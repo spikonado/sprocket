@@ -41,7 +41,6 @@ impl GitHubSettingsStore {
         let _guard = self.write_lock.lock().await;
         let mut settings = github::settings();
         change(&mut settings);
-        settings.hosts.retain(|_, host| host.disabled);
         let bytes = serde_json::to_vec_pretty(&settings)?;
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || crate::profile::write_private_file(&path, &bytes))
@@ -57,12 +56,6 @@ fn read(path: &Path) -> anyhow::Result<GitHubSettings> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(GitHubSettings::default()),
         Err(error) => Err(error.into()),
     }
-}
-
-#[derive(serde::Deserialize)]
-struct IssuedToken {
-    host: String,
-    token: String,
 }
 
 /// Lets the GitHub client read the tokens a user saved, which Convex only
@@ -82,8 +75,8 @@ pub fn install_saved_tokens_loader(
                 native_auth.auth_token_fetcher_for_user(user_id),
             )
             .await?;
-            let issued: Vec<IssuedToken> = client
-                .act(
+            client
+                .act::<SavedTokens>(
                     "githubCredentials:issueTokens",
                     BTreeMap::from([
                         (
@@ -96,13 +89,7 @@ pub fn install_saved_tokens_loader(
                         ),
                     ]),
                 )
-                .await?;
-            Ok::<_, anyhow::Error>(
-                issued
-                    .into_iter()
-                    .map(|issued| (issued.host, issued.token))
-                    .collect::<SavedTokens>(),
-            )
+                .await
         })
     }));
 }

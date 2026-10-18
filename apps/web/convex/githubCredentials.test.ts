@@ -128,7 +128,7 @@ describe('GitHub credentials', () => {
 				machineId: 'machine-a',
 				credential: 'machine-credential'
 			})
-		).resolves.toEqual([{ host: 'ghe.acme.com', token: 'ghp_acme' }]);
+		).resolves.toEqual({ 'ghe.acme.com': 'ghp_acme' });
 
 		await alice.action(api.githubCredentials.removeToken, { host: 'ghe.acme.com' });
 		expect(vault.size).toBe(0);

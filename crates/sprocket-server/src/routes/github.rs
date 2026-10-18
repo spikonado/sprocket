@@ -82,7 +82,11 @@ async fn update_handler(
                 settings.disabled = !enabled;
             }
             if let Some(host) = host {
-                settings.hosts.entry(host.host).or_default().disabled = !host.enabled;
+                if host.enabled {
+                    settings.disabled_hosts.remove(&host.host);
+                } else {
+                    settings.disabled_hosts.insert(host.host);
+                }
             }
         })
         .await

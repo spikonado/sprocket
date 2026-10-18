@@ -2,12 +2,13 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
 import { getRunWithExecution } from '@convex/lib/runExecution';
-import { constantTimeEqual, executionSecretHash, getUserId } from '@convex/lib/auth';
+import { constantTimeEqual, getUserId } from '@convex/lib/auth';
 import {
 	getOwnedMachine,
 	isMachineActive,
 	MACHINE_ONLINE_THRESHOLD_MS,
-	MAX_ACTIVE_MACHINE_RUNS
+	MAX_ACTIVE_MACHINE_RUNS,
+	requireMachine
 } from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
@@ -74,26 +75,6 @@ async function failMachineRuns(
 	}
 
 	await ctx.db.patch('machines', machine._id, { runIds: [] });
-}
-
-async function requireMachine(
-	ctx: MutationCtx,
-	userId: string,
-	machineId: string,
-	credential: string
-): Promise<Doc<'machines'>> {
-	const machine = await getOwnedMachine(ctx, userId, machineId);
-	const candidateHash = await executionSecretHash(credential);
-
-	if (
-		!machine ||
-		machine.lastSeenAt === undefined ||
-		!constantTimeEqual(candidateHash, machine.credentialHash)
-	) {
-		throw new Error('Machine is not active.');
-	}
-
-	return machine;
 }
 
 const vRegistration = v.object({

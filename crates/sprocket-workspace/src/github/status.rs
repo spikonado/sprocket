@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
 use super::{
-    CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, gh_output, is_valid_host, read_settings,
-    saved_tokens,
+    CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, gh_output, is_valid_host, saved_tokens,
+    settings,
 };
 
 /// Keeps an unreachable Enterprise host, e.g. off VPN, from stalling the page.
@@ -43,13 +43,8 @@ pub async fn status(user_id: &str) -> GitHubStatus {
         gh_output(&["auth", "status", "--json", "hosts"]),
         saved_tokens::load(user_id, true)
     );
-    let (enabled, mut hosts) = {
-        let settings = read_settings();
-        (
-            !settings.disabled,
-            settings.hosts.keys().cloned().collect::<BTreeSet<_>>(),
-        )
-    };
+    let settings = settings();
+    let mut hosts = settings.disabled_hosts.clone();
     hosts.insert(PUBLIC_HOST.to_string());
     hosts.extend(saved.tokens.keys().cloned());
     hosts.extend(
@@ -63,51 +58,37 @@ pub async fn status(user_id: &str) -> GitHubStatus {
     }
     hosts.retain(|host| is_valid_host(host));
 
+    let mut statuses = Vec::with_capacity(hosts.len());
     let mut checks = JoinSet::new();
     for host in hosts {
-        let has_saved_token = saved.tokens.contains_key(&host);
-        checks.spawn(host_status(
-            user_id.to_string(),
+        let status = HostStatus {
+            enabled: !settings.disabled_hosts.contains(&host),
+            has_saved_token: saved.tokens.contains_key(&host),
             host,
-            has_saved_token,
-            enabled,
-        ));
+            source: None,
+            login: None,
+            problem: None,
+        };
+        if settings.disabled || !status.enabled {
+            statuses.push(status);
+        } else {
+            checks.spawn(checked(user_id.to_string(), status));
+        }
     }
-    let mut statuses = Vec::with_capacity(checks.len());
-    while let Some(checked) = checks.join_next().await {
-        statuses.extend(checked.ok());
+    while let Some(status) = checks.join_next().await {
+        statuses.extend(status.ok());
     }
     statuses
         .sort_by(|a, b| (a.host != PUBLIC_HOST, &a.host).cmp(&(b.host != PUBLIC_HOST, &b.host)));
     GitHubStatus {
-        enabled,
+        enabled: !settings.disabled,
         cli_version: cli_version.as_deref().and_then(parse_cli_version),
         saved_tokens_problem: saved.error,
         hosts: statuses,
     }
 }
 
-async fn host_status(
-    user_id: String,
-    host: String,
-    has_saved_token: bool,
-    github_enabled: bool,
-) -> HostStatus {
-    let enabled = read_settings()
-        .hosts
-        .get(&host)
-        .is_none_or(|saved| !saved.disabled);
-    let mut status = HostStatus {
-        host,
-        enabled,
-        has_saved_token,
-        source: None,
-        login: None,
-        problem: None,
-    };
-    if !github_enabled || !enabled {
-        return status;
-    }
+async fn checked(user_id: String, mut status: HostStatus) -> HostStatus {
     if tokio::time::timeout(HOST_CHECK_TIMEOUT, check_credential(&user_id, &mut status))
         .await
         .is_err()

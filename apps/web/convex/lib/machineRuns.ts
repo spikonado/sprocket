@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import { constantTimeEqual, executionSecretHash } from '@convex/lib/auth';
 
 export const MAX_ACTIVE_MACHINE_RUNS = 64;
 
@@ -22,6 +23,26 @@ export async function getOwnedMachine(
 			query.eq('userId', userId).eq('machineId', machineId)
 		)
 		.unique();
+}
+
+export async function requireMachine(
+	ctx: QueryCtx | MutationCtx,
+	userId: string,
+	machineId: string,
+	credential: string
+): Promise<Doc<'machines'>> {
+	const machine = await getOwnedMachine(ctx, userId, machineId);
+	const candidateHash = await executionSecretHash(credential);
+
+	if (
+		!machine ||
+		machine.lastSeenAt === undefined ||
+		!constantTimeEqual(candidateHash, machine.credentialHash)
+	) {
+		throw new Error('Machine is not active.');
+	}
+
+	return machine;
 }
 
 export function runMachineId(run: Doc<'runs'>): string | undefined {

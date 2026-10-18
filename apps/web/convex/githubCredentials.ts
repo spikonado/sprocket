@@ -1,9 +1,9 @@
-import { action, internalQuery, type ActionCtx } from '@convex/_generated/server';
+import { action, internalQuery } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { constantTimeEqual, executionSecretHash } from '@convex/lib/auth';
-import { getOwnedMachine } from '@convex/lib/machineRuns';
+import { getUserId } from '@convex/lib/auth';
+import { requireMachine } from '@convex/lib/machineRuns';
 import {
 	credentialName,
 	deleteVaultObject,
@@ -23,16 +23,6 @@ const HOST_PATTERN = /^[a-z0-9][a-z0-9.-]{0,252}$/;
 const savedTokensSchema = z.record(z.string(), z.string());
 
 type SavedTokens = z.infer<typeof savedTokensSchema>;
-
-const vSavedToken = v.object({ host: v.string(), token: v.string() });
-
-async function requireUserId(ctx: ActionCtx): Promise<string> {
-	const identity = await ctx.auth.getUserIdentity();
-
-	if (!identity) throw new Error('Authentication required.');
-
-	return identity.subject;
-}
 
 function normalizedHost(host: string): string {
 	const normalized = host.trim().toLowerCase();
@@ -76,7 +66,7 @@ export const saveToken = action({
 	args: { host: v.string(), token: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await requireUserId(ctx);
+		const userId = await getUserId(ctx);
 		const host = normalizedHost(args.host);
 		const token = args.token.trim();
 
@@ -100,7 +90,7 @@ export const removeToken = action({
 	args: { host: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await requireUserId(ctx);
+		const userId = await getUserId(ctx);
 		const host = normalizedHost(args.host);
 		const { name, object, tokens } = await readTokens(userId);
 
@@ -119,16 +109,7 @@ export const authorizeMachine = internalQuery({
 	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const machine = await getOwnedMachine(ctx, args.userId, args.machineId);
-		const candidateHash = await executionSecretHash(args.credential);
-
-		if (
-			!machine ||
-			machine.lastSeenAt === undefined ||
-			!constantTimeEqual(candidateHash, machine.credentialHash)
-		) {
-			throw new Error('Machine is not active.');
-		}
+		await requireMachine(ctx, args.userId, args.machineId, args.credential);
 
 		return null;
 	}
@@ -137,12 +118,12 @@ export const authorizeMachine = internalQuery({
 /** Hands the saved tokens to a running machine, proven by the credential it registered with. */
 export const issueTokens = action({
 	args: { machineId: v.string(), credential: v.string() },
-	returns: v.array(vSavedToken),
+	returns: v.record(v.string(), v.string()),
 	handler: async (ctx, args) => {
-		const userId = await requireUserId(ctx);
+		const userId = await getUserId(ctx);
 		await ctx.runQuery(internal.githubCredentials.authorizeMachine, { userId, ...args });
 		const { tokens } = await readTokens(userId);
 
-		return Object.entries(tokens).map(([host, token]) => ({ host, token }));
+		return tokens;
 	}
 });

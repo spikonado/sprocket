@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { ExternalLink, Eye, EyeOff, KeyRound, Plus, RefreshCw } from 'lucide-react';
 import { useAction } from 'convex/react';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { cn } from '$lib/utils';
-import type { DesktopApi, GitHubHostStatus, GitHubStatus } from '$lib/types/sprocket';
+import type {
+	DesktopApi,
+	GitHubHostStatus,
+	GitHubSettingsUpdate,
+	GitHubStatus
+} from '$lib/types/sprocket';
 
 const sourceLabels: Record<NonNullable<GitHubHostStatus['source']>, string> = {
 	settings: 'saved token',
@@ -16,6 +21,9 @@ const sourceLabels: Record<NonNullable<GitHubHostStatus['source']>, string> = {
 type GitHubApi = Pick<DesktopApi, 'fetchGitHubStatus' | 'updateGitHubSettings'>;
 
 const caughtError = z.instanceof(Error).catch(new Error());
+
+const tokenInputClass =
+	'border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full min-w-0 rounded-lg border font-mono text-[13px] outline-none disabled:opacity-50';
 
 export default function SettingsVersionControl({
 	userId,
@@ -73,7 +81,7 @@ export default function SettingsVersionControl({
 		}
 	}
 
-	const setEnabled = (key: string, update: Parameters<GitHubApi['updateGitHubSettings']>[1]) =>
+	const setEnabled = (key: string, update: GitHubSettingsUpdate) =>
 		change(key, (desktop) => desktop.updateGitHubSettings(userId, update));
 
 	const setToken = (host: string, token: string, key = host) =>
@@ -337,9 +345,6 @@ function AddHost({
 		);
 	}
 
-	const inputClass =
-		'border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full min-w-0 rounded-lg border px-3 font-mono text-[13px] outline-none disabled:opacity-50';
-
 	const trimmedHost = host.trim().toLowerCase();
 
 	return (
@@ -367,7 +372,7 @@ function AddHost({
 						aria-label="Enterprise host"
 						placeholder="github.example.com"
 						disabled={disabled}
-						className={cn(inputClass, 'basis-2/5')}
+						className={cn(tokenInputClass, 'basis-2/5 px-3')}
 					/>
 					<input
 						type="password"
@@ -378,7 +383,7 @@ function AddHost({
 						aria-label="Enterprise token"
 						placeholder="ghp_… or github_pat_…"
 						disabled={disabled}
-						className={cn(inputClass, 'flex-1')}
+						className={cn(tokenInputClass, 'flex-1 px-3')}
 					/>
 					<button
 						type="submit"
@@ -388,25 +393,33 @@ function AddHost({
 						{saving ? 'Checking…' : 'Add'}
 					</button>
 				</div>
-				<p className="text-muted-foreground text-[12px] leading-5">
-					It needs read access to pull requests.
-					{trimmedHost.includes('.') && (
-						<>
-							{' '}
-							<a
-								href={`https://${trimmedHost}/settings/tokens/new?description=Sprocket&scopes=repo`}
-								target="_blank"
-								rel="noreferrer"
-								className="text-foreground inline-flex items-center gap-0.5 hover:underline"
-							>
-								Create a token on {trimmedHost}
-								<ExternalLink className="size-3" aria-hidden="true" />
-							</a>
-						</>
-					)}
-				</p>
+				<TokenHelp host={trimmedHost.includes('.') ? trimmedHost : null}>
+					Create a token on {trimmedHost}
+				</TokenHelp>
 			</form>
 		</li>
+	);
+}
+
+function TokenHelp({ host, children }: { host: string | null; children: ReactNode }) {
+	return (
+		<p className="text-muted-foreground text-[12px] leading-5">
+			It needs read access to pull requests.
+			{host && (
+				<>
+					{' '}
+					<a
+						href={`https://${host}/settings/tokens/new?description=Sprocket&scopes=repo`}
+						target="_blank"
+						rel="noreferrer"
+						className="text-foreground inline-flex items-center gap-0.5 hover:underline"
+					>
+						{children}
+						<ExternalLink className="size-3" aria-hidden="true" />
+					</a>
+				</>
+			)}
+		</p>
 	);
 }
 
@@ -445,7 +458,7 @@ function TokenEditor({
 						aria-label={`Token for ${host.host}`}
 						placeholder={host.hasSavedToken ? 'Enter a replacement token' : 'ghp_… or github_pat_…'}
 						disabled={disabled}
-						className="border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full rounded-lg border pr-9 pl-3 font-mono text-[13px] outline-none disabled:opacity-50"
+						className={cn(tokenInputClass, 'pr-9 pl-3')}
 					/>
 					<button
 						type="button"
@@ -464,18 +477,7 @@ function TokenEditor({
 					{saving ? 'Checking…' : 'Save'}
 				</button>
 			</div>
-			<p className="text-muted-foreground text-[12px] leading-5">
-				It needs read access to pull requests.{' '}
-				<a
-					href={`https://${host.host}/settings/tokens/new?description=Sprocket&scopes=repo`}
-					target="_blank"
-					rel="noreferrer"
-					className="text-foreground inline-flex items-center gap-0.5 hover:underline"
-				>
-					Create a token
-					<ExternalLink className="size-3" aria-hidden="true" />
-				</a>
-			</p>
+			<TokenHelp host={host.host}>Create a token</TokenHelp>
 			{host.hasSavedToken && (
 				<button
 					type="button"

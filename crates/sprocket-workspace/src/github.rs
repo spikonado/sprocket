@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::process::Stdio;
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -34,13 +34,7 @@ static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::defau
 #[serde(rename_all = "camelCase", default)]
 pub struct GitHubSettings {
     pub disabled: bool,
-    pub hosts: BTreeMap<String, HostSettings>,
-}
-
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct HostSettings {
-    pub disabled: bool,
+    pub disabled_hosts: BTreeSet<String>,
 }
 
 pub fn settings() -> GitHubSettings {
@@ -90,9 +84,6 @@ pub struct GraphQlError {
     pub kind: Option<String>,
     #[serde(default)]
     pub message: String,
-    /// The response path the error belongs to; its first entry is the top-level alias.
-    #[serde(default)]
-    pub path: Vec<serde_json::Value>,
 }
 
 /// A GraphQL answer that may be partial: aliased lookups fail one by one in `errors`.
@@ -184,7 +175,7 @@ impl GitHubApi {
 }
 
 fn is_github_dot_com(host: &str) -> bool {
-    host.eq_ignore_ascii_case(PUBLIC_HOST) || host.to_ascii_lowercase().ends_with(".ghe.com")
+    host == PUBLIC_HOST || host.ends_with(".ghe.com")
 }
 
 /// GitHub's own reading: a 429, a 403 that names the limit, or GraphQL errors
@@ -239,7 +230,7 @@ fn graphql_url(host: &str) -> anyhow::Result<Url> {
 async fn credential(user_id: &str, host: &str) -> Result<(String, CredentialSource), GitHubError> {
     {
         let settings = read_settings();
-        if settings.disabled || settings.hosts.get(host).is_some_and(|saved| saved.disabled) {
+        if settings.disabled || settings.disabled_hosts.contains(host) {
             return Err(GitHubError::Disabled(host.to_string()));
         }
     }
