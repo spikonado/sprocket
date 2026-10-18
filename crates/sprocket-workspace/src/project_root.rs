@@ -27,7 +27,3 @@ pub(crate) fn discover_repository(cwd: &Path) -> Option<gix::Repository> {
 
     gix::discover_opts(cwd, options, gix::open::Options::default()).ok()
 }
-
-pub fn is_in_git_repository(cwd: &Path) -> bool {
-    discover_repository(cwd).is_some()
-}

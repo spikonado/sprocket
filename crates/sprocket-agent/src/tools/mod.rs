@@ -37,7 +37,6 @@ use self::mandates::{
 use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
 use self::pull_requests::LinkPrsTool;
-pub(crate) use self::pull_requests::link_prs_available;
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
 use self::subagents::{

@@ -29,7 +29,7 @@ use crate::now_ms;
 use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
-use crate::tools::{agent_tools, link_prs_available, working_directory_message};
+use crate::tools::{agent_tools, working_directory_message};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
     gateway_api_v1_url,
@@ -496,7 +496,7 @@ async fn run_with_completion_model(
         target_params(&target)
     };
     let tool_call_tracker = ToolCallTracker::new(&request.run_id, &request.claim_id);
-    let offer_link_prs = link_prs_available(&request.cwd);
+    let offer_link_prs = !sprocket_workspace::github::settings().disabled;
     let tools = agent_tools(
         runtime.clone(),
         request.run_id.clone(),

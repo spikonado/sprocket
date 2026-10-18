@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use convex::Value;
 use rig::tool::ToolExecutionError;
@@ -8,19 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::WorkspaceOperationCancelled;
 use sprocket_workspace::github::pull_requests::{PullRequestRef, fetch_states};
-use sprocket_workspace::{github, is_in_git_repository};
 
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
 
 #[derive(Clone)]
 pub(crate) struct LinkPrsTool(pub(super) AgentToolContext);
-
-/// Offered only where it can work: in a git repository, with GitHub not
-/// turned off in Settings → Version Control.
-pub(crate) fn link_prs_available(cwd: &Path) -> bool {
-    !github::settings().disabled && is_in_git_repository(cwd)
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
