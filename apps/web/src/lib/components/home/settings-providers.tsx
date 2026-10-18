@@ -397,11 +397,6 @@ export default function SettingsProviders({
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
-					<p className="text-muted-foreground mb-5 text-sm leading-6">
-						Use your own API keys or subscriptions. ChatGPT credentials stay in a protected file on
-						this computer. OpenAI API keys are encrypted in WorkOS Vault.
-					</p>
-
 					<div className="border-border rounded-xl border p-5">
 						<div className="flex items-center gap-3">
 							<ProviderLogo provider="openai" className="size-5" />
