@@ -5,11 +5,11 @@
 - Sprocket is an agentic platform that streamlines hardware and software development.
 - The goal is to make the world's best platform for agents and humans to develop apps, robots, devices, and the systems that glue them together.
 - Sprocket should work across different hardware platforms, operating systems, and Sprocket's own cloud for hardware and software development.
-- Sprocket runs on one person's machine. Machine resources such as installed tools, browsers, daemons, and caches belong to the machine; user IDs are for auth checks.
+- Sprocket runs on a machine. Machine resources such as installed tools, browsers, daemons, and caches belong to the machine; user IDs are for auth checks.
 
 ### Crates
 
-Put new code in the crate whose purpose matches it:
+Here's what each Rust crate is for; you may create more crates when needed.
 
 - `sprocket-agent`: model providers, the agent run loop, and agent tools.
 - `sprocket-cli`: the `sprocket` CLI, a client of the local server.
