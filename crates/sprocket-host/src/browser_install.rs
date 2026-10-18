@@ -106,13 +106,13 @@ impl BrowserInstaller {
         if destination.join("core/SKILL.md").is_file() {
             return Ok(());
         }
-        let archive = self.version_dir().join("source.tar.gz");
+        let archive_path = self.version_dir().join("source.tar.gz");
         let release = &self.releases.skill_data;
-        download_atomic(&self.client, &release.url, &release.checksum, &archive).await?;
+        download_atomic(&self.client, &release.url, &release.checksum, &archive_path).await?;
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let temporary =
                 tempfile::tempdir_in(destination.parent().context("skills directory")?)?;
-            let reader = flate2::read::GzDecoder::new(File::open(&archive)?);
+            let reader = flate2::read::GzDecoder::new(File::open(&archive_path)?);
             let mut archive = tar::Archive::new(std::io::Read::take(reader, 64 * 1024 * 1024));
             for entry in archive.entries()? {
                 let mut entry = entry?;
@@ -143,7 +143,7 @@ impl BrowserInstaller {
                 "Upstream core browser skill is missing"
             );
             std::fs::rename(temporary.path(), destination)?;
-            std::fs::remove_file(archive)?;
+            std::fs::remove_file(archive_path)?;
             Ok(())
         })
         .await??;
