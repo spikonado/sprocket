@@ -29,9 +29,12 @@ All of these are core priorities; try your best to achieve all of them without h
 - Don't be afraid to completely refactor existing code to improve on any of the priorities.
 - Put Rust unit tests for `foo.rs` in `foo/tests.rs`, declared as `#[cfg(test)] mod tests;`. Test-only helpers live there too, or in `foo/test_support.rs` when other modules' tests use them.
 - Make sure that changes are made in all the layers of the app when needed.
-- Ship breaking changes with backwards compatibility for already-released clients, their sprocket data-dir, and data in the Convex deployment.
-- Record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
-- For the above point, remember that the Rust server and the UI that connects with it can't have different versions.
+
+### Backwards compatibility
+
+- The Rust server, the UI, and the CLI ship as one version, so changes between them need no compatibility.
+- Ship breaking changes with backwards compatibility for the Convex API that released clients call, their sprocket data-dir, and data in the Convex deployment.
+- A shim is temporary code with a removal gate. Record each shim in `BACKWARDS_COMPATIBILITY.md` with its gate, and add historical formats kept forever to its permanent list. Permanent defaults, SDK workarounds, and fields introduced by the current PR need no entry.
 - Include data migrations in the PR that introduces the breaking change instead of leaving debt behind.
 - Remove compat only once that gate passes (clients age out, or a migration rewrites the data).
 
