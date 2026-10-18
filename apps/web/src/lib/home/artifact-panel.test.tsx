@@ -105,10 +105,10 @@ it('notifies subscribers on panel changes and keeps one instance per mount', () 
 	expect(result.current).toBe(instance);
 
 	act(() => {
-		instance.update({ open: true, tab: 'artifacts' });
+		instance.update({ open: true, view: 'artifacts' });
 	});
 	expect(listener).toHaveBeenCalledTimes(1);
-	expect(result.current.panel).toMatchObject({ open: true, tab: 'artifacts' });
+	expect(result.current.panel).toMatchObject({ open: true, view: 'artifacts' });
 	expect(instance.getSnapshot()).not.toBe(before);
 
 	unsubscribe();

@@ -2762,7 +2762,7 @@ export default function App({
 									onOpenArtifact={(artifactId) => {
 										artifactPanel.update({
 											open: true,
-											tab: 'artifacts',
+											view: 'artifacts',
 											selectedKey: artifactId
 										});
 									}}
@@ -2908,14 +2908,14 @@ export default function App({
 						artifacts={artifactPanel.artifacts}
 						onDeleteArtifact={deleteArtifact}
 						selectedKey={artifactPanel.panel.selectedKey}
-						tab={artifactPanel.panel.tab}
+						view={artifactPanel.panel.view}
 						browserApi={desktopApi}
 						expanded={artifactPanel.panel.expanded}
 						stale={artifactPanel.watchState.stale}
 						error={artifactPanel.watchState.error}
 						onSelect={(key) => artifactPanel.update({ selectedKey: key })}
 						onBack={() => artifactPanel.update({ selectedKey: null })}
-						onTabChange={(tab) => artifactPanel.update({ tab })}
+						onViewChange={(view) => artifactPanel.update({ view })}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
 

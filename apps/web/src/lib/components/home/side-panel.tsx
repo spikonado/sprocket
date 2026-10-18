@@ -15,7 +15,7 @@ import { useEffect, useRef } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import type { SidePanelTab } from '$lib/chat/side-panel';
+import type { SidePanelView } from '$lib/chat/side-panel';
 import type { ArtifactType } from '@convex/lib/validators';
 
 type Props = {
@@ -23,7 +23,7 @@ type Props = {
 	workspacePath?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 	selectedKey: string | null;
-	tab: SidePanelTab;
+	view: SidePanelView | null;
 	browserApi: BrowserApi | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
@@ -31,7 +31,7 @@ type Props = {
 	error?: string | null;
 	onSelect: (key: string) => void;
 	onBack: () => void;
-	onTabChange: (tab: SidePanelTab) => void;
+	onViewChange: (view: SidePanelView | null) => void;
 	/** Enter true browser fullscreen for a single artifact (content only). */
 	onOpenFullscreen: (key: string) => void;
 	onToggleExpanded: () => void;
@@ -44,9 +44,9 @@ const TYPE_ICONS = {
 	react: FileCode
 } as const satisfies Record<ArtifactType, typeof FileCode>;
 
-const VIEWS: { tab: Exclude<SidePanelTab, 'launcher'>; label: string; icon: LucideIcon }[] = [
-	{ tab: 'artifacts', label: 'Artifacts', icon: Files },
-	{ tab: 'browser', label: 'Browser', icon: Globe }
+const VIEWS: { id: SidePanelView; label: string; icon: LucideIcon }[] = [
+	{ id: 'artifacts', label: 'Artifacts', icon: Files },
+	{ id: 'browser', label: 'Browser', icon: Globe }
 ];
 
 const ICON_BUTTON =
@@ -57,20 +57,20 @@ export default function SidePanel({
 	workspacePath,
 	onDeleteArtifact,
 	selectedKey,
-	tab,
+	view,
 	browserApi,
 	expanded,
 	stale = false,
 	error = null,
 	onSelect,
 	onBack,
-	onTabChange,
+	onViewChange,
 	onOpenFullscreen,
 	onToggleExpanded,
 	onClose
 }: Props) {
 	const selected = artifacts.find((artifact) => artifact.key === selectedKey) ?? null;
-	const current = VIEWS.find((view) => view.tab === tab) ?? null;
+	const current = VIEWS.find((item) => item.id === view) ?? null;
 	const viewRef = useRef<HTMLElement>(null);
 
 	useEffect(() => {
@@ -114,7 +114,7 @@ export default function SidePanel({
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={() => onTabChange('launcher')}
+					onClick={() => onViewChange(null)}
 					aria-label="New tab"
 					title="New tab"
 				>
@@ -151,27 +151,27 @@ export default function SidePanel({
 				aria-label={current?.label ?? 'Side panel'}
 				className="flex min-h-0 flex-1 flex-col focus:outline-none"
 			>
-				{tab === 'launcher' ? (
+				{view === null ? (
 					<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
 						<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
-							{VIEWS.map((view) => (
-								<li key={view.tab}>
+							{VIEWS.map((item) => (
+								<li key={item.id}>
 									<button
 										type="button"
 										onClick={() => {
-											onTabChange(view.tab);
+											onViewChange(item.id);
 											viewRef.current?.focus();
 										}}
 										className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
 									>
-										<view.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
-										<span className="text-sm">{view.label}</span>
+										<item.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
+										<span className="text-sm">{item.label}</span>
 									</button>
 								</li>
 							))}
 						</ul>
 					</div>
-				) : tab === 'browser' ? (
+				) : view === 'browser' ? (
 					<BrowserView browserApi={browserApi} />
 				) : (
 					<>
