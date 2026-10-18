@@ -13,7 +13,7 @@ import {
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
@@ -57,6 +57,21 @@ const VIEWS: { id: SidePanelView; label: string; icon: LucideIcon }[] = [
 const ICON_BUTTON =
 	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none';
 
+function tabIndexForKey(key: string, index: number, count: number) {
+	switch (key) {
+		case 'ArrowLeft':
+			return (index - 1 + count) % count;
+		case 'ArrowRight':
+			return (index + 1) % count;
+		case 'Home':
+			return 0;
+		case 'End':
+			return count - 1;
+		default:
+			return null;
+	}
+}
+
 function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 	const artifact =
 		tab.view === 'artifacts' ? artifacts.find((item) => item.key === tab.selectedKey) : undefined;
@@ -84,6 +99,18 @@ export default function SidePanel({
 	onToggleExpanded,
 	onClose
 }: Props) {
+	const focusActiveTab = useRef(false);
+
+	useEffect(() => {
+		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
+		tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+
+		if (focusActiveTab.current) {
+			focusActiveTab.current = false;
+			tab?.focus();
+		}
+	}, [activeTabId, tabs.length]);
+
 	useEffect(() => {
 		if (!expanded) return;
 
@@ -118,6 +145,22 @@ export default function SidePanel({
 					role="tablist"
 					aria-label="Side panel tabs"
 					className="flex min-w-0 items-center gap-1 overflow-x-auto"
+					onKeyDown={(event) => {
+						const index = tabIndexForKey(
+							event.key,
+							tabs.findIndex((tab) => tab.id === activeTabId),
+							tabs.length
+						);
+
+						if (index === null) return;
+						event.preventDefault();
+
+						const next = tabs[index]!;
+
+						if (next.id === activeTabId) return;
+						focusActiveTab.current = true;
+						onActivateTab(next.id);
+					}}
 				>
 					{tabs.map((tab) => {
 						const heading = tabHeading(tab, artifacts);
@@ -138,6 +181,7 @@ export default function SidePanel({
 									id={`side-panel-tab-${tab.id}`}
 									aria-selected={active}
 									aria-controls={`side-panel-tabpanel-${tab.id}`}
+									tabIndex={active ? 0 : -1}
 									title={heading.label}
 									onClick={() => onActivateTab(tab.id)}
 									onAuxClick={(event) => {
@@ -150,7 +194,11 @@ export default function SidePanel({
 								</button>
 								<button
 									type="button"
-									onClick={() => onCloseTab(tab.id)}
+									tabIndex={active ? 0 : -1}
+									onClick={() => {
+										focusActiveTab.current = true;
+										onCloseTab(tab.id);
+									}}
 									aria-label={`Close ${heading.label} tab`}
 									title="Close tab"
 									className={`hover:bg-hover-fill focus-visible:ring-ring mx-0.5 shrink-0 rounded p-0.5 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none ${active ? '' : 'opacity-0'}`}

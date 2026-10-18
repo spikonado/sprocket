@@ -46,7 +46,12 @@ it('keeps each tab open with its own view and switches between them', () => {
 	expect(screen.getByRole('tab', { name: 'Notes' }).getAttribute('aria-selected')).toBe('true');
 	expect(screen.getByRole('tabpanel', { name: 'Notes' })).toBeTruthy();
 
+	fireEvent.keyDown(screen.getByRole('tab', { name: 'Notes' }), { key: 'ArrowRight' });
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
+	fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), { key: 'ArrowRight' });
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Notes' }));
+
 	fireEvent.click(screen.getByRole('button', { name: 'Close Notes tab' }));
 	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Browser']);
-	expect(screen.getByRole('tabpanel', { name: 'Browser' })).toBeTruthy();
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
 });
