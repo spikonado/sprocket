@@ -5,7 +5,7 @@ import SidePanel from './side-panel';
 import type { SidePanelTab } from '$lib/chat/side-panel';
 
 function Harness() {
-	const [tab, setTab] = useState<SidePanelTab>('home');
+	const [tab, setTab] = useState<SidePanelTab>('launcher');
 
 	return (
 		<SidePanel

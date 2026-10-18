@@ -44,7 +44,7 @@ const TYPE_ICONS = {
 	react: FileCode
 } as const satisfies Record<ArtifactType, typeof FileCode>;
 
-const VIEWS: { tab: Exclude<SidePanelTab, 'home'>; label: string; icon: LucideIcon }[] = [
+const VIEWS: { tab: Exclude<SidePanelTab, 'launcher'>; label: string; icon: LucideIcon }[] = [
 	{ tab: 'artifacts', label: 'Artifacts', icon: Files },
 	{ tab: 'live', label: 'Browser', icon: Globe }
 ];
@@ -114,7 +114,7 @@ export default function SidePanel({
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={() => onTabChange('home')}
+					onClick={() => onTabChange('launcher')}
 					aria-label="New tab"
 					title="New tab"
 				>
@@ -151,7 +151,7 @@ export default function SidePanel({
 				aria-label={current?.label ?? 'Side panel'}
 				className="flex min-h-0 flex-1 flex-col focus:outline-none"
 			>
-				{tab === 'home' ? (
+				{tab === 'launcher' ? (
 					<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
 						<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
 							{VIEWS.map((view) => (
