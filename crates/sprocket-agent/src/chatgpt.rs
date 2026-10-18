@@ -289,7 +289,8 @@ fn streaming_response(
         .version(response.version());
     if let Some(headers) = res.headers_mut() {
         *headers = response.headers().clone();
-        // The SIWC route can omit the SSE content type that Rig requires.
+        // The SIWC route can omit the SSE content type that Rig requires. Remove once
+        // it always sends one or Rig accepts its absence.
         headers
             .entry(http::header::CONTENT_TYPE)
             .or_insert(HeaderValue::from_static("text/event-stream"));
