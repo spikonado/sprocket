@@ -205,6 +205,17 @@ describe('automatic run recovery', () => {
 		);
 	});
 
+	it('stops the resumed run when stopping a restarted run', async () => {
+		const { t, asUser, runId, recoveryArgs, restartMachine, registerNewProcess } = await setup();
+
+		await restartMachine();
+		await registerNewProcess();
+		const { runId: continuationId } = await insertQueuedRun(t, asUser, recoveryArgs);
+		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId })).toBe(true);
+		const continuation = await t.run((ctx) => ctx.db.get('runs', continuationId));
+		expect(continuation?.cancellationRequestedAt).toBeDefined();
+	});
+
 	it('discards automatic recovery when disabled but allows manual continuation', async () => {
 		const { t, asUser, runId, queryArgs, recoveryArgs, abandon } = await setup();
 		await abandon();
