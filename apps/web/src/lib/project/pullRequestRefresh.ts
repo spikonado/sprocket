@@ -4,9 +4,9 @@ import type { LinkedPullRequest } from '@convex/lib/validators';
 
 type Thread = Doc<'threadRecords'>;
 
-export type PullRequestRef = { repository: string; number: number };
+type PullRequestRef = Pick<LinkedPullRequest, 'repository' | 'number'>;
 
-export type PullRequestStateUpdate = LinkedPullRequest & { threadId: Id<'threadRecords'> };
+type PullRequestStateUpdate = LinkedPullRequest & { threadId: Id<'threadRecords'> };
 
 export type PullRequestStateSync = {
 	fetchStates: (pullRequests: PullRequestRef[]) => Promise<LinkedPullRequest[]>;

@@ -11,8 +11,6 @@ use sprocket_workspace::github::pull_requests::{PullRequestRef, fetch_states};
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
 
-const MAX_LINKED_PRS: usize = 20;
-
 #[derive(Clone)]
 pub(crate) struct LinkPrsTool(pub(super) AgentToolContext);
 
@@ -67,10 +65,6 @@ async fn link(
     pull_requests: Vec<LinkedPr>,
 ) -> anyhow::Result<serde_json::Value> {
     anyhow::ensure!(!pull_requests.is_empty(), "Pass at least one PR.");
-    anyhow::ensure!(
-        pull_requests.len() <= MAX_LINKED_PRS,
-        "A thread can link at most {MAX_LINKED_PRS} PRs."
-    );
 
     // GitHub matches repositories case-insensitively, so one spelling keeps
     // relinks from adding a duplicate.

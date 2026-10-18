@@ -385,7 +385,7 @@ export type DesktopApi = {
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	fetchPullRequestStates: (
 		request: LocalUserRequest & {
-			pullRequests: { repository: string; number: number }[];
+			pullRequests: Pick<LinkedPullRequest, 'repository' | 'number'>[];
 		}
 	) => Promise<LinkedPullRequest[]>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;

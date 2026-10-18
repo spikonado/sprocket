@@ -25,10 +25,6 @@ export const link = mutation({
 	returns: v.array(vLinkedPullRequest),
 	handler: async (ctx, args) => {
 		try {
-			if (!args.pullRequests.every((pr) => Number.isSafeInteger(pr.number) && pr.number > 0)) {
-				throw new Error('PR numbers must be positive integers.');
-			}
-
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
 			if (!ownsActiveRunClaim(run, args.claimId, Date.now())) throw new Error(RUN_NO_LONGER_ACTIVE);
