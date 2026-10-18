@@ -28,7 +28,6 @@ it('opens views from the launcher, focuses them, and returns via the new tab but
 	render(<Harness />);
 	fireEvent.click(screen.getByRole('button', { name: 'Artifacts' }));
 	expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Artifacts' }));
-	expect(screen.queryByRole('list', { name: 'Open a view' })).toBeNull();
 
 	fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));

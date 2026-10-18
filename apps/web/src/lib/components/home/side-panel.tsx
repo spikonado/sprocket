@@ -72,18 +72,6 @@ export default function SidePanel({
 	const selected = artifacts.find((artifact) => artifact.key === selectedKey) ?? null;
 	const current = VIEWS.find((view) => view.tab === tab) ?? null;
 	const viewRef = useRef<HTMLElement>(null);
-	const focusOpenedView = useRef(false);
-
-	useEffect(() => {
-		if (!focusOpenedView.current) return;
-		focusOpenedView.current = false;
-		viewRef.current?.focus();
-	}, [tab]);
-
-	function openView(next: Exclude<SidePanelTab, 'home'>) {
-		focusOpenedView.current = true;
-		onTabChange(next);
-	}
 
 	useEffect(() => {
 		if (!expanded) return;
@@ -170,7 +158,10 @@ export default function SidePanel({
 								<li key={view.tab}>
 									<button
 										type="button"
-										onClick={() => openView(view.tab)}
+										onClick={() => {
+											onTabChange(view.tab);
+											viewRef.current?.focus();
+										}}
 										className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
 									>
 										<view.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
