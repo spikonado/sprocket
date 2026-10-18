@@ -1,4 +1,4 @@
-export type SidePanelTab = 'launcher' | 'artifacts' | 'live';
+export type SidePanelTab = 'launcher' | 'artifacts' | 'browser';
 
 /** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {

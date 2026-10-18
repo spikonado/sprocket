@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
-import BrowserLiveView, { type BrowserApi } from '$lib/components/home/browser-live-view';
+import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import type { SidePanelTab } from '$lib/chat/side-panel';
 import type { ArtifactType } from '@convex/lib/validators';
@@ -46,7 +46,7 @@ const TYPE_ICONS = {
 
 const VIEWS: { tab: Exclude<SidePanelTab, 'launcher'>; label: string; icon: LucideIcon }[] = [
 	{ tab: 'artifacts', label: 'Artifacts', icon: Files },
-	{ tab: 'live', label: 'Browser', icon: Globe }
+	{ tab: 'browser', label: 'Browser', icon: Globe }
 ];
 
 const ICON_BUTTON =
@@ -171,8 +171,8 @@ export default function SidePanel({
 							))}
 						</ul>
 					</div>
-				) : tab === 'live' ? (
-					<BrowserLiveView browserApi={browserApi} />
+				) : tab === 'browser' ? (
+					<BrowserView browserApi={browserApi} />
 				) : (
 					<>
 						{error || stale ? (
