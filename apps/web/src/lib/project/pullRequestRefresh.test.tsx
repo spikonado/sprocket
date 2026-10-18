@@ -105,6 +105,20 @@ it('re-reads every shown thread on refreshShown and a thread that comes back int
 	expect(requested(sync)).toEqual([[1], [2], [1, 2], [1], [1]]);
 });
 
+it('reads closed PRs at most every 15 minutes and open PRs on every refresh', () => {
+	vi.useFakeTimers();
+	const sync = fakeSync();
+	const refresher = new PullRequestRefresher(sync);
+
+	refresher.show('sidebar', [thread('a', [pr(1, 'open'), pr(2, 'closed')])]);
+	vi.advanceTimersByTime(14 * 60_000);
+	refresher.refreshShown();
+	vi.advanceTimersByTime(60_000);
+	refresher.refreshShown();
+
+	expect(requested(sync)).toEqual([[1, 2], [1], [1, 2]]);
+});
+
 it('refreshes each minute only while visible, and on return once a minute has passed', () => {
 	vi.useFakeTimers();
 	const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');

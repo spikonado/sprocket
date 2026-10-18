@@ -11,6 +11,8 @@ const PULL_REQUESTS_PER_REQUEST: usize = 25;
 
 const FIRST_PAUSE: Duration = Duration::from_secs(2 * 60);
 const LONGEST_PAUSE: Duration = Duration::from_secs(30 * 60);
+/// GitHub's quota resets every hour, so a longer hint is a mistake.
+const LONGEST_RATE_LIMIT_WAIT: Duration = Duration::from_secs(60 * 60);
 
 static REFRESH_PAUSES: LazyLock<HostPauses> = LazyLock::new(HostPauses::default);
 
@@ -106,9 +108,15 @@ impl HostPauses {
             return;
         }
         let failures = hosts.get(&key).map_or(0, |pause| pause.failures) + 1;
-        let pause = FIRST_PAUSE
+        let backoff = FIRST_PAUSE
             .saturating_mul(2u32.saturating_pow(failures - 1))
             .min(LONGEST_PAUSE);
+        let pause = match error {
+            Some(GitHubError::RateLimited {
+                retry_after: Some(wait),
+            }) => backoff.max((*wait).min(LONGEST_RATE_LIMIT_WAIT)),
+            _ => backoff,
+        };
         hosts.insert(
             key,
             Pause {

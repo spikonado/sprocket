@@ -16,6 +16,8 @@ export type PullRequestStateSync = {
 
 const REFRESH_INTERVAL_MS = 60_000;
 
+const CLOSED_REFRESH_INTERVAL_MS = 15 * 60_000;
+
 const MAX_PULL_REQUESTS_PER_REFRESH = 500;
 
 const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
@@ -23,11 +25,13 @@ const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${numb
 /**
  * Keeps linked PR states and titles of the threads on screen fresh. Each list of shown rows
  * registers itself; a thread is read when it first appears, and every shown
- * thread is read on `refreshShown`. Merged PRs rarely change, so they are skipped.
+ * thread is read on `refreshShown`. Closed PRs rarely reopen, so they are read
+ * at most every 15 minutes, and merged PRs never.
  */
 export class PullRequestRefresher {
 	readonly #sync: PullRequestStateSync;
 	readonly #lists = new Map<string, readonly Thread[]>();
+	readonly #closedReadAt = new Map<string, number>();
 	#shownIds = new Set<Id<'threadRecords'>>();
 
 	constructor(sync: PullRequestStateSync) {
@@ -60,10 +64,26 @@ export class PullRequestRefresher {
 		return [...byId.values()];
 	}
 
+	#isDue(pr: LinkedPullRequest, now: number) {
+		if (pr.state === 'open') return true;
+
+		if (pr.state === 'merged') return false;
+
+		const readAt = this.#closedReadAt.get(refKey(pr));
+
+		return readAt === undefined || now - readAt >= CLOSED_REFRESH_INTERVAL_MS;
+	}
+
 	async #refresh(threads: readonly Thread[]) {
+		const now = Date.now();
+
 		const linked = threads.flatMap((thread) =>
-			(thread.pullRequests ?? []).flatMap((pr) => (pr.state === 'merged' ? [] : [{ thread, pr }]))
+			(thread.pullRequests ?? []).flatMap((pr) => (this.#isDue(pr, now) ? [{ thread, pr }] : []))
 		);
+
+		for (const { pr } of linked) {
+			if (pr.state === 'closed') this.#closedReadAt.set(refKey(pr), now);
+		}
 
 		for (let start = 0; start < linked.length; start += MAX_PULL_REQUESTS_PER_REFRESH) {
 			const batch = linked.slice(start, start + MAX_PULL_REQUESTS_PER_REFRESH);
