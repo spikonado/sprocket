@@ -95,6 +95,10 @@ impl BrowserManager {
         self.dashboard.lock().await.status()
     }
 
+    pub async fn install_lightpanda(&self) -> anyhow::Result<()> {
+        self.installer.ensure_lightpanda().await
+    }
+
     pub async fn start(self: &Arc<Self>) -> BrowserStatus {
         if self.shutdown.is_cancelled() {
             return BrowserStatus {
@@ -197,6 +201,7 @@ impl BrowserManager {
 
     pub fn environment(&self) -> anyhow::Result<Vec<(OsString, OsString)>> {
         let mut paths = vec![self.installer.cli_directory()?];
+        paths.extend(self.installer.lightpanda_directory());
         if let Some(path) = std::env::var_os("PATH") {
             paths.extend(std::env::split_paths(&path));
         }

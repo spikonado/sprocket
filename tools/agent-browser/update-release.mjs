@@ -9,6 +9,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const releasesPath = join(root, 'tools/agent-browser/releases.json');
 
+const dashboardPatches = JSON.parse(
+	await readFile(join(root, 'tools/agent-browser/dashboard-patches.json'), 'utf8')
+);
+
 const noticesPath = join(root, 'THIRD_PARTY_NOTICES.md');
 
 const releases = JSON.parse(await readFile(releasesPath, 'utf8'));
@@ -50,7 +54,10 @@ async function download(url) {
 
 	const bytes = Buffer.from(await response.arrayBuffer());
 
-	return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+	return {
+		content: bytes,
+		measured: { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+	};
 }
 
 const response = await fetch(`https://api.github.com/repos/${pinned.repository}/releases/latest`, {
@@ -81,7 +88,7 @@ for (const [platform, { asset }] of Object.entries(pinned.platforms)) {
 		throw new Error(`agent-browser ${tag} has no ${asset} asset`);
 	}
 
-	const measured = await download(
+	const { content, measured } = await download(
 		`https://github.com/${pinned.repository}/releases/download/${tag}/${asset}`
 	);
 
@@ -92,6 +99,12 @@ for (const [platform, { asset }] of Object.entries(pinned.platforms)) {
 		throw new Error(`Downloaded ${asset} does not match the published size or digest`);
 	}
 
+	for (const [pattern] of dashboardPatches) {
+		if (!content.includes(pattern)) {
+			throw new Error(`${asset} no longer contains dashboard patch pattern ${pattern}`);
+		}
+	}
+
 	platforms[platform] = { asset, ...measured };
 }
 
@@ -100,7 +113,7 @@ const skillUrl = `https://codeload.github.com/${pinned.repository}/tar.gz/refs/t
 releases.skillData = {
 	url: skillUrl,
 	asset: releases.skillData.asset,
-	...(await download(skillUrl))
+	...(await download(skillUrl)).measured
 };
 
 releases.agentBrowser = { ...pinned, version, tag, platforms };

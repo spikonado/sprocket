@@ -17,19 +17,22 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const INSTALL_LOCK: &str = "install.lock";
 const LEASE_LOCK: &str = "in-use.lock";
 const TOMBSTONE_SUFFIX: &str = ".removing";
+const LIGHTPANDA_UNSUPPORTED: &str =
+    "Lightpanda can't run on this host; its Linux builds need glibc";
 
 pub(crate) struct BrowserInstaller {
-    tool_dir: PathBuf,
+    tools_dir: PathBuf,
     releases: Releases,
     client: reqwest::Client,
     ready_cli: Mutex<Option<PathBuf>>,
-    lease: Mutex<Option<File>>,
+    ready_lightpanda: Mutex<Option<PathBuf>>,
+    leases: Mutex<BTreeMap<&'static str, File>>,
 }
 
 impl BrowserInstaller {
     pub fn new(data_dir: &Path) -> anyhow::Result<Self> {
         Ok(Self {
-            tool_dir: data_dir.join("tools/agent-browser"),
+            tools_dir: data_dir.join("tools"),
             releases: serde_json::from_str(RELEASES)?,
             client: reqwest::Client::builder()
                 .user_agent(concat!("sprocket/", env!("CARGO_PKG_VERSION")))
@@ -37,7 +40,8 @@ impl BrowserInstaller {
                 .timeout(DOWNLOAD_TIMEOUT)
                 .build()?,
             ready_cli: Mutex::new(None),
-            lease: Mutex::new(None),
+            ready_lightpanda: Mutex::new(None),
+            leases: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -54,49 +58,95 @@ impl BrowserInstaller {
         Ok(cli)
     }
 
-    fn version_dir(&self) -> PathBuf {
-        self.tool_dir.join(&self.releases.agent_browser.version)
+    /// Lightpanda is large, so it's only installed when a dashboard session asks for it.
+    pub async fn ensure_lightpanda(&self) -> anyhow::Result<()> {
+        let mut ready = self.ready_lightpanda.lock().await;
+        if let Some(path) = ready.as_ref()
+            && executable_file(path).await
+        {
+            return Ok(());
+        }
+        let (path, _lock) = self.install_tool(Tool::Lightpanda).await?;
+        let output = run(Command::new(&path).arg("version"))
+            .await
+            .context(LIGHTPANDA_UNSUPPORTED)?;
+        ensure!(
+            output.status.success(),
+            "{LIGHTPANDA_UNSUPPORTED}\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        self.finish_install(Tool::Lightpanda).await;
+        *ready = Some(path);
+        Ok(())
+    }
+
+    fn release(&self, tool: Tool) -> &Release {
+        match tool {
+            Tool::AgentBrowser => &self.releases.agent_browser,
+            Tool::Lightpanda => &self.releases.lightpanda,
+        }
+    }
+
+    fn version_dir(&self, tool: Tool) -> PathBuf {
+        self.tools_dir
+            .join(tool.name())
+            .join(&self.release(tool).version)
+    }
+
+    fn executable_directory(&self, tool: Tool) -> anyhow::Result<PathBuf> {
+        Ok(self.version_dir(tool).join(tool.platform()?))
     }
 
     pub fn cli_directory(&self) -> anyhow::Result<PathBuf> {
-        Ok(self.version_dir().join(platform()?))
+        self.executable_directory(Tool::AgentBrowser)
+    }
+
+    /// agent-browser looks Lightpanda up on `PATH`, so this directory is listed before it exists.
+    pub fn lightpanda_directory(&self) -> Option<PathBuf> {
+        self.executable_directory(Tool::Lightpanda).ok()
     }
 
     pub fn skills_directory(&self) -> PathBuf {
-        self.version_dir().join("skill-data")
+        self.version_dir(Tool::AgentBrowser).join("skill-data")
     }
 
     async fn install(&self) -> anyhow::Result<PathBuf> {
-        let release = &self.releases.agent_browser;
+        let (cli, _lock) = self.install_tool(Tool::AgentBrowser).await?;
+        self.ensure_skills().await?;
+        self.finish_install(Tool::AgentBrowser).await;
+        Ok(cli)
+    }
+
+    /// Returns the verified executable along with the version's install lock.
+    async fn install_tool(&self, tool: Tool) -> anyhow::Result<(PathBuf, File)> {
+        let release = self.release(tool);
         let asset = release
             .platforms
-            .get(platform()?)
+            .get(tool.platform()?)
             .context("missing pinned release")?;
-        let directory = self.cli_directory()?;
+        let directory = self.executable_directory(tool)?;
         tokio::fs::create_dir_all(&directory).await?;
-        let _lock = acquire_lock(self.version_dir().join(INSTALL_LOCK)).await?;
-        let cli = directory.join(if cfg!(windows) {
-            "agent-browser.exe"
-        } else {
-            "agent-browser"
-        });
-        if !verified_file(&cli, asset).await? {
+        let lock = acquire_lock(self.version_dir(tool).join(INSTALL_LOCK)).await?;
+        let executable = directory.join(tool.executable());
+        if !verified_file(&executable, asset).await? {
             let url = format!(
                 "https://github.com/{}/releases/download/{}/{}",
                 release.repository, release.tag, asset.asset
             );
-            download_atomic(&self.client, &url, asset, &cli).await?;
+            download_atomic(&self.client, &url, asset, &executable).await?;
         }
-        self.ensure_skills().await?;
-        self.lease_version().await;
-        let tool_dir = self.tool_dir.clone();
-        let current = release.version.clone();
+        Ok((executable, lock))
+    }
+
+    async fn finish_install(&self, tool: Tool) {
+        self.lease_version(tool).await;
+        let tool_dir = self.tools_dir.join(tool.name());
+        let current = self.release(tool).version.clone();
         if let Err(error) =
             tokio::task::spawn_blocking(move || prune_versions(&tool_dir, &current)).await
         {
-            tracing::warn!("Old agent-browser cleanup failed: {error}");
+            tracing::warn!("Old {} cleanup failed: {error}", tool.name());
         }
-        Ok(cli)
     }
 
     /// The native CLI doesn't embed its skills, so `agent-browser skills get <name>` reads them
@@ -106,7 +156,7 @@ impl BrowserInstaller {
         if destination.join("core/SKILL.md").is_file() {
             return Ok(());
         }
-        let archive = self.version_dir().join("source.tar.gz");
+        let archive = self.version_dir(Tool::AgentBrowser).join("source.tar.gz");
         let release = &self.releases.skill_data;
         download_atomic(&self.client, &release.url, &release.asset, &archive).await?;
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -151,12 +201,12 @@ impl BrowserInstaller {
 
     /// Holds a shared lock on the pinned version for the server's lifetime so that other
     /// Sprocket versions sharing this data directory don't prune it.
-    async fn lease_version(&self) {
-        let mut lease = self.lease.lock().await;
-        if lease.is_some() {
+    async fn lease_version(&self, tool: Tool) {
+        let mut leases = self.leases.lock().await;
+        if leases.contains_key(tool.name()) {
             return;
         }
-        let path = self.version_dir().join(LEASE_LOCK);
+        let path = self.version_dir(tool).join(LEASE_LOCK);
         let result = tokio::task::spawn_blocking(move || -> std::io::Result<File> {
             let file = open_lock_file(&path)?;
             file.lock_shared()?;
@@ -166,8 +216,10 @@ impl BrowserInstaller {
         .map_err(std::io::Error::other)
         .and_then(|result| result);
         match result {
-            Ok(file) => *lease = Some(file),
-            Err(error) => tracing::warn!("Couldn't lease agent-browser: {error}"),
+            Ok(file) => {
+                leases.insert(tool.name(), file);
+            }
+            Err(error) => tracing::warn!("Couldn't lease {}: {error}", tool.name()),
         }
     }
 
@@ -179,7 +231,12 @@ impl BrowserInstaller {
         {
             return Ok(());
         }
-        let _lock = acquire_lock(self.tool_dir.join("chromium-install.lock")).await?;
+        let _lock = acquire_lock(
+            self.tools_dir
+                .join(Tool::AgentBrowser.name())
+                .join("chromium-install.lock"),
+        )
+        .await?;
         if chromium_installed(cli).await? {
             return Ok(());
         }
@@ -221,7 +278,7 @@ async fn run(command: &mut Command) -> anyhow::Result<Output> {
     let output = command.stdin(Stdio::null()).kill_on_drop(true).output();
     let output = tokio::time::timeout(COMMAND_TIMEOUT, output)
         .await
-        .context("agent-browser timed out")??;
+        .context("browser tool timed out")??;
     Ok(output)
 }
 
@@ -229,6 +286,7 @@ async fn run(command: &mut Command) -> anyhow::Result<Output> {
 #[serde(rename_all = "camelCase")]
 struct Releases {
     agent_browser: Release,
+    lightpanda: Release,
     skill_data: SkillRelease,
 }
 
@@ -254,14 +312,38 @@ struct ReleaseAsset {
     sha256: String,
 }
 
-fn platform() -> anyhow::Result<&'static str> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => Ok("darwin-arm64"),
-        ("macos", "x86_64") => Ok("darwin-x64"),
-        ("linux", "aarch64") => Ok("linux-musl-arm64"),
-        ("linux", "x86_64") => Ok("linux-musl-x64"),
-        ("windows", "x86_64" | "aarch64") => Ok("win32-x64"),
-        (os, arch) => bail!("No pinned agent-browser release for {os}/{arch}"),
+#[derive(Clone, Copy)]
+enum Tool {
+    AgentBrowser,
+    Lightpanda,
+}
+
+impl Tool {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AgentBrowser => "agent-browser",
+            Self::Lightpanda => "lightpanda",
+        }
+    }
+
+    fn executable(self) -> &'static str {
+        match self {
+            Self::AgentBrowser if cfg!(windows) => "agent-browser.exe",
+            tool => tool.name(),
+        }
+    }
+
+    fn platform(self) -> anyhow::Result<&'static str> {
+        match (self, std::env::consts::OS, std::env::consts::ARCH) {
+            (_, "macos", "aarch64") => Ok("darwin-arm64"),
+            (_, "macos", "x86_64") => Ok("darwin-x64"),
+            (Self::AgentBrowser, "linux", "aarch64") => Ok("linux-musl-arm64"),
+            (Self::AgentBrowser, "linux", "x86_64") => Ok("linux-musl-x64"),
+            (Self::AgentBrowser, "windows", "x86_64" | "aarch64") => Ok("win32-x64"),
+            (Self::Lightpanda, "linux", "aarch64") => Ok("linux-arm64"),
+            (Self::Lightpanda, "linux", "x86_64") => Ok("linux-x64"),
+            (tool, os, arch) => bail!("No pinned {} release for {os}/{arch}", tool.name()),
+        }
     }
 }
 
