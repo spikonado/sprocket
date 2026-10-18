@@ -88,4 +88,30 @@ describe('linked pull requests', () => {
 			})
 		).rejects.toThrow(/at most 20 PRs/);
 	});
+
+	it.each([true, false])(
+		'settles a thread once all its PRs merge when the setting is %s',
+		async (enabled) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+
+			await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled });
+			await t.run((ctx) =>
+				ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open'), pr(2, 'open')] })
+			);
+
+			const archivedAt = async () =>
+				(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt;
+
+			await asUser.mutation(api.pullRequests.updateStates, {
+				updates: [{ threadId, ...pr(1, 'merged') }]
+			});
+			expect(await archivedAt()).toBeUndefined();
+
+			await asUser.mutation(api.pullRequests.updateStates, {
+				updates: [{ threadId, ...pr(2, 'merged') }]
+			});
+			expect((await archivedAt()) !== undefined).toBe(enabled);
+		}
+	);
 });

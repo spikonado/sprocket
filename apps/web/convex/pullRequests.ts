@@ -5,12 +5,17 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { subtreeSummary } from '@convex/lib/threadHierarchy';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { vLinkedPullRequest, type LinkedPullRequest } from '@convex/lib/validators';
 
 const MAX_LINKED_PRS = 20;
 
 const pullRequestKey = (pr: { repository: string; number: number }) =>
 	`${pr.repository}#${pr.number}`;
+
+const allMerged = (pullRequests: LinkedPullRequest[]) =>
+	pullRequests.length > 0 && pullRequests.every((pr) => pr.state === 'merged');
 
 /** Adds PRs the agent linked, with the states it read from GitHub on the user's machine. */
 export const link = mutation({
@@ -63,6 +68,7 @@ export const updateStates = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const byThread = new Map<Id<'threadRecords'>, Map<string, LinkedPullRequest>>();
+		let settleMergedThreads: boolean | undefined;
 
 		for (const { threadId, ...pr } of args.updates) {
 			const fetched = byThread.get(threadId) ?? new Map();
@@ -73,9 +79,10 @@ export const updateStates = mutation({
 
 		for (const [threadId, fetched] of byThread) {
 			const thread = await getOwnedThreadRecord(ctx.db, userId, threadId);
+			const linked = thread.pullRequests ?? [];
 			let changed = false;
 
-			const pullRequests = (thread.pullRequests ?? []).map((pr) => {
+			const pullRequests = linked.map((pr) => {
 				const update = fetched.get(pullRequestKey(pr));
 
 				if (!update || (update.state === pr.state && update.title === pr.title)) return pr;
@@ -85,7 +92,23 @@ export const updateStates = mutation({
 				return { ...pr, state: update.state, title: update.title };
 			});
 
-			if (changed) await ctx.db.patch('threadRecords', thread._id, { pullRequests });
+			if (!changed) continue;
+
+			// Only the merge itself settles, so a thread the user unsettles afterwards stays put.
+			const justMerged = allMerged(pullRequests) && !allMerged(linked);
+
+			const settle =
+				justMerged &&
+				thread.parentThreadId === undefined &&
+				thread.archivedAt === undefined &&
+				(settleMergedThreads ??=
+					(await getUiPreferences(ctx.db, userId))?.settleMergedThreads ?? false) &&
+				!(await subtreeSummary(ctx.db, thread)).anyActive;
+
+			await ctx.db.patch('threadRecords', thread._id, {
+				pullRequests,
+				...(settle && { archivedAt: Date.now() })
+			});
 		}
 
 		return null;

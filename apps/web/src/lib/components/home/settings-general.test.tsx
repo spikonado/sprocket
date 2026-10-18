@@ -18,12 +18,20 @@ const toggles = [
 	{
 		name: 'Automatically name threads',
 		field: 'automaticThreadTitles',
-		mutation: api.uiPreferences.setAutomaticThreadTitles
+		mutation: api.uiPreferences.setAutomaticThreadTitles,
+		defaultEnabled: true
 	},
 	{
 		name: 'Continue agents automatically after restarts',
 		field: 'automaticAgentContinuation',
-		mutation: api.uiPreferences.setAutomaticAgentContinuation
+		mutation: api.uiPreferences.setAutomaticAgentContinuation,
+		defaultEnabled: true
+	},
+	{
+		name: 'Settle threads when their PRs merge',
+		field: 'settleMergedThreads',
+		mutation: api.uiPreferences.setSettleMergedThreads,
+		defaultEnabled: false
 	}
 ] as const;
 
@@ -50,17 +58,16 @@ function disabledStates() {
 }
 
 it.each([null, preferences])(
-	'defaults to enabled for missing preferences or fields: %j',
+	'uses defaults for missing preferences or fields: %j',
 	async (data) => {
 		const client = new ConvexTestClient();
 		client.registerQuery(api.uiPreferences.getMine, data);
 		await mount(client);
 		expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
-		expect(allSwitches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual([
-			'true',
-			'true'
-		]);
-		expect(disabledStates()).toEqual([false, false]);
+		expect(allSwitches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(
+			toggles.map(({ defaultEnabled }) => String(defaultEnabled))
+		);
+		expect(disabledStates()).toEqual([false, false, false]);
 	}
 );
 
@@ -68,12 +75,12 @@ it('waits for preferences to load before allowing changes', async () => {
 	const client = new ConvexTestClient();
 	await mount(client);
 	expect(screen.getByRole('status').textContent).toBe('Loading preferences...');
-	expect(disabledStates()).toEqual([true, true]);
+	expect(disabledStates()).toEqual([true, true, true]);
 	await act(async () => {
 		client.registerQuery(api.uiPreferences.getMine, preferences);
 	});
 	expect(screen.queryByRole('status')).toBeNull();
-	expect(disabledStates()).toEqual([false, false]);
+	expect(disabledStates()).toEqual([false, false, false]);
 });
 
 it('shows a preference load error inline', async () => {
@@ -89,10 +96,10 @@ it('shows a preference load error inline', async () => {
 	await waitFor(() => {
 		expect(screen.getByRole('alert').textContent).toBe("Couldn't load your preferences right now.");
 	});
-	expect(disabledStates()).toEqual([true, true]);
+	expect(disabledStates()).toEqual([true, true, true]);
 });
 
-describe.each(toggles)('$name', ({ name, field, mutation: preferenceMutation }) => {
+describe.each(toggles)('$name', ({ name, field, mutation: preferenceMutation, defaultEnabled }) => {
 	const toggle = () => switchNamed(name);
 	const other = () => allSwitches().find((element) => element !== toggle())!;
 
@@ -146,7 +153,7 @@ describe.each(toggles)('$name', ({ name, field, mutation: preferenceMutation }) 
 			save.reject(new Error('Unavailable'));
 		});
 		expect(screen.getByRole('alert').textContent).toBe("Couldn't save your preference. Try again.");
-		expect(toggle().getAttribute('aria-checked')).toBe('true');
+		expect(toggle().getAttribute('aria-checked')).toBe(String(defaultEnabled));
 		expect(toggle()).toHaveProperty('disabled', false);
 		const retry = Promise.withResolvers<null>();
 		client.registerMutation(preferenceMutation, retry.promise);
@@ -154,10 +161,10 @@ describe.each(toggles)('$name', ({ name, field, mutation: preferenceMutation }) 
 		expect(screen.queryByRole('alert')).toBeNull();
 		expect(mutation).toHaveBeenCalledTimes(2);
 		await act(async () => {
-			client.registerQuery(api.uiPreferences.getMine, { ...preferences, [field]: false });
+			client.registerQuery(api.uiPreferences.getMine, { ...preferences, [field]: !defaultEnabled });
 			retry.resolve(null);
 		});
-		expect(toggle().getAttribute('aria-checked')).toBe('false');
+		expect(toggle().getAttribute('aria-checked')).toBe(String(!defaultEnabled));
 		expect(toggle()).toHaveProperty('disabled', false);
 	});
 });

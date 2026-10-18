@@ -20,6 +20,8 @@ export default function SettingsGeneral() {
 		api.uiPreferences.setAutomaticAgentContinuation
 	);
 
+	const setSettleMergedThreads = useMutation(api.uiPreferences.setSettleMergedThreads);
+
 	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
 	const disabled = preferencesQuery.status !== 'success';
 
@@ -46,6 +48,14 @@ export default function SettingsGeneral() {
 						savedEnabled={preferences?.automaticAgentContinuation ?? true}
 						disabled={disabled}
 						save={setAutomaticAgentContinuation}
+					/>
+					<PreferenceToggle
+						title="Settle threads when their PRs merge"
+						description="Settle a thread once every PR linked to it is merged."
+						descriptionId="settle-merged-threads-description"
+						savedEnabled={preferences?.settleMergedThreads ?? false}
+						disabled={disabled}
+						save={setSettleMergedThreads}
 					/>
 					{preferencesQuery.status === 'pending' && (
 						<p role="status" className="text-muted-foreground px-3 text-sm">
