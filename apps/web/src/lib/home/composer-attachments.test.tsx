@@ -166,3 +166,43 @@ it('reports a pending upload failure through the latest committed onError', asyn
 	expect(result.current.items[0]?.status).toBe('error');
 	expect(result.current.items[0]?.error).toBe('Gateway rejected the upload.');
 });
+
+it('finishes waiting when the user removes the last pending file without waiting for its request', async () => {
+	const upload = Promise.withResolvers<TranscriptUploadResult>();
+
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(() => upload.promise),
+		discardTranscriptAttachment: vi.fn(async () => true)
+	};
+
+	const { result } = renderAttachments({ api, userId: 'user-a', threadId: null });
+	act(() => result.current.add([textFile()]));
+	const waiting = result.current.waitForUploads(new AbortController().signal);
+	act(() => result.current.remove(result.current.items[0].localId));
+	await waiting;
+	expect(result.current.items).toEqual([]);
+	await act(async () => upload.resolve(uploadResult('discarded-upload')));
+	expect(api.discardTranscriptAttachment).toHaveBeenCalledWith({
+		userId: 'user-a',
+		storageId: storageId('discarded-upload'),
+		threadId: undefined
+	});
+});
+
+it('cancels the wait without cancelling a retained upload', async () => {
+	const upload = Promise.withResolvers<TranscriptUploadResult>();
+
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(() => upload.promise),
+		discardTranscriptAttachment: vi.fn(async () => true)
+	};
+
+	const { result } = renderAttachments({ api, userId: 'user-a', threadId: null });
+	act(() => result.current.add([textFile()]));
+	const controller = new AbortController();
+	const waiting = result.current.waitForUploads(controller.signal);
+	controller.abort();
+	await expect(waiting).rejects.toBe(controller.signal.reason);
+	await act(async () => upload.resolve(uploadResult('retained-upload')));
+	expect(result.current.items[0]).toMatchObject({ status: 'ready', storageId: 'retained-upload' });
+});

@@ -62,6 +62,7 @@ import {
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
+import RemoveProjectDialog from '$lib/components/home/remove-project-dialog';
 import {
 	attachLocalProject as attachLocalProjectForPath,
 	compareProjectRecency,
@@ -557,6 +558,12 @@ export default function App({
 
 	const [selectionUserId, setSelectionUserId] = useState<string | null>(null);
 	const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+
+	const [projectToRemove, setProjectToRemove] = useState<{
+		workspacePath: string;
+		displayName: string;
+	} | null>(null);
+
 	const [projectPickerMode, setProjectPickerMode] = useState<'add' | 'reconnect'>('add');
 
 	const [projectPickerExpectedDisplayName, setProjectPickerExpectedDisplayName] = useState<
@@ -753,13 +760,12 @@ export default function App({
 		[projects]
 	);
 
-	const inboxProjectKeys = useMemo(
-		() =>
-			projectFilter.length > 0
-				? projectFilter
-				: inboxProjects.map((project) => project.repositoryKey),
-		[projectFilter, inboxProjects]
-	);
+	const inboxProjectKeys = useMemo(() => {
+		const attachedKeys = inboxProjects.map((project) => project.repositoryKey);
+		const filteredKeys = projectFilter.filter((key) => attachedKeys.includes(key));
+
+		return filteredKeys.length > 0 ? filteredKeys : attachedKeys;
+	}, [projectFilter, inboxProjects]);
 
 	useEffect(() => {
 		const attachedKeys = new Set(inboxProjects.map((project) => project.repositoryKey));
@@ -1200,6 +1206,68 @@ export default function App({
 		return attachment;
 	}
 
+	async function prepareProjectRemoval(workspacePath: string, signal: AbortSignal) {
+		const client = desktopApiRef.current;
+		const userId = signedInUserIdRef.current;
+
+		if (currentWorkspacePathRef.current === workspacePath) {
+			await composerAttachments.waitForUploads(signal);
+		}
+
+		if (client !== desktopApiRef.current || userId !== signedInUserIdRef.current) {
+			throw new Error('The connection or account changed. Please try again.');
+		}
+	}
+
+	async function removeProject(workspacePath: string) {
+		const client = desktopApiRef.current;
+		const userId = signedInUserIdRef.current;
+
+		if (!client || !userId) throw new Error(localServerRequiredMessage);
+
+		await client.removeProject({ workspacePath });
+
+		if (client !== desktopApiRef.current || userId !== signedInUserIdRef.current) return;
+
+		desktopProjectAttachmentsGeneration.current += 1;
+
+		const remaining = Object.fromEntries(
+			Object.entries(desktopProjectAttachmentsRef.current).filter(
+				([path]) => path !== workspacePath
+			)
+		);
+
+		publishDesktopProjectAttachments(remaining);
+		const attachedKeys = new Set(Object.values(remaining).map((project) => project.repositoryKey));
+		setProjectFilter((keys) => keys.filter((key) => attachedKeys.has(key)));
+
+		if (currentWorkspacePathRef.current === workspacePath) {
+			const scope = getComposerScope(currentThreadIdRef.current, workspacePath);
+
+			if (scope && (prompt || composerAttachments.items.length > 0)) {
+				storeComposerRecovery(userId, scope, {
+					message: '',
+					prompt,
+					attachments: composerAttachments.snapshot(),
+					continuationOfRunId: composerContinuationOfRunIdRef.current ?? undefined,
+					autoSubmit: false
+				});
+			}
+
+			setPrompt('');
+			composerAttachments.clear({ discard: false });
+			bumpProjectSelectionGeneration();
+			setCurrentWorkspacePath(null);
+			setCurrentRepositoryKey(null);
+			setCurrentThreadId(null);
+			setDraftWorkspacePath(null);
+			setPendingCreatedThreadId(null);
+			setComposerContinuationOfRunId(null);
+			setAutoSubmitComposerContinuation(false);
+			setSelectedQuestionOptionId(null);
+		}
+	}
+
 	function openProject(
 		workspacePath: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
@@ -1287,10 +1355,10 @@ export default function App({
 		expectedUserId: string,
 		client?: DesktopApi
 	) {
-		await attachLocalProject(selection.workspacePath, undefined, client);
+		const attachment = await attachLocalProject(selection.workspacePath, undefined, client);
 
 		if (signedInUserIdRef.current !== expectedUserId) return;
-		setProjectSelection(selection.workspacePath, null, true, false, selection.repositoryKey);
+		setProjectSelection(attachment.workspacePath, null, true, false, attachment.repositoryKey);
 		setCurrentError(null);
 	}
 
@@ -1301,7 +1369,8 @@ export default function App({
 		client?: DesktopApi
 	) {
 		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
-		await attachLocalProject(
+
+		const attachment = await attachLocalProject(
 			selection.workspacePath,
 			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath,
 			client
@@ -1310,11 +1379,17 @@ export default function App({
 		if (signedInUserIdRef.current !== expectedUserId) return;
 
 		const keepThread =
-			previousProject?.repositoryKey === selection.repositoryKey
+			previousProject?.repositoryKey === attachment.repositoryKey
 				? currentThreadIdRef.current
 				: null;
 
-		setProjectSelection(selection.workspacePath, keepThread, false, false, selection.repositoryKey);
+		setProjectSelection(
+			attachment.workspacePath,
+			keepThread,
+			false,
+			false,
+			attachment.repositoryKey
+		);
 		setCurrentError(null);
 	}
 
@@ -2135,6 +2210,7 @@ export default function App({
 		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort);
 		setFastMode(false);
 		setProjectPickerOpen(false);
+		setProjectToRemove(null);
 		setProjectPickerReconnectWorkspacePath(null);
 		setProjectPickerExpectedDisplayName(undefined);
 		artifactPanel.reset();
@@ -2639,6 +2715,7 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
+							onRemoveProject={desktopApi ? setProjectToRemove : undefined}
 							onSettings={openSettings}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
@@ -2921,6 +2998,7 @@ export default function App({
 					mode={projectPickerMode}
 					expectedDisplayName={projectPickerExpectedDisplayName}
 					recentProjectPaths={recentProjectDirectories}
+					onRemoveProject={setProjectToRemove}
 					onClose={() => {
 						setProjectPickerOpen(false);
 						setProjectPickerReconnectWorkspacePath(null);
@@ -2933,6 +3011,14 @@ export default function App({
 							await refreshDesktopProjectAttachments();
 						}
 					}}
+				/>
+			)}
+			{projectToRemove && (
+				<RemoveProjectDialog
+					project={projectToRemove}
+					onClose={() => setProjectToRemove(null)}
+					onPrepareRemove={prepareProjectRemoval}
+					onRemove={removeProject}
 				/>
 			)}
 		</div>
