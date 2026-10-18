@@ -33,18 +33,17 @@ describe('linked pull requests', () => {
 
 		await t.mutation(api.pullRequests.link, { ...caller, pullRequests: [pr(12, 'open')] });
 
-		const linked = await t.mutation(api.pullRequests.link, {
+		await t.mutation(api.pullRequests.link, {
 			...caller,
 			pullRequests: [pr(7, 'merged'), pr(12, 'closed'), pr(12, 'open', 'github.com/acme/site')]
 		});
 
-		expect(linked).toEqual([
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.pullRequests).toEqual([
 			pr(12, 'closed'),
 			pr(7, 'merged'),
 			pr(12, 'open', 'github.com/acme/site')
 		]);
-		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
-		expect(thread?.pullRequests).toEqual(linked);
 	});
 
 	it('updates only states and titles of PRs linked to threads the user owns', async () => {

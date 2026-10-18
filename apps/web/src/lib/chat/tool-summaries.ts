@@ -170,8 +170,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'set_cwd':
 			return jsonString(fields?.path) ?? 'Directory';
 		case 'link_prs':
-			return Array.isArray(fields?.pull_requests)
-				? fields.pull_requests
+			return Array.isArray(fields?.pullRequests)
+				? fields.pullRequests
 						.map((pr) =>
 							isJsonObject(pr) ? `${String(pr.repository)}#${String(pr.number)}` : 'PR'
 						)

@@ -15,7 +15,7 @@ use super::job::execute_tool_job;
 pub(crate) struct LinkPrsTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LinkPrsArgs {
     pub(crate) pull_requests: Vec<LinkedPr>,
 }
@@ -35,8 +35,7 @@ impl rig::tool::Tool for LinkPrsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Link GitHub pull requests to this thread so the user sees them and their status in the sidebar. Link a PR right after you create it."
-            .to_string()
+        "Link pull requests you are working on to this thread".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -104,9 +103,9 @@ async fn link(
             Value::try_from(serde_json::to_value(&fetched.states)?)?,
         ),
     ]);
-    let linked: serde_json::Value = context
+    context
         .runtime
-        .mutation_json("pullRequests:link", args)
+        .mutation_unit("pullRequests:link", args)
         .await?;
-    Ok(json!({ "pullRequests": linked }))
+    Ok(json!("Linked."))
 }

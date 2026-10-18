@@ -22,7 +22,7 @@ export const link = mutation({
 		executionSecret: v.string(),
 		pullRequests: v.array(vLinkedPullRequest)
 	},
-	returns: v.array(vLinkedPullRequest),
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
@@ -44,7 +44,7 @@ export const link = mutation({
 
 			await ctx.db.patch('threadRecords', thread._id, { pullRequests });
 
-			return pullRequests;
+			return null;
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
