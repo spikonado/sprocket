@@ -176,7 +176,7 @@ fn resolve_settings(
         .iter()
         .find(|model| model.id == model_id)
         .ok_or_else(|| {
-            anyhow::anyhow!("model {model_id} is unavailable for the current completion provider")
+            anyhow::anyhow!("model {model_id} is unavailable from the enabled providers")
         })?;
     let reasoning = reasoning.unwrap_or(&model.default_reasoning_effort);
     if !model

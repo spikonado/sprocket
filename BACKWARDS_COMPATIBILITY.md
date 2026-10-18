@@ -26,7 +26,11 @@ Gateway catalogs still return `tierAllowedModels`, `modelLockUpgradeMessage`, `t
 
 ### Usage windows array
 
-`usage.getMyUsage` keeps a `windows` array with a single `monthly` entry because released usage pages iterate it. Drop `windows` from `vMyUsage` once those clients age out.
+`usage.getMyUsage` keeps a `windows` array with a single `monthly` entry because released usage pages iterate it. Each meter's `description` is also only rendered by released clients. Drop both from `vMyUsage`, and `description` from `usageMeters`, once those clients age out.
+
+### Subagent provider choice
+
+Released runners omit `completionProvider` from `subagents:createOrSend`, so creation inherits the caller's provider and follow-ups keep the child's saved one. Make the argument required once those runners age out.
 
 ### Descendant status counts
 
@@ -39,6 +43,12 @@ Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:
 ### Repository rekey continuation
 
 `artifacts.continueRekey` is a no-op for already-queued jobs. Remove it after a scheduler scan finds no queued continuation jobs.
+
+## Browser storage shims
+
+### Composer provider choice
+
+The web app moves the removed composer provider choice from localStorage (`sprocket.composer.provider:<userId>`) into `uiPreferences.providerOrder` once and deletes the key. Remove that migration once clients from before the Providers settings page age out.
 
 ## Convex data shims
 

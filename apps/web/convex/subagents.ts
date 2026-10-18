@@ -42,6 +42,7 @@ import {
 } from '@convex/lib/transcriptParts';
 import {
 	isRunFinalStatus,
+	vCompletionProvider,
 	vReasoningEffort,
 	vRunStatus,
 	vAskQuestionAnswer,
@@ -180,6 +181,7 @@ export const createOrSend = mutation({
 		model: v.string(),
 		reasoning: vReasoningEffort,
 		fast: v.boolean(),
+		completionProvider: v.optional(vCompletionProvider),
 		timeoutMs: v.optional(v.number())
 	},
 	returns: vCreatedSubagentRun,
@@ -199,11 +201,12 @@ export const createOrSend = mutation({
 					? callerThread
 					: await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 
-			// Creation inherits the caller's effective provider; follow-ups keep
-			// the target child's saved provider.
-			const completionProvider = creating
-				? (callerRun.completionProvider ?? 'spikonado')
-				: (targetThread.completionProvider ?? 'spikonado');
+			// Released runners omit the provider: creation inherits the caller's,
+			// follow-ups keep the child's saved one.
+			const completionProvider =
+				args.completionProvider ??
+				(creating ? callerRun.completionProvider : targetThread.completionProvider) ??
+				'spikonado';
 
 			const timeoutMs = normalizeTaskTimeoutMs(args.timeoutMs);
 
