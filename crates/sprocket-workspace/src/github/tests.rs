@@ -95,6 +95,23 @@ fn rate_limits_are_read_from_status_headers_and_graphql_errors() {
 }
 
 #[test]
+fn rate_limit_waits_follow_retry_after_then_the_quota_reset() {
+    let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+    assert_eq!(
+        retry_after(Some("30"), Some("0"), Some("2000"), now),
+        Some(Duration::from_secs(30))
+    );
+    assert_eq!(
+        retry_after(None, Some("0"), Some("1600"), now),
+        Some(Duration::from_secs(600))
+    );
+    assert_eq!(retry_after(None, Some("12"), Some("1600"), now), None);
+    assert_eq!(retry_after(None, Some("0"), Some("900"), now), None);
+    assert_eq!(retry_after(None, None, None, now), None);
+}
+
+#[test]
 fn gh_runs_without_prompts_or_inherited_tokens() {
     let command = gh_command(&["auth", "token", "--hostname", "ghe.example.com"]);
     let command = command.as_std();

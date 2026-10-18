@@ -9,6 +9,7 @@ import {
 	FileDiff,
 	FileText,
 	FolderOpen,
+	GitPullRequest,
 	Globe,
 	Hourglass,
 	ListChecks,
@@ -78,6 +79,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Camera;
 		case 'set_cwd':
 			return FolderOpen;
+		case 'link_prs':
+			return GitPullRequest;
 		case 'edit_artifact':
 		case 'list_artifacts':
 		case 'update_artifact':

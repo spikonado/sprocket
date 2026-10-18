@@ -1,13 +1,14 @@
 use std::collections::{BTreeSet, HashMap};
 use std::process::Stdio;
 use std::sync::{LazyLock, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::{StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+pub mod pull_requests;
 pub mod saved_tokens;
 pub mod status;
 
@@ -71,7 +72,10 @@ pub enum GitHubError {
     #[error("GitHub access to {0} is turned off in Settings → Version Control.")]
     Disabled(String),
     #[error("GitHub rate limit reached")]
-    RateLimited,
+    RateLimited {
+        /// How long GitHub asked us to wait, when it said.
+        retry_after: Option<Duration>,
+    },
     #[error("GitHub returned {0}")]
     Status(StatusCode),
     #[error(transparent)]
@@ -162,7 +166,14 @@ impl GitHubApi {
             &String::from_utf8_lossy(&body),
         );
         if rate_limited {
-            return Err(GitHubError::RateLimited);
+            return Err(GitHubError::RateLimited {
+                retry_after: retry_after(
+                    header("retry-after"),
+                    header("x-ratelimit-remaining"),
+                    header("x-ratelimit-reset"),
+                    SystemTime::now(),
+                ),
+            });
         }
         if status == StatusCode::UNAUTHORIZED {
             lock_tokens().remove(&self.host);
@@ -176,6 +187,24 @@ impl GitHubApi {
 
 fn is_github_dot_com(host: &str) -> bool {
     host == PUBLIC_HOST || host.ends_with(".ghe.com")
+}
+
+/// GitHub's guidance: wait `retry-after` seconds, or until `x-ratelimit-reset`
+/// once the quota is used up.
+fn retry_after(
+    retry_after: Option<&str>,
+    remaining: Option<&str>,
+    reset: Option<&str>,
+    now: SystemTime,
+) -> Option<Duration> {
+    if let Some(seconds) = retry_after.and_then(|value| value.trim().parse().ok()) {
+        return Some(Duration::from_secs(seconds));
+    }
+    if remaining != Some("0") {
+        return None;
+    }
+    let reset = UNIX_EPOCH + Duration::from_secs(reset?.trim().parse().ok()?);
+    reset.duration_since(now).ok()
 }
 
 /// GitHub's own reading: a 429, a 403 that names the limit, or GraphQL errors

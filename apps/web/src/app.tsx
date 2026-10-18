@@ -106,6 +106,12 @@ import {
 } from '$lib/project/threads';
 import { useRevealInboxThread, useThreadInbox } from '$lib/project/inbox';
 import {
+	usePullRequestRefresher,
+	useShownPullRequests,
+	type PullRequestRefresher,
+	type PullRequestStateSync
+} from '$lib/project/pullRequestRefresh';
+import {
 	useExpandedThreads,
 	useRevealPaginatedThread,
 	useSelectedThreadAncestryReveal,
@@ -152,10 +158,19 @@ function InboxSidebarContainer(
 	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
 		signedInUserId: string | null;
 		repositoryKeys: string[];
+		pullRequestRefresher: PullRequestRefresher | null;
 	}
 ) {
+	const { pullRequestRefresher, ...sidebarProps } = props;
 	const expansion = useExpandedThreads(props.signedInUserId);
 	const { currentThreadId, onSettledOpenChange } = props;
+
+	useShownPullRequests(
+		pullRequestRefresher,
+		props.sections.flatMap((section) =>
+			section.state === 'settled' && !props.settledOpen ? [] : section.rows
+		)
+	);
 
 	const selectedPath = useSelectedThreadAncestryReveal({
 		currentThreadId: props.currentThreadId,
@@ -197,24 +212,30 @@ function InboxSidebarContainer(
 				threadId={threadId}
 				renderRows={renderRows}
 				selectedPath={selectedPath}
+				pullRequestRefresher={pullRequestRefresher}
 			/>
 		),
-		[expansion, selectedPath]
+		[expansion, selectedPath, pullRequestRefresher]
 	);
 
-	return <InboxSidebar {...props} expansion={expansion} resolveChildren={resolveChildren} />;
+	return <InboxSidebar {...sidebarProps} expansion={expansion} resolveChildren={resolveChildren} />;
 }
 
 function ExpandedThreadChildren({
 	expansion,
 	threadId,
 	renderRows,
-	selectedPath
+	selectedPath,
+	pullRequestRefresher
 }: Parameters<SidebarChildrenResolver>[0] & {
 	expansion: UseExpandedThreads;
 	selectedPath: readonly Id<'threadRecords'>[];
+	pullRequestRefresher: PullRequestRefresher | null;
 }) {
 	const children = useThreadChildren(threadId);
+
+	useShownPullRequests(pullRequestRefresher, children.rows);
+
 	const parentIndex = selectedPath.indexOf(threadId);
 	useRevealPaginatedThread(
 		parentIndex >= 0 ? (selectedPath[parentIndex + 1] ?? null) : null,
@@ -338,6 +359,7 @@ export default function App({
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
+	const updatePullRequestStates = useMutation(api.pullRequests.updateStates);
 
 	const [modelCatalog, setModelCatalog] = useState<ModelCatalog | undefined>(undefined);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -821,6 +843,28 @@ export default function App({
 	}, [inbox.sections, currentActiveThread]);
 
 	const currentLifecycle = dataForThread(lifecycleQuery.data, currentThreadId);
+
+	const pullRequestStateSync = useMemo<PullRequestStateSync | null>(
+		() =>
+			desktopApi && authReady && signedInUserId
+				? {
+						fetchStates: (pullRequests) =>
+							desktopApi.fetchPullRequestStates({ userId: signedInUserId, pullRequests }),
+						updateStates: (updates) => updatePullRequestStates({ updates })
+					}
+				: null,
+		[desktopApi, authReady, signedInUserId, updatePullRequestStates]
+	);
+
+	const pullRequestRefresher = usePullRequestRefresher(pullRequestStateSync);
+
+	const selectedThreadRows = useMemo(
+		() => (currentActiveThread ? [currentActiveThread] : []),
+		[currentActiveThread]
+	);
+
+	useShownPullRequests(pullRequestRefresher, selectedThreadRows);
+
 	const runState = currentLifecycle?.run ?? null;
 	const pendingAgentQuestion = dataForThread(pendingAgentQuestionQuery.data, currentThreadId);
 
@@ -2658,6 +2702,7 @@ export default function App({
 					) : (
 						<InboxSidebarContainer
 							signedInUserId={signedInUserId}
+							pullRequestRefresher={sidebarVisible ? pullRequestRefresher : null}
 							repositoryKeys={inboxProjectKeys}
 							sections={inbox.sections}
 							projects={inboxProjects}

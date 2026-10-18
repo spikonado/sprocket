@@ -496,6 +496,7 @@ async fn run_with_completion_model(
         target_params(&target)
     };
     let tool_call_tracker = ToolCallTracker::new(&request.run_id, &request.claim_id);
+    let offer_link_prs = !sprocket_workspace::github::settings().disabled;
     let tools = agent_tools(
         runtime.clone(),
         request.run_id.clone(),
@@ -540,6 +541,11 @@ async fn run_with_completion_model(
         .tool(tools.list_subagent_models)
         .tool(tools.set_cwd)
         .tool(context_handoff_hook.tool());
+    let agent = if offer_link_prs {
+        agent.tool(tools.link_prs)
+    } else {
+        agent
+    };
     let agent = if request.allow_interaction || request.is_child {
         agent.tool(tools.ask_question).tool(tools.poll_question)
     } else {

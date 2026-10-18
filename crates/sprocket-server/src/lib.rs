@@ -105,6 +105,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::agent::routes())
         .merge(routes::transcript::routes())
         .merge(routes::threads::routes())
+        .merge(routes::pull_requests::routes())
         .merge(routes::update::routes())
         .merge(routes::browser::routes())
         .merge(routes::artifacts::routes())

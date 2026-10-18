@@ -22,6 +22,7 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
+	vLinkedPullRequest,
 	vReasoningEffort,
 	vRunStatus,
 	vBillingInterval,
@@ -342,6 +343,7 @@ export default defineSchema({
 		reasoningStrippedThroughPartNumber: v.optional(v.number()),
 		// Absolute local path from the latest set_cwd call; subagents inherit it.
 		cwd: v.optional(v.string()),
+		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
