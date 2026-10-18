@@ -1,4 +1,5 @@
 [
+	[",{id:\"lightpanda\",label:\"Lightpanda\",engine:\"lightpanda\"}", ""],
 	[",{id:\"agentcore\",label:\"AgentCore\",provider:\"agentcore\"}", ""],
 	[",{id:\"browserbase\",label:\"Browserbase\",provider:\"browserbase\"}", ""],
 	[",{id:\"browserless\",label:\"Browserless\",provider:\"browserless\"}", ""],

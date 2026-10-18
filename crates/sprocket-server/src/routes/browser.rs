@@ -21,7 +21,7 @@ use crate::routes::api_error::{ApiError, no_store};
 const DASHBOARD_PATH: &str = "/api/browser/dashboard/";
 const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
-/// Hides the dashboard's cloud providers and AI chat. `tools/agent-browser/update-release.mjs`
+/// Hides the dashboard's non-Chrome browsers and AI chat. `tools/agent-browser/update-release.mjs`
 /// refuses a pin whose bundle no longer contains every pattern.
 static DASHBOARD_PATCHES: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
     serde_json::from_str(include_str!(
@@ -169,14 +169,6 @@ async fn proxy(
         .into();
         path = "/api/exec".into();
     }
-    if method == Method::POST && pathname == "/api/exec" && requests_lightpanda(&bytes) {
-        state
-            .host
-            .browsers
-            .install_lightpanda()
-            .await
-            .map_err(ApiError::internal)?;
-    }
     let mut request = client
         .request(method, format!("http://127.0.0.1:{port}{path}"))
         .header(header::ORIGIN, format!("http://127.0.0.1:{port}"))
@@ -242,18 +234,6 @@ fn upstream_path(path: &str) -> anyhow::Result<String> {
     Ok(format!("/{suffix}"))
 }
 
-fn requests_lightpanda(body: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .as_ref()
-        .and_then(|payload| payload.get("args"))
-        .and_then(Value::as_array)
-        .is_some_and(|args| {
-            args.windows(2)
-                .any(|pair| pair[0] == "--engine" && pair[1] == "lightpanda")
-        })
-}
-
 fn rewrite_asset(source: &str) -> String {
     let source = DASHBOARD_PATCHES
         .iter()
@@ -264,10 +244,6 @@ fn rewrite_asset(source: &str) -> String {
         .replace("/api/", &format!("{DASHBOARD_PATH}api/"))
         .replace("/_next/", &format!("{DASHBOARD_PATH}_next/"))
         .replace("/favicon.ico", &format!("{DASHBOARD_PATH}favicon.ico"))
-        .replace(
-            "\"/lightpanda.svg\"",
-            &format!("\"{DASHBOARD_PATH}lightpanda.svg\""),
-        )
 }
 
 async fn relay(

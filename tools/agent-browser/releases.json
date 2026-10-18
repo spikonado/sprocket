@@ -36,32 +36,5 @@
 				"sha256": "a6a9a3654c41ee19c05961b73489db98cff9eae88a77436986df08a7a7a73786"
 			}
 		}
-	},
-	"lightpanda": {
-		"version": "1.0.1",
-		"repository": "lightpanda-io/browser",
-		"tag": "1.0.1",
-		"platforms": {
-			"darwin-arm64": {
-				"asset": "lightpanda-aarch64-macos",
-				"bytes": 92526552,
-				"sha256": "d4b66ac8484f49d7a49e05b6f9342716c747129527fcbe8ffe36679ffa18dd60"
-			},
-			"darwin-x64": {
-				"asset": "lightpanda-x86_64-macos",
-				"bytes": 96332629,
-				"sha256": "1fcca0ae7684f470780de611a56e9a8ea612d5ff21e37dbb48905ebac5b918a7"
-			},
-			"linux-arm64": {
-				"asset": "lightpanda-aarch64-linux",
-				"bytes": 73240632,
-				"sha256": "392ba370c12d9f045c36c1477db8b3e2985942c89532732ef8d1610057db7d5c"
-			},
-			"linux-x64": {
-				"asset": "lightpanda-x86_64-linux",
-				"bytes": 75670856,
-				"sha256": "551747e35c51ba107b5d5277eca4b48e077b2a3b40f09a047bf6670448bc35fd"
-			}
-		}
 	}
 }
