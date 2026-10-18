@@ -90,16 +90,16 @@ fn failing_hosts_pause_longer_each_time_until_they_answer() {
 }
 
 #[test]
-fn missing_credentials_do_not_pause_a_host() {
+fn missing_or_rejected_credentials_do_not_pause_a_host() {
     let pauses = HostPauses::default();
     let now = Instant::now();
 
-    pauses.record(
-        "user",
-        "github.com",
-        Some(&GitHubError::NoCredential("github.com".into())),
-        now,
-    );
+    for error in [
+        GitHubError::NoCredential("github.com".into()),
+        GitHubError::Status(reqwest::StatusCode::UNAUTHORIZED),
+    ] {
+        pauses.record("user", "github.com", Some(&error), now);
 
-    assert!(!pauses.is_paused("user", "github.com", now));
+        assert!(!pauses.is_paused("user", "github.com", now));
+    }
 }

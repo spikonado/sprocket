@@ -70,8 +70,8 @@ fn parse_repository(repository: &str) -> Option<Repository<'_>> {
 
 /// Background refreshes back off from a host after it fails, doubling the
 /// pause each time, so a rate limit or an outage isn't hit every minute.
-/// A missing or switched-off credential doesn't pause, so fixing it in
-/// Settings applies on the next refresh.
+/// A missing, rejected or switched-off credential doesn't pause, so fixing it
+/// in Settings applies on the next refresh.
 #[derive(Default)]
 struct HostPauses {
     hosts: Mutex<HashMap<(String, String), Pause>>,
@@ -94,7 +94,12 @@ impl HostPauses {
         let mut hosts = self.lock();
         let backs_off = matches!(
             error,
-            Some(error) if !matches!(error, GitHubError::NoCredential(_) | GitHubError::Disabled(_))
+            Some(error) if !matches!(
+                error,
+                GitHubError::NoCredential(_)
+                    | GitHubError::Disabled(_)
+                    | GitHubError::Status(reqwest::StatusCode::UNAUTHORIZED)
+            )
         );
         if !backs_off {
             hosts.remove(&key);
