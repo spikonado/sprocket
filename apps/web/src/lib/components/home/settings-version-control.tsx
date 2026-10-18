@@ -389,8 +389,7 @@ function AddHost({
 					</button>
 				</div>
 				<p className="text-muted-foreground text-[12px] leading-5">
-					Encrypted in WorkOS Vault and used on all your machines. It needs read access to pull
-					requests.
+					It needs read access to pull requests.
 					{trimmedHost.includes('.') && (
 						<>
 							{' '}
@@ -466,8 +465,7 @@ function TokenEditor({
 				</button>
 			</div>
 			<p className="text-muted-foreground text-[12px] leading-5">
-				Encrypted in WorkOS Vault and used on all your machines, before environment tokens and the
-				gh login. It needs read access to pull requests.{' '}
+				It needs read access to pull requests.{' '}
 				<a
 					href={`https://${host.host}/settings/tokens/new?description=Sprocket&scopes=repo`}
 					target="_blank"
