@@ -33,6 +33,7 @@ const ACCESS_TOKEN_REFRESH_MARGIN_SECS: u64 = 60;
 const NATIVE_SESSION_SIGNED_OUT: &str = "native WorkOS session is signed out";
 const NATIVE_SESSION_EXPIRED: &str = "native WorkOS session expired";
 const NATIVE_SESSION_UNAVAILABLE: &str = "Native sign-in is temporarily unavailable. Try again.";
+pub const UNENCRYPTED_CREDENTIALS_NOTICE: &str = "Your session is stored unencrypted in a private file for this Sprocket profile. To require the operating system keyring, run sprocket logout, then sprocket login --credential-store keyring.";
 
 #[derive(Clone, Debug)]
 pub struct NativeAuthConfig {
@@ -98,9 +99,18 @@ impl std::fmt::Debug for NativeBrowserSession {
 pub enum NativeLoginStatus {
     SignedOut,
     Pending,
-    Authenticated { user: NativeUser },
-    Unavailable { error: String },
-    Failed { error: String },
+    Authenticated {
+        user: NativeUser,
+        /// Where this process last saved the refresh token, if it has saved one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credential_store: Option<CredentialStore>,
+    },
+    Unavailable {
+        error: String,
+    },
+    Failed {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +151,7 @@ struct NativeSession {
     access_token: Option<AccessToken>,
     refresh_token: Option<String>,
     refresh_token_persisted: bool,
+    credential_store: Option<CredentialStore>,
     refresh_generation: u64,
     user: Option<NativeUser>,
     login_errors: HashMap<String, String>,
@@ -157,6 +168,7 @@ impl Default for NativeSession {
             access_token: None,
             refresh_token: None,
             refresh_token_persisted: true,
+            credential_store: None,
             refresh_generation: 0,
             user: None,
             login_errors: HashMap::new(),
@@ -171,6 +183,7 @@ impl NativeSession {
         self.access_token = None;
         self.refresh_token = None;
         self.refresh_token_persisted = true;
+        self.credential_store = None;
         self.user = None;
         self.suppress_persisted_resume = true;
     }
@@ -370,7 +383,10 @@ impl NativeAuthManager {
         }
 
         match self.browser_session(false).await {
-            Ok(Some(session)) => NativeLoginStatus::Authenticated { user: session.user },
+            Ok(Some(session)) => NativeLoginStatus::Authenticated {
+                user: session.user,
+                credential_store: self.credential_store().await,
+            },
             Ok(None) => NativeLoginStatus::SignedOut,
             Err(_) => NativeLoginStatus::Unavailable {
                 error: NATIVE_SESSION_UNAVAILABLE.to_string(),
@@ -726,9 +742,15 @@ impl NativeAuthManager {
 
     async fn save_refresh_token(&self, refresh_token: String) -> anyhow::Result<()> {
         let store = Arc::clone(&self.refresh_tokens);
-        tokio::task::spawn_blocking(move || store.save(&refresh_token))
+        let credential_store = tokio::task::spawn_blocking(move || store.save(&refresh_token))
             .await
-            .context("credential-store task failed")?
+            .context("credential-store task failed")??;
+        self.session.lock().await.credential_store = Some(credential_store);
+        Ok(())
+    }
+
+    pub async fn credential_store(&self) -> Option<CredentialStore> {
+        self.session.lock().await.credential_store
     }
 
     async fn clear_refresh_token(&self) -> anyhow::Result<()> {

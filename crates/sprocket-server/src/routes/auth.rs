@@ -16,7 +16,10 @@ use crate::auth::{
 };
 use crate::routes::api_error::{ApiError, no_store};
 use crate::{AppState, PairingProofRequest, PairingProofResponse};
-use sprocket_host::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
+use sprocket_host::native_auth::{
+    CredentialStore, NativeLoginFlow, NativeLoginStart, NativeLoginStatus,
+    UNENCRYPTED_CREDENTIALS_NOTICE,
+};
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
 
@@ -320,11 +323,11 @@ async fn desktop_login_callback(
             if let Err(error) = state.auth.bind_session_user(&session_token, &user.id).await {
                 return desktop_login_error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
             }
-            desktop_login_html_response(
-                StatusCode::OK,
-                "Signed in",
-                "Return to Sprocket. You can close this tab.",
-            )
+            let mut message = "Return to Sprocket. You can close this tab.".to_string();
+            if state.host.native_auth.credential_store().await == Some(CredentialStore::File) {
+                message = format!("{message} {UNENCRYPTED_CREDENTIALS_NOTICE}");
+            }
+            desktop_login_html_response(StatusCode::OK, "Signed in", &message)
         }
         Err(error) => desktop_login_error_response(StatusCode::BAD_REQUEST, &error),
     }

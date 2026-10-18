@@ -298,18 +298,13 @@ pub(crate) fn login(args: LoginArgs) -> anyhow::Result<u8> {
 
 async fn login_connected(connection: &Connection, args: LoginArgs) -> anyhow::Result<u8> {
     if args.credential_store.is_none() {
-        if let LoginStatus::Authenticated { user } = connection
+        if let LoginStatus::Authenticated { user, .. } = connection
             .call("auth", &connection.client_request())
             .await?
         {
             eprintln!("Signed in as {}", user.email);
             return Ok(0);
         }
-    }
-    if args.credential_store == Some(CredentialStore::File) {
-        eprintln!(
-            "The refresh token will be stored unencrypted in a private file for this Sprocket profile."
-        );
     }
     let authorization: DeviceLoginResponse = connection
         .call(
@@ -329,8 +324,11 @@ async fn login_connected(connection: &Connection, args: LoginArgs) -> anyhow::Re
         result = tokio::time::timeout(Duration::from_secs(authorization.expires_in + 5), async {
             loop {
                 match connection.retry("auth", &connection.client_request()).await? {
-                    LoginStatus::Authenticated { user } => {
+                    LoginStatus::Authenticated { user, credential_store } => {
                         eprintln!("Signed in as {}", user.email);
+                        if credential_store == Some(CredentialStore::File) {
+                            eprintln!("{UNENCRYPTED_CREDENTIALS_NOTICE}");
+                        }
                         return Ok(0);
                     }
                     LoginStatus::Failed { error } | LoginStatus::Unavailable { error } => anyhow::bail!("{error}"),

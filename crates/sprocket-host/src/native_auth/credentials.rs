@@ -14,7 +14,8 @@ pub(super) trait RefreshTokenStore: Send + Sync {
         anyhow::bail!("credential-store selection is unavailable")
     }
     fn load(&self) -> anyhow::Result<Option<String>>;
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()>;
+    /// Returns the store that now holds the token.
+    fn save(&self, refresh_token: &str) -> anyhow::Result<CredentialStore>;
     fn clear(&self) -> anyhow::Result<()>;
 }
 
@@ -56,13 +57,14 @@ impl RefreshTokenStore for KeyringRefreshTokenStore {
         }
     }
 
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()> {
+    fn save(&self, refresh_token: &str) -> anyhow::Result<CredentialStore> {
         if refresh_token.trim().is_empty() {
             anyhow::bail!("refusing to persist an empty WorkOS refresh token");
         }
         self.entry()?
             .set_password(refresh_token)
-            .context("failed to persist WorkOS refresh token")
+            .context("failed to persist WorkOS refresh token")?;
+        Ok(CredentialStore::Keyring)
     }
 
     fn clear(&self) -> anyhow::Result<()> {
@@ -98,28 +100,6 @@ impl ProfileCredentials {
         }
     }
 
-    fn write_with_store<T>(
-        &self,
-        keyring: impl FnOnce() -> anyhow::Result<T>,
-        file: impl FnOnce() -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        match self.selected()? {
-            Some(CredentialStore::File) => file(),
-            Some(CredentialStore::Keyring) => keyring(),
-            None => match keyring() {
-                Err(error) if keyring_unavailable(&error) => {
-                    let result = file()?;
-                    self.write_selection(CredentialStore::File)?;
-                    tracing::warn!(
-                        "Operating system credential store is unavailable; using an unencrypted private file for this Sprocket profile"
-                    );
-                    Ok(result)
-                }
-                result => result,
-            },
-        }
-    }
-
     fn write_selection(&self, store: CredentialStore) -> anyhow::Result<()> {
         write_private_file(
             &self.directory.join("store.json"),
@@ -129,6 +109,11 @@ impl ProfileCredentials {
 
     fn token_path(&self) -> PathBuf {
         self.directory.join("refresh-token")
+    }
+
+    fn save_file(&self, token: &str) -> anyhow::Result<CredentialStore> {
+        write_private_file(&self.token_path(), token.as_bytes())?;
+        Ok(CredentialStore::File)
     }
 
     fn load_file(&self) -> anyhow::Result<Option<String>> {
@@ -184,19 +169,34 @@ impl RefreshTokenStore for ProfileCredentials {
         }
     }
 
-    fn save(&self, token: &str) -> anyhow::Result<()> {
+    fn save(&self, token: &str) -> anyhow::Result<CredentialStore> {
         anyhow::ensure!(
             !token.trim().is_empty(),
             "refusing to store an empty refresh token"
         );
-        self.write_with_store(
-            || self.keyring.save(token),
-            || write_private_file(&self.token_path(), token.as_bytes()),
-        )
+        match self.selected()? {
+            Some(CredentialStore::File) => self.save_file(token),
+            Some(CredentialStore::Keyring) => self.keyring.save(token),
+            None => match self.keyring.save(token) {
+                Err(error) if keyring_unavailable(&error) => {
+                    self.save_file(token)?;
+                    self.write_selection(CredentialStore::File)?;
+                    tracing::warn!(
+                        "Operating system credential store is unavailable; using an unencrypted private file for this Sprocket profile"
+                    );
+                    Ok(CredentialStore::File)
+                }
+                result => result,
+            },
+        }
     }
 
+    // Sign-out fails instead of falling back: an unreachable keyring may still hold the token.
     fn clear(&self) -> anyhow::Result<()> {
-        self.write_with_store(|| self.keyring.clear(), || self.clear_file())
+        match self.selected()? {
+            Some(CredentialStore::File) => self.clear_file(),
+            Some(CredentialStore::Keyring) | None => self.keyring.clear(),
+        }
     }
 }
 

@@ -34,10 +34,10 @@ impl RefreshTokenStore for TestKeyring {
         Ok(self.token.lock().unwrap().clone())
     }
 
-    fn save(&self, token: &str) -> anyhow::Result<()> {
+    fn save(&self, token: &str) -> anyhow::Result<CredentialStore> {
         self.check()?;
         *self.token.lock().unwrap() = Some(token.to_string());
-        Ok(())
+        Ok(CredentialStore::Keyring)
     }
 
     fn clear(&self) -> anyhow::Result<()> {
@@ -91,7 +91,10 @@ fn automatic_storage_keeps_using_an_available_keyring() {
     let dir = tempfile::tempdir().unwrap();
     let store = with_keyring(dir.path(), TestKeyring::available(None));
     assert!(store.load().unwrap().is_none());
-    store.save("keyring-session").unwrap();
+    assert_eq!(
+        store.save("keyring-session").unwrap(),
+        CredentialStore::Keyring
+    );
     assert_eq!(store.load().unwrap().as_deref(), Some("keyring-session"));
     assert_eq!(store.selected().unwrap(), None);
     assert!(!store.token_path().exists());
@@ -104,7 +107,7 @@ fn unavailable_keyring_allows_sign_in_and_persists_file_storage() {
     let dir = tempfile::tempdir().unwrap();
     let store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
     assert!(store.load().unwrap().is_none());
-    store.save("signed-in").unwrap();
+    assert_eq!(store.save("signed-in").unwrap(), CredentialStore::File);
     assert_eq!(store.selected().unwrap(), Some(CredentialStore::File));
 
     let restarted = with_keyring(dir.path(), TestKeyring::failing(unavailable));
@@ -116,13 +119,11 @@ fn unavailable_keyring_allows_sign_in_and_persists_file_storage() {
 }
 
 #[test]
-fn unavailable_keyring_allows_sign_out_without_restoring_stale_file_credentials() {
+fn unavailable_keyring_fails_sign_out_and_keeps_automatic_selection() {
     let dir = tempfile::tempdir().unwrap();
     let store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
-    write_private_file(&store.token_path(), b"stale-session").unwrap();
-    store.clear().unwrap();
-    assert_eq!(store.selected().unwrap(), Some(CredentialStore::File));
-    assert!(store.load().unwrap().is_none());
+    assert!(store.clear().is_err());
+    assert_eq!(store.selected().unwrap(), None);
 }
 
 #[test]

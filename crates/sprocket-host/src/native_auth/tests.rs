@@ -21,7 +21,10 @@ impl NativeAuthManager {
         };
         match &attempt.result {
             None => NativeLoginStatus::Pending,
-            Some(Ok(user)) => NativeLoginStatus::Authenticated { user: user.clone() },
+            Some(Ok(user)) => NativeLoginStatus::Authenticated {
+                user: user.clone(),
+                credential_store: session.credential_store,
+            },
             Some(Err(error)) => NativeLoginStatus::Failed {
                 error: error.clone(),
             },
@@ -91,6 +94,7 @@ struct MemoryRefreshTokenStore {
     fail_save: AtomicBool,
     fail_clear: AtomicBool,
     fail_load: AtomicBool,
+    save_to_file: AtomicBool,
 }
 
 impl MemoryRefreshTokenStore {
@@ -104,6 +108,7 @@ impl MemoryRefreshTokenStore {
             fail_save: AtomicBool::new(false),
             fail_clear: AtomicBool::new(false),
             fail_load: AtomicBool::new(false),
+            save_to_file: AtomicBool::new(false),
         })
     }
 
@@ -120,12 +125,16 @@ impl RefreshTokenStore for MemoryRefreshTokenStore {
         Ok(self.token())
     }
 
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()> {
+    fn save(&self, refresh_token: &str) -> anyhow::Result<CredentialStore> {
         if self.fail_save.load(Ordering::SeqCst) {
             anyhow::bail!("credential store unavailable");
         }
         *self.token.lock().unwrap() = Some(refresh_token.to_string());
-        Ok(())
+        Ok(if self.save_to_file.load(Ordering::SeqCst) {
+            CredentialStore::File
+        } else {
+            CredentialStore::Keyring
+        })
     }
 
     fn clear(&self) -> anyhow::Result<()> {
@@ -314,6 +323,7 @@ fn config_result(client_id: Value) -> FunctionResult {
 #[tokio::test]
 async fn device_login_uses_the_shared_session_and_never_discloses_the_device_secret() {
     let store = MemoryRefreshTokenStore::empty();
+    store.save_to_file.store(true, Ordering::SeqCst);
     let response = serde_json::to_value(authentication_response(
         access_token(unix_time_secs() + 3600),
         "device-refresh",
@@ -346,10 +356,13 @@ async fn device_login_uses_the_shared_session_and_never_discloses_the_device_sec
         store.token.lock().unwrap().as_deref(),
         Some("device-refresh")
     );
-    assert!(
-        matches!(manager.device_status("cli-session").await, NativeLoginStatus::Authenticated { user } if user.id == session.user.id)
-    );
+    assert!(matches!(
+        manager.device_status("cli-session").await,
+        NativeLoginStatus::Authenticated { user, credential_store: Some(CredentialStore::File) }
+            if user.id == session.user.id
+    ));
     manager.sign_out().await.unwrap();
+    assert_eq!(manager.credential_store().await, None);
     assert!(manager.browser_session(false).await.unwrap().is_none());
     assert_eq!(local.user(&browser_session), None);
 }
@@ -375,14 +388,14 @@ async fn remote_device_login_matches_the_host_owner_without_replacing_its_creden
     assert!(login.authorization_url.contains("ABCD-EFGH"));
     assert!(matches!(
         wait_for_remote_device_status(&manager, &browser_session).await,
-        NativeLoginStatus::Authenticated { user } if user.id == "user_123"
+        NativeLoginStatus::Authenticated { user, .. } if user.id == "user_123"
     ));
     assert!(matches!(
         manager
             .complete_remote_device_login(&browser_session)
             .await
             .unwrap(),
-        NativeLoginStatus::Authenticated { user } if user.id == "user_123"
+        NativeLoginStatus::Authenticated { user, .. } if user.id == "user_123"
     ));
     assert_eq!(local.user(&browser_session).as_deref(), Some("user_123"));
     assert!(matches!(

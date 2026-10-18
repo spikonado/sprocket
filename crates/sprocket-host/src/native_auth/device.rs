@@ -345,7 +345,10 @@ impl NativeAuthManager {
         if let Some(attempt) = session.remote_devices.remove(session_token) {
             attempt.cancel.cancel();
         }
-        Ok(NativeLoginStatus::Authenticated { user })
+        Ok(NativeLoginStatus::Authenticated {
+            user,
+            credential_store: session.credential_store,
+        })
     }
 
     pub async fn cancel_remote_device_login(&self, session_token: &str, login_id: Option<&str>) {
