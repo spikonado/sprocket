@@ -1,6 +1,16 @@
-import { expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { PullRequestRefresher, type PullRequestStateSync } from '$lib/project/pullRequestRefresh';
+import {
+	PullRequestRefresher,
+	type PullRequestStateSync,
+	usePullRequestRefresher
+} from '$lib/project/pullRequestRefresh';
+
+afterEach(() => {
+	vi.useRealTimers();
+	vi.restoreAllMocks();
+});
 
 type PullRequests = NonNullable<Doc<'threadRecords'>['pullRequests']>;
 
@@ -93,4 +103,33 @@ it('re-reads every shown thread on refreshShown and a thread that comes back int
 	refresher.refreshShown();
 
 	expect(requested(sync)).toEqual([[1], [2], [1, 2], [1], [1]]);
+});
+
+it('refreshes each minute only while visible, and on return once a minute has passed', () => {
+	vi.useFakeTimers();
+	const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+
+	const setVisibility = (state: DocumentVisibilityState) => {
+		visibility.mockReturnValue(state);
+		document.dispatchEvent(new Event('visibilitychange'));
+	};
+
+	const sync = fakeSync();
+	const { result } = renderHook(() => usePullRequestRefresher(sync));
+
+	result.current!.show('sidebar', [thread('a', [pr(1, 'open')])]);
+	vi.advanceTimersByTime(60_000);
+	expect(sync.fetchStates).toHaveBeenCalledTimes(2);
+
+	setVisibility('hidden');
+	vi.advanceTimersByTime(120_000);
+	expect(sync.fetchStates).toHaveBeenCalledTimes(2);
+
+	setVisibility('visible');
+	expect(sync.fetchStates).toHaveBeenCalledTimes(3);
+
+	setVisibility('hidden');
+	vi.advanceTimersByTime(10_000);
+	setVisibility('visible');
+	expect(sync.fetchStates).toHaveBeenCalledTimes(3);
 });

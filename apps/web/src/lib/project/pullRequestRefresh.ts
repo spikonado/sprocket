@@ -104,7 +104,10 @@ export class PullRequestRefresher {
 	}
 }
 
-/** One refresher per sync source, re-reading every shown thread each minute. */
+/**
+ * One refresher per sync source, re-reading every shown thread each minute
+ * while the page is visible, and on return once a minute has passed.
+ */
 export function usePullRequestRefresher(
 	sync: PullRequestStateSync | null
 ): PullRequestRefresher | null {
@@ -113,9 +116,29 @@ export function usePullRequestRefresher(
 	useEffect(() => {
 		if (!refresher) return;
 
-		const interval = setInterval(() => refresher.refreshShown(), REFRESH_INTERVAL_MS);
+		let lastRefresh = Date.now();
 
-		return () => clearInterval(interval);
+		const refresh = () => {
+			lastRefresh = Date.now();
+			refresher.refreshShown();
+		};
+
+		const interval = setInterval(() => {
+			if (document.visibilityState === 'visible') refresh();
+		}, REFRESH_INTERVAL_MS);
+
+		const refreshIfDue = () => {
+			if (document.visibilityState !== 'visible') return;
+
+			if (Date.now() - lastRefresh >= REFRESH_INTERVAL_MS) refresh();
+		};
+
+		document.addEventListener('visibilitychange', refreshIfDue);
+
+		return () => {
+			clearInterval(interval);
+			document.removeEventListener('visibilitychange', refreshIfDue);
+		};
 	}, [refresher]);
 
 	return refresher;

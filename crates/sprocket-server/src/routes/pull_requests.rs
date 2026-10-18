@@ -1,7 +1,9 @@
 use axum::Json;
 use axum::routing::post;
 use serde::Deserialize;
-use sprocket_workspace::github::pull_requests::{PullRequestRef, PullRequestStatus, fetch_states};
+use sprocket_workspace::github::pull_requests::{
+    PullRequestRef, PullRequestStatus, refresh_states,
+};
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
@@ -36,7 +38,7 @@ async fn states_handler(
             "Read at most {MAX_PULL_REQUESTS} pull requests at once."
         )));
     }
-    let fetched = fetch_states(&payload.user_id, &payload.pull_requests).await;
+    let fetched = refresh_states(&payload.user_id, &payload.pull_requests).await;
     for (host, error) in &fetched.failures {
         tracing::debug!("skipping linked PRs on {host}: {error}");
     }
