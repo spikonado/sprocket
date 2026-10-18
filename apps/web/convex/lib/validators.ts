@@ -126,6 +126,25 @@ export const vSetCwdPayload = v.object({
 	path: v.string()
 });
 
+export const vLinkPrsPayload = v.object({
+	pullRequests: v.array(v.object({ repository: v.string(), number: v.number() }))
+});
+
+export const vPullRequestState = v.union(
+	v.literal('open'),
+	v.literal('closed'),
+	v.literal('merged')
+);
+
+export const vLinkedPullRequest = v.object({
+	repository: v.string(),
+	number: v.number(),
+	state: vPullRequestState,
+	title: v.string()
+});
+
+export type LinkedPullRequest = Infer<typeof vLinkedPullRequest>;
+
 const vHistoricalBrowserActPayload = v.object({
 	instruction: v.optional(v.string()),
 	action: v.optional(
@@ -274,6 +293,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vExecCommandPayload,
 	vReadSkillPayload,
 	vSetCwdPayload,
+	vLinkPrsPayload,
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
@@ -722,6 +742,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('mandate_report'),
 	v.literal('read_skill'),
 	v.literal('set_cwd'),
+	v.literal('link_prs'),
 	v.literal('parse_file'),
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),

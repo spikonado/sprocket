@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { LogOut } from 'lucide-react';
-import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import type { AuthUser } from '$lib/auth';
 import Button from '$lib/components/ui/button/button';
+import SpikonadoUsage from '$lib/components/home/spikonado-usage';
 
 export default function SettingsAccount({
 	user,
@@ -15,15 +14,6 @@ export default function SettingsAccount({
 	onSignOut: () => void;
 }) {
 	const [emailRevealed, setEmailRevealed] = useState(false);
-	const convexAuth = useConvexAuth();
-
-	const subscriptionQuery = useConvexQueryResult({
-		query: api.billing.getMySubscription,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
-	});
-
-	const subscription = subscriptionQuery.status === 'success' ? subscriptionQuery.data : null;
-	const subscriptionError = subscriptionQuery.status === 'error';
 	const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || null;
 
 	return (
@@ -60,23 +50,7 @@ export default function SettingsAccount({
 						)}
 					</div>
 
-					<div>
-						<p className="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
-							Spikonado Subscription Tier
-						</p>
-						{subscription ? (
-							<p className="text-foreground mt-3 text-[15px]">{subscription.tierLabel}</p>
-						) : subscriptionError ? (
-							<p className="text-muted-foreground mt-3 text-sm">
-								Couldn’t load your subscription right now.
-							</p>
-						) : (
-							<div
-								className="bg-hover-fill mt-3.5 h-4 w-16 animate-pulse rounded"
-								aria-hidden="true"
-							/>
-						)}
-					</div>
+					<SpikonadoUsage />
 
 					<div>
 						<Button variant="outline" onclick={onSignOut}>

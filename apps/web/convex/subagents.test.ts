@@ -279,6 +279,21 @@ describe('subagents.createOrSend', () => {
 		).rejects.toThrow(/no longer active/);
 	});
 
+	it('starts a child on the provider its runner chose', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+
+		const created = await t.mutation(api.subagents.createOrSend, {
+			...createArgs(caller),
+			completionProvider: 'chatgpt'
+		});
+
+		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
+
+		expect(created.settings.completionProvider).toBe('chatgpt');
+		expect(run?.completionProvider).toBe('chatgpt');
+	});
+
 	it('creates and retries one child with its parent, chosen secret, machine, and prompt', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);

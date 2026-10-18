@@ -1,44 +1,19 @@
-import type { Id } from '@convex/_generated/dataModel';
-
-/** The right sidebar shows the agent's browser live view alongside project artifacts. */
-export type SidePanelTab = 'live' | 'artifacts';
+export type SidePanelView = 'artifacts' | 'browser';
 
 /** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {
 	open: boolean;
 	/** When true, the panel covers the full Sprocket workspace UI. */
 	expanded: boolean;
-	tab: SidePanelTab;
-	/** Selected artifact, for the artifacts tab. */
+	/** `null` shows the view picker. */
+	view: SidePanelView | null;
+	/** Selected artifact, for the artifacts view. */
 	selectedKey: string | null;
 };
 
 export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 	open: false,
 	expanded: false,
-	tab: 'artifacts',
+	view: null,
 	selectedKey: null
-};
-
-/** Live-view state for the thread's shared browser session. */
-export type BrowserLiveViewState = {
-	id: string;
-	providerSessionId: string | null;
-	/** Embeddable watch-only live view URL; null while it is being set up. */
-	url: string | null;
-	/** Interactive variant. Load it only after humanControl is true. */
-	interactiveUrl: string | null;
-	/** Whether this session persists cookies and login state. */
-	saving: boolean;
-	/** Hard deadline for the browser session. */
-	expiresAt: number;
-	/** Backend expiry, reset, or quarantine has made the session unavailable. */
-	ended: boolean;
-	/** True after the user takes control; agent browser calls are blocked. */
-	humanControl: boolean;
-	threadId: Id<'threadRecords'> | string;
-	/** Run that most recently drove the browser, matched against the active run for liveness. */
-	lastUsedRunId: Id<'runs'> | string | null;
-	/** Session (re)start time. */
-	startedAt: number;
 };

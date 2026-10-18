@@ -46,6 +46,8 @@ import {
 	submissionReadiness,
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
+import { enabledProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
@@ -317,6 +319,7 @@ function getContextResult(args: {
 	prompt: string;
 	contextTokens: number | undefined;
 	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
+	providerPreferences: Infer<typeof vGetContextResult>['providerPreferences'];
 	cwd: string | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
@@ -332,6 +335,7 @@ function getContextResult(args: {
 			continuationOfRunId: args.run.continuationOfRunId,
 			parentThreadId: args.parentThreadId
 		},
+		providerPreferences: args.providerPreferences,
 		prompt: args.prompt
 	};
 
@@ -359,6 +363,7 @@ export const getContext = query({
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 		const parentThreadId = thread?.parentThreadId;
 		const providerHandoff = await getProviderHandoff(ctx, run, thread);
+		const preferences = await getUiPreferences(ctx.db, run.userId);
 
 		if (!promptPart?.prompt && !run.continuationOfRunId) {
 			throw new Error('Run does not contain a user prompt.');
@@ -370,6 +375,10 @@ export const getContext = query({
 			prompt: promptPart?.prompt?.text ?? '',
 			contextTokens,
 			providerHandoff,
+			providerPreferences: {
+				enabledProviders: enabledProviders(preferences?.providerOrder),
+				restrictSubagentsToProvider: preferences?.restrictSubagentsToProvider ?? false
+			},
 			cwd: thread?.cwd
 		});
 	}
@@ -509,6 +518,47 @@ export const omitReasoningReplay = mutation({
 				reasoningStrippedThroughPartNumber: throughPartNumber
 			});
 		}
+
+		return true;
+	}
+});
+
+/** Moves the run to another provider after the active one failed. */
+export const fallBackToProvider = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		completionProvider: vCompletionProvider
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (
+			run.cancellationRequestedAt !== undefined ||
+			!ownsActiveRunClaim(run, args.claimId, Date.now())
+		) {
+			return false;
+		}
+
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+		// The next provider cannot replay the failed provider's reasoning.
+		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			beforePrompt: false
+		});
+
+		await ctx.db.patch('runs', run._id, { completionProvider: args.completionProvider });
+		await ctx.db.patch('threadRecords', thread._id, {
+			completionProvider: args.completionProvider,
+			reasoningStrippedThroughPartNumber: Math.max(
+				throughPartNumber,
+				thread.reasoningStrippedThroughPartNumber ?? -1
+			)
+		});
 
 		return true;
 	}

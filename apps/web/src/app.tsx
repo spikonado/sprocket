@@ -48,17 +48,14 @@ import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
+import SettingsCredentials from '$lib/components/home/settings-credentials';
 import SettingsProviders from '$lib/components/home/settings-providers';
+import SettingsVersionControl from '$lib/components/home/settings-version-control';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
-import SettingsUsage from '$lib/components/home/settings-usage';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
 import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
-import {
-	readCompletionProviderPreference,
-	storeCompletionProviderPreference
-} from '$lib/home/completion-provider-preference';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
@@ -82,9 +79,12 @@ import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
+	getCatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
+import { providersForModel, usableProviders } from '$lib/chat/providers';
+import { enabledProviders } from '@convex/lib/providerOrder';
 import { isLifecycleInProgress } from '@convex/lib/runCancellation';
 import {
 	beginPendingAgentLaunch,
@@ -105,6 +105,12 @@ import {
 	type PendingAgentLaunches
 } from '$lib/project/threads';
 import { useRevealInboxThread, useThreadInbox } from '$lib/project/inbox';
+import {
+	usePullRequestRefresher,
+	useShownPullRequests,
+	type PullRequestRefresher,
+	type PullRequestStateSync
+} from '$lib/project/pullRequestRefresh';
 import {
 	useExpandedThreads,
 	useRevealPaginatedThread,
@@ -141,6 +147,9 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
+const noProviderMessage =
+	'No enabled provider offers this model. Check your providers in Settings → Providers.';
+
 const agentLaunchTimeoutMs = 30_000;
 
 type SidebarProps = ComponentProps<typeof InboxSidebar>;
@@ -149,10 +158,19 @@ function InboxSidebarContainer(
 	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
 		signedInUserId: string | null;
 		repositoryKeys: string[];
+		pullRequestRefresher: PullRequestRefresher | null;
 	}
 ) {
+	const { pullRequestRefresher, ...sidebarProps } = props;
 	const expansion = useExpandedThreads(props.signedInUserId);
 	const { currentThreadId, onSettledOpenChange } = props;
+
+	useShownPullRequests(
+		pullRequestRefresher,
+		props.sections.flatMap((section) =>
+			section.state === 'settled' && !props.settledOpen ? [] : section.rows
+		)
+	);
 
 	const selectedPath = useSelectedThreadAncestryReveal({
 		currentThreadId: props.currentThreadId,
@@ -194,24 +212,30 @@ function InboxSidebarContainer(
 				threadId={threadId}
 				renderRows={renderRows}
 				selectedPath={selectedPath}
+				pullRequestRefresher={pullRequestRefresher}
 			/>
 		),
-		[expansion, selectedPath]
+		[expansion, selectedPath, pullRequestRefresher]
 	);
 
-	return <InboxSidebar {...props} expansion={expansion} resolveChildren={resolveChildren} />;
+	return <InboxSidebar {...sidebarProps} expansion={expansion} resolveChildren={resolveChildren} />;
 }
 
 function ExpandedThreadChildren({
 	expansion,
 	threadId,
 	renderRows,
-	selectedPath
+	selectedPath,
+	pullRequestRefresher
 }: Parameters<SidebarChildrenResolver>[0] & {
 	expansion: UseExpandedThreads;
 	selectedPath: readonly Id<'threadRecords'>[];
+	pullRequestRefresher: PullRequestRefresher | null;
 }) {
 	const children = useThreadChildren(threadId);
+
+	useShownPullRequests(pullRequestRefresher, children.rows);
+
 	const parentIndex = selectedPath.indexOf(threadId);
 	useRevealPaginatedThread(
 		parentIndex >= 0 ? (selectedPath[parentIndex + 1] ?? null) : null,
@@ -335,6 +359,7 @@ export default function App({
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
+	const updatePullRequestStates = useMutation(api.pullRequests.updateStates);
 
 	const [modelCatalog, setModelCatalog] = useState<ModelCatalog | undefined>(undefined);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -519,11 +544,6 @@ export default function App({
 	const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | null>(null);
 	const [selectedModel, setSelectedModel] = useState<CatalogModelId>();
 
-	const [selectedCompletionProvider, setSelectedCompletionProvider] =
-		useState<CompletionProvider>('spikonado');
-
-	const preferredCompletionProvider = useRef<CompletionProvider>('spikonado');
-
 	const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string>();
 
 	const [fastMode, setFastMode] = useState(false);
@@ -668,6 +688,40 @@ export default function App({
 		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
+	const providerOrder = uiPreferencesQuery.data?.providerOrder;
+
+	const availableProviders = useMemo(
+		() => usableProviders(providerOrder, configuredProviders),
+		[providerOrder, configuredProviders]
+	);
+
+	const providerStatusKnown: Record<CompletionProvider, boolean> = {
+		spikonado: true,
+		openai: providerConfigurationReady || providerConfigurationError !== null,
+		chatgpt:
+			desktopApiResolved && (!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)
+	};
+
+	const selectedCatalogModel =
+		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
+
+	const enabledProviderOrder = enabledProviders(providerOrder);
+
+	const routeProviders = selectedCatalogModel
+		? providersForModel(enabledProviderOrder, selectedCatalogModel)
+		: enabledProviderOrder;
+
+	const spikonadoIndex = routeProviders.indexOf('spikonado');
+
+	// Spikonado is always usable, so providers after it cannot change which one runs first.
+	// A failed preferences read must not fall back to the default order and re-enable providers.
+	const providersReady =
+		uiPreferencesQuery.data !== undefined &&
+		(spikonadoIndex === -1 ? routeProviders : routeProviders.slice(0, spikonadoIndex)).every(
+			(provider) => providerStatusKnown[provider]
+		);
+
+	const currentProvider = providersForModel(availableProviders, selectedCatalogModel).at(0);
 
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
@@ -678,10 +732,6 @@ export default function App({
 		api.chat.selectedThreadLifecycle,
 		authenticatedThreadQueryArgs
 	);
-
-	// No browser backend is wired up; the live view stays empty until the local
-	// browser implementation provides session state.
-	const browserLiveView = { data: null, error: null };
 
 	const pendingAgentQuestionQuery = usePageQuery(
 		api.agentQuestions.headPendingForThread,
@@ -793,6 +843,28 @@ export default function App({
 	}, [inbox.sections, currentActiveThread]);
 
 	const currentLifecycle = dataForThread(lifecycleQuery.data, currentThreadId);
+
+	const pullRequestStateSync = useMemo<PullRequestStateSync | null>(
+		() =>
+			desktopApi && authReady && signedInUserId
+				? {
+						fetchStates: (pullRequests) =>
+							desktopApi.fetchPullRequestStates({ userId: signedInUserId, pullRequests }),
+						updateStates: (updates) => updatePullRequestStates({ updates })
+					}
+				: null,
+		[desktopApi, authReady, signedInUserId, updatePullRequestStates]
+	);
+
+	const pullRequestRefresher = usePullRequestRefresher(pullRequestStateSync);
+
+	const selectedThreadRows = useMemo(
+		() => (currentActiveThread ? [currentActiveThread] : []),
+		[currentActiveThread]
+	);
+
+	useShownPullRequests(pullRequestRefresher, selectedThreadRows);
+
 	const runState = currentLifecycle?.run ?? null;
 	const pendingAgentQuestion = dataForThread(pendingAgentQuestionQuery.data, currentThreadId);
 
@@ -1019,7 +1091,7 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
-		(pendingAgentQuestion || selectedCompletionProvider !== 'chatgpt' || chatGptConfigured) &&
+		(pendingAgentQuestion || providersReady) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
@@ -1146,8 +1218,6 @@ export default function App({
 		setCurrentRepositoryKey(nextRepositoryKey);
 		setCurrentThreadId(threadId);
 		setDraftWorkspacePath(draft ? workspacePath : null);
-
-		if (draft) setSelectedCompletionProvider(preferredCompletionProvider.current);
 
 		if (threadId !== pendingCreatedThreadId) {
 			setPendingCreatedThreadId(null);
@@ -1365,10 +1435,6 @@ export default function App({
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
 		setProviderConfigurationReady(true);
 		setProviderConfigurationError(null);
-
-		if (!change.configured && selectedCompletionProvider === change.provider) {
-			setSelectedCompletionProvider('spikonado');
-		}
 	}
 
 	function handleChatGptStatusChange(status: ChatGptStatus) {
@@ -1381,12 +1447,7 @@ export default function App({
 			(account) => account.connectionId === status.activeConnectionId
 		);
 
-		const configured = active?.connected === true;
-		setChatGptConfigured(configured);
-
-		if (!configured && selectedCompletionProvider === 'chatgpt') {
-			setSelectedCompletionProvider('spikonado');
-		}
+		setChatGptConfigured(active?.connected === true);
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {
@@ -1531,7 +1592,8 @@ export default function App({
 		);
 
 		const submittedModel = selectedModel;
-		const submittedCompletionProvider = selectedCompletionProvider;
+		const submittedCompletionProvider = currentProvider;
+		const submittedProvidersReady = providersReady;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
@@ -1589,6 +1651,13 @@ export default function App({
 		if (continuationPrompt !== null) {
 			setComposerContinuationOfRunId(continuationOfRunId ?? null);
 			setPrompt(continuationPrompt);
+
+			if (!submittedProvidersReady) {
+				setAutoSubmitComposerContinuation(true);
+
+				return;
+			}
+
 			await submitPrompt(
 				{ answeredQuestionId: question.questionId, continuationOfRunId },
 				continuationPrompt
@@ -1670,6 +1739,12 @@ export default function App({
 			return;
 		}
 
+		if (!currentProvider) {
+			setCurrentError(noProviderMessage);
+
+			return;
+		}
+
 		const selectedThreadId = currentThreadId;
 		let submittedRepositoryKey = currentRepositoryKey;
 
@@ -1696,7 +1771,7 @@ export default function App({
 		);
 
 		const submittedModel = selectedModel;
-		const submittedCompletionProvider = selectedCompletionProvider;
+		const submittedCompletionProvider = currentProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 
@@ -2028,6 +2103,7 @@ export default function App({
 			!currentProjectPath ||
 			!selectedModel ||
 			!selectedReasoningEffort ||
+			!providersReady ||
 			hasPendingAgentLaunch ||
 			isSubmittingPrompt
 		) {
@@ -2036,6 +2112,12 @@ export default function App({
 
 		if (!desktopApi) {
 			setCurrentError(localServerRequiredMessage);
+
+			return;
+		}
+
+		if (!currentProvider) {
+			setCurrentError(noProviderMessage);
 
 			return;
 		}
@@ -2079,7 +2161,7 @@ export default function App({
 				prompt: '',
 				storageIds: [],
 				selectedModel,
-				completionProvider: selectedCompletionProvider,
+				completionProvider: currentProvider,
 				reasoningEffort: selectedReasoningEffort,
 				fastMode,
 				submissionId: crypto.randomUUID(),
@@ -2130,8 +2212,6 @@ export default function App({
 		});
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId);
-		preferredCompletionProvider.current = readCompletionProviderPreference(userId);
-		setSelectedCompletionProvider(preferredCompletionProvider.current);
 		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort);
 		setFastMode(false);
 		setProjectPickerOpen(false);
@@ -2216,7 +2296,6 @@ export default function App({
 
 		if (!thread) return;
 		setSelectedModel(thread.selectedModel);
-		setSelectedCompletionProvider(thread.completionProvider ?? 'spikonado');
 		setSelectedReasoningEffort(thread.reasoningEffort);
 		setFastMode(thread.fastMode ?? false);
 	}, [currentActiveThread]);
@@ -2507,8 +2586,8 @@ export default function App({
 		await focusSidebarControl(false);
 	}
 
-	function openSettings() {
-		setSettingsPage('general');
+	function openSettings(page: SettingsPage = 'general') {
+		setSettingsPage(page);
 		setSettingsOpen(true);
 	}
 
@@ -2623,6 +2702,7 @@ export default function App({
 					) : (
 						<InboxSidebarContainer
 							signedInUserId={signedInUserId}
+							pullRequestRefresher={sidebarVisible ? pullRequestRefresher : null}
 							repositoryKeys={inboxProjectKeys}
 							sections={inbox.sections}
 							projects={inboxProjects}
@@ -2639,7 +2719,7 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
-							onSettings={openSettings}
+							onSettings={() => openSettings()}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
 							onRegenerateTitle={(thread) => regenerateThreadTitle(thread._id)}
@@ -2684,10 +2764,13 @@ export default function App({
 					{settingsOpen ? (
 						settingsPage === 'general' ? (
 							<SettingsGeneral />
-						) : settingsPage === 'usage' ? (
-							<SettingsUsage />
-						) : settingsPage === 'providers' && signedInUserId ? (
+						) : settingsPage === 'providers' ? (
 							<SettingsProviders
+								configuredProviders={configuredProviders}
+								onOpenCredentials={() => setSettingsPage('credentials')}
+							/>
+						) : settingsPage === 'credentials' && signedInUserId ? (
+							<SettingsCredentials
 								userId={signedInUserId}
 								desktopApi={desktopApi}
 								openAiConfigured={openAiConfigured}
@@ -2701,6 +2784,8 @@ export default function App({
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments />
+						) : settingsPage === 'versionControl' && signedInUserId ? (
+							<SettingsVersionControl userId={signedInUserId} desktopApi={desktopApi} />
 						) : (
 							<SettingsAccount
 								user={auth.user}
@@ -2722,7 +2807,7 @@ export default function App({
 									onOpenArtifact={(artifactId) => {
 										artifactPanel.update({
 											open: true,
-											tab: 'artifacts',
+											view: 'artifacts',
 											selectedKey: artifactId
 										});
 									}}
@@ -2806,21 +2891,9 @@ export default function App({
 										modelCatalog={modelCatalog}
 										selectedModel={selectedModel}
 										onSelectedModelChange={setSelectedModel}
-										configuredProviders={configuredProviders}
-										providersReady={
-											providerConfigurationReady &&
-											(selectedCompletionProvider !== 'chatgpt' ||
-												(desktopApiResolved &&
-													(!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)))
-										}
-										selectedCompletionProvider={selectedCompletionProvider}
-										onSelectedCompletionProviderChange={setSelectedCompletionProvider}
-										onCompletionProviderSelect={(provider) => {
-											preferredCompletionProvider.current = provider;
-
-											if (signedInUserId)
-												storeCompletionProviderPreference(signedInUserId, provider);
-										}}
+										availableProviders={availableProviders}
+										providersReady={providersReady}
+										onOpenProviderSettings={() => openSettings('providers')}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										fastMode={fastMode}
@@ -2880,15 +2953,14 @@ export default function App({
 						artifacts={artifactPanel.artifacts}
 						onDeleteArtifact={deleteArtifact}
 						selectedKey={artifactPanel.panel.selectedKey}
-						tab={artifactPanel.panel.tab}
-						liveView={browserLiveView.data}
-						liveActive={false}
+						view={artifactPanel.panel.view}
+						browserApi={desktopApi}
 						expanded={artifactPanel.panel.expanded}
 						stale={artifactPanel.watchState.stale}
 						error={artifactPanel.watchState.error}
 						onSelect={(key) => artifactPanel.update({ selectedKey: key })}
 						onBack={() => artifactPanel.update({ selectedKey: null })}
-						onTabChange={(tab) => artifactPanel.update({ tab })}
+						onViewChange={(view) => artifactPanel.update({ view })}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
 

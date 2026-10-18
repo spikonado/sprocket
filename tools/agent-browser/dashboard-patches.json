@@ -1,0 +1,13 @@
+[
+	[",{id:\"lightpanda\",label:\"Lightpanda\",engine:\"lightpanda\"}", ""],
+	[",{id:\"agentcore\",label:\"AgentCore\",provider:\"agentcore\"}", ""],
+	[",{id:\"browserbase\",label:\"Browserbase\",provider:\"browserbase\"}", ""],
+	[",{id:\"browserless\",label:\"Browserless\",provider:\"browserless\"}", ""],
+	[",{id:\"browser-use\",label:\"Browser Use\",provider:\"browser-use\"}", ""],
+	[",{id:\"kernel\",label:\"Kernel\",provider:\"kernel\"}", ""],
+	["defaultValue:\"chat\"", "defaultValue:\"activity\""],
+	[
+		"{value:\"chat\",className:\"text-[11px]\",children:\"Chat\"}",
+		"{value:\"chat\",className:\"hidden\",children:\"Chat\"}"
+	]
+]

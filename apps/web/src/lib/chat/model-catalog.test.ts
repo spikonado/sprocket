@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
 	fetchGatewayModelCatalog,
-	modelOptionsForCompletionProvider,
-	resolveModelForCompletionProvider,
+	modelOptionsForProviders,
+	resolveModelForProviders,
 	showsReasoningControl
 } from './model-catalog';
 
@@ -71,14 +71,12 @@ describe('gateway model catalog', () => {
 			)
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(modelOptionsForCompletionProvider(catalog, 'spikonado')).toEqual([
+		expect(modelOptionsForProviders(catalog, ['spikonado'])).toEqual([
 			{ id: 'model-small', label: 'Model Small', provider: 'provider-one' },
 			{ id: 'model-large', label: 'Model Large', provider: 'provider-one' }
 		]);
-		expect(resolveModelForCompletionProvider(catalog, 'spikonado', 'model-large')).toBe(
-			'model-large'
-		);
-		expect(resolveModelForCompletionProvider(catalog, 'spikonado', 'unknown')).toBe('model-large');
+		expect(resolveModelForProviders(catalog, ['spikonado'], 'model-large')).toBe('model-large');
+		expect(resolveModelForProviders(catalog, ['spikonado'], 'unknown')).toBe('model-large');
 		expect(catalog.models.every((model) => model.supportsFastMode)).toBe(true);
 		expect(catalog).not.toHaveProperty('tierAllowedModels');
 	});
@@ -107,10 +105,10 @@ describe('gateway model catalog', () => {
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 
-		expect(modelOptionsForCompletionProvider(catalog, 'openai')).toEqual([
+		expect(modelOptionsForProviders(catalog, ['openai'])).toEqual([
 			expect.objectContaining({ id: 'openai-paid', provider: 'openai' })
 		]);
-		expect(resolveModelForCompletionProvider(catalog, 'openai', 'other-free')).toBe('openai-paid');
+		expect(resolveModelForProviders(catalog, ['openai'], 'other-free')).toBe('openai-paid');
 	});
 
 	it('offers ChatGPT models and settings only from the gateway catalog', async () => {
@@ -130,13 +128,13 @@ describe('gateway model catalog', () => {
 			vi.fn(async () => Response.json(payload))
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(modelOptionsForCompletionProvider(catalog, 'chatgpt')).toEqual([
+		expect(modelOptionsForProviders(catalog, ['chatgpt'])).toEqual([
 			{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai' },
 			{ id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'openai' }
 		]);
-		expect(resolveModelForCompletionProvider(catalog, 'chatgpt', 'unknown')).toBe('gpt-6.1-sol');
-		expect(resolveModelForCompletionProvider(catalog, 'chatgpt', 'other')).toBe('gpt-6.1-sol');
-		expect(resolveModelForCompletionProvider(catalog, 'chatgpt', 'gpt-6-luna')).toBe('gpt-6-luna');
+		expect(resolveModelForProviders(catalog, ['chatgpt'], 'unknown')).toBe('gpt-6.1-sol');
+		expect(resolveModelForProviders(catalog, ['chatgpt'], 'other')).toBe('gpt-6.1-sol');
+		expect(resolveModelForProviders(catalog, ['chatgpt'], 'gpt-6-luna')).toBe('gpt-6-luna');
 	});
 });
 

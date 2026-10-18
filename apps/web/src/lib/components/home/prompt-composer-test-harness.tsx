@@ -9,10 +9,6 @@ export default function PromptComposerTestHarness({
 	const [prompt, setPrompt] = useState(composerProps.prompt ?? '');
 	const [selectedModel, setSelectedModel] = useState(composerProps.selectedModel);
 
-	const [selectedCompletionProvider, setSelectedCompletionProvider] = useState(
-		composerProps.selectedCompletionProvider
-	);
-
 	const [selectedReasoningEffort, setSelectedReasoningEffort] = useState(
 		composerProps.selectedReasoningEffort
 	);
@@ -35,11 +31,6 @@ export default function PromptComposerTestHarness({
 			onSelectedModelChange={(next) => {
 				setSelectedModel(next);
 				composerProps.onSelectedModelChange?.(next);
-			}}
-			selectedCompletionProvider={selectedCompletionProvider}
-			onSelectedCompletionProviderChange={(next) => {
-				setSelectedCompletionProvider(next);
-				composerProps.onSelectedCompletionProviderChange?.(next);
 			}}
 			selectedReasoningEffort={selectedReasoningEffort}
 			onSelectedReasoningEffortChange={(next) => {

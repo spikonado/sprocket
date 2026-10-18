@@ -5,7 +5,8 @@ import { initConvexTest } from './test.setup';
 describe('theme preferences', () => {
 	it.each([
 		['automaticThreadTitles', api.uiPreferences.setAutomaticThreadTitles],
-		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation]
+		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation],
+		['restrictSubagentsToProvider', api.uiPreferences.setRestrictSubagentsToProvider]
 	] as const)('syncs %s per account and preserves the theme', async (field, setPreference) => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });
@@ -48,5 +49,19 @@ describe('theme preferences', () => {
 		expect(updated?._id).toBe(saved?._id);
 		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({ theme: 'light' });
 		await expect(t.query(api.uiPreferences.getMine, {})).rejects.toThrow('Authentication required');
+	});
+
+	it('rejects a provider order that disables every provider', async () => {
+		const alice = initConvexTest().withIdentity({ subject: 'alice' });
+
+		await expect(
+			alice.mutation(api.uiPreferences.setProviderOrder, {
+				providerOrder: [
+					{ provider: 'chatgpt', enabled: false },
+					{ provider: 'spikonado', enabled: false },
+					{ provider: 'openai', enabled: false }
+				]
+			})
+		).rejects.toThrow('at least one enabled');
 	});
 });

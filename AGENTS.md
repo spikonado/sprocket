@@ -50,6 +50,7 @@ Reliability comes from fewer moving parts. Add recovery, retries, validation, or
 
 - The Rust server, the UI, and the CLI ship as one version, so changes between them need no compatibility.
 - Ship breaking changes with backwards compatibility for the Convex API that released clients call, their sprocket data-dir, and data in the Convex deployment.
+- Older PR builds/dev builds don't count as released clients for backwards compatibility.
 - A shim is temporary code with a removal gate. Record each shim in `BACKWARDS_COMPATIBILITY.md` with its gate, and add historical formats kept forever to its permanent list. Permanent defaults, SDK workarounds, and fields introduced by the current PR need no entry.
 - Include data migrations in the PR that introduces the breaking change instead of leaving debt behind.
 - Remove compat only once that gate passes (clients age out, or a migration rewrites the data).

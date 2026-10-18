@@ -41,6 +41,9 @@ const recoveredSubmission = {
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
+		fetchBrowserStatus: unusedDesktopCall,
+		startBrowser: unusedDesktopCall,
+		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
 		listRunningCommands: vi.fn(async () => ({ commands: [] })),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unusedDesktopCall,
@@ -61,6 +64,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		deleteArtifact: unusedDesktopCall,
 		watchArtifacts: unusedDesktopCall,
 		requestRunCancellation: unusedDesktopCall,
+		fetchPullRequestStates: unusedDesktopCall,
 		startAccountSession: unusedDesktopCall,
 		endAccountSession: unusedDesktopCall,
 		fetchChatGptStatus: unusedDesktopCall,
@@ -68,7 +72,9 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		fetchChatGptBrowserLoginResult: unusedDesktopCall,
 		cancelChatGptBrowserLogin: unusedDesktopCall,
 		selectChatGptAccount: unusedDesktopCall,
-		disconnectChatGptAccount: unusedDesktopCall
+		disconnectChatGptAccount: unusedDesktopCall,
+		fetchGitHubStatus: unusedDesktopCall,
+		updateGitHubSettings: unusedDesktopCall
 	};
 }
 

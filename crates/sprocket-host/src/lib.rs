@@ -3,9 +3,12 @@
 
 pub mod agent_launch;
 pub mod artifact_watch;
+pub mod browser;
+mod browser_install;
 pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
+pub mod github_settings;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
@@ -29,8 +32,10 @@ use sprocket_transcript::{LiveCompletionHub, TranscriptStore};
 use tokio::task::JoinHandle;
 
 use crate::artifact_watch::ArtifactWatchers;
+use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
+use crate::github_settings::GitHubSettingsStore;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
 use crate::machines::MachineManager;
@@ -62,6 +67,7 @@ pub struct Host {
     pub lifetime: Arc<HostLifetime>,
     pub native_auth: Arc<NativeAuthManager>,
     pub chatgpt_credentials: Arc<ChatGptService>,
+    pub github_settings: Arc<GitHubSettingsStore>,
     pub project_attachments: Arc<ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
@@ -74,6 +80,7 @@ pub struct Host {
     pub machine_identity: Arc<MachineIdentity>,
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
+    pub browsers: Arc<BrowserManager>,
 }
 
 impl Host {
@@ -101,10 +108,16 @@ impl Host {
         package_updates: Arc<PackageUpdateManager>,
     ) -> anyhow::Result<Self> {
         let machine_identity = Arc::new(MachineIdentity::load(data_dir)?);
+        github_settings::install_saved_tokens_loader(
+            convex_deployment_url.clone(),
+            Arc::clone(&native_auth),
+            Arc::clone(&machine_identity),
+        );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
+            github_settings: GitHubSettingsStore::load(data_dir),
             project_attachments: ProjectAttachmentStore::new(data_dir.to_path_buf()),
             transcript_watchers: TranscriptWatchers::new(
                 convex_deployment_url.clone(),
@@ -130,6 +143,7 @@ impl Host {
             machine_identity,
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
+            browsers: BrowserManager::new(data_dir.to_path_buf())?,
         })
     }
 
@@ -160,6 +174,7 @@ impl Host {
 
     /// Starts the background work that keeps local state in sync with the cloud.
     pub fn start(&self) -> HostTasks {
+        self.browsers.prepare_tools();
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
@@ -214,6 +229,7 @@ impl HostTasks {
             let _ = task.await;
         }
         host.command_sessions.stop_all().await;
+        host.browsers.shutdown().await;
         self.command_sync.abort();
         let _ = self.command_sync.await;
         if let Err(error) = tokio::time::timeout(

@@ -78,6 +78,10 @@ export const vGetContextResult = v.object({
 			fastMode: v.boolean(),
 			parentThreadId: v.optional(v.id('threadRecords'))
 		}),
+	providerPreferences: v.object({
+		enabledProviders: v.array(vCompletionProvider),
+		restrictSubagentsToProvider: v.boolean()
+	}),
 	prompt: v.string(),
 	contextTokens: v.optional(v.number()),
 	providerHandoff: v.optional(vProviderHandoff),

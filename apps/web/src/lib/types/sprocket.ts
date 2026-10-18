@@ -9,6 +9,7 @@ import {
 	type ArtifactType,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
+	type LinkedPullRequest,
 	type WorkspaceInstruction
 } from '@convex/lib/validators';
 
@@ -269,6 +270,28 @@ export type ChatGptBrowserLoginStart = {
 	authorizeUrl: string;
 };
 
+export type GitHubHostStatus = {
+	host: string;
+	enabled: boolean;
+	hasSavedToken: boolean;
+	source: 'settings' | 'environment' | 'gitHubCli' | null;
+	login: string | null;
+	problem: string | null;
+};
+
+export type GitHubStatus = {
+	enabled: boolean;
+	cliVersion: string | null;
+	savedTokensProblem: string | null;
+	hosts: GitHubHostStatus[];
+};
+
+/** One switch on this machine at a time. Tokens are saved through Convex. */
+export type GitHubSettingsUpdate = {
+	enabled?: boolean;
+	host?: { host: string; enabled: boolean };
+};
+
 export type ChatGptBrowserLoginResult = {
 	status: 'pending' | 'complete' | 'error';
 	error?: string;
@@ -291,7 +314,15 @@ export type RunningCommand = {
 	startedAt: number;
 };
 
+export type BrowserStatus = {
+	state: 'installing' | 'ready' | 'error';
+	error: string | null;
+};
+
 export type DesktopApi = {
+	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
+	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
+	browserDashboardUrl: string;
 	listRunningCommands: (
 		request: TranscriptScopeRequest,
 		signal?: AbortSignal
@@ -352,6 +383,11 @@ export type DesktopApi = {
 		}
 	) => Promise<void>;
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
+	fetchPullRequestStates: (
+		request: LocalUserRequest & {
+			pullRequests: Pick<LinkedPullRequest, 'repository' | 'number'>[];
+		}
+	) => Promise<LinkedPullRequest[]>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;
 	endAccountSession: (request: LocalUserRequest) => Promise<void>;
 	fetchChatGptStatus: (request: LocalUserRequest) => Promise<ChatGptStatus>;
@@ -366,6 +402,8 @@ export type DesktopApi = {
 	disconnectChatGptAccount: (
 		request: LocalUserRequest & { connectionId: string }
 	) => Promise<string | null>;
+	fetchGitHubStatus: (userId: string) => Promise<GitHubStatus>;
+	updateGitHubSettings: (userId: string, update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
 };
 
 export type WorkspacePathResolution = {

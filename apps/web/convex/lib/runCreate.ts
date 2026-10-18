@@ -389,7 +389,6 @@ async function reconcileExistingQueuedRun(
 		(args.repositoryKey !== undefined &&
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
-		(existingRun.completionProvider ?? 'spikonado') !== (args.completionProvider ?? 'spikonado') ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches

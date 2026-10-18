@@ -4,6 +4,7 @@ import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
+import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -21,6 +22,7 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
+	vLinkedPullRequest,
 	vReasoningEffort,
 	vRunStatus,
 	vBillingInterval,
@@ -308,7 +310,9 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark')),
 		automaticThreadTitles: v.optional(v.boolean()),
-		automaticAgentContinuation: v.optional(v.boolean())
+		automaticAgentContinuation: v.optional(v.boolean()),
+		providerOrder: v.optional(v.array(vProviderOrderEntry)),
+		restrictSubagentsToProvider: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),
@@ -339,6 +343,7 @@ export default defineSchema({
 		reasoningStrippedThroughPartNumber: v.optional(v.number()),
 		// Absolute local path from the latest set_cwd call; subagents inherit it.
 		cwd: v.optional(v.string()),
+		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})

@@ -15,6 +15,20 @@ const errorPayloadSchema = z.object({ error: z.string().optional() });
 
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 
+const browserStatusSchema = z.object({
+	state: z.enum(['installing', 'ready', 'error']),
+	error: z.string().nullable()
+});
+
+const pullRequestStatesSchema = z.array(
+	z.object({
+		repository: z.string(),
+		number: z.number(),
+		state: z.enum(['open', 'closed', 'merged']),
+		title: z.string()
+	})
+);
+
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
 	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
@@ -214,6 +228,22 @@ const chatGptStatusSchema = z.object({
 
 const chatGptBrowserLoginStartSchema = z.object({ state: z.string(), authorizeUrl: z.string() });
 
+const gitHubStatusSchema = z.object({
+	enabled: z.boolean(),
+	cliVersion: z.string().nullable(),
+	savedTokensProblem: z.string().nullable(),
+	hosts: z.array(
+		z.object({
+			host: z.string(),
+			enabled: z.boolean(),
+			hasSavedToken: z.boolean(),
+			source: z.enum(['settings', 'environment', 'gitHubCli']).nullable(),
+			login: z.string().nullable(),
+			problem: z.string().nullable()
+		})
+	)
+});
+
 const chatGptBrowserLoginResultSchema = z.object({
 	status: z.enum(['pending', 'complete', 'error']),
 	error: z.string().optional()
@@ -375,6 +405,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 	const { request } = transport;
 
 	return {
+		fetchBrowserStatus: (signal) =>
+			request('/api/browser/status', browserStatusSchema, { method: 'GET', signal }),
+		startBrowser: (signal) =>
+			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
+		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
 		browseFilesystem: (input) => {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }
@@ -562,6 +597,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody)
 			});
 		},
+		fetchPullRequestStates: async (requestBody) =>
+			await request('/api/pull-requests/states', pullRequestStatesSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
 		startAccountSession: async (requestBody) => {
 			await request('/api/threads/account-session/start', z.null(), {
 				method: 'POST',
@@ -608,7 +648,17 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 
 			return warning;
-		}
+		},
+		fetchGitHubStatus: async (userId) =>
+			await request(
+				`/api/github/status?${new URLSearchParams({ userId }).toString()}`,
+				gitHubStatusSchema
+			),
+		updateGitHubSettings: async (userId, update) =>
+			await request('/api/github/settings', gitHubStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId, ...update })
+			})
 	};
 }
 
