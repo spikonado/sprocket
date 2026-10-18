@@ -105,45 +105,22 @@ it('re-reads every shown thread on refreshShown and a thread that comes back int
 	expect(requested(sync)).toEqual([[1], [2], [1, 2], [1], [1]]);
 });
 
-it('reads closed PRs at most every 15 minutes and open PRs on every refresh', async () => {
+it('includes closed PRs of every shown thread every 15 minutes, and open PRs on every refresh', () => {
 	vi.useFakeTimers();
 	const sync = fakeSync();
-
-	sync.fetchStates.mockImplementation(async (pullRequests) =>
-		pullRequests.map((ref) => pr(ref.number, ref.number === 1 ? 'open' : 'closed'))
-	);
 	const refresher = new PullRequestRefresher(sync);
 
 	refresher.show('sidebar', [thread('a', [pr(1, 'open'), pr(2, 'closed')])]);
-	await vi.advanceTimersByTimeAsync(0);
-	vi.advanceTimersByTime(14 * 60_000);
+	vi.advanceTimersByTime(10 * 60_000);
+	refresher.show('selected', [thread('b', [pr(3, 'closed')])]);
+	vi.advanceTimersByTime(4 * 60_000);
 	refresher.refreshShown();
-	await vi.advanceTimersByTimeAsync(0);
+	vi.advanceTimersByTime(60_000);
+	refresher.refreshShown();
 	vi.advanceTimersByTime(60_000);
 	refresher.refreshShown();
 
-	expect(requested(sync)).toEqual([[1, 2], [1], [1, 2]]);
-});
-
-it('keeps reading a closed PR until GitHub answers for it, separately for each thread', async () => {
-	const sync = fakeSync();
-
-	sync.fetchStates.mockImplementationOnce(async () => []);
-	sync.fetchStates.mockImplementation(async (pullRequests) =>
-		pullRequests.map((ref) => pr(ref.number, 'closed'))
-	);
-	const refresher = new PullRequestRefresher(sync);
-	const a = thread('a', [pr(2, 'closed')]);
-
-	refresher.show('sidebar', [a]);
-	await vi.waitFor(() => expect(sync.fetchStates).toHaveBeenCalledTimes(1));
-	refresher.refreshShown();
-	await vi.waitFor(() => expect(sync.fetchStates).toHaveBeenCalledTimes(2));
-	await new Promise((resolve) => setTimeout(resolve, 0));
-	refresher.refreshShown();
-	refresher.show('selected', [thread('b', [pr(2, 'closed')])]);
-
-	expect(requested(sync)).toEqual([[2], [2], [2]]);
+	expect(requested(sync)).toEqual([[1, 2], [3], [1], [1, 2, 3], [1]]);
 });
 
 it('refreshes each minute only while visible, and on return once a minute has passed', () => {

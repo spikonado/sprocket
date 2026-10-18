@@ -22,19 +22,17 @@ const MAX_PULL_REQUESTS_PER_REFRESH = 500;
 
 const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
 
-const closedKey = (thread: Thread, pr: PullRequestRef) => `${thread._id} ${refKey(pr)}`;
-
 /**
  * Keeps linked PR states and titles of the threads on screen fresh. Each list of shown rows
  * registers itself; a thread is read when it first appears, and every shown
- * thread is read on `refreshShown`. Closed PRs rarely reopen, so they are read
- * at most every 15 minutes, and merged PRs never.
+ * thread is read on `refreshShown`. Closed PRs rarely reopen, so `refreshShown`
+ * includes them only every 15 minutes, and merged PRs are never read again.
  */
 export class PullRequestRefresher {
 	readonly #sync: PullRequestStateSync;
 	readonly #lists = new Map<string, readonly Thread[]>();
-	readonly #closedReadAt = new Map<string, number>();
 	#shownIds = new Set<Id<'threadRecords'>>();
+	#closedRefreshedAt = Date.now();
 
 	constructor(sync: PullRequestStateSync) {
 		this.#sync = sync;
@@ -44,7 +42,10 @@ export class PullRequestRefresher {
 		this.#lists.set(listKey, rows);
 		const before = this.#shownIds;
 		this.#shownIds = new Set(this.#shownThreads().map((thread) => thread._id));
-		void this.#refresh(rows.filter((thread) => !before.has(thread._id)));
+		void this.#refresh(
+			rows.filter((thread) => !before.has(thread._id)),
+			true
+		);
 	}
 
 	hide(listKey: string) {
@@ -53,7 +54,11 @@ export class PullRequestRefresher {
 	}
 
 	refreshShown() {
-		void this.#refresh(this.#shownThreads());
+		const includeClosed = Date.now() - this.#closedRefreshedAt >= CLOSED_REFRESH_INTERVAL_MS;
+
+		if (includeClosed) this.#closedRefreshedAt = Date.now();
+
+		void this.#refresh(this.#shownThreads(), includeClosed);
 	}
 
 	#shownThreads(): Thread[] {
@@ -66,22 +71,10 @@ export class PullRequestRefresher {
 		return [...byId.values()];
 	}
 
-	#isDue(thread: Thread, pr: LinkedPullRequest, now: number) {
-		if (pr.state === 'open') return true;
-
-		if (pr.state === 'merged') return false;
-
-		const readAt = this.#closedReadAt.get(closedKey(thread, pr));
-
-		return readAt === undefined || now - readAt >= CLOSED_REFRESH_INTERVAL_MS;
-	}
-
-	async #refresh(threads: readonly Thread[]) {
-		const now = Date.now();
-
+	async #refresh(threads: readonly Thread[], includeClosed: boolean) {
 		const linked = threads.flatMap((thread) =>
 			(thread.pullRequests ?? []).flatMap((pr) =>
-				this.#isDue(thread, pr, now) ? [{ thread, pr }] : []
+				pr.state === 'open' || (includeClosed && pr.state === 'closed') ? [{ thread, pr }] : []
 			)
 		);
 
@@ -117,13 +110,6 @@ export class PullRequestRefresher {
 				});
 
 				if (updates.length > 0) await this.#sync.updateStates(updates);
-
-				// The cooldown starts only once GitHub answered for this PR and its change was saved.
-				for (const { thread, pr } of batch) {
-					if (fetched.get(refKey(pr))?.state === 'closed') {
-						this.#closedReadAt.set(closedKey(thread, pr), now);
-					}
-				}
 			} catch {
 				// Stale badges are harmless; the next refresh tries again.
 			}
