@@ -5,6 +5,19 @@
 - Sprocket is an agentic platform that streamlines hardware and software development.
 - The goal is to make the world's best platform for agents and humans to develop apps, robots, devices, and the systems that glue them together.
 - Sprocket should work across different hardware platforms, operating systems, and Sprocket's own cloud for hardware and software development.
+- Sprocket runs on one person's machine. Machine resources such as installed tools, browsers, daemons, and caches belong to the machine; user IDs are for auth checks.
+
+### Crates
+
+Put new code in the crate whose purpose matches it:
+
+- `sprocket-agent`: model providers, the agent run loop, and agent tools.
+- `sprocket-cli`: the `sprocket` CLI, a client of the local server.
+- `sprocket-convex`: the Convex client.
+- `sprocket-host`: machine-side services such as credentials, command sessions, run recovery, sync, and updates.
+- `sprocket-server`: the HTTP server for the UI and CLI.
+- `sprocket-transcript`: transcript storage, sync, and downloads.
+- `sprocket-workspace`: local files, git, commands, patches, artifacts, and skills.
 
 ## Available testing commands
 
@@ -24,10 +37,13 @@ It provides all dependencies/tools you may need. Use it through `nix develop -c 
 
 All of these are core priorities; try your best to achieve all of them without having to make trade-offs.
 
+Reliability comes from fewer moving parts. Add recovery, retries, validation, or idempotency when the task needs them.
+
 ## Maintaining code
 
 - Don't be afraid to completely refactor existing code to improve on any of the priorities.
 - Put Rust unit tests for `foo.rs` in `foo/tests.rs`, declared as `#[cfg(test)] mod tests;`. Test-only helpers live there too, or in `foo/test_support.rs` when other modules' tests use them.
+- Before adding a Convex function, table field, or index, check whether an existing query or mutation already serves the need. Store only the state the feature needs and derive the rest.
 - Make sure that changes are made in all the layers of the app when needed.
 - Ship breaking changes with backwards compatibility for already-released clients, their sprocket data-dir, and data in the Convex deployment.
 - Record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
@@ -42,10 +58,11 @@ All of these are core priorities; try your best to achieve all of them without h
 
 1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
 2. Wait for the Greptile AI code review CI to complete and give its review of your changes.
-3. Fix any relevant issues found by it:
+3. Fix the actionable issues found by it:
    - These can be inline comments on the PR or somewhere above "Important Files Changed" in the PR description.
-   - It often happens that some of the issues reported are false positives, outdated, not relevant, etc.
-   - Don't spend any energy on these; skip them and explain your reasoning in the inline thread or, for an issue in the PR description, in a top-level PR comment.
+   - A finding is actionable when it shows the change breaks behavior the task needs.
+   - When a finding comes from a mechanism the task doesn't need, remove the mechanism.
+   - Findings that add a mechanism, UI, or handling for a scenario that doesn't occur in real use, along with false positives and outdated findings, get a reply with your reasoning in the inline thread or, for an issue in the PR description, in a top-level PR comment.
 4. Commit and push the code -> this time without asking.
 5. You should loop steps 2-4 until Greptile gives you a 5/5 confidence score or there are no remaining actionable issues. Comment `@greptileai review` when it doesn't start reviewing automatically; if the score remains below 5/5 with no actionable issues, explain why and stop.
 6. Clean up any worktrees and branches you created for this PR when you are done.
