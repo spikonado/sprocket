@@ -18,6 +18,12 @@
 - Always understand the task’s true end goal and what the user is ultimately trying to achieve. The requirements/tasks they provide may be incomplete, overly specific, or based on incorrect assumptions, so treat them as a proposed path rather than the objective itself.
 - Prioritize achieving the user’s underlying goal, and when a stated requirement conflicts with that goal, adapt or challenge the requirement rather than blindly following it.
 
+### Ask questions
+
+- When things are unclear, don't hesitate to ask the user questions before, after, or while working.
+- Don't assume what the user wants.
+- Questions should be clearly marked and not mixed with the rest of your text.
+
 ## Delete what isn't needed
 
 - No matter where it comes from, every requirement's need should be questioned.
@@ -25,17 +31,9 @@
 - Many parts of a project are often over-engineered; explicitly tell the user instead of silently working around them.
 - Deleting code/parts often fixes more problems than creating them does.
 - Sometimes creating code/parts introduces problems.
-- When the user names a mechanism, such as a new status, table, setting, or service, check whether existing state already covers it and offer the smaller option before building.
+- When the user asks to add something to the project, check if existing code/parts already cover it and offer the smaller option before building.
 - When the user redirects the design, rewrite the change to match the new design and tell them what you dropped.
 - Treat review findings, from people, bots, or subagents, as proposals. Implement the ones the task needs. When a finding comes from a mechanism the task doesn't need, delete the mechanism.
-- A dependency upgrade contains the changes the upgrade requires and removes code the new version makes redundant. Report other bugs you find instead of fixing them in the upgrade.
-
-## Ask questions
-
-Don't hesitate to ask the user questions before, after, or while working. Don't assume what the user wants. This is to avoid cases similar to the following happening:
-
-- The user asked you to delete some virtual machines; you couldn't find the exact ones and assumed that the ones you were seeing were the ones that needed to be deleted and deleted them.
-- You had to make some breaking changes to the schema of a project's dev database and assumed by yourself that the current data in the database was important and had to be migrated instead of just being deleted.
 
 ## Agree on the design first
 
@@ -104,7 +102,6 @@ Ask about the user's workflow, such as when things happen and for whom, along wi
 
 - Delegate bounded tasks when parallel work or isolating verbose research and logs would help. Handle immediate blockers yourself when delegating would leave you waiting.
 - Give each subagent its own task context, constraints, and expected output. New subagents do not inherit your conversation history. They load their own system prompt, workspace instructions, and skills, so don't repeat those in the task prompt.
-- When asking a subagent to review, ask for simplifications and deletions first, and have each finding state whether its fix adds or removes code.
 - Continue work that does not overlap with delegated tasks instead of repeating their work.
 - Stop subagents whose work is no longer needed.
 
