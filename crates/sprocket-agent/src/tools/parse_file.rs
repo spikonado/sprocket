@@ -772,7 +772,7 @@ impl ReplayedOutput {
         }
     }
 
-    pub(crate) fn into_content(self, urls: &ImageUrlMap) -> Vec<ToolResultContent> {
+    fn into_content(self, urls: &ImageUrlMap) -> Vec<ToolResultContent> {
         match self {
             Self::Text(text) => vec![ToolResultContent::text(text)],
             Self::Image(ReplayedImage {
@@ -945,10 +945,7 @@ pub(super) async fn replay_tool_output(
     image_urls: &impl ImageUrlSource,
 ) -> anyhow::Result<ToolOutput> {
     let replayed = replay_local_tool_output(output).await?;
-    let urls = match replayed.image() {
-        Some(image) => image_urls.urls(&[image]).await,
-        None => ImageUrlMap::new(),
-    };
+    let urls = image_urls.urls(replayed.image().as_slice()).await;
     Ok(ToolOutput::content(replayed.into_content(&urls))?)
 }
 

@@ -33,7 +33,7 @@ use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
 pub(crate) use self::cwd::working_directory_message;
 pub(crate) use self::image_urls::ConvexImageUrls;
-use self::image_urls::{ImageUrlMap, ImageUrlSource};
+use self::image_urls::ImageUrlSource;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -134,11 +134,7 @@ pub(crate) async fn hydrate_tool_history(
         .iter()
         .filter_map(|(_, _, replayed)| replayed.as_ref().ok()?.image())
         .collect();
-    let urls = if images.is_empty() {
-        ImageUrlMap::new()
-    } else {
-        image_urls.urls(&images).await
-    };
+    let urls = image_urls.urls(&images).await;
     for (items, output, replayed) in replays {
         *items = match replayed.and_then(|replayed| replayed.into_history_items(&urls)) {
             Ok(items) => items,

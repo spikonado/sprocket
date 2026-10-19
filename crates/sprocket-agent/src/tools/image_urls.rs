@@ -38,8 +38,8 @@ impl<T: ImageUrlSource> ImageUrlSource for Option<T> {
 /// it the provider's prompt cache, stays byte-identical across turns. Only the
 /// AI gateway is verified to fetch these URLs.
 pub(crate) struct ConvexImageUrls<'a> {
-    pub(crate) runtime: &'a RuntimeClient,
-    pub(crate) run_id: &'a str,
+    runtime: &'a RuntimeClient,
+    run_id: &'a str,
 }
 
 impl<'a> ConvexImageUrls<'a> {

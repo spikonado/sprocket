@@ -4,6 +4,7 @@ use sprocket_workspace::async_tools::DEFAULT_YIELD_MS;
 use sprocket_workspace::{SkillSource, WorkspaceOperationCancelled, WorkspaceSkill};
 
 use super::context::tool_error;
+use super::image_urls::ImageUrlMap;
 use super::job::mutation_args_from_payload;
 use super::questions::{
     AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, MAX_QUESTION_CHARS,
