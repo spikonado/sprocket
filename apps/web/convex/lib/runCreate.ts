@@ -318,7 +318,7 @@ export async function createQueuedRunRecord(
 		completionProvider,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
-		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt,
+		lastMessageAt: Date.now(),
 		archivedAt: undefined
 	};
 

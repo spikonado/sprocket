@@ -17,6 +17,9 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			lastError: 'boom',
 			executionSecret: 'parent-secret'
 		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', threadId, { lastMessageAt: 0 });
+		});
 
 		const args = {
 			threadId,
@@ -47,6 +50,10 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			submissionId: 'sub-continue'
 		});
 		expect(continuation).not.toHaveProperty('serviceTier');
+		// Keeps attachments past retention while the continuation still sends their URLs.
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.lastMessageAt
+		).toBeGreaterThan(0);
 
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => [part.number, part.kind, part.runId])).toEqual([
