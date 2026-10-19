@@ -171,6 +171,12 @@ impl Host {
         .await
     }
 
+    /// Ends machine presence first because ending it needs the native token.
+    pub async fn sign_out(&self) -> anyhow::Result<()> {
+        self.machines.end_all().await;
+        self.native_auth.sign_out().await
+    }
+
     /// Starts the background work that keeps local state in sync with the cloud.
     pub fn start(&self) -> HostTasks {
         self.browsers.prepare_tools();

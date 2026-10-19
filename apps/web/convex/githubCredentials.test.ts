@@ -102,6 +102,9 @@ describe('GitHub credentials', () => {
 		await expect(alice.action(api.githubCredentials.issueTokens, {})).resolves.toEqual({
 			'ghe.acme.com': 'ghp_acme'
 		});
+		await expect(
+			t.withIdentity({ subject: 'user_bob' }).action(api.githubCredentials.issueTokens, {})
+		).resolves.toEqual({});
 
 		await alice.action(api.githubCredentials.removeToken, { host: 'ghe.acme.com' });
 		expect(vault.size).toBe(0);

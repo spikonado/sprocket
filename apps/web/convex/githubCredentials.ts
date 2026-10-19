@@ -59,7 +59,7 @@ async function writeTokens(
 	}
 }
 
-/** Saves a token for one GitHub host. Browsers can't read it back; only the user's machines can. */
+/** Saves a token for one GitHub host. */
 export const saveToken = action({
 	args: { host: v.string(), token: v.string() },
 	returns: v.null(),

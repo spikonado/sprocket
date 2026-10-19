@@ -404,7 +404,6 @@ async fn native_sign_out(
     }
     state
         .host
-        .native_auth
         .sign_out()
         .await
         .map_err(|error| ApiError::internal_with("failed to clear native session", error))?;

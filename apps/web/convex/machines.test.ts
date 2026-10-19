@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
 import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
@@ -215,6 +215,46 @@ describe('machines', () => {
 		).resolves.toBeNull();
 		await t.mutation(api.machines.end, { ...legacyArgs, credential: 'credential-a' });
 		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(false);
+	});
+
+	it('moves process IDs out of rows written before processId', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const credentialHash = await executionSecretHash('credential-a');
+
+		const legacyHeartbeat = {
+			userId: 'user_alice',
+			machineId: machine.machineId,
+			credential: 'credential-a'
+		};
+
+		const machineDocId = await t.run((ctx) =>
+			ctx.db.insert('machines', {
+				...machine,
+				userId: 'user_alice',
+				credentialHash,
+				lastSeenAt: Date.now(),
+				runIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now()
+			})
+		);
+
+		await expect(t.mutation(api.machines.heartbeat, legacyHeartbeat)).resolves.toBeNull();
+
+		for (let pass = 0; pass < 2; pass++) {
+			await t.mutation(internal.migrations.moveMachineCredentialHashes, {
+				cursor: null,
+				dryRun: false,
+				oneBatchOnly: true
+			});
+		}
+
+		const migrated = await t.run((ctx) => ctx.db.get('machines', machineDocId));
+		expect(migrated).toMatchObject({ processId: credentialHash });
+		expect(migrated?.credentialHash).toBeUndefined();
+		await expect(t.mutation(api.machines.heartbeat, legacyHeartbeat)).resolves.toBeNull();
+		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(true);
 	});
 
 	it('allows one local machine identity to register for different users', async () => {

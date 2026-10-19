@@ -252,12 +252,7 @@ async fn logout(
     Json(request): Json<CliClientRequest>,
 ) -> Result<Json<bool>, ApiError> {
     client_session(&state, peer, &headers, &request.client_id).await?;
-    state
-        .host
-        .native_auth
-        .sign_out()
-        .await
-        .map_err(ApiError::bad_request)?;
+    state.host.sign_out().await.map_err(ApiError::bad_request)?;
     Ok(Json(true))
 }
 

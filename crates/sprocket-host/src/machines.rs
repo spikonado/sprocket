@@ -147,6 +147,10 @@ impl MachineManager {
 
     pub async fn shutdown(&self) {
         self.stop_registration();
+        self.end_all().await;
+    }
+
+    pub async fn end_all(&self) {
         let users = self
             .account_locks
             .lock()
@@ -156,7 +160,7 @@ impl MachineManager {
             .collect::<Vec<_>>();
         for user_id in users {
             if let Err(error) = self.end(&user_id).await {
-                tracing::warn!("failed to end machine presence during shutdown: {error:#}");
+                tracing::warn!("failed to end machine presence: {error:#}");
             }
         }
     }
