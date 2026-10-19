@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signs the verification profile's host in with a device code. Needs the API from launch.sh running.
+# Signs the verification profile's host in with a device code.
 source "$(dirname "$0")/common.sh"
 load_dev_env
 
