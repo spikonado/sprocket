@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  native:
+  native_tests:
     name: Native (${{ matrix.os }})
     strategy:
       fail-fast: false
