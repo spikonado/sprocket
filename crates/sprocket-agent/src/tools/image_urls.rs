@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use anyhow::Context;
 use convex::Value;
-use futures::StreamExt;
 use rig::message::MimeType;
 use serde::Deserialize;
 
@@ -109,23 +108,24 @@ impl ImageUrlSource for ConvexImageUrls<'_> {
                 return urls;
             }
         };
-        let uploaded: Vec<_> = futures::stream::iter(uploads)
-            .map(|(image, upload_url)| {
-                let client = &client;
-                async move { (image, self.upload(client, image, &upload_url).await) }
-            })
-            .buffer_unordered(CONCURRENT_UPLOADS)
-            .collect()
-            .await;
-        for (image, result) in uploaded {
-            match result {
-                Ok(url) => {
-                    urls.insert(image.sha256.clone(), url);
+        // Plain `upload` futures rather than a stream of async closures, which
+        // fails the `Send` check rig's tool futures need (rust-lang/rust#102211).
+        for chunk in uploads.chunks(CONCURRENT_UPLOADS) {
+            let mut pending = Vec::with_capacity(chunk.len());
+            for (image, upload_url) in chunk {
+                pending.push(self.upload(&client, image, upload_url));
+            }
+            let results = futures::future::join_all(pending).await;
+            for ((image, _), result) in chunk.iter().zip(results) {
+                match result {
+                    Ok(url) => {
+                        urls.insert(image.sha256.clone(), url);
+                    }
+                    Err(error) => eprintln!(
+                        "sprocket-agent: image upload failed for {} ({error:#}); sending it as base64",
+                        image.path
+                    ),
                 }
-                Err(error) => eprintln!(
-                    "sprocket-agent: image upload failed for {} ({error:#}); sending it as base64",
-                    image.path
-                ),
             }
         }
         urls
