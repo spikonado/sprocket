@@ -1,5 +1,4 @@
 //! Runs `` !`command` `` placeholders in a skill body when the skill loads.
-//! The README's skills section documents the matching rules.
 
 use std::ffi::OsString;
 use std::ops::Range;
@@ -59,7 +58,7 @@ pub(crate) async fn render_skill_commands(
     let shell = resolve_command_shell(&default_shell, cwd).map_err(|error| {
         format!(
             "could not start shell \"{default_shell}\": {}",
-            truncate_chars(&error.root_cause().to_string())
+            error.root_cause()
         )
     });
     let mut rendered = String::with_capacity(body.len());

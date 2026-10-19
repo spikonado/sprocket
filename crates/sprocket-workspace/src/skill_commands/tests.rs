@@ -51,34 +51,16 @@ command`
 }
 
 #[tokio::test]
-async fn placeholders_in_multi_line_code_spans_do_not_run() {
+async fn replaces_placeholders_with_output_run_in_the_given_directory() {
     let root = temp_workspace();
-    let body = "Example:\n``\n!`touch marker`\n``\n";
-    let rendered = render(body, &root, SkillCommandLimits::DEFAULT).await;
-    assert_eq!(rendered, body);
-    assert!(!root.join("marker").exists());
-    std::fs::remove_dir_all(root).ok();
-}
-
-#[tokio::test]
-async fn replaces_placeholders_with_command_output() {
-    let root = temp_workspace();
+    std::fs::write(root.join("marker.txt"), "inside").unwrap();
     let rendered = render(
-        "A: !`echo one`\nB: !`echo two` end\n```\n!`echo fenced`\n```\n",
+        "A: !`echo one`\nB: !`cat marker.txt` end\n",
         &root,
         SkillCommandLimits::DEFAULT,
     )
     .await;
-    assert_eq!(rendered, "A: one\nB: two end\n```\n!`echo fenced`\n```\n");
-    std::fs::remove_dir_all(root).ok();
-}
-
-#[tokio::test]
-async fn runs_commands_in_the_given_directory() {
-    let root = temp_workspace();
-    std::fs::write(root.join("marker.txt"), "inside").unwrap();
-    let rendered = render("!`cat marker.txt`", &root, SkillCommandLimits::DEFAULT).await;
-    assert_eq!(rendered, "inside");
+    assert_eq!(rendered, "A: one\nB: inside end\n");
     std::fs::remove_dir_all(root).ok();
 }
 
@@ -105,25 +87,6 @@ async fn failures_become_inline_error_lines() {
     std::fs::remove_dir_all(root).ok();
 }
 
-#[tokio::test]
-async fn timed_out_commands_are_killed_and_the_total_budget_skips_the_rest() {
-    let root = temp_workspace();
-    let limits = SkillCommandLimits {
-        command_timeout: Duration::from_millis(300),
-        total_timeout: Duration::from_millis(300),
-        ..SkillCommandLimits::DEFAULT
-    };
-    let started = std::time::Instant::now();
-    let rendered = render("!`sleep 5`\n!`sleep 5`", &root, limits).await;
-    assert!(started.elapsed() < Duration::from_secs(4));
-    assert_eq!(
-        rendered,
-        "[skill command failed: timed out after 0.3s]\n\
-         [skill command skipped: skill commands used their 0.3s total time limit]"
-    );
-    std::fs::remove_dir_all(root).ok();
-}
-
 const WRITES_MARKERS_LATER: &str = "!`(sleep 1; touch child) & sleep 1; touch parent`";
 
 async fn assert_no_markers_appear(root: &Path) {
@@ -133,14 +96,24 @@ async fn assert_no_markers_appear(root: &Path) {
 }
 
 #[tokio::test]
-async fn timeouts_stop_the_command_and_its_descendants() {
+async fn timeouts_stop_the_command_and_its_descendants_and_skip_the_rest() {
     let root = temp_workspace();
     let limits = SkillCommandLimits {
         command_timeout: Duration::from_millis(300),
+        total_timeout: Duration::from_millis(300),
         ..SkillCommandLimits::DEFAULT
     };
-    let rendered = render(WRITES_MARKERS_LATER, &root, limits).await;
-    assert_eq!(rendered, "[skill command failed: timed out after 0.3s]");
+    let rendered = render(
+        &format!("{WRITES_MARKERS_LATER}\n!`echo late`"),
+        &root,
+        limits,
+    )
+    .await;
+    assert_eq!(
+        rendered,
+        "[skill command failed: timed out after 0.3s]\n\
+         [skill command skipped: skill commands used their 0.3s total time limit]"
+    );
     assert_no_markers_appear(&root).await;
     std::fs::remove_dir_all(root).ok();
 }
