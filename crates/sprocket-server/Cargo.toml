@@ -27,7 +27,7 @@ sprocket-transcript = { path = "../sprocket-transcript" }
 sprocket-workspace = { path = "../sprocket-workspace" }
 tokio = { version = "1.52.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 tempfile = "3.27.0"
 tower = "0.5.3"
 convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
