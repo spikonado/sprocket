@@ -46,6 +46,9 @@ let isQuitting = false;
 /** Reported by the renderer so quitting can ask before anything shuts down. */
 let hasUnsavedChanges = false;
 
+/** Set when the user chooses Leave, so the quit that follows doesn't ask again. */
+let discardConfirmed = false;
+
 const updates = new DesktopUpdater(
 	process.platform === 'linux' && process.env.APPIMAGE
 		? createAppImageUpdater(electronUpdater.AppImageUpdater)
@@ -492,8 +495,18 @@ ipcMain.handle('sprocket:set-unsaved-changes', (event, value) => {
 	hasUnsavedChanges = value === true;
 });
 
+let lastUpdateStatus = updates.getState().status;
+
+updates.subscribe(({ status }) => {
+	// A failed install keeps the app, and its unsaved edits, open.
+	if (lastUpdateStatus === 'installing' && status !== 'installing') discardConfirmed = false;
+	lastUpdateStatus = status;
+});
+
 function confirmDiscardUnsavedChanges() {
-	if (!hasUnsavedChanges || !mainWindowRef || mainWindowRef.isDestroyed()) return true;
+	if (discardConfirmed || !hasUnsavedChanges || !mainWindowRef || mainWindowRef.isDestroyed()) {
+		return true;
+	}
 
 	const choice = dialog.showMessageBoxSync(mainWindowRef, {
 		type: 'question',
@@ -504,11 +517,9 @@ function confirmDiscardUnsavedChanges() {
 		cancelId: 1
 	});
 
-	if (choice !== 0) return false;
-	// Quitting closes the window afterwards; don't ask twice.
-	hasUnsavedChanges = false;
+	discardConfirmed = choice === 0;
 
-	return true;
+	return discardConfirmed;
 }
 
 ipcMain.handle('sprocket:get-update-state', (event) => {
@@ -563,6 +574,7 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 				}
 			} catch (error) {
 				isQuitting = false;
+				discardConfirmed = false;
 				reportFatalError('Failed to install Sprocket update', error);
 			}
 		}
