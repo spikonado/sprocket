@@ -147,7 +147,10 @@ export async function requestThreadTreeCancellation(
 
 const vTreeCancellationBatch = v.object({
 	parentThreadId: v.id('threadRecords'),
-	cursor: v.union(v.string(), v.null())
+	cursor: v.union(v.string(), v.null()),
+	// Ignored; carried by batches queued before the stateless sweep.
+	rootThreadId: v.optional(v.id('threadRecords')),
+	generation: v.optional(v.string())
 });
 
 // A thread's children are listed only after its own run is told to cancel, and
@@ -199,7 +202,7 @@ async function cancelDescendantsPage(
 
 	if (!result.isDone) {
 		await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
-			...args,
+			parentThreadId: args.parentThreadId,
 			cursor: result.continueCursor
 		});
 	}

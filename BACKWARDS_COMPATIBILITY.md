@@ -48,6 +48,10 @@ Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:
 
 Released servers require an integer `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from the floored `_creationTime`. Remove that field once those servers age out.
 
+### Tree cancellation batch arguments
+
+`runLifecycle.cancelDescendants` accepts and ignores `rootThreadId` and `generation` from batches queued before the stateless sweep. Remove them after a scheduler scan finds no queued batch carrying them.
+
 ## Convex data shims
 
 ### Billing subscription projection

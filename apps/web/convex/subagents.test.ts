@@ -1076,7 +1076,7 @@ describe('subagents.control', () => {
 		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
 		const grandchildArgs = createArgs(childRun);
 		const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
-		await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
+		const grandchildRun = await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
 
 		for (let batch = 0; batch < 10; batch++) {
 			await t.run(async (ctx) => {
@@ -1115,10 +1115,19 @@ describe('subagents.control', () => {
 		}
 
 		await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
+
+		const spawnedDuringStop = await t.mutation(
+			api.subagents.createOrSend,
+			createArgs(grandchildRun)
+		);
+
 		await finishTreeCancellation(t);
-		expect(
-			(await t.run((ctx) => ctx.db.get('runs', grandchild.runId)))?.cancellationRequestedAt
-		).toBeDefined();
+
+		for (const run of [grandchild, spawnedDuringStop]) {
+			expect(
+				(await t.run((ctx) => ctx.db.get('runs', run.runId)))?.cancellationRequestedAt
+			).toBeDefined();
+		}
 	}, 30_000);
 
 	async function childWithPendingQuestion(
