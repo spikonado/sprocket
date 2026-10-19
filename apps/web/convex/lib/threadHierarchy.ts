@@ -5,17 +5,31 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { allMerged } from '@convex/lib/pullRequestState';
+import { awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
+
+async function latestThreadRun(db: DatabaseReader, threadId: Id<'threadRecords'>) {
+	return await db
+		.query('runs')
+		.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+		.order('desc')
+		.first();
+}
+
+export async function threadRunAwaitsAutomaticRecovery(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>
+): Promise<boolean> {
+	const latest = await latestThreadRun(db, threadId);
+
+	return latest !== null && (await awaitsAutomaticRecovery(db, latest));
+}
 
 export async function threadOwnActivity(
 	db: DatabaseReader,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
-	const latest = await db
-		.query('runs')
-		.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
-		.order('desc')
-		.first();
+	const latest = await latestThreadRun(db, threadId);
 
 	if (latest && !isRunFinalStatus(latest.status)) return true;
 
@@ -189,6 +203,7 @@ export async function updateThreadHierarchyAfterChange(
 		active: Number(await threadOwnActivity(ctx.db, thread._id)) - Number(before.active),
 		working: Number(thread.status === 'running') - Number(before.thread.status === 'running')
 	});
+
 	await applyPendingMergedSettle(ctx, thread);
 }
 
@@ -199,25 +214,27 @@ async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRec
 
 	if (root.parentThreadId !== undefined || !allMerged(root.pullRequests ?? [])) {
 		await ctx.db.patch('threadRecords', root._id, { settleWhenIdle: undefined });
-		return;
-	}
 
-	if (root.archivedAt !== undefined) {
-		await ctx.db.patch('threadRecords', root._id, { settleWhenIdle: undefined });
 		return;
 	}
 
 	if (!(await getUiPreferences(ctx.db, root.userId))?.settleMergedThreads) {
 		await ctx.db.patch('threadRecords', root._id, { settleWhenIdle: undefined });
+
 		return;
 	}
 
+	if (root.archivedAt !== undefined) return;
+
 	if ((await subtreeSummary(ctx.db, root)).anyActive) return;
 
-	await ctx.db.patch('threadRecords', root._id, {
-		archivedAt: Date.now(),
-		settleWhenIdle: undefined
-	});
+	if (await threadRunAwaitsAutomaticRecovery(ctx.db, thread._id)) return;
+
+	if (thread._id !== root._id && (await threadRunAwaitsAutomaticRecovery(ctx.db, root._id))) {
+		return;
+	}
+
+	await ctx.db.patch('threadRecords', root._id, { archivedAt: Date.now() });
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
