@@ -2754,7 +2754,7 @@ export default function App({
 					{!settingsOpen && !artifactPanel.panel.open && (
 						<button
 							type="button"
-							className="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
+							className="text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring absolute top-1.5 right-2 z-100 rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none"
 							onClick={() => artifactPanel.update({ open: true })}
 							aria-label="Open side panel"
 						>
@@ -2804,13 +2804,7 @@ export default function App({
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 									project={currentProject}
 									artifacts={artifactPanel.artifacts}
-									onOpenArtifact={(artifactId) => {
-										artifactPanel.update({
-											open: true,
-											view: 'artifacts',
-											selectedKey: artifactId
-										});
-									}}
+									onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
 									loadingOlder={transcript.loadingOlder}
 									nextBefore={transcript.nextBefore ?? undefined}
 									emptyStateMessage={
@@ -2952,15 +2946,16 @@ export default function App({
 						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 						artifacts={artifactPanel.artifacts}
 						onDeleteArtifact={deleteArtifact}
-						selectedKey={artifactPanel.panel.selectedKey}
-						view={artifactPanel.panel.view}
+						tabs={artifactPanel.panel.tabs}
+						activeTabId={artifactPanel.activeTab.id}
 						browserApi={desktopApi}
 						expanded={artifactPanel.panel.expanded}
 						stale={artifactPanel.watchState.stale}
 						error={artifactPanel.watchState.error}
-						onSelect={(key) => artifactPanel.update({ selectedKey: key })}
-						onBack={() => artifactPanel.update({ selectedKey: null })}
-						onViewChange={(view) => artifactPanel.update({ view })}
+						onNewTab={() => artifactPanel.newTab()}
+						onActivateTab={(id) => artifactPanel.activateTab(id)}
+						onCloseTab={(id) => artifactPanel.closeTab(id)}
+						onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
 

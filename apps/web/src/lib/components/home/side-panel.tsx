@@ -9,29 +9,34 @@ import {
 	Minimize2,
 	PanelRight,
 	Plus,
+	SquarePlus,
+	X,
 	type LucideIcon
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import type { SidePanelView } from '$lib/chat/side-panel';
+import type { SidePanelTab, SidePanelView } from '$lib/chat/side-panel';
 import type { ArtifactType } from '@convex/lib/validators';
+
+type TabPatch = Partial<Omit<SidePanelTab, 'id'>>;
 
 type Props = {
 	artifacts: ArtifactEntry[];
 	workspacePath?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
-	selectedKey: string | null;
-	view: SidePanelView | null;
+	tabs: SidePanelTab[];
+	activeTabId: string;
 	browserApi: BrowserApi | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
 	error?: string | null;
-	onSelect: (key: string) => void;
-	onBack: () => void;
-	onViewChange: (view: SidePanelView | null) => void;
+	onNewTab: () => void;
+	onActivateTab: (id: string) => void;
+	onCloseTab: (id: string) => void;
+	onUpdateTab: (id: string, patch: TabPatch) => void;
 	/** Enter true browser fullscreen for a single artifact (content only). */
 	onOpenFullscreen: (key: string) => void;
 	onToggleExpanded: () => void;
@@ -52,26 +57,59 @@ const VIEWS: { id: SidePanelView; label: string; icon: LucideIcon }[] = [
 const ICON_BUTTON =
 	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none';
 
+function tabIndexForKey(key: string, index: number, count: number) {
+	switch (key) {
+		case 'ArrowLeft':
+			return (index - 1 + count) % count;
+		case 'ArrowRight':
+			return (index + 1) % count;
+		case 'Home':
+			return 0;
+		case 'End':
+			return count - 1;
+		default:
+			return null;
+	}
+}
+
+function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
+	const artifact =
+		tab.view === 'artifacts' ? artifacts.find((item) => item.key === tab.selectedKey) : undefined;
+
+	if (artifact) return { label: artifact.title, icon: TYPE_ICONS[artifact.artifactType] };
+
+	return VIEWS.find((item) => item.id === tab.view) ?? { label: 'New tab', icon: SquarePlus };
+}
+
 export default function SidePanel({
 	artifacts,
 	workspacePath,
 	onDeleteArtifact,
-	selectedKey,
-	view,
+	tabs,
+	activeTabId,
 	browserApi,
 	expanded,
 	stale = false,
 	error = null,
-	onSelect,
-	onBack,
-	onViewChange,
+	onNewTab,
+	onActivateTab,
+	onCloseTab,
+	onUpdateTab,
 	onOpenFullscreen,
 	onToggleExpanded,
 	onClose
 }: Props) {
-	const selected = artifacts.find((artifact) => artifact.key === selectedKey) ?? null;
-	const current = VIEWS.find((item) => item.id === view) ?? null;
-	const viewRef = useRef<HTMLElement>(null);
+	const focusActiveTab = useRef(false);
+
+	useEffect(() => {
+		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
+		tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+
+		if (focusActiveTab.current) {
+			focusActiveTab.current = false;
+			tab?.focus();
+		}
+	}, [activeTabId, tabs.length]);
 
 	useEffect(() => {
 		if (!expanded) return;
@@ -102,19 +140,79 @@ export default function SidePanel({
 			id="side-panel"
 			className={`bg-background flex h-full min-h-0 w-full flex-col ${expanded ? '' : 'border-hairline border-l'}`}
 		>
-			<div
-				className={`flex h-10 shrink-0 items-center gap-1 px-2 ${current ? 'border-hairline border-b' : ''}`}
-			>
-				{current ? (
-					<span className="bg-muted text-foreground inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium">
-						<current.icon className="size-3.5" aria-hidden="true" />
-						{current.label}
-					</span>
-				) : null}
+			<div className="border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-2">
+				<div
+					role="tablist"
+					aria-label="Side panel tabs"
+					className="flex min-w-0 items-center gap-1 overflow-x-auto"
+					onKeyDown={(event) => {
+						const index = tabIndexForKey(
+							event.key,
+							tabs.findIndex((tab) => tab.id === activeTabId),
+							tabs.length
+						);
+
+						if (index === null) return;
+						event.preventDefault();
+
+						const next = tabs[index]!;
+
+						if (next.id === activeTabId) return;
+						focusActiveTab.current = true;
+						onActivateTab(next.id);
+					}}
+				>
+					{tabs.map((tab) => {
+						const heading = tabHeading(tab, artifacts);
+						const active = tab.id === activeTabId;
+
+						return (
+							<div
+								key={tab.id}
+								className={`group flex max-w-40 min-w-20 shrink items-center rounded-md text-xs font-medium transition ${
+									active
+										? 'bg-muted text-foreground'
+										: 'text-muted-foreground hover:bg-hover-fill hover:text-foreground'
+								}`}
+							>
+								<button
+									type="button"
+									role="tab"
+									id={`side-panel-tab-${tab.id}`}
+									aria-selected={active}
+									aria-controls={`side-panel-tabpanel-${tab.id}`}
+									tabIndex={active ? 0 : -1}
+									title={heading.label}
+									onClick={() => onActivateTab(tab.id)}
+									onAuxClick={(event) => {
+										if (event.button === 1) onCloseTab(tab.id);
+									}}
+									className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2.5 focus-visible:ring-2 focus-visible:outline-none"
+								>
+									<heading.icon className="size-3.5 shrink-0" aria-hidden="true" />
+									<span className="truncate">{heading.label}</span>
+								</button>
+								<button
+									type="button"
+									tabIndex={active ? 0 : -1}
+									onClick={() => {
+										focusActiveTab.current = true;
+										onCloseTab(tab.id);
+									}}
+									aria-label={`Close ${heading.label} tab`}
+									title="Close tab"
+									className={`hover:bg-hover-fill focus-visible:ring-ring mx-0.5 shrink-0 rounded p-0.5 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none ${active ? '' : 'opacity-0'}`}
+								>
+									<X className="size-3" aria-hidden="true" />
+								</button>
+							</div>
+						);
+					})}
+				</div>
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={() => onViewChange(null)}
+					onClick={onNewTab}
 					aria-label="New tab"
 					title="New tab"
 				>
@@ -145,132 +243,174 @@ export default function SidePanel({
 					<PanelRight className="size-4" aria-hidden="true" />
 				</button>
 			</div>
-			<section
-				ref={viewRef}
-				tabIndex={-1}
-				aria-label={current?.label ?? 'Side panel'}
-				className="flex min-h-0 flex-1 flex-col focus:outline-none"
-			>
-				{view === null ? (
-					<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
-						<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
-							{VIEWS.map((item) => (
-								<li key={item.id}>
+			{tabs.map((tab) => (
+				// Inactive tabs stay mounted so their browser session, scroll, and artifact state survive.
+				<section
+					key={tab.id}
+					id={`side-panel-tabpanel-${tab.id}`}
+					role="tabpanel"
+					aria-labelledby={`side-panel-tab-${tab.id}`}
+					hidden={tab.id !== activeTabId}
+					tabIndex={-1}
+					className="flex min-h-0 flex-1 flex-col focus:outline-none"
+				>
+					{tab.view === null ? (
+						<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+							<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
+								{VIEWS.map((item) => (
+									<li key={item.id}>
+										<button
+											type="button"
+											onClick={(event) => {
+												onUpdateTab(tab.id, { view: item.id });
+												event.currentTarget.closest<HTMLElement>('[role="tabpanel"]')?.focus();
+											}}
+											className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
+										>
+											<item.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
+											<span className="text-sm">{item.label}</span>
+										</button>
+									</li>
+								))}
+							</ul>
+						</div>
+					) : tab.view === 'browser' ? (
+						<BrowserView browserApi={browserApi} />
+					) : (
+						<ArtifactsView
+							artifacts={artifacts}
+							selectedKey={tab.selectedKey}
+							workspacePath={workspacePath}
+							stale={stale}
+							error={error}
+							onSelect={(key) => onUpdateTab(tab.id, { selectedKey: key })}
+							onBack={() => onUpdateTab(tab.id, { selectedKey: null })}
+							onOpenFullscreen={onOpenFullscreen}
+							onDeleteArtifact={onDeleteArtifact}
+						/>
+					)}
+				</section>
+			))}
+		</aside>
+	);
+}
+
+function ArtifactsView({
+	artifacts,
+	selectedKey,
+	workspacePath,
+	stale,
+	error,
+	onSelect,
+	onBack,
+	onOpenFullscreen,
+	onDeleteArtifact
+}: {
+	artifacts: ArtifactEntry[];
+	selectedKey: string | null;
+	workspacePath?: string;
+	stale: boolean;
+	error: string | null;
+	onSelect: (key: string) => void;
+	onBack: () => void;
+	onOpenFullscreen: (key: string) => void;
+	onDeleteArtifact?: (artifactId: string) => Promise<void>;
+}) {
+	const selected = artifacts.find((artifact) => artifact.key === selectedKey) ?? null;
+
+	return (
+		<>
+			{error || stale ? (
+				<div className="space-y-1 border-b px-3 py-2">
+					{error ? (
+						<p role="alert" className="text-xs text-amber-800 dark:text-amber-200">
+							{error}
+						</p>
+					) : null}
+					{stale ? (
+						<p role="status" className="text-muted-foreground text-xs">
+							Showing last known artifacts while Sprocket reconnects.
+						</p>
+					) : null}
+				</div>
+			) : null}
+			{selected ? (
+				<div className="flex min-h-0 flex-1 flex-col p-3">
+					<ArtifactDisplay
+						title={selected.title}
+						artifactType={selected.artifactType}
+						content={selected.content}
+						localPath={selected.localPath}
+						workspacePath={workspacePath}
+						localError={selected.localError}
+						variant="full"
+						onOpenFullscreen={() => onOpenFullscreen(selected.key)}
+						onBack={onBack}
+						onDelete={onDeleteArtifact ? () => onDeleteArtifact(selected.key) : undefined}
+					/>
+				</div>
+			) : (
+				<div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
+					{artifacts.length === 0 ? (
+						<p className="text-muted-foreground p-3 text-sm">No artifacts yet.</p>
+					) : (
+						artifacts.map((artifact) => {
+							const TypeIcon = TYPE_ICONS[artifact.artifactType];
+
+							return (
+								<div
+									key={artifact.key}
+									className="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
+								>
+									<ArtifactMenu
+										trigger="context"
+										title={artifact.title}
+										onDelete={onDeleteArtifact ? () => onDeleteArtifact(artifact.key) : undefined}
+									>
+										<button
+											type="button"
+											className="flex min-w-0 flex-1 items-center gap-2 text-left"
+											onClick={() => onSelect(artifact.key)}
+										>
+											<TypeIcon
+												className="text-muted-foreground size-3.5 shrink-0"
+												aria-hidden="true"
+											/>
+											<span className="flex min-w-0 flex-1 flex-col">
+												<span className="flex min-w-0 items-center gap-2">
+													<span className="text-foreground min-w-0 truncate text-sm">
+														{artifact.title}
+													</span>
+													<span className="text-muted-foreground shrink-0 text-[11px]">
+														{artifact.artifactType}
+													</span>
+												</span>
+												<span className="text-muted-foreground min-w-0 truncate text-[11px]">
+													{artifact.localPath ?? 'Stored in cloud'}
+												</span>
+												{artifact.localError ? (
+													<span className="text-[11px] text-amber-800 dark:text-amber-200">
+														{artifact.localError}
+													</span>
+												) : null}
+											</span>
+										</button>
+									</ArtifactMenu>
 									<button
 										type="button"
-										onClick={() => {
-											onViewChange(item.id);
-											viewRef.current?.focus();
-										}}
-										className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
+										className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+										onClick={() => onOpenFullscreen(artifact.key)}
+										aria-label={`Open ${artifact.title} fullscreen`}
+										title="Open fullscreen"
 									>
-										<item.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
-										<span className="text-sm">{item.label}</span>
+										<Fullscreen className="size-3.5" aria-hidden="true" />
 									</button>
-								</li>
-							))}
-						</ul>
-					</div>
-				) : view === 'browser' ? (
-					<BrowserView browserApi={browserApi} />
-				) : (
-					<>
-						{error || stale ? (
-							<div className="space-y-1 border-b px-3 py-2">
-								{error ? (
-									<p role="alert" className="text-xs text-amber-800 dark:text-amber-200">
-										{error}
-									</p>
-								) : null}
-								{stale ? (
-									<p role="status" className="text-muted-foreground text-xs">
-										Showing last known artifacts while Sprocket reconnects.
-									</p>
-								) : null}
-							</div>
-						) : null}
-						{selected ? (
-							<div className="flex min-h-0 flex-1 flex-col p-3">
-								<ArtifactDisplay
-									title={selected.title}
-									artifactType={selected.artifactType}
-									content={selected.content}
-									localPath={selected.localPath}
-									workspacePath={workspacePath}
-									localError={selected.localError}
-									variant="full"
-									onOpenFullscreen={() => onOpenFullscreen(selected.key)}
-									onBack={onBack}
-									onDelete={onDeleteArtifact ? () => onDeleteArtifact(selected.key) : undefined}
-								/>
-							</div>
-						) : (
-							<div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
-								{artifacts.length === 0 ? (
-									<p className="text-muted-foreground p-3 text-sm">No artifacts yet.</p>
-								) : (
-									artifacts.map((artifact) => {
-										const TypeIcon = TYPE_ICONS[artifact.artifactType];
-
-										return (
-											<div
-												key={artifact.key}
-												className="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
-											>
-												<ArtifactMenu
-													trigger="context"
-													title={artifact.title}
-													onDelete={
-														onDeleteArtifact ? () => onDeleteArtifact(artifact.key) : undefined
-													}
-												>
-													<button
-														type="button"
-														className="flex min-w-0 flex-1 items-center gap-2 text-left"
-														onClick={() => onSelect(artifact.key)}
-													>
-														<TypeIcon
-															className="text-muted-foreground size-3.5 shrink-0"
-															aria-hidden="true"
-														/>
-														<span className="flex min-w-0 flex-1 flex-col">
-															<span className="flex min-w-0 items-center gap-2">
-																<span className="text-foreground min-w-0 truncate text-sm">
-																	{artifact.title}
-																</span>
-																<span className="text-muted-foreground shrink-0 text-[11px]">
-																	{artifact.artifactType}
-																</span>
-															</span>
-															<span className="text-muted-foreground min-w-0 truncate text-[11px]">
-																{artifact.localPath ?? 'Stored in cloud'}
-															</span>
-															{artifact.localError ? (
-																<span className="text-[11px] text-amber-800 dark:text-amber-200">
-																	{artifact.localError}
-																</span>
-															) : null}
-														</span>
-													</button>
-												</ArtifactMenu>
-												<button
-													type="button"
-													className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
-													onClick={() => onOpenFullscreen(artifact.key)}
-													aria-label={`Open ${artifact.title} fullscreen`}
-													title="Open fullscreen"
-												>
-													<Fullscreen className="size-3.5" aria-hidden="true" />
-												</button>
-											</div>
-										);
-									})
-								)}
-							</div>
-						)}
-					</>
-				)}
-			</section>
-		</aside>
+								</div>
+							);
+						})
+					)}
+				</div>
+			)}
+		</>
 	);
 }
