@@ -69,6 +69,8 @@ pub fn write_workspace_file(
         bail!("file content exceeds the 2 MiB editor limit");
     }
     let file_path = resolve_entry(root, path, true)?;
+    // Callers run on blocking threads; `blocking_lock` panics inside an async context.
+    let _write_guard = crate::patch::PATCH_LOCK.blocking_lock();
     let existing = match fs::metadata(&file_path) {
         Ok(metadata) if metadata.is_file() => Some(metadata),
         Ok(_) => bail!("{path} is not a file"),

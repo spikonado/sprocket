@@ -3,7 +3,7 @@ mod image;
 mod tests;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
@@ -17,10 +17,14 @@ use sprocket_host::workspace_search::{
     GitStatusEntry, MAX_QUERY_CHARS, PathListing, SearchOutcome,
 };
 use sprocket_workspace::{
-    BUILTIN_SKILLS, FilesystemBrowseResult, WorkspaceFileContent, WorkspaceFileWrite,
-    browse_filesystem, create_workspace_entry, default_user_skills_dirs, delete_workspace_entry,
-    load_workspace_skills, read_workspace_file, rename_workspace_entry, write_workspace_file,
+    BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceFileContent,
+    WorkspaceFileWrite, browse_filesystem, create_workspace_entry, default_user_skills_dirs,
+    delete_workspace_entry, load_workspace_skills, read_workspace_file, rename_workspace_entry,
+    write_workspace_file,
 };
+
+/// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
+const WRITE_BODY_LIMIT: usize = MAX_EDITABLE_FILE_BYTES as usize * 6 + 64 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,7 +146,10 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/search", post(search_workspace))
         .route("/workspace/files", post(list_workspace_files))
         .route("/workspace/file/read", post(read_file))
-        .route("/workspace/file/write", post(write_file))
+        .route(
+            "/workspace/file/write",
+            post(write_file).layer(DefaultBodyLimit::max(WRITE_BODY_LIMIT)),
+        )
         .route("/workspace/file/create", post(create_entry))
         .route("/workspace/file/rename", post(rename_entry))
         .route("/workspace/file/delete", post(delete_entry))

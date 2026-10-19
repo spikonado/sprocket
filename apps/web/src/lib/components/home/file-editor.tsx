@@ -13,6 +13,8 @@ export type FileEditorApi = Pick<DesktopApi, 'readWorkspaceFile' | 'writeWorkspa
 type Props = {
 	api: FileEditorApi | null;
 	file: WorkspaceFileTarget;
+	/** Identifies the tab so unsaved edits survive the editor unmounting. */
+	draftKey: string;
 	/** Polls the file for outside edits while the tab is visible. */
 	active: boolean;
 	onDirtyChange: (dirty: boolean) => void;
@@ -26,7 +28,22 @@ type Status =
 
 const DISK_POLL_MS = 2_500;
 
-const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|svg)$/i;
+const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+
+type Draft = { doc: Text; base: Text; version: string };
+
+/** Unsaved buffers by tab, kept while the panel is closed or another view replaces it. */
+const drafts = new Map<string, Draft>();
+
+export function discardFileDraft(draftKey: string) {
+	drafts.delete(draftKey);
+}
+
+if (typeof window !== 'undefined') {
+	window.addEventListener('beforeunload', (event) => {
+		if (drafts.size > 0) event.preventDefault();
+	});
+}
 
 const editorTheme = EditorView.theme({
 	'&': { height: '100%', fontSize: '12.5px', backgroundColor: 'var(--background)' },
@@ -55,8 +72,27 @@ function basename(path: string) {
 	return path.slice(path.lastIndexOf('/') + 1);
 }
 
-export default function FileEditor({ api, file, active, onDirtyChange }: Props) {
-	const isImage = IMAGE_EXTENSIONS.test(file.path);
+export default function FileEditor(props: Props) {
+	return IMAGE_EXTENSIONS.test(props.file.path) ? (
+		<ImagePreview file={props.file} />
+	) : (
+		<TextFileEditor {...props} />
+	);
+}
+
+function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
+	// Encoded so `#`, `?`, and `%` in filenames survive the Markdown URL parsing.
+	const source = file.path.split('/').map(encodeURIComponent).join('/');
+	const src = markdownImageUrl(source, { workspacePath: file.workspacePath });
+
+	return (
+		<div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+			{src ? <img src={src} alt={basename(file.path)} className="max-h-full max-w-full" /> : null}
+		</div>
+	);
+}
+
+function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [dirty, setDirty] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -78,7 +114,16 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 
 	function markDirty() {
 		const view = viewRef.current;
-		setDirty(!!view && !!savedDoc.current && !view.state.doc.eq(savedDoc.current));
+		const base = savedDoc.current;
+		const isDirty = !!view && !!base && !view.state.doc.eq(base);
+
+		if (isDirty && version.current !== null) {
+			drafts.set(draftKey, { doc: view.state.doc, base, version: version.current });
+		} else {
+			drafts.delete(draftKey);
+		}
+
+		setDirty(isDirty);
 	}
 
 	function extensions(): Extension[] {
@@ -104,7 +149,7 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 		];
 	}
 
-	function replaceContent(content: string, nextVersion: string) {
+	function replaceContent(content: string | Text, nextVersion: string, base?: Text) {
 		const view = viewRef.current;
 
 		if (!view) return;
@@ -117,7 +162,7 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 			})
 		);
 		void loadLanguage(view);
-		savedDoc.current = view.state.doc;
+		savedDoc.current = base ?? view.state.doc;
 		version.current = nextVersion;
 		setDiskVersion(null);
 		markDirty();
@@ -139,7 +184,7 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 	async function sync(force: boolean) {
 		const { api, file } = latest.current;
 
-		if (!api || isImage) return;
+		if (!api) return;
 
 		const started = ++generation.current;
 
@@ -160,7 +205,23 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 
 		if (started !== generation.current) return;
 
+		const draft = version.current === null ? drafts.get(draftKey) : undefined;
+
+		if (draft) {
+			replaceContent(draft.doc, draft.version, draft.base);
+			setStatus({ kind: 'text' });
+		}
+
+		const view = viewRef.current;
+		const hasEdits = !!view && !!savedDoc.current && !view.state.doc.eq(savedDoc.current);
+
 		if (result.unsupported) {
+			if (hasEdits && !force) {
+				setDiskVersion(result.version);
+
+				return;
+			}
+
 			setStatus({
 				kind: 'unsupported',
 				message:
@@ -180,9 +241,6 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 
 			return;
 		}
-
-		const view = viewRef.current;
-		const hasEdits = !!view && !!savedDoc.current && !view.state.doc.eq(savedDoc.current);
 
 		if (hasEdits && !force) setDiskVersion(result.version);
 		else replaceContent(result.content ?? '', result.version);
@@ -248,30 +306,20 @@ export default function FileEditor({ api, file, active, onDirtyChange }: Props) 
 	}, [file.workspacePath, file.path]);
 
 	useEffect(() => {
-		if (!active || isImage) return;
+		if (!active) return;
 
 		const timer = setInterval(() => {
 			if (document.visibilityState === 'visible') actions.current.sync(false);
 		}, DISK_POLL_MS);
 
 		return () => clearInterval(timer);
-	}, [active, isImage]);
+	}, [active]);
 
 	useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 
-	if (isImage) {
-		const src = markdownImageUrl(file.path, { workspacePath: file.workspacePath });
-
-		return (
-			<div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-				{src ? <img src={src} alt={basename(file.path)} className="max-h-full max-w-full" /> : null}
-			</div>
-		);
-	}
-
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			{diskVersion ? (
+			{diskVersion !== null ? (
 				<div
 					role="alert"
 					className="border-hairline flex shrink-0 items-center gap-2 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-900 dark:text-amber-100"

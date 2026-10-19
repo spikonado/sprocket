@@ -18,7 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
-import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
+import FileEditor, { discardFileDraft, type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import type { SidePanelTab, SidePanelView } from '$lib/chat/side-panel';
@@ -339,6 +339,7 @@ export default function SidePanel({
 						<FileEditor
 							api={filesApi}
 							file={tab.file}
+							draftKey={tab.id}
 							active={tab.id === activeTabId}
 							onDirtyChange={(dirty) => setTabDirty(tab.id, dirty)}
 						/>
@@ -367,6 +368,7 @@ export default function SidePanel({
 					onConfirm={() => {
 						setConfirmCloseId(null);
 						setTabDirty(confirmCloseId, false);
+						discardFileDraft(confirmCloseId);
 						onCloseTab(confirmCloseId);
 					}}
 				/>

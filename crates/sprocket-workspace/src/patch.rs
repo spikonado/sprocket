@@ -20,8 +20,9 @@ use crate::unified_diff::{
 
 /// Patches may target any absolute path and runs may start from different
 /// directories, so one process-wide lock is the only key every overlapping
-/// write shares.
-static PATCH_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+/// write shares. Editor saves take it too so their version check and replace
+/// stay atomic with respect to patches and each other.
+pub(crate) static PATCH_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

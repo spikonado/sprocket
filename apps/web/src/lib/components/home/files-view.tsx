@@ -113,7 +113,7 @@ export default function FilesView({
 	const [refreshKey, setRefreshKey] = useState(0);
 	const [listing, setListing] = useState<ListingState | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
-	const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+	const [deleteRequest, setDeleteRequest] = useState<{ path: string; root: string } | null>(null);
 	const shown = useRef<Shown | null>(null);
 	const forceReset = useRef(false);
 	const mutations = useRef(0);
@@ -131,6 +131,13 @@ export default function FilesView({
 	const canSwitchRoot = !!threadCwd && !!projectPath && threadCwd !== projectPath;
 	const rootPath = canSwitchRoot && root === 'project' ? projectPath : (threadCwd ?? projectPath);
 	const current = listing?.path === rootPath ? listing : null;
+
+	const pendingDelete =
+		deleteRequest && deleteRequest.root === rootPath ? deleteRequest.path : null;
+
+	function requestDelete(path: string) {
+		if (rootPath) setDeleteRequest({ path, root: rootPath });
+	}
 
 	const { model } = useFileTree({
 		paths: [],
@@ -247,7 +254,7 @@ export default function FilesView({
 	}
 
 	function confirmDelete(path: string) {
-		setPendingDelete(null);
+		setDeleteRequest(null);
 		model.remove(path, { recursive: path.endsWith('/') });
 		const target = trimSlash(path);
 
@@ -574,7 +581,7 @@ export default function FilesView({
 					if (!path || !(origin instanceof HTMLElement) || origin.role !== 'treeitem') return;
 
 					if (event.key === 'Enter') openPath(path);
-					else if (event.key === 'Delete') setPendingDelete(path);
+					else if (event.key === 'Delete') requestDelete(path);
 				}}
 				renderContextMenu={(item, context) => (
 					<FileContextMenu
@@ -589,7 +596,7 @@ export default function FilesView({
 							)
 						}
 						onRename={() => model.startRenaming(item.path)}
-						onDelete={() => setPendingDelete(item.path)}
+						onDelete={() => requestDelete(item.path)}
 					/>
 				)}
 			/>
@@ -603,7 +610,7 @@ export default function FilesView({
 					}
 					confirmLabel="Delete"
 					destructive
-					onCancel={() => setPendingDelete(null)}
+					onCancel={() => setDeleteRequest(null)}
 					onConfirm={() => confirmDelete(pendingDelete)}
 				/>
 			) : null}
