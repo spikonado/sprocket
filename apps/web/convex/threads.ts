@@ -41,7 +41,10 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 		throw new Error('Cannot settle a thread with active work.');
 	}
 
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+	await ctx.db.patch('threadRecords', threadId, {
+		archivedAt: Date.now(),
+		settleWhenIdle: undefined
+	});
 
 	return { userId, record };
 }
@@ -54,7 +57,10 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 		throw new Error('Only root threads can be settled.');
 	}
 
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
+	await ctx.db.patch('threadRecords', threadId, {
+		archivedAt: undefined,
+		settleWhenIdle: undefined
+	});
 
 	return { userId, record };
 }
