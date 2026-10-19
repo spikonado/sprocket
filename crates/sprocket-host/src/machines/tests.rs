@@ -171,7 +171,7 @@ async fn failed_registration_keeps_an_existing_presence() {
 }
 
 #[tokio::test]
-async fn failed_heartbeat_drops_cached_presence() {
+async fn failed_heartbeat_keeps_cached_presence() {
     let (dir, manager) = manager_for_test();
     {
         let mut accounts = manager.accounts.lock().await;
@@ -187,11 +187,17 @@ async fn failed_heartbeat_drops_cached_presence() {
         .heartbeat("user-a")
         .await
         .expect_err("invalid deployment must fail heartbeat");
-    assert!(manager.accounts.lock().await.get("user-a").is_none());
-    manager
-        .register("user-a")
-        .await
-        .expect_err("cleared presence must register with Convex");
+    {
+        let accounts = manager.accounts.lock().await;
+        let presence = accounts
+            .get("user-a")
+            .expect("a transient heartbeat failure must keep presence");
+        assert!(
+            !presence.heartbeat.is_finished(),
+            "the heartbeat task must keep running"
+        );
+        presence.heartbeat.abort();
+    }
 
     let _ = tokio::fs::remove_dir_all(dir).await;
 }

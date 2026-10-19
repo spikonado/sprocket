@@ -114,9 +114,8 @@ impl MachineManager {
         let heartbeat = tokio::spawn(async move {
             loop {
                 sleep(HEARTBEAT_INTERVAL).await;
-                if manager.heartbeat(&heartbeat_user_id).await.is_err() {
-                    tracing::warn!("machine heartbeat failed");
-                    break;
+                if let Err(error) = manager.heartbeat(&heartbeat_user_id).await {
+                    tracing::warn!("machine heartbeat failed: {error:#}");
                 }
             }
         });
@@ -197,7 +196,7 @@ impl MachineManager {
         if !self.accounts.lock().await.contains_key(user_id) {
             return Ok(());
         }
-        let error = match timeout(RPC_TIMEOUT, async {
+        match timeout(RPC_TIMEOUT, async {
             let _: serde_json::Value = self
                 .connect(user_id)
                 .await?
@@ -207,14 +206,10 @@ impl MachineManager {
         })
         .await
         {
-            Ok(Ok(())) => return Ok(()),
-            Ok(Err(error)) => error,
-            Err(_) => anyhow::anyhow!("machine heartbeat timed out"),
-        };
-        if let Some(presence) = self.accounts.lock().await.remove(user_id) {
-            presence.heartbeat.abort();
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(anyhow::anyhow!("machine heartbeat timed out")),
         }
-        Err(error)
     }
 
     async fn register_remote(&self, expected_user_id: &str) -> anyhow::Result<RegisteredMachine> {
