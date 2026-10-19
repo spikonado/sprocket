@@ -14,12 +14,15 @@ import {
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
+import ConfirmDialog from '$lib/components/home/confirm-dialog';
+import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import type { SidePanelTab, SidePanelView } from '$lib/chat/side-panel';
+import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 import type { ArtifactType } from '@convex/lib/validators';
 
 type TabPatch = Partial<Omit<SidePanelTab, 'id'>>;
@@ -32,7 +35,7 @@ type Props = {
 	tabs: SidePanelTab[];
 	activeTabId: string;
 	browserApi: BrowserApi | null;
-	filesApi: FilesApi | null;
+	filesApi: (FilesApi & FileEditorApi) | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
@@ -41,6 +44,9 @@ type Props = {
 	onActivateTab: (id: string) => void;
 	onCloseTab: (id: string) => void;
 	onUpdateTab: (id: string, patch: TabPatch) => void;
+	onOpenFile: (file: WorkspaceFileTarget) => void;
+	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
+	onFileDeleted: (workspacePath: string, path: string) => void;
 	/** Enter true browser fullscreen for a single artifact (content only). */
 	onOpenFullscreen: (key: string) => void;
 	onToggleExpanded: () => void;
@@ -53,7 +59,7 @@ const TYPE_ICONS = {
 	react: FileCode
 } as const satisfies Record<ArtifactType, typeof FileCode>;
 
-const VIEWS: { id: SidePanelView; label: string; icon: LucideIcon }[] = [
+const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIcon }[] = [
 	{ id: 'artifacts', label: 'Artifacts', icon: Files },
 	{ id: 'files', label: 'Files', icon: FolderTree },
 	{ id: 'browser', label: 'Browser', icon: Globe }
@@ -83,6 +89,14 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 
 	if (artifact) return { label: artifact.title, icon: TYPE_ICONS[artifact.artifactType] };
 
+	if (tab.view === 'file' && tab.file) {
+		return {
+			label: tab.file.path.slice(tab.file.path.lastIndexOf('/') + 1),
+			title: tab.file.path,
+			icon: FileCode
+		};
+	}
+
 	return VIEWS.find((item) => item.id === tab.view) ?? { label: 'New tab', icon: SquarePlus };
 }
 
@@ -102,11 +116,33 @@ export default function SidePanel({
 	onActivateTab,
 	onCloseTab,
 	onUpdateTab,
+	onOpenFile,
+	onFileRenamed,
+	onFileDeleted,
 	onOpenFullscreen,
 	onToggleExpanded,
 	onClose
 }: Props) {
 	const focusActiveTab = useRef(false);
+	const [dirtyTabs, setDirtyTabs] = useState<ReadonlySet<string>>(() => new Set());
+	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
+
+	const setTabDirty = useCallback((id: string, dirty: boolean) => {
+		setDirtyTabs((current) => {
+			if (current.has(id) === dirty) return current;
+			const next = new Set(current);
+
+			if (dirty) next.add(id);
+			else next.delete(id);
+
+			return next;
+		});
+	}, []);
+
+	function requestCloseTab(id: string) {
+		if (dirtyTabs.has(id)) setConfirmCloseId(id);
+		else onCloseTab(id);
+	}
 
 	useEffect(() => {
 		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
@@ -189,22 +225,28 @@ export default function SidePanel({
 									aria-selected={active}
 									aria-controls={`side-panel-tabpanel-${tab.id}`}
 									tabIndex={active ? 0 : -1}
-									title={heading.label}
+									title={'title' in heading ? heading.title : heading.label}
 									onClick={() => onActivateTab(tab.id)}
 									onAuxClick={(event) => {
-										if (event.button === 1) onCloseTab(tab.id);
+										if (event.button === 1) requestCloseTab(tab.id);
 									}}
 									className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2.5 focus-visible:ring-2 focus-visible:outline-none"
 								>
 									<heading.icon className="size-3.5 shrink-0" aria-hidden="true" />
 									<span className="truncate">{heading.label}</span>
+									{dirtyTabs.has(tab.id) ? (
+										<span
+											className="bg-foreground/70 size-1.5 shrink-0 rounded-full"
+											aria-label="Unsaved changes"
+										/>
+									) : null}
 								</button>
 								<button
 									type="button"
 									tabIndex={active ? 0 : -1}
 									onClick={() => {
 										focusActiveTab.current = true;
-										onCloseTab(tab.id);
+										requestCloseTab(tab.id);
 									}}
 									aria-label={`Close ${heading.label} tab`}
 									title="Close tab"
@@ -289,6 +331,16 @@ export default function SidePanel({
 							projectPath={workspacePath}
 							threadCwd={threadCwd}
 							active={tab.id === activeTabId}
+							onOpenFile={onOpenFile}
+							onRenamed={onFileRenamed}
+							onDeleted={onFileDeleted}
+						/>
+					) : tab.view === 'file' && tab.file ? (
+						<FileEditor
+							api={filesApi}
+							file={tab.file}
+							active={tab.id === activeTabId}
+							onDirtyChange={(dirty) => setTabDirty(tab.id, dirty)}
 						/>
 					) : (
 						<ArtifactsView
@@ -305,6 +357,20 @@ export default function SidePanel({
 					)}
 				</section>
 			))}
+			{confirmCloseId ? (
+				<ConfirmDialog
+					title="Discard unsaved changes?"
+					description="This file has edits that haven’t been saved. Closing the tab discards them."
+					confirmLabel="Discard and close"
+					destructive
+					onCancel={() => setConfirmCloseId(null)}
+					onConfirm={() => {
+						setConfirmCloseId(null);
+						setTabDirty(confirmCloseId, false);
+						onCloseTab(confirmCloseId);
+					}}
+				/>
+			) : null}
 		</aside>
 	);
 }

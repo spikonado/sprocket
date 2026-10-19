@@ -53,8 +53,28 @@ const workspaceSearchResultSchema = z.object({
 
 const workspaceFilesResultSchema = z.object({
 	paths: z.array(z.string()),
+	gitStatus: z.array(
+		z.object({
+			path: z.string(),
+			status: z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked', 'ignored'])
+		})
+	),
 	scanning: z.boolean(),
-	truncated: z.boolean()
+	truncated: z.boolean(),
+	hash: z.string(),
+	unchanged: z.boolean()
+});
+
+const workspaceFileContentSchema = z.object({
+	content: z.string().nullable(),
+	version: z.string(),
+	size: z.number(),
+	unsupported: z.enum(['binary', 'tooLarge']).nullable()
+});
+
+const workspaceFileWriteResultSchema = z.object({
+	status: z.enum(['saved', 'conflict']),
+	version: z.string()
 });
 
 const workspacePathResolutionSchema = z.object({
@@ -438,6 +458,35 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(input),
 				signal
 			}),
+		readWorkspaceFile: (input, signal) =>
+			request('/api/workspace/file/read', workspaceFileContentSchema, {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			}),
+		writeWorkspaceFile: (input) =>
+			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
+				method: 'POST',
+				body: JSON.stringify(input)
+			}),
+		createWorkspaceFile: async (input) => {
+			await request('/api/workspace/file/create', z.unknown(), {
+				method: 'POST',
+				body: JSON.stringify(input)
+			});
+		},
+		renameWorkspaceFile: async (input) => {
+			await request('/api/workspace/file/rename', z.unknown(), {
+				method: 'POST',
+				body: JSON.stringify(input)
+			});
+		},
+		deleteWorkspaceFile: async (input) => {
+			await request('/api/workspace/file/delete', z.unknown(), {
+				method: 'POST',
+				body: JSON.stringify(input)
+			});
+		},
 		resolveWorkspacePath: (input) => {
 			const body = input.createIfMissing
 				? { workspacePath: input.workspacePath, createIfMissing: true }

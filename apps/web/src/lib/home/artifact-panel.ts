@@ -14,11 +14,12 @@ import {
 import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
+	renamedPath,
 	type SidePanelSnapshot,
 	type SidePanelTab
 } from '$lib/chat/side-panel';
 import { useStore, type Store } from '$lib/store';
-import type { ArtifactsWatchRequest, DesktopApi } from '$lib/types/sprocket';
+import type { ArtifactsWatchRequest, DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
 
@@ -238,6 +239,56 @@ export class ArtifactPanel implements Store<number> {
 		if (this.fullscreenKey === key) return;
 		this.fullscreenKey = key;
 		this.#emit();
+	}
+
+	/** Focuses the tab already editing the file, or opens a new one. */
+	openFile(file: WorkspaceFileTarget) {
+		const existing = this.panel.tabs.find(
+			(tab) =>
+				tab.view === 'file' &&
+				tab.file?.workspacePath === file.workspacePath &&
+				tab.file.path === file.path
+		);
+
+		if (existing) {
+			this.activateTab(existing.id);
+
+			return;
+		}
+
+		const tab: SidePanelTab = { ...this.#createTab(), view: 'file', file };
+		this.panel = { ...this.panel, tabs: [...this.panel.tabs, tab], activeTabId: tab.id };
+		this.#emit();
+	}
+
+	/** Keeps open file tabs pointing at a renamed file or folder. */
+	renameFile(workspacePath: string, from: string, to: string) {
+		let changed = false;
+
+		const tabs = this.panel.tabs.map((tab) => {
+			if (tab.file?.workspacePath !== workspacePath) return tab;
+			const path = renamedPath(tab.file.path, from, to);
+
+			if (path === null) return tab;
+			changed = true;
+
+			return { ...tab, file: { workspacePath, path } };
+		});
+
+		if (!changed) return;
+		this.panel = { ...this.panel, tabs };
+		this.#emit();
+	}
+
+	closeFile(workspacePath: string, path: string) {
+		for (const tab of this.panel.tabs) {
+			if (
+				tab.file?.workspacePath === workspacePath &&
+				renamedPath(tab.file.path, path, path) !== null
+			) {
+				this.closeTab(tab.id);
+			}
+		}
 	}
 
 	#createTab(): SidePanelTab {

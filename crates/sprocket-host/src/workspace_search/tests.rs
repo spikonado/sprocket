@@ -148,6 +148,14 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
             "src/nested/important.tmp",
         ])
     );
+    assert!(listing.git_status.contains(&GitStatusEntry {
+        path: "src/main.rs".to_string(),
+        status: GitFileStatus::Untracked,
+    }));
+    assert_eq!(
+        listing.content_hash(),
+        index.list_paths(&root).unwrap().content_hash()
+    );
 }
 
 #[test]

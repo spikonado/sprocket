@@ -1,4 +1,6 @@
-export type SidePanelView = 'artifacts' | 'files' | 'browser';
+import type { WorkspaceFileTarget } from '$lib/types/sprocket';
+
+export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
 
 export type SidePanelTab = {
 	id: string;
@@ -6,7 +8,16 @@ export type SidePanelTab = {
 	view: SidePanelView | null;
 	/** Selected artifact, for the artifacts view. */
 	selectedKey: string | null;
+	/** Open workspace file, for the file view. */
+	file?: WorkspaceFileTarget;
 };
+
+/** Maps `path` through a rename of `from` to `to`; returns null when unaffected. */
+export function renamedPath(path: string, from: string, to: string) {
+	if (path === from) return to;
+
+	return path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : null;
+}
 
 /** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {

@@ -25,6 +25,9 @@ function Harness() {
 			onActivateTab={(id) => panel.activateTab(id)}
 			onCloseTab={(id) => panel.closeTab(id)}
 			onUpdateTab={(id, patch) => panel.updateTab(id, patch)}
+			onOpenFile={(file) => panel.openFile(file)}
+			onFileRenamed={(workspacePath, from, to) => panel.renameFile(workspacePath, from, to)}
+			onFileDeleted={(workspacePath, path) => panel.closeFile(workspacePath, path)}
 			onOpenFullscreen={vi.fn()}
 			onToggleExpanded={vi.fn()}
 			onClose={vi.fn()}

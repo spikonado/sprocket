@@ -1,13 +1,24 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
-export default function RestartConfirmation({
-	onCancel,
-	onConfirm
-}: {
+type Props = {
+	title: string;
+	description: string;
+	confirmLabel: string;
+	destructive?: boolean;
 	onCancel: () => void;
 	onConfirm: () => void;
-}) {
+};
+
+export default function ConfirmDialog({
+	title,
+	description,
+	confirmLabel,
+	destructive = false,
+	onCancel,
+	onConfirm
+}: Props) {
+	const id = useId();
 	const dialogRef = useRef<HTMLDialogElement>(null);
 
 	useEffect(() => {
@@ -24,17 +35,16 @@ export default function RestartConfirmation({
 	return createPortal(
 		<dialog
 			ref={dialogRef}
-			aria-labelledby="restart-confirmation-title"
-			aria-describedby="restart-confirmation-description"
+			aria-labelledby={`${id}-title`}
+			aria-describedby={`${id}-description`}
 			className="bg-background text-foreground fixed inset-0 m-auto w-[min(28rem,calc(100%-2rem))] rounded-2xl border p-6 shadow-xl backdrop:bg-black/40"
 			onCancel={onCancel}
 		>
-			<h2 id="restart-confirmation-title" className="text-lg font-medium">
-				Restart Sprocket?
+			<h2 id={`${id}-title`} className="text-lg font-medium">
+				{title}
 			</h2>
-			<p id="restart-confirmation-description" className="text-muted-foreground mt-3 text-sm">
-				Restarting interrupts active agents. They resume afterward only when automatic continuation
-				is on in Settings.
+			<p id={`${id}-description`} className="text-muted-foreground mt-3 text-sm">
+				{description}
 			</p>
 			<div className="mt-6 flex justify-end gap-2">
 				<button
@@ -46,10 +56,14 @@ export default function RestartConfirmation({
 				</button>
 				<button
 					type="button"
-					className="bg-foreground text-background rounded-lg px-4 py-2 text-sm"
+					className={`rounded-lg px-4 py-2 text-sm ${
+						destructive
+							? 'bg-destructive text-destructive-foreground'
+							: 'bg-foreground text-background'
+					}`}
 					onClick={onConfirm}
 				>
-					Restart Sprocket
+					{confirmLabel}
 				</button>
 			</div>
 		</dialog>,

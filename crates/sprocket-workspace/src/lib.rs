@@ -20,6 +20,7 @@ mod skills;
 mod test_support;
 mod unified_diff;
 mod workspace;
+mod workspace_files;
 
 pub const SPROCKET_VERSION: &str = match option_env!("SPROCKET_VERSION") {
     Some(version) => version,
@@ -49,3 +50,7 @@ pub use skills::{
     read_skill_content,
 };
 pub use workspace::resolve_workspace_root;
+pub use workspace_files::{
+    UnsupportedFile, WorkspaceFileContent, WorkspaceFileWrite, create_workspace_entry,
+    delete_workspace_entry, read_workspace_file, rename_workspace_entry, write_workspace_file,
+};

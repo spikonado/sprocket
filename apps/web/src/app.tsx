@@ -2957,6 +2957,11 @@ export default function App({
 						onActivateTab={(id) => artifactPanel.activateTab(id)}
 						onCloseTab={(id) => artifactPanel.closeTab(id)}
 						onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
+						onOpenFile={(file) => artifactPanel.openFile(file)}
+						onFileRenamed={(workspacePath, from, to) =>
+							artifactPanel.renameFile(workspacePath, from, to)
+						}
+						onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
 

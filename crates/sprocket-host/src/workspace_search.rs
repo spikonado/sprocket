@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -6,6 +7,8 @@ use std::time::{Duration, Instant};
 use fff_search::file_picker::{FFFMode, FilePicker, FilePickerOptions, FuzzySearchOptions};
 use fff_search::types::MixedItemRef;
 use fff_search::{MixedSearchConfig, PaginationArgs, QueryParser, SharedFilePicker};
+use git2::Status;
+use serde::Serialize;
 
 pub const SEARCH_RESULT_LIMIT: usize = 30;
 pub const MAX_QUERY_CHARS: usize = 128;
@@ -29,8 +32,63 @@ pub struct SearchOutcome {
 #[derive(Debug, Default)]
 pub struct PathListing {
     pub paths: Vec<String>,
+    pub git_status: Vec<GitStatusEntry>,
     pub scanning: bool,
     pub truncated: bool,
+}
+
+impl PathListing {
+    /// Stable within a server version, which is all clients compare against.
+    pub fn content_hash(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.paths.hash(&mut hasher);
+        self.git_status.hash(&mut hasher);
+        self.truncated.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct GitStatusEntry {
+    pub path: String,
+    pub status: GitFileStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitFileStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Untracked,
+    Ignored,
+}
+
+impl GitFileStatus {
+    fn from_git(status: Status) -> Option<Self> {
+        if status.contains(Status::INDEX_NEW) {
+            Some(Self::Added)
+        } else if status.contains(Status::WT_NEW) {
+            Some(Self::Untracked)
+        } else if status.intersects(Status::INDEX_DELETED | Status::WT_DELETED) {
+            Some(Self::Deleted)
+        } else if status.intersects(Status::INDEX_RENAMED | Status::WT_RENAMED) {
+            Some(Self::Renamed)
+        } else if status.intersects(
+            Status::INDEX_MODIFIED
+                | Status::WT_MODIFIED
+                | Status::INDEX_TYPECHANGE
+                | Status::WT_TYPECHANGE
+                | Status::CONFLICTED,
+        ) {
+            Some(Self::Modified)
+        } else if status.contains(Status::IGNORED) {
+            Some(Self::Ignored)
+        } else {
+            None
+        }
+    }
 }
 
 struct PickerHandle(SharedFilePicker);
@@ -132,18 +190,34 @@ impl WorkspaceSearchIndex {
             .filter(|dir| !dir.is_deleted())
             .map(|dir| directory_path(dir.relative_path(searcher)))
             .filter(|path| path != ".")
-            .map(|path| format!("{path}/"));
+            .map(|path| (format!("{path}/"), None));
         let files = searcher
             .get_files()
             .iter()
             .filter(|file| !file.is_deleted())
-            .map(|file| to_forward_slashes(file.relative_path(searcher)));
-        let mut paths: Vec<String> = dirs.chain(files).take(MAX_LISTED_PATHS + 1).collect();
-        let truncated = paths.len() > MAX_LISTED_PATHS;
-        paths.truncate(MAX_LISTED_PATHS);
+            .map(|file| {
+                (
+                    to_forward_slashes(file.relative_path(searcher)),
+                    file.git_status.and_then(GitFileStatus::from_git),
+                )
+            });
+        let mut entries: Vec<_> = dirs.chain(files).take(MAX_LISTED_PATHS + 1).collect();
+        let truncated = entries.len() > MAX_LISTED_PATHS;
+        entries.truncate(MAX_LISTED_PATHS);
+        let git_status = entries
+            .iter()
+            .filter_map(|(path, status)| {
+                status.map(|status| GitStatusEntry {
+                    path: path.clone(),
+                    status,
+                })
+            })
+            .collect();
+        let paths = entries.into_iter().map(|(path, _)| path).collect();
 
         Ok(PathListing {
             paths,
+            git_status,
             scanning: searcher.is_scan_active(),
             truncated,
         })

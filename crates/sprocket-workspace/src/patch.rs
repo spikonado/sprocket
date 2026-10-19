@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::Permissions;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use diffy::patch_set::{FileOperation, ParseOptions, PatchKind, PatchSet};
@@ -13,6 +13,7 @@ use crate::apply_patch_format::{
     PatchHunk, apply_update, is_apply_patch_format, parse_apply_patch,
 };
 use crate::commands::WorkspaceCancellation;
+use crate::paths::{canonicalize_with_missing_tail, normalize_path};
 use crate::unified_diff::{
     normalize_unified_diff_hunk_counts, strip_surrounding_markdown_fence, unidiff_path_strip,
 };
@@ -137,7 +138,7 @@ fn resolve_patch_path(root: &Path, path: &str, allow_missing: bool) -> Result<Pa
     let resolved = normalize_path(&candidate)?;
 
     if allow_missing {
-        resolve_missing_patch_path(&resolved)
+        canonicalize_with_missing_tail(&resolved)
     } else {
         if !resolved.exists() {
             bail!("path does not exist: {}", resolved.display());
@@ -147,61 +148,6 @@ fn resolve_patch_path(root: &Path, path: &str, allow_missing: bool) -> Result<Pa
             .canonicalize()
             .with_context(|| format!("failed to resolve {}", resolved.display()))
     }
-}
-
-fn normalize_path(path: &Path) -> Result<PathBuf> {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::Normal(segment) => normalized.push(segment),
-            Component::ParentDir => {
-                if matches!(
-                    normalized.components().next_back(),
-                    Some(Component::Normal(_))
-                ) {
-                    normalized.pop();
-                } else if !normalized.has_root() {
-                    normalized.push("..");
-                }
-                // Absolute path already at root: treat extra `..` as a no-op.
-            }
-        }
-    }
-
-    if normalized.as_os_str().is_empty() {
-        bail!("invalid path {}", path.display());
-    }
-
-    Ok(normalized)
-}
-
-fn resolve_missing_patch_path(resolved: &Path) -> Result<PathBuf> {
-    let mut existing_ancestor = resolved;
-    let mut suffix = Vec::new();
-
-    while !existing_ancestor.exists() {
-        let name = existing_ancestor
-            .file_name()
-            .ok_or_else(|| anyhow!("invalid path {}", resolved.display()))?;
-        suffix.push(name.to_os_string());
-        existing_ancestor = existing_ancestor
-            .parent()
-            .ok_or_else(|| anyhow!("invalid path {}", resolved.display()))?;
-    }
-
-    let mut canonical = existing_ancestor
-        .canonicalize()
-        .with_context(|| format!("failed to resolve {}", existing_ancestor.display()))?;
-
-    for component in suffix.into_iter().rev() {
-        canonical.push(component);
-    }
-
-    Ok(canonical)
 }
 
 fn display_path(root: &Path, path: &Path) -> String {

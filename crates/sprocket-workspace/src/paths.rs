@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 pub fn expand_home(path: &str) -> String {
     if path == "~" {
@@ -54,6 +54,62 @@ pub fn normalize_windows_drive_root(path: &str) -> String {
     } else {
         path.to_string()
     }
+}
+
+pub(crate) fn normalize_path(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::Normal(segment) => normalized.push(segment),
+            Component::ParentDir => {
+                if matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                ) {
+                    normalized.pop();
+                } else if !normalized.has_root() {
+                    normalized.push("..");
+                }
+                // Absolute path already at root: treat extra `..` as a no-op.
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        bail!("invalid path {}", path.display());
+    }
+
+    Ok(normalized)
+}
+
+/// Canonicalizes the deepest existing ancestor and re-appends the missing tail.
+pub(crate) fn canonicalize_with_missing_tail(path: &Path) -> Result<PathBuf> {
+    let mut existing_ancestor = path;
+    let mut suffix = Vec::new();
+
+    while !existing_ancestor.exists() {
+        let name = existing_ancestor
+            .file_name()
+            .ok_or_else(|| anyhow!("invalid path {}", path.display()))?;
+        suffix.push(name.to_os_string());
+        existing_ancestor = existing_ancestor
+            .parent()
+            .ok_or_else(|| anyhow!("invalid path {}", path.display()))?;
+    }
+
+    let mut canonical = existing_ancestor
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", existing_ancestor.display()))?;
+
+    for component in suffix.into_iter().rev() {
+        canonical.push(component);
+    }
+
+    Ok(canonical)
 }
 
 /// Strips Windows `\\?\` drive and UNC prefixes so paths are usable in the UI.

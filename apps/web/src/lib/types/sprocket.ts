@@ -303,12 +303,29 @@ export type WorkspaceSearchResult = {
 	scanning: boolean;
 };
 
-/** Directory paths end with `/`. */
+export type WorkspaceGitStatus =
+	'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'ignored';
+
+/** Directory paths end with `/`. `unchanged` means the listing matches `knownHash`. */
 export type WorkspaceFilesResult = {
 	paths: string[];
+	gitStatus: { path: string; status: WorkspaceGitStatus }[];
 	scanning: boolean;
 	truncated: boolean;
+	hash: string;
+	unchanged: boolean;
 };
+
+export type WorkspaceFileContent = {
+	content: string | null;
+	version: string;
+	size: number;
+	unsupported: 'binary' | 'tooLarge' | null;
+};
+
+export type WorkspaceFileWriteResult = { status: 'saved' | 'conflict'; version: string };
+
+export type WorkspaceFileTarget = { workspacePath: string; path: string };
 
 export type RunningCommand = {
 	sessionId: string;
@@ -343,9 +360,23 @@ export type DesktopApi = {
 		signal?: AbortSignal
 	) => Promise<WorkspaceSearchResult>;
 	listWorkspaceFiles: (
-		input: { workspacePath: string },
+		input: { workspacePath: string; knownHash?: string },
 		signal?: AbortSignal
 	) => Promise<WorkspaceFilesResult>;
+	readWorkspaceFile: (
+		input: WorkspaceFileTarget,
+		signal?: AbortSignal
+	) => Promise<WorkspaceFileContent>;
+	writeWorkspaceFile: (
+		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
+	) => Promise<WorkspaceFileWriteResult>;
+	createWorkspaceFile: (input: WorkspaceFileTarget & { directory: boolean }) => Promise<void>;
+	renameWorkspaceFile: (input: {
+		workspacePath: string;
+		from: string;
+		to: string;
+	}) => Promise<void>;
+	deleteWorkspaceFile: (input: WorkspaceFileTarget) => Promise<void>;
 	resolveWorkspacePath: (input: {
 		workspacePath: string;
 		createIfMissing?: boolean;
