@@ -142,7 +142,6 @@ async function registerMachine(
 			userId,
 			machineId: args.machineId,
 			runIds: [],
-			createdAt: now,
 			...metadata
 		});
 	}

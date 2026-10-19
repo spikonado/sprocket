@@ -238,7 +238,7 @@ describe('agentQuestions', () => {
 			});
 
 			expect(snapshot?.status).toBe('timedOut');
-			expect(snapshot?.answeredAt).toBe(snapshot?.createdAt);
+			expect(snapshot?.answeredAt).toBe(created.timeoutAt);
 
 			expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toBeNull();
 

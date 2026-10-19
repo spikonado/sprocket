@@ -650,7 +650,6 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 						question: `Question ${index}?`,
 						options: [{ id: 'yes', label: `Answer ${index}` }],
 						status: 'pending',
-						createdAt: 1,
 						timeoutAt: Date.now() + 60_000,
 						sequence: index
 					})
@@ -708,7 +707,6 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 					question: 'Old question?',
 					options: [{ id: 'yes', label: 'Yes' }],
 					status: 'pending',
-					createdAt: 1,
 					timeoutAt: Date.now() + 60_000,
 					sequence
 				});
@@ -732,7 +730,6 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				question: 'New question?',
 				options: [{ id: 'yes', label: 'Yes' }],
 				status: 'pending',
-				createdAt: Date.now(),
 				timeoutAt: Date.now() + 60_000,
 				sequence: 35
 			})
@@ -773,7 +770,6 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 					question: 'Child question?',
 					options: [{ id: 'yes', label: 'Yes' }],
 					status: 'pending',
-					createdAt: Date.now(),
 					timeoutAt: Date.now() + 60_000,
 					sequence
 				});
@@ -819,7 +815,6 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 						question: 'Continue?',
 						options: [{ id: 'yes', label: 'Yes' }],
 						status: 'pending',
-						createdAt: 1,
 						timeoutAt: Date.now() + 60_000,
 						sequence: job.sequence
 					});

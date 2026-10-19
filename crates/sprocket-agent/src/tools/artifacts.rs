@@ -196,7 +196,6 @@ fn artifact_summary(artifact: serde_json::Value) -> serde_json::Value {
         "type",
         "contentType",
         "revision",
-        "createdAt",
         "updatedAt",
     ] {
         if let Some(value) = fields.get(key) {

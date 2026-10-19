@@ -16,7 +16,6 @@ type UsageEventInsert = {
 	userId: string;
 	eventId: string;
 	processedTokens: number;
-	createdAt: number;
 };
 
 export const threadProcessedTokens = new TableAggregate<{
@@ -125,8 +124,7 @@ export async function recordThreadUsageEvent(
 		threadId: thread._id,
 		userId: thread.userId,
 		eventId: args.eventId,
-		processedTokens: args.processedTokens,
-		createdAt: Date.now()
+		processedTokens: args.processedTokens
 	};
 
 	const eventId = await ctx.db.insert('threadUsageEvents', event);

@@ -654,7 +654,8 @@ export const vListArtifactsResult = v.object({
 			type: vArtifactType,
 			title: v.string(),
 			revision: v.number(),
-			createdAt: v.number(),
+			// Released list tools and stored results include it; current results omit it.
+			createdAt: v.optional(v.number()),
 			updatedAt: v.number()
 		})
 	)

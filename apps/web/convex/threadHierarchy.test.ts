@@ -208,7 +208,6 @@ describe('thread hierarchy', () => {
 						question: 'Continue?',
 						options: [{ id: 'yes', label: 'Yes' }],
 						status: 'pending',
-						createdAt: Date.now(),
 						sequence: 0
 					});
 					await updateThreadHierarchyAfterChange(ctx, before);

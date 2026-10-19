@@ -1,34 +1,15 @@
-import { v, type Infer } from 'convex/values';
+import type { Infer } from 'convex/values';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { vMandateChargeStatus, vMandateReportOutcome } from '@convex/lib/validators';
+import schema from '@convex/schema';
+import { vMandateReportOutcome } from '@convex/lib/validators';
 import { formatMoneyMinor, parseMoneyMinor } from '@convex/lib/payments/money';
 
 export const REPORT_CLAIM_STALE_MS = 60_000;
 
 export const CHARGE_CLAIM_STALE_MS = 60_000;
 
-export const chargeDoc = v.object({
-	_id: v.id('mandateCharges'),
-	_creationTime: v.number(),
-	mandateId: v.id('mandates'),
-	runId: v.id('runs'),
-	userId: v.string(),
-	pravaTransactionId: v.optional(v.string()),
-	amount: v.number(),
-	currency: v.string(),
-	description: v.string(),
-	reference: v.optional(v.string()),
-	status: vMandateChargeStatus,
-	reportOutcome: v.optional(vMandateReportOutcome),
-	reportedAt: v.optional(v.number()),
-	reportingStartedAt: v.optional(v.number()),
-	chargingStartedAt: v.optional(v.number()),
-	providerRequestedAt: v.optional(v.number()),
-	reportRetrierRunId: v.optional(v.string()),
-	createdAt: v.number(),
-	updatedAt: v.number()
-});
+export const chargeDoc = schema.doc('mandateCharges');
 
 export type ChargeStatusPatch = {
 	status: 'completed' | 'declined' | 'failed';

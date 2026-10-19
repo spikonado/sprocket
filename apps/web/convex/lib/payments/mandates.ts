@@ -1,7 +1,8 @@
-import { v, type Infer } from 'convex/values';
+import type { Infer } from 'convex/values';
 import type { ActionCtx } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import schema from '@convex/schema';
 import {
 	isMandateStatus,
 	vMandateFrequency,
@@ -42,28 +43,7 @@ export function assertMandateFrequencyAllowed(args: {
 	}
 }
 
-export const mandateDoc = v.object({
-	_id: v.id('mandates'),
-	_creationTime: v.number(),
-	userId: v.string(),
-	pravaMandateId: v.optional(v.string()),
-	pravaSessionId: v.string(),
-	merchantName: v.optional(v.string()),
-	merchantUrl: v.optional(v.string()),
-	countryCode: v.optional(v.string()),
-	amountCap: v.number(),
-	currency: v.string(),
-	frequency: vMandateFrequency,
-	scope: vMandateScope,
-	status: vMandateStatus,
-	description: v.string(),
-	approvalUrl: v.string(),
-	validUntil: v.optional(v.string()),
-	renewsAt: v.optional(v.string()),
-	remaining: v.optional(v.number()),
-	createdAt: v.number(),
-	updatedAt: v.number()
-});
+export const mandateDoc = schema.doc('mandates');
 
 function pravaStatusToLocal(status: string | undefined): Infer<typeof vMandateStatus> | undefined {
 	return isMandateStatus(status) ? status : undefined;

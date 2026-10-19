@@ -33,8 +33,6 @@ pub struct RemoteArtifact {
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub revision: u64,
     #[serde(deserialize_with = "deserialize_convex_u64")]
-    pub created_at: u64,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
     pub updated_at: u64,
 }
 

@@ -206,7 +206,6 @@ const localArtifactSchema = z.object({
 	type: z.enum(['markdown', 'html', 'react']),
 	title: z.string(),
 	revision: z.number(),
-	createdAt: z.number(),
 	updatedAt: z.number(),
 	localError: z.string().optional()
 });

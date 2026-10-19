@@ -36,7 +36,9 @@ export async function requireIdentity(
 export function pickPrimaryUser(rows: Array<Doc<'users'>>): Doc<'users'> | null {
 	if (rows.length === 0) return null;
 
-	return [...rows].sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id))[0];
+	return [...rows].sort(
+		(a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id)
+	)[0];
 }
 
 /** Query-safe lookup of the caller's users row; null until their first
@@ -87,7 +89,6 @@ export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Pro
 	const newUser = {
 		subject: identity.subject,
 		tokenIdentifier: identity.tokenIdentifier,
-		createdAt: Date.now(),
 		email
 	};
 

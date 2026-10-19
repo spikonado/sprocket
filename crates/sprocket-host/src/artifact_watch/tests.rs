@@ -185,7 +185,6 @@ fn remote() -> RemoteArtifact {
         content_type: ArtifactContentType::Markdown,
         title: "Notes".into(),
         revision: 1,
-        created_at: 1,
         updated_at: 1,
     }
 }
