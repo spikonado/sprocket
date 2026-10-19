@@ -25,6 +25,13 @@ crons.interval(
 );
 
 crons.interval(
+	'move machine credential hashes to process IDs',
+	{ hours: 1 },
+	internal.migrations.runMachineProcessIdBackfill,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

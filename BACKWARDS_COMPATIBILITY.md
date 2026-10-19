@@ -78,7 +78,7 @@ The legacy `dodoWebhookCleanup` table stays for diagnostics. Remove it after rel
 
 ### Machine process IDs
 
-Machine rows written before `processId` keep it in `credentialHash`, and `machineProcessId` reads either. Registration moves it, and `migrations:runMachineProcessIdBackfill` moves the rest. Once that migration completes on every deployment, make `processId` required and drop `credentialHash`.
+Machine rows written before `processId` keep it in `credentialHash`, and `machineProcessId` reads either. Registration moves it, and the hourly `migrations:runMachineProcessIdBackfill` cron moves the rest. Once that migration completes on every deployment, make `processId` required, drop `credentialHash`, and remove the cron.
 
 ### Calendar usage windows
 
