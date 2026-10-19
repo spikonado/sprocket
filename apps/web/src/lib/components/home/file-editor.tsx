@@ -6,8 +6,7 @@ import { classHighlighter } from '@lezer/highlight';
 import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
-import { leafName } from '$lib/chat/side-panel';
-import { fileDrafts } from '$lib/home/file-drafts';
+import { leafName, type FileDraft } from '$lib/chat/side-panel';
 import type { DesktopApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FileEditorApi = Pick<DesktopApi, 'readWorkspaceFile' | 'writeWorkspaceFile'>;
@@ -15,11 +14,11 @@ export type FileEditorApi = Pick<DesktopApi, 'readWorkspaceFile' | 'writeWorkspa
 type Props = {
 	api: FileEditorApi | null;
 	file: WorkspaceFileTarget;
-	/** Identifies the tab so unsaved edits survive the editor unmounting. */
-	draftKey: string;
+	/** Read on mount; changes are reported through `onDraftChange`. */
+	draft: FileDraft | undefined;
 	/** Polls the file for outside edits while the tab is visible. */
 	active: boolean;
-	onDirtyChange: (dirty: boolean) => void;
+	onDraftChange: (draft: FileDraft | undefined) => void;
 };
 
 type Status =
@@ -75,9 +74,8 @@ function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
 	);
 }
 
-function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
+function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
-	const [dirty, setDirty] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
 	/** Disk version the buffer has not absorbed because it has unsaved edits. */
 	const [diskVersion, setDiskVersion] = useState<string | null>(null);
@@ -87,29 +85,24 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 	const version = useRef<string | null>(null);
 	const generation = useRef(0);
 	const language = useRef(new Compartment());
-	const latest = useRef({ api, file });
-	latest.current = { api, file };
+	const latest = useRef({ api, file, onDraftChange });
+	latest.current = { api, file, onDraftChange };
 
 	const actions = useRef<{
 		save: (overwrite: boolean) => void;
 		sync: (force: boolean) => void;
-		restoreDraft: () => void;
-	}>({ save: () => {}, sync: () => {}, restoreDraft: () => {} });
+		replace: typeof replaceContent;
+	}>({ save: () => {}, sync: () => {}, replace: () => {} });
 
-	function markDirty() {
+	function reportDraft() {
 		const view = viewRef.current;
 		const base = savedDoc.current;
 
-		if (!view) return;
-		const isDirty = !!base && !view.state.doc.eq(base);
-
-		if (isDirty && version.current !== null) {
-			fileDrafts.set(draftKey, { doc: view.state.doc, base, version: version.current });
-		} else {
-			fileDrafts.delete(draftKey);
-		}
-
-		setDirty(isDirty);
+		// A save can settle after unmount; the tab's draft is newer than this editor then.
+		if (!view || !base || version.current === null) return;
+		latest.current.onDraftChange(
+			view.state.doc.eq(base) ? undefined : { doc: view.state.doc, base, version: version.current }
+		);
 	}
 
 	function extensions(): Extension[] {
@@ -130,7 +123,7 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 				}
 			]),
 			EditorView.updateListener.of((update) => {
-				if (update.docChanged) markDirty();
+				if (update.docChanged) reportDraft();
 			})
 		];
 	}
@@ -151,7 +144,7 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 		savedDoc.current = base ?? view.state.doc;
 		version.current = nextVersion;
 		setDiskVersion(null);
-		markDirty();
+		reportDraft();
 	}
 
 	async function loadLanguage(view: EditorView) {
@@ -248,23 +241,13 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 				return;
 			}
 
-			if (viewRef.current !== view) {
-				// The editor unmounted mid-save; only its draft can still absorb the new base.
-				const draft = fileDrafts.get(draftKey);
-
-				if (draft?.doc.eq(doc)) fileDrafts.delete(draftKey);
-				else if (draft) fileDrafts.set(draftKey, { ...draft, base: doc, version: result.version });
-
-				return;
-			}
-
 			// Reads that overlapped the write may carry the old content.
 			generation.current++;
 			savedDoc.current = doc;
 			version.current = result.version;
 			setDiskVersion(null);
 			setNotice(null);
-			markDirty();
+			reportDraft();
 		} catch (error) {
 			setNotice(error instanceof Error ? error.message : 'Could not save the file.');
 		}
@@ -273,14 +256,10 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 	actions.current = {
 		save: (overwrite) => void save(overwrite),
 		sync: (force) => void sync(force),
-		restoreDraft: () => {
-			const draft = fileDrafts.get(draftKey);
-
-			if (!draft) return;
-			replaceContent(draft.doc, draft.version, draft.base);
-			setStatus({ kind: 'text' });
-		}
+		replace: replaceContent
 	};
+
+	const initialDraft = useRef(draft);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -288,7 +267,13 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 		const view = new EditorView({ parent: containerRef.current });
 
 		viewRef.current = view;
-		actions.current.restoreDraft();
+
+		if (initialDraft.current) {
+			const { doc, version, base } = initialDraft.current;
+
+			actions.current.replace(doc, version, base);
+			setStatus({ kind: 'text' });
+		}
 
 		return () => {
 			view.destroy();
@@ -311,8 +296,6 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 
 		return () => clearInterval(timer);
 	}, [active]);
-
-	useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">

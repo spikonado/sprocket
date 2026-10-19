@@ -16,10 +16,10 @@ import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
 	isSameOrInside,
 	renamedPath,
+	type FileDraft,
 	type SidePanelSnapshot,
 	type SidePanelTab
 } from '$lib/chat/side-panel';
-import { fileDrafts } from '$lib/home/file-drafts';
 import { useStore, type Store } from '$lib/store';
 import type { ArtifactsWatchRequest, DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
@@ -148,7 +148,6 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	reset() {
-		fileDrafts.clear();
 		this.#snapshots.clear();
 		this.#panelScopeKey = null;
 		this.#watchScope = null;
@@ -190,14 +189,25 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
+	/** Runs on every keystroke, so it only re-renders when the tab gains or loses its draft. */
+	setFileDraft(id: string, draft: FileDraft | undefined) {
+		const tab = this.panel.tabs.find((candidate) => candidate.id === id);
+
+		if (!tab) return;
+		this.panel = {
+			...this.panel,
+			tabs: this.panel.tabs.map((candidate) => (candidate === tab ? { ...tab, draft } : candidate))
+		};
+
+		if (!tab.draft !== !draft) this.#emit();
+	}
+
 	closeTab(id: string) {
 		const index = this.panel.tabs.findIndex((tab) => tab.id === id);
 
 		if (index === -1) return;
 
 		const tabs = this.panel.tabs.filter((tab) => tab.id !== id);
-
-		fileDrafts.delete(id);
 
 		if (tabs.length === 0) {
 			this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };

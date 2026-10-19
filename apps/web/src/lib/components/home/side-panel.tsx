@@ -14,14 +14,19 @@ import {
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import { leafName, type SidePanelTab, type SidePanelView } from '$lib/chat/side-panel';
+import {
+	leafName,
+	type FileDraft,
+	type SidePanelTab,
+	type SidePanelView
+} from '$lib/chat/side-panel';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 import type { ArtifactType } from '@convex/lib/validators';
 
@@ -44,6 +49,7 @@ type Props = {
 	onActivateTab: (id: string) => void;
 	onCloseTab: (id: string) => void;
 	onUpdateTab: (id: string, patch: TabPatch) => void;
+	onDraftChange: (id: string, draft: FileDraft | undefined) => void;
 	onOpenFile: (file: WorkspaceFileTarget) => void;
 	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
 	onFileDeleted: (workspacePath: string, path: string) => void;
@@ -112,6 +118,7 @@ export default function SidePanel({
 	onActivateTab,
 	onCloseTab,
 	onUpdateTab,
+	onDraftChange,
 	onOpenFile,
 	onFileRenamed,
 	onFileDeleted,
@@ -120,23 +127,10 @@ export default function SidePanel({
 	onClose
 }: Props) {
 	const focusActiveTab = useRef(false);
-	const [dirtyTabs, setDirtyTabs] = useState<ReadonlySet<string>>(() => new Set());
 	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
 
-	const setTabDirty = useCallback((id: string, dirty: boolean) => {
-		setDirtyTabs((current) => {
-			if (current.has(id) === dirty) return current;
-			const next = new Set(current);
-
-			if (dirty) next.add(id);
-			else next.delete(id);
-
-			return next;
-		});
-	}, []);
-
 	function requestCloseTab(id: string) {
-		if (dirtyTabs.has(id)) setConfirmCloseId(id);
+		if (tabs.find((tab) => tab.id === id)?.draft) setConfirmCloseId(id);
 		else onCloseTab(id);
 	}
 
@@ -230,7 +224,7 @@ export default function SidePanel({
 								>
 									<heading.icon className="size-3.5 shrink-0" aria-hidden="true" />
 									<span className="truncate">{heading.label}</span>
-									{dirtyTabs.has(tab.id) ? (
+									{tab.draft ? (
 										<span
 											className="bg-foreground/70 size-1.5 shrink-0 rounded-full"
 											aria-label="Unsaved changes"
@@ -335,9 +329,9 @@ export default function SidePanel({
 						<FileEditor
 							api={filesApi}
 							file={tab.file}
-							draftKey={tab.id}
+							draft={tab.draft}
 							active={tab.id === activeTabId}
-							onDirtyChange={(dirty) => setTabDirty(tab.id, dirty)}
+							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
 						/>
 					) : (
 						<ArtifactsView
@@ -363,7 +357,6 @@ export default function SidePanel({
 					onCancel={() => setConfirmCloseId(null)}
 					onConfirm={() => {
 						setConfirmCloseId(null);
-						setTabDirty(confirmCloseId, false);
 						onCloseTab(confirmCloseId);
 					}}
 				/>

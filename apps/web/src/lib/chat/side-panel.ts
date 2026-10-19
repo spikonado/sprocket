@@ -1,6 +1,10 @@
+import type { Text } from '@codemirror/state';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
+
+/** Unsaved edits to `base`, the content read at `version`. */
+export type FileDraft = { doc: Text; base: Text; version: string };
 
 export type SidePanelTab = {
 	id: string;
@@ -10,6 +14,8 @@ export type SidePanelTab = {
 	selectedKey: string | null;
 	/** Open workspace file, for the file view. */
 	file?: WorkspaceFileTarget;
+	/** Unsaved edits in the file view; they live here so they outlive the editor. */
+	draft?: FileDraft;
 };
 
 export function trimSlash(path: string) {

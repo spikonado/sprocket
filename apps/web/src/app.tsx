@@ -2957,6 +2957,7 @@ export default function App({
 						onActivateTab={(id) => artifactPanel.activateTab(id)}
 						onCloseTab={(id) => artifactPanel.closeTab(id)}
 						onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
+						onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
 						onOpenFile={(file) => artifactPanel.openFile(file)}
 						onFileRenamed={(workspacePath, from, to) =>
 							artifactPanel.renameFile(workspacePath, from, to)
