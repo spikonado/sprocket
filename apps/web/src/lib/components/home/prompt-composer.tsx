@@ -68,6 +68,7 @@ export type PromptComposerProps = {
 	isSubmitting: boolean;
 	isStarting: boolean;
 	isRunning: boolean;
+	isWorking: boolean;
 	/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 	projectSkills?: {
 		workspacePath: string | null;
@@ -131,6 +132,7 @@ export function PromptComposerView({
 	isSubmitting,
 	isStarting,
 	isRunning,
+	isWorking,
 	projectSkills = null,
 	projectPaths = null,
 	onSubmit,
@@ -680,7 +682,7 @@ export function PromptComposerView({
 		<>
 			<footer className="shrink-0 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
 				<div className="mx-auto max-w-336">
-					{isRunning ? (
+					{isWorking ? (
 						<div
 							className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]"
 							role="status"

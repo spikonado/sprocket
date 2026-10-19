@@ -2910,6 +2910,7 @@ export default function App({
 										}
 										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
+										isWorking={!hasPendingAgentLaunch && isRunInProgress}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}
 										onSubmit={() => void submitPrompt()}

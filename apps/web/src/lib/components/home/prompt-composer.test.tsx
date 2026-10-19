@@ -49,6 +49,7 @@ function composerProps(overrides: Partial<PromptComposerViewProps> = {}): Prompt
 		isSubmitting: false,
 		isStarting: false,
 		isRunning: false,
+		isWorking: false,
 		usage: undefined,
 		usageFailed: false,
 		onSubmit: vi.fn(),
