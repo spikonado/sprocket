@@ -79,7 +79,6 @@ export async function reconcileTerminalRun(
 
 		await recordToolTranscript(ctx, {
 			threadId: run.threadId,
-			userId: run.userId,
 			runId: run._id,
 			job: finalizedJob,
 			preserveExistingDisplay: finalizedJob === job

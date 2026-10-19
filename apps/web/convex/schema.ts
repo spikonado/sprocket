@@ -431,12 +431,12 @@ export default defineSchema({
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
-		userId: v.string(),
+		userId: v.optional(v.string()),
 		totalParts: v.number()
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
-		userId: v.string(),
+		userId: v.optional(v.string()),
 		number: v.number(),
 		sourceKey: v.string(),
 		kind: vTranscriptPartKind,

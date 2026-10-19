@@ -79,7 +79,6 @@ describe('automatic thread titles', () => {
 		await t.run(async (ctx) => {
 			await appendTranscriptPart(ctx, {
 				threadId: first.threadId,
-				userId: 'alice',
 				runId: first.runId,
 				sourceKey: 'previous-completion',
 				kind: 'completion',
@@ -96,7 +95,6 @@ describe('automatic thread titles', () => {
 			for (let index = 0; index < 105; index++) {
 				await appendTranscriptPart(ctx, {
 					threadId: first.threadId,
-					userId: 'alice',
 					runId: first.runId,
 					sourceKey: `tool-${index}`,
 					kind: 'tool',
@@ -110,7 +108,6 @@ describe('automatic thread titles', () => {
 		await t.run((ctx) =>
 			appendTranscriptPart(ctx, {
 				threadId: first.threadId,
-				userId: 'alice',
 				runId: second.runId,
 				sourceKey: 'after-second-prompt',
 				kind: 'completion',

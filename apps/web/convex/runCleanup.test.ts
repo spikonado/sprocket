@@ -64,7 +64,6 @@ async function seedJobs(
 				if (settled && index % 2 === 0) {
 					await recordToolTranscript(ctx, {
 						threadId: run.threadId,
-						userId: run.userId,
 						runId,
 						job
 					});

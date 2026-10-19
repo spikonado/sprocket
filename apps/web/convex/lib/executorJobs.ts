@@ -22,7 +22,6 @@ export async function applyExecutorJobSuccess(
 	if (args.job.status === 'completed') {
 		await recordToolTranscript(ctx, {
 			threadId: args.run.threadId,
-			userId: args.run.userId,
 			runId: args.run._id,
 			job: args.job
 		});
@@ -62,7 +61,6 @@ export async function applyExecutorJobSuccess(
 
 	await recordToolTranscript(ctx, {
 		threadId: args.run.threadId,
-		userId: args.run.userId,
 		runId: args.run._id,
 		job: settledJob
 	});
@@ -115,7 +113,6 @@ export async function applyExecutorJobFailure(
 
 	await recordToolTranscript(ctx, {
 		threadId: args.run.threadId,
-		userId: args.run.userId,
 		runId: args.run._id,
 		job: settledJob
 	});

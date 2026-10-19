@@ -298,7 +298,6 @@ export async function createQueuedRunRecord(
 	if (recordsPrompt) {
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
-			userId: args.userId,
 			runId,
 			text: prompt,
 			imageUploadIds: args.imageUploadIds

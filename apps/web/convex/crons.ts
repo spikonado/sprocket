@@ -25,6 +25,13 @@ crons.interval(
 );
 
 crons.interval(
+	'remove transcript userId fields',
+	{ hours: 1 },
+	internal.migrations.removeTranscriptUserId,
+	{}
+);
+
+crons.interval(
 	'move machine credential hashes to process IDs',
 	{ hours: 1 },
 	internal.migrations.runMachineProcessIdBackfill,
