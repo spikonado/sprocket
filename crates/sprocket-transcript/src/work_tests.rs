@@ -267,6 +267,7 @@ fn repeated_call_ids_pair_by_invocation_when_results_finish_out_of_order() {
         }),
     );
     replica.save_parts("thread", &[completion]).unwrap();
+    let revision = replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["revision"].clone();
     replica
         .save_parts(
             "thread",
@@ -276,6 +277,10 @@ fn repeated_call_ids_pair_by_invocation_when_results_finish_out_of_order() {
             ],
         )
         .unwrap();
+    assert_ne!(
+        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["revision"],
+        revision
+    );
 
     let details = replica
         .details("section", None, None, true, 10, false)

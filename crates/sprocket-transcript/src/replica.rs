@@ -224,8 +224,14 @@ impl WorkReplica {
                 }
             }
         }
+        let pending_tools = items
+            .iter()
+            .filter(|item| item.call_id.is_some() && item.result_part.is_none())
+            .count();
+        // The UI reloads open details when the row revision changes, so detail-only changes must change the row.
         let row = json!({"id":key,"threadId":thread_id,"runId":run_id,"sequence":first.sequence(),"kind":"work",
-            "closed":closed,"toolCounts":index.tool_counts(key)?,"unpersistedToolCallIds":index.unpersisted_tool_call_ids(key)?});
+            "closed":closed,"toolCounts":index.tool_counts(key)?,"unpersistedToolCallIds":index.unpersisted_tool_call_ids(key)?,
+            "itemCount":items.len(),"pendingTools":pending_tools});
         Self::put_row(db, row, generation)
     }
 
