@@ -219,6 +219,9 @@ export const cleanupExpired = internalMutation({
 			const thread = await ctx.db.get('threadRecords', upload.threadId);
 
 			if (!thread || thread.lastMessageAt >= now - ATTACHMENT_RETENTION_MS) continue;
+
+			// A promptless continuation keeps `lastMessageAt` while its run sends these URLs.
+			if (upload.sha256 !== undefined && !isRunFinalStatus(thread.status)) continue;
 			await ctx.storage.delete(upload.storageId);
 			await ctx.db.patch('imageUploads', upload._id, { storageDeletedAt: now });
 			deleted += 1;

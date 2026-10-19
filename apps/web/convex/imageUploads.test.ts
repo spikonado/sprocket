@@ -388,12 +388,16 @@ describe('tool images for runs', () => {
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', duplicate))).toBeNull();
 	});
 
-	it('uploads again once retention deleted the bytes', async () => {
+	it('keeps images while the thread runs and uploads again once retention deleted them', async () => {
 		const t = initConvexTest();
 		const run = await seedRun(t, 'user_alice');
 		await upload(t, run);
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', run.threadId, { lastMessageAt: 0 });
+		});
+		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(0);
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', run.threadId, { status: 'completed' });
 		});
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);
 
