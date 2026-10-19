@@ -41,6 +41,18 @@ export function pickPrimaryUser(rows: Array<Doc<'users'>>): Doc<'users'> | null 
 	)[0];
 }
 
+export async function getPrimaryUser(
+	db: GenericQueryCtx<DataModel>['db'],
+	subject: string
+): Promise<Doc<'users'> | null> {
+	const rows = await db
+		.query('users')
+		.withIndex('by_subject', (query) => query.eq('subject', subject))
+		.collect();
+
+	return pickPrimaryUser(rows);
+}
+
 /** Query-safe lookup of the caller's users row; null until their first
  * ensureCurrentUser ran. */
 export async function getCurrentUser(

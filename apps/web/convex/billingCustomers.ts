@@ -1,37 +1,24 @@
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from '@convex/_generated/server';
+import { getPrimaryUser } from '@convex/lib/auth';
 
-export const get = internalQuery({
+export const getDodoCustomerId = internalQuery({
 	args: { userId: v.string() },
-	handler: async (ctx, { userId }) =>
-		await ctx.db
-			.query('billingCustomers')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique()
+	returns: v.union(v.string(), v.null()),
+	handler: async (ctx, { userId }) => (await getPrimaryUser(ctx.db, userId))?.dodoCustomerId ?? null
 });
 
 export const remember = internalMutation({
-	args: {
-		userId: v.string(),
-		dodoCustomerId: v.string(),
-		dodoEnvironment: v.optional(v.string())
-	},
+	args: { userId: v.string(), dodoCustomerId: v.string() },
 	returns: v.string(),
-	handler: async (ctx, args) => {
-		const { userId, dodoCustomerId } = args;
+	handler: async (ctx, { userId, dodoCustomerId }) => {
+		const user = await getPrimaryUser(ctx.db, userId);
 
-		const existing = await ctx.db
-			.query('billingCustomers')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
+		if (!user) throw new Error(`No user record for ${userId}.`);
 
-		if (existing) return existing.dodoCustomerId;
+		if (user.dodoCustomerId) return user.dodoCustomerId;
 
-		await ctx.db.insert('billingCustomers', {
-			userId,
-			dodoCustomerId,
-			dodoEnvironment: args.dodoEnvironment
-		});
+		await ctx.db.patch('users', user._id, { dodoCustomerId });
 
 		return dodoCustomerId;
 	}

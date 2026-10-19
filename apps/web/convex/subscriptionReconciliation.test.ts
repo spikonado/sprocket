@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 import type { Subscription } from 'dodopayments/resources/subscriptions';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
+import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
 
 const now = Date.UTC(2026, 5, 15, 12);
 
@@ -23,7 +23,7 @@ async function seed(t: ConvexTestInstance): Promise<void> {
 			monthly: 75,
 			monthlyProductId: 'prod_pro'
 		});
-		await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: 'cus_reconciliation' });
+		await insertUser(ctx, userId, 'cus_reconciliation');
 		await ctx.db.insert('subscriptions', {
 			userId,
 			tier: 'pro',

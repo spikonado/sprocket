@@ -42,8 +42,11 @@ export default defineSchema({
 		subject: v.string(),
 		tokenIdentifier: v.string(),
 		email: v.string(),
-		createdAt: legacyCreatedAt
-	}).index('by_subject', ['subject']),
+		createdAt: legacyCreatedAt,
+		dodoCustomerId: v.optional(v.string())
+	})
+		.index('by_subject', ['subject'])
+		.index('by_dodoCustomerId', ['dodoCustomerId']),
 	machines: defineTable({
 		userId: v.string(),
 		machineId: v.string(),
@@ -75,15 +78,6 @@ export default defineSchema({
 		.index('by_tierId', ['tierId'])
 		.index('by_monthlyProductId', ['monthlyProductId'])
 		.index('by_annualProductId', ['annualProductId']),
-	billingCustomers: defineTable({
-		userId: v.string(),
-		dodoCustomerId: v.string(),
-		// Provider environment the customer was created in. Legacy rows lack it;
-		// checkout rejects them when the current environment differs.
-		dodoEnvironment: v.optional(v.string())
-	})
-		.index('by_userId', ['userId'])
-		.index('by_dodoCustomerId', ['dodoCustomerId']),
 	billingCheckoutSessions: defineTable({
 		userId: v.string(),
 		attemptId: v.string(),
@@ -119,7 +113,6 @@ export default defineSchema({
 				dodoCustomerId: v.string()
 			})
 		),
-		dodoEnvironment: v.optional(v.string()),
 		expiresAt: v.number()
 	})
 		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Released readers use this index; retain until their removal gate passes.
@@ -148,7 +141,6 @@ export default defineSchema({
 				dodoCustomerId: v.string()
 			})
 		),
-		dodoEnvironment: v.optional(v.string()),
 		expiresAt: v.number()
 	})
 		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.

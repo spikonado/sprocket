@@ -10,6 +10,7 @@ import workpoolTest from '@convex-dev/workpool/test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import type { MutationCtx } from '@convex/_generated/server';
 import type { FunctionArgs } from 'convex/server';
 import schema from './schema';
 
@@ -27,6 +28,15 @@ export const modules = import.meta.glob([
 ]);
 
 export type ConvexTestInstance = TestConvex<typeof schema>;
+
+export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: string) {
+	return ctx.db.insert('users', {
+		subject,
+		tokenIdentifier: subject,
+		email: `${subject}@example.com`,
+		dodoCustomerId
+	});
+}
 
 type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
+import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
 import {
 	drainWebhookJobs,
 	sendRawWebhook,
@@ -41,6 +41,7 @@ async function seedTiers(t: ConvexTestInstance, tierIds: string[] = ['pro', 'tea
 async function planChangeFixture() {
 	const t = initConvexTest();
 	await seedTiers(t);
+	await t.run((ctx) => insertUser(ctx, 'owner'));
 	const data = subscriptionPayload();
 	expect((await sendSubscriptionWebhook(t, 'subscription.active', data)).status).toBe(200);
 	await drainWebhookJobs(t);
