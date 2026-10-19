@@ -367,7 +367,8 @@ export default defineSchema({
 			'repositoryKey',
 			'archivedAt',
 			'lastMessageAt'
-		]),
+		])
+		.index('by_userId_settleWhenIdle', ['userId', 'settleWhenIdle']),
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
 		workingDescendantCount: v.number(),
