@@ -427,6 +427,10 @@ function createMainWindow() {
 		if (!confirmDiscardUnsavedChanges()) event.preventDefault();
 	});
 	mainWindow.on('closed', () => {
+		// The page and its edits are gone; a new window reports its own state.
+		hasUnsavedChanges = false;
+		discardConfirmed = false;
+
 		if (mainWindowRef === mainWindow) {
 			mainWindowRef = null;
 		}
