@@ -1,4 +1,4 @@
-export type SidePanelView = 'artifacts' | 'browser';
+export type SidePanelView = 'artifacts' | 'files' | 'browser';
 
 export type SidePanelTab = {
 	id: string;

@@ -107,6 +107,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		browseFilesystem: unused,
 		listWorkspaceSkills: async () => ({ skills: [], warnings: [] }),
 		searchWorkspace: unused,
+		listWorkspaceFiles: unused,
 		resolveWorkspacePath: unused,
 		listProjectAttachments: async () => [],
 		attachProject: unused,

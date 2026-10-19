@@ -405,6 +405,18 @@ body::after {
 	opacity: 0.85;
 }
 
+.workspace-file-tree {
+	--trees-bg-override: var(--background);
+	--trees-fg-override: var(--foreground);
+	--trees-fg-muted-override: var(--muted-foreground);
+	--trees-bg-muted-override: var(--hover-fill);
+	--trees-selected-bg-override: var(--muted);
+	--trees-border-color-override: var(--hairline);
+	--trees-focus-ring-color-override: var(--ring);
+	--trees-search-bg-override: var(--muted);
+	--trees-font-family-override: var(--font-sans);
+}
+
 .chat-markdown blockquote {
 	border-left: 2px solid var(--border);
 	padding-left: 0.9rem;

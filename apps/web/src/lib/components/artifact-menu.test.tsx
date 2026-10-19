@@ -19,6 +19,7 @@ function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {
 		tabs: [{ id: 'tab', view: 'artifacts' as const, selectedKey: null }],
 		activeTabId: 'tab',
 		browserApi: null,
+		filesApi: null,
 		expanded: false,
 		onNewTab: vi.fn(),
 		onActivateTab: vi.fn(),

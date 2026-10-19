@@ -303,6 +303,13 @@ export type WorkspaceSearchResult = {
 	scanning: boolean;
 };
 
+/** Directory paths end with `/`. */
+export type WorkspaceFilesResult = {
+	paths: string[];
+	scanning: boolean;
+	truncated: boolean;
+};
+
 export type RunningCommand = {
 	sessionId: string;
 	command: string;
@@ -335,6 +342,10 @@ export type DesktopApi = {
 		input: { workspacePath: string; query: string },
 		signal?: AbortSignal
 	) => Promise<WorkspaceSearchResult>;
+	listWorkspaceFiles: (
+		input: { workspacePath: string },
+		signal?: AbortSignal
+	) => Promise<WorkspaceFilesResult>;
 	resolveWorkspacePath: (input: {
 		workspacePath: string;
 		createIfMissing?: boolean;

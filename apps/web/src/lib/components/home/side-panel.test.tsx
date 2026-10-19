@@ -19,6 +19,7 @@ function Harness() {
 			tabs={panel.panel.tabs}
 			activeTabId={panel.activeTab.id}
 			browserApi={null}
+			filesApi={null}
 			expanded={false}
 			onNewTab={() => panel.newTab()}
 			onActivateTab={(id) => panel.activateTab(id)}

@@ -51,6 +51,12 @@ const workspaceSearchResultSchema = z.object({
 	scanning: z.boolean()
 });
 
+const workspaceFilesResultSchema = z.object({
+	paths: z.array(z.string()),
+	scanning: z.boolean(),
+	truncated: z.boolean()
+});
+
 const workspacePathResolutionSchema = z.object({
 	workspacePath: z.string(),
 	displayName: z.string(),
@@ -422,6 +428,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			}),
 		searchWorkspace: (input, signal) =>
 			request('/api/workspace/search', workspaceSearchResultSchema, {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			}),
+		listWorkspaceFiles: (input, signal) =>
+			request('/api/workspace/files', workspaceFilesResultSchema, {
 				method: 'POST',
 				body: JSON.stringify(input),
 				signal

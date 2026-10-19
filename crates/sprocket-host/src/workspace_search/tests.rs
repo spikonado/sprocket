@@ -128,6 +128,26 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
             ("src/nested/important.tmp", false),
         ])
     );
+
+    let listing = index.list_paths(&root).expect("list paths");
+    assert!(!listing.scanning && !listing.truncated);
+    assert_eq!(
+        listing
+            .paths
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            ".gitignore",
+            "src/",
+            "src/main.rs",
+            "src/notes.txt",
+            "src/nested/",
+            "src/nested/.gitignore",
+            "src/nested/keep.rs",
+            "src/nested/important.tmp",
+        ])
+    );
 }
 
 #[test]

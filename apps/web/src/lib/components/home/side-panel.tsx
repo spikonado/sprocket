@@ -3,6 +3,7 @@ import {
 	FileCode,
 	Files,
 	FileText,
+	FolderTree,
 	Fullscreen,
 	Globe,
 	Maximize2,
@@ -16,6 +17,7 @@ import {
 import { useEffect, useRef } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
+import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import type { SidePanelTab, SidePanelView } from '$lib/chat/side-panel';
 import type { ArtifactType } from '@convex/lib/validators';
@@ -25,10 +27,12 @@ type TabPatch = Partial<Omit<SidePanelTab, 'id'>>;
 type Props = {
 	artifacts: ArtifactEntry[];
 	workspacePath?: string;
+	threadCwd?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 	tabs: SidePanelTab[];
 	activeTabId: string;
 	browserApi: BrowserApi | null;
+	filesApi: FilesApi | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
@@ -51,6 +55,7 @@ const TYPE_ICONS = {
 
 const VIEWS: { id: SidePanelView; label: string; icon: LucideIcon }[] = [
 	{ id: 'artifacts', label: 'Artifacts', icon: Files },
+	{ id: 'files', label: 'Files', icon: FolderTree },
 	{ id: 'browser', label: 'Browser', icon: Globe }
 ];
 
@@ -84,10 +89,12 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 export default function SidePanel({
 	artifacts,
 	workspacePath,
+	threadCwd,
 	onDeleteArtifact,
 	tabs,
 	activeTabId,
 	browserApi,
+	filesApi,
 	expanded,
 	stale = false,
 	error = null,
@@ -276,6 +283,13 @@ export default function SidePanel({
 						</div>
 					) : tab.view === 'browser' ? (
 						<BrowserView browserApi={browserApi} />
+					) : tab.view === 'files' ? (
+						<FilesView
+							api={filesApi}
+							projectPath={workspacePath}
+							threadCwd={threadCwd}
+							active={tab.id === activeTabId}
+						/>
 					) : (
 						<ArtifactsView
 							artifacts={artifacts}

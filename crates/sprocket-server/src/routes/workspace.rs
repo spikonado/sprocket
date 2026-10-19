@@ -13,7 +13,7 @@ use crate::routes::session::MachineSession;
 use sprocket_host::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
-use sprocket_host::workspace_search::{MAX_QUERY_CHARS, SearchOutcome};
+use sprocket_host::workspace_search::{MAX_QUERY_CHARS, PathListing, SearchOutcome};
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
     load_workspace_skills,
@@ -59,6 +59,19 @@ struct WorkspaceSearchEntry {
     kind: &'static str,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFilesRequest {
+    workspace_path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceFilesResponse {
+    paths: Vec<String>,
+    scanning: bool,
+    truncated: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SkillSummary {
@@ -84,7 +97,39 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/browse", post(browse_path))
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
+        .route("/workspace/files", post(list_workspace_files))
         .route("/workspace/image", get(image::local_image))
+}
+
+async fn list_workspace_files(
+    State(state): State<AppState>,
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceFilesRequest>,
+) -> Result<Json<WorkspaceFilesResponse>, ApiError> {
+    let permit = std::sync::Arc::clone(&state.host.workspace_search.search_slots)
+        .acquire_owned()
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?;
+    let PathListing {
+        paths,
+        scanning,
+        truncated,
+    } = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let resolution = resolve_workspace_path(&payload.workspace_path, false)?;
+        state
+            .host
+            .workspace_search
+            .list_paths(std::path::Path::new(&resolution.workspace_path))
+    })
+    .await
+    .map_err(|error| ApiError::internal(error.into()))?
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(WorkspaceFilesResponse {
+        paths,
+        scanning,
+        truncated,
+    }))
 }
 
 async fn search_workspace(

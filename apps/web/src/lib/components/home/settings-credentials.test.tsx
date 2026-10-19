@@ -49,6 +49,7 @@ function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		browseFilesystem: unused,
 		listWorkspaceSkills: unused,
 		searchWorkspace: unused,
+		listWorkspaceFiles: unused,
 		resolveWorkspacePath: unused,
 		listProjectAttachments: unused,
 		attachProject: unused,

@@ -9,6 +9,7 @@ use fff_search::{MixedSearchConfig, PaginationArgs, QueryParser, SharedFilePicke
 
 pub const SEARCH_RESULT_LIMIT: usize = 30;
 pub const MAX_QUERY_CHARS: usize = 128;
+pub const MAX_LISTED_PATHS: usize = 50_000;
 const MAX_CACHED_WORKSPACES: usize = 8;
 const PICKER_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -22,6 +23,14 @@ pub struct WorkspaceSearchEntry {
 pub struct SearchOutcome {
     pub entries: Vec<WorkspaceSearchEntry>,
     pub scanning: bool,
+}
+
+/// Directory paths end with `/`.
+#[derive(Debug, Default)]
+pub struct PathListing {
+    pub paths: Vec<String>,
+    pub scanning: bool,
+    pub truncated: bool,
 }
 
 struct PickerHandle(SharedFilePicker);
@@ -104,6 +113,40 @@ impl WorkspaceSearchIndex {
             .collect();
 
         Ok(SearchOutcome { entries, scanning })
+    }
+
+    pub fn list_paths(&self, workspace_root: &Path) -> anyhow::Result<PathListing> {
+        let picker = self.picker_for(workspace_root)?;
+
+        let guard = picker.0.read().map_err(|error| anyhow::anyhow!(error))?;
+        let Some(searcher) = guard.as_ref() else {
+            return Ok(PathListing {
+                scanning: true,
+                ..Default::default()
+            });
+        };
+
+        let dirs = searcher
+            .get_dirs()
+            .iter()
+            .filter(|dir| !dir.is_deleted())
+            .map(|dir| directory_path(dir.relative_path(searcher)))
+            .filter(|path| path != ".")
+            .map(|path| format!("{path}/"));
+        let files = searcher
+            .get_files()
+            .iter()
+            .filter(|file| !file.is_deleted())
+            .map(|file| to_forward_slashes(file.relative_path(searcher)));
+        let mut paths: Vec<String> = dirs.chain(files).take(MAX_LISTED_PATHS + 1).collect();
+        let truncated = paths.len() > MAX_LISTED_PATHS;
+        paths.truncate(MAX_LISTED_PATHS);
+
+        Ok(PathListing {
+            paths,
+            scanning: searcher.is_scan_active(),
+            truncated,
+        })
     }
 
     fn picker_for(&self, workspace_root: &Path) -> anyhow::Result<Arc<PickerHandle>> {
