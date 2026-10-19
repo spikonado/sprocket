@@ -159,6 +159,14 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	newTab() {
+		const empty = this.panel.tabs.find((tab) => tab.view === null);
+
+		if (empty) {
+			this.activateTab(empty.id);
+
+			return;
+		}
+
 		const tab = this.#createTab();
 		this.panel = { ...this.panel, tabs: [...this.panel.tabs, tab], activeTabId: tab.id };
 		this.#emit();

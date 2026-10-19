@@ -168,3 +168,15 @@ it('opens artifacts in the empty tab, then new tabs, and refocuses tabs already 
 	expect(panel.panel.open).toBe(false);
 	expect(panel.activeTab.view).toBeNull();
 });
+
+it('keeps at most one new tab and focuses it instead of adding another', () => {
+	const panel = new ArtifactPanel();
+	panel.openArtifact('a');
+	panel.newTab();
+	const emptyTabId = panel.activeTab.id;
+
+	panel.activateTab(panel.panel.tabs[0]!.id);
+	panel.newTab();
+	expect(panel.panel.tabs).toHaveLength(2);
+	expect(panel.activeTab.id).toBe(emptyTabId);
+});
