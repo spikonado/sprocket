@@ -322,7 +322,10 @@ export default defineSchema({
 		cwd: v.optional(v.string()),
 		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
-		archivedAt: v.optional(v.number())
+		archivedAt: v.optional(v.number()),
+		// Set when every linked PR merged while the subtree was still active.
+		// Applied once the subtree is idle; cleared on settle and unsettle.
+		settleWhenIdle: v.optional(v.boolean())
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Tree cancellation needs stable cursors while lastMessageAt changes.

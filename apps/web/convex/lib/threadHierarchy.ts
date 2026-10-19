@@ -4,6 +4,8 @@ import { paginationOptsValidator } from 'convex/server';
 import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
+import { allMerged } from '@convex/lib/pullRequestState';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 export async function threadOwnActivity(
 	db: DatabaseReader,
@@ -186,6 +188,35 @@ export async function updateThreadHierarchyAfterChange(
 		total: 0,
 		active: Number(await threadOwnActivity(ctx.db, thread._id)) - Number(before.active),
 		working: Number(thread.status === 'running') - Number(before.thread.status === 'running')
+	});
+	await applyPendingMergedSettle(ctx, thread);
+}
+
+async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+	const root = await threadRoot(ctx.db, thread);
+
+	if (!root.settleWhenIdle) return;
+
+	if (root.parentThreadId !== undefined || !allMerged(root.pullRequests ?? [])) {
+		await ctx.db.patch('threadRecords', root._id, { settleWhenIdle: undefined });
+		return;
+	}
+
+	if (root.archivedAt !== undefined) {
+		await ctx.db.patch('threadRecords', root._id, { settleWhenIdle: undefined });
+		return;
+	}
+
+	if (!(await getUiPreferences(ctx.db, root.userId))?.settleMergedThreads) {
+		await ctx.db.patch('threadRecords', root._id, { settleWhenIdle: undefined });
+		return;
+	}
+
+	if ((await subtreeSummary(ctx.db, root)).anyActive) return;
+
+	await ctx.db.patch('threadRecords', root._id, {
+		archivedAt: Date.now(),
+		settleWhenIdle: undefined
 	});
 }
 
