@@ -9,9 +9,7 @@ Here's what makes Sprocket special:
 - <ins>Buys anything from any website</ins> when you ask, from hardware parts to SaaS subscriptions.
 - Makes <ins>beautifully detailed schematics</ins>, creates your <ins>BOM</ins>, and writes <ins>assembly instructions</ins>.
 
-[Sprocket Demo](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
-
-[![Sprocket](./assets/sprocket.png)](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
+[![Sprocket](./assets/sprocket.webp)](https://spikonado.com/sprocket)
 
 ## Using Sprocket
 
