@@ -6,7 +6,7 @@ import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentE
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { allMerged } from '@convex/lib/pullRequestState';
-import { subtreeSummary } from '@convex/lib/threadHierarchy';
+import { subtreeSummary, threadRunAwaitsAutomaticRecovery } from '@convex/lib/threadHierarchy';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { vLinkedPullRequest, type LinkedPullRequest } from '@convex/lib/validators';
 
@@ -22,6 +22,7 @@ async function writeThreadPullRequests(
 	settleMergedThreads: boolean
 ) {
 	const justMerged = allMerged(pullRequests) && !allMerged(thread.pullRequests ?? []);
+
 	const canSettle =
 		justMerged &&
 		thread.parentThreadId === undefined &&
@@ -29,22 +30,33 @@ async function writeThreadPullRequests(
 		settleMergedThreads;
 
 	if (!canSettle) {
-		await ctx.db.patch('threadRecords', thread._id, {
-			pullRequests,
-			...(!allMerged(pullRequests) && thread.settleWhenIdle ? { settleWhenIdle: undefined } : {})
-		});
+		if (!allMerged(pullRequests) && thread.settleWhenIdle) {
+			await ctx.db.patch('threadRecords', thread._id, {
+				pullRequests,
+				settleWhenIdle: undefined
+			});
+
+			return;
+		}
+
+		await ctx.db.patch('threadRecords', thread._id, { pullRequests });
+
 		return;
 	}
 
-	if ((await subtreeSummary(ctx.db, thread)).anyActive) {
+	if (
+		(await subtreeSummary(ctx.db, thread)).anyActive ||
+		(await threadRunAwaitsAutomaticRecovery(ctx.db, thread._id))
+	) {
 		await ctx.db.patch('threadRecords', thread._id, { pullRequests, settleWhenIdle: true });
+
 		return;
 	}
 
 	await ctx.db.patch('threadRecords', thread._id, {
 		pullRequests,
 		archivedAt: Date.now(),
-		settleWhenIdle: undefined
+		settleWhenIdle: true
 	});
 }
 

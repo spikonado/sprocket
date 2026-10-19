@@ -45,11 +45,28 @@ export const setAutomaticThreadTitles = mutation({
 	}
 });
 
+async function clearPendingMergedSettles(ctx: MutationCtx, userId: string) {
+	const threads = await ctx.db
+		.query('threadRecords')
+		.withIndex('by_userId_lastMessageAt', (q) => q.eq('userId', userId))
+		.collect();
+
+	for (const thread of threads) {
+		if (!thread.settleWhenIdle) continue;
+
+		await ctx.db.patch('threadRecords', thread._id, { settleWhenIdle: undefined });
+	}
+}
+
 export const setSettleMergedThreads = mutation({
 	args: { enabled: v.boolean() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await savePreferences(ctx, { settleMergedThreads: args.enabled });
+
+		if (!args.enabled) {
+			await clearPendingMergedSettles(ctx, await getUserId(ctx));
+		}
 
 		return null;
 	}
