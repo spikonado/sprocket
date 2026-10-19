@@ -18,9 +18,9 @@
 	},
 	"devDependencies": {
 		"@mermaid-lint/cli": "0.53.1",
-		"@oxlint/plugins": "1.87.0",
+		"@oxlint/plugins": "1.88.0",
 		"concurrently": "^10.0.0",
-		"oxlint": "1.87.0",
+		"oxlint": "1.88.0",
 		"prettier": "^3.8.3",
 		"prettier-plugin-tailwindcss": "^0.8.0",
 		"turbo": "^2.9.8"
