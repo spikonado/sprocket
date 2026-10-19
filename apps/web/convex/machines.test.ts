@@ -235,7 +235,6 @@ describe('machines', () => {
 				credentialHash,
 				lastSeenAt: Date.now(),
 				runIds: [],
-				createdAt: Date.now(),
 				updatedAt: Date.now()
 			})
 		);
