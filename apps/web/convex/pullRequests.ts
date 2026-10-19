@@ -56,7 +56,7 @@ async function writeThreadPullRequests(
 	await ctx.db.patch('threadRecords', thread._id, {
 		pullRequests,
 		archivedAt: Date.now(),
-		settleWhenIdle: true
+		settleWhenIdle: undefined
 	});
 }
 

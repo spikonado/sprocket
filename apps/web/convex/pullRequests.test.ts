@@ -115,9 +115,58 @@ describe('linked pull requests', () => {
 			await asUser.mutation(api.pullRequests.updateStates, {
 				updates: [{ threadId, ...pr(2, 'merged') }]
 			});
-			expect((await archivedAt()) !== undefined).toBe(enabled);
+
+			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+			expect(settled?.archivedAt !== undefined).toBe(enabled);
+			expect(settled?.settleWhenIdle).toBeUndefined();
 		}
 	);
+
+	it('restores a pending settle when new work unarchives a settled merged thread', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged')] })
+		});
+
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+
+		await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
+
+		const continued = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(continued?.archivedAt).toBeUndefined();
+		expect(continued?.settleWhenIdle).toBe(true);
+	});
+
+	it('does not restore a pending settle after a manual unsettle', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged')] })
+		});
+		await asUser.mutation(api.threads.unsettle, { threadId });
+		await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
+
+		const continued = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(continued?.archivedAt).toBeUndefined();
+		expect(continued?.settleWhenIdle).toBeUndefined();
+	});
 
 	it.each([
 		['has active work', true],
@@ -174,7 +223,7 @@ describe('linked pull requests', () => {
 
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.archivedAt).toBeTypeOf('number');
-		expect(thread?.settleWhenIdle).toBe(true);
+		expect(thread?.settleWhenIdle).toBeUndefined();
 	});
 
 	it('settles after the run finishes when the agent linked already-merged PRs', async () => {
@@ -201,7 +250,7 @@ describe('linked pull requests', () => {
 
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.archivedAt).toBeTypeOf('number');
-		expect(thread?.settleWhenIdle).toBe(true);
+		expect(thread?.settleWhenIdle).toBeUndefined();
 	});
 
 	it('keeps a pending settle across a question continuation', async () => {
@@ -254,7 +303,7 @@ describe('linked pull requests', () => {
 
 		const afterAnswer = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(afterAnswer?.archivedAt).toBeTypeOf('number');
-		expect(afterAnswer?.settleWhenIdle).toBe(true);
+		expect(afterAnswer?.settleWhenIdle).toBeUndefined();
 
 		const continued = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -284,7 +333,7 @@ describe('linked pull requests', () => {
 
 		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(settled?.archivedAt).toBeTypeOf('number');
-		expect(settled?.settleWhenIdle).toBe(true);
+		expect(settled?.settleWhenIdle).toBeUndefined();
 	});
 
 	it('does not archive an abandoned run that is still eligible for recovery', async () => {
@@ -319,6 +368,7 @@ describe('linked pull requests', () => {
 			...caller,
 			pullRequests: [pr(1, 'merged')]
 		});
+
 		await abandonRun(t, created.runId);
 
 		const abandoned = await t.run((ctx) => ctx.db.get('threadRecords', threadId));

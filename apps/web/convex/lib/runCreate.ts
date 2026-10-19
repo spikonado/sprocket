@@ -344,6 +344,9 @@ export async function createQueuedRunRecord(
 		archivedAt: undefined
 	};
 
+	// Unsettle before this patch. threadRoot reuses the in-memory root doc, and
+	// archivedAt is what restores a pending merge-settle on continuation.
+	await unsettleRootOfThread(ctx, threadRecord);
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 
 	if (created.promptPart) {
@@ -354,7 +357,6 @@ export async function createQueuedRunRecord(
 		);
 	}
 
-	await unsettleRootOfThread(ctx, threadRecord);
 	await updateThreadHierarchyAfterChange(ctx, before);
 	await startRunLifecycle(ctx, runId);
 
