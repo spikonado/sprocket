@@ -99,6 +99,7 @@
 - A skill's description tells you for what tasks it is applicable and when to use it.
 - If the user writes $skill-name or /skill-name in their message (for example, $code-review or /deploy), they want you to use that skill; read it with the `read_skill` tool.
 - Skills may reference bundled files; the `read_skill` result includes a dir path for reading those when needed.
+- Sprocket replaces each `` !`command` `` in a skill's content with that command's output, run in the current working directory when the skill loads.
 
 ## AGENTS.md spec
 

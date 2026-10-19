@@ -1,10 +1,14 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::commands::WorkspaceCancellation;
 use crate::project_root::find_project_root;
+use crate::skill_commands::{SkillCommandLimits, render_skill_commands};
 use crate::skill_name::validate_skill_name;
 
 const MAX_SKILLS: usize = 64;
@@ -141,19 +145,35 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     })
 }
 
-pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, String> {
-    let raw = match &skill.source {
-        SkillSource::File { skill_md_path } => Cow::Owned(
-            std::fs::read(skill_md_path)
-                .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?,
-        ),
-        SkillSource::BuiltIn { contents } => Cow::Borrowed(contents.as_bytes()),
+/// Returns the skill body with its `` !`command` `` placeholders replaced by
+/// their output, run in `cwd` with `environment`.
+pub async fn read_skill_content(
+    skill: &WorkspaceSkill,
+    cwd: &Path,
+    environment: &[(OsString, OsString)],
+    cancellation: &WorkspaceCancellation,
+) -> Result<ReadSkillContent> {
+    let text = match &skill.source {
+        SkillSource::File { skill_md_path } => {
+            let raw = tokio::fs::read(skill_md_path)
+                .await
+                .with_context(|| format!("failed to read skill '{}'", skill.name))?;
+            Cow::Owned(String::from_utf8_lossy(&raw).into_owned())
+        }
+        SkillSource::BuiltIn { contents } => Cow::Borrowed(*contents),
     };
 
-    let text = String::from_utf8_lossy(&raw);
     let Some((_, body)) = split_frontmatter(&text) else {
-        return Err("missing YAML frontmatter".to_string());
+        bail!("missing YAML frontmatter");
     };
+    let content = render_skill_commands(
+        body,
+        cwd,
+        environment,
+        cancellation,
+        SkillCommandLimits::DEFAULT,
+    )
+    .await?;
 
     let dir = match &skill.source {
         SkillSource::File { skill_md_path } => skill_md_path
@@ -165,7 +185,7 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
     Ok(ReadSkillContent {
         name: skill.name.clone(),
         description: skill.description.clone(),
-        content: body.to_string(),
+        content,
         dir,
     })
 }
