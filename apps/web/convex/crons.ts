@@ -18,6 +18,13 @@ crons.interval(
 );
 
 crons.interval(
+	'remove legacy thread record fields',
+	{ hours: 1 },
+	internal.migrations.runThreadRecordLegacyFieldsRemoval,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

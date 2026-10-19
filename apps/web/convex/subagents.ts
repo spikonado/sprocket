@@ -28,11 +28,7 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
-import {
-	assertDescendantThreadAccess,
-	assertThreadTreeAcceptsWork,
-	listDirectChildrenPage
-} from '@convex/lib/threadHierarchy';
+import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
 import {
 	getPromptPart,
 	loadTranscriptPartsByNumbers,
@@ -139,12 +135,6 @@ async function requireLiveCallerRun(ctx: MutationCtx, args: Infer<typeof vCaller
 	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 		throw new Error('Run is no longer active.');
 	}
-
-	const thread = await ctx.db.get('threadRecords', run.threadId);
-
-	if (!thread) throw new Error('Thread not found.');
-
-	await assertThreadTreeAcceptsWork(ctx.db, thread);
 
 	return run;
 }

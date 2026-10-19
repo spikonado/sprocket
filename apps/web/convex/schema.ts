@@ -318,8 +318,10 @@ export default defineSchema({
 	}).index('by_name', ['name']),
 	threadRecords: defineTable({
 		userId: v.string(),
-		submissionId: v.string(),
+		// Cleared by `migrations.removeThreadRecordLegacyFields`.
+		submissionId: v.optional(v.string()),
 		parentThreadId: v.optional(v.id('threadRecords')),
+		// Cleared by `migrations.removeThreadRecordLegacyFields`.
 		treeCancellation: v.optional(v.object({ generation: v.string(), pendingBatches: v.number() })),
 		status: vRunStatus,
 		repositoryKey: v.string(),
@@ -343,7 +345,6 @@ export default defineSchema({
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
-		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		// Tree cancellation needs stable cursors while transcript timestamps change.
 		// eslint-disable-next-line @convex-dev/no-duplicate-indexes

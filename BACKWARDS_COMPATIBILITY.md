@@ -48,6 +48,10 @@ Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:
 
 Released servers require an integer `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from the floored `_creationTime`. Remove that field once those servers age out.
 
+### Tree cancellation batch arguments
+
+`runLifecycle.cancelDescendants` accepts and ignores `rootThreadId` and `generation` from batches queued before the stateless sweep. Remove them after a scheduler scan finds no queued batch carrying them.
+
 ## Convex data shims
 
 ### Billing subscription projection
@@ -81,6 +85,10 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 ### Legacy `createdAt` fields
 
 `users`, `machines`, `threadUsageEvents`, `agentQuestions`, `artifacts`, `mandates` and `mandateCharges` rows written before `_creationTime` replaced `createdAt` still carry it, so the schema keeps it as `legacyCreatedAt`. The hourly `migrations.removeCreatedAt` cron clears it. Once that migration completes on every deployment, remove `legacyCreatedAt`, the migrations and the cron.
+
+### Legacy thread record fields
+
+Older `threadRecords` rows still carry `submissionId` and `treeCancellation`, so the schema keeps both optional. The hourly `migrations.runThreadRecordLegacyFieldsRemoval` cron clears them. Once that migration completes on every deployment, remove both fields, the migration and the cron.
 
 ### Stored executor job and result fields
 

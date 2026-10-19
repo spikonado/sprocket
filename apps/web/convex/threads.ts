@@ -4,7 +4,7 @@ import { paginationOptsValidator, paginationResultValidator } from 'convex/serve
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { vCompletionProvider, vDescendantStatusCounts } from '@convex/lib/validators';
+import { vDescendantStatusCounts } from '@convex/lib/validators';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import schema from '@convex/schema';
@@ -60,53 +60,6 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 
 	return { userId, record };
 }
-
-export const setSelectedModel = mutation({
-	args: {
-		threadId: v.id('threadRecords'),
-		selectedModel: v.string()
-	},
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-
-		if (thread.selectedModel === args.selectedModel) {
-			return null;
-		}
-
-		await ctx.db.patch('threadRecords', thread._id, { selectedModel: args.selectedModel });
-
-		return null;
-	}
-});
-
-export const setCompletionSettings = mutation({
-	args: {
-		threadId: v.id('threadRecords'),
-		selectedModel: v.string(),
-		completionProvider: vCompletionProvider
-	},
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-
-		if (
-			thread.selectedModel === args.selectedModel &&
-			(thread.completionProvider ?? 'spikonado') === args.completionProvider
-		) {
-			return null;
-		}
-
-		await ctx.db.patch('threadRecords', thread._id, {
-			selectedModel: args.selectedModel,
-			completionProvider: args.completionProvider
-		});
-
-		return null;
-	}
-});
 
 export const getByThreadId = query({
 	args: {

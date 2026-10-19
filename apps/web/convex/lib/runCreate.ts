@@ -32,7 +32,6 @@ import {
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange,
 	registerChildThread,
-	assertThreadTreeAcceptsWork,
 	threadRoot,
 	unsettleRootOfThread
 } from '@convex/lib/threadHierarchy';
@@ -167,7 +166,6 @@ export async function createQueuedRunRecord(
 
 	if (args.threadId) {
 		threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
-		await assertThreadTreeAcceptsWork(ctx.db, threadRecord);
 	} else {
 		const repositoryKey = args.repositoryKey?.trim();
 
@@ -185,15 +183,12 @@ export async function createQueuedRunRecord(
 			) {
 				throw new Error('Parent thread not found.');
 			}
-
-			await assertThreadTreeAcceptsWork(ctx.db, parentThread);
 		}
 
 		const now = Date.now();
 
 		const threadId = await ctx.db.insert('threadRecords', {
 			userId: args.userId,
-			submissionId: args.submissionId,
 			parentThreadId: args.parentThreadId,
 			status: 'queued',
 			repositoryKey,

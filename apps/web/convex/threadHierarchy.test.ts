@@ -26,7 +26,6 @@ async function child(
 
 		const threadId = await ctx.db.insert('threadRecords', {
 			userId: parent.userId,
-			submissionId: title,
 			parentThreadId: parentId,
 			repositoryKey: parent.repositoryKey,
 			status,
@@ -349,7 +348,7 @@ describe('thread hierarchy', () => {
 					await ctx.db.insert('runs', {
 						threadId: id,
 						userId: thread.userId,
-						submissionId: thread.submissionId,
+						submissionId: `fixture-${id}`,
 						status: thread.status,
 						executionSecretHash: 'fixture',
 						selectedModel: thread.selectedModel,

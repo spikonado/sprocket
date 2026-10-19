@@ -133,21 +133,12 @@ export async function requestThreadTreeCancellation(
 ): Promise<{ stoppedRunId?: Id<'runs'>; cancelled: boolean }> {
 	const latest = await latestRunForThread(ctx.db, thread._id);
 
-	if (thread.treeCancellation) return { stoppedRunId: latest?._id, cancelled: true };
-
 	const cancelled = latest
 		? await requestRunCancellation(ctx, latest)
 		: await cancelPendingQuestionsForThread(ctx, thread._id);
 
-	const generation = crypto.randomUUID();
-	await ctx.db.patch('threadRecords', thread._id, {
-		treeCancellation: { generation, pendingBatches: 1 }
-	});
-
 	const descendantsCancelled = await cancelDescendantsPage(ctx, {
-		rootThreadId: thread._id,
 		parentThreadId: thread._id,
-		generation,
 		cursor: null
 	});
 
@@ -155,24 +146,27 @@ export async function requestThreadTreeCancellation(
 }
 
 const vTreeCancellationBatch = v.object({
-	rootThreadId: v.id('threadRecords'),
 	parentThreadId: v.id('threadRecords'),
-	generation: v.string(),
-	cursor: v.union(v.string(), v.null())
+	cursor: v.union(v.string(), v.null()),
+	// Ignored; carried by batches queued before the stateless sweep.
+	rootThreadId: v.optional(v.id('threadRecords')),
+	generation: v.optional(v.string())
 });
 
+// A thread's children are listed only after its own run is told to cancel, and
+// a cancelling run cannot spawn subagents, so the top-down sweep needs no lock.
 async function cancelDescendantsPage(
 	ctx: MutationCtx,
 	args: Infer<typeof vTreeCancellationBatch>
 ): Promise<boolean> {
-	const root = await ctx.db.get('threadRecords', args.rootThreadId);
+	const parent = await ctx.db.get('threadRecords', args.parentThreadId);
 
-	if (!root?.treeCancellation || root.treeCancellation.generation !== args.generation) return false;
+	if (!parent) return false;
 
 	const result = await ctx.db
 		.query('threadRecords')
 		.withIndex('by_userId_parentThreadId', (q) =>
-			q.eq('userId', root.userId).eq('parentThreadId', args.parentThreadId)
+			q.eq('userId', parent.userId).eq('parentThreadId', parent._id)
 		)
 		.order('desc')
 		.paginate({
@@ -181,8 +175,6 @@ async function cancelDescendantsPage(
 			maximumRowsRead: 16,
 			maximumBytesRead: 1024 * 1024
 		});
-
-	let pendingBatches = root.treeCancellation.pendingBatches - 1;
 
 	for (const child of result.page) {
 		const latest = await latestRunForThread(ctx.db, child._id);
@@ -193,37 +185,29 @@ async function cancelDescendantsPage(
 			await cancelPendingQuestionsForThread(ctx, child._id);
 		}
 
-		const descendant = await ctx.db
+		const grandchild = await ctx.db
 			.query('threadRecords')
 			.withIndex('by_userId_parentThreadId', (q) =>
-				q.eq('userId', root.userId).eq('parentThreadId', child._id)
+				q.eq('userId', parent.userId).eq('parentThreadId', child._id)
 			)
 			.first();
 
-		if (descendant) {
+		if (grandchild) {
 			await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
-				...args,
 				parentThreadId: child._id,
 				cursor: null
 			});
-			pendingBatches++;
 		}
 	}
 
 	if (!result.isDone) {
 		await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
-			...args,
+			parentThreadId: args.parentThreadId,
 			cursor: result.continueCursor
 		});
-		pendingBatches++;
 	}
 
-	await ctx.db.patch('threadRecords', root._id, {
-		treeCancellation:
-			pendingBatches > 0 ? { generation: args.generation, pendingBatches } : undefined
-	});
-
-	return result.page.length > 0 || pendingBatches > 0;
+	return result.page.length > 0;
 }
 
 export const cancelDescendants = internalMutation({

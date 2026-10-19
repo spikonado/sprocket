@@ -104,12 +104,20 @@ async function createChild(t: ConvexTestInstance, caller: CallerRun) {
 	return await t.mutation(api.subagents.createOrSend, createArgs(caller));
 }
 
-async function finishTreeCancellation(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
+async function finishTreeCancellation(t: ConvexTestInstance) {
 	for (let attempt = 0; attempt < 100; attempt++) {
+		const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+
+		if (
+			!scheduled.some(
+				(entry) =>
+					entry.name.includes('cancelDescendants') &&
+					(entry.state.kind === 'pending' || entry.state.kind === 'inProgress')
+			)
+		)
+			return;
 		await vi.advanceTimersByTimeAsync(1);
 		await t.finishInProgressScheduledFunctions();
-
-		if (!(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.treeCancellation) return;
 	}
 
 	throw new Error('Tree cancellation did not finish.');
@@ -1059,7 +1067,7 @@ describe('subagents access control', () => {
 });
 
 describe('subagents.control', () => {
-	it('stops a large historical tree in batches and blocks new descendant work during traversal', async () => {
+	it('stops a large historical tree in batches', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
@@ -1079,7 +1087,6 @@ describe('subagents.control', () => {
 
 					const threadId = await ctx.db.insert('threadRecords', {
 						userId: thread.userId,
-						submissionId,
 						parentThreadId: child.threadId,
 						status: 'completed',
 						repositoryKey: thread.repositoryKey,
@@ -1108,24 +1115,19 @@ describe('subagents.control', () => {
 		}
 
 		await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
-		expect(
-			(await t.run((ctx) => ctx.db.get('threadRecords', child.threadId)))?.treeCancellation
-		).toBeDefined();
-		await expect(t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))).rejects.toThrow(
-			/tree is being stopped/
+
+		const spawnedDuringStop = await t.mutation(
+			api.subagents.createOrSend,
+			createArgs(grandchildRun)
 		);
-		await expect(
-			insertQueuedRun(t, caller.asUser, {
-				threadId: grandchild.threadId,
-				submissionId: 'manual-during-tree-stop',
-				executionSecret: 'manual-secret',
-				prompt: 'New work'
-			})
-		).rejects.toThrow(/tree is being stopped/);
-		await finishTreeCancellation(t, child.threadId);
-		expect(
-			(await t.run((ctx) => ctx.db.get('runs', grandchild.runId)))?.cancellationRequestedAt
-		).toBeDefined();
+
+		await finishTreeCancellation(t);
+
+		for (const run of [grandchild, spawnedDuringStop]) {
+			expect(
+				(await t.run((ctx) => ctx.db.get('runs', run.runId)))?.cancellationRequestedAt
+			).toBeDefined();
+		}
 	}, 30_000);
 
 	async function childWithPendingQuestion(
@@ -1408,7 +1410,7 @@ describe('subagents.control', () => {
 				});
 			}
 
-			await finishTreeCancellation(t, child.threadId);
+			await finishTreeCancellation(t);
 
 			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {
 				expect(await t.run((ctx) => ctx.db.get('runs', target.runId))).toMatchObject({
@@ -1486,7 +1488,7 @@ describe('subagents.control', () => {
 				await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
 			}
 
-			await finishTreeCancellation(t, child.threadId);
+			await finishTreeCancellation(t);
 
 			for (const id of [questionId, descendantQuestion.questionId]) {
 				expect((await t.run((ctx) => ctx.db.get('agentQuestions', id)))?.status).toBe('cancelled');
