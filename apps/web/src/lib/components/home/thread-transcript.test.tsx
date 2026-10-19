@@ -536,6 +536,40 @@ describe('transcript viewport paging', () => {
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(2);
 	});
 
+	it('marks unfinished tools interrupted in a closed work section of the active run', async () => {
+		const parts: LiveTranscriptMessage['parts'] = [
+			{ type: 'tool-call', callId: 'done', name: 'exec_cmd', input: { cmd: 'echo ok' } },
+			{ type: 'tool-result', callId: 'done', name: 'exec_cmd', output: {} },
+			{ type: 'tool-call', callId: 'cut', name: 'exec_cmd', input: { cmd: 'sleep 10' } }
+		];
+		const closed: TranscriptDisplayRow = {
+			...message(2),
+			kind: 'work',
+			id: 'closed-work',
+			closed: true,
+			toolCounts: { exec_cmd: 2 }
+		};
+		const live: LiveTranscriptMessage = {
+			...liveMessage(),
+			runId: closed.runId,
+			runStatus: 'running',
+			parts: [{ type: 'text', id: 'later', text: 'Later text' }]
+		};
+
+		const { viewport, setProps } = await renderTranscript([closed, live]);
+		setProps({
+			activeRunId: closed.runId,
+			loadSectionDetails: vi
+				.fn()
+				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+		});
+		click(workButtons(viewport)[0]);
+		await settle();
+
+		expect(viewport.textContent).toContain('sleep 10(interrupted)');
+		expect(viewport.textContent).toContain('echo ok');
+	});
+
 	it('keeps command counts stable as calls settle and the run completes', async () => {
 		const response: LiveTranscriptMessage = {
 			...liveMessage(),
