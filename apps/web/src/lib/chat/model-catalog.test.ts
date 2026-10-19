@@ -48,39 +48,6 @@ describe('gateway model catalog', () => {
 		expect(catalog).not.toHaveProperty('tierAllowsFastMode');
 	});
 
-	it('ignores retired tier restriction fields from older gateways', async () => {
-		const payload = structuredClone(catalogPayload);
-		payload.sprocket.models.push({
-			...payload.sprocket.models[0],
-			id: 'model-large',
-			label: 'Model Large'
-		});
-		payload.sprocket.defaultModelId = 'model-large';
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () =>
-				Response.json({
-					sprocket: {
-						...payload.sprocket,
-						tierAllowedModels: { free: ['model-small'] },
-						modelLockUpgradeMessage: 'Upgrade to use this model',
-						tierAllowedServiceTiers: { free: ['standard'] },
-						serviceTierLockUpgradeMessage: 'Upgrade to use Fast mode'
-					}
-				})
-			)
-		);
-		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(modelOptionsForProviders(catalog, ['spikonado'])).toEqual([
-			{ id: 'model-small', label: 'Model Small', provider: 'provider-one' },
-			{ id: 'model-large', label: 'Model Large', provider: 'provider-one' }
-		]);
-		expect(resolveModelForProviders(catalog, ['spikonado'], 'model-large')).toBe('model-large');
-		expect(resolveModelForProviders(catalog, ['spikonado'], 'unknown')).toBe('model-large');
-		expect(catalog.models.every((model) => model.supportsFastMode)).toBe(true);
-		expect(catalog).not.toHaveProperty('tierAllowedModels');
-	});
-
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models[0].serviceTiers = ['standard'];

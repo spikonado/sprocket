@@ -16,10 +16,6 @@ Run context responses optionally include `providerHandoff`. Released clients ign
 
 Released clients don't send `completionProvider`, and older thread and run rows lack it. Convex and the Rust agent treat a missing value as `spikonado`. Once those clients age out, migrate older rows to `spikonado`, then require the field.
 
-### Gateway model eligibility fields
-
-Gateway catalogs still return `tierAllowedModels`, `modelLockUpgradeMessage`, `tierAllowedServiceTiers` and `serviceTierLockUpgradeMessage`, with everything allowed. Sprocket ignores them. Remove them once clients that validate or apply them age out.
-
 ### Retired cloud-held ChatGPT sign-in
 
 `getMyConfiguration` reports `chatgpt: false` and `chatgptModelIds: null`. Remove those fields once no supported client reads them.
