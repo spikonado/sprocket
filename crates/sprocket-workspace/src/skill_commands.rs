@@ -101,6 +101,9 @@ pub(crate) async fn render_skill_commands(
 pub(crate) fn find_placeholders(body: &str) -> Vec<Placeholder<'_>> {
     let mut placeholders = Vec::new();
     let mut open_fence: Option<(u8, usize)> = None;
+    // Code spans can cross lines but not blank lines or fences, so each
+    // paragraph is scanned as one unit.
+    let mut paragraph_start: Option<usize> = None;
     let mut line_start = 0;
     for line in body.split_inclusive('\n') {
         let content = line.trim_end_matches(is_line_ending);
@@ -110,12 +113,26 @@ pub(crate) fn find_placeholders(body: &str) -> Vec<Placeholder<'_>> {
                     open_fence = None;
                 }
             }
-            None => match opening_fence(content) {
-                Some(fence) => open_fence = Some(fence),
-                None => find_inline_placeholders(content, line_start, &mut placeholders),
-            },
+            None => {
+                let fence = opening_fence(content);
+                if fence.is_some() || content.trim().is_empty() {
+                    if let Some(start) = paragraph_start.take() {
+                        find_inline_placeholders(
+                            &body[start..line_start],
+                            start,
+                            &mut placeholders,
+                        );
+                    }
+                    open_fence = fence;
+                } else {
+                    paragraph_start.get_or_insert(line_start);
+                }
+            }
         }
         line_start += line.len();
+    }
+    if let Some(start) = paragraph_start {
+        find_inline_placeholders(&body[start..], start, &mut placeholders);
     }
     placeholders
 }
@@ -148,11 +165,11 @@ fn closes_fence(line: &str, marker: u8, length: usize) -> bool {
 }
 
 fn find_inline_placeholders<'a>(
-    line: &'a str,
+    text: &'a str,
     offset: usize,
     placeholders: &mut Vec<Placeholder<'a>>,
 ) {
-    let bytes = line.as_bytes();
+    let bytes = text.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] != b'`' {
@@ -165,8 +182,9 @@ fn find_inline_placeholders<'a>(
             index += run;
             continue;
         };
-        if run == 1 && placeholder_bang_before(line, index) {
-            let command = line[index + 1..close].trim();
+        let span = &text[index + 1..close];
+        if run == 1 && !span.contains(is_line_ending) && placeholder_bang_before(text, index) {
+            let command = span.trim();
             if !command.is_empty() {
                 placeholders.push(Placeholder {
                     range: offset + index - 1..offset + close + 1,

@@ -28,16 +28,36 @@ Use `ship !` and `format!` here, then !`` `double-span` ``.
 !`inside-longer-fence`
 ````
   !`four`
+`` multi-line
+!`inside-multi-line-double-span` ``
+` multi-line
+!`inside-multi-line-single-span`
+!`split
+command`
+
+`` unclosed before a blank line
+
+!`five`
 ```
 !`unclosed-fence`
 ";
 
     let placeholders = find_placeholders(body);
     let commands: Vec<_> = placeholders.iter().map(|found| found.command).collect();
-    assert_eq!(commands, ["one", "two", "three", "four"]);
+    assert_eq!(commands, ["one", "two", "three", "four", "five"]);
     for found in &placeholders {
         assert_eq!(&body[found.range.clone()], format!("!`{}`", found.command));
     }
+}
+
+#[tokio::test]
+async fn placeholders_in_multi_line_code_spans_do_not_run() {
+    let root = temp_workspace();
+    let body = "Example:\n``\n!`touch marker`\n``\n";
+    let rendered = render(body, &root, SkillCommandLimits::DEFAULT).await;
+    assert_eq!(rendered, body);
+    assert!(!root.join("marker").exists());
+    std::fs::remove_dir_all(root).ok();
 }
 
 #[tokio::test]
@@ -101,6 +121,50 @@ async fn timed_out_commands_are_killed_and_the_total_budget_skips_the_rest() {
         "[skill command failed: timed out after 0.3s]\n\
          [skill command skipped: skill commands used their 0.3s total time limit]"
     );
+    std::fs::remove_dir_all(root).ok();
+}
+
+const WRITES_MARKERS_LATER: &str = "!`(sleep 1; touch child) & sleep 1; touch parent`";
+
+async fn assert_no_markers_appear(root: &Path) {
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(!root.join("parent").exists(), "the shell kept running");
+    assert!(!root.join("child").exists(), "a descendant kept running");
+}
+
+#[tokio::test]
+async fn timeouts_stop_the_command_and_its_descendants() {
+    let root = temp_workspace();
+    let limits = SkillCommandLimits {
+        command_timeout: Duration::from_millis(300),
+        ..SkillCommandLimits::DEFAULT
+    };
+    let rendered = render(WRITES_MARKERS_LATER, &root, limits).await;
+    assert_eq!(rendered, "[skill command failed: timed out after 0.3s]");
+    assert_no_markers_appear(&root).await;
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
+async fn cancellation_stops_the_command_and_its_descendants() {
+    let root = temp_workspace();
+    let cancellation = WorkspaceCancellation::new();
+    let canceller = cancellation.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        canceller.cancel();
+    });
+    let error = render_skill_commands(
+        WRITES_MARKERS_LATER,
+        &root,
+        &[],
+        &cancellation,
+        SkillCommandLimits::DEFAULT,
+    )
+    .await
+    .expect_err("cancelled render");
+    assert!(error.is::<WorkspaceOperationCancelled>(), "{error:#}");
+    assert_no_markers_appear(&root).await;
     std::fs::remove_dir_all(root).ok();
 }
 

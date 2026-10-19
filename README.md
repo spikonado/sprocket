@@ -55,9 +55,9 @@ When a skill loads, each `` !`command` `` in its body runs in the thread's worki
 Current branch: !`git branch --show-current`
 ```
 
-- The `!` must start a line or follow whitespace, and a single-backtick code span on the same line must follow it. `` KEY=!`cmd` `` stays as text.
+- The `!` must start a line or follow whitespace, and a single-backtick code span that ends on the same line must follow it. `` KEY=!`cmd` `` stays as text.
 - Placeholders inside fenced code blocks don't run. A fence opens at a line whose first non-whitespace characters are three or more backticks or tildes, and closes at a line with at least as many of the same character and nothing else. An unclosed fence runs to the end of the file.
-- Placeholders inside another inline code span don't run. To show the syntax as an example, wrap it in a double-backtick code span, as this README does.
+- Placeholders inside another inline code span don't run, including spans that continue across lines of a paragraph. To show the syntax as an example, wrap it in a double-backtick code span, as this README does.
 - Commands run one at a time in your default shell (`$SHELL`, or PowerShell on Windows). Each gets 30 seconds, and one skill load gets 60 seconds in total; placeholders left after that are skipped. Output over 20,000 bytes is truncated with a marker.
 - A non-zero exit, a timeout, or a shell that fails to start replaces the placeholder with a `[skill command failed: ...]` line.
 - Output is inserted as plain text and isn't scanned for more placeholders. Frontmatter isn't scanned.
