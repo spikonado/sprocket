@@ -41,8 +41,8 @@ fn thread_settings(
     selected_model: &str,
     reasoning_effort: &str,
     fast_mode: bool,
-) -> super::super::ThreadSettings {
-    super::super::ThreadSettings {
+) -> ThreadSettings {
+    ThreadSettings {
         repository_key: "repo".into(),
         selected_model: selected_model.into(),
         reasoning_effort: reasoning_effort.into(),
