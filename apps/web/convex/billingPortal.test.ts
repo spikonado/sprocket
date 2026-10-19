@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { initConvexTest } from './test.setup';
+import { initConvexTest, insertUser } from './test.setup';
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -30,8 +30,8 @@ describe('billing portal recovery', () => {
 					eventAt: Date.now(),
 					dodoSubscriptionId: 'sub_owner'
 				});
-				await ctx.db.insert('billingCustomers', { userId: 'owner', dodoCustomerId: 'cus_owner' });
-				await ctx.db.insert('billingCustomers', { userId: 'other', dodoCustomerId: 'cus_other' });
+				await insertUser(ctx, 'owner', 'cus_owner');
+				await insertUser(ctx, 'other', 'cus_other');
 			});
 			const owner = t.withIdentity({ subject: 'owner' });
 			await expect(owner.query(api.billing.getMySubscription, {})).resolves.toMatchObject({
@@ -51,7 +51,7 @@ describe('billing portal recovery', () => {
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 1 });
-			await ctx.db.insert('billingCustomers', { userId: 'owner', dodoCustomerId: 'cus_owner' });
+			await insertUser(ctx, 'owner', 'cus_owner');
 		});
 		await expect(
 			t.withIdentity({ subject: 'owner' }).query(api.billing.getMySubscription, {})

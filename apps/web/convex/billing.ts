@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import {
 	action,
 	env,
@@ -10,7 +10,7 @@ import {
 } from '@convex/_generated/server';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
-import { ensureCurrentUser, getUserId, requireIdentity } from '@convex/lib/auth';
+import { ensureCurrentUser, getPrimaryUser, getUserId, requireIdentity } from '@convex/lib/auth';
 import {
 	computeAccess,
 	identityTakeoverAllowed,
@@ -147,17 +147,14 @@ export const getMySubscription = query({
 		const subscription = await getSubscriptionDoc(ctx, userId);
 		const tier = subscriptionMaterializedTier(subscription);
 
-		const customer = await ctx.db
-			.query('billingCustomers')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
+		const user = await getPrimaryUser(ctx.db, userId);
 
 		const accessPhase = paidAccessState(subscription);
 
 		return {
 			tier,
 			tierLabel: await getTierLabel(ctx, tier),
-			billingManaged: customer !== null,
+			billingManaged: user?.dodoCustomerId !== undefined,
 			accessPhase
 		};
 	}
@@ -284,6 +281,10 @@ export const checkout = action({
 				'This older checkout needs provider reconciliation before retrying. Contact billing support.'
 			);
 		}
+
+		// The pricing site can start checkout before the app ever created the
+		// users row that stores the Dodo customer.
+		await ctx.runMutation(api.billing.ensureMySubscription, {});
 
 		const dodoCustomerId: string = await ctx.runAction(internal.pricing.ensureCustomer, {
 			userId: identity.subject,
@@ -456,19 +457,12 @@ export const reserveCheckoutSession = internalMutation({
 				attempt.productId === args.productId
 		);
 
-		const environment = readDodoEnvironment(env);
 		const existing = openRows[0];
 
 		const ambiguousMatchRetained =
 			ambiguousMatch !== undefined && !openRows.some((row) => row._id === ambiguousMatch._id);
 
 		if (ambiguousMatchRetained) {
-			if (ambiguousMatch.dodoEnvironment && ambiguousMatch.dodoEnvironment !== environment) {
-				throw new Error(
-					'This checkout belongs to a different payment environment. Contact billing support.'
-				);
-			}
-
 			return {
 				kind: 'create' as const,
 				attemptId: ambiguousMatch.attemptId,
@@ -501,12 +495,6 @@ export const reserveCheckoutSession = internalMutation({
 		) {
 			// Terminal attempts never resume; the caller gets a fresh reservation.
 			if (!checkoutOutcomeIsTerminal(existing.outcome)) {
-				if (existing.dodoEnvironment && existing.dodoEnvironment !== environment) {
-					throw new Error(
-						'This checkout belongs to a different payment environment. Contact billing support.'
-					);
-				}
-
 				if (existing.checkoutUrl) {
 					return {
 						kind: 'existing' as const,
@@ -546,7 +534,6 @@ export const reserveCheckoutSession = internalMutation({
 			productId: args.productId,
 			outcome: 'reserved' as const,
 			idempotencyKey: `sprocket-checkout:${crypto.randomUUID()}`,
-			dodoEnvironment: environment,
 			outcomeUpdatedAt: args.now,
 			expiresAt: args.now + CHECKOUT_SESSION_TTL_MS
 		};
@@ -585,7 +572,6 @@ async function archiveCheckoutAttempt(
 		outcomeUpdatedAt: attempt.outcomeUpdatedAt ?? now,
 		createRequest: terminal ? undefined : attempt.createRequest,
 		createStartedAt: attempt.createStartedAt,
-		dodoEnvironment: attempt.dodoEnvironment,
 		expiresAt: attempt.expiresAt
 	});
 	await ctx.db.delete('billingCheckoutSessions', attempt._id);
@@ -926,7 +912,7 @@ export const getCheckoutStatus = action({
 
 		if (!attempt) throw new Error('Unknown checkout attempt.');
 
-		const mode = publicMode(attempt.dodoEnvironment ?? readDodoEnvironment(env));
+		const mode = publicMode(readDodoEnvironment(env));
 
 		const now = Date.now();
 
@@ -963,12 +949,7 @@ export const getCheckoutStatus = action({
 			return { attemptId, mode, status: 'expired', expiresAt: attempt.expiresAt };
 		}
 
-		const environment = readDodoEnvironment(env);
-
-		const environmentMismatch =
-			attempt.dodoEnvironment !== undefined && attempt.dodoEnvironment !== environment;
-
-		if (!env.DODO_PAYMENTS_API_KEY?.trim() || environmentMismatch) {
+		if (!env.DODO_PAYMENTS_API_KEY?.trim()) {
 			return {
 				attemptId,
 				status: 'unknown',
@@ -1073,7 +1054,6 @@ export const lookupCheckoutAttempt = internalQuery({
 					dodoCustomerId: v.string()
 				})
 			),
-			dodoEnvironment: v.optional(v.union(v.literal('test_mode'), v.literal('live_mode'))),
 			expiresAt: v.number()
 		}),
 		v.null()
@@ -1108,9 +1088,6 @@ export const lookupCheckoutAttempt = internalQuery({
 			idempotencyKey: retained.idempotencyKey,
 			outcomeUpdatedAt: retained.outcomeUpdatedAt,
 			createRequest: retained.createRequest,
-			dodoEnvironment: retained.dodoEnvironment
-				? readDodoEnvironment({ DODO_PAYMENTS_ENVIRONMENT: retained.dodoEnvironment })
-				: undefined,
 			expiresAt: retained.expiresAt
 		};
 	}
@@ -1158,12 +1135,15 @@ export const customerPortal = action({
 	handler: async (ctx): Promise<{ portal_url: string }> => {
 		assertPaymentsConfigured();
 		const userId = await getUserId(ctx);
-		const customer = await ctx.runQuery(internal.billingCustomers.get, { userId });
 
-		if (!customer) throw new Error('This account does not have a billing customer.');
+		const dodoCustomerId = await ctx.runQuery(internal.billingCustomers.getDodoCustomerId, {
+			userId
+		});
+
+		if (!dodoCustomerId) throw new Error('This account does not have a billing customer.');
 
 		const portal = await ctx.runAction(internal.pricing.createCustomerPortal, {
-			dodoCustomerId: customer.dodoCustomerId
+			dodoCustomerId
 		});
 
 		return { portal_url: portal.portal_url };
@@ -1264,11 +1244,11 @@ export async function applyDodoSubscriptionProjection(
 	}
 
 	const knownCustomer = await ctx.db
-		.query('billingCustomers')
+		.query('users')
 		.withIndex('by_dodoCustomerId', (query) => query.eq('dodoCustomerId', args.dodoCustomerId))
 		.unique();
 
-	const userId = args.userId ?? knownCustomer?.userId;
+	const userId = args.userId ?? knownCustomer?.subject;
 
 	if (!userId) {
 		return {
@@ -1277,7 +1257,7 @@ export async function applyDodoSubscriptionProjection(
 		};
 	}
 
-	if (knownCustomer && knownCustomer.userId !== userId) {
+	if (knownCustomer && knownCustomer.subject !== userId) {
 		throw new Error('Dodo subscription customer does not match this account.');
 	}
 
@@ -1418,12 +1398,9 @@ export async function applyDodoSubscriptionProjection(
 		};
 	}
 
-	const customer = await ctx.db
-		.query('billingCustomers')
-		.withIndex('by_userId', (query) => query.eq('userId', userId))
-		.unique();
+	const user = await getPrimaryUser(ctx.db, userId);
 
-	if (customer && customer.dodoCustomerId !== args.dodoCustomerId) {
+	if (user?.dodoCustomerId && user.dodoCustomerId !== args.dodoCustomerId) {
 		throw new Error('Dodo subscription customer does not match this account.');
 	}
 
@@ -1625,8 +1602,8 @@ export async function applyDodoSubscriptionProjection(
 		}
 	}
 
-	if (!customer) {
-		await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: args.dodoCustomerId });
+	if (user && !user.dodoCustomerId) {
+		await ctx.db.patch('users', user._id, { dodoCustomerId: args.dodoCustomerId });
 	}
 
 	// Only a webhook-confirmed new identity supersedes; observations never do.

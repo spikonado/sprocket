@@ -129,18 +129,9 @@ export const ensureCustomer = internalAction({
 	args: { userId: v.string(), email: v.optional(v.string()), name: v.string() },
 	returns: v.string(),
 	handler: async (ctx, { userId, email, name }): Promise<string> => {
-		const environment = readDodoEnvironment(env);
-		const existing = await ctx.runQuery(internal.billingCustomers.get, { userId });
+		const existing = await ctx.runQuery(internal.billingCustomers.getDodoCustomerId, { userId });
 
-		if (existing) {
-			if (existing.dodoEnvironment && existing.dodoEnvironment !== environment) {
-				throw new Error(
-					'This account has a billing customer from a different environment. Contact support.'
-				);
-			}
-
-			return existing.dodoCustomerId;
-		}
+		if (existing) return existing;
 
 		if (!email?.trim()) throw new Error('Your account does not have a billing email.');
 
@@ -151,8 +142,7 @@ export const ensureCustomer = internalAction({
 
 		return await ctx.runMutation(internal.billingCustomers.remember, {
 			userId,
-			dodoCustomerId: customer.customer_id,
-			dodoEnvironment: environment
+			dodoCustomerId: customer.customer_id
 		});
 	}
 });

@@ -3,7 +3,7 @@ import { api, internal } from '@convex/_generated/api';
 import { matchesBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
 import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
-import { initConvexTest } from './test.setup';
+import { initConvexTest, insertUser } from './test.setup';
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -405,6 +405,7 @@ describe('Dodo subscription persistence', () => {
 	it('activates an arbitrary Dodo tier, links the customer, and ignores an older cancellation', async () => {
 		const t = initConvexTest();
 		const now = Date.now();
+		await t.run((ctx) => insertUser(ctx, 'user_1'));
 		await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_1',
 			attemptId: 'attempt_1',
@@ -436,19 +437,14 @@ describe('Dodo subscription persistence', () => {
 			eventAt: 1_000
 		});
 
-		const stored = await t.run(async (ctx) => ({
-			subscription: await ctx.db
+		const subscription = await t.run(async (ctx) =>
+			ctx.db
 				.query('subscriptions')
 				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
-				.unique(),
-			customer: await ctx.db
-				.query('billingCustomers')
-				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 				.unique()
-		}));
+		);
 
-		expect(stored.subscription).toMatchObject({ tier: 'team', status: 'active', eventAt: 2_000 });
-		expect(stored.customer).toMatchObject({ dodoCustomerId: 'cus_1' });
+		expect(subscription).toMatchObject({ tier: 'team', status: 'active', eventAt: 2_000 });
 
 		const checkoutSession = await t.run(async (ctx) =>
 			ctx.db
@@ -466,8 +462,8 @@ describe('Dodo subscription persistence', () => {
 			t.withIdentity({ subject: args.userId }).query(api.billing.getMySubscription, {})
 		).resolves.toMatchObject({ tier: 'team', tierLabel: 'Team', billingManaged: true });
 		await expect(
-			t.query(internal.billingCustomers.get, { userId: args.userId })
-		).resolves.toMatchObject({ dodoCustomerId: 'cus_1' });
+			t.query(internal.billingCustomers.getDodoCustomerId, { userId: args.userId })
+		).resolves.toBe('cus_1');
 	});
 
 	it('does not reactivate a lapsed subscription with the same event timestamp', async () => {
@@ -511,6 +507,7 @@ describe('Dodo subscription persistence', () => {
 	it('does not let Dodo replace an active operator-managed tier', async () => {
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
+			await insertUser(ctx, 'user_max');
 			await ctx.db.insert('subscriptions', {
 				userId: 'user_max',
 				tier: 'max',
@@ -540,15 +537,6 @@ describe('Dodo subscription persistence', () => {
 		);
 
 		expect(subscription).toMatchObject({ tier: 'max', status: 'active' });
-
-		const customer = await t.run(async (ctx) =>
-			ctx.db
-				.query('billingCustomers')
-				.withIndex('by_userId', (query) => query.eq('userId', 'user_max'))
-				.unique()
-		);
-
-		expect(customer).toBeNull();
 
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', { tierId: 'max', label: 'Max', monthly: 1 });

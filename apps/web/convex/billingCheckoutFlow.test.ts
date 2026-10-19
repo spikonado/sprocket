@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest } from './test.setup';
+import { initConvexTest, insertUser } from './test.setup';
 import {
 	drainWebhookJobs,
 	sendSubscriptionWebhook,
@@ -193,12 +193,13 @@ describe('checkout selection changes', () => {
 			checkouts[1]!.headers.get('Idempotency-Key')
 		);
 		await expect(
-			t.query(internal.billingCustomers.get, { userId: 'owner' })
-		).resolves.toMatchObject({ dodoCustomerId: 'cus_owner' });
+			t.query(internal.billingCustomers.getDodoCustomerId, { userId: 'owner' })
+		).resolves.toBe('cus_owner');
 	});
 
 	it('retains the saved customer across concurrent creation results', async () => {
 		const { t, requests } = await billingFixture();
+		await t.run((ctx) => insertUser(ctx, 'owner'));
 		await Promise.all([
 			t.action(internal.pricing.ensureCustomer, {
 				userId: 'owner',
@@ -455,7 +456,6 @@ describe('checkout selection changes', () => {
 				outcomeUpdatedAt: session.outcomeUpdatedAt,
 				createRequest: session.createRequest,
 				createStartedAt: session.createStartedAt,
-				dodoEnvironment: session.dodoEnvironment,
 				expiresAt: session.expiresAt
 			});
 			await ctx.db.delete('billingCheckoutSessions', session._id);
@@ -474,67 +474,5 @@ describe('checkout selection changes', () => {
 		);
 
 		expect(monthlyCreates.length).toBeGreaterThanOrEqual(2);
-	});
-
-	it('allows a different selection while an old-environment attempt is merely archived', async () => {
-		const { t, owner } = await billingFixture();
-		await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
-
-		const monthly = await t.run(async (ctx) =>
-			ctx.db
-				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
-				.unique()
-		);
-
-		if (!monthly) throw new Error('Missing monthly checkout reservation.');
-
-		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'live_mode');
-
-		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'owner',
-				tierId: 'pro',
-				interval: 'annual',
-				productId: 'prod_annual',
-				now: Date.now()
-			})
-		).resolves.toMatchObject({
-			kind: 'create',
-			productId: 'prod_annual'
-		});
-
-		const retained = await t.run(async (ctx) =>
-			ctx.db
-				.query('billingCheckoutAttempts')
-				.withIndex('by_userId_and_attemptId', (query) =>
-					query.eq('userId', 'owner').eq('attemptId', monthly.attemptId)
-				)
-				.unique()
-		);
-
-		expect(retained).toMatchObject({ attemptId: monthly.attemptId, dodoEnvironment: 'test_mode' });
-	});
-
-	it('resuming a same-selection hosted link keeps its original environment after a config flip', async () => {
-		const { owner } = await billingFixture();
-
-		const first = await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
-
-		expect(first.mode).toBe('test');
-
-		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'live_mode');
-
-		await expect(
-			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
-		).rejects.toThrow('different payment environment');
-
-		await expect(
-			owner.action(api.billing.getCheckoutStatus, { attemptId: first.attemptId! })
-		).resolves.toMatchObject({
-			mode: 'test',
-			status: 'unknown',
-			checkout_url: 'https://checkout.example/prod_monthly'
-		});
 	});
 });

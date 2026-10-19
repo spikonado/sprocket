@@ -3,7 +3,7 @@ import { api, internal } from '@convex/_generated/api';
 import type { FunctionArgs } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
+import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
 
 const now = Date.UTC(2026, 5, 15, 12);
 
@@ -63,6 +63,7 @@ function readCheck(t: ConvexTestInstance, checkId: Id<'_scheduled_functions'>) {
 async function upsertPaidSubscription(t: ConvexTestInstance) {
 	const args = paidSubscription();
 
+	await t.run((ctx) => insertUser(ctx, userId));
 	await t.mutation(internal.billing.upsertDodoSubscription, args);
 
 	return args;

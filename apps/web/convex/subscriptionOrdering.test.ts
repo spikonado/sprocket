@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
+import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
 
@@ -32,7 +32,7 @@ async function seedTiersAndCustomer(t: ConvexTestInstance): Promise<void> {
 			monthlyProductId: 'prod_max',
 			monthly: 500 * UNITS_PER_DOLLAR
 		});
-		await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: 'cus_ordering' });
+		await insertUser(ctx, userId, 'cus_ordering');
 	});
 }
 
