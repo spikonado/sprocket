@@ -166,6 +166,7 @@ it('uses the same confirmation before a desktop restart', async () => {
 		onWorkspaceLaunch: () => () => {},
 		openExternal: async () => {},
 		focusWindow: async () => true,
+		setUnsavedChanges: async () => {},
 		updates: {
 			getState: async () => ({ ...available, method: 'desktop', status: 'downloaded' }),
 			download: vi.fn(),

@@ -212,3 +212,38 @@ it('reports unsaved file edits in any scope until they are saved', () => {
 	panel.setFileDraft(panel.activeTab.id, undefined);
 	expect(panel.hasFileDrafts).toBe(false);
 });
+
+it('tells the desktop app when unsaved file edits appear and go away', () => {
+	const setUnsavedChanges = vi.fn<(value: boolean) => Promise<void>>(async () => {});
+
+	window.sprocketDesktopBridge = {
+		takeWorkspaceLaunch: async () => null,
+		onWorkspaceLaunch: () => () => {},
+		openExternal: async () => {},
+		focusWindow: async () => true,
+		setUnsavedChanges,
+		updates: {
+			getState: vi.fn(),
+			download: vi.fn(),
+			install: vi.fn(),
+			onState: () => () => {}
+		}
+	};
+
+	const { result, unmount } = renderHook(() => useArtifactPanel());
+	const panel = result.current;
+
+	act(() => {
+		panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
+		panel.setFileDraft(panel.activeTab.id, {
+			doc: Text.of(['edited']),
+			base: Text.of(['saved']),
+			version: 'v1'
+		});
+		panel.setFileDraft(panel.activeTab.id, undefined);
+	});
+	unmount();
+	delete window.sprocketDesktopBridge;
+
+	expect(setUnsavedChanges.mock.calls).toEqual([[false], [true], [false]]);
+});

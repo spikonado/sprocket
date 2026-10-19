@@ -6,6 +6,7 @@ declare global {
 			onWorkspaceLaunch: (callback: () => void) => () => void;
 			openExternal: (url: string) => Promise<void>;
 			focusWindow: () => Promise<boolean>;
+			setUnsavedChanges: (value: boolean) => Promise<void>;
 		};
 	}
 }
