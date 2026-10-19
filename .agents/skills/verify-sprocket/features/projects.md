@@ -18,8 +18,8 @@ A project is a local directory the user attaches to their account. New threads r
 
 Preconditions:
 
-- Signed in, on the new-thread screen.
-- For adding, a directory that isn't attached yet. Prefer `scripts/scratch-repo.sh /tmp/verify-sprocket-<name>` over real repos, and remember it can't be removed again.
+- On the new-thread screen.
+- For adding, an unattached directory made with `$V/scratch-repo.sh /tmp/verify-sprocket-<name>`. Only add one when the change under test needs a fresh project; it stays in the dev account for good.
 
 - **Open picker.** Click `button "Add project"`. The picker shows `button "Go to parent directory"`, `combobox "Project directory path"` with value `~/`, `button "Add Ctrl Enter"`, and `listbox "Directories"` with one `option` per subdirectory.
 - **Enter path.** Click the combobox, `agent-browser press Control+a`, then `agent-browser keyboard type "<path>"`.
@@ -29,6 +29,5 @@ Preconditions:
 
 ## Gotchas
 
-- A directory whose git remote matches an existing project attaches to that project and shows its name. That is correct behavior, not a failure. Scratch repos have no remote.
-- Projects can't be removed in the UI. Each new directory you add stays in the dev account for good.
+- A directory whose git remote matches an existing project attaches to that project and shows its name. That is correct behavior. Scratch repos have no remote, so each becomes its own project.
 - `Enter` in the path box picks the highlighted directory. Only `Control+Enter` adds.

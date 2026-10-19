@@ -16,10 +16,7 @@ The user sends a prompt in a project. The local agent runs it through the model 
 
 ## Driving it with agent-browser
 
-Preconditions:
-
-- Signed in with project `verify-sprocket-scratch` selected.
-- The dev deployment's `tiers` table is seeded (see Known limits in `SKILL.md`).
+Precondition: the dev deployment's `tiers` table is seeded (Known limits in `SKILL.md`).
 
 - **Type prompt.** Click `combobox "Ask anything, use / for commands, @ to tag files/folders, and $ for skills"` and run `agent-browser keyboard type "Reply with the single word ok"`. `button "Send message"` becomes enabled.
 - **Send.** Click `button "Send message"`. The prompt appears in `region "Conversation history"`.
@@ -30,6 +27,5 @@ Preconditions:
 
 ## Gotchas
 
-- A 429 "Subscription tiers are unavailable" in the transcript means the dev `tiers` table is empty. Report it; don't seed it yourself.
-- `@`, `$` and `/` in the composer open popups that capture Enter. Type plain prompts for basic checks.
+- `@`, `$` and `/` in the composer open popups that capture Enter. Plain-text prompts avoid them.
 - Each prompt uses real model quota on the user's dev account. Keep prompts tiny.
