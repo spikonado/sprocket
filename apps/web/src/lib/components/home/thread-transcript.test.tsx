@@ -542,6 +542,7 @@ describe('transcript viewport paging', () => {
 			{ type: 'tool-result', callId: 'done', name: 'exec_cmd', output: {} },
 			{ type: 'tool-call', callId: 'cut', name: 'exec_cmd', input: { cmd: 'sleep 10' } }
 		];
+
 		const closed: TranscriptDisplayRow = {
 			...message(2),
 			kind: 'work',
@@ -549,6 +550,7 @@ describe('transcript viewport paging', () => {
 			closed: true,
 			toolCounts: { exec_cmd: 2 }
 		};
+
 		const live: LiveTranscriptMessage = {
 			...liveMessage(),
 			runId: closed.runId,
