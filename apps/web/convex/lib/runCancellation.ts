@@ -123,7 +123,6 @@ export function projectSelectedThreadLifecycle(args: {
 		_id: Id<'runs'>;
 		_creationTime: number;
 		status: Infer<typeof vRunStatus>;
-		startedAt?: number;
 		completedAt?: number;
 		lastError?: string;
 		cancellationRequestedAt?: number;

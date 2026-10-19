@@ -7,8 +7,8 @@ type ExecutorJobState = {
 	completedAt?: number;
 };
 
-export function runStartedAt(run: { startedAt?: number; _creationTime: number }): number {
-	return run.startedAt ?? Math.floor(run._creationTime);
+export function runStartedAt(run: { _creationTime: number }): number {
+	return Math.floor(run._creationTime);
 }
 
 export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null | undefined) {

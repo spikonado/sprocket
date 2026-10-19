@@ -4,10 +4,6 @@ import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
-import {
-	runSectionDisplayOrderPrefix,
-	sectionDisplayOrder
-} from '@convex/lib/transcriptSectionWrites';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, {
@@ -200,46 +196,18 @@ export const runMachineProcessIdBackfill = internalMutation({
 	}
 });
 
-// Section display orders embed the run start, so they move with it in one transaction.
 export const unsetRetiredRunFields = migrations.define({
 	table: 'runs',
-	batchSize: 10,
-	migrateOne: async (ctx, run) => {
-		if (
-			run.startedAt === undefined &&
-			run.gatewayProtocolVersion === undefined &&
-			run.cancellationDeadlineAt === undefined
-		) {
-			return;
-		}
-
-		if (run.startedAt !== undefined) {
-			const oldPrefix = runSectionDisplayOrderPrefix(run.startedAt, run._id);
-			const startedAt = Math.floor(run._creationTime);
-
-			const sections = await ctx.db
-				.query('threadTranscriptWorkSections')
-				.withIndex('by_threadId_and_displayOrder', (q) =>
-					q
-						.eq('threadId', run.threadId)
-						.gte('displayOrder', oldPrefix)
-						.lt('displayOrder', `${oldPrefix.slice(0, -1)};`)
-				)
-				.collect();
-
-			for (const section of sections) {
-				await ctx.db.patch('threadTranscriptWorkSections', section._id, {
-					displayOrder: sectionDisplayOrder(startedAt, run._id, section.sectionOrdinal)
-				});
-			}
-		}
-
-		await ctx.db.patch('runs', run._id, {
-			startedAt: undefined,
-			gatewayProtocolVersion: undefined,
-			cancellationDeadlineAt: undefined
-		});
-	}
+	migrateOne: (_ctx, run) =>
+		run.startedAt === undefined &&
+		run.gatewayProtocolVersion === undefined &&
+		run.cancellationDeadlineAt === undefined
+			? undefined
+			: {
+					startedAt: undefined,
+					gatewayProtocolVersion: undefined,
+					cancellationDeadlineAt: undefined
+				}
 });
 
 export const removeRetiredRunFields = migrations.runner(internal.migrations.unsetRetiredRunFields);

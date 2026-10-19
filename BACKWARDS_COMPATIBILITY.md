@@ -110,7 +110,7 @@ Each of these Convex variants goes once a full production scan confirms no retai
 
 ### Retired run fields
 
-Older `runs` rows carry `startedAt`, `gatewayProtocolVersion` and `cancellationDeadlineAt`. New runs derive their start from `_creationTime`, and `runStartedAt` reads a legacy `startedAt` because those runs' section `displayOrder` keys embed it. The hourly `migrations.removeRetiredRunFields` cron unsets the fields and rewrites each run's section keys in the same transaction. Once that migration completes on every deployment, remove the three fields, the fallback in `runStartedAt`, the migration and the cron.
+Older `runs` rows carry `startedAt`, `gatewayProtocolVersion` and `cancellationDeadlineAt`, which nothing reads anymore. The hourly `migrations.removeRetiredRunFields` cron unsets them. Once that migration completes on every deployment, remove the three fields, the migration and the cron.
 
 ### Tool invocation IDs
 
