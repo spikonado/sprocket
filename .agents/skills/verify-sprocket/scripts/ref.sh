@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Prints the @ref of the first `snapshot -i` line containing the given text, such as 'button "Files"'.
 # `find role button --name X` matches substrings, so it can hit `Attach files` instead.
 set -euo pipefail
 

@@ -32,6 +32,6 @@ Preconditions:
 
 ## Gotchas
 
-- A second directory with the same git remote as an attached project is rejected with "Repository is already attached to <path>" in the error banner, and the picker still closes. Scratch repos have no remote, so each becomes its own project.
+- Adding a second directory with the same git remote as an attached project fails with "Repository is already attached to <path>" in the error banner, and the picker still closes. Scratch repos have no remote, so each becomes its own project.
 - `Enter` in the path box opens the highlighted directory. Only `Control+Enter` adds.
 - A path that doesn't exist yet turns the button into `Create & add Ctrl Enter`.

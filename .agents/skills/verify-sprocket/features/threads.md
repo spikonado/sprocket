@@ -19,7 +19,7 @@ The user sends a prompt in a project. The local agent runs it through the model 
 
 ## Driving it with agent-browser
 
-Precondition: the dev deployment's `tiers` table is seeded. See Known limits in `SKILL.md`.
+Precondition: the dev deployment's `tiers` table has rows. See Known limits in `SKILL.md`.
 
 - **Type prompt.** Click `combobox "Ask anything, use / for commands, @ to tag files/folders, and $ for skills"` and run `agent-browser keyboard type "Reply with the single word ok"`. `button "Send message"` becomes enabled.
 - **Send.** Click `button "Send message"`. The prompt and its `button "Copy message"` appear in `region "Conversation history"`. Plain `snapshot` shows the status `Agent is running` and `button "Stop generation"` in place of `Send message`. `region "Unsettled"` has a new `group` labeled `Starting`, then `Working`. Its name is the prompt text until the generated title arrives, which can happen before the reply.

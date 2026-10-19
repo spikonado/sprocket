@@ -1,4 +1,3 @@
-# Sourced by the other helpers. Sets repo_root, data_dir and CARGO_TARGET_DIR. load_dev_env sets env_file and dev_convex_url.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -23,12 +22,12 @@ load_dev_env() {
 	fi
 }
 
-# Prints the PIDs of dev-port listeners this user can see.
+# ss shows PIDs only for this user's processes.
 dev_port_pids() {
 	ss -Hltnp '( sport = :5173 or sport = :7731 )' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
 }
 
-# Prints dev-port listen addresses, skipping tailscale serve on the tailnet IP.
+# Skips tailscale serve on the tailnet IP.
 dev_port_listeners() {
 	ss -Hltn '( sport = :5173 or sport = :7731 )' | awk '$4 ~ /^(127\.0\.0\.1|\[::1\]|0\.0\.0\.0|\[::\]|\*):/ {print $4}'
 }

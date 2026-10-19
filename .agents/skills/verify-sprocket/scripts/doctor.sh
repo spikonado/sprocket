@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Read-only: is the running dev instance this worktree's, on the dev deployment, and serving?
 source "$(dirname "$0")/common.sh"
 load_dev_env
 set +e

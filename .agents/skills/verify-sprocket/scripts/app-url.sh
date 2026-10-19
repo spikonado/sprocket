@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Maps the tailnet's port 5173 to Vite and prints the app URL.
 # The target is localhost because Vite listens on ::1 only: 127.0.0.1 gives 502 and [::1] gives 500.
 source "$(dirname "$0")/common.sh"
 

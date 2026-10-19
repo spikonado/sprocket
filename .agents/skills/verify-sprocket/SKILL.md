@@ -5,7 +5,7 @@ description: Verify Sprocket web app changes in the real dev app, run from the c
 
 # Verify Sprocket
 
-Proof comes from the real app. Run the Rust API and Vite from this worktree against the dev Convex deployment, and drive them the way a user does. The user rejects mock pages and fake-data previews as proof. Local Rust builds are allowed for verification, overriding AGENTS.md.
+Proof comes from the real app. Run the Rust API and Vite from this worktree against the dev Convex deployment, and drive them the way a user does. The user rejects mock pages and fake-data previews as proof. Build Rust locally when verifying. That overrides the AGENTS.md rule against local Rust compilations.
 
 ## Helpers
 
@@ -16,14 +16,14 @@ Set `V=$(git rev-parse --show-toplevel)/.agents/skills/verify-sprocket/scripts` 
 | `$V/launch.sh`             | Installs bun deps, builds `sprocket-cli`, then runs `bun dev` in the foreground. Refuses when 5173 or 7731 is taken. |
 | `$V/doctor.sh`             | Read-only health check. Exit 0 means the instance is worth driving.                                                  |
 | `$V/app-url.sh`            | Maps the tailnet's port 5173 to Vite and prints the app URL.                                                         |
-| `$V/ref.sh '<text>'`       | Prints the `@ref` of the first `snapshot -i` line containing the text, for example `'button "Files"'`.               |
+| `$V/ref.sh '<text>'`       | Prints the `@ref` of the first `snapshot -i` line containing the text.                                               |
 | `$V/login.sh`              | Signs the profile's host in with a device code.                                                                      |
 | `$V/stop.sh`               | Kills this worktree's leftover dev-port listeners.                                                                   |
 | `$V/scratch-repo.sh [dir]` | Creates or reuses a remote-less git repo and prints its path. Default `/tmp/verify-sprocket-scratch`.                |
 
 ## Machine facts
 
-- One instance per machine. The API is fixed on `127.0.0.1:7731` and Vite on `localhost:5173` with `strictPort`. When another worktree's instance holds them, ask the user before stopping it.
+- One instance per machine. The API always binds `127.0.0.1:7731`, and Vite binds `localhost:5173` with `strictPort`. When another worktree's instance holds them, ask the user before stopping it.
 - Ports `17731` and `4321` belong to the user. `17731` is the installed Sprocket app, possibly the agent you run in. Leave both ports and their tailscale serve mappings alone.
 - `bun dev` runs `convex dev`. That pushes this worktree's `apps/web/convex` to the shared dev deployment and sets the dev AuthKit homepage URL to `http://localhost:5173`.
 - The shell exports the prod `PUBLIC_CONVEX_URL`, and the committed root `.env` compiles prod in as a fallback. Every Sprocket process needs the dev URL, `VITE_CONVEX_URL` in the gitignored `apps/web/.env.local` of the main checkout. The helpers pass it, and anything run by hand must too. A mixup signs the host into prod and registers this machine there.
@@ -61,13 +61,12 @@ APP=$($V/app-url.sh)
 export AGENT_BROWSER_SESSION=verify-sprocket AGENT_BROWSER_RESTORE=verify-sprocket
 agent-browser open "$APP"
 agent-browser set viewport 1440 900
-agent-browser wait --fn "!document.body.innerText.includes('Connecting to Sprocket')"
+agent-browser wait --fn "document.querySelector('[aria-label=\"Open side panel\"]') || document.body.innerText.includes('Sign in to continue')"
 agent-browser snapshot -i
 ```
 
-- Leave the serve mapping in place, since the stored sign-in belongs to that origin.
 - `AGENT_BROWSER_RESTORE` is the restore key itself. Keep both exports for every call: after an hour idle the browser closes, and the next command relaunches it with the cookie restored.
-- `button "New thread"` in the snapshot means signed in. `heading "Sign in to continue"` means follow [features/sign-in.md](features/sign-in.md) first. The inbox rows load a few seconds after `New thread` appears.
+- `button "New thread"` in the snapshot means signed in. `heading "Sign in to continue"` means follow [features/sign-in.md](features/sign-in.md) first. Use the same `wait` after every reload, since `New thread` shows about a second before the rest of the shell.
 
 ## Drive
 
@@ -81,7 +80,7 @@ agent-browser snapshot -i
 
 ## Evidence
 
-Proof goes in `OUT=/tmp/verify-sprocket/$(date +%Y%m%d-%H%M%S)-<feature>`, one per feature run, named after its feature file. It outlives cleanup.
+Proof goes in `OUT=/tmp/verify-sprocket/$(date +%Y%m%d-%H%M%S)-<feature>`, one per feature run, named after its feature file.
 
 - Before and after each user action, run `agent-browser screenshot $OUT/NN-step.png` and `agent-browser snapshot > $OUT/NN-step.txt`.
 - Every mutation gets a second view besides the screen: files in the scratch repo, `~/.sprocket-dev-verify/project-attachments.json`, network requests, the launch log, or the page after a reload.
@@ -96,8 +95,8 @@ Stop only what this run started, by PID.
 
 1. `agent-browser close`, which saves the restore state.
 2. Terminate the launch command session, then run `$V/stop.sh`, which kills the `vite dev` that terminating leaves behind.
-3. Reset the scratch repos: `git -C <dir> checkout -- . && git -C <dir> clean -fd` for `/tmp/verify-sprocket-scratch` and any other `$V/scratch-repo.sh` directory the run touched. Keep the directories: projects can't be removed in the app, so a deleted directory leaves a dangling project in `~/.sprocket-dev-verify`.
-4. Keep `~/.sprocket-dev-verify`, the `verify-sprocket` restore state, the 5173 serve mapping, `~/.cache/sprocket-verify-target` and `/tmp/verify-sprocket/`.
+3. Reset the scratch repos: `git -C <dir> checkout -- . && git -C <dir> clean -fd` for `/tmp/verify-sprocket-scratch` and any other `$V/scratch-repo.sh` directory the run touched. Keep the directories. The app can't remove projects, so a deleted directory leaves a dangling project in `~/.sprocket-dev-verify`.
+4. Keep `~/.sprocket-dev-verify`, the `verify-sprocket` restore state, `~/.cache/sprocket-verify-target` and the evidence in `/tmp/verify-sprocket/`. Keep the 5173 serve mapping too, since the stored sign-in belongs to that origin.
 
 Run cleanup after failed attempts too, so the next launch finds free ports.
 
