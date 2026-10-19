@@ -16,6 +16,7 @@ import { FilePlus, FolderPlus, RefreshCw, Search, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
+import { leafName, trimSlash } from '$lib/chat/side-panel';
 import type { DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FilesApi = Pick<
@@ -59,16 +60,6 @@ const TOOL_BUTTON =
 	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
 
 type TreeModel = UseFileTreeResult['model'];
-
-function trimSlash(path: string) {
-	return path.endsWith('/') ? path.slice(0, -1) : path;
-}
-
-function leafName(path: string) {
-	const trimmed = trimSlash(path);
-
-	return trimmed.slice(trimmed.lastIndexOf('/') + 1);
-}
 
 function parentDirectory(path: string) {
 	const trimmed = trimSlash(path);
@@ -120,7 +111,6 @@ export default function FilesView({
 	/** A placeholder row for a new file or folder that is waiting for its name. */
 	const pendingCreate = useRef<{ path: string; editing: boolean } | null>(null);
 	const searchInput = useRef<HTMLInputElement>(null);
-	const rootButtons = useRef<(HTMLButtonElement | null)[]>([]);
 
 	const handlers = useRef<{
 		rename: (event: FileTreeRenameEvent) => void;
@@ -312,10 +302,11 @@ export default function FilesView({
 
 			if (document.visibilityState === 'visible' && !pendingCreate.current) {
 				const known = shown.current?.path === workspacePath ? shown.current : null;
+				const knownHash = forceReset.current ? undefined : known?.hash;
 
 				try {
 					const result = await api!.listWorkspaceFiles(
-						{ workspacePath, knownHash: forceReset.current ? undefined : known?.hash },
+						{ workspacePath, knownHash },
 						controller.signal
 					);
 
@@ -323,7 +314,7 @@ export default function FilesView({
 					scanning = result.scanning;
 
 					// Optimistic tree edits win until their request settles.
-					if (!result.unchanged && mutations.current === 0 && !pendingCreate.current) {
+					if (result.hash !== knownHash && mutations.current === 0 && !pendingCreate.current) {
 						if (forceReset.current || !known || !samePaths(known.paths, result.paths)) {
 							model.resetPaths({
 								preparedInput: prepareFileTreeInput(result.paths, {
@@ -411,32 +402,15 @@ export default function FilesView({
 			<div className="border-hairline flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
 				{canSwitchRoot ? (
 					<div
-						role="radiogroup"
+						role="group"
 						aria-label="Files root"
 						className="bg-muted mr-1 flex shrink-0 rounded-full p-0.5 text-xs font-medium"
-						onKeyDown={(event) => {
-							const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
-
-							if (!delta) return;
-							event.preventDefault();
-
-							const index =
-								(ROOTS.findIndex((item) => item.id === root) + delta + ROOTS.length) % ROOTS.length;
-
-							setRoot(ROOTS[index]!.id);
-							rootButtons.current[index]?.focus();
-						}}
 					>
-						{ROOTS.map((item, index) => (
+						{ROOTS.map((item) => (
 							<button
 								key={item.id}
-								ref={(button) => {
-									rootButtons.current[index] = button;
-								}}
 								type="button"
-								role="radio"
-								aria-checked={root === item.id}
-								tabIndex={root === item.id ? 0 : -1}
+								aria-pressed={root === item.id}
 								onClick={() => setRoot(item.id)}
 								className={`focus-visible:ring-ring rounded-full px-2.5 py-0.5 transition focus-visible:ring-2 focus-visible:outline-none ${
 									root === item.id

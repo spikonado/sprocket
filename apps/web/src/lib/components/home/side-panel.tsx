@@ -21,7 +21,7 @@ import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import type { SidePanelTab, SidePanelView } from '$lib/chat/side-panel';
+import { leafName, type SidePanelTab, type SidePanelView } from '$lib/chat/side-panel';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 import type { ArtifactType } from '@convex/lib/validators';
 
@@ -90,11 +90,7 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 	if (artifact) return { label: artifact.title, icon: TYPE_ICONS[artifact.artifactType] };
 
 	if (tab.view === 'file' && tab.file) {
-		return {
-			label: tab.file.path.slice(tab.file.path.lastIndexOf('/') + 1),
-			title: tab.file.path,
-			icon: FileCode
-		};
+		return { label: leafName(tab.file.path), title: tab.file.path, icon: FileCode };
 	}
 
 	return VIEWS.find((item) => item.id === tab.view) ?? { label: 'New tab', icon: SquarePlus };

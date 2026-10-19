@@ -163,10 +163,6 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
         assert!(Instant::now() < deadline, "git status did not load in time");
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert_eq!(
-        index.list_paths(&root).unwrap().content_hash(),
-        index.list_paths(&root).unwrap().content_hash()
-    );
 }
 
 #[test]

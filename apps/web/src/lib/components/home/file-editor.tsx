@@ -6,6 +6,7 @@ import { classHighlighter } from '@lezer/highlight';
 import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
+import { leafName } from '$lib/chat/side-panel';
 import { fileDrafts } from '$lib/home/file-drafts';
 import type { DesktopApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
@@ -54,10 +55,6 @@ const editorTheme = EditorView.theme({
 	}
 });
 
-function basename(path: string) {
-	return path.slice(path.lastIndexOf('/') + 1);
-}
-
 export default function FileEditor(props: Props) {
 	return IMAGE_EXTENSIONS.test(props.file.path) ? (
 		<ImagePreview file={props.file} />
@@ -73,7 +70,7 @@ function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
 
 	return (
 		<div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-			{src ? <img src={src} alt={basename(file.path)} className="max-h-full max-w-full" /> : null}
+			{src ? <img src={src} alt={leafName(file.path)} className="max-h-full max-w-full" /> : null}
 		</div>
 	);
 }
@@ -159,7 +156,7 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 	async function loadLanguage(view: EditorView) {
 		const description = LanguageDescription.matchFilename(
 			languages,
-			basename(latest.current.file.path)
+			leafName(latest.current.file.path)
 		);
 
 		const support = description ? await description.load().catch(() => null) : null;
@@ -347,7 +344,7 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 					{notice}
 				</p>
 			) : null}
-			{status.kind === 'loading' || status.kind === 'error' || status.kind === 'unsupported' ? (
+			{status.kind !== 'text' ? (
 				<p
 					role={status.kind === 'error' ? 'alert' : 'status'}
 					className="text-muted-foreground p-3 text-sm"

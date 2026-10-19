@@ -441,8 +441,7 @@ body::after {
 	--tok-invalid: #ffa198;
 }
 
-.file-editor .tok-keyword,
-.file-editor .tok-operator.tok-keyword {
+.file-editor .tok-keyword {
 	color: var(--tok-keyword);
 }
 

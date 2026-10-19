@@ -12,11 +12,23 @@ export type SidePanelTab = {
 	file?: WorkspaceFileTarget;
 };
 
+export function trimSlash(path: string) {
+	return path.endsWith('/') ? path.slice(0, -1) : path;
+}
+
+export function leafName(path: string) {
+	const trimmed = trimSlash(path);
+
+	return trimmed.slice(trimmed.lastIndexOf('/') + 1);
+}
+
+export function isSameOrInside(path: string, entry: string) {
+	return path === entry || path.startsWith(`${entry}/`);
+}
+
 /** Maps `path` through a rename of `from` to `to`; returns null when unaffected. */
 export function renamedPath(path: string, from: string, to: string) {
-	if (path === from) return to;
-
-	return path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : null;
+	return isSameOrInside(path, from) ? `${to}${path.slice(from.length)}` : null;
 }
 
 /** Stored panel state, restored when revisiting a project workspace. */

@@ -14,6 +14,7 @@ import {
 import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
+	isSameOrInside,
 	renamedPath,
 	type SidePanelSnapshot,
 	type SidePanelTab
@@ -286,10 +287,7 @@ export class ArtifactPanel implements Store<number> {
 
 	closeFile(workspacePath: string, path: string) {
 		for (const tab of this.panel.tabs) {
-			if (
-				tab.file?.workspacePath === workspacePath &&
-				renamedPath(tab.file.path, path, path) !== null
-			) {
+			if (tab.file?.workspacePath === workspacePath && isSameOrInside(tab.file.path, path)) {
 				this.closeTab(tab.id);
 			}
 		}

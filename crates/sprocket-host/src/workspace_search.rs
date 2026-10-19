@@ -29,7 +29,8 @@ pub struct SearchOutcome {
 }
 
 /// Directory paths end with `/`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PathListing {
     pub paths: Vec<String>,
     pub git_status: Vec<GitStatusEntry>,

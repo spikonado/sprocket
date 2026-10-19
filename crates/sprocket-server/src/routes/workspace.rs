@@ -13,9 +13,7 @@ use crate::routes::session::MachineSession;
 use sprocket_host::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
-use sprocket_host::workspace_search::{
-    GitStatusEntry, MAX_QUERY_CHARS, PathListing, SearchOutcome,
-};
+use sprocket_host::workspace_search::{MAX_QUERY_CHARS, PathListing, SearchOutcome};
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceFileContent,
     WorkspaceFileWrite, browse_filesystem, create_workspace_entry, default_user_skills_dirs,
@@ -74,14 +72,10 @@ struct WorkspaceFilesRequest {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct WorkspaceFilesResponse {
-    paths: Vec<String>,
-    git_status: Vec<GitStatusEntry>,
-    scanning: bool,
-    truncated: bool,
+    #[serde(flatten)]
+    listing: PathListing,
     hash: String,
-    unchanged: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,9 +109,6 @@ struct WorkspaceEntryRenameRequest {
     from: String,
     to: String,
 }
-
-#[derive(Debug, Serialize)]
-struct EmptyResponse {}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,34 +190,34 @@ async fn write_file(
 async fn create_entry(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceEntryCreateRequest>,
-) -> Result<Json<EmptyResponse>, ApiError> {
+) -> Result<Json<()>, ApiError> {
     in_workspace(payload.workspace_path, move |root| {
         create_workspace_entry(root, &payload.path, payload.directory)
     })
-    .await?;
-    Ok(Json(EmptyResponse {}))
+    .await
+    .map(Json)
 }
 
 async fn rename_entry(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceEntryRenameRequest>,
-) -> Result<Json<EmptyResponse>, ApiError> {
+) -> Result<Json<()>, ApiError> {
     in_workspace(payload.workspace_path, move |root| {
         rename_workspace_entry(root, &payload.from, &payload.to)
     })
-    .await?;
-    Ok(Json(EmptyResponse {}))
+    .await
+    .map(Json)
 }
 
 async fn delete_entry(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceEntryRequest>,
-) -> Result<Json<EmptyResponse>, ApiError> {
+) -> Result<Json<()>, ApiError> {
     in_workspace(payload.workspace_path, move |root| {
         delete_workspace_entry(root, &payload.path)
     })
-    .await?;
-    Ok(Json(EmptyResponse {}))
+    .await
+    .map(Json)
 }
 
 async fn list_workspace_files(
@@ -238,35 +229,17 @@ async fn list_workspace_files(
         .acquire_owned()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
-    let listing = in_workspace(payload.workspace_path, move |root| {
+    let mut listing = in_workspace(payload.workspace_path, move |root| {
         let _permit = permit;
         state.host.workspace_search.list_paths(root)
     })
     .await?;
     let hash = listing.content_hash();
-    let unchanged = payload.known_hash.as_deref() == Some(hash.as_str());
-    let PathListing {
-        paths,
-        git_status,
-        scanning,
-        truncated,
-    } = if unchanged {
-        PathListing {
-            scanning: listing.scanning,
-            truncated: listing.truncated,
-            ..Default::default()
-        }
-    } else {
-        listing
-    };
-    Ok(Json(WorkspaceFilesResponse {
-        paths,
-        git_status,
-        scanning,
-        truncated,
-        hash,
-        unchanged,
-    }))
+    if payload.known_hash.as_deref() == Some(hash.as_str()) {
+        listing.paths.clear();
+        listing.git_status.clear();
+    }
+    Ok(Json(WorkspaceFilesResponse { listing, hash }))
 }
 
 async fn search_workspace(

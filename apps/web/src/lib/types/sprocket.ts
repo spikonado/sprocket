@@ -306,14 +306,13 @@ export type WorkspaceSearchResult = {
 export type WorkspaceGitStatus =
 	'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'ignored';
 
-/** Directory paths end with `/`. `unchanged` means the listing matches `knownHash`. */
+/** Directory paths end with `/`. Paths and git status are empty when `hash` matches `knownHash`. */
 export type WorkspaceFilesResult = {
 	paths: string[];
 	gitStatus: { path: string; status: WorkspaceGitStatus }[];
 	scanning: boolean;
 	truncated: boolean;
 	hash: string;
-	unchanged: boolean;
 };
 
 export type WorkspaceFileContent = {

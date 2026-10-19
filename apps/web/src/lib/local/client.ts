@@ -61,8 +61,7 @@ const workspaceFilesResultSchema = z.object({
 	),
 	scanning: z.boolean(),
 	truncated: z.boolean(),
-	hash: z.string(),
-	unchanged: z.boolean()
+	hash: z.string()
 });
 
 const workspaceFileContentSchema = z.object({

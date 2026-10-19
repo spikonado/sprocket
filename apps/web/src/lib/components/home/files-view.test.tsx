@@ -8,8 +8,7 @@ const listing: WorkspaceFilesResult = {
 	gitStatus: [{ path: 'src/main.rs', status: 'modified' }],
 	scanning: false,
 	truncated: false,
-	hash: 'h1',
-	unchanged: false
+	hash: 'h1'
 };
 
 function filesApi(): FilesApi {
@@ -41,7 +40,7 @@ function row(path: string) {
 		?.shadowRoot?.querySelector<HTMLElement>(`[role="treeitem"][data-item-path="${path}"]`);
 }
 
-it('switches roots with the arrow keys', async () => {
+it('switches between the thread and project roots', async () => {
 	const api = filesApi();
 	renderFiles(api);
 
@@ -52,15 +51,13 @@ it('switches roots with the arrow keys', async () => {
 		)
 	);
 
-	fireEvent.keyDown(screen.getByRole('radio', { name: 'Thread' }), { key: 'ArrowRight' });
+	fireEvent.click(screen.getByRole('button', { name: 'Project' }));
 	await waitFor(() =>
 		expect(api.listWorkspaceFiles).toHaveBeenLastCalledWith(
 			{ workspacePath: '/repo', knownHash: undefined },
 			expect.any(AbortSignal)
 		)
 	);
-	expect(document.activeElement).toBe(screen.getByRole('radio', { name: 'Project' }));
-	expect(screen.getByRole('radio', { name: 'Project' }).tabIndex).toBe(0);
 });
 
 it('lists the project without a root switch when the thread runs in it', async () => {
@@ -73,7 +70,7 @@ it('lists the project without a root switch when the thread runs in it', async (
 			expect.any(AbortSignal)
 		)
 	);
-	expect(screen.queryByRole('radiogroup')).toBeNull();
+	expect(screen.queryByRole('group', { name: 'Files root' })).toBeNull();
 });
 
 it('keeps expanded folders across a refresh and opens clicked files', async () => {
