@@ -23,7 +23,7 @@ Preconditions:
 - The empty state needs a profile with no projects. The shared profile already has them, so `project-add-empty` is unreachable without a fresh `SPROCKET_VERIFY_DATA_DIR` and a new sign-in.
 
 - **Open menu.** Click `button "Select project. Current project: <name>"`. Each project is a `menuitemradio` named after it, the current one `[checked=true]`, followed by `menuitem "Add project"`.
-- **Open picker.** Click `menuitem "Add project"`. `dialog "Add project"` shows `button "Go to parent directory"`, `combobox "Project directory path"` with value `~/`, `button "Add Ctrl Enter"`, and `listbox "Directories"` with one `option` per subdirectory.
+- **Open picker.** Click `menuitem "Add project"`. `dialog "Add project"` shows `button "Go to parent directory"`, `combobox "Project directory path"` with value `~/`, `button "Add Ctrl Enter"`, one button per attached project such as `button "verify-sprocket-scratch"` that fills in its path, and `listbox "Directories"` with one `option` per subdirectory.
 - **Enter path.** Click the combobox, `agent-browser press Control+a`, then `agent-browser keyboard type "/tmp/verify-sprocket-projects/"`. The listbox shows `option "src"`.
 - **Add.** `agent-browser press Control+Enter`. The dialog closes and the heading reads `What should we build in Select project. Current project: verify-sprocket-projects`.
 - **Side effect.** `python3 -m json.tool ~/.sprocket-dev-verify/project-attachments.json` has an entry with `"workspacePath": "/tmp/verify-sprocket-projects"` and `"displayName": "verify-sprocket-projects"`.

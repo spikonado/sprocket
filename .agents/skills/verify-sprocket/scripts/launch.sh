@@ -11,7 +11,7 @@ fi
 
 # The shell may export the prod deployment. run-dev.mjs derives the dev one from the env file.
 unset PUBLIC_CONVEX_URL
-if ts_host=$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null); then
+if ts_host=$(tailnet_host 2>/dev/null); then
 	export __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="$ts_host"
 fi
 

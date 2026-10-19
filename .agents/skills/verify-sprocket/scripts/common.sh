@@ -32,3 +32,7 @@ dev_port_pids() {
 dev_port_listeners() {
 	ss -Hltn '( sport = :5173 or sport = :7731 )' | awk '$4 ~ /^(127\.0\.0\.1|\[::1\]|0\.0\.0\.0|\[::\]|\*):/ {print $4}'
 }
+
+tailnet_host() {
+	tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'
+}

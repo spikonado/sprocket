@@ -15,6 +15,8 @@ Set `V=$(git rev-parse --show-toplevel)/.agents/skills/verify-sprocket/scripts` 
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `$V/launch.sh`             | Installs bun deps, builds `sprocket-cli`, then runs `bun dev` in the foreground. Refuses when 5173 or 7731 is taken. |
 | `$V/doctor.sh`             | Read-only health check. Exit 0 means the instance is worth driving.                                                  |
+| `$V/app-url.sh`            | Maps the tailnet's port 5173 to Vite and prints the app URL.                                                         |
+| `$V/ref.sh '<text>'`       | Prints the `@ref` of the first `snapshot -i` line containing the text, for example `'button "Files"'`.               |
 | `$V/login.sh`              | Signs the profile's host in with a device code.                                                                      |
 | `$V/stop.sh`               | Kills this worktree's leftover dev-port listeners.                                                                   |
 | `$V/scratch-repo.sh [dir]` | Creates or reuses a remote-less git repo and prints its path. Default `/tmp/verify-sprocket-scratch`.                |
@@ -55,25 +57,25 @@ Run `$V/doctor.sh` before the first drive, after any failed drive, and whenever 
 Drive the tailnet origin. It signs in with device codes the user approves on their own device. The `localhost` origin would need the user's AuthKit password typed into the headless browser.
 
 ```sh
-tailscale serve --bg --https=5173 http://localhost:5173
-APP=https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'):5173
+APP=$($V/app-url.sh)
 export AGENT_BROWSER_SESSION=verify-sprocket AGENT_BROWSER_RESTORE=verify-sprocket
 agent-browser open "$APP"
 agent-browser set viewport 1440 900
+agent-browser wait --fn "!document.body.innerText.includes('Connecting to Sprocket')"
 agent-browser snapshot -i
 ```
 
-- The mapping targets `http://localhost:5173` because Vite listens on `::1` only. A `127.0.0.1` target gives 502 and `[::1]` gives 500. Leave the mapping in place, since the stored sign-in belongs to that origin.
+- Leave the serve mapping in place, since the stored sign-in belongs to that origin.
 - `AGENT_BROWSER_RESTORE` is the restore key itself. Keep both exports for every call: after an hour idle the browser closes, and the next command relaunches it with the cookie restored.
-- `button "New thread"` in the snapshot means signed in. `heading "Sign in to continue"` means follow [features/sign-in.md](features/sign-in.md) first.
+- `button "New thread"` in the snapshot means signed in. `heading "Sign in to continue"` means follow [features/sign-in.md](features/sign-in.md) first. The inbox rows load a few seconds after `New thread` appears.
 
 ## Drive
 
 [features/README.md](features/README.md) indexes one recipe per feature. Read it before driving.
 
 - `snapshot -i` gives refs. Plain `snapshot` also shows alerts, banners and errors.
-- Take a ref from its exact accessible name: `snapshot -i | grep 'button "Files"' | grep -o 'ref=e[0-9]*' | cut -d= -f2`. `find role button --name X` matches substrings and can hit `Attach files`.
-- Shadow-root widgets such as `file-tree-container` from `@pierre/trees` are invisible to `find` and `click`. Use the row's ref when `snapshot -i` lists it, or coordinates from `eval --stdin` on `el.shadowRoot.querySelector(...)` with `mouse move`, `mouse down` and `mouse up`.
+- Take refs with `$V/ref.sh`, for example `agent-browser click $($V/ref.sh 'button "Files"')`. Dialogs show in plain `snapshot` only, while `snapshot -i` lists their controls.
+- `click` has no right button. For a context menu, read the target's center from `agent-browser get box @eN`, then run `mouse move <x> <y>`, `mouse down right` and `mouse up right`. This also reaches rows inside shadow roots, such as the Files tree.
 - A hot reload resets UI state such as the open side panel. Re-open it and re-take refs after each source edit.
 - API checks go through the signed-in page: `fetch` in `agent-browser eval --stdin`, or `agent-browser network requests --filter /api/`. Plain `curl` to `/api/*` gets 403 or 401.
 
