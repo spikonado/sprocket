@@ -1,17 +1,10 @@
 # Sprocket
 
-**Goal**: To make the world's best platform for developing hardware and software.
+The best AI agent for hardware and software.
 
-Here's what makes Sprocket special:
+Sprocket designs electronics, tests code end-to-end, and buys parts or subscriptions for your project when asked.
 
-- The only AI agent that can work on both <ins>hardware</ins> and <ins>software</ins>.
-- Retrieves best-in-class <ins>context from the web</ins> for everything it does, so it stays <ins>incredibly reliable</ins>.
-- <ins>Buys anything from any website</ins> when you ask, from hardware parts to SaaS subscriptions.
-- Makes <ins>beautifully detailed schematics</ins>, creates your <ins>BOM</ins>, and writes <ins>assembly instructions</ins>.
-
-[Sprocket Demo](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
-
-[![Sprocket](./assets/sprocket.png)](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
+[![Sprocket](./assets/sprocket.webp)](https://spikonado.com/sprocket)
 
 ## Using Sprocket
 
