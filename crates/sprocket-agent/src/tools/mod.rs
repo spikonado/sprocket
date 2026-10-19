@@ -33,7 +33,7 @@ use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
 pub(crate) use self::cwd::working_directory_message;
 pub(crate) use self::image_urls::ConvexImageUrls;
-use self::image_urls::ImageUrlSource;
+use self::image_urls::ImageUrlMap;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -85,7 +85,7 @@ pub(crate) async fn hydrate_tool_history(
     history: &mut [crate::types::AgentHistoryMessage],
     parts: &[sprocket_transcript::TranscriptPart],
     supports_images: bool,
-    image_urls: &impl ImageUrlSource,
+    image_urls: Option<&ConvexImageUrls<'_>>,
 ) {
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
     let mut results = std::collections::HashMap::new();
@@ -134,7 +134,10 @@ pub(crate) async fn hydrate_tool_history(
         .iter()
         .filter_map(|(_, _, replayed)| replayed.as_ref().ok()?.image())
         .collect();
-    let urls = image_urls.urls(&images).await;
+    let urls = match image_urls {
+        Some(source) => source.urls(&images).await,
+        None => ImageUrlMap::new(),
+    };
     for (items, output, replayed) in replays {
         *items = match replayed.and_then(|replayed| replayed.into_history_items(&urls)) {
             Ok(items) => items,

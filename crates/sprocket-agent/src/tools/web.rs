@@ -193,7 +193,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
             file.disable_cleanup(true);
         }
         if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
-            replay_tool_output(&result, &self.0.image_urls())
+            replay_tool_output(&result, self.0.image_urls().as_ref())
                 .await
                 .map_err(tool_error)
         } else {

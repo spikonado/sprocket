@@ -15,22 +15,7 @@ const MAX_IMAGES_PER_LOOKUP: usize = 100;
 const CONCURRENT_UPLOADS: usize = 4;
 
 /// Hex sha256 of a replayed image to the URL the model fetches it from.
-pub(crate) type ImageUrlMap = HashMap<String, String>;
-
-pub(crate) trait ImageUrlSource {
-    /// Images missing from the result go to the model as base64.
-    async fn urls(&self, images: &[&ReplayedImage]) -> ImageUrlMap;
-}
-
-/// `None` keeps every image base64 and uploads nothing.
-impl<T: ImageUrlSource> ImageUrlSource for Option<T> {
-    async fn urls(&self, images: &[&ReplayedImage]) -> ImageUrlMap {
-        match self {
-            Some(source) => source.urls(images).await,
-            None => ImageUrlMap::new(),
-        }
-    }
-}
+pub(super) type ImageUrlMap = HashMap<String, String>;
 
 /// Stores tool-result images in the thread's Convex file storage. Each image
 /// keeps one URL while its thread is active, so the request prefix, and with
@@ -65,8 +50,9 @@ enum StoredImage {
     },
 }
 
-impl ImageUrlSource for ConvexImageUrls<'_> {
-    async fn urls(&self, images: &[&ReplayedImage]) -> ImageUrlMap {
+impl ConvexImageUrls<'_> {
+    /// Images missing from the result go to the model as base64.
+    pub(super) async fn urls(&self, images: &[&ReplayedImage]) -> ImageUrlMap {
         let by_hash: HashMap<&str, &ReplayedImage> = images
             .iter()
             .map(|image| (image.sha256.as_str(), *image))
@@ -130,9 +116,7 @@ impl ImageUrlSource for ConvexImageUrls<'_> {
         }
         urls
     }
-}
 
-impl ConvexImageUrls<'_> {
     async fn lookup(&self, sha256s: &[&str]) -> anyhow::Result<Vec<StoredImage>> {
         let args = BTreeMap::from([
             ("runId".to_string(), Value::from(self.run_id)),
@@ -191,6 +175,3 @@ fn upload_client() -> reqwest::Result<reqwest::Client> {
         .timeout(Duration::from_secs(120))
         .build()
 }
-
-#[cfg(test)]
-mod test_support;

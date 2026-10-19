@@ -4,7 +4,6 @@ use sprocket_workspace::async_tools::DEFAULT_YIELD_MS;
 use sprocket_workspace::{SkillSource, WorkspaceOperationCancelled, WorkspaceSkill};
 
 use super::context::tool_error;
-use super::image_urls::ImageUrlMap;
 use super::job::mutation_args_from_payload;
 use super::questions::{
     AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, MAX_QUESTION_CHARS,
@@ -37,7 +36,7 @@ async fn text_only_models_do_not_replay_cached_image_results() {
             }],
         }],
     }];
-    hydrate_tool_history(&mut history, &[part], false, &ImageUrlMap::new()).await;
+    hydrate_tool_history(&mut history, &[part], false, None).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("Image omitted"));
     assert!(!serialized.contains("not available"));

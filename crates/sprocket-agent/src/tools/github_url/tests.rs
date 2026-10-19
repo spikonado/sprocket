@@ -301,12 +301,9 @@ async fn image_bytes_use_the_existing_model_and_cache_limits() {
                     .unwrap(),
                 *png.get_ref()
             );
-            super::super::parse_file::replay_tool_output(
-                &result,
-                &super::super::image_urls::ImageUrlMap::new(),
-            )
-            .await
-            .unwrap();
+            super::super::parse_file::replay_tool_output(&result, None)
+                .await
+                .unwrap();
         } else {
             assert!(format!("{:#}", result.unwrap_err()).contains("cannot view images"));
         }

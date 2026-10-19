@@ -10,11 +10,7 @@ import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { vRegisterFileResult } from '@convex/lib/docs';
 import { isRunFinalStatus, registeredFileUploadError } from '@convex/lib/validators';
 import { registeredParseStorage } from '@convex/lib/hostedParse';
-import {
-	getOwnedImageUploadsByStorageIds,
-	imageUploadByStorageId,
-	liveToolImage
-} from '@convex/lib/imageUploads';
+import { getOwnedImageUploadsByStorageIds, imageUploadByStorageId } from '@convex/lib/imageUploads';
 import { internal } from '@convex/_generated/api';
 
 const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -325,6 +321,19 @@ async function activeRunRecord(
 
 function requireSha256(sha256: string): void {
 	if (!SHA256_HEX.test(sha256)) throw new Error('Image hash must be a lowercase hex sha256.');
+}
+
+async function liveToolImage(
+	ctx: MutationCtx,
+	run: Doc<'runs'>,
+	sha256: string
+): Promise<Doc<'imageUploads'> | null> {
+	return await ctx.db
+		.query('imageUploads')
+		.withIndex('by_threadId_and_sha256_and_storageDeletedAt', (query) =>
+			query.eq('threadId', run.threadId).eq('sha256', sha256).eq('storageDeletedAt', undefined)
+		)
+		.first();
 }
 
 async function discardOwnedDraft(

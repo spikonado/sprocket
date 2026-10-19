@@ -14,7 +14,7 @@ use tokio::io::AsyncReadExt;
 
 use super::context::{AgentToolContext, tool_error};
 use super::hosted_parse::HostedParseContext;
-use super::image_urls::{ImageUrlMap, ImageUrlSource};
+use super::image_urls::{ConvexImageUrls, ImageUrlMap};
 use super::job::execute_tool_job_with_id;
 use crate::types::AgentHistoryToolResultItem;
 
@@ -152,7 +152,7 @@ impl rig::tool::Tool for ParseFileTool {
             },
         )
         .await?;
-        replay_tool_output(&persisted, &self.0.image_urls())
+        replay_tool_output(&persisted, self.0.image_urls().as_ref())
             .await
             .map_err(tool_error)
     }
@@ -280,7 +280,7 @@ pub(super) fn decode_image_info(bytes: &[u8]) -> anyhow::Result<(ImageMediaType,
     Ok((media_type, width, height))
 }
 
-pub(crate) struct ModelImage {
+pub(super) struct ModelImage {
     pub bytes: Vec<u8>,
     pub media_type: ImageMediaType,
     pub width: u32,
@@ -752,20 +752,20 @@ async fn persist_parse_file(
     }
 }
 
-pub(crate) struct ReplayedImage {
-    pub(crate) path: String,
-    pub(crate) image: ModelImage,
+pub(super) struct ReplayedImage {
+    pub(super) path: String,
+    pub(super) image: ModelImage,
     /// Hex sha256 of the bytes the model receives.
-    pub(crate) sha256: String,
+    pub(super) sha256: String,
 }
 
-pub(crate) enum ReplayedOutput {
+pub(super) enum ReplayedOutput {
     Text(String),
     Image(ReplayedImage),
 }
 
 impl ReplayedOutput {
-    pub(crate) fn image(&self) -> Option<&ReplayedImage> {
+    pub(super) fn image(&self) -> Option<&ReplayedImage> {
         match self {
             Self::Image(image) => Some(image),
             Self::Text(_) => None,
@@ -797,7 +797,7 @@ impl ReplayedOutput {
         }
     }
 
-    pub(crate) fn into_history_items(
+    pub(super) fn into_history_items(
         self,
         urls: &ImageUrlMap,
     ) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
@@ -930,7 +930,7 @@ async fn replay_image_reference(output: &serde_json::Value) -> anyhow::Result<Re
 /// Rebuilds the model input of a `parse_file` result or an `outputType:
 /// "image"` result from the local cache. Missing cache is an error so history
 /// hydration can fall back to text.
-pub(crate) async fn replay_local_tool_output(
+pub(super) async fn replay_local_tool_output(
     output: &serde_json::Value,
 ) -> anyhow::Result<ReplayedOutput> {
     if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
@@ -942,10 +942,13 @@ pub(crate) async fn replay_local_tool_output(
 
 pub(super) async fn replay_tool_output(
     output: &serde_json::Value,
-    image_urls: &impl ImageUrlSource,
+    image_urls: Option<&ConvexImageUrls<'_>>,
 ) -> anyhow::Result<ToolOutput> {
     let replayed = replay_local_tool_output(output).await?;
-    let urls = image_urls.urls(replayed.image().as_slice()).await;
+    let urls = match (image_urls, replayed.image()) {
+        (Some(source), Some(image)) => source.urls(&[image]).await,
+        _ => ImageUrlMap::new(),
+    };
     Ok(ToolOutput::content(replayed.into_content(&urls))?)
 }
 

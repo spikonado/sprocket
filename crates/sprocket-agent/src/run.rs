@@ -823,7 +823,8 @@ async fn load_prior_history(
         run_id,
     )
     .filter(|_| !switching_provider);
-    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images, &image_urls).await;
+    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images, image_urls.as_ref())
+        .await;
     Ok(PriorHistory {
         current_prompt,
         messages: deserialize_agent_history(history)?,
