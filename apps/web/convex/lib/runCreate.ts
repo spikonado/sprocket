@@ -4,7 +4,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
-import { RUN_ABANDONED_BY_AGENT, SPROCKET_SUBMISSION_WAITING } from '@convex/lib/agentErrors';
+import { SPROCKET_SUBMISSION_WAITING } from '@convex/lib/agentErrors';
 import {
 	getOwnedImageUploads,
 	markImageUploadsAttached,
@@ -18,7 +18,7 @@ import {
 	MAX_ACTIVE_MACHINE_RUNS
 } from '@convex/lib/machineRuns';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { finalizeRunRecord } from '@convex/lib/runFinalize';
+import { abandonRunRecord, finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import {
 	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
@@ -62,6 +62,7 @@ export type QueuedRunRequest = {
 	agentVersion?: string;
 	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
+	taskDeadlineAt?: number;
 };
 
 type CreatedGatewayRun = {
@@ -87,11 +88,7 @@ export async function submissionReadiness(
 	const run = await withRunExecution(ctx.db, latestRun);
 
 	if (isClaimedRunStatus(run.status) && !isRunClaimLeaseActive(run, Date.now())) {
-		await finalizeRunRecord(ctx, run, {
-			text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}`,
-			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
-		});
+		await abandonRunRecord(ctx, run);
 		latestRun = (await ctx.db.get('runs', run._id))!;
 	} else {
 		assertThreadCanStartRun(latestRun.status);
@@ -216,11 +213,7 @@ export async function createQueuedRunRecord(
 		isClaimedRunStatus(latestRun.status) &&
 		!isRunClaimLeaseActive(latestRun, Date.now())
 	) {
-		await finalizeRunRecord(ctx, latestRun, {
-			text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}`,
-			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
-		});
+		await abandonRunRecord(ctx, latestRun);
 		const finalizedRun = await ctx.db.get('runs', latestRun._id);
 
 		if (finalizedRun) latestRun = await withRunExecution(ctx.db, finalizedRun);
@@ -232,11 +225,14 @@ export async function createQueuedRunRecord(
 		assertThreadCanStartRun(latestRun?.status);
 	}
 
+	let taskDeadlineAt = args.taskDeadlineAt;
+
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
+		const automaticRecovery = args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX);
 
 		if (
-			args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
+			automaticRecovery &&
 			(!machineId ||
 				!(await automaticAgentContinuationEnabled(ctx.db, args.userId)) ||
 				!isAutomaticallyRecoverableRun(parent, machineId) ||
@@ -245,6 +241,8 @@ export async function createQueuedRunRecord(
 		) {
 			throw new ConvexError('This run cannot recover automatically.');
 		}
+
+		if (automaticRecovery) taskDeadlineAt ??= parent.taskDeadlineAt;
 	}
 
 	if (await headActionablePendingQuestion(ctx.db, threadRecord._id)) {
@@ -277,10 +275,19 @@ export async function createQueuedRunRecord(
 
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 
+	if (taskDeadlineAt !== undefined) runRecord.taskDeadlineAt = taskDeadlineAt;
+
 	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
 
 	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+
+	if (taskDeadlineAt !== undefined) {
+		await ctx.scheduler.runAt(taskDeadlineAt, internal.subagents.enforceTaskDeadline, {
+			runId,
+			deadlineAt: taskDeadlineAt
+		});
+	}
 
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);
@@ -493,7 +500,6 @@ export async function finalizeFailedQueuedStart(
 	}
 
 	await finalizeRunRecord(ctx, await withRunExecution(ctx.db, run), {
-		text: args.text,
 		status: 'failed',
 		lastError: args.lastError
 	});

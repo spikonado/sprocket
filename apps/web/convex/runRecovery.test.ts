@@ -3,7 +3,7 @@ import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
-import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import { abandonRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 afterEach(() => vi.useRealTimers());
 
@@ -42,14 +42,7 @@ async function setup() {
 		continuationOfRunId: runId
 	};
 
-	const abandon = () =>
-		asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId,
-			executionSecret: 'run-secret',
-			text: '',
-			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
-		});
+	const abandon = () => abandonRun(t, runId);
 
 	const shutDownMachine = () =>
 		asUser.mutation(api.machines.endProcess, { machineId, processId: 'machine-process' });
@@ -131,7 +124,7 @@ describe('automatic run recovery', () => {
 		expect(manual.runId).not.toBe(runId);
 	});
 
-	it('recovers an executor-reported lease failure before the lifecycle deadline', async () => {
+	it('recovers a lease failure reported by a released agent before the lifecycle deadline', async () => {
 		vi.useFakeTimers();
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();
 		await asUser.mutation(api.agentRuntime.start, {
@@ -141,8 +134,6 @@ describe('automatic run recovery', () => {
 		});
 		await vi.advanceTimersByTimeAsync(RUN_CLAIM_LEASE_DURATION_MS - 10_000);
 
-		// Rust's lease loop reports the abandonment sentinel as lastError,
-		// retaining the underlying renewal failure in the transcript text.
 		expect(
 			await asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,
@@ -152,6 +143,7 @@ describe('automatic run recovery', () => {
 				lastError: RUN_ABANDONED_BY_AGENT
 			})
 		).toMatchObject({ accepted: true });
+		expect((await t.run((ctx) => ctx.db.get('runs', runId)))?.failureKind).toBe('abandoned');
 		await vi.advanceTimersByTimeAsync(10_000);
 		await t.finishInProgressScheduledFunctions();
 		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
@@ -200,13 +192,7 @@ describe('automatic run recovery', () => {
 		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
 		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow();
 
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: continuation.runId,
-			executionSecret: 'manual-secret',
-			text: '',
-			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
-		});
+		await abandonRun(t, continuation.runId);
 		expect(await asUser.query(api.runRecovery.state, { submissionId, machineId })).toEqual({
 			state: 'recover',
 			runId: continuation.runId,

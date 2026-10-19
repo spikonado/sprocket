@@ -8,7 +8,6 @@ import type {
 	ProjectAttachmentRequest,
 	RunState
 } from '$lib/types/sprocket';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
 import { areStorageIdsEqual } from '$lib/chat/attachments';
@@ -91,12 +90,12 @@ export type RunResumeKind = 'crash' | 'failed' | 'cancelled';
 
 export function lifecycleResumeKind(
 	phase: SelectedThreadLifecyclePhase,
-	lastError?: string
+	failureKind?: 'abandoned'
 ): RunResumeKind | null {
 	if (phase === 'cancelled') return 'cancelled';
 
 	if (phase === 'failed') {
-		return lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
+		return failureKind === 'abandoned' ? 'crash' : 'failed';
 	}
 
 	return null;

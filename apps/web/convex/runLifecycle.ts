@@ -7,12 +7,8 @@ import {
 import { internal } from '@convex/_generated/api';
 import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { finalizeRunRecord } from '@convex/lib/runFinalize';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
-import {
-	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
-	isAutomaticallyRecoverableRun
-} from '@convex/lib/runRecovery';
+import { abandonRunRecord, finalizeRunRecord } from '@convex/lib/runFinalize';
+import { isAutomaticallyRecoverableRun } from '@convex/lib/runRecovery';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
@@ -64,11 +60,7 @@ export const checkRun = internalMutation({
 		if (deadline > Date.now()) {
 			await scheduleRunLifecycleCheck(ctx, state, deadline);
 		} else {
-			await finalizeRunRecord(ctx, run, {
-				text: RUN_ABANDONED_BY_AGENT,
-				status: 'failed',
-				lastError: RUN_ABANDONED_BY_AGENT
-			});
+			await abandonRunRecord(ctx, run);
 		}
 
 		return null;
@@ -82,11 +74,7 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 
 	const latest = await latestRunForThread(ctx.db, current.threadId);
 
-	if (
-		latest &&
-		latest.continuationOfRunId === current._id &&
-		latest.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX)
-	) {
+	if (latest?.continuationOfRunId === current._id) {
 		return await requestRunCancellation(ctx, latest);
 	}
 
@@ -227,7 +215,6 @@ export const forceCancelRun = internalMutation({
 		}
 
 		return await finalizeRunRecord(ctx, run, {
-			text: '',
 			status: 'cancelled'
 		});
 	}

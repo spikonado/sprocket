@@ -26,6 +26,7 @@ import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreat
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
@@ -247,16 +248,9 @@ export const createOrSend = mutation({
 				fastMode: args.fast,
 				machineId: callerRun.machineId,
 				continuationOfRunId,
-				executionSecret: args.childExecutionSecret
+				executionSecret: args.childExecutionSecret,
+				taskDeadlineAt: timeoutMs === undefined ? undefined : Date.now() + timeoutMs
 			});
-
-			if (created.created && timeoutMs !== undefined) {
-				const deadlineAt = Date.now() + timeoutMs;
-				await ctx.scheduler.runAt(deadlineAt, internal.subagents.enforceTaskDeadline, {
-					runId: created.runId,
-					deadlineAt
-				});
-			}
 
 			const run = (await ctx.db.get('runs', created.runId))!;
 
@@ -286,7 +280,6 @@ export const enforceTaskDeadline = internalMutation({
 		if (thread) await requestThreadTreeCancellation(ctx, thread);
 
 		await finalizeRunRecord(ctx, run, {
-			text: 'Task deadline exceeded.',
 			status: 'cancelled',
 			lastError: 'Task deadline exceeded.'
 		});
@@ -519,12 +512,19 @@ export const threadMonitorInfo = mutation({
 				throw new Error('Target run does not belong to the descendant thread.');
 			}
 
+			const transcript = await transcriptStateResult(ctx, thread._id, thread);
+			const pendingQuestions = pending.map(toAgentQuestionSnapshot);
+
+			if (!args.targetRunId && latest && (await awaitsAutomaticRecovery(ctx.db, latest))) {
+				return { transcript, status: 'queued' as const, active: true, pendingQuestions };
+			}
+
 			return {
-				transcript: await transcriptStateResult(ctx, thread._id, thread),
+				transcript,
 				status: latest?.status ?? thread.status,
 				lastError: latest?.lastError,
 				active: (latest !== null && !isRunFinalStatus(latest.status)) || pending.length > 0,
-				pendingQuestions: pending.map(toAgentQuestionSnapshot)
+				pendingQuestions
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

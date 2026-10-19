@@ -11,8 +11,7 @@ import {
 	machineProcessId,
 	requireMachineProcess
 } from '@convex/lib/machineRuns';
-import { finalizeRunRecord } from '@convex/lib/runFinalize';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { abandonRunRecord } from '@convex/lib/runFinalize';
 
 const vMachinePresence = v.object({
 	machineId: v.string(),
@@ -61,11 +60,7 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 		const run = await getRunWithExecution(ctx.db, runId);
 
 		if (run) {
-			await finalizeRunRecord(ctx, run, {
-				text: RUN_ABANDONED_BY_AGENT,
-				status: 'failed',
-				lastError: RUN_ABANDONED_BY_AGENT
-			});
+			await abandonRunRecord(ctx, run);
 		}
 	}
 

@@ -4,6 +4,7 @@ import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
+import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, {
@@ -230,3 +231,23 @@ export const unsetRetiredRunFields = migrations.define({
 });
 
 export const removeRetiredRunFields = migrations.runner(internal.migrations.unsetRetiredRunFields);
+
+export const backfillRunFailureKind = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) =>
+		run.failureKind === undefined &&
+		run.status === 'failed' &&
+		run.lastError === RUN_ABANDONED_BY_AGENT
+			? { failureKind: 'abandoned' as const }
+			: undefined
+});
+
+export const runRunFailureKindBackfill = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		await migrations.runOne(ctx, internal.migrations.backfillRunFailureKind);
+
+		return null;
+	}
+});

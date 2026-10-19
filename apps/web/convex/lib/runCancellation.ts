@@ -1,7 +1,8 @@
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
 import { runStartedAt } from '@convex/lib/runs';
 import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
+import { isAbandonedRun } from '@convex/lib/runRecovery';
 
 export const CANCELLATION_FORCE_AFTER_MS = 10_000;
 
@@ -34,6 +35,7 @@ export const vSelectedThreadLifecycleRun = v.object({
 	startedAt: v.number(),
 	completedAt: v.optional(v.number()),
 	lastError: v.optional(v.string()),
+	failureKind: v.optional(v.literal('abandoned')),
 	executorFriendlyName: v.optional(v.string())
 });
 
@@ -125,6 +127,7 @@ export function projectSelectedThreadLifecycle(args: {
 		status: Infer<typeof vRunStatus>;
 		completedAt?: number;
 		lastError?: string;
+		failureKind?: Doc<'runs'>['failureKind'];
 		cancellationRequestedAt?: number;
 	} | null;
 	waitingForInput: boolean;
@@ -150,6 +153,10 @@ export function projectSelectedThreadLifecycle(args: {
 
 	if (args.run.lastError !== undefined) {
 		projected.lastError = args.run.lastError;
+	}
+
+	if (isAbandonedRun(args.run)) {
+		projected.failureKind = 'abandoned';
 	}
 
 	if (args.executorFriendlyName) {

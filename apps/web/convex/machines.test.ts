@@ -189,7 +189,8 @@ describe('machines', () => {
 		await asUser.mutation(api.machines.endProcess, processArgs);
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
 			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
+			lastError: RUN_ABANDONED_BY_AGENT,
+			failureKind: 'abandoned'
 		});
 		expect((await asUser.query(api.machines.listMine, {}))[0]).toMatchObject({
 			machineId: machine.machineId,

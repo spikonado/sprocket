@@ -1,3 +1,4 @@
+import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { isRunFinalStatus, vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
@@ -13,11 +14,12 @@ import {
 	type ExecutionRun
 } from '@convex/lib/runExecution';
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
+import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 
 type FinalizeRunArgs = {
-	text: string;
 	status: Infer<typeof vRunFinalStatus>;
 	lastError?: string;
+	failureKind?: Doc<'runs'>['failureKind'];
 };
 
 export const vExecutorFinalizationResult = v.object({
@@ -108,6 +110,7 @@ export async function finalizeRunRecord(
 	});
 	await setRunAndThreadStatus(ctx, run, finalStatus, {
 		lastError: args.lastError,
+		failureKind: finalStatus === 'failed' ? args.failureKind : undefined,
 		completedAt
 	});
 	const latest = await getRunWithExecution(ctx.db, run._id);
@@ -123,4 +126,12 @@ export async function finalizeRunRecord(
 	});
 
 	return true;
+}
+
+export async function abandonRunRecord(ctx: MutationCtx, run: ExecutionRun): Promise<boolean> {
+	return await finalizeRunRecord(ctx, run, {
+		status: 'failed',
+		lastError: RUN_ABANDONED_BY_AGENT,
+		failureKind: 'abandoned'
+	});
 }

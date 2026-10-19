@@ -1066,7 +1066,7 @@ export default function App({
 	const latestRunResumeKind =
 		hasPendingAgentLaunch || isRunInProgress
 			? null
-			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.lastError);
+			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.failureKind);
 
 	const isLatestRunReady = isLatestRunReadyForThread({
 		threadId: currentThreadId,

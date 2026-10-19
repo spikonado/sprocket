@@ -399,6 +399,8 @@ export default defineSchema({
 		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
+		failureKind: v.optional(v.literal('abandoned')),
+		taskDeadlineAt: v.optional(v.number()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number())
 	})
