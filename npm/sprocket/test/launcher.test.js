@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
-import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+	chmodSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	statSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-	ensureExecutable,
-	launch,
-	nativePackage,
-	RESTART_EXIT_CODE,
-	run
-} from '../lib/launcher.js';
+import { ensureExecutable, launch, RESTART_EXIT_CODE, run } from '../lib/launcher.js';
+import { nativePackage } from '../lib/native.js';
 
 function successfulChild(code = 0) {
 	const child = new EventEmitter();
@@ -32,6 +36,56 @@ test('selects the native package for supported platforms', () => {
 	]);
 	assert.equal(nativePackage('freebsd', 'x64'), undefined);
 });
+
+test(
+	'starts the native binary only when its package matches the launcher version',
+	{ skip: process.platform === 'win32' },
+	(t) => {
+		const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-native-version-'));
+		t.after(() => rmSync(directory, { recursive: true, force: true }));
+		const [packageName, executable] = nativePackage();
+		const launcherDir = path.join(directory, 'node_modules', '@spikonado', 'sprocket');
+		const nativeDir = path.join(directory, 'node_modules', packageName);
+		cpSync(path.join(import.meta.dirname, '..', 'bin'), path.join(launcherDir, 'bin'), {
+			recursive: true
+		});
+		cpSync(path.join(import.meta.dirname, '..', 'lib'), path.join(launcherDir, 'lib'), {
+			recursive: true
+		});
+		cpSync(
+			path.join(import.meta.dirname, '..', 'targets.json'),
+			path.join(launcherDir, 'targets.json')
+		);
+		writeFileSync(
+			path.join(launcherDir, 'package.json'),
+			JSON.stringify({ name: '@spikonado/sprocket', version: '1.0.0', type: 'module' })
+		);
+		mkdirSync(path.join(nativeDir, 'bin'), { recursive: true });
+		writeFileSync(path.join(nativeDir, 'bin', executable), '#!/bin/sh\necho native\n', {
+			mode: 0o755
+		});
+
+		const launchWithNative = (version) => {
+			writeFileSync(
+				path.join(nativeDir, 'package.json'),
+				JSON.stringify({ name: packageName, version })
+			);
+
+			return spawnSync(process.execPath, [path.join(launcherDir, 'bin', 'sprocket.js')], {
+				encoding: 'utf8'
+			});
+		};
+
+		const matching = launchWithNative('1.0.0');
+		assert.equal(matching.status, 0);
+		assert.equal(matching.stdout, 'native\n');
+
+		const mismatched = launchWithNative('0.9.0');
+		assert.equal(mismatched.status, 1);
+		assert.equal(mismatched.stdout, '');
+		assert.match(mismatched.stderr, /needs .*@1\.0\.0, but 0\.9\.0 is installed/);
+	}
+);
 
 test('restores execute bits on unix binaries', { skip: process.platform === 'win32' }, () => {
 	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-chmod-'));

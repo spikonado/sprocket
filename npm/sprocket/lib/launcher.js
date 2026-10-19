@@ -1,55 +1,33 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, chmodSync, constants, readFileSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { createHost, parseUpdateArgs, runUpdateCli, UPDATE_API_FILENAME } from './update.js';
-
-const require = createRequire(import.meta.url);
+import { resolveNativePackage } from './native.js';
+import {
+	createHost,
+	PACKAGE_ROOT,
+	parseUpdateArgs,
+	runUpdateCli,
+	UPDATE_API_FILENAME
+} from './update.js';
 
 // Must match crates/sprocket-cli/src/main.rs.
 export const RESTART_EXIT_CODE = 75;
 
-const TARGETS = JSON.parse(readFileSync(path.join(import.meta.dirname, '../targets.json'), 'utf8'));
+export function resolveNativeBinary() {
+	const native = resolveNativePackage();
+	const version = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8')).version;
 
-const PLATFORM_PACKAGES = new Map(
-	TARGETS.map((target) => [`${target.os}:${target.cpu}`, [target.packageName, target.executable]])
-);
-
-export function nativePackage(platform = process.platform, arch = process.arch) {
-	return PLATFORM_PACKAGES.get(`${platform}:${arch}`);
-}
-
-export function resolveNativeBinary(platform = process.platform, arch = process.arch) {
-	const target = nativePackage(platform, arch);
-
-	if (!target) {
+	if (native.version !== version) {
 		throw new Error(
-			`Sprocket does not provide a binary for ${platform}/${arch}. ` +
-				'Supported targets are Linux x64/arm64, macOS x64/arm64, and Windows x64.'
+			`Sprocket ${version} needs ${native.packageName}@${version}, but ${native.version} is ` +
+				'installed. Run `sprocket update` to repair the install.'
 		);
 	}
 
-	const [packageName, executable] = target;
-	let packageJson;
-
-	try {
-		packageJson = require.resolve(`${packageName}/package.json`);
-	} catch (error) {
-		if (error?.code !== 'MODULE_NOT_FOUND') {
-			throw error;
-		}
-
-		throw new Error(
-			`The native package ${packageName} is missing. Reinstall @spikonado/sprocket ` +
-				'without omitting optional dependencies.',
-			{ cause: error }
-		);
-	}
-
-	return path.join(path.dirname(packageJson), 'bin', executable);
+	return native.binary;
 }
 
 export function ensureExecutable(binary) {
