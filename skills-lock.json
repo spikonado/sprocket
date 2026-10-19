@@ -1,0 +1,17 @@
+{
+	"version": 1,
+	"skills": {
+		"create-verification-skill": {
+			"source": "cursor/plugins",
+			"sourceType": "github",
+			"skillPath": "harness/pstack/claude-code/skills/create-verification-skill/SKILL.md",
+			"computedHash": "8eff1bcd42739eaf76717d042c2ec22251cea022863e54901728b575b9c4eb52"
+		},
+		"maintain-verification-skill": {
+			"source": "cursor/plugins",
+			"sourceType": "github",
+			"skillPath": "harness/pstack/claude-code/skills/maintain-verification-skill/SKILL.md",
+			"computedHash": "515e7ca21ff18f2cc0daf26243e1a4f41e2f7b73490fa5e116e7c73cf7a5eb6e"
+		}
+	}
+}
