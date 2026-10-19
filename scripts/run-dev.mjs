@@ -40,7 +40,13 @@ const childEnv = { ...process.env };
 
 if (envFile) {
 	const filePath = path.resolve(repositoryRoot, envFile);
-	Object.assign(childEnv, parseEnv(readFileSync(filePath, 'utf8')));
+	const fileEnv = parseEnv(readFileSync(filePath, 'utf8'));
+	Object.assign(childEnv, fileEnv);
+
+	// `convex dev` writes only VITE_CONVEX_URL; point the Rust API at the same deployment as the web app.
+	if (fileEnv.VITE_CONVEX_URL) {
+		childEnv.PUBLIC_CONVEX_URL = fileEnv.VITE_CONVEX_URL;
+	}
 }
 
 if (dataDir) {
