@@ -43,11 +43,7 @@ let serverReadyPromise = null;
 
 let isQuitting = false;
 
-/** Reported by the renderer so quitting can ask before anything shuts down. */
 let hasUnsavedChanges = false;
-
-/** Set when the user chooses Leave, so the quit that follows doesn't ask again. */
-let discardConfirmed = false;
 
 const updates = new DesktopUpdater(
 	process.platform === 'linux' && process.env.APPIMAGE
@@ -427,9 +423,7 @@ function createMainWindow() {
 		if (!confirmDiscardUnsavedChanges()) event.preventDefault();
 	});
 	mainWindow.on('closed', () => {
-		// The page and its edits are gone; a new window reports its own state.
 		hasUnsavedChanges = false;
-		discardConfirmed = false;
 
 		if (mainWindowRef === mainWindow) {
 			mainWindowRef = null;
@@ -499,16 +493,15 @@ ipcMain.handle('sprocket:set-unsaved-changes', (event, value) => {
 	hasUnsavedChanges = value === true;
 });
 
-let lastUpdateStatus = updates.getState().status;
-
-updates.subscribe(({ status }) => {
-	// A failed install keeps the app, and its unsaved edits, open.
-	if (lastUpdateStatus === 'installing' && status !== 'installing') discardConfirmed = false;
-	lastUpdateStatus = status;
-});
-
 function confirmDiscardUnsavedChanges() {
-	if (discardConfirmed || !hasUnsavedChanges || !mainWindowRef || mainWindowRef.isDestroyed()) {
+	// Quitting and installing start only after the user already chose to discard.
+	if (
+		isQuitting ||
+		updates.getState().status === 'installing' ||
+		!hasUnsavedChanges ||
+		!mainWindowRef ||
+		mainWindowRef.isDestroyed()
+	) {
 		return true;
 	}
 
@@ -521,9 +514,7 @@ function confirmDiscardUnsavedChanges() {
 		cancelId: 1
 	});
 
-	discardConfirmed = choice === 0;
-
-	return discardConfirmed;
+	return choice === 0;
 }
 
 ipcMain.handle('sprocket:get-update-state', (event) => {
@@ -578,7 +569,6 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 				}
 			} catch (error) {
 				isQuitting = false;
-				discardConfirmed = false;
 				reportFatalError('Failed to install Sprocket update', error);
 			}
 		}
