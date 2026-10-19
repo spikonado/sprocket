@@ -127,12 +127,9 @@ const displayRowSchema = z
 		attachments: z.array(localTranscriptAttachmentSchema).optional(),
 		mandateId: z.string().optional(),
 		approvalUrl: z.string().optional(),
-		itemCount: z.int().nonnegative(),
-		pendingTools: z.int().nonnegative(),
-		provisional: z.boolean().optional(),
-		startedAt: z.number().optional(),
-		completedAt: z.number().optional(),
-		closed: z.boolean(),
+		toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
+		unpersistedToolCallIds: z.array(z.string()).optional(),
+		closed: z.boolean().optional(),
 		revision: z.int().nonnegative()
 	})
 	.transform((row) => ({
@@ -152,7 +149,6 @@ const displayPageSchema = z.object({
 	syncing: z.boolean(),
 	stale: z.boolean(),
 	nextBefore: z.int().nonnegative().optional(),
-	endSequence: z.int().nonnegative(),
 	revision: z.int().nonnegative(),
 	persistedStreams: z.array(
 		z.object({ runId: z.string().transform((id) => asConvexId<'runs'>(id)), streamId: z.string() })
@@ -163,7 +159,7 @@ const displayPageSchema = z.object({
 			row: displayRowSchema.nullable()
 		})
 	),
-	changesCursor: z.object({ revision: z.int().nonnegative(), sequence: z.int().min(-1) }),
+	changesCursor: z.object({ revision: z.int().nonnegative(), position: z.int().min(-1) }),
 	moreChanges: z.boolean()
 });
 
@@ -188,8 +184,7 @@ const liveCompletionOverlaySchema = z.object({
 	runStatus: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
 	streamId: z.string().min(1),
 	text: z.string(),
-	parts: z.array(z.unknown()),
-	runStartedAt: z.int()
+	parts: z.array(z.unknown())
 });
 
 const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
@@ -273,8 +268,7 @@ function parseLiveCompletionOverlay(
 		streamId: live.streamId,
 		text: live.text,
 		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
-		parts: live.parts as AssistantPart[],
-		runStartedAt: live.runStartedAt
+		parts: live.parts as AssistantPart[]
 	};
 }
 

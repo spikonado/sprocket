@@ -18,12 +18,9 @@ export const displayRowFields = {
 	),
 	mandateId: v.optional(v.string()),
 	approvalUrl: v.optional(v.string()),
-	itemCount: v.number(),
-	pendingTools: v.number(),
-	provisional: v.optional(v.boolean()),
-	startedAt: v.optional(v.number()),
-	completedAt: v.optional(v.number()),
-	closed: v.boolean(),
+	toolCounts: v.optional(v.record(v.string(), v.number())),
+	unpersistedToolCallIds: v.optional(v.array(v.string())),
+	closed: v.optional(v.boolean()),
 	revision: v.number()
 };
 

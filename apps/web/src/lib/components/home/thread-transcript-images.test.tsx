@@ -24,8 +24,6 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 						kind: 'text',
 						text,
 						sequence: 1,
-						itemCount: 1,
-						pendingTools: 0,
 						closed: true,
 						revision: 1
 					}
@@ -36,7 +34,6 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 						kind: 'live',
 						text,
 						runStatus: 'completed',
-						runStartedAt: 1,
 						parts: kind === 'live-section' ? [{ type: 'text', id: 'image', text }] : []
 					};
 
@@ -101,8 +98,6 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 			}
 		],
 		sequence: 1,
-		itemCount: 0,
-		pendingTools: 0,
 		closed: true,
 		revision: 1
 	} satisfies TranscriptDisplayRow;

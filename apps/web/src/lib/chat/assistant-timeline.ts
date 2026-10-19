@@ -16,8 +16,6 @@ export type AssistantTimelineTool = {
 	input: JsonValue;
 	output?: JsonValue;
 	job?: ExecutorJob;
-	startedAt?: number;
-	completedAt?: number;
 };
 
 export type AssistantTimelineItem =
@@ -127,41 +125,6 @@ export function groupAssistantTimelineSections(
 	}
 
 	return sections;
-}
-
-export type WorkSectionTimingAnchor = {
-	startedAtMs?: number;
-	completedAtMs?: number;
-};
-
-export function workSectionTimingAnchor(
-	section: Extract<AssistantTimelineSection, { type: 'work' }>,
-	options: {
-		inProgress: boolean;
-		endedAt?: number;
-	}
-): WorkSectionTimingAnchor {
-	let startedAtMs: number | undefined;
-	let completedAtMs = options.endedAt;
-
-	for (const block of section.blocks) {
-		const items = block.type === 'tool-group' ? block.tools : [block];
-
-		for (const item of items) {
-			// Older transcripts did not record boundaries. A partial duration is misleading.
-			if (item.startedAt == null) return {};
-			startedAtMs = Math.min(startedAtMs ?? item.startedAt, item.startedAt);
-
-			if (!options.inProgress) {
-				const end = item.completedAt ?? options.endedAt;
-
-				if (end === undefined) return {};
-				completedAtMs = Math.max(completedAtMs ?? end, end);
-			}
-		}
-	}
-
-	return options.inProgress ? { startedAtMs } : { startedAtMs, completedAtMs };
 }
 
 /** Whether a tool call never reached a durable result (no output and no finished job). */
@@ -390,10 +353,7 @@ export function buildAssistantTimeline(
 			type: 'tool',
 			callId: part.callId,
 			name: part.name,
-			input: part.input,
-			startedAt: part.startedAt ?? job?.enqueuedAt,
-			// The call's completedAt ends argument generation, not tool execution.
-			completedAt: result?.completedAt ?? job?.completedAt
+			input: part.input
 		};
 
 		if (result) {
@@ -417,8 +377,6 @@ export function buildAssistantTimeline(
 			callId: job.callId ?? `executor-job:${job._id}`,
 			name: job.kind,
 			input: job.payload,
-			startedAt: job.enqueuedAt,
-			completedAt: job.completedAt,
 			job
 		};
 

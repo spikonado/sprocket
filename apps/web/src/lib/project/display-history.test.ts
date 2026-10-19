@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DisplayHistory, visibleDisplayMessages } from './display-history';
+import { DisplayHistory } from './display-history';
 import type {
 	LiveCompletionOverlay,
 	TranscriptDisplayPage,
@@ -16,10 +16,6 @@ function row(sequence: number, revision = sequence): TranscriptDisplayRow {
 		runId: 'run' as TranscriptDisplayRow['runId'],
 		sequence,
 		kind: 'work',
-		itemCount: 4_000,
-		pendingTools: 0,
-		startedAt: 0,
-		completedAt: 4_000_000,
 		closed: true,
 		revision
 	};
@@ -33,11 +29,10 @@ function page(rows: TranscriptDisplayRow[], nextBefore?: number): TranscriptDisp
 		indexing: false,
 		syncing: false,
 		stale: false,
-		endSequence: 100,
 		revision: 100,
 		persistedStreams: [],
 		changes: [],
-		changesCursor: { revision: 100, sequence: -1 },
+		changesCursor: { revision: 100, position: -1 },
 		moreChanges: false
 	};
 }
@@ -76,7 +71,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -106,7 +100,7 @@ describe('DisplayHistory', () => {
 
 	it('moves an existing section to its earlier position as older parts arrive', async () => {
 		const original = row(40);
-		const expanded = { ...original, sequence: 10, itemCount: 5_000, revision: 101 };
+		const expanded = { ...original, sequence: 10, toolCounts: { exec_cmd: 1 }, revision: 101 };
 
 		const fetch = vi
 			.fn()
@@ -126,7 +120,7 @@ describe('DisplayHistory', () => {
 
 	it('merges an older page that expands a section already shown in the recent page', async () => {
 		const original = row(40);
-		const expanded = { ...original, sequence: 10, itemCount: 5_000, revision: 101 };
+		const expanded = { ...original, sequence: 10, toolCounts: { exec_cmd: 1 }, revision: 101 };
 
 		const fetch = vi
 			.fn()
@@ -146,7 +140,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'late',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -183,7 +176,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: `stream-${index}`,
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		}));
@@ -208,7 +200,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -295,7 +286,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: [{ type: 'text', id: 'answer', text: 'Answer' }]
 		};
@@ -328,7 +318,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'late',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -388,14 +377,13 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: [{ type: 'text', id: 'answer', text: 'Answer' }]
 		};
 
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce(page([{ ...row(0), provisional: true }]))
+			.mockResolvedValueOnce(page([row(0)]))
 			.mockResolvedValueOnce({
 				...page([row(1)]),
 				persistedStreams: [{ runId: live.runId, streamId: live.streamId }]
@@ -404,8 +392,6 @@ describe('DisplayHistory', () => {
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		expect(history.unpersisted([live])).toEqual([live]);
-		expect(visibleDisplayMessages(history.messages, [live])).toEqual([]);
-		expect(visibleDisplayMessages(history.messages, [])).toHaveLength(1);
 		await history.refresh();
 		expect(history.unpersisted([live])).toEqual([]);
 		history.stop();
@@ -594,7 +580,7 @@ describe('DisplayHistory', () => {
 				...page([row(1)]),
 				revision: 102,
 				moreChanges: true,
-				changesCursor: { revision: 101, sequence: 64 },
+				changesCursor: { revision: 101, position: 64 },
 				changes: [{ id: row(1).id, row: row(1, 101) }]
 			})
 			.mockResolvedValueOnce({ ...page([row(1, 101)]), revision: 102 });
@@ -603,7 +589,7 @@ describe('DisplayHistory', () => {
 		await history.refresh();
 		await history.refresh();
 		expect(fetch).toHaveBeenCalledTimes(3);
-		expect(fetch.mock.calls[2][0].changesAfter).toEqual({ revision: 101, sequence: 64 });
+		expect(fetch.mock.calls[2][0].changesAfter).toEqual({ revision: 101, position: 64 });
 		expect(history.messages[0].revision).toBe(101);
 		history.stop();
 	});
@@ -625,7 +611,7 @@ describe('DisplayHistory', () => {
 		expect(fetch.mock.calls).toEqual([
 			[{ limit: 12 }],
 			[{ before: 40, limit: 40 }],
-			[{ limit: 12, changesAfter: { revision: 100, sequence: -1 } }]
+			[{ limit: 12, changesAfter: { revision: 100, position: -1 } }]
 		]);
 		history.stop();
 	});

@@ -1,36 +1,20 @@
 import { ChevronRight } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { formatElapsedDuration } from '$lib/format';
-import { elapsedSeconds, useTickingNow } from '$lib/chat/elapsed-time';
 
 type Props = {
 	inProgress: boolean;
-	startedAtMs?: number;
-	/** Durable end when the section is finished; omit while in progress. */
-	completedAtMs?: number;
+	summary: string;
 	children: ReactNode;
 };
 
-export default function WorkDisclosure({
-	inProgress,
-	startedAtMs,
-	completedAtMs,
-	children
-}: Props) {
+export default function WorkDisclosure({ inProgress, summary, children }: Props) {
 	const [expanded, setExpanded] = useState(inProgress);
 	const [previousInProgress, setPreviousInProgress] = useState(inProgress);
-	const now = useTickingNow(inProgress);
 
 	if (inProgress !== previousInProgress) {
 		setPreviousInProgress(inProgress);
 		setExpanded(inProgress);
 	}
-
-	const duration = elapsedSeconds(startedAtMs, inProgress ? now : completedAtMs);
-
-	const label = `${inProgress ? 'Working' : 'Worked'}${
-		duration === undefined ? '' : ` for ${formatElapsedDuration(duration)}`
-	}`;
 
 	return (
 		<div className="text-muted-foreground text-sm">
@@ -40,7 +24,7 @@ export default function WorkDisclosure({
 				onClick={() => setExpanded((value) => !value)}
 				aria-expanded={expanded}
 			>
-				<span>{label}</span>
+				<span className="text-left">{summary}</span>
 				<ChevronRight
 					className={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
 					aria-hidden="true"

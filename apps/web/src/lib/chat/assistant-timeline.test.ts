@@ -9,7 +9,6 @@ import {
 	isAssistantTimelineToolRunning,
 	partitionWorkSectionTools,
 	resolveCommandSessionLabel,
-	workSectionTimingAnchor,
 	type AssistantTimelineTool,
 	type AssistantTimelineWorkBlock
 } from '$lib/chat/assistant-timeline';
@@ -96,8 +95,7 @@ describe('assistant timeline', () => {
 			expect.objectContaining({
 				type: 'tool',
 				callId: 'call-1',
-				output: 'latest',
-				completedAt: 2_000
+				output: 'latest'
 			}),
 			{ type: 'text', id: 't1', text: 'Done' }
 		]);
@@ -787,118 +785,5 @@ describe('command session labels', () => {
 		expect(resolveCommandSessionLabel(tools[0], buildCommandSessionCommandMap(tools))).toBe(
 			'npm run dev'
 		);
-	});
-});
-
-describe('workSectionTimingAnchor', () => {
-	it('treats migrated null timing as unknown rather than epoch zero', () => {
-		const section = {
-			type: 'work' as const,
-			key: 'r1',
-			blocks: [
-				{ type: 'reasoning' as const, id: 'r1', text: '', startedAt: null, completedAt: null }
-			]
-		};
-
-		expect(workSectionTimingAnchor(section, { inProgress: true })).toEqual({});
-		expect(workSectionTimingAnchor(section, { inProgress: false, endedAt: 9_000 })).toEqual({});
-	});
-	it('uses recorded reasoning and tool boundaries without a job subscription', () => {
-		const section = {
-			type: 'work' as const,
-			key: 'c1',
-			blocks: [
-				{ type: 'reasoning' as const, id: 'r1', text: 'plan', startedAt: 500, completedAt: 900 },
-				{
-					type: 'tool-group' as const,
-					toolKey: 'exec_command',
-					tools: [
-						tool('c1', 'exec_command', {
-							startedAt: 1_000,
-							completedAt: 5_000
-						})
-					]
-				},
-				{
-					type: 'reasoning' as const,
-					id: 'r2',
-					text: 'review result',
-					startedAt: 5_200,
-					completedAt: 7_000
-				}
-			]
-		};
-
-		expect(
-			workSectionTimingAnchor(section, {
-				inProgress: false
-			})
-		).toEqual({ startedAtMs: 500, completedAtMs: 7_000 });
-	});
-
-	it('does not invent a duration for old reasoning without timestamps', () => {
-		const section = {
-			type: 'work' as const,
-			key: 'r1',
-			blocks: [{ type: 'reasoning' as const, id: 'r1', text: 'thinking' }]
-		};
-
-		expect(
-			workSectionTimingAnchor(section, {
-				inProgress: true
-			})
-		).toEqual({});
-		expect(workSectionTimingAnchor(section, { inProgress: false, endedAt: 9_000 })).toEqual({});
-	});
-
-	it('keeps later reasoning on its own start and freezes at the next text boundary', () => {
-		const section = {
-			type: 'work' as const,
-			key: 'r2',
-			blocks: [
-				{
-					type: 'reasoning' as const,
-					id: 'r2',
-					text: 'more',
-					startedAt: 8_000,
-					completedAt: 10_000
-				}
-			]
-		};
-
-		expect(
-			workSectionTimingAnchor(section, {
-				inProgress: true
-			})
-		).toEqual({ startedAtMs: 8_000 });
-		expect(workSectionTimingAnchor(section, { inProgress: false, endedAt: 11_000 })).toEqual({
-			startedAtMs: 8_000,
-			completedAtMs: 11_000
-		});
-	});
-
-	it('uses result completion rather than tool-call generation time', () => {
-		const parts = buildAssistantTimeline(
-			[
-				{
-					type: 'tool-call',
-					callId: 'c1',
-					name: 'exec_command',
-					input: {},
-					startedAt: 1_000,
-					completedAt: 1_100
-				},
-				{ type: 'tool-result', callId: 'c1', output: 'done', completedAt: 5_000 }
-			],
-			[]
-		);
-
-		const [section] = groupAssistantTimelineSections(groupAssistantTimeline(parts));
-
-		if (section.type !== 'work') throw new Error('Expected work');
-		expect(workSectionTimingAnchor(section, { inProgress: false })).toEqual({
-			startedAtMs: 1_000,
-			completedAtMs: 5_000
-		});
 	});
 });

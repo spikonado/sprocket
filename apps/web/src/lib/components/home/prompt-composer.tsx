@@ -20,7 +20,6 @@ import { providersForModel } from '$lib/chat/providers';
 import { formatCountdownDuration } from '$lib/format';
 import { useUsageTime } from '$lib/usage-time';
 import AgentQuestion from '$lib/components/home/agent-question';
-import RunElapsed from '$lib/components/home/run-elapsed';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
@@ -69,7 +68,7 @@ export type PromptComposerProps = {
 	isSubmitting: boolean;
 	isStarting: boolean;
 	isRunning: boolean;
-	runStartedAt: number | null;
+	isWorking: boolean;
 	/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 	projectSkills?: {
 		workspacePath: string | null;
@@ -133,7 +132,7 @@ export function PromptComposerView({
 	isSubmitting,
 	isStarting,
 	isRunning,
-	runStartedAt,
+	isWorking,
 	projectSkills = null,
 	projectPaths = null,
 	onSubmit,
@@ -683,15 +682,16 @@ export function PromptComposerView({
 		<>
 			<footer className="shrink-0 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
 				<div className="mx-auto max-w-336">
-					{runStartedAt !== null && runStartedAt > 0 && Number.isFinite(runStartedAt) ? (
-						<div className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]">
-							<span className="inline-flex items-center gap-0.75">
+					{isWorking ? (
+						<div
+							className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]"
+							role="status"
+						>
+							<span className="sr-only">Agent is running</span>
+							<span className="inline-flex items-center gap-0.75" aria-hidden="true">
 								<span className="bg-foreground/28 size-1 animate-pulse rounded-full"></span>
 								<span className="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:200ms]"></span>
 								<span className="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:400ms]"></span>
-							</span>
-							<span>
-								Working for <RunElapsed startedAt={runStartedAt} />
 							</span>
 						</div>
 					) : isSubmitting ? (

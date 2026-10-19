@@ -18,15 +18,6 @@ function streamKey(stream: Stream) {
 	return `${stream.runId}:${stream.streamId}`;
 }
 
-export function visibleDisplayMessages(
-	messages: TranscriptDisplayRow[],
-	overlays: LiveCompletionOverlay[]
-) {
-	const liveRuns = new Set(overlays.map((overlay) => overlay.runId));
-
-	return messages.filter((message) => !message.provisional || !liveRuns.has(message.runId));
-}
-
 export class DisplayHistory {
 	messages: TranscriptDisplayRow[] = [];
 	nextBefore: number | undefined;

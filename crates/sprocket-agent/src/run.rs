@@ -1112,7 +1112,6 @@ pub async fn run_agent(
                     claim_id: claim_id.clone(),
                     user_id: context.run.user_id.clone(),
                     thread_id: request.thread_id.clone(),
-                    run_started_at: context.run.started_at,
                     live: live.clone(),
                     prompt,
                     base_instructions: prompt_context.base_instructions,

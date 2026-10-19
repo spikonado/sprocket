@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
-import { DisplayHistory, visibleDisplayMessages } from '$lib/project/display-history';
+import { DisplayHistory } from '$lib/project/display-history';
 import { mergeLiveOverlays } from '$lib/project/transcript';
 import { useStore, type Store } from '$lib/store';
 import type {
@@ -14,12 +14,6 @@ export type TranscriptReplicaApi = Pick<
 	DesktopApi,
 	'fetchTranscriptDisplay' | 'watchTranscript' | 'watchLiveCompletion'
 >;
-
-type RunTiming = {
-	runId: Id<'runs'>;
-	startedAt: number;
-	completedAt?: number;
-} | null;
 
 type WatchArgs = {
 	api: TranscriptReplicaApi;
@@ -147,26 +141,13 @@ export class TranscriptReplica implements Store<number> {
 	visibleMessages(args: {
 		threadId: Id<'threadRecords'> | null;
 		userId: string | null;
-		run: RunTiming;
 	}): TranscriptMessage[] {
 		if (!args.threadId || !args.userId || this.threadId !== args.threadId) return [];
 		const overlays = this.#history?.visibleOverlays(this.overlays) ?? [];
 
-		const liveMessages = mergeLiveOverlays(
-			overlays.filter((overlay) => overlay.threadId === args.threadId)
-		);
-
 		return [
-			...visibleDisplayMessages(this.messages, overlays),
-			...liveMessages.map((message) =>
-				message.runId === args.run?.runId
-					? {
-							...message,
-							runStartedAt: args.run.startedAt,
-							runCompletedAt: args.run.completedAt
-						}
-					: message
-			)
+			...this.messages,
+			...mergeLiveOverlays(overlays.filter((overlay) => overlay.threadId === args.threadId))
 		];
 	}
 

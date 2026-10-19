@@ -166,17 +166,16 @@ describe('display transcript pages', () => {
 		);
 	});
 
-	it('preserves display cursors, stream acknowledgements, and row changes', async () => {
+	it('preserves display cursors, activity counts, stream acknowledgements, and row changes', async () => {
 		const row = {
 			id: 'row-499',
 			threadId: 'thread-1',
 			runId: 'run-1',
 			sequence: 499,
-			kind: 'text',
-			text: 'Last completion',
+			kind: 'work',
 			attachments: [],
-			itemCount: 0,
-			pendingTools: 0,
+			toolCounts: { read_skill: 1, exec_cmd: 1, poll_cmd: 1 },
+			unpersistedToolCallIds: ['command'],
 			closed: true,
 			revision: 500
 		};
@@ -187,14 +186,13 @@ describe('display transcript pages', () => {
 			syncing: true,
 			stale: false,
 			nextBefore: 499,
-			endSequence: 500,
 			revision: 500,
 			persistedStreams: [{ runId: 'run-1', streamId: 'stream-499' }],
 			changes: [
 				{ id: row.id, row },
 				{ id: 'row-1', row: null }
 			],
-			changesCursor: { revision: 500, sequence: -1 },
+			changesCursor: { revision: 500, position: -1 },
 			replicaId: 'replica',
 			moreChanges: false
 		};
@@ -208,7 +206,7 @@ describe('display transcript pages', () => {
 			before: 500,
 			limit: 12,
 			streams: [{ runId: runId('run-1'), streamId: 'stream-499' }],
-			changesAfter: { revision: 490, sequence: 12 }
+			changesAfter: { revision: 490, position: 12 }
 		};
 
 		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(request);
@@ -225,11 +223,10 @@ describe('display transcript pages', () => {
 				indexing: false,
 				syncing: false,
 				stale: false,
-				endSequence: 1,
 				revision: 1,
 				persistedStreams: [],
 				changes: [],
-				changesCursor: { revision: 1, sequence: -1 },
+				changesCursor: { revision: 1, position: -1 },
 				replicaId: 'replica',
 				moreChanges: false,
 				rows: [
@@ -240,8 +237,6 @@ describe('display transcript pages', () => {
 						sequence: 0,
 						kind: 'prompt',
 						text: 'Inspect this',
-						itemCount: 0,
-						pendingTools: 0,
 						closed: true,
 						revision: 1,
 						attachments: [
@@ -324,8 +319,7 @@ describe('watchLiveCompletion', () => {
 			runStatus: 'running' as const,
 			streamId: 'stream-1',
 			text: 'Hello',
-			parts: [{ type: 'text' as const, id: 't', text: 'Hello', turnId: 'stream-1' }],
-			runStartedAt: 1
+			parts: [{ type: 'text' as const, id: 't', text: 'Hello', turnId: 'stream-1' }]
 		};
 
 		const encoder = new TextEncoder();

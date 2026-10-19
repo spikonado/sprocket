@@ -126,7 +126,7 @@ struct DisplayStream {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DisplayChangeCursor {
     revision: u64,
-    sequence: i64,
+    position: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,14 +169,14 @@ async fn display_handler(
     }
     if let Some(cursor) = &payload.changes_after {
         if cursor.revision > 9_007_199_254_740_991
-            || !(-1..=9_007_199_254_740_991).contains(&cursor.sequence)
+            || !(-1..=9_007_199_254_740_991).contains(&cursor.position)
         {
             return Err(ApiError::bad_request(anyhow!(
                 "invalid display change cursor"
             )));
         }
     }
-    let changes = payload.changes_after.map(|c| (c.revision, c.sequence));
+    let changes = payload.changes_after.map(|c| (c.revision, c.position));
     let streams = payload
         .streams
         .into_iter()

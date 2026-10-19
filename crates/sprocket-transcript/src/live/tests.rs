@@ -20,7 +20,6 @@ fn overlay(thread_id: &str, text: &str) -> LiveCompletionOverlay {
             completed_at: None,
             turn_id: Some("stream-1".to_string()),
         }],
-        run_started_at: 1,
     }
 }
 
