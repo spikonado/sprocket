@@ -8,6 +8,7 @@ import {
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
+	toolTranscriptAssignment,
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
@@ -213,6 +214,13 @@ describe('linked pull requests', () => {
 			pullRequests: [pr(1, 'merged')]
 		});
 
+		await t.mutation(api.agentRuntime.beginToolJob, {
+			...caller,
+			...toolTranscriptAssignment(caller.runId, caller.claimId),
+			kind: 'ask_question',
+			payload: { question: 'Ship the merge?', options: [{ id: 'yes', label: 'Yes' }] }
+		});
+
 		const { questionId } = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			...caller,
 			question: 'Ship the merge?',
@@ -236,6 +244,7 @@ describe('linked pull requests', () => {
 			questionId,
 			optionId: 'yes'
 		});
+
 		const continuation = answered.continuation;
 		expect(continuation?.runId).toBe(caller.runId);
 
@@ -264,6 +273,7 @@ describe('linked pull requests', () => {
 			claimId: 'continuation-claim',
 			executionSecret: 'continuation-secret'
 		});
+
 		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: continued.runId,
 			expectedClaimId: 'continuation-claim',
@@ -300,6 +310,7 @@ describe('linked pull requests', () => {
 			prompt: 'Open the PR',
 			machineId
 		});
+
 		const caller = { runId: created.runId, claimId: 'pr-claim', executionSecret: 'pr-secret' };
 
 		await t.mutation(api.agentRuntime.start, caller);
