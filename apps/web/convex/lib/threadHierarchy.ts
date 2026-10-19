@@ -234,7 +234,10 @@ async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRec
 		return;
 	}
 
-	await ctx.db.patch('threadRecords', root._id, { archivedAt: Date.now() });
+	await ctx.db.patch('threadRecords', root._id, {
+		archivedAt: Date.now(),
+		settleWhenIdle: undefined
+	});
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
@@ -261,9 +264,16 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 export async function unsettleRootOfThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
 	const root = await threadRoot(ctx.db, thread);
 
-	if (root.archivedAt !== undefined) {
-		await ctx.db.patch('threadRecords', root._id, { archivedAt: undefined });
-	}
+	if (root.archivedAt === undefined) return;
+
+	const restoreSettle =
+		allMerged(root.pullRequests ?? []) &&
+		(await getUiPreferences(ctx.db, root.userId))?.settleMergedThreads;
+
+	await ctx.db.patch('threadRecords', root._id, {
+		archivedAt: undefined,
+		settleWhenIdle: restoreSettle ? true : undefined
+	});
 }
 
 export async function listDirectChildrenPage(

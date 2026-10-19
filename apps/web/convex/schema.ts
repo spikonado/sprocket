@@ -347,8 +347,9 @@ export default defineSchema({
 		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number()),
-		// Set when every linked PR merged. Re-applied when the subtree is idle,
-		// including after a continuation unarchives the root. Cleared on manual
+		// Set when every linked PR merged but the subtree is still busy or
+		// awaiting recovery. Restored when a continuation unarchives an
+		// auto-settled root. Cleared once the thread is archived, on manual
 		// settle/unsettle, when the setting is turned off, or when a PR unmerges.
 		settleWhenIdle: v.optional(v.boolean())
 	})
