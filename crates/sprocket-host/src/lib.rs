@@ -172,8 +172,10 @@ impl Host {
     }
 
     /// Ends machine presence first because ending it needs the native token.
+    /// The wait is bounded so a pending registration can't outlast the CLI's
+    /// logout timeout; presence then expires on its own.
     pub async fn sign_out(&self) -> anyhow::Result<()> {
-        self.machines.end_all().await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), self.machines.end_all()).await;
         self.native_auth.sign_out().await
     }
 
