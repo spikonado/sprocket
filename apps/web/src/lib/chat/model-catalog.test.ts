@@ -48,6 +48,22 @@ describe('gateway model catalog', () => {
 		expect(catalog).not.toHaveProperty('tierAllowsFastMode');
 	});
 
+	it('falls back to the catalog default rather than the first model', async () => {
+		const payload = structuredClone(catalogPayload);
+		payload.sprocket.models.push({
+			...payload.sprocket.models[0],
+			id: 'model-large',
+			label: 'Model Large'
+		});
+		payload.sprocket.defaultModelId = 'model-large';
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+		expect(resolveModelForProviders(catalog, ['spikonado'], 'unknown')).toBe('model-large');
+	});
+
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models[0].serviceTiers = ['standard'];
