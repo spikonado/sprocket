@@ -18,6 +18,7 @@ import {
 	type SidePanelSnapshot,
 	type SidePanelTab
 } from '$lib/chat/side-panel';
+import { fileDrafts } from '$lib/home/file-drafts';
 import { useStore, type Store } from '$lib/store';
 import type { ArtifactsWatchRequest, DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
@@ -146,6 +147,7 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	reset() {
+		fileDrafts.clear();
 		this.#snapshots.clear();
 		this.#panelScopeKey = null;
 		this.#watchScope = null;
@@ -193,6 +195,8 @@ export class ArtifactPanel implements Store<number> {
 		if (index === -1) return;
 
 		const tabs = this.panel.tabs.filter((tab) => tab.id !== id);
+
+		fileDrafts.delete(id);
 
 		if (tabs.length === 0) {
 			this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };

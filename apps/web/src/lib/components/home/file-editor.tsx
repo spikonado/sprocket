@@ -6,6 +6,7 @@ import { classHighlighter } from '@lezer/highlight';
 import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
+import { fileDrafts } from '$lib/home/file-drafts';
 import type { DesktopApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FileEditorApi = Pick<DesktopApi, 'readWorkspaceFile' | 'writeWorkspaceFile'>;
@@ -29,21 +30,6 @@ type Status =
 const DISK_POLL_MS = 2_500;
 
 const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg)$/i;
-
-type Draft = { doc: Text; base: Text; version: string };
-
-/** Unsaved buffers by tab, kept while the panel is closed or another view replaces it. */
-const drafts = new Map<string, Draft>();
-
-export function discardFileDraft(draftKey: string) {
-	drafts.delete(draftKey);
-}
-
-if (typeof window !== 'undefined') {
-	window.addEventListener('beforeunload', (event) => {
-		if (drafts.size > 0) event.preventDefault();
-	});
-}
 
 const editorTheme = EditorView.theme({
 	'&': { height: '100%', fontSize: '12.5px', backgroundColor: 'var(--background)' },
@@ -115,12 +101,14 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 	function markDirty() {
 		const view = viewRef.current;
 		const base = savedDoc.current;
-		const isDirty = !!view && !!base && !view.state.doc.eq(base);
+
+		if (!view) return;
+		const isDirty = !!base && !view.state.doc.eq(base);
 
 		if (isDirty && version.current !== null) {
-			drafts.set(draftKey, { doc: view.state.doc, base, version: version.current });
+			fileDrafts.set(draftKey, { doc: view.state.doc, base, version: version.current });
 		} else {
-			drafts.delete(draftKey);
+			fileDrafts.delete(draftKey);
 		}
 
 		setDirty(isDirty);
@@ -205,7 +193,7 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 
 		if (started !== generation.current) return;
 
-		const draft = version.current === null ? drafts.get(draftKey) : undefined;
+		const draft = version.current === null ? fileDrafts.get(draftKey) : undefined;
 
 		if (draft) {
 			replaceContent(draft.doc, draft.version, draft.base);
@@ -265,6 +253,16 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 
 			if (result.status === 'conflict') {
 				setDiskVersion(result.version);
+
+				return;
+			}
+
+			if (viewRef.current !== view) {
+				// The editor unmounted mid-save; only its draft can still absorb the new base.
+				const draft = fileDrafts.get(draftKey);
+
+				if (draft?.doc.eq(doc)) fileDrafts.delete(draftKey);
+				else if (draft) fileDrafts.set(draftKey, { ...draft, base: doc, version: result.version });
 
 				return;
 			}
