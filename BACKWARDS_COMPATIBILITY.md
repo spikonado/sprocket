@@ -108,6 +108,10 @@ Each of these Convex variants goes once a full production scan confirms no retai
 - `hidden` on executor jobs. Sectionless jobs keep their terminal-write fallback during reconciliation until they're reconciled.
 - `imageUploadId` on prompt attachments.
 
+### Retired run fields
+
+Older `runs` rows carry `startedAt`, `gatewayProtocolVersion` and `cancellationDeadlineAt`. New runs derive their start from `_creationTime`, and `runStartedAt` reads a legacy `startedAt` because those runs' section `displayOrder` keys embed it. The hourly `migrations.removeRetiredRunFields` cron unsets the fields and rewrites each run's section keys in the same transaction. Once that migration completes on every deployment, remove the three fields, the fallback in `runStartedAt`, the migration and the cron.
+
 ### Tool invocation IDs
 
 Older tool parts use `jobId` and `tool:<jobId>` source keys. Readers pair by `jobId` when `toolInvocationId` is absent, and `executorJobs.toolInvocationId` stays optional. Remove the Convex fallbacks after a full scan confirms every job and tool part has an invocation ID and no tool part carries `jobId`.

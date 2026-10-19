@@ -70,10 +70,10 @@ export const vGetContextResult = v.object({
 			'selectedModel',
 			'completionProvider',
 			'reasoningEffort',
-			'startedAt',
 			'continuationOfRunId'
 		)
 		.extend({
+			startedAt: v.number(),
 			fastMode: v.boolean(),
 			parentThreadId: v.optional(v.id('threadRecords'))
 		}),

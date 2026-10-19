@@ -1562,7 +1562,6 @@ describe('subagents.control', () => {
 		const stopped = await t.run((ctx) => ctx.db.get('runs', child.runId));
 		expect(stopped?.cancellationRequestedAt).toBeDefined();
 		expect(stopped?.status).toBe('failed');
-		expect(stopped?.cancellationDeadlineAt).toBeUndefined();
 		await t.mutation(api.subagents.control, stopArgs);
 		expect(await t.run((ctx) => ctx.db.get('runs', child.runId))).toEqual(stopped);
 		expect(await caller.asUser.query(api.runRecovery.state, queryArgs)).toEqual({
@@ -1842,7 +1841,7 @@ describe('subagents.control delegated answer retries', () => {
 			const runs = await t.run((ctx) =>
 				ctx.db
 					.query('runs')
-					.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', child.threadId))
+					.withIndex('by_threadId', (q) => q.eq('threadId', child.threadId))
 					.collect()
 			);
 
@@ -2096,7 +2095,7 @@ describe('subagents.control delegated answer retries', () => {
 			const runs = await t.run(async (ctx) =>
 				ctx.db
 					.query('runs')
-					.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', child.threadId))
+					.withIndex('by_threadId', (q) => q.eq('threadId', child.threadId))
 					.collect()
 			);
 

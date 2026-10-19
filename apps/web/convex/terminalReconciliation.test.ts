@@ -116,7 +116,7 @@ describe('terminal job reconciliation', () => {
 		const run = await t.run((ctx) =>
 			ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
 				.first()
 		);
 

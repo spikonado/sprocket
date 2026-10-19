@@ -7,11 +7,8 @@ type ExecutorJobState = {
 	completedAt?: number;
 };
 
-export function compareRunStartedAt(
-	left: { startedAt: number; _creationTime: number },
-	right: { startedAt: number; _creationTime: number }
-): number {
-	return left.startedAt - right.startedAt || left._creationTime - right._creationTime;
+export function runStartedAt(run: { startedAt?: number; _creationTime: number }): number {
+	return run.startedAt ?? Math.floor(run._creationTime);
 }
 
 export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null | undefined) {

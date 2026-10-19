@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
+import { runStartedAt } from '@convex/lib/runs';
 
 export type PersistedWork = NonNullable<Doc<'threadTranscriptParts'>['work']>;
 
@@ -24,12 +25,16 @@ function validateOrdinal(value: number) {
 	if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid section ordinal.');
 }
 
+export function runSectionDisplayOrderPrefix(startedAt: number, runId: string): string {
+	return `${String(startedAt).padStart(16, '0')}:${runId}:`;
+}
+
 export function sectionDisplayOrder(
 	startedAt: number,
 	runId: string,
 	sectionOrdinal: number
 ): string {
-	return `${String(startedAt).padStart(16, '0')}:${runId}:${String(sectionOrdinal).padStart(12, '0')}`;
+	return `${runSectionDisplayOrderPrefix(startedAt, runId)}${String(sectionOrdinal).padStart(12, '0')}`;
 }
 
 async function persistedSectionDisplayOrder(
@@ -41,7 +46,7 @@ async function persistedSectionDisplayOrder(
 
 	if (!run) throw new Error('Section run not found.');
 
-	return sectionDisplayOrder(run.startedAt, run._id, sectionOrdinal);
+	return sectionDisplayOrder(runStartedAt(run), run._id, sectionOrdinal);
 }
 
 async function updateSummary(

@@ -396,13 +396,13 @@ export default defineSchema({
 		fastMode: v.boolean(),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
-		startedAt: v.number(),
+		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number())
 	})
-		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
+		.index('by_threadId', ['threadId'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
 	runExecutionStates: defineTable({

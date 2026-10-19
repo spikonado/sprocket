@@ -78,7 +78,7 @@ describe('agentRuntime.start', () => {
 		await t.run(async (ctx) => {
 			for (const run of await ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 				.collect()) {
 				await ctx.db.patch('runs', run._id, { startedAt: 0 });
 			}
@@ -116,7 +116,7 @@ describe('agentRuntime.start', () => {
 			await t.run(async (ctx) =>
 				ctx.db
 					.query('runs')
-					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+					.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 					.order('desc')
 					.first()
 			)

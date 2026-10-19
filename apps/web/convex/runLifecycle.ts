@@ -114,11 +114,7 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 	}
 
 	const before = await captureThreadActivityBeforeChange(ctx, current.threadId);
-	const now = Date.now();
-	await ctx.db.patch('runs', current._id, {
-		cancellationRequestedAt: now,
-		cancellationDeadlineAt: now + CANCELLATION_FORCE_AFTER_MS
-	});
+	await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
 	await updateThreadHierarchyAfterChange(ctx, before);
 	await ctx.scheduler.runAfter(CANCELLATION_FORCE_AFTER_MS, internal.runLifecycle.forceCancelRun, {
 		runId: current._id
@@ -227,12 +223,6 @@ export const forceCancelRun = internalMutation({
 		const run = await getRunWithExecution(ctx.db, args.runId);
 
 		if (!run || !isRunCancellationOpen(run)) {
-			return false;
-		}
-
-		const now = Date.now();
-
-		if (run.cancellationDeadlineAt !== undefined && now < run.cancellationDeadlineAt) {
 			return false;
 		}
 

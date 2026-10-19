@@ -1,5 +1,6 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
+import { runStartedAt } from '@convex/lib/runs';
 import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 
 export const CANCELLATION_FORCE_AFTER_MS = 10_000;
@@ -120,8 +121,9 @@ export function projectSelectedThreadLifecycle(args: {
 	threadId: Id<'threadRecords'>;
 	run: {
 		_id: Id<'runs'>;
+		_creationTime: number;
 		status: Infer<typeof vRunStatus>;
-		startedAt: number;
+		startedAt?: number;
 		completedAt?: number;
 		lastError?: string;
 		cancellationRequestedAt?: number;
@@ -140,7 +142,7 @@ export function projectSelectedThreadLifecycle(args: {
 
 	const projected: Infer<typeof vSelectedThreadLifecycleRun> = {
 		runId: args.run._id,
-		startedAt: args.run.startedAt
+		startedAt: runStartedAt(args.run)
 	};
 
 	if (args.run.completedAt !== undefined) {

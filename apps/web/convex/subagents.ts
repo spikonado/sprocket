@@ -247,8 +247,7 @@ export const createOrSend = mutation({
 				fastMode: args.fast,
 				machineId: callerRun.machineId,
 				continuationOfRunId,
-				executionSecret: args.childExecutionSecret,
-				protocolVersion: callerRun.gatewayProtocolVersion ?? 0
+				executionSecret: args.childExecutionSecret
 			});
 
 			if (created.created && timeoutMs !== undefined) {

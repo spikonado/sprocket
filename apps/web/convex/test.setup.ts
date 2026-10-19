@@ -180,7 +180,6 @@ export async function insertQueuedRun(
 		reasoningEffort: args.reasoningEffort ?? 'medium',
 		fastMode: args.fastMode ?? false,
 		executionSecret: args.executionSecret,
-		protocolVersion: 1,
 		machineId: args.machineId
 	};
 

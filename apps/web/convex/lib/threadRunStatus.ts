@@ -30,7 +30,7 @@ export async function setRunAndThreadStatus(
 	const [latestRun, thread] = await Promise.all([
 		ctx.db
 			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', run.threadId))
+			.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
 			.order('desc')
 			.first(),
 		ctx.db.get('threadRecords', run.threadId)

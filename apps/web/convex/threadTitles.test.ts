@@ -19,8 +19,7 @@ function createRun(t: ConvexTestInstance, submissionId: string, threadId?: Id<'t
 		completionProvider: 'chatgpt',
 		reasoningEffort: 'high',
 		fastMode: true,
-		executionSecret: `secret-${submissionId}`,
-		protocolVersion: 1
+		executionSecret: `secret-${submissionId}`
 	});
 }
 

@@ -958,7 +958,7 @@ describe('transcript range reads', () => {
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', owned.threadId))
+				.withIndex('by_threadId', (q) => q.eq('threadId', owned.threadId))
 				.unique();
 
 			if (!run) throw new Error('Missing fixture run.');
