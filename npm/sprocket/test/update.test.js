@@ -414,15 +414,17 @@ test('check reports unavailable, idle, and available without installing', async 
 });
 
 test('offers a reinstall when the native package version differs from the launcher', async () => {
-	const payload = await checkForUpdate(
-		testHost({
-			manifest: versionDoc('0.3.4'),
-			nativeVersion: '0.3.3'
-		}).host
-	);
+	for (const registryVersion of ['0.3.4', '0.3.3']) {
+		const payload = await checkForUpdate(
+			testHost({
+				manifest: versionDoc(registryVersion),
+				nativeVersion: '0.3.2'
+			}).host
+		);
 
-	assert.equal(payload.status, 'available');
-	assert.equal(payload.version, '0.3.4');
+		assert.equal(payload.status, 'available');
+		assert.equal(payload.version, '0.3.4');
+	}
 });
 
 test('does not offer a stable or canary downgrade when the installed version is newer', async () => {

@@ -563,18 +563,15 @@ export async function checkForUpdate(host) {
 	const registryVersion = await fetchChannelVersion(host, channel, currentVersion);
 	const decision = channelUpdate(currentVersion, registryVersion);
 
-	const nativeMismatch =
-		registryVersion === currentVersion && host.nativeVersion() !== currentVersion;
-
-	if (decision.status === 'idle' && !nativeMismatch) {
-		return makePayload({ status: 'idle', currentVersion });
+	if (decision.status === 'available') {
+		return makePayload({ status: 'available', currentVersion, version: decision.version });
 	}
 
-	return makePayload({
-		status: 'available',
-		currentVersion,
-		version: registryVersion
-	});
+	if (host.nativeVersion() !== currentVersion) {
+		return makePayload({ status: 'available', currentVersion, version: currentVersion });
+	}
+
+	return makePayload({ status: 'idle', currentVersion });
 }
 
 export async function installUpdate(host) {
