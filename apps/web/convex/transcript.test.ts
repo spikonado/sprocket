@@ -470,6 +470,72 @@ describe('numbered transcript parts', () => {
 		});
 	});
 
+	it('persists a tool call before its job starts', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-call-first-secret';
+		const claimId = 'claim-call-first';
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-call-first',
+			executionSecret,
+			'Use a tool'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, { claimId, runId, executionSecret });
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId,
+			attemptSeq: 1,
+			executionSecret
+		});
+
+		const assignment = toolTranscriptAssignment(runId, claimId, 1, 1, 'stream-tool');
+
+		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			runId,
+			claimId,
+			attemptSeq: 1,
+			streamId: 'stream-tool',
+			items: [
+				{
+					type: 'tool-call',
+					partId: 'stream-tool:tool:c1',
+					callId: 'c1',
+					name: 'exec_cmd',
+					input: { cmd: 'echo hi' },
+					turnId: 'stream-tool'
+				}
+			],
+			work: { ranges: [{ start: 0, end: 1, sectionKey: assignment.sectionKey }] },
+			toolInvocations: [
+				{
+					callId: 'c1',
+					toolInvocationId: assignment.toolInvocationId,
+					sectionKey: assignment.sectionKey
+				}
+			],
+			sections: [{ sectionKey: assignment.sectionKey, sectionOrdinal: 1, closed: false }],
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.beginToolJob, {
+			claimId,
+			runId,
+			...assignment,
+			kind: 'exec_cmd',
+			callId: 'c1',
+			payload: { cmd: 'echo hi' },
+			executionSecret
+		});
+
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion', 'tool']);
+		expect(parts.parts[2]?.tool).toMatchObject({ callId: 'c1', status: 'started' });
+	});
+
 	it('records one cancelled finished event and ignores a later complete', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
