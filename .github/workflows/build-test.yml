@@ -15,19 +15,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  native_credential_store_check:
-    name: Native credential store (${{ matrix.os }})
+  native_tests:
+    name: Native (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        # Linux runs the full suite in the rust job.
+        os: [macos-latest, windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: native-credential-store-${{ matrix.os }}
       - name: Check native server
         run: cargo check --locked -p sprocket-server
       - name: Test native credential storage
@@ -39,8 +38,29 @@ jobs:
       - name: Test failed command launch cleanup
         run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
 
-  build_and_test:
+  web:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ./.github/actions/setup-nix-shell
+
+      - name: Bun install
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        run: bun install --frozen-lockfile
+
+      - name: Build web
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        run: bun run --cwd apps/web build
+
+      - name: Bun test
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        run: bun run test
+
+  rust:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -52,18 +72,6 @@ jobs:
           # Cached build scripts embed Nix interpreter paths from flake.lock.
           prefix-key: v0-rust-${{ hashFiles('flake.lock') }}
 
-      - name: Bun install
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
-        run: bun install --frozen-lockfile
-
-      - name: Bun build
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
-        run: bun run build
-
-      - name: Bun test
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
-        run: bun run test
-
       - name: Cargo test
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
-        run: cargo test
+        run: cargo test --locked

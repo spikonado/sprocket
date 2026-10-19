@@ -121,6 +121,9 @@ jobs:
             runner: windows-2022
             executable: sprocket.exe
     runs-on: ${{ matrix.runner }}
+    env:
+      # Dev builds publish on every main push, and LTO triples their build time.
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.prepare.outputs.npm-tag == 'dev' && 'false' || 'true' }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
