@@ -90,10 +90,11 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 	const latest = useRef({ api, file });
 	latest.current = { api, file };
 
-	const actions = useRef<{ save: (overwrite: boolean) => void; sync: (force: boolean) => void }>({
-		save: () => {},
-		sync: () => {}
-	});
+	const actions = useRef<{
+		save: (overwrite: boolean) => void;
+		sync: (force: boolean) => void;
+		restoreDraft: () => void;
+	}>({ save: () => {}, sync: () => {}, restoreDraft: () => {} });
 
 	function markDirty() {
 		const view = viewRef.current;
@@ -190,13 +191,6 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 
 		if (started !== generation.current) return;
 
-		const draft = version.current === null ? fileDrafts.get(draftKey) : undefined;
-
-		if (draft) {
-			replaceContent(draft.doc, draft.version, draft.base);
-			setStatus({ kind: 'text' });
-		}
-
 		const view = viewRef.current;
 		const hasEdits = !!view && !!savedDoc.current && !view.state.doc.eq(savedDoc.current);
 
@@ -278,7 +272,14 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 
 	actions.current = {
 		save: (overwrite) => void save(overwrite),
-		sync: (force) => void sync(force)
+		sync: (force) => void sync(force),
+		restoreDraft: () => {
+			const draft = fileDrafts.get(draftKey);
+
+			if (!draft) return;
+			replaceContent(draft.doc, draft.version, draft.base);
+			setStatus({ kind: 'text' });
+		}
 	};
 
 	useEffect(() => {
@@ -287,6 +288,7 @@ function TextFileEditor({ api, file, draftKey, active, onDirtyChange }: Props) {
 		const view = new EditorView({ parent: containerRef.current });
 
 		viewRef.current = view;
+		actions.current.restoreDraft();
 
 		return () => {
 			view.destroy();

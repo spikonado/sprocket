@@ -23,7 +23,7 @@ function editorView() {
 	return EditorView.findFromDOM(document.querySelector<HTMLElement>('.cm-editor')!)!;
 }
 
-it('restores unsaved edits after the editor remounts', async () => {
+it('restores unsaved edits after the editor remounts, before the file is read again', async () => {
 	const api = editorApi();
 	const onDirtyChange = vi.fn();
 	const props = { api, file, draftKey: 'tab-1', active: false, onDirtyChange };
@@ -34,6 +34,7 @@ it('restores unsaved edits after the editor remounts', async () => {
 	first.unmount();
 
 	onDirtyChange.mockClear();
+	vi.mocked(api.readWorkspaceFile).mockReturnValue(new Promise(() => {}));
 	render(<FileEditor {...props} />);
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved and edited'));
