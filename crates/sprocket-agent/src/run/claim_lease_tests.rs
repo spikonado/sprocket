@@ -5,8 +5,8 @@ use anyhow::anyhow;
 use tokio::time::{Instant, sleep};
 
 use super::{
-    RUN_ABANDONED_BY_AGENT, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION,
-    RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
+    RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
+    RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
 };
 
 /// Regression: a starved renewal tick (CPU saturation, slow reconnect)
@@ -116,13 +116,11 @@ async fn drive_fails_the_run_when_the_lease_is_lost() {
         std::future::pending(),
     )
     .await;
-    let error = result.unwrap_err();
-    assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
-    assert!(format!("{error:#}").contains("was lost"));
+    assert!(result.unwrap_err().to_string().contains("was lost"));
 }
 
 #[tokio::test(start_paused = true)]
-async fn renewal_failure_is_abandonment_and_keeps_the_diagnostic() {
+async fn drive_fails_the_run_when_renewal_fails() {
     let result: anyhow::Result<()> = drive_claim_lease(
         "run-disconnected",
         Instant::now(),
@@ -130,13 +128,11 @@ async fn renewal_failure_is_abandonment_and_keeps_the_diagnostic() {
         std::future::pending(),
     )
     .await;
-    let error = result.unwrap_err();
-    assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
-    assert!(format!("{error:#}").contains("claim renewal timed out"));
+    assert_eq!(result.unwrap_err().to_string(), "claim renewal timed out");
 }
 
 #[tokio::test(start_paused = true)]
-async fn operation_failure_is_not_classified_as_abandonment() {
+async fn operation_failure_is_returned_inside_ok() {
     let result = drive_claim_lease(
         "run-provider-error",
         Instant::now(),

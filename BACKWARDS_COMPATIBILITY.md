@@ -52,6 +52,10 @@ Released servers require an integer `createdAt` on `artifacts:listArtifacts` row
 
 Released clients call `machines:tryRegister` with a `credentialHash`, then `machines:heartbeat` and `machines:end` anonymously with the matching `credential`. The hash is stored as their `processId`. Remove those three mutations once those clients age out.
 
+### Agent-reported claim lease loss
+
+Released agents report claim lease loss through `agentRuntime.finalizeClaimFailure` with `lastError` set to `RUN_ABANDONED_BY_AGENT`. That mutation maps the text to `failureKind: 'abandoned'`. Remove the mapping once those agents age out.
+
 ## Convex data shims
 
 ### Billing subscription projection
@@ -97,6 +101,10 @@ Older `threadRecords` rows still carry `submissionId` and `treeCancellation`, so
 ### Transcript user IDs
 
 Older `threadTranscriptStates` and `threadTranscriptParts` rows still carry `userId`, so the schema keeps it optional. The hourly `migrations.removeTranscriptUserId` cron clears it. Once both migrations complete on every deployment, remove the field, the migrations and the cron.
+
+### Run abandonment kind
+
+Abandoned runs written before `runs.failureKind` only carry `lastError: RUN_ABANDONED_BY_AGENT`, so `isAbandonedRun` also matches that text. The hourly `migrations.runRunFailureKindBackfill` cron sets `failureKind` on them. Once the backfill completes on every deployment, remove the text match, the migration and the cron.
 
 ### Stored executor job and result fields
 

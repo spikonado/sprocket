@@ -11,7 +11,7 @@ export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
 	run: Pick<Doc<'runs'>, '_id' | 'threadId' | 'status'>,
 	status: Infer<typeof vRunStatus>,
-	runPatch: Partial<Pick<Doc<'runs'>, 'completedAt' | 'lastError'>> = {}
+	runPatch: Partial<Pick<Doc<'runs'>, 'completedAt' | 'lastError' | 'failureKind'>> = {}
 ): Promise<void> {
 	const current = await ctx.db.get('runs', run._id);
 
@@ -22,7 +22,8 @@ export async function setRunAndThreadStatus(
 	if (
 		current.status !== status ||
 		('completedAt' in runPatch && current.completedAt !== runPatch.completedAt) ||
-		('lastError' in runPatch && current.lastError !== runPatch.lastError)
+		('lastError' in runPatch && current.lastError !== runPatch.lastError) ||
+		('failureKind' in runPatch && current.failureKind !== runPatch.failureKind)
 	) {
 		await ctx.db.patch('runs', run._id, { ...runPatch, status });
 	}

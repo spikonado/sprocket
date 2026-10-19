@@ -46,6 +46,13 @@ crons.interval(
 );
 
 crons.interval(
+	'backfill run failure kinds',
+	{ hours: 1 },
+	internal.migrations.runRunFailureKindBackfill,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

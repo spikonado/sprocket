@@ -46,9 +46,6 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 /// apps/web/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
 const CONTINUE_PROMPT: &str = "continue";
-// Must match convex/lib/agentErrors.ts so executor-reported lease loss and
-// lifecycle-detected abandonment have the same automatic recovery policy.
-const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
@@ -573,16 +570,12 @@ where
         tokio::select! {
             biased;
             _ = sleep_until(next_renewal_at) => {
-                match renew(lease_deadline).await {
-                    Ok((true, renewal_started_at)) => {
+                match renew(lease_deadline).await? {
+                    (true, renewal_started_at) => {
                         lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
                         next_renewal_at = renewal_started_at + RUN_CLAIM_RENEW_INTERVAL;
                     }
-                    Ok((false, _)) => return Err(
-                        anyhow!("claim lease for run {run_id} was lost")
-                            .context(RUN_ABANDONED_BY_AGENT)
-                    ),
-                    Err(error) => return Err(error.context(RUN_ABANDONED_BY_AGENT)),
+                    (false, _) => return Err(anyhow!("claim lease for run {run_id} was lost")),
                 }
             }
             result = &mut operation => return Ok(result),
@@ -1149,14 +1142,15 @@ pub async fn run_agent(
     {
         Ok(result) => result,
         Err(error) => {
-            // A renewal tick can race the operation's own finalization; a run
-            // that already finished server-side must not be reported as failed.
+            // The lease is gone, so the server's lifecycle check marks the run
+            // abandoned. A renewal tick can also race the operation's own
+            // finalization, which this acknowledges instead.
             match runtime.run_finished(&run_id).await {
                 Ok(true) => {
                     acknowledge_stop(&runtime, &run_id, &claim_id).await?;
                     Ok(())
                 }
-                _ => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+                _ => Err(error),
             }
         }
     }

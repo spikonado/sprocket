@@ -252,7 +252,8 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		expect(continuation.runId).not.toBe(abandoned.runId);
 		expect(await t.run(async (ctx) => ctx.db.get('runs', abandoned.runId))).toMatchObject({
 			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
+			lastError: RUN_ABANDONED_BY_AGENT,
+			failureKind: 'abandoned'
 		});
 		expect(await t.run(async (ctx) => ctx.db.get('runs', continuation.runId))).toMatchObject({
 			continuationOfRunId: abandoned.runId,

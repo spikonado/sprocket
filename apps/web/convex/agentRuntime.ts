@@ -35,6 +35,7 @@ import {
 } from '@convex/lib/transcriptWrites';
 import {
 	COMPLETION_STREAM_SUPERSEDED,
+	RUN_ABANDONED_BY_AGENT,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
@@ -787,7 +788,7 @@ export const requestCancellation = mutation({
 		if (thread.parentThreadId !== undefined) {
 			const latest = await latestRunForThread(ctx.db, thread._id);
 
-			if (latest?._id === run._id) {
+			if (latest?._id === run._id || latest?.continuationOfRunId === run._id) {
 				return (await requestThreadTreeCancellation(ctx, thread)).cancelled;
 			}
 		}
@@ -871,9 +872,10 @@ export const finalizeClaimFailure = mutation({
 		const accepted =
 			canFinalizeAfterClaimFailure(run, args.claimId) &&
 			(await finalizeRunRecord(ctx, run, {
-				text: args.text,
 				status: 'failed',
-				lastError: args.lastError
+				lastError: args.lastError,
+				// Released agents still report claim lease loss through this mutation.
+				failureKind: args.lastError === RUN_ABANDONED_BY_AGENT ? 'abandoned' : undefined
 			}));
 
 		return executorFinalizationResult(ctx, run, accepted);

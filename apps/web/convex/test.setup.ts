@@ -12,6 +12,8 @@ import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { FunctionArgs } from 'convex/server';
+import { abandonRunRecord } from '@convex/lib/runFinalize';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import schema from './schema';
 
 /**
@@ -147,6 +149,12 @@ export async function seedThreadRecord(
 		});
 
 		return threadId;
+	});
+}
+
+export async function abandonRun(t: ConvexTestInstance, runId: Id<'runs'>) {
+	await t.run(async (ctx) => {
+		await abandonRunRecord(ctx, (await getRunWithExecution(ctx.db, runId))!);
 	});
 }
 
