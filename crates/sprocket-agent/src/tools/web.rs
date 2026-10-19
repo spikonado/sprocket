@@ -15,7 +15,7 @@ use super::hosted_parse::HostedParseContext;
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::parse_file::{
     MAX_PARSE_FILE_IMAGE_BYTES, convert_document, fit_image_for_model_blocking,
-    persist_image_bytes, replay_image_tool_output,
+    persist_image_bytes, replay_tool_output,
 };
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
@@ -193,7 +193,9 @@ impl rig::tool::Tool for ScrapeUrlTool {
             file.disable_cleanup(true);
         }
         if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
-            replay_image_tool_output(&result).await.map_err(tool_error)
+            replay_tool_output(&result, &self.0.image_urls())
+                .await
+                .map_err(tool_error)
         } else {
             Ok(ToolOutput::json(result))
         }

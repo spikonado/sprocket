@@ -338,7 +338,9 @@ async fn persist_and_replay_round_trip_from_a_local_path() {
     assert_eq!(value["outputType"], "image");
     assert_eq!(value["mediaType"], "image/png");
 
-    let output = replay_parse_file_tool_output(&value).await.expect("replay");
+    let output = replay_tool_output(&value, &ImageUrlMap::new())
+        .await
+        .expect("replay");
     assert_png_image_output(&output, &png);
     let ToolResultContent::Text(saved_path) = &output.as_content()[0] else {
         panic!("missing image path");
@@ -348,8 +350,10 @@ async fn persist_and_replay_round_trip_from_a_local_path() {
         format!("Image saved to: {}", value["path"].as_str().unwrap())
     );
 
-    let history = replay_local_tool_history_items(&value)
+    let history = replay_local_tool_output(&value)
         .await
+        .expect("history")
+        .into_history_items(&ImageUrlMap::new())
         .expect("history");
     assert_eq!(history.len(), 2);
     let AgentHistoryToolResultItem::Text { text } = &history[0] else {
@@ -396,11 +400,15 @@ async fn rtf_converts_through_anydoc() {
 
     let value = serde_json::to_value(&persisted).expect("value");
     assert_eq!(value["outputType"], "text");
-    let output = replay_parse_file_tool_output(&value).await.expect("replay");
+    let output = replay_tool_output(&value, &ImageUrlMap::new())
+        .await
+        .expect("replay");
     assert_text_contains(&output, "Hello from RTF");
 
-    let history = replay_local_tool_history_items(&value)
+    let history = replay_local_tool_output(&value)
         .await
+        .expect("history")
+        .into_history_items(&ImageUrlMap::new())
         .expect("history");
     match &history[0] {
         AgentHistoryToolResultItem::Text { text } => {
@@ -533,7 +541,9 @@ async fn long_text_is_cached_in_full_and_previewed_for_convex() {
     assert!(!value.to_string().contains(tail));
     assert_eq!(value["truncated"], true);
 
-    let output = replay_parse_file_tool_output(&value).await.expect("replay");
+    let output = replay_tool_output(&value, &ImageUrlMap::new())
+        .await
+        .expect("replay");
     match output.as_content() {
         [ToolResultContent::Text(text)] => {
             assert!(text.text.contains("...[truncated]"));
@@ -558,7 +568,7 @@ async fn missing_replay_cache_reports_missing_files() {
         "width": 1,
         "height": 1
     });
-    let error = replay_parse_file_tool_output(&value)
+    let error = replay_tool_output(&value, &ImageUrlMap::new())
         .await
         .expect_err("missing cache");
     let message = format!("{error:#}");
@@ -576,7 +586,7 @@ async fn missing_replay_cache_reports_missing_files() {
         "preview": "name",
         "truncated": false
     });
-    let text_error = replay_parse_file_tool_output(&text)
+    let text_error = replay_tool_output(&text, &ImageUrlMap::new())
         .await
         .expect_err("missing text cache");
     let text_message = format!("{text_error:#}");
@@ -600,7 +610,9 @@ async fn oversized_images_are_downscaled_when_persisted_and_when_replayed_from_o
     };
     assert_eq!((*width, *height), (2000, 1000));
     let value = serde_json::to_value(&persisted).expect("value");
-    let output = replay_parse_file_tool_output(&value).await.expect("replay");
+    let output = replay_tool_output(&value, &ImageUrlMap::new())
+        .await
+        .expect("replay");
     assert_eq!(decoded_image(&output), (ImageMediaType::PNG, 2000, 1000));
 
     let legacy_path = cache.join("legacy.png");
@@ -616,7 +628,7 @@ async fn oversized_images_are_downscaled_when_persisted_and_when_replayed_from_o
         "width": 3000,
         "height": 1500
     });
-    let output = replay_parse_file_tool_output(&legacy)
+    let output = replay_tool_output(&legacy, &ImageUrlMap::new())
         .await
         .expect("replay legacy");
     assert_eq!(decoded_image(&output), (ImageMediaType::PNG, 2000, 1000));
@@ -694,7 +706,7 @@ async fn local_and_replay_reads_are_bounded_without_trusting_size_metadata() {
         "width": 1,
         "height": 1
     });
-    let replay = replay_parse_file_tool_output(&spoofed)
+    let replay = replay_tool_output(&spoofed, &ImageUrlMap::new())
         .await
         .expect_err("replay oversize");
     assert!(

@@ -812,7 +812,18 @@ async fn load_prior_history(
         .and_then(|part| part.prompt.as_ref())
         .map(|prompt| prompt.text_with_attachments());
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
-    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
+    // A provider-switch handoff replays this history on the previous provider too.
+    let switching_provider = context
+        .provider_handoff
+        .as_ref()
+        .is_some_and(|handoff| handoff.completion_provider != context.run.completion_provider);
+    let image_urls = crate::tools::ConvexImageUrls::for_provider(
+        context.run.completion_provider,
+        runtime,
+        run_id,
+    )
+    .filter(|_| !switching_provider);
+    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images, &image_urls).await;
     Ok(PriorHistory {
         current_prompt,
         messages: deserialize_agent_history(history)?,

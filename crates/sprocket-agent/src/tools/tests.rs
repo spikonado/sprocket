@@ -36,7 +36,7 @@ async fn text_only_models_do_not_replay_cached_image_results() {
             }],
         }],
     }];
-    hydrate_tool_history(&mut history, &[part], false).await;
+    hydrate_tool_history(&mut history, &[part], false, &ImageUrlMap::new()).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("Image omitted"));
     assert!(!serialized.contains("not available"));

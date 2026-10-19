@@ -492,11 +492,18 @@ export default defineSchema({
 		size: v.number(),
 		attached: v.boolean(),
 		threadId: v.optional(v.id('threadRecords')),
-		storageDeletedAt: v.optional(v.number())
+		storageDeletedAt: v.optional(v.number()),
+		/** Hex sha256 of a tool-result image the agent sends to the model by URL. */
+		sha256: v.optional(v.string())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_storageId', ['storageId'])
-		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt']),
+		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt'])
+		.index('by_threadId_and_sha256_and_storageDeletedAt', [
+			'threadId',
+			'sha256',
+			'storageDeletedAt'
+		]),
 	hostedParseRequests: defineTable({
 		jobId: v.id('executorJobs'),
 		runId: v.id('runs'),

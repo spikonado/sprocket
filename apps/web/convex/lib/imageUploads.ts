@@ -21,6 +21,21 @@ export async function imageUploadByStorageId(
 		.unique();
 }
 
+export async function liveToolImage(
+	ctx: MutationCtx | QueryCtx,
+	run: Pick<Doc<'runs'>, 'threadId' | 'userId'>,
+	sha256: string
+): Promise<Doc<'imageUploads'> | null> {
+	const image = await ctx.db
+		.query('imageUploads')
+		.withIndex('by_threadId_and_sha256_and_storageDeletedAt', (query) =>
+			query.eq('threadId', run.threadId).eq('sha256', sha256).eq('storageDeletedAt', undefined)
+		)
+		.first();
+
+	return image?.userId === run.userId ? image : null;
+}
+
 export async function getOwnedImageUploads(
 	ctx: MutationCtx | QueryCtx,
 	userId: string,

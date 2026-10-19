@@ -6,6 +6,7 @@ mod cwd;
 mod firecrawl;
 mod github_url;
 mod hosted_parse;
+mod image_urls;
 mod job;
 mod mandates;
 mod markdown_url;
@@ -31,6 +32,8 @@ use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
 pub(crate) use self::cwd::working_directory_message;
+pub(crate) use self::image_urls::ConvexImageUrls;
+use self::image_urls::{ImageUrlMap, ImageUrlSource};
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -82,6 +85,7 @@ pub(crate) async fn hydrate_tool_history(
     history: &mut [crate::types::AgentHistoryMessage],
     parts: &[sprocket_transcript::TranscriptPart],
     supports_images: bool,
+    image_urls: &impl ImageUrlSource,
 ) {
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
     let mut results = std::collections::HashMap::new();
@@ -93,6 +97,7 @@ pub(crate) async fn hydrate_tool_history(
             results.entry(tool.call_id.as_str()).or_insert(tool);
         }
     }
+    let mut replays = Vec::new();
     for message in history {
         for content in &mut message.contents {
             let AgentHistoryContent::ToolResult { id, items, .. } = content else {
@@ -118,15 +123,31 @@ pub(crate) async fn hydrate_tool_history(
                 }];
                 continue;
             }
-            *items = match parse_file::replay_local_tool_history_items(output).await {
-                Ok(items) => items,
-                Err(error) => vec![AgentHistoryToolResultItem::Text {
-                    text: format!(
-                        "Previous tool output is not available in the local cache: {error}. Original result: {output}"
-                    ),
-                }],
-            };
+            replays.push((
+                items,
+                output,
+                parse_file::replay_local_tool_output(output).await,
+            ));
         }
+    }
+    let images: Vec<_> = replays
+        .iter()
+        .filter_map(|(_, _, replayed)| replayed.as_ref().ok()?.image())
+        .collect();
+    let urls = if images.is_empty() {
+        ImageUrlMap::new()
+    } else {
+        image_urls.urls(&images).await
+    };
+    for (items, output, replayed) in replays {
+        *items = match replayed.and_then(|replayed| replayed.into_history_items(&urls)) {
+            Ok(items) => items,
+            Err(error) => vec![AgentHistoryToolResultItem::Text {
+                text: format!(
+                    "Previous tool output is not available in the local cache: {error}. Original result: {output}"
+                ),
+            }],
+        };
     }
 }
 
@@ -142,6 +163,7 @@ pub(crate) fn agent_tools(
     transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     supports_images: bool,
+    completion_provider: crate::types::CompletionProvider,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
     command_sessions: CommandSessionManager,
@@ -159,6 +181,7 @@ pub(crate) fn agent_tools(
         transcript_store,
         artifact_bindings,
         supports_images,
+        completion_provider,
         tool_call_tracker,
         command_sessions,
         question_polls: questions::QuestionPolls::default(),

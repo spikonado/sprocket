@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { GenericDatabaseWriter, GenericDataModel } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
-import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 async function storeUpload(
 	t: ReturnType<typeof initConvexTest>,
@@ -311,5 +311,105 @@ describe('imageUploads.ownedIdsForStorageIds', () => {
 				storageIds: [file.storageId]
 			})
 		).rejects.toThrow('File attachment was not found.');
+	});
+});
+
+describe('tool images for runs', () => {
+	const sha256 = 'a'.repeat(64);
+
+	async function seedRun(t: ReturnType<typeof initConvexTest>, subject: string) {
+		const { asUser, threadId } = await seedOwnedThread(t, subject);
+		const executionSecret = `secret-${subject}-${Math.random()}`;
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			`tool-image-${Math.random()}`,
+			executionSecret
+		);
+
+		return { runId, executionSecret, threadId };
+	}
+
+	async function upload(
+		t: ReturnType<typeof initConvexTest>,
+		run: Awaited<ReturnType<typeof seedRun>>
+	) {
+		const [missing] = await t.mutation(api.imageUploads.toolImageUrlsForRun, {
+			runId: run.runId,
+			executionSecret: run.executionSecret,
+			sha256s: [sha256]
+		});
+
+		expect(missing).toHaveProperty('uploadUrl');
+
+		const storageId = await storeUpload(t, { bytes: 'png', type: 'image/png' });
+
+		return await t.mutation(api.imageUploads.registerToolImageForRun, {
+			runId: run.runId,
+			executionSecret: run.executionSecret,
+			storageId,
+			sha256
+		});
+	}
+
+	it('returns the same URL per thread and never shares it across threads', async () => {
+		const t = initConvexTest();
+		const alice = await seedRun(t, 'user_alice');
+		const bob = await seedRun(t, 'user_bob');
+		const url = await upload(t, alice);
+
+		expect(
+			await t.mutation(api.imageUploads.toolImageUrlsForRun, {
+				runId: alice.runId,
+				executionSecret: alice.executionSecret,
+				sha256s: [sha256, sha256]
+			})
+		).toEqual([{ sha256, url }]);
+		// upload() asserts that Bob's thread does not see Alice's image.
+		await upload(t, bob);
+		await expect(
+			t.mutation(api.imageUploads.toolImageUrlsForRun, {
+				runId: alice.runId,
+				executionSecret: bob.executionSecret,
+				sha256s: [sha256]
+			})
+		).rejects.toThrow('Run not found.');
+	});
+
+	it('keeps the first URL when the same bytes are registered twice', async () => {
+		const t = initConvexTest();
+		const run = await seedRun(t, 'user_alice');
+		const url = await upload(t, run);
+		const duplicate = await storeUpload(t, { bytes: 'png', type: 'image/png' });
+
+		expect(
+			await t.mutation(api.imageUploads.registerToolImageForRun, {
+				runId: run.runId,
+				executionSecret: run.executionSecret,
+				storageId: duplicate,
+				sha256
+			})
+		).toBe(url);
+		expect(await t.run((ctx) => ctx.db.system.get('_storage', duplicate))).toBeNull();
+	});
+
+	it('uploads again once retention deleted the bytes', async () => {
+		const t = initConvexTest();
+		const run = await seedRun(t, 'user_alice');
+		await upload(t, run);
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', run.threadId, { lastMessageAt: 0 });
+		});
+		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);
+
+		const [image] = await t.mutation(api.imageUploads.toolImageUrlsForRun, {
+			runId: run.runId,
+			executionSecret: run.executionSecret,
+			sha256s: [sha256]
+		});
+
+		expect(image).toHaveProperty('uploadUrl');
 	});
 });

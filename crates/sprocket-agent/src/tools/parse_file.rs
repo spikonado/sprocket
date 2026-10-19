@@ -8,11 +8,13 @@ use rig::tool::{ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncReadExt;
 
 use super::context::{AgentToolContext, tool_error};
 use super::hosted_parse::HostedParseContext;
+use super::image_urls::{ImageUrlMap, ImageUrlSource};
 use super::job::execute_tool_job_with_id;
 use crate::types::AgentHistoryToolResultItem;
 
@@ -150,7 +152,7 @@ impl rig::tool::Tool for ParseFileTool {
             },
         )
         .await?;
-        replay_parse_file_tool_output(&persisted)
+        replay_tool_output(&persisted, &self.0.image_urls())
             .await
             .map_err(tool_error)
     }
@@ -278,7 +280,7 @@ pub(super) fn decode_image_info(bytes: &[u8]) -> anyhow::Result<(ImageMediaType,
     Ok((media_type, width, height))
 }
 
-pub(super) struct ModelImage {
+pub(crate) struct ModelImage {
     pub bytes: Vec<u8>,
     pub media_type: ImageMediaType,
     pub width: u32,
@@ -750,13 +752,80 @@ async fn persist_parse_file(
     }
 }
 
+pub(crate) struct ReplayedImage {
+    pub(crate) path: String,
+    pub(crate) image: ModelImage,
+    /// Hex sha256 of the bytes the model receives.
+    pub(crate) sha256: String,
+}
+
+pub(crate) enum ReplayedOutput {
+    Text(String),
+    Image(ReplayedImage),
+}
+
+impl ReplayedOutput {
+    pub(crate) fn image(&self) -> Option<&ReplayedImage> {
+        match self {
+            Self::Image(image) => Some(image),
+            Self::Text(_) => None,
+        }
+    }
+
+    pub(crate) fn into_content(self, urls: &ImageUrlMap) -> Vec<ToolResultContent> {
+        match self {
+            Self::Text(text) => vec![ToolResultContent::text(text)],
+            Self::Image(ReplayedImage {
+                path,
+                image,
+                sha256,
+            }) => {
+                let media_type = Some(image.media_type);
+                let image = match urls.get(&sha256) {
+                    Some(url) => ToolResultContent::image_url(url.clone(), media_type, None),
+                    None => ToolResultContent::image_base64(
+                        base64::engine::general_purpose::STANDARD.encode(image.bytes),
+                        media_type,
+                        None,
+                    ),
+                };
+                vec![
+                    ToolResultContent::text(format!("Image saved to: {path}")),
+                    image,
+                ]
+            }
+        }
+    }
+
+    pub(crate) fn into_history_items(
+        self,
+        urls: &ImageUrlMap,
+    ) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
+        self.into_content(urls)
+            .into_iter()
+            .map(|content| match content {
+                ToolResultContent::Image(image) => Ok(AgentHistoryToolResultItem::Image {
+                    image_json: serde_json::to_string(&image)
+                        .context("failed to serialize replayed image")?,
+                }),
+                ToolResultContent::Text(text) => {
+                    Ok(AgentHistoryToolResultItem::Text { text: text.text })
+                }
+                ToolResultContent::Json { value } => Ok(AgentHistoryToolResultItem::Text {
+                    text: value.to_string(),
+                }),
+            })
+            .collect()
+    }
+}
+
 async fn replay_image_output(
     media_type: &str,
     path: &str,
     byte_size: u64,
     width: u32,
     height: u32,
-) -> anyhow::Result<ToolOutput> {
+) -> anyhow::Result<ReplayedImage> {
     anyhow::ensure!(
         !path.is_empty(),
         "image tool output is missing a cached path"
@@ -775,15 +844,18 @@ async fn replay_image_output(
         "cached image {path} does not match persisted metadata"
     );
     // Images cached before fitting existed still reach the model through replay.
-    let image = fit_image_for_model_blocking(bytes).await?;
-    Ok(ToolOutput::content(vec![
-        ToolResultContent::text(format!("Image saved to: {path}")),
-        ToolResultContent::image_base64(
-            base64::engine::general_purpose::STANDARD.encode(image.bytes),
-            Some(image.media_type),
-            None,
-        ),
-    ])?)
+    let (image, sha256) = tokio::task::spawn_blocking(move || {
+        let image = fit_image_for_model(bytes)?;
+        let sha256 = hex::encode(Sha256::digest(&image.bytes));
+        anyhow::Ok((image, sha256))
+    })
+    .await
+    .context("image downscaling worker failed")??;
+    Ok(ReplayedImage {
+        path: path.to_string(),
+        image,
+        sha256,
+    })
 }
 
 async fn replay_text_output(
@@ -791,7 +863,7 @@ async fn replay_text_output(
     preview: &str,
     truncated: bool,
     char_count: u64,
-) -> anyhow::Result<ToolOutput> {
+) -> anyhow::Result<String> {
     anyhow::ensure!(
         !path.is_empty(),
         "parse_file tool output is missing a cached path"
@@ -800,18 +872,13 @@ async fn replay_text_output(
         .await
         .with_context(|| format!("failed to read cached text {path}"))?;
     anyhow::ensure!(exists, "failed to read cached text {path}");
-    Ok(ToolOutput::text(model_text(
-        preview, truncated, char_count, path,
-    )))
+    Ok(model_text(preview, truncated, char_count, path))
 }
 
-/// Missing cache is an error so history hydration can fall back to text.
-pub(crate) async fn replay_parse_file_tool_output(
-    output: &serde_json::Value,
-) -> anyhow::Result<ToolOutput> {
+async fn replay_parse_file_output(output: &serde_json::Value) -> anyhow::Result<ReplayedOutput> {
     let persisted: ParseFilePersistedOutput = serde_json::from_value(output.clone())
         .context("parse_file tool output is not replay metadata")?;
-    match persisted {
+    Ok(match persisted {
         ParseFilePersistedOutput::Image {
             media_type,
             path,
@@ -819,20 +886,22 @@ pub(crate) async fn replay_parse_file_tool_output(
             width,
             height,
             ..
-        } => replay_image_output(&media_type, &path, byte_size, width, height).await,
+        } => ReplayedOutput::Image(
+            replay_image_output(&media_type, &path, byte_size, width, height).await?,
+        ),
         ParseFilePersistedOutput::Text {
             path,
             preview,
             truncated,
             char_count,
             ..
-        } => replay_text_output(&path, &preview, truncated, char_count).await,
-    }
+        } => {
+            ReplayedOutput::Text(replay_text_output(&path, &preview, truncated, char_count).await?)
+        }
+    })
 }
 
-pub(super) async fn replay_image_tool_output(
-    output: &serde_json::Value,
-) -> anyhow::Result<ToolOutput> {
+async fn replay_image_reference(output: &serde_json::Value) -> anyhow::Result<ReplayedImage> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct ImageReference {
@@ -858,31 +927,29 @@ pub(super) async fn replay_image_tool_output(
     .await
 }
 
-pub(crate) async fn replay_local_tool_history_items(
+/// Rebuilds the model input of a `parse_file` result or an `outputType:
+/// "image"` result from the local cache. Missing cache is an error so history
+/// hydration can fall back to text.
+pub(crate) async fn replay_local_tool_output(
     output: &serde_json::Value,
-) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
-    let tool_output =
-        if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
-            replay_image_tool_output(output).await?
-        } else {
-            replay_parse_file_tool_output(output).await?
-        };
-    tool_output
-        .into_content()
-        .into_iter()
-        .map(|content| match content {
-            ToolResultContent::Image(image) => Ok(AgentHistoryToolResultItem::Image {
-                image_json: serde_json::to_string(&image)
-                    .context("failed to serialize replayed image")?,
-            }),
-            ToolResultContent::Text(text) => {
-                Ok(AgentHistoryToolResultItem::Text { text: text.text })
-            }
-            ToolResultContent::Json { value } => Ok(AgentHistoryToolResultItem::Text {
-                text: value.to_string(),
-            }),
-        })
-        .collect()
+) -> anyhow::Result<ReplayedOutput> {
+    if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
+        Ok(ReplayedOutput::Image(replay_image_reference(output).await?))
+    } else {
+        replay_parse_file_output(output).await
+    }
+}
+
+pub(super) async fn replay_tool_output(
+    output: &serde_json::Value,
+    image_urls: &impl ImageUrlSource,
+) -> anyhow::Result<ToolOutput> {
+    let replayed = replay_local_tool_output(output).await?;
+    let urls = match replayed.image() {
+        Some(image) => image_urls.urls(&[image]).await,
+        None => ImageUrlMap::new(),
+    };
+    Ok(ToolOutput::content(replayed.into_content(&urls))?)
 }
 
 #[cfg(test)]
