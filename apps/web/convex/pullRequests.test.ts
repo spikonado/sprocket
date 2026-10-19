@@ -132,7 +132,7 @@ describe('linked pull requests', () => {
 			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
 		);
 		await asUser.mutation(api.pullRequests.updateStates, {
-			updates: [{ threadId, ...pr(1, 'merged')] })
+			updates: [{ threadId, ...pr(1, 'merged') }]
 		});
 
 		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
@@ -157,9 +157,10 @@ describe('linked pull requests', () => {
 			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
 		);
 		await asUser.mutation(api.pullRequests.updateStates, {
-			updates: [{ threadId, ...pr(1, 'merged')] })
+			updates: [{ threadId, ...pr(1, 'merged') }]
 		});
 		await asUser.mutation(api.threads.unsettle, { threadId });
+
 		await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
 
 		const continued = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
