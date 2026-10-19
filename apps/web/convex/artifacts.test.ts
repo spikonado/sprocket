@@ -132,6 +132,7 @@ describe('cloud artifacts', () => {
 		for (const project of [{ repositoryKey }]) {
 			const listed = await asUser.query(api.artifacts.listArtifacts, project);
 			expect(listed.page.map((artifact) => artifact._id)).toEqual([created.artifactId]);
+			expect(listed.page[0].createdAt).toBe(Math.floor(listed.page[0]._creationTime));
 
 			const loaded = await asUser.query(api.artifacts.getArtifact, {
 				...project,
@@ -440,7 +441,6 @@ describe('cloud artifacts', () => {
 					type: 'markdown',
 					title: `Notes ${i}`,
 					revision: 1,
-					createdAt: 1,
 					updatedAt: 1
 				});
 			});

@@ -175,7 +175,6 @@ describe('cloud artifact subscriptions', () => {
 					title: 'Notes',
 					type: 'markdown',
 					revision: 1,
-					createdAt: 1,
 					updatedAt: 1
 				}
 			],
@@ -204,7 +203,6 @@ describe('cloud artifact subscriptions', () => {
 					title: 'Notes',
 					type: 'markdown',
 					revision: 1,
-					createdAt: 1,
 					updatedAt: 1
 				}
 			],

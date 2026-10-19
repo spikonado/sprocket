@@ -44,6 +44,10 @@ Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:
 
 `artifacts.continueRekey` is a no-op for already-queued jobs. Remove it after a scheduler scan finds no queued continuation jobs.
 
+### Artifact `createdAt`
+
+Released servers require an integer `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from the floored `_creationTime`. Remove that field once those servers age out.
+
 ## Convex data shims
 
 ### Billing subscription projection
@@ -73,6 +77,10 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 ### Migration records
 
 `migrationSchedules` keeps completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment.
+
+### Legacy `createdAt` fields
+
+`users`, `machines`, `threadUsageEvents`, `agentQuestions`, `artifacts`, `mandates` and `mandateCharges` rows written before `_creationTime` replaced `createdAt` still carry it, so the schema keeps it as `legacyCreatedAt`. The hourly `migrations.removeCreatedAt` cron clears it. Once that migration completes on every deployment, remove `legacyCreatedAt`, the migrations and the cron.
 
 ### Stored executor job and result fields
 
@@ -145,6 +153,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - Scope and thread metadata on artifact tool payloads and results.
 - `parse_file` URL sources, legacy command results and `mandate_status` results without `description`.
 - `apply_patch` results without `source` for renames and copies.
+- `createdAt` on stored `list_artifacts` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.

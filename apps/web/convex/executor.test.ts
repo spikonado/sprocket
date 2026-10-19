@@ -462,7 +462,6 @@ describe('executor', () => {
 						question: 'Which configuration?',
 						options: [{ id: 'safe', label: 'Safe' }],
 						status,
-						createdAt: Date.now(),
 						sequence: 1
 					});
 				});

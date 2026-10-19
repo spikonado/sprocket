@@ -33,13 +33,16 @@ import {
 	vTranscriptToolBody
 } from '@convex/lib/validators';
 
+// Cleared by `migrations.removeCreatedAt`; `_creationTime` replaces it.
+const legacyCreatedAt = v.optional(v.number());
+
 export default defineSchema({
 	users: defineTable({
 		// WorkOS JWT subject; every owned table stores this value as `userId`.
 		subject: v.string(),
 		tokenIdentifier: v.string(),
 		email: v.string(),
-		createdAt: v.number()
+		createdAt: legacyCreatedAt
 	}).index('by_subject', ['subject']),
 	machines: defineTable({
 		userId: v.string(),
@@ -53,7 +56,7 @@ export default defineSchema({
 		credentialHash: v.string(),
 		lastSeenAt: v.optional(v.number()),
 		runIds: v.array(v.id('runs')),
-		createdAt: v.number(),
+		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
 	// Operator-managed subscription tiers (edited directly in prod data).
@@ -382,7 +385,7 @@ export default defineSchema({
 		userId: v.string(),
 		eventId: v.string(),
 		processedTokens: v.number(),
-		createdAt: v.number()
+		createdAt: legacyCreatedAt
 	}).index('by_threadId_eventId', ['threadId', 'eventId']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
@@ -582,7 +585,7 @@ export default defineSchema({
 				claimId: v.string()
 			})
 		),
-		createdAt: v.number(),
+		createdAt: legacyCreatedAt,
 		timeoutAt: v.optional(v.number()),
 		answeredAt: v.optional(v.number()),
 		sequence: v.number()
@@ -604,7 +607,7 @@ export default defineSchema({
 		type: vArtifactType,
 		title: v.string(),
 		revision: v.number(),
-		createdAt: v.number(),
+		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	})
 		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
@@ -629,7 +632,7 @@ export default defineSchema({
 		validUntil: v.optional(v.string()),
 		renewsAt: v.optional(v.string()),
 		remaining: v.optional(v.number()),
-		createdAt: v.number(),
+		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	}).index('by_user', ['userId']),
 	mandateCharges: defineTable({
@@ -653,7 +656,7 @@ export default defineSchema({
 		// not be reclaimed for another provider request.
 		providerRequestedAt: v.optional(v.number()),
 		reportRetrierRunId: v.optional(v.string()),
-		createdAt: v.number(),
+		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	})
 		.index('by_mandate_reference', ['mandateId', 'reference'])

@@ -126,8 +126,6 @@ export const insertMandate = internalMutation({
 				throw new Error('Mandate description is required.');
 			}
 
-			const now = Date.now();
-
 			return await ctx.db.insert('mandates', {
 				userId: args.userId,
 				pravaSessionId: args.pravaSessionId,
@@ -141,8 +139,7 @@ export const insertMandate = internalMutation({
 				description,
 				approvalUrl: args.approvalUrl,
 				status: 'pending',
-				createdAt: now,
-				updatedAt: now
+				updatedAt: Date.now()
 			});
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -358,7 +355,6 @@ export const reserveCharge = internalMutation({
 				reference,
 				status: 'awaiting_result',
 				chargingStartedAt: now,
-				createdAt: now,
 				updatedAt: now
 			});
 

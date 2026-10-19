@@ -260,8 +260,6 @@ export const addArtifact = mutation({
 				return mutationResult(existing);
 			}
 
-			const now = Date.now();
-
 			const record: Omit<Doc<'artifacts'>, '_id' | '_creationTime'> = {
 				userId: run.userId,
 				scope: 'project',
@@ -271,8 +269,7 @@ export const addArtifact = mutation({
 				type: args.contentType,
 				title,
 				revision: 1,
-				createdAt: now,
-				updatedAt: now
+				updatedAt: Date.now()
 			};
 
 			const artifactId = await ctx.db.insert('artifacts', record);
@@ -414,12 +411,22 @@ export const listArtifacts = query({
 		repositoryKey: v.string(),
 		cursor: v.optional(v.union(v.string(), v.null()))
 	},
-	returns: v.object({ ...pageFields, page: v.array(vProjectArtifact) }),
+	returns: v.object({
+		...pageFields,
+		page: v.array(vProjectArtifact.extend({ createdAt: v.number() }))
+	}),
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
 		const userId = await getUserId(ctx);
+		const result = await listVisibleArtifacts(ctx, userId, repositoryKey, args.cursor ?? null);
 
-		return await listVisibleArtifacts(ctx, userId, repositoryKey, args.cursor ?? null);
+		return {
+			...result,
+			page: result.page.map((artifact) => ({
+				...artifact,
+				createdAt: Math.floor(artifact._creationTime)
+			}))
+		};
 	}
 });
 

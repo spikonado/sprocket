@@ -212,7 +212,6 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				appVersion: '0.3.2',
 				credentialHash: 'a'.repeat(64),
 				runIds: [created.runId],
-				createdAt: Date.now(),
 				updatedAt: Date.now()
 			});
 			await ctx.db.patch('runs', created.runId, { machineId: 'install-lifecycle' });

@@ -1,6 +1,6 @@
 import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation } from '@convex/_generated/server';
+import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
@@ -109,3 +109,52 @@ export const runSubscriptionAccessBackfill = internalMutation({
 		return null;
 	}
 });
+
+function clearCreatedAt(_ctx: MutationCtx, doc: { createdAt?: number }) {
+	return doc.createdAt === undefined ? undefined : { createdAt: undefined };
+}
+
+export const removeUsersCreatedAt = migrations.define({
+	table: 'users',
+	migrateOne: clearCreatedAt
+});
+
+export const removeMachinesCreatedAt = migrations.define({
+	table: 'machines',
+	migrateOne: clearCreatedAt
+});
+
+export const removeThreadUsageEventsCreatedAt = migrations.define({
+	table: 'threadUsageEvents',
+	migrateOne: clearCreatedAt
+});
+
+export const removeAgentQuestionsCreatedAt = migrations.define({
+	table: 'agentQuestions',
+	migrateOne: clearCreatedAt
+});
+
+export const removeArtifactsCreatedAt = migrations.define({
+	table: 'artifacts',
+	migrateOne: clearCreatedAt
+});
+
+export const removeMandatesCreatedAt = migrations.define({
+	table: 'mandates',
+	migrateOne: clearCreatedAt
+});
+
+export const removeMandateChargesCreatedAt = migrations.define({
+	table: 'mandateCharges',
+	migrateOne: clearCreatedAt
+});
+
+export const removeCreatedAt = migrations.runner([
+	internal.migrations.removeUsersCreatedAt,
+	internal.migrations.removeMachinesCreatedAt,
+	internal.migrations.removeThreadUsageEventsCreatedAt,
+	internal.migrations.removeAgentQuestionsCreatedAt,
+	internal.migrations.removeArtifactsCreatedAt,
+	internal.migrations.removeMandatesCreatedAt,
+	internal.migrations.removeMandateChargesCreatedAt
+]);

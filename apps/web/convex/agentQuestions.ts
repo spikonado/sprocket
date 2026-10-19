@@ -39,8 +39,7 @@ export function toAgentQuestionSnapshot(question: Doc<'agentQuestions'>): AgentQ
 		question: question.question,
 		options: question.options,
 		status: question.status,
-		sequence: question.sequence,
-		createdAt: question.createdAt
+		sequence: question.sequence
 	};
 
 	if (question.timeoutAt !== undefined) snapshot.timeoutAt = question.timeoutAt;
@@ -106,8 +105,8 @@ async function createQuestion(
 	const options = finalizeQuestionOptions(args.options);
 
 	const timeoutMs = validateQuestionTimeoutMs(args.timeoutMs);
-	const createdAt = Date.now();
-	const timeoutAt = timeoutMs === undefined ? undefined : createdAt + timeoutMs;
+	const now = Date.now();
+	const timeoutAt = timeoutMs === undefined ? undefined : now + timeoutMs;
 	const sequence = await nextThreadSequence(ctx, run.threadId);
 
 	const before = await captureThreadActivityBeforeChange(ctx, run.threadId);
@@ -119,14 +118,13 @@ async function createQuestion(
 		question,
 		options,
 		status: timeoutMs === 0 ? 'timedOut' : 'pending',
-		createdAt,
 		timeoutAt,
-		answeredAt: timeoutMs === 0 ? createdAt : undefined,
+		answeredAt: timeoutMs === 0 ? now : undefined,
 		sequence
 	});
 
 	if (timeoutAt !== undefined && timeoutMs !== 0) {
-		await scheduleDeadlineCheck(ctx, questionId, createdAt, timeoutAt);
+		await scheduleDeadlineCheck(ctx, questionId, now, timeoutAt);
 	}
 
 	await updateThreadHierarchyAfterChange(ctx, before);

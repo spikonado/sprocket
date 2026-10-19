@@ -397,7 +397,6 @@ describe('watchArtifacts', () => {
 		type: 'markdown' as const,
 		title: 'Spec',
 		revision: 1,
-		createdAt: 10,
 		updatedAt: 20
 	};
 

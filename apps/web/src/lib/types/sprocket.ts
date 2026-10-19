@@ -235,7 +235,6 @@ export type LocalArtifact = {
 	type: ArtifactType;
 	title: string;
 	revision: number;
-	createdAt: number;
 	updatedAt: number;
 	localError?: string;
 };

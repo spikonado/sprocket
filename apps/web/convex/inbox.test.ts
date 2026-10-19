@@ -135,7 +135,6 @@ describe('thread inbox', () => {
 				question: 'Choose?',
 				options: [],
 				status: 'pending',
-				createdAt: 1,
 				timeoutAt: Date.now() + 60_000,
 				sequence: 1
 			});

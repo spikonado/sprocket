@@ -910,7 +910,6 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 		options: [{ id: 'option-a', label: 'Option A' }],
 		status: 'pending',
 		sequence: 1,
-		createdAt: 1,
 		timeoutAt: 1_000_000
 	};
 
@@ -1183,7 +1182,6 @@ it('launches the continuation prompt after an agent question is answered', async
 		options: [{ id: 'option-a', label: 'Option A' }],
 		status: 'pending',
 		sequence: 1,
-		createdAt: 1,
 		timeoutAt: 1_000_000
 	};
 
@@ -1256,7 +1254,6 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 		options: [{ id: 'option-a', label: 'Option A' }],
 		status: 'pending',
 		sequence: 1,
-		createdAt: 1,
 		timeoutAt: 1_000_000
 	};
 

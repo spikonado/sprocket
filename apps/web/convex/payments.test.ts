@@ -208,7 +208,6 @@ describe('payments mandates', () => {
 				currency: 'USD',
 				description: 'Root purchase',
 				status: 'awaiting_result',
-				createdAt: Date.now(),
 				updatedAt: Date.now()
 			})
 		);
