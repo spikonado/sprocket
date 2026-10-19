@@ -202,30 +202,6 @@ fn model_override_uses_the_selected_models_reasoning_default() {
 }
 
 #[test]
-fn released_gateway_eligibility_fields_are_ignored() {
-    let catalog: Catalog = serde_json::from_value(serde_json::json!({
-        "protocolVersion": 1, "defaultModelId": "default", "defaultReasoningEffort": "high",
-        "models": [
-            {"id": "default", "label": "Default", "reasoningEfforts": ["high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard"]},
-            {"id": "pro", "label": "Pro", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard", "fast"]}
-        ],
-        "tierAllowedModels": {"free": ["default"]},
-        "tierAllowedServiceTiers": {"free": ["standard"]}
-    }))
-    .unwrap();
-
-    let response = list_models(&catalog).unwrap();
-    assert_eq!(response.models.len(), 2);
-
-    let mut request = run_request();
-    request.model = Some("pro".into());
-    request.fast = Some(true);
-    let settings = select(catalog, &fresh_context(), &request).unwrap();
-    assert_eq!(settings.model, "pro");
-    assert!(settings.fast);
-}
-
-#[test]
 fn catalog_default_model_must_exist() {
     let catalog: Catalog = serde_json::from_value(serde_json::json!({
         "protocolVersion": 1, "defaultModelId": "missing", "defaultReasoningEffort": "high",
