@@ -27,8 +27,6 @@ const machine = {
 	appVersion: '0.3.2'
 };
 
-const MACHINE_CREDENTIAL = 'machine-credential';
-
 type CallerRun = {
 	asUser: ReturnType<ConvexTestInstance['withIdentity']>;
 	threadId: Id<'threadRecords'>;
@@ -38,10 +36,7 @@ type CallerRun = {
 };
 
 async function registerActiveMachine(asUser: CallerRun['asUser']) {
-	await asUser.mutation(api.machines.tryRegister, {
-		...machine,
-		credentialHash: await executionSecretHash(MACHINE_CREDENTIAL)
-	});
+	await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'machine-process' });
 }
 
 async function startCallerRun(t: ConvexTestInstance, subject = 'user_alice'): Promise<CallerRun> {

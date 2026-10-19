@@ -5,7 +5,6 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const INSTALLATION_IDENTITY_FILE: &str = "installation.json";
@@ -23,8 +22,7 @@ struct StoredInstallationIdentity {
 #[derive(Clone)]
 pub struct MachineIdentity {
     pub installation_id: String,
-    pub credential: String,
-    pub credential_hash: String,
+    pub process_id: String,
     pub friendly_name: String,
     pub platform: String,
     pub platform_version: String,
@@ -35,15 +33,10 @@ pub struct MachineIdentity {
 impl MachineIdentity {
     pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
         let stored = load_or_create_installation_identity(data_dir)?;
-        let credential = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let hostname = hostname();
         Ok(Self {
             installation_id: stored.installation_id,
-            credential_hash: Sha256::digest(credential.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-            credential,
+            process_id: Uuid::new_v4().to_string(),
             friendly_name: stored.friendly_name.unwrap_or_else(|| hostname.clone()),
             platform: normalized_platform().to_string(),
             platform_version: platform_version(),

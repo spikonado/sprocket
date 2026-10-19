@@ -111,7 +111,6 @@ impl Host {
         github_settings::install_saved_tokens_loader(
             convex_deployment_url.clone(),
             Arc::clone(&native_auth),
-            Arc::clone(&machine_identity),
         );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         Ok(Self {

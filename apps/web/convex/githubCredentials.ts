@@ -1,9 +1,7 @@
-import { action, internalQuery } from '@convex/_generated/server';
-import { internal } from '@convex/_generated/api';
+import { action } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { z } from 'zod';
 import { getUserId } from '@convex/lib/auth';
-import { requireMachine } from '@convex/lib/machineRuns';
 import {
 	credentialName,
 	deleteVaultObject,
@@ -105,24 +103,11 @@ export const removeToken = action({
 	}
 });
 
-export const authorizeMachine = internalQuery({
-	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		await requireMachine(ctx, args.userId, args.machineId, args.credential);
-
-		return null;
-	}
-});
-
-/** Hands the saved tokens to a running machine, proven by the credential it registered with. */
 export const issueTokens = action({
-	args: { machineId: v.string(), credential: v.string() },
+	args: {},
 	returns: v.record(v.string(), v.string()),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await ctx.runQuery(internal.githubCredentials.authorizeMachine, { userId, ...args });
-		const { tokens } = await readTokens(userId);
+	handler: async (ctx) => {
+		const { tokens } = await readTokens(await getUserId(ctx));
 
 		return tokens;
 	}

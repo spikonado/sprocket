@@ -194,9 +194,10 @@ impl MachineManager {
             return Ok(());
         }
         let error = match timeout(RPC_TIMEOUT, async {
-            let client = UserConvexClient::connect_anonymous(&self.deployment_url).await?;
-            let _: serde_json::Value = client
-                .mutate("machines:heartbeat", self.machine_args(user_id))
+            let _: serde_json::Value = self
+                .connect(user_id)
+                .await?
+                .mutate("machines:heartbeatProcess", self.process_args())
                 .await?;
             anyhow::Ok(())
         })
@@ -216,14 +217,9 @@ impl MachineManager {
         register_when_available(&self.shutdown, || async {
             self.ensure_running()?;
             timeout(RPC_TIMEOUT, async {
-                let client = UserConvexClient::connect_with_fetcher(
-                    &self.deployment_url,
-                    self.native_auth
-                        .auth_token_fetcher_for_user(expected_user_id.to_string()),
-                )
-                .await?;
-                client
-                    .mutate("machines:tryRegister", self.registration_args())
+                self.connect(expected_user_id)
+                    .await?
+                    .mutate("machines:registerProcess", self.registration_args())
                     .await
             })
             .await
@@ -234,9 +230,10 @@ impl MachineManager {
 
     async fn end_remote(&self, user_id: &str) -> anyhow::Result<()> {
         timeout(RPC_TIMEOUT, async {
-            let client = UserConvexClient::connect_anonymous(&self.deployment_url).await?;
-            let _: serde_json::Value = client
-                .mutate("machines:end", self.machine_args(user_id))
+            let _: serde_json::Value = self
+                .connect(user_id)
+                .await?
+                .mutate("machines:endProcess", self.process_args())
                 .await?;
             anyhow::Ok(())
         })
@@ -245,16 +242,22 @@ impl MachineManager {
         Ok(())
     }
 
+    async fn connect(&self, user_id: &str) -> anyhow::Result<UserConvexClient> {
+        UserConvexClient::connect_with_fetcher(
+            &self.deployment_url,
+            self.native_auth
+                .auth_token_fetcher_for_user(user_id.to_string()),
+        )
+        .await
+    }
+
     fn registration_args(&self) -> BTreeMap<String, Value> {
         BTreeMap::from([
             (
                 "machineId".into(),
                 self.identity.installation_id.clone().into(),
             ),
-            (
-                "credentialHash".into(),
-                self.identity.credential_hash.clone().into(),
-            ),
+            ("processId".into(), self.identity.process_id.clone().into()),
             (
                 "friendlyName".into(),
                 self.identity.friendly_name.clone().into(),
@@ -276,14 +279,13 @@ impl MachineManager {
         ])
     }
 
-    fn machine_args(&self, user_id: &str) -> BTreeMap<String, Value> {
+    fn process_args(&self) -> BTreeMap<String, Value> {
         BTreeMap::from([
-            ("userId".into(), user_id.to_string().into()),
             (
                 "machineId".into(),
                 self.identity.installation_id.clone().into(),
             ),
-            ("credential".into(), self.identity.credential.clone().into()),
+            ("processId".into(), self.identity.process_id.clone().into()),
         ])
     }
 }

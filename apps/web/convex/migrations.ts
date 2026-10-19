@@ -176,3 +176,22 @@ export const runThreadRecordLegacyFieldsRemoval = internalMutation({
 		return null;
 	}
 });
+
+export const moveMachineCredentialHashes = migrations.define({
+	table: 'machines',
+	migrateOne: (_ctx, machine) => {
+		if (machine.credentialHash === undefined) return;
+
+		return { processId: machine.processId ?? machine.credentialHash, credentialHash: undefined };
+	}
+});
+
+export const runMachineProcessIdBackfill = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		await migrations.runOne(ctx, internal.migrations.moveMachineCredentialHashes);
+
+		return null;
+	}
+});
