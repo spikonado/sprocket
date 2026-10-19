@@ -292,6 +292,33 @@ fn skips_started_tool_progress_and_emits_one_finished_result_after_the_call() {
 }
 
 #[test]
+fn answers_calls_whose_tools_never_settled_before_the_next_prompt() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let history = agent_history_from_parts(
+        &state,
+        &[
+            prompt(0, "run", "wait on it"),
+            completion_with_call(1, "poll"),
+            tool_part(
+                2,
+                "tool:inv-1:started",
+                "poll",
+                "started",
+                None,
+                Some("inv-1"),
+                None,
+            ),
+            prompt(3, "next", "keep going"),
+        ],
+        Some("next"),
+    );
+    assert_eq!(history.len(), 3);
+    let interrupted = format!("{:?}", history[2]);
+    assert!(interrupted.contains("ToolResult") && interrupted.contains("interrupted"));
+    deserialize_agent_history(history).expect("every call has a result");
+}
+
+#[test]
 fn first_terminal_tool_event_wins() {
     let state = TranscriptState::new("user".into(), "thread".into());
     let history = agent_history_from_parts(

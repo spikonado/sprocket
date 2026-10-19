@@ -665,16 +665,17 @@ export const finalizeCompletionCall = mutation({
 				)
 				.unique();
 
+			// Agents persist a turn before its tools start, so its jobs may not exist yet.
 			if (
-				!job ||
-				job.callId !== invocation.callId ||
-				job.sectionKey !== invocation.sectionKey ||
-				job.sectionOrdinal !==
-					(invocation.sectionKey === undefined
-						? job.sectionOrdinal
-						: sectionOrdinals.get(invocation.sectionKey)) ||
-				job.attemptSeq !== args.attemptSeq ||
-				job.streamId !== args.streamId
+				job &&
+				(job.callId !== invocation.callId ||
+					job.sectionKey !== invocation.sectionKey ||
+					job.sectionOrdinal !==
+						(invocation.sectionKey === undefined
+							? job.sectionOrdinal
+							: sectionOrdinals.get(invocation.sectionKey)) ||
+					job.attemptSeq !== args.attemptSeq ||
+					job.streamId !== args.streamId)
 			) {
 				throw new Error('Invalid tool invocation assignment.');
 			}

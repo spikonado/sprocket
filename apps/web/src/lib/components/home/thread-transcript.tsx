@@ -573,7 +573,7 @@ export default function ThreadTranscript({
 								row={row}
 								load={loadWorkDetails}
 								commands={commands}
-								inProgress={row.runId === activeRunId}
+								inProgress={!row.closed && row.runId === activeRunId}
 								viewport={viewport}
 								beforeChange={beforeDetailChange}
 							/>

@@ -939,12 +939,20 @@ async fn run_with_completion_model(
                                         error: anyhow!("Context handoff failed: no valid document was submitted."),
                                     };
                                 }
-                                if let Err(error) = transcript.begin_next_turn_if_streamed().await {
+                                if let Err(error) = transcript.begin_next_turn_after_tools().await {
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::ToolCall { .. })) => {
+                                // Rig emits this after the turn commits and before its tools run, so
+                                // persisting here keeps the calls when the run stops mid-tool.
+                                if !context_handoff_hook.is_writing()
+                                    && let Err(error) = transcript.finalize_turn_if_streamed().await
+                                {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(_)))
-                            | Some(Ok(rig::agent::MultiTurnStreamItem::ToolCall { .. }))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::ToolResult { .. })) => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. })) => {
                                 if let Err(error) = transcript.advance_attempt().await {
@@ -1122,6 +1130,7 @@ struct TranscriptSink {
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
+    finalized: bool,
     usage_tokens: Option<u64>,
     tool_call_tracker: ToolCallTracker,
 }
@@ -1151,6 +1160,7 @@ impl TranscriptSink {
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
+            finalized: false,
             usage_tokens: None,
             tool_call_tracker,
         })
@@ -1215,6 +1225,7 @@ impl TranscriptSink {
         self.provider_metadata.clear();
         self.unpublished = 0;
         self.streamed = false;
+        self.finalized = false;
         self.usage_tokens = None;
     }
 
@@ -1232,12 +1243,8 @@ impl TranscriptSink {
             )
             .await?;
         self.streamed = false;
+        self.finalized = true;
         Ok(())
-    }
-
-    async fn begin_next_turn(&mut self) -> anyhow::Result<()> {
-        self.finalize_turn().await?;
-        self.advance_attempt().await
     }
 
     async fn advance_attempt(&mut self) -> anyhow::Result<()> {
@@ -1255,11 +1262,19 @@ impl TranscriptSink {
         Ok(())
     }
 
-    async fn begin_next_turn_if_streamed(&mut self) -> anyhow::Result<()> {
-        if !self.streamed {
-            return Ok(());
+    async fn finalize_turn_if_streamed(&mut self) -> anyhow::Result<()> {
+        if self.streamed {
+            self.finalize_turn().await?;
         }
-        self.begin_next_turn().await
+        Ok(())
+    }
+
+    async fn begin_next_turn_after_tools(&mut self) -> anyhow::Result<()> {
+        self.finalize_turn_if_streamed().await?;
+        if self.finalized {
+            self.advance_attempt().await?;
+        }
+        Ok(())
     }
 
     fn items_json(&self) -> Vec<serde_json::Value> {

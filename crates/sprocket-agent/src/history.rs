@@ -101,14 +101,39 @@ fn tool_result_message(tool: &TranscriptToolBody) -> AgentHistoryMessage {
         .as_ref()
         .unwrap_or(&serde_json::Value::Null)
         .to_string();
+    tool_result_text_message(&tool.call_id, output)
+}
+
+fn tool_result_text_message(call_id: &str, text: String) -> AgentHistoryMessage {
     AgentHistoryMessage {
         role: AgentHistoryRole::User,
         origin: None,
         contents: vec![AgentHistoryContent::ToolResult {
-            id: tool.call_id.clone(),
-            call_id: Some(tool.call_id.clone()),
-            items: vec![AgentHistoryToolResultItem::Text { text: output }],
+            id: call_id.to_string(),
+            call_id: Some(call_id.to_string()),
+            items: vec![AgentHistoryToolResultItem::Text { text }],
         }],
+    }
+}
+
+/// Providers reject a tool call without a result, and a run can stop before
+/// its tools settle, so those calls are answered before the next turn.
+fn answer_unsettled_calls(
+    awaiting_results: &mut Vec<String>,
+    emitted_results: &mut HashSet<String>,
+    history: &mut Vec<AgentHistoryMessage>,
+) {
+    for call_id in awaiting_results.drain(..) {
+        if emitted_results.insert(call_id.clone()) {
+            history.push(tool_result_text_message(
+                &call_id,
+                serde_json::json!({
+                    "error": "The run was interrupted before this tool call returned a result.",
+                    "status": "interrupted",
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -184,10 +209,14 @@ pub fn agent_history_from_parts(
     let mut opened_call_ids = HashSet::new();
     let mut emitted_results = HashSet::new();
     let mut pending_tools: HashMap<String, &TranscriptToolBody> = HashMap::new();
+    let mut awaiting_results = Vec::new();
 
     for part in parts {
         if part.number < state.history_from_number {
             continue;
+        }
+        if part.kind != TranscriptPartKind::Tool {
+            answer_unsettled_calls(&mut awaiting_results, &mut emitted_results, &mut history);
         }
         if pending_prompt_number == Some(part.number) {
             continue;
@@ -232,6 +261,13 @@ pub fn agent_history_from_parts(
                         .iter()
                         .filter_map(|item| completion_item_to_history(item, omit_reasoning))
                         .collect();
+                    let call_ids: Vec<_> = contents
+                        .iter()
+                        .filter_map(|content| match content {
+                            AgentHistoryContent::ToolCall { call_id, .. } => Some(call_id.clone()),
+                            _ => None,
+                        })
+                        .collect();
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
                             role: AgentHistoryRole::Assistant,
@@ -246,6 +282,7 @@ pub fn agent_history_from_parts(
                         &mut pending_tools,
                         &mut history,
                     );
+                    awaiting_results.extend(call_ids);
                 }
             }
             TranscriptPartKind::Tool => {
@@ -263,6 +300,7 @@ pub fn agent_history_from_parts(
             }
         }
     }
+    answer_unsettled_calls(&mut awaiting_results, &mut emitted_results, &mut history);
     history
 }
 
