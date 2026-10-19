@@ -76,19 +76,15 @@ export async function getTranscriptState(
 
 export async function getOrCreateTranscriptState(
 	ctx: MutationCtx,
-	args: { threadId: Id<'threadRecords'>; userId: string }
+	threadId: Id<'threadRecords'>
 ): Promise<Doc<'threadTranscriptStates'>> {
-	const existing = await getTranscriptState(ctx, args.threadId);
+	const existing = await getTranscriptState(ctx, threadId);
 
 	if (existing) {
 		return existing;
 	}
 
-	const stateId = await ctx.db.insert('threadTranscriptStates', {
-		threadId: args.threadId,
-		userId: args.userId,
-		totalParts: 0
-	});
+	const stateId = await ctx.db.insert('threadTranscriptStates', { threadId, totalParts: 0 });
 
 	const created = await ctx.db.get('threadTranscriptStates', stateId);
 
@@ -101,7 +97,6 @@ export async function getOrCreateTranscriptState(
 
 type AppendTranscriptPartArgs = {
 	threadId: Id<'threadRecords'>;
-	userId: string;
 	sourceKey: string;
 	kind: Doc<'threadTranscriptParts'>['kind'];
 	runId: Id<'runs'>;
@@ -113,7 +108,6 @@ type AppendTranscriptPartArgs = {
 
 type TranscriptPartInsert = {
 	threadId: Id<'threadRecords'>;
-	userId: string;
 	number: number;
 	sourceKey: string;
 	kind: Doc<'threadTranscriptParts'>['kind'];
@@ -231,16 +225,12 @@ export async function appendTranscriptPart(
 		return { part: existing, inserted: false };
 	}
 
-	const state = await getOrCreateTranscriptState(ctx, {
-		threadId: args.threadId,
-		userId: args.userId
-	});
+	const state = await getOrCreateTranscriptState(ctx, args.threadId);
 
 	const number = state.totalParts;
 
 	const part: TranscriptPartInsert = {
 		threadId: args.threadId,
-		userId: args.userId,
 		number,
 		sourceKey: args.sourceKey,
 		kind: args.kind,

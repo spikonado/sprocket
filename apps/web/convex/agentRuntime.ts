@@ -749,7 +749,6 @@ export const finalizeCompletionCall = mutation({
 
 		const part = await recordCompletionTranscript(ctx, {
 			threadId: run.threadId,
-			userId: run.userId,
 			runId: run._id,
 			streamId: args.streamId,
 			items: args.items,
@@ -760,7 +759,6 @@ export const finalizeCompletionCall = mutation({
 
 		await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,
-			userId: run.userId,
 			runId: run._id,
 			items: args.items,
 			toolInvocations: args.toolInvocations

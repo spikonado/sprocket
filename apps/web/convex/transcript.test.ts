@@ -19,7 +19,7 @@ describe('numbered transcript parts', () => {
 		'validates legacy tool retries before hydrating inputs, conflicting output: %s',
 		async (conflictingOutput) => {
 			const t = initConvexTest();
-			const { asUser, threadId, subject } = await seedOwnedThread(t);
+			const { asUser, threadId } = await seedOwnedThread(t);
 
 			const { runId } = await createQueuedRun(
 				t,
@@ -33,7 +33,6 @@ describe('numbered transcript parts', () => {
 			await t.run(async (ctx) => {
 				const args = {
 					threadId,
-					userId: subject,
 					runId,
 					sourceKey: 'tool:legacy:finished',
 					kind: 'tool' as const,
@@ -970,7 +969,6 @@ describe('transcript range reads', () => {
 			for (const number of numbers) {
 				await ctx.db.insert('threadTranscriptParts', {
 					threadId: owned.threadId,
-					userId: owned.subject,
 					runId: run._id,
 					number,
 					sourceKey: `prompt:${number}`,
@@ -1030,7 +1028,7 @@ describe('transcript range reads', () => {
 			const t = initConvexTest();
 			const numbers = Array.from({ length: 8 }, (_, number) => number);
 
-			const { asUser, subject, threadId, runId, executionSecret } = await seedParts(
+			const { asUser, threadId, runId, executionSecret } = await seedParts(
 				t,
 				numbers,
 				'x'.repeat(400_000)
@@ -1065,7 +1063,6 @@ describe('transcript range reads', () => {
 			await t.run((ctx) =>
 				ctx.db.insert('threadTranscriptParts', {
 					threadId,
-					userId: subject,
 					runId,
 					number: numbers.length,
 					sourceKey: 'prompt:live',
@@ -1270,7 +1267,6 @@ describe('transcript attachment identity', () => {
 		await t.run(async (ctx) => {
 			await appendTranscriptPart(ctx, {
 				threadId: first.threadId,
-				userId: first.subject,
 				runId: first.runId,
 				sourceKey: 'prompt:without-attachments',
 				kind: 'prompt',
@@ -1279,7 +1275,6 @@ describe('transcript attachment identity', () => {
 			});
 			await appendTranscriptPart(ctx, {
 				threadId: first.threadId,
-				userId: first.subject,
 				runId: first.runId,
 				sourceKey: 'tool:without-attachments',
 				kind: 'tool',

@@ -177,6 +177,25 @@ export const runThreadRecordLegacyFieldsRemoval = internalMutation({
 	}
 });
 
+function clearUserId(_ctx: MutationCtx, doc: { userId?: string }) {
+	return doc.userId === undefined ? undefined : { userId: undefined };
+}
+
+export const removeTranscriptStatesUserId = migrations.define({
+	table: 'threadTranscriptStates',
+	migrateOne: clearUserId
+});
+
+export const removeTranscriptPartsUserId = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: clearUserId
+});
+
+export const removeTranscriptUserId = migrations.runner([
+	internal.migrations.removeTranscriptStatesUserId,
+	internal.migrations.removeTranscriptPartsUserId
+]);
+
 export const moveMachineCredentialHashes = migrations.define({
 	table: 'machines',
 	migrateOne: (_ctx, machine) => {

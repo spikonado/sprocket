@@ -710,7 +710,6 @@ describe('subagents transcript pages', () => {
 			for (let number = 1; number < count; number++) {
 				await appendTranscriptPart(ctx, {
 					threadId: child.threadId,
-					userId: 'user_alice',
 					runId: child.runId,
 					sourceKey: `prompt:${number}`,
 					kind: 'prompt',
@@ -773,7 +772,6 @@ describe('subagents transcript pages', () => {
 			await t.run((ctx) =>
 				appendTranscriptPart(ctx, {
 					threadId: child.threadId,
-					userId: 'user_alice',
 					runId: child.runId,
 					sourceKey: 'prompt:live',
 					kind: 'prompt',

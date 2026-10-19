@@ -19,7 +19,7 @@ describe('terminal job reconciliation', () => {
 		'preserves historical output with reconciliation marker %s',
 		async (marker) => {
 			const t = initConvexTest();
-			const { threadId, subject } = await seedOwnedThread(t);
+			const { threadId } = await seedOwnedThread(t);
 
 			const { jobId, partId } = await t.run(async (ctx) => {
 				const run = (await ctx.db.query('runs').first())!;
@@ -40,7 +40,6 @@ describe('terminal job reconciliation', () => {
 
 				await recordToolTranscript(ctx, {
 					threadId,
-					userId: subject,
 					runId: run._id,
 					job: (await ctx.db.get('executorJobs', jobId))!
 				});
@@ -71,7 +70,7 @@ describe('terminal job reconciliation', () => {
 
 	it('preserves the historical section when a settled job lacks section metadata', async () => {
 		const t = initConvexTest();
-		const { threadId, subject } = await seedOwnedThread(t);
+		const { threadId } = await seedOwnedThread(t);
 
 		const part = await t.run(async (ctx) => {
 			const run = (await ctx.db.query('runs').first())!;
@@ -90,7 +89,6 @@ describe('terminal job reconciliation', () => {
 
 			await recordToolTranscript(ctx, {
 				threadId,
-				userId: subject,
 				runId: run._id,
 				job: (await ctx.db.get('executorJobs', jobId))!
 			});

@@ -41,7 +41,6 @@ async function historicalRun(
 		if (completion !== 'none') {
 			await appendTranscriptPart(ctx, {
 				threadId,
-				userId: 'user_alice',
 				runId,
 				kind: 'completion',
 				sourceKey: `completion:${runId}`,
@@ -179,7 +178,6 @@ describe('provider handoff provenance', () => {
 		await t.run(async (ctx) => {
 			await appendTranscriptPart(ctx, {
 				threadId,
-				userId: 'user_alice',
 				runId: run.runId,
 				kind: 'completion',
 				sourceKey: 'current',

@@ -98,6 +98,10 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 
 Older `threadRecords` rows still carry `submissionId` and `treeCancellation`, so the schema keeps both optional. The hourly `migrations.runThreadRecordLegacyFieldsRemoval` cron clears them. Once that migration completes on every deployment, remove both fields, the migration and the cron.
 
+### Transcript user IDs
+
+Older `threadTranscriptStates` and `threadTranscriptParts` rows still carry `userId`, so the schema keeps it optional. The hourly `migrations.removeTranscriptUserId` cron clears it. Once both migrations complete on every deployment, remove the field, the migrations and the cron.
+
 ### Stored executor job and result fields
 
 Each of these Convex variants goes once a full production scan confirms no retained row uses it:

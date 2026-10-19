@@ -96,7 +96,6 @@ async function appendFinishedToolPart(
 	await t.run(async (ctx) => {
 		await appendTranscriptPart(ctx, {
 			threadId: args.threadId,
-			userId: 'user_alice',
 			sourceKey: `tool:${args.invocationId}:finished`,
 			kind: 'tool',
 			runId: args.runId,

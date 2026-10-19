@@ -61,7 +61,6 @@ export async function recordPromptTranscript(
 	ctx: MutationCtx,
 	args: {
 		threadId: Id<'threadRecords'>;
-		userId: string;
 		runId: Id<'runs'>;
 		text: string;
 		imageUploadIds?: Id<'imageUploads'>[];
@@ -69,7 +68,6 @@ export async function recordPromptTranscript(
 ): Promise<Doc<'threadTranscriptParts'>> {
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
-		userId: args.userId,
 		sourceKey: promptSourceKey(args.runId),
 		kind: 'prompt',
 		runId: args.runId,
@@ -87,7 +85,6 @@ export async function recordCompletionTranscript(
 	ctx: MutationCtx,
 	args: {
 		threadId: Id<'threadRecords'>;
-		userId: string;
 		runId: Id<'runs'>;
 		streamId: string;
 		items: TranscriptCompletionItem[];
@@ -115,7 +112,6 @@ export async function recordCompletionTranscript(
 
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
-		userId: args.userId,
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
@@ -137,7 +133,6 @@ export async function recordStartedToolTranscript(
 	ctx: MutationCtx,
 	args: {
 		threadId: Id<'threadRecords'>;
-		userId: string;
 		runId: Id<'runs'>;
 		job: TranscriptToolJob;
 	}
@@ -146,7 +141,6 @@ export async function recordStartedToolTranscript(
 
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
-		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'started'),
 		kind: 'tool',
 		runId: args.runId,
@@ -169,7 +163,6 @@ export async function recordToolTranscript(
 	ctx: MutationCtx,
 	args: {
 		threadId: Id<'threadRecords'>;
-		userId: string;
 		runId: Id<'runs'>;
 		job: TranscriptToolJob;
 		preserveExistingDisplay?: boolean;
@@ -203,7 +196,6 @@ export async function recordToolTranscript(
 
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
-		userId: args.userId,
 		sourceKey,
 		kind: 'tool',
 		runId: args.runId,
@@ -226,7 +218,6 @@ export async function recordSettledToolTranscripts(
 	ctx: MutationCtx,
 	args: {
 		threadId: Id<'threadRecords'>;
-		userId: string;
 		runId: Id<'runs'>;
 		items: TranscriptCompletionItem[];
 		toolInvocations?: { callId: string; toolInvocationId: string }[];
@@ -255,7 +246,6 @@ export async function recordSettledToolTranscripts(
 		if (job) {
 			await recordToolTranscript(ctx, {
 				threadId: args.threadId,
-				userId: args.userId,
 				runId: args.runId,
 				job
 			});

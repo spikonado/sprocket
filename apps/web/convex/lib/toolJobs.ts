@@ -112,7 +112,6 @@ export async function beginExecutorJob(
 	if (!persistedJob) throw new Error('Failed to create executor job.');
 	await recordStartedToolTranscript(ctx, {
 		threadId: args.run.threadId,
-		userId: args.run.userId,
 		runId: args.run._id,
 		job: persistedJob
 	});
