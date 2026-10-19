@@ -14,6 +14,12 @@
 			"sourceType": "github",
 			"skillPath": "pstack/skills/maintain-verification-skill/SKILL.md",
 			"computedHash": "283083c9547641392a58c38edeb147e75aa99912e7fba55edaa7b1a02021ffec"
+		},
+		"writing-for-agents": {
+			"source": "mattpocock/skills",
+			"sourceType": "github",
+			"skillPath": "skills/productivity/writing-for-agents/SKILL.md",
+			"computedHash": "95da47fc97af998e85b7d7e6d57b3ac76727c1e290cfe9ea09005aacb826959f"
 		}
 	}
 }
