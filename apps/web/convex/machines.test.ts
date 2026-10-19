@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
 import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
@@ -23,10 +23,7 @@ describe('machines', () => {
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-a')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
 
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -37,28 +34,27 @@ describe('machines', () => {
 		});
 
 		const original = await t.run((ctx) => ctx.db.query('machines').unique());
-		const args = { ...machine, credentialHash: await executionSecretHash('credential-b') };
+		const args = { ...machine, processId: 'process-b' };
 
 		vi.advanceTimersByTime(30_000);
-		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual({
+		expect(await asUser.mutation(api.machines.registerProcess, args)).toEqual({
 			status: 'busy',
 			retryAfterMs: MACHINE_ONLINE_THRESHOLD_MS - 30_000 + 1
 		});
 		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toEqual(original);
 		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'queued' });
 
-		await t.mutation(api.machines.heartbeat, {
-			userId: 'user_alice',
+		await asUser.mutation(api.machines.heartbeatProcess, {
 			machineId: machine.machineId,
-			credential: 'credential-a'
+			processId: 'process-a'
 		});
 		vi.advanceTimersByTime(MACHINE_ONLINE_THRESHOLD_MS);
-		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual({
+		expect(await asUser.mutation(api.machines.registerProcess, args)).toEqual({
 			status: 'busy',
 			retryAfterMs: 1
 		});
 		vi.advanceTimersByTime(1);
-		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual({
+		expect(await asUser.mutation(api.machines.registerProcess, args)).toEqual({
 			status: 'registered',
 			machineId: machine.machineId,
 			userId: 'user_alice'
@@ -66,25 +62,20 @@ describe('machines', () => {
 		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'failed' });
 		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toMatchObject({
 			_id: original?._id,
-			credentialHash: args.credentialHash,
+			processId: 'process-b',
 			runIds: []
 		});
 
-		for (const mutation of [api.machines.heartbeat, api.machines.end]) {
+		for (const mutation of [api.machines.heartbeatProcess, api.machines.endProcess]) {
 			await expect(
-				t.mutation(mutation, {
-					userId: 'user_alice',
-					machineId: machine.machineId,
-					credential: 'credential-a'
-				})
+				asUser.mutation(mutation, { machineId: machine.machineId, processId: 'process-a' })
 			).rejects.toThrow('Machine is not active.');
 		}
 
 		await expect(
-			t.mutation(api.machines.heartbeat, {
-				userId: 'user_alice',
+			asUser.mutation(api.machines.heartbeatProcess, {
 				machineId: machine.machineId,
-				credential: 'credential-b'
+				processId: 'process-b'
 			})
 		).resolves.toBeNull();
 	});
@@ -92,8 +83,8 @@ describe('machines', () => {
 	it('keeps registration retries from the same process idempotent', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const args = { ...machine, credentialHash: await executionSecretHash('credential-a') };
-		const registered = await asUser.mutation(api.machines.tryRegister, args);
+		const args = { ...machine, processId: 'process-a' };
+		const registered = await asUser.mutation(api.machines.registerProcess, args);
 
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -103,26 +94,27 @@ describe('machines', () => {
 			machineId: machine.machineId
 		});
 
-		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual(registered);
+		expect(await asUser.mutation(api.machines.registerProcess, args)).toEqual(registered);
 		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'queued' });
 		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toMatchObject({
 			runIds: [run.runId]
 		});
 	});
 
-	it('requires authentication before reporting a registration conflict', async () => {
+	it('requires authentication for every process call', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-a')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
+
 		await expect(
-			t.mutation(api.machines.tryRegister, {
-				...machine,
-				credentialHash: await executionSecretHash('credential-b')
-			})
+			t.mutation(api.machines.registerProcess, { ...machine, processId: 'process-b' })
 		).rejects.toThrow('Authentication required.');
+
+		for (const mutation of [api.machines.heartbeatProcess, api.machines.endProcess]) {
+			await expect(
+				t.mutation(mutation, { machineId: machine.machineId, processId: 'process-a' })
+			).rejects.toThrow('Authentication required.');
+		}
 	});
 
 	it('lets a new process take over after the previous one goes stale', async () => {
@@ -130,10 +122,7 @@ describe('machines', () => {
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-a')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
 
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -150,43 +139,35 @@ describe('machines', () => {
 		});
 
 		vi.advanceTimersByTime(90_001);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-b')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-b' });
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
 			status: 'failed',
 			lastError: 'The local agent stopped responding before this run finished.'
 		});
 	});
 
-	it('authenticates heartbeats with the process credential', async () => {
+	it('accepts heartbeats only from the registered process of the signed-in user', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-a')
-		});
+		const { asUser: asOtherUser } = await seedOwnedThread(t, 'other-user');
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
 
 		await expect(
-			t.mutation(api.machines.heartbeat, {
-				userId: 'other-user',
+			asOtherUser.mutation(api.machines.heartbeatProcess, {
 				machineId: machine.machineId,
-				credential: 'credential-a'
+				processId: 'process-a'
 			})
 		).rejects.toThrow('Machine is not active.');
 		await expect(
-			t.mutation(api.machines.heartbeat, {
-				userId: 'user_alice',
+			asUser.mutation(api.machines.heartbeatProcess, {
 				machineId: machine.machineId,
-				credential: 'wrong'
+				processId: 'wrong'
 			})
 		).rejects.toThrow('Machine is not active.');
 		await expect(
-			t.mutation(api.machines.heartbeat, {
-				userId: 'user_alice',
+			asUser.mutation(api.machines.heartbeatProcess, {
 				machineId: machine.machineId,
-				credential: 'credential-a'
+				processId: 'process-a'
 			})
 		).resolves.toBeNull();
 	});
@@ -194,10 +175,7 @@ describe('machines', () => {
 	it('ends a machine by failing its runs as recoverable and clearing lastSeenAt', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-a')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
 
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -207,11 +185,8 @@ describe('machines', () => {
 			machineId: machine.machineId
 		});
 
-		await t.mutation(api.machines.end, {
-			userId: 'user_alice',
-			machineId: machine.machineId,
-			credential: 'credential-a'
-		});
+		const processArgs = { machineId: machine.machineId, processId: 'process-a' };
+		await asUser.mutation(api.machines.endProcess, processArgs);
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
@@ -220,29 +195,75 @@ describe('machines', () => {
 			machineId: machine.machineId,
 			online: false
 		});
+		await expect(asUser.mutation(api.machines.heartbeatProcess, processArgs)).rejects.toThrow(
+			'Machine is not active.'
+		);
+	});
+
+	it('keeps released clients working with their credential', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const credentialHash = await executionSecretHash('credential-a');
+		const legacyArgs = { userId: 'user_alice', machineId: machine.machineId };
+		await asUser.mutation(api.machines.tryRegister, { ...machine, credentialHash });
+
 		await expect(
-			t.mutation(api.machines.heartbeat, {
-				userId: 'user_alice',
-				machineId: machine.machineId,
-				credential: 'credential-a'
-			})
+			t.mutation(api.machines.heartbeat, { ...legacyArgs, credential: credentialHash })
 		).rejects.toThrow('Machine is not active.');
+		await expect(
+			t.mutation(api.machines.heartbeat, { ...legacyArgs, credential: 'credential-a' })
+		).resolves.toBeNull();
+		await t.mutation(api.machines.end, { ...legacyArgs, credential: 'credential-a' });
+		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(false);
+	});
+
+	it('moves process IDs out of rows written before processId', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const credentialHash = await executionSecretHash('credential-a');
+
+		const legacyHeartbeat = {
+			userId: 'user_alice',
+			machineId: machine.machineId,
+			credential: 'credential-a'
+		};
+
+		const machineDocId = await t.run((ctx) =>
+			ctx.db.insert('machines', {
+				...machine,
+				userId: 'user_alice',
+				credentialHash,
+				lastSeenAt: Date.now(),
+				runIds: [],
+				updatedAt: Date.now()
+			})
+		);
+
+		await expect(t.mutation(api.machines.heartbeat, legacyHeartbeat)).resolves.toBeNull();
+
+		for (let pass = 0; pass < 2; pass++) {
+			await t.mutation(internal.migrations.moveMachineCredentialHashes, {
+				cursor: null,
+				dryRun: false,
+				oneBatchOnly: true
+			});
+		}
+
+		const migrated = await t.run((ctx) => ctx.db.get('machines', machineDocId));
+		expect(migrated).toMatchObject({ processId: credentialHash });
+		expect(migrated?.credentialHash).toBeUndefined();
+		await expect(t.mutation(api.machines.heartbeat, legacyHeartbeat)).resolves.toBeNull();
+		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(true);
 	});
 
 	it('allows one local machine identity to register for different users', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
 		const { asUser: asOtherUser } = await seedOwnedThread(t, 'other-user');
-		const credentialHash = await executionSecretHash('shared-machine-credential');
+		const args = { ...machine, processId: 'shared-process' };
 
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash
-		});
-		await asOtherUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash
-		});
+		await asUser.mutation(api.machines.registerProcess, args);
+		await asOtherUser.mutation(api.machines.registerProcess, args);
 
 		expect(await asUser.query(api.machines.listMine, {})).toHaveLength(1);
 		expect(await asOtherUser.query(api.machines.listMine, {})).toHaveLength(1);
@@ -253,19 +274,12 @@ describe('machines', () => {
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			platformVersion: '6.12.1',
-			hostname: 'workbench',
-			credentialHash: await executionSecretHash('credential-a')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
 
 		vi.advanceTimersByTime(90_000);
 		expect(await asUser.query(api.machines.listMine, {})).toEqual([
 			{
 				...machine,
-				platformVersion: '6.12.1',
-				hostname: 'workbench',
 				lastSeenAt: Date.parse('2026-01-01T00:00:00.000Z'),
 				online: true
 			}
@@ -274,10 +288,9 @@ describe('machines', () => {
 		vi.advanceTimersByTime(1);
 		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(false);
 
-		await t.mutation(api.machines.heartbeat, {
-			userId: 'user_alice',
+		await asUser.mutation(api.machines.heartbeatProcess, {
 			machineId: machine.machineId,
-			credential: 'credential-a'
+			processId: 'process-a'
 		});
 		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(true);
 	});

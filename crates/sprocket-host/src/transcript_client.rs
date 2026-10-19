@@ -50,12 +50,6 @@ impl UserConvexClient {
         Ok(Self { client })
     }
 
-    pub async fn connect_anonymous(deployment_url: &str) -> anyhow::Result<Self> {
-        Ok(Self {
-            client: ConvexClient::new(deployment_url).await?,
-        })
-    }
-
     pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
         self.client.watch_all().await
     }

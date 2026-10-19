@@ -10,7 +10,7 @@ pub type SavedTokens = BTreeMap<String, String>;
 pub type LoadFuture = Pin<Box<dyn Future<Output = anyhow::Result<SavedTokens>> + Send>>;
 
 /// Fetches one user's saved tokens. The host installs it, since the tokens live
-/// in WorkOS Vault behind Convex and only a registered machine may read them.
+/// in WorkOS Vault behind Convex and reading them needs the user's token.
 pub type Loader = Arc<dyn Fn(String) -> LoadFuture + Send + Sync>;
 
 const FRESH_FOR: Duration = Duration::from_secs(5 * 60);

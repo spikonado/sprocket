@@ -52,6 +52,10 @@ Released servers require an integer `createdAt` on `artifacts:listArtifacts` row
 
 `runLifecycle.cancelDescendants` accepts and ignores `rootThreadId` and `generation` from batches queued before the stateless sweep. Remove them after a scheduler scan finds no queued batch carrying them.
 
+### Machine credentials
+
+Released clients call `machines:tryRegister` with a `credentialHash`, then `machines:heartbeat` and `machines:end` anonymously with the matching `credential`. The hash is stored as their `processId`. Remove those three mutations once those clients age out.
+
 ## Convex data shims
 
 ### Billing subscription projection
@@ -71,6 +75,10 @@ The checkout tables keep `by_userId` because released readers use it. Remove it 
 ### Webhook cleanup cursor
 
 The legacy `dodoWebhookCleanup` table stays for diagnostics. Remove it after released cleanup callers age out and its rows are migrated or deleted.
+
+### Machine process IDs
+
+Machine rows written before `processId` keep it in `credentialHash`, and `machineProcessId` reads either. Registration moves it, and the hourly `migrations:runMachineProcessIdBackfill` cron moves the rest. Once that migration completes on every deployment, make `processId` required, drop `credentialHash`, and remove the cron.
 
 ### Calendar usage windows
 

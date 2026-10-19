@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { executionSecretHash } from '@convex/lib/auth';
 import { actionablePendingQuestionsForThread } from '@convex/lib/agentQuestions';
 import { registerChildThread, subtreeSummary } from '@convex/lib/threadHierarchy';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
@@ -587,10 +586,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			appVersion: '0.3.2'
 		};
 
-		await asUser.mutation(api.machines.tryRegister, {
-			...machine,
-			credentialHash: await executionSecretHash('old-process')
-		});
+		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'old-process' });
 		const runIds: Id<'runs'>[] = [];
 		const jobs: Doc<'executorJobs'>[] = [];
 
@@ -611,10 +607,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 		vi.setSystemTime(Date.now() + 90_001);
 		expect(
-			await asUser.mutation(api.machines.tryRegister, {
-				...machine,
-				credentialHash: await executionSecretHash('new-process')
-			})
+			await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'new-process' })
 		).toMatchObject({ status: 'registered' });
 
 		for (const runId of runIds) {
@@ -626,7 +619,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toMatchObject({
 			runIds: [],
-			credentialHash: await executionSecretHash('new-process')
+			processId: 'new-process'
 		});
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		await expectCleanedJobs(t, jobs);

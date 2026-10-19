@@ -18,7 +18,7 @@ fn installation_id_persists_across_process_identities() {
     let second = MachineIdentity::load(&dir).unwrap();
 
     assert_eq!(first.installation_id, second.installation_id);
-    assert_ne!(first.credential, second.credential);
+    assert_ne!(first.process_id, second.process_id);
     assert!(identity_path(&dir).is_file());
     fs::remove_dir_all(dir).unwrap();
 }

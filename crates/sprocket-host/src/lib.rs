@@ -111,7 +111,6 @@ impl Host {
         github_settings::install_saved_tokens_loader(
             convex_deployment_url.clone(),
             Arc::clone(&native_auth),
-            Arc::clone(&machine_identity),
         );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         Ok(Self {
@@ -170,6 +169,14 @@ impl Host {
                 .auth_token_fetcher_for_user(user_id.to_string()),
         )
         .await
+    }
+
+    /// Ends machine presence first because ending it needs the native token.
+    /// The wait is bounded so a pending registration can't outlast the CLI's
+    /// logout timeout; presence then expires on its own.
+    pub async fn sign_out(&self) -> anyhow::Result<()> {
+        let _ = tokio::time::timeout(Duration::from_secs(10), self.machines.end_all()).await;
+        self.native_auth.sign_out().await
     }
 
     /// Starts the background work that keeps local state in sync with the cloud.

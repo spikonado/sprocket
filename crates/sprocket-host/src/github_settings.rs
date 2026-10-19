@@ -2,11 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use convex::Value;
 use sprocket_workspace::github::saved_tokens::{self, LoadFuture, SavedTokens};
 use sprocket_workspace::github::{self, GitHubSettings};
 
-use crate::machine_identity::MachineIdentity;
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
 
@@ -58,17 +56,10 @@ fn read(path: &Path) -> anyhow::Result<GitHubSettings> {
     }
 }
 
-/// Lets the GitHub client read the tokens a user saved, which Convex only
-/// hands to a machine that proves the credential it registered with.
-pub fn install_saved_tokens_loader(
-    deployment_url: String,
-    native_auth: Arc<NativeAuthManager>,
-    identity: Arc<MachineIdentity>,
-) {
+pub fn install_saved_tokens_loader(deployment_url: String, native_auth: Arc<NativeAuthManager>) {
     saved_tokens::install(Arc::new(move |user_id| -> LoadFuture {
         let deployment_url = deployment_url.clone();
         let native_auth = Arc::clone(&native_auth);
-        let identity = Arc::clone(&identity);
         Box::pin(async move {
             let client = UserConvexClient::connect_with_fetcher(
                 &deployment_url,
@@ -76,19 +67,7 @@ pub fn install_saved_tokens_loader(
             )
             .await?;
             client
-                .act::<SavedTokens>(
-                    "githubCredentials:issueTokens",
-                    BTreeMap::from([
-                        (
-                            "machineId".to_string(),
-                            Value::from(identity.installation_id.clone()),
-                        ),
-                        (
-                            "credential".to_string(),
-                            Value::from(identity.credential.clone()),
-                        ),
-                    ]),
-                )
+                .act::<SavedTokens>("githubCredentials:issueTokens", BTreeMap::new())
                 .await
         })
     }));

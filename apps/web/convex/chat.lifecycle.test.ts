@@ -210,7 +210,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				architecture: 'x86_64',
 				hostname: 'workbench',
 				appVersion: '0.3.2',
-				credentialHash: 'a'.repeat(64),
+				processId: 'machine-process',
 				runIds: [created.runId],
 				updatedAt: Date.now()
 			});

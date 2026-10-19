@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
-import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -12,9 +11,9 @@ async function setup() {
 	const t = initConvexTest();
 	const { asUser, threadId } = await seedOwnedThread(t);
 	const machineId = 'recovery-machine';
-	await asUser.mutation(api.machines.tryRegister, {
+	await asUser.mutation(api.machines.registerProcess, {
 		machineId,
-		credentialHash: await executionSecretHash('machine-secret'),
+		processId: 'machine-process',
 		friendlyName: 'Workstation',
 		platform: 'linux',
 		platformVersion: 'test',
@@ -53,16 +52,12 @@ async function setup() {
 		});
 
 	const shutDownMachine = () =>
-		asUser.mutation(api.machines.end, {
-			userId: 'user_alice',
-			machineId,
-			credential: 'machine-secret'
-		});
+		asUser.mutation(api.machines.endProcess, { machineId, processId: 'machine-process' });
 
 	const registerNewProcess = async () =>
-		asUser.mutation(api.machines.tryRegister, {
+		asUser.mutation(api.machines.registerProcess, {
 			machineId,
-			credentialHash: await executionSecretHash('new-process'),
+			processId: 'new-process',
 			friendlyName: 'Workstation',
 			platform: 'linux',
 			platformVersion: 'test',
@@ -166,10 +161,9 @@ describe('automatic run recovery', () => {
 		});
 
 		// Refresh presence after advancing past the machine heartbeat window.
-		await asUser.mutation(api.machines.heartbeat, {
-			userId: 'user_alice',
+		await asUser.mutation(api.machines.heartbeatProcess, {
 			machineId: queryArgs.machineId,
-			credential: 'machine-secret'
+			processId: 'machine-process'
 		});
 		const continuation = await insertQueuedRun(t, asUser, recoveryArgs);
 		expect(continuation.created).toBe(true);
@@ -180,9 +174,9 @@ describe('automatic run recovery', () => {
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs, abandon } = await setup();
 		await abandon();
 		const machineId = 'second-machine';
-		await asUser.mutation(api.machines.tryRegister, {
+		await asUser.mutation(api.machines.registerProcess, {
 			machineId,
-			credentialHash: await executionSecretHash('second-machine-secret'),
+			processId: 'second-machine-process',
 			friendlyName: 'Second workstation',
 			platform: 'linux',
 			platformVersion: 'test',
@@ -251,9 +245,9 @@ describe('automatic run recovery', () => {
 			runId,
 			threadId
 		});
-		await asUser.mutation(api.machines.tryRegister, {
+		await asUser.mutation(api.machines.registerProcess, {
 			machineId: queryArgs.machineId,
-			credentialHash: await executionSecretHash('new-process'),
+			processId: 'new-process',
 			friendlyName: 'Workstation',
 			platform: 'linux',
 			platformVersion: 'test',

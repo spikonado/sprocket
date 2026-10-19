@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { executionSecretHash } from '@convex/lib/auth';
 import { api } from './_generated/api';
 import { initConvexTest } from './test.setup';
 
@@ -76,27 +75,6 @@ function stubVault(): Map<string, VaultEntry> {
 	return entries;
 }
 
-async function registerMachine(t: ReturnType<typeof initConvexTest>, userId: string) {
-	const credentialHash = await executionSecretHash('machine-credential');
-
-	await t.run((ctx) =>
-		ctx.db.insert('machines', {
-			userId,
-			machineId: 'machine-a',
-			friendlyName: 'Laptop',
-			platform: 'linux',
-			platformVersion: '6',
-			architecture: 'arm64',
-			hostname: 'laptop',
-			appVersion: '1.0.0',
-			credentialHash,
-			lastSeenAt: Date.now(),
-			runIds: [],
-			updatedAt: Date.now()
-		})
-	);
-}
-
 describe('GitHub credentials', () => {
 	beforeEach(() => {
 		vi.stubEnv('WORKOS_API_KEY', 'sk_workos_test');
@@ -108,11 +86,10 @@ describe('GitHub credentials', () => {
 		vi.unstubAllEnvs();
 	});
 
-	it('hands the saved tokens to a registered machine of the same user', async () => {
+	it('hands the saved tokens back to the same user', async () => {
 		const vault = stubVault();
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'user_alice' });
-		await registerMachine(t, 'user_alice');
 
 		await alice.action(api.githubCredentials.saveToken, { host: 'GitHub.com ', token: ' ghp_a ' });
 		await alice.action(api.githubCredentials.saveToken, {
@@ -122,32 +99,14 @@ describe('GitHub credentials', () => {
 		await alice.action(api.githubCredentials.removeToken, { host: 'github.com' });
 
 		expect(vault.size).toBe(1);
+		await expect(alice.action(api.githubCredentials.issueTokens, {})).resolves.toEqual({
+			'ghe.acme.com': 'ghp_acme'
+		});
 		await expect(
-			alice.action(api.githubCredentials.issueTokens, {
-				machineId: 'machine-a',
-				credential: 'machine-credential'
-			})
-		).resolves.toEqual({ 'ghe.acme.com': 'ghp_acme' });
+			t.withIdentity({ subject: 'user_bob' }).action(api.githubCredentials.issueTokens, {})
+		).resolves.toEqual({});
 
 		await alice.action(api.githubCredentials.removeToken, { host: 'ghe.acme.com' });
 		expect(vault.size).toBe(0);
-	});
-
-	it('refuses tokens to callers without the machine credential', async () => {
-		stubVault();
-		const t = initConvexTest();
-		await registerMachine(t, 'user_alice');
-		const alice = t.withIdentity({ subject: 'user_alice' });
-		const bob = t.withIdentity({ subject: 'user_bob' });
-		await alice.action(api.githubCredentials.saveToken, { host: 'github.com', token: 'ghp_a' });
-
-		for (const [caller, credential] of [
-			[alice, 'browser-guess'],
-			[bob, 'machine-credential']
-		] as const) {
-			await expect(
-				caller.action(api.githubCredentials.issueTokens, { machineId: 'machine-a', credential })
-			).rejects.toThrow('Machine is not active.');
-		}
 	});
 });
