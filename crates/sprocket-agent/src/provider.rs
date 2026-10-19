@@ -508,7 +508,6 @@ async fn run_with_completion_model(
         request.transcript_store.clone(),
         request.artifact_bindings.clone(),
         request.supports_images,
-        target.completion_provider,
         tool_call_tracker.clone(),
         request.skills.clone(),
         request.command_sessions.clone(),

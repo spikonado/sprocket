@@ -55,7 +55,6 @@ pub(super) struct AgentToolContext {
     pub(super) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub(super) artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     pub(super) supports_images: bool,
-    pub(super) completion_provider: crate::types::CompletionProvider,
     pub(super) tool_call_tracker: ToolCallTracker,
     pub(super) command_sessions: CommandSessionManager,
     pub(super) question_polls: super::questions::QuestionPolls,
@@ -68,12 +67,8 @@ impl AgentToolContext {
         rebase_onto_cwd(&self.workspace_root, &self.cwd.get(), path)
     }
 
-    pub(super) fn image_urls(&self) -> Option<super::image_urls::ConvexImageUrls<'_>> {
-        super::image_urls::ConvexImageUrls::for_provider(
-            self.completion_provider,
-            &self.runtime,
-            &self.run_id,
-        )
+    pub(super) fn image_urls(&self) -> super::image_urls::ConvexImageUrls<'_> {
+        super::image_urls::ConvexImageUrls::new(&self.runtime, &self.run_id)
     }
 }
 

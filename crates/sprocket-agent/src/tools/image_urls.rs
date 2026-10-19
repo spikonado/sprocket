@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 use super::parse_file::ReplayedImage;
 use crate::convex::RuntimeClient;
-use crate::types::CompletionProvider;
 
 /// Matches the per-call cap of `imageUploads:toolImageUrlsForRun`.
 const MAX_IMAGES_PER_LOOKUP: usize = 100;
@@ -19,20 +18,15 @@ pub(super) type ImageUrlMap = HashMap<String, String>;
 
 /// Stores tool-result images in the thread's Convex file storage. Each image
 /// keeps one URL while its thread is active, so the request prefix, and with
-/// it the provider's prompt cache, stays byte-identical across turns. Only the
-/// AI gateway is verified to fetch these URLs.
+/// it the provider's prompt cache, stays byte-identical across turns.
 pub(crate) struct ConvexImageUrls<'a> {
     runtime: &'a RuntimeClient,
     run_id: &'a str,
 }
 
 impl<'a> ConvexImageUrls<'a> {
-    pub(crate) fn for_provider(
-        provider: CompletionProvider,
-        runtime: &'a RuntimeClient,
-        run_id: &'a str,
-    ) -> Option<Self> {
-        (provider == CompletionProvider::Spikonado).then_some(Self { runtime, run_id })
+    pub(crate) fn new(runtime: &'a RuntimeClient, run_id: &'a str) -> Self {
+        Self { runtime, run_id }
     }
 }
 
