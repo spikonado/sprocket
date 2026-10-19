@@ -20,6 +20,8 @@ export default function SettingsGeneral() {
 		api.uiPreferences.setAutomaticAgentContinuation
 	);
 
+	const setSettleMergedThreads = useMutation(api.uiPreferences.setSettleMergedThreads);
+
 	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
 	const disabled = preferencesQuery.status !== 'success';
 
@@ -34,7 +36,6 @@ export default function SettingsGeneral() {
 					<PreferenceToggle
 						title="Automatically name threads"
 						description="Name threads after the first user prompt."
-						descriptionId="automatic-thread-titles-description"
 						savedEnabled={preferences?.automaticThreadTitles ?? true}
 						disabled={disabled}
 						save={setAutomaticThreadTitles}
@@ -42,10 +43,15 @@ export default function SettingsGeneral() {
 					<PreferenceToggle
 						title="Continue agents automatically after restarts"
 						description="Automatically resume interrupted agents after an update, crash, or machine restart."
-						descriptionId="automatic-agent-continuation-description"
 						savedEnabled={preferences?.automaticAgentContinuation ?? true}
 						disabled={disabled}
 						save={setAutomaticAgentContinuation}
+					/>
+					<PreferenceToggle
+						title="Settle threads when their PRs merge"
+						savedEnabled={preferences?.settleMergedThreads ?? false}
+						disabled={disabled}
+						save={setSettleMergedThreads}
 					/>
 					{preferencesQuery.status === 'pending' && (
 						<p role="status" className="text-muted-foreground px-3 text-sm">

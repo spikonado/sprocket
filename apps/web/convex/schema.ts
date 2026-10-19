@@ -311,6 +311,7 @@ export default defineSchema({
 		theme: v.union(v.literal('light'), v.literal('dark')),
 		automaticThreadTitles: v.optional(v.boolean()),
 		automaticAgentContinuation: v.optional(v.boolean()),
+		settleMergedThreads: v.optional(v.boolean()),
 		providerOrder: v.optional(v.array(vProviderOrderEntry)),
 		restrictSubagentsToProvider: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),

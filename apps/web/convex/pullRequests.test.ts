@@ -88,4 +88,57 @@ describe('linked pull requests', () => {
 			})
 		).rejects.toThrow(/at most 20 PRs/);
 	});
+
+	it.each([true, false])(
+		'settles a thread once all its PRs merge when the setting is %s',
+		async (enabled) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+
+			await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled });
+			await t.run((ctx) =>
+				ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open'), pr(2, 'open')] })
+			);
+
+			const archivedAt = async () =>
+				(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt;
+
+			await asUser.mutation(api.pullRequests.updateStates, {
+				updates: [{ threadId, ...pr(1, 'merged') }]
+			});
+			expect(await archivedAt()).toBeUndefined();
+
+			await asUser.mutation(api.pullRequests.updateStates, {
+				updates: [{ threadId, ...pr(2, 'merged') }]
+			});
+			expect((await archivedAt()) !== undefined).toBe(enabled);
+		}
+	);
+
+	it.each([
+		['has active work', true],
+		['was unsettled after its PRs merged', false]
+	])('leaves a thread unsettled when it %s', async (_, active) => {
+		const t = initConvexTest();
+		const { asUser, threadId } = active ? await startRun(t) : await seedOwnedThread(t);
+
+		const merge = (title?: string) =>
+			asUser.mutation(api.pullRequests.updateStates, {
+				updates: [{ threadId, ...pr(1, 'merged', undefined, title) }]
+			});
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await merge();
+
+		if (!active) {
+			await asUser.mutation(api.threads.unsettle, { threadId });
+			await merge('Renamed');
+		}
+
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeUndefined();
+	});
 });

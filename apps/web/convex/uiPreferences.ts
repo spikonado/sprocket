@@ -45,6 +45,16 @@ export const setAutomaticThreadTitles = mutation({
 	}
 });
 
+export const setSettleMergedThreads = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await savePreferences(ctx, { settleMergedThreads: args.enabled });
+
+		return null;
+	}
+});
+
 export const setProviderOrder = mutation({
 	args: { providerOrder: v.array(vProviderOrderEntry) },
 	returns: v.null(),
