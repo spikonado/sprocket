@@ -82,6 +82,10 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 
 `users`, `machines`, `threadUsageEvents`, `agentQuestions`, `artifacts`, `mandates` and `mandateCharges` rows written before `_creationTime` replaced `createdAt` still carry it, so the schema keeps it as `legacyCreatedAt`. The hourly `migrations.removeCreatedAt` cron clears it. Once that migration completes on every deployment, remove `legacyCreatedAt`, the migrations and the cron.
 
+### Legacy thread record fields
+
+Older `threadRecords` rows still carry `submissionId` and `treeCancellation`, so the schema keeps both optional. The hourly `migrations.runThreadRecordLegacyFieldsRemoval` cron clears them. Once that migration completes on every deployment, remove both fields, the migration and the cron.
+
 ### Stored executor job and result fields
 
 Each of these Convex variants goes once a full production scan confirms no retained row uses it:

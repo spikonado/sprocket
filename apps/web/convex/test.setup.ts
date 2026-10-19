@@ -114,7 +114,6 @@ export async function seedThreadRecord(
 
 		const threadId = await ctx.db.insert('threadRecords', {
 			userId,
-			submissionId,
 			status: 'completed',
 			repositoryKey,
 			selectedModel: 'gpt-5.6-sol',

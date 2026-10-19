@@ -158,3 +158,21 @@ export const removeCreatedAt = migrations.runner([
 	internal.migrations.removeMandatesCreatedAt,
 	internal.migrations.removeMandateChargesCreatedAt
 ]);
+
+export const removeThreadRecordLegacyFields = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) =>
+		thread.submissionId === undefined && thread.treeCancellation === undefined
+			? undefined
+			: { submissionId: undefined, treeCancellation: undefined }
+});
+
+export const runThreadRecordLegacyFieldsRemoval = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		await migrations.runOne(ctx, internal.migrations.removeThreadRecordLegacyFields);
+
+		return null;
+	}
+});
