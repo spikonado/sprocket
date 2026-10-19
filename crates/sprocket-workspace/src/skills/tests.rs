@@ -28,6 +28,7 @@ fn write_skill_with_frontmatter(
 fn discovers_across_sources_with_precedence_and_sorts() {
     let root = temp_workspace();
     let project_skills = root.join(".sprocket/skills");
+    let project_agents_skills = root.join(".agents/skills");
     let sprocket_user = temp_workspace();
     let agents_user = temp_workspace();
     gix::init(&root).expect("git repository");
@@ -40,6 +41,18 @@ fn discovers_across_sources_with_precedence_and_sorts() {
         "project wins",
         "project shared",
         "disable-model-invocation: true\n",
+    );
+    write_skill(
+        &project_agents_skills,
+        "echo",
+        "from project agents",
+        "echo body",
+    );
+    write_skill(
+        &project_agents_skills,
+        "shared",
+        "project agents",
+        "agents shared",
     );
     write_skill(&sprocket_user, "shared", "sprocket user", "sprocket shared");
     write_skill_with_frontmatter(
@@ -74,7 +87,10 @@ fn discovers_across_sources_with_precedence_and_sorts() {
         .iter()
         .map(|skill| skill.name.as_str())
         .collect();
-    assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta", "shared"]);
+    assert_eq!(
+        names,
+        vec!["alpha", "bravo", "charlie", "delta", "echo", "shared"]
+    );
     let hidden_names: Vec<_> = loaded
         .skills
         .iter()

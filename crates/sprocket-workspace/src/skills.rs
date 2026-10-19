@@ -54,7 +54,7 @@ pub fn default_user_skills_dirs() -> Vec<PathBuf> {
     vec![home.join(".sprocket/skills"), home.join(".agents/skills")]
 }
 
-/// Load skills with precedence: project, then `user_skills_dirs`, then `builtin`.
+/// Load skills with precedence: project `.sprocket/skills`, project `.agents/skills`, then `user_skills_dirs`, then `builtin`.
 pub fn load_workspace_skills(
     cwd: &Path,
     user_skills_dirs: &[PathBuf],
@@ -78,12 +78,14 @@ pub fn load_workspace_skills(
     let project_root = find_project_root(&canonical_cwd);
     let mut by_name: HashMap<String, WorkspaceSkill> = HashMap::new();
 
-    scan_skills_dir(
-        &project_root.join(".sprocket/skills"),
-        "project",
-        &mut by_name,
-        &mut warnings,
-    );
+    for project_dir in [".sprocket/skills", ".agents/skills"] {
+        scan_skills_dir(
+            &project_root.join(project_dir),
+            "project",
+            &mut by_name,
+            &mut warnings,
+        );
+    }
 
     for user_dir in user_skills_dirs {
         let label = user_dir.display().to_string();
