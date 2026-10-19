@@ -285,6 +285,7 @@ export const checkout = action({
 		// The pricing site can start checkout before the app ever created the
 		// users row that stores the Dodo customer.
 		await ctx.runMutation(api.billing.ensureMySubscription, {});
+
 		const dodoCustomerId: string = await ctx.runAction(internal.pricing.ensureCustomer, {
 			userId: identity.subject,
 			email: identity.email,
@@ -1134,6 +1135,7 @@ export const customerPortal = action({
 	handler: async (ctx): Promise<{ portal_url: string }> => {
 		assertPaymentsConfigured();
 		const userId = await getUserId(ctx);
+
 		const dodoCustomerId = await ctx.runQuery(internal.billingCustomers.getDodoCustomerId, {
 			userId
 		});
