@@ -2943,11 +2943,13 @@ export default function App({
 					)}
 					<SidePanel
 						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
+						threadCwd={currentActiveThread?.cwd}
 						artifacts={artifactPanel.artifacts}
 						onDeleteArtifact={deleteArtifact}
 						tabs={artifactPanel.panel.tabs}
 						activeTabId={artifactPanel.activeTab.id}
 						browserApi={desktopApi}
+						filesApi={desktopApi}
 						expanded={artifactPanel.panel.expanded}
 						stale={artifactPanel.watchState.stale}
 						error={artifactPanel.watchState.error}
@@ -2955,6 +2957,12 @@ export default function App({
 						onActivateTab={(id) => artifactPanel.activateTab(id)}
 						onCloseTab={(id) => artifactPanel.closeTab(id)}
 						onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
+						onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
+						onOpenFile={(file) => artifactPanel.openFile(file)}
+						onFileRenamed={(workspacePath, from, to) =>
+							artifactPanel.renameFile(workspacePath, from, to)
+						}
+						onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
 

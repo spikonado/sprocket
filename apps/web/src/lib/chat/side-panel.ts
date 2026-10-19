@@ -1,4 +1,10 @@
-export type SidePanelView = 'artifacts' | 'browser';
+import type { Text } from '@codemirror/state';
+import type { WorkspaceFileTarget } from '$lib/types/sprocket';
+
+export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
+
+/** Unsaved edits to `base`, the content read at `version`. */
+export type FileDraft = { doc: Text; base: Text; version: string };
 
 export type SidePanelTab = {
 	id: string;
@@ -6,7 +12,30 @@ export type SidePanelTab = {
 	view: SidePanelView | null;
 	/** Selected artifact, for the artifacts view. */
 	selectedKey: string | null;
+	/** Open workspace file, for the file view. */
+	file?: WorkspaceFileTarget;
+	/** Unsaved edits in the file view; they live here so they outlive the editor. */
+	draft?: FileDraft;
 };
+
+export function trimSlash(path: string) {
+	return path.endsWith('/') ? path.slice(0, -1) : path;
+}
+
+export function leafName(path: string) {
+	const trimmed = trimSlash(path);
+
+	return trimmed.slice(trimmed.lastIndexOf('/') + 1);
+}
+
+export function isSameOrInside(path: string, entry: string) {
+	return path === entry || path.startsWith(`${entry}/`);
+}
+
+/** Maps `path` through a rename of `from` to `to`; returns null when unaffected. */
+export function renamedPath(path: string, from: string, to: string) {
+	return isSameOrInside(path, from) ? `${to}${path.slice(from.length)}` : null;
+}
 
 /** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {

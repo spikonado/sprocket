@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
+import { Text } from '@codemirror/state';
 import { expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import {
@@ -179,4 +180,35 @@ it('keeps at most one new tab and focuses it instead of adding another', () => {
 	panel.newTab();
 	expect(panel.panel.tabs).toHaveLength(2);
 	expect(panel.activeTab.id).toBe(emptyTabId);
+});
+
+it('opens each file once and keeps its tab across renames until it is deleted', () => {
+	const panel = new ArtifactPanel();
+	const file = { workspacePath: '/repo', path: 'src/main.rs' };
+	panel.openFile(file);
+	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
+	panel.openFile(file);
+	expect(panel.panel.tabs.filter((tab) => tab.view === 'file')).toHaveLength(2);
+	expect(panel.activeTab.file).toEqual(file);
+
+	panel.renameFile('/repo', 'src', 'lib');
+	expect(panel.activeTab.file).toEqual({ workspacePath: '/repo', path: 'lib/main.rs' });
+
+	panel.closeFile('/repo', 'lib');
+	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual([undefined, 'README.md']);
+});
+
+it('reports unsaved file edits in any scope until they are saved', () => {
+	const panel = new ArtifactPanel();
+	const doc = Text.of(['edited']);
+
+	panel.selectScope(scope('robot'));
+	panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
+	panel.setFileDraft(panel.activeTab.id, { doc, base: Text.of(['saved']), version: 'v1' });
+	panel.selectScope(scope('other'));
+	expect(panel.hasFileDrafts).toBe(true);
+
+	panel.selectScope(scope('robot'));
+	panel.setFileDraft(panel.activeTab.id, undefined);
+	expect(panel.hasFileDrafts).toBe(false);
 });

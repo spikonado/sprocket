@@ -8687,6 +8687,7 @@ dependencies = [
  "fff-search",
  "flate2",
  "futures",
+ "git2",
  "gix",
  "hex",
  "jsonwebtoken 11.1.0",

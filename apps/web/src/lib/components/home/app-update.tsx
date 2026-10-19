@@ -8,7 +8,7 @@ import {
 	updateLabel,
 	type UpdateState
 } from '$lib/updates';
-import RestartConfirmation from './restart-confirmation';
+import ConfirmDialog from './confirm-dialog';
 
 // An error belongs to the update status it was raised from and hides once that status moves on.
 type FailedRequest = { error: string; status: UpdateState['status'] };
@@ -151,7 +151,10 @@ export default function AppUpdate() {
 				<span>{busy && restartReady ? 'Restarting Sprocket...' : label}</span>
 			</button>
 			{confirmRestart && (
-				<RestartConfirmation
+				<ConfirmDialog
+					title="Restart Sprocket?"
+					description="Restarting interrupts active agents. They resume afterward only when automatic continuation is on in Settings."
+					confirmLabel="Restart Sprocket"
 					onCancel={() => setConfirmRestart(false)}
 					onConfirm={() => void update(true)}
 				/>

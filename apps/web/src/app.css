@@ -405,6 +405,92 @@ body::after {
 	opacity: 0.85;
 }
 
+.workspace-file-tree {
+	--trees-bg-override: var(--background);
+	--trees-fg-override: var(--foreground);
+	--trees-fg-muted-override: var(--muted-foreground);
+	--trees-bg-muted-override: var(--hover-fill);
+	--trees-selected-bg-override: var(--muted);
+	--trees-border-color-override: var(--hairline);
+	--trees-focus-ring-color-override: var(--ring);
+	--trees-search-bg-override: var(--muted);
+	--trees-font-family-override: var(--font-sans);
+}
+
+.file-editor {
+	--tok-keyword: #cf222e;
+	--tok-string: #0a3069;
+	--tok-number: #0550ae;
+	--tok-comment: #6e7781;
+	--tok-type: #953800;
+	--tok-function: #8250df;
+	--tok-property: #0550ae;
+	--tok-heading: #0550ae;
+	--tok-invalid: #82071e;
+}
+
+[data-theme='dark'] .file-editor {
+	--tok-keyword: #ff7b72;
+	--tok-string: #a5d6ff;
+	--tok-number: #79c0ff;
+	--tok-comment: #8b949e;
+	--tok-type: #ffa657;
+	--tok-function: #d2a8ff;
+	--tok-property: #79c0ff;
+	--tok-heading: #79c0ff;
+	--tok-invalid: #ffa198;
+}
+
+.file-editor .tok-keyword {
+	color: var(--tok-keyword);
+}
+
+.file-editor :is(.tok-string, .tok-string2, .tok-url) {
+	color: var(--tok-string);
+}
+
+.file-editor :is(.tok-number, .tok-bool, .tok-atom, .tok-literal) {
+	color: var(--tok-number);
+}
+
+.file-editor :is(.tok-comment, .tok-meta) {
+	color: var(--tok-comment);
+	font-style: italic;
+}
+
+.file-editor :is(.tok-typeName, .tok-className, .tok-namespace, .tok-labelName) {
+	color: var(--tok-type);
+}
+
+.file-editor :is(.tok-variableName.tok-definition, .tok-macroName) {
+	color: var(--tok-function);
+}
+
+.file-editor .tok-propertyName {
+	color: var(--tok-property);
+}
+
+.file-editor .tok-heading {
+	color: var(--tok-heading);
+	font-weight: 600;
+}
+
+.file-editor .tok-strong {
+	font-weight: 600;
+}
+
+.file-editor .tok-emphasis {
+	font-style: italic;
+}
+
+.file-editor .tok-link {
+	text-decoration: underline;
+}
+
+.file-editor .tok-invalid {
+	color: var(--tok-invalid);
+}
+
 .chat-markdown blockquote {
 	border-left: 2px solid var(--border);
 	padding-left: 0.9rem;

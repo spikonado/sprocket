@@ -3,7 +3,7 @@ mod image;
 mod tests;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
@@ -13,11 +13,16 @@ use crate::routes::session::MachineSession;
 use sprocket_host::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
-use sprocket_host::workspace_search::{MAX_QUERY_CHARS, SearchOutcome};
+use sprocket_host::workspace_search::{MAX_QUERY_CHARS, PathListing, SearchOutcome};
 use sprocket_workspace::{
-    BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
-    load_workspace_skills,
+    BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceFileContent,
+    WorkspaceFileWrite, browse_filesystem, create_workspace_entry, default_user_skills_dirs,
+    delete_workspace_entry, load_workspace_skills, read_workspace_file, rename_workspace_entry,
+    write_workspace_file,
 };
+
+/// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
+const WRITE_BODY_LIMIT: usize = MAX_EDITABLE_FILE_BYTES as usize * 6 + 64 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +64,52 @@ struct WorkspaceSearchEntry {
     kind: &'static str,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFilesRequest {
+    workspace_path: String,
+    known_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceFilesResponse {
+    #[serde(flatten)]
+    listing: PathListing,
+    hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceEntryRequest {
+    workspace_path: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFileWriteRequest {
+    workspace_path: String,
+    path: String,
+    content: String,
+    expected_version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceEntryCreateRequest {
+    workspace_path: String,
+    path: String,
+    directory: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceEntryRenameRequest {
+    workspace_path: String,
+    from: String,
+    to: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SkillSummary {
@@ -84,7 +135,111 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/browse", post(browse_path))
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
+        .route("/workspace/files", post(list_workspace_files))
+        .route("/workspace/file/read", post(read_file))
+        .route(
+            "/workspace/file/write",
+            post(write_file).layer(DefaultBodyLimit::max(WRITE_BODY_LIMIT)),
+        )
+        .route("/workspace/file/create", post(create_entry))
+        .route("/workspace/file/rename", post(rename_entry))
+        .route("/workspace/file/delete", post(delete_entry))
         .route("/workspace/image", get(image::local_image))
+}
+
+async fn in_workspace<T: Send + 'static>(
+    workspace_path: String,
+    operation: impl FnOnce(&std::path::Path) -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let resolution = resolve_workspace_path(&workspace_path, false)?;
+        operation(std::path::Path::new(&resolution.workspace_path))
+    })
+    .await
+    .map_err(|error| ApiError::internal(error.into()))?
+    .map_err(ApiError::bad_request)
+}
+
+async fn read_file(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceEntryRequest>,
+) -> Result<Json<WorkspaceFileContent>, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        read_workspace_file(root, &payload.path)
+    })
+    .await
+    .map(Json)
+}
+
+async fn write_file(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceFileWriteRequest>,
+) -> Result<Json<WorkspaceFileWrite>, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        write_workspace_file(
+            root,
+            &payload.path,
+            &payload.content,
+            payload.expected_version.as_deref(),
+        )
+    })
+    .await
+    .map(Json)
+}
+
+async fn create_entry(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceEntryCreateRequest>,
+) -> Result<Json<()>, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        create_workspace_entry(root, &payload.path, payload.directory)
+    })
+    .await
+    .map(Json)
+}
+
+async fn rename_entry(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceEntryRenameRequest>,
+) -> Result<Json<()>, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        rename_workspace_entry(root, &payload.from, &payload.to)
+    })
+    .await
+    .map(Json)
+}
+
+async fn delete_entry(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceEntryRequest>,
+) -> Result<Json<()>, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        delete_workspace_entry(root, &payload.path)
+    })
+    .await
+    .map(Json)
+}
+
+async fn list_workspace_files(
+    State(state): State<AppState>,
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceFilesRequest>,
+) -> Result<Json<WorkspaceFilesResponse>, ApiError> {
+    let permit = std::sync::Arc::clone(&state.host.workspace_search.search_slots)
+        .acquire_owned()
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?;
+    let mut listing = in_workspace(payload.workspace_path, move |root| {
+        let _permit = permit;
+        state.host.workspace_search.list_paths(root)
+    })
+    .await?;
+    let hash = listing.content_hash();
+    if payload.known_hash.as_deref() == Some(hash.as_str()) {
+        listing.paths.clear();
+        listing.git_status.clear();
+    }
+    Ok(Json(WorkspaceFilesResponse { listing, hash }))
 }
 
 async fn search_workspace(

@@ -14,6 +14,10 @@
 		"lint": "eslint . && convex typecheck"
 	},
 	"dependencies": {
+		"@codemirror/language": "^6.13.1",
+		"@codemirror/language-data": "^6.5.2",
+		"@codemirror/state": "^6.7.6",
+		"@codemirror/view": "^6.43.14",
 		"@convex-dev/action-retrier": "^0.3.1",
 		"@convex-dev/aggregate": "^0.3.0",
 		"@convex-dev/migrations": "^0.3.6",
@@ -28,8 +32,11 @@
 		"@fontsource-variable/ibm-plex-sans": "^5.2.8",
 		"@fontsource/dm-sans": "^5.2.8",
 		"@fontsource/ibm-plex-mono": "^5.3.0",
+		"@lezer/highlight": "^1.2.5",
+		"@pierre/trees": "1.0.0-beta.6",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"clsx": "^2.1.1",
+		"codemirror": "^6.0.2",
 		"convex": "^1.45.0",
 		"convex-helpers": "^0.1.123",
 		"devicon": "^2.17.0",

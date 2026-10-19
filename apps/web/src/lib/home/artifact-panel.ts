@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Watch } from 'convex/react';
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
@@ -14,11 +14,14 @@ import {
 import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
+	isSameOrInside,
+	renamedPath,
+	type FileDraft,
 	type SidePanelSnapshot,
 	type SidePanelTab
 } from '$lib/chat/side-panel';
 import { useStore, type Store } from '$lib/store';
-import type { ArtifactsWatchRequest, DesktopApi } from '$lib/types/sprocket';
+import type { ArtifactsWatchRequest, DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
 
@@ -72,6 +75,18 @@ export class ArtifactPanel implements Store<number> {
 
 	get activeTab() {
 		return this.panel.tabs.find((tab) => tab.id === this.panel.activeTabId) ?? this.panel.tabs[0]!;
+	}
+
+	get hasFileDrafts() {
+		const hasDraft = (panel: SidePanelSnapshot) => panel.tabs.some((tab) => tab.draft);
+
+		// The current scope's snapshot is stale until the panel leaves it again.
+		return (
+			hasDraft(this.panel) ||
+			[...this.#snapshots].some(
+				([scopeKey, snapshot]) => scopeKey !== this.#panelScopeKey && hasDraft(snapshot)
+			)
+		);
 	}
 
 	selectScope(scope: ArtifactsWatchRequest | null) {
@@ -186,6 +201,19 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
+	/** Runs on every keystroke, so it only re-renders when the tab gains or loses its draft. */
+	setFileDraft(id: string, draft: FileDraft | undefined) {
+		const tab = this.panel.tabs.find((candidate) => candidate.id === id);
+
+		if (!tab) return;
+		this.panel = {
+			...this.panel,
+			tabs: this.panel.tabs.map((candidate) => (candidate === tab ? { ...tab, draft } : candidate))
+		};
+
+		if (!tab.draft !== !draft) this.#emit();
+	}
+
 	closeTab(id: string) {
 		const index = this.panel.tabs.findIndex((tab) => tab.id === id);
 
@@ -238,6 +266,53 @@ export class ArtifactPanel implements Store<number> {
 		if (this.fullscreenKey === key) return;
 		this.fullscreenKey = key;
 		this.#emit();
+	}
+
+	/** Focuses the tab already editing the file, or opens a new one. */
+	openFile(file: WorkspaceFileTarget) {
+		const existing = this.panel.tabs.find(
+			(tab) =>
+				tab.view === 'file' &&
+				tab.file?.workspacePath === file.workspacePath &&
+				tab.file.path === file.path
+		);
+
+		if (existing) {
+			this.activateTab(existing.id);
+
+			return;
+		}
+
+		const tab: SidePanelTab = { ...this.#createTab(), view: 'file', file };
+		this.panel = { ...this.panel, tabs: [...this.panel.tabs, tab], activeTabId: tab.id };
+		this.#emit();
+	}
+
+	/** Keeps open file tabs pointing at a renamed file or folder. */
+	renameFile(workspacePath: string, from: string, to: string) {
+		let changed = false;
+
+		const tabs = this.panel.tabs.map((tab) => {
+			if (tab.file?.workspacePath !== workspacePath) return tab;
+			const path = renamedPath(tab.file.path, from, to);
+
+			if (path === null) return tab;
+			changed = true;
+
+			return { ...tab, file: { workspacePath, path } };
+		});
+
+		if (!changed) return;
+		this.panel = { ...this.panel, tabs };
+		this.#emit();
+	}
+
+	closeFile(workspacePath: string, path: string) {
+		for (const tab of this.panel.tabs) {
+			if (tab.file?.workspacePath === workspacePath && isSameOrInside(tab.file.path, path)) {
+				this.closeTab(tab.id);
+			}
+		}
 	}
 
 	#createTab(): SidePanelTab {
@@ -301,6 +376,19 @@ export class ArtifactPanel implements Store<number> {
 export function useArtifactPanel() {
 	const [panel] = useState(() => new ArtifactPanel());
 	useStore(panel);
+
+	useEffect(() => {
+		// Electron would block quitting without a prompt, after the local server already stopped.
+		if (window.sprocketDesktopBridge) return;
+
+		const warn = (event: BeforeUnloadEvent) => {
+			if (panel.hasFileDrafts) event.preventDefault();
+		};
+
+		window.addEventListener('beforeunload', warn);
+
+		return () => window.removeEventListener('beforeunload', warn);
+	}, [panel]);
 
 	return panel;
 }
