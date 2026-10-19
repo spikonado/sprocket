@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Starts `bun dev` for this worktree against the dev Convex deployment, in the foreground.
 source "$(dirname "$0")/common.sh"
+load_dev_env
 
 busy=$(dev_port_listeners)
 if [[ -n "$busy" ]]; then
