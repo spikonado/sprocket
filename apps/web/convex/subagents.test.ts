@@ -1532,6 +1532,34 @@ describe('subagents.control', () => {
 		}
 	});
 
+	it('stopping an abandoned child also stops its recovery descendants', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const child = await createChild(t, caller);
+		await abandonRun(t, child.runId);
+
+		const recovery = await insertQueuedRun(t, caller.asUser, {
+			threadId: child.threadId,
+			submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}stopped-tree`,
+			executionSecret: 'recovery-secret',
+			prompt: '',
+			machineId: machine.machineId,
+			continuationOfRunId: child.runId
+		});
+
+		const recoveryRun = await claimChildRun(t, recovery, 'recovery-secret');
+		const grandchild = await t.mutation(api.subagents.createOrSend, createArgs(recoveryRun));
+		expect(
+			await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId })
+		).toBe(true);
+
+		for (const run of [recovery, grandchild]) {
+			expect(
+				(await t.run((ctx) => ctx.db.get('runs', run.runId)))?.cancellationRequestedAt
+			).toBeDefined();
+		}
+	});
+
 	it('reports an abandoned child as working until recovery or stop', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);

@@ -788,7 +788,7 @@ export const requestCancellation = mutation({
 		if (thread.parentThreadId !== undefined) {
 			const latest = await latestRunForThread(ctx.db, thread._id);
 
-			if (latest?._id === run._id) {
+			if (latest?._id === run._id || latest?.continuationOfRunId === run._id) {
 				return (await requestThreadTreeCancellation(ctx, thread)).cancelled;
 			}
 		}
