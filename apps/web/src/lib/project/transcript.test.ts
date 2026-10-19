@@ -11,7 +11,6 @@ function overlay(streamId: string, text: string): LiveCompletionOverlay {
 		runId: 'run' as Id<'runs'>,
 		streamId,
 		runStatus: 'running',
-		runStartedAt: 1,
 		text,
 		parts: [{ type: 'text', id: 'text', turnId: streamId, text }]
 	};

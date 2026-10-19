@@ -919,8 +919,7 @@ export default function App({
 
 	const visibleMessages = transcript.visibleMessages({
 		threadId: currentThreadId,
-		userId: signedInUserId,
-		run: runState
+		userId: signedInUserId
 	});
 
 	const currentProject = useMemo<ProjectState | null>(() => {
@@ -2911,7 +2910,6 @@ export default function App({
 										}
 										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
-										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}
 										onSubmit={() => void submitPrompt()}

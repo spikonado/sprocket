@@ -63,8 +63,7 @@ const overlay = (streamId: string): LiveCompletionOverlay => ({
 	runStatus: 'running',
 	streamId,
 	text: 'Working',
-	parts: [],
-	runStartedAt: 1
+	parts: []
 });
 
 it('clears the previous thread window and notifies subscribers on selection', () => {
@@ -160,15 +159,9 @@ it('withholds visible messages for other threads and accounts', () => {
 	const replica = new TranscriptReplica();
 	replica.selectThread(threadId('thread-a'));
 
-	expect(
-		replica.visibleMessages({ threadId: threadId('thread-b'), userId: 'user-a', run: null })
-	).toEqual([]);
-	expect(
-		replica.visibleMessages({ threadId: threadId('thread-a'), userId: null, run: null })
-	).toEqual([]);
-	expect(
-		replica.visibleMessages({ threadId: threadId('thread-a'), userId: 'user-a', run: null })
-	).toEqual([]);
+	expect(replica.visibleMessages({ threadId: threadId('thread-b'), userId: 'user-a' })).toEqual([]);
+	expect(replica.visibleMessages({ threadId: threadId('thread-a'), userId: null })).toEqual([]);
+	expect(replica.visibleMessages({ threadId: threadId('thread-a'), userId: 'user-a' })).toEqual([]);
 });
 
 it('keeps one replica per mount and re-renders on changes', () => {

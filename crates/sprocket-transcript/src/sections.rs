@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -32,6 +34,8 @@ pub struct WorkSection {
     pub provisional: bool,
     pub item_count: u32,
     pub pending_tools: u32,
+    pub tool_counts: BTreeMap<String, u32>,
+    pub unpersisted_tool_call_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]

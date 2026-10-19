@@ -66,7 +66,31 @@ impl WorkReplica {
         )?;
         let mut replica = Self { db };
         replica.migrate_command_session_index()?;
+        replica.migrate_tool_counts()?;
         Ok(replica)
+    }
+
+    fn migrate_tool_counts(&mut self) -> anyhow::Result<()> {
+        let generation = self.generation()? + 1;
+        let tx = self.db.transaction()?;
+        if Self::rebuild_work_rows(&tx, generation, "json_type(body,'$.toolCounts') IS NULL")? > 0 {
+            Self::put_state(&tx, "generation", &generation)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn rebuild_work_rows(db: &Connection, generation: i64, filter: &str) -> anyhow::Result<usize> {
+        let sections: Vec<(String, String, bool)> = db
+            .prepare(&format!(
+                "SELECT id,json_extract(body,'$.threadId'),json_extract(body,'$.closed') FROM rows WHERE kind='work' AND {filter}"
+            ))?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<_, _>>()?;
+        for (section, thread, closed) in &sections {
+            Self::rebuild_section(db, thread, section, generation, Some(*closed))?;
+        }
+        Ok(sections.len())
     }
 
     fn migrate_command_session_index(&mut self) -> anyhow::Result<()> {
@@ -80,10 +104,6 @@ impl WorkReplica {
         }
         let generation = self.generation()? + 1;
         let tx = self.db.transaction()?;
-        let sections: Vec<(String, String, bool)> = tx
-            .prepare("SELECT id,json_extract(body,'$.threadId'),json_extract(body,'$.closed') FROM rows WHERE kind='work'")?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .collect::<Result<_, _>>()?;
         tx.execute_batch("DROP TABLE source_refs;")?;
         ReadIndex::initialize(&tx)?;
         {
@@ -92,9 +112,7 @@ impl WorkReplica {
                 ReadIndex(&tx).insert_part(&serde_json::from_str(&body?)?)?;
             }
         }
-        for (section, thread, closed) in sections {
-            Self::rebuild_section(&tx, &thread, &section, generation, Some(closed))?;
-        }
+        Self::rebuild_work_rows(&tx, generation, "1")?;
         Self::put_state(&tx, "generation", &generation)?;
         tx.commit()?;
         Ok(())
@@ -282,6 +300,8 @@ impl WorkReplica {
             provisional: false,
             item_count: u32::try_from(items.len())?,
             pending_tools,
+            tool_counts: index.tool_counts(key)?,
+            unpersisted_tool_call_ids: index.unpersisted_tool_call_ids(key)?,
             started_at,
             completed_at,
         };

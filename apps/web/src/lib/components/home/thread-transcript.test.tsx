@@ -40,7 +40,6 @@ function liveMessage(): LiveTranscriptMessage {
 		threadId: message(3).threadId,
 		runId: message(3).runId,
 		runStatus: 'completed',
-		runStartedAt: 1,
 		text: '',
 		parts: []
 	};
@@ -50,6 +49,14 @@ function click(element: Element | null | undefined) {
 	act(() => {
 		element?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 	});
+}
+
+function workButtons(viewport: HTMLElement) {
+	return [
+		...viewport.querySelectorAll<HTMLButtonElement>(
+			'[data-transcript-anchor] > div > button[aria-expanded]'
+		)
+	];
 }
 
 async function settle(milliseconds = 16) {
@@ -351,7 +358,20 @@ describe('transcript viewport paging', () => {
 			const response: TranscriptMessage =
 				kind === 'live'
 					? { ...liveMessage(), parts }
-					: { ...message(3), kind: 'work', id: 'work-3', itemCount: calls.length };
+					: {
+							...message(3),
+							kind: 'work',
+							id: 'work-3',
+							itemCount: calls.length,
+							toolCounts: {
+								exec_cmd: 3,
+								read_skill: 3,
+								apply_patch: 3,
+								add_artifact: 1,
+								list_artifacts: 1,
+								edit_artifact: 1
+							}
+						};
 
 			const { viewport, setProps } = await renderTranscript([response]);
 			setProps({
@@ -359,7 +379,7 @@ describe('transcript viewport paging', () => {
 					.fn()
 					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
 			});
-			click(within(viewport).getByRole('button', { name: /^Worked/ }));
+			click(workButtons(viewport)[0]);
 			await settle();
 
 			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
@@ -388,7 +408,139 @@ describe('transcript viewport paging', () => {
 		}
 	);
 
-	it('keeps running calls inside Working as they settle and the run completes', async () => {
+	it('summarizes live and persisted work without loading details', async () => {
+		const counts = { apply_patch: 2, web_search: 1, exec_cmd: 2, read_skill: 1, poll_cmd: 3 };
+		const summary = 'Read 1 skill; Ran 2 commands; Applied 2 patches; Searched 1 time';
+
+		const parts: LiveTranscriptMessage['parts'] = [
+			{ type: 'reasoning', id: 'plan', text: 'Plan the changes.' },
+			...Object.entries(counts).flatMap(([name, count]) =>
+				Array.from({ length: count }, (_, index): LiveTranscriptMessage['parts'] => [
+					{ type: 'tool-call', callId: `${name}-${index}`, name, input: {} },
+					{ type: 'tool-result', callId: `${name}-${index}`, name, output: {} }
+				]).flat()
+			)
+		];
+
+		const saved: TranscriptDisplayRow = {
+			...message(2),
+			kind: 'work',
+			id: 'saved-work',
+			toolCounts: counts
+		};
+
+		const { viewport, setProps } = await renderTranscript([saved, { ...liveMessage(), parts }]);
+		const load = vi.fn();
+		setProps({ loadSectionDetails: load });
+		await settle();
+
+		expect(workButtons(viewport).map((button) => button.textContent)).toEqual([summary, summary]);
+		expect(workButtons(viewport).map((button) => button.getAttribute('aria-expanded'))).toEqual([
+			'false',
+			'false'
+		]);
+		expect(load).not.toHaveBeenCalled();
+	});
+
+	it('keeps pending calls in their original section across text, later work, and settlement', async () => {
+		const first: LiveTranscriptMessage['parts'][number] = {
+			type: 'tool-call',
+			callId: 'first',
+			name: 'exec_cmd',
+			input: { cmd: 'sleep 11' }
+		};
+
+		const second: LiveTranscriptMessage['parts'][number] = {
+			type: 'tool-call',
+			callId: 'second',
+			name: 'exec_cmd',
+			input: { cmd: 'sleep 22' }
+		};
+
+		const response: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [first]
+		};
+
+		const { viewport, setProps } = await renderTranscript([response]);
+		setProps({ activeRunId: response.runId });
+		await settle();
+		const original = workButtons(viewport)[0];
+		const originalSection = original.closest('[data-transcript-anchor]');
+
+		if (!originalSection) throw new Error('Missing original work section');
+		expect(original.getAttribute('aria-expanded')).toBe('true');
+		expect(originalSection.querySelectorAll('[data-tool-kind]')).toHaveLength(1);
+
+		const boundary: LiveTranscriptMessage['parts'][number] = {
+			type: 'text',
+			id: 'boundary',
+			text: 'Progress update'
+		};
+
+		setProps({ messages: [{ ...response, parts: [first, boundary] }] });
+		await settle();
+		expect(workButtons(viewport)[0]).toBe(original);
+		expect(original.getAttribute('aria-expanded')).toBe('false');
+		expect(viewport.textContent).toContain('Progress update');
+
+		setProps({ messages: [{ ...response, parts: [first, boundary, second] }] });
+		await settle();
+		const latest = workButtons(viewport)[1];
+		const latestSection = latest.closest('[data-transcript-anchor]');
+
+		if (!latestSection) throw new Error('Missing latest work section');
+		expect(workButtons(viewport).map((button) => button.getAttribute('aria-expanded'))).toEqual([
+			'false',
+			'true'
+		]);
+		click(original);
+
+		const callRows = (section: Element) =>
+			[...section.querySelectorAll('[data-tool-row]')].map((row) => row.textContent);
+
+		expect(callRows(originalSection)).toEqual(['sleep 11']);
+		expect(callRows(latestSection)).toEqual(['sleep 22']);
+		expect(originalSection.textContent).not.toContain('(interrupted)');
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(2);
+		click(original);
+
+		setProps({
+			messages: [
+				{
+					...response,
+					parts: [
+						first,
+						boundary,
+						second,
+						{
+							type: 'tool-result',
+							callId: 'first',
+							name: 'exec_cmd',
+							output: { status: 'cancelled', error: 'First command stopped' }
+						}
+					]
+				}
+			]
+		});
+		await settle();
+		expect(workButtons(viewport)).toEqual([original, latest]);
+		expect(workButtons(viewport).map((button) => button.getAttribute('aria-expanded'))).toEqual([
+			'false',
+			'true'
+		]);
+		click(original);
+		expect(callRows(originalSection)).toEqual(['sleep 11(stopped)']);
+		expect(callRows(latestSection)).toEqual(['sleep 22']);
+		expect(originalSection.querySelector('[role="status"]')?.textContent).toBe(
+			'First command stopped'
+		);
+		expect(latestSection.textContent).not.toContain('(interrupted)');
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(2);
+	});
+
+	it('keeps command counts stable as calls settle and the run completes', async () => {
 		const response: LiveTranscriptMessage = {
 			...liveMessage(),
 			runStatus: 'running',
@@ -402,7 +554,8 @@ describe('transcript viewport paging', () => {
 
 		const { viewport, setProps } = await renderTranscript([response]);
 		setProps({ activeRunId: response.runId });
-		const work = within(viewport).getByRole('button', { name: /^Working/ });
+		const work = workButtons(viewport)[0];
+		expect(work.textContent).toBe('Ran 3 commands');
 		expect(work.getAttribute('aria-expanded')).toBe('true');
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
 		expect(
@@ -430,7 +583,8 @@ describe('transcript viewport paging', () => {
 
 		setProps({ messages: [settled], activeRunId: null });
 		await settle();
-		expect(within(viewport).getByRole('button', { name: /^Worked/ })).toBe(work);
+		expect(workButtons(viewport)[0]).toBe(work);
+		expect(work.textContent).toBe('Ran 3 commands');
 		expect(work.getAttribute('aria-expanded')).toBe('false');
 		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
 		click(work);
@@ -469,11 +623,7 @@ describe('transcript viewport paging', () => {
 			const { viewport, setProps } = await renderTranscript([response]);
 			setProps({ activeRunId: response.runId });
 			await settle();
-			expect(
-				within(viewport)
-					.getByRole('button', { name: /^Working/ })
-					.getAttribute('aria-expanded')
-			).toBe('true');
+			expect(workButtons(viewport)[0].getAttribute('aria-expanded')).toBe('true');
 
 			expect(
 				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
@@ -582,9 +732,7 @@ describe('transcript viewport paging', () => {
 			});
 			await settle();
 
-			const work = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
-				button.textContent?.trim().startsWith('Worked')
-			);
+			const work = workButtons(viewport)[0];
 
 			expect(work?.getAttribute('aria-expanded')).toBe('false');
 
@@ -644,9 +792,7 @@ describe('transcript viewport paging', () => {
 		});
 		await settle();
 
-		const transcript = within(viewport);
-
-		click(transcript.getByRole('button', { name: /^Worked/ }));
+		click(workButtons(viewport)[0]);
 		await settle();
 
 		expect(
@@ -712,7 +858,7 @@ describe('transcript viewport paging', () => {
 			});
 			await settle();
 
-			const buttons = within(viewport).getAllByRole('button', { name: /^Worked/ });
+			const buttons = workButtons(viewport);
 			click(buttons[1]);
 			await settle();
 			const pollRow = viewport.querySelector('[data-tool-kind="poll_cmd"]');
@@ -766,11 +912,7 @@ describe('transcript viewport paging', () => {
 		const { viewport, setProps } = await renderTranscript([launch, poll]);
 		setProps({ activeRunId: poll.runId });
 		await settle();
-		expect(
-			within(viewport)
-				.getByRole('button', { name: /^Working/ })
-				.getAttribute('aria-expanded')
-		).toBe('true');
+		expect(workButtons(viewport)[1].getAttribute('aria-expanded')).toBe('true');
 		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
 			'sleep 10'
 		);
@@ -782,6 +924,45 @@ describe('transcript viewport paging', () => {
 		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
 			'sleep 10'
 		);
+	});
+
+	it('counts saved start events and separate live calls once through completion handoff', async () => {
+		const work: TranscriptDisplayRow = {
+			...message(3),
+			kind: 'work',
+			id: 'work-3',
+			closed: false,
+			toolCounts: { exec_cmd: 2 },
+			unpersistedToolCallIds: ['running'],
+			pendingTools: 1
+		};
+
+		const live: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [
+				{ type: 'tool-call', callId: 'running', name: 'exec_cmd', input: { cmd: 'sleep 10' } },
+				{ type: 'tool-call', callId: 'new', name: 'exec_cmd', input: { cmd: 'echo new' } },
+				{ type: 'tool-call', callId: 'skill', name: 'read_skill', input: { name: 'cleanup' } }
+			]
+		};
+
+		const { viewport, setProps } = await renderTranscript([work, live]);
+		setProps({ activeRunId: live.runId });
+		await settle();
+		expect(workButtons(viewport).map((button) => button.textContent)).toEqual([
+			'Read 1 skill; Ran 3 commands'
+		]);
+		expect(viewport.textContent).toContain('sleep 10');
+		setProps({
+			messages: [
+				{ ...work, toolCounts: { exec_cmd: 3, read_skill: 1 }, unpersistedToolCallIds: [] }
+			]
+		});
+		await settle();
+		expect(workButtons(viewport).map((button) => button.textContent)).toEqual([
+			'Read 1 skill; Ran 3 commands'
+		]);
 	});
 
 	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
@@ -828,18 +1009,16 @@ describe('transcript viewport paging', () => {
 		});
 		await settle();
 
-		const workButtons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter(
-			(button) => button.textContent?.trim().startsWith('Working')
-		);
+		const buttons = workButtons(viewport);
 
-		expect(workButtons).toHaveLength(1);
-		expect(workButtons[0].getAttribute('aria-expanded')).toBe('true');
+		expect(buttons).toHaveLength(1);
+		expect(buttons[0].textContent).toBe('Reasoned');
+		expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 
 		expect(viewport.textContent).toContain('Reasoned');
-		expect(viewport.textContent).toContain('Reasoning');
 		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(3);
-		click(within(viewport).getByRole('button', { name: 'Reasoned' }));
+		click(within(viewport).getAllByRole('button', { name: 'Reasoned' })[1]);
 		expect(viewport.textContent).toContain('Saved reasoning');
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
@@ -879,23 +1058,9 @@ describe('transcript viewport paging', () => {
 		setProps({ activeRunId: live.runId });
 		await settle();
 
-		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
-			(button) => {
-				const label = button.textContent?.trim() ?? '';
-
-				return label.startsWith('Work') ? [label] : [];
-			}
-		);
-
-		expect(workLabels[0]).toBe('Worked for 2s');
-		expect(workLabels[1]).toMatch(/^Working/);
-		expect(workLabels).toHaveLength(2);
-
-		const workButtons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter(
-			(button) => button.textContent?.trim().startsWith('Work')
-		);
-
-		expect(workButtons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+		const buttons = workButtons(viewport);
+		expect(buttons.map((button) => button.textContent)).toEqual(['Reasoned', 'Reasoned']);
+		expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
 			'false',
 			'true'
 		]);
@@ -909,8 +1074,7 @@ describe('transcript viewport paging', () => {
 			kind: 'work',
 			text: '',
 			itemCount: 4_000,
-			startedAt: 1_000,
-			completedAt: 3_001_000
+			toolCounts: { read_skill: 1_000, exec_cmd: 2_000, apply_patch: 1_000 }
 		});
 
 		const first = summary(1);
@@ -943,13 +1107,11 @@ describe('transcript viewport paging', () => {
 		expect(load).not.toHaveBeenCalled();
 		expect(viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(3);
 
-		const buttons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
-			button.textContent?.includes('Worked for')
-		);
+		const buttons = workButtons(viewport);
 
 		expect(buttons.map((button) => button.textContent?.trim())).toEqual([
-			'Worked for 50m 0s',
-			'Worked for 50m 0s'
+			'Read 1000 skills; Ran 2000 commands; Applied 1000 patches',
+			'Read 1000 skills; Ran 2000 commands; Applied 1000 patches'
 		]);
 		click(buttons[0]);
 		await settle();
@@ -983,7 +1145,8 @@ describe('transcript viewport paging', () => {
 				id: 'work',
 				kind: 'work',
 				itemCount: 10,
-				closed: false
+				closed: true,
+				toolCounts: viewingError ? { exec_cmd: 9, apply_patch: 1 } : { exec_cmd: 10 }
 			};
 
 			const { viewport, scrollTo, setProps } = await renderTranscript([
@@ -1091,11 +1254,10 @@ describe('transcript viewport paging', () => {
 				);
 
 			setProps({ loadSectionDetails: load, activeRunId: work.runId });
+			click(workButtons(viewport)[0]);
 			await settle();
 
-			const disclosure = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
-				(button) => button.textContent?.trim().startsWith('Working')
-			);
+			const disclosure = workButtons(viewport)[0];
 
 			expect(disclosure?.getAttribute('aria-expanded')).toBe('true');
 			expect(load).toHaveBeenCalledTimes(1);
@@ -1207,9 +1369,11 @@ describe('transcript viewport paging', () => {
 				stale: false
 			})
 		});
-		click(within(viewport).getByRole('button', { name: /^Worked/ }));
+		click(workButtons(viewport)[0]);
 		await settle();
-		expect(within(viewport).getByRole('button', { name: 'Reasoned' })).toBeTruthy();
+		expect(viewport.querySelector('[data-work-detail] button[aria-expanded]')?.textContent).toBe(
+			'Reasoned'
+		);
 		setProps({ messages: [...props.messages, message(6)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(viewport.scrollHeight - viewport.clientHeight);

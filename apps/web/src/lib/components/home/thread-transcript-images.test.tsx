@@ -36,7 +36,6 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 						kind: 'live',
 						text,
 						runStatus: 'completed',
-						runStartedAt: 1,
 						parts: kind === 'live-section' ? [{ type: 'text', id: 'image', text }] : []
 					};
 

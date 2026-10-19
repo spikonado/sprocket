@@ -103,7 +103,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) claim_id: String,
     pub(crate) user_id: String,
     pub(crate) thread_id: String,
-    pub(crate) run_started_at: u64,
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
@@ -576,7 +575,6 @@ async fn run_with_completion_model(
         request.run_id.clone(),
         request.claim_id.clone(),
         request.thread_id.clone(),
-        request.run_started_at,
         tool_call_tracker.clone(),
     )
     .await
@@ -1117,7 +1115,6 @@ struct TranscriptSink {
     run_id: String,
     claim_id: String,
     thread_id: String,
-    run_started_at: u64,
     stream_id: String,
     attempt_seq: u64,
     parts: LiveAssistantParts,
@@ -1136,7 +1133,6 @@ impl TranscriptSink {
         run_id: String,
         claim_id: String,
         thread_id: String,
-        run_started_at: u64,
         tool_call_tracker: ToolCallTracker,
     ) -> anyhow::Result<Self> {
         runtime
@@ -1149,7 +1145,6 @@ impl TranscriptSink {
             run_id,
             claim_id,
             thread_id,
-            run_started_at,
             attempt_seq: 1,
             parts: LiveAssistantParts::default(),
             provider_metadata: HashMap::new(),
@@ -1312,7 +1307,6 @@ impl TranscriptSink {
             stream_id: self.stream_id.clone(),
             text: join_assistant_text_parts(&self.parts.parts),
             parts: visible_live_parts(&self.parts.parts),
-            run_started_at: self.run_started_at,
         };
         self.live.publish(overlay);
         if let Some(output) = &self.runtime.output {

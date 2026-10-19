@@ -29,7 +29,6 @@ export function mergeLiveOverlays(overlays: LiveCompletionOverlay[]): LiveTransc
 			threadId: live.threadId,
 			runId: live.runId,
 			runStatus: live.runStatus,
-			runStartedAt: live.runStartedAt,
 			text: joinAssistantTextParts(parts),
 			parts
 		};

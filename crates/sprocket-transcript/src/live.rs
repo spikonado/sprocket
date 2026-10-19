@@ -283,7 +283,6 @@ pub struct LiveCompletionOverlay {
     pub stream_id: String,
     pub text: String,
     pub parts: Vec<LiveAssistantPart>,
-    pub run_started_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -76,7 +76,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -146,7 +145,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'late',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -183,7 +181,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: `stream-${index}`,
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		}));
@@ -208,7 +205,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -295,7 +291,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: [{ type: 'text', id: 'answer', text: 'Answer' }]
 		};
@@ -328,7 +323,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'late',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: []
 		};
@@ -388,7 +382,6 @@ describe('DisplayHistory', () => {
 			runId: row(0).runId,
 			streamId: 'live',
 			runStatus: 'running',
-			runStartedAt: 1,
 			text: 'Answer',
 			parts: [{ type: 'text', id: 'answer', text: 'Answer' }]
 		};

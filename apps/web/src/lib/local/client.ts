@@ -129,6 +129,8 @@ const displayRowSchema = z
 		approvalUrl: z.string().optional(),
 		itemCount: z.int().nonnegative(),
 		pendingTools: z.int().nonnegative(),
+		toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
+		unpersistedToolCallIds: z.array(z.string()).optional(),
 		provisional: z.boolean().optional(),
 		startedAt: z.number().optional(),
 		completedAt: z.number().optional(),
@@ -188,8 +190,7 @@ const liveCompletionOverlaySchema = z.object({
 	runStatus: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
 	streamId: z.string().min(1),
 	text: z.string(),
-	parts: z.array(z.unknown()),
-	runStartedAt: z.int()
+	parts: z.array(z.unknown())
 });
 
 const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
@@ -273,8 +274,7 @@ function parseLiveCompletionOverlay(
 		streamId: live.streamId,
 		text: live.text,
 		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
-		parts: live.parts as AssistantPart[],
-		runStartedAt: live.runStartedAt
+		parts: live.parts as AssistantPart[]
 	};
 }
 
