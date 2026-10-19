@@ -1,0 +1,40 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Rust analysis takes over 10 minutes, so it only runs on the schedule or on demand.
+        language: >-
+          ${{ fromJSON(contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name)
+          && '["actions","javascript-typescript","rust"]'
+          || '["actions","javascript-typescript"]') }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
