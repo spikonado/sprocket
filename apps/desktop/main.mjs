@@ -43,6 +43,8 @@ let serverReadyPromise = null;
 
 let isQuitting = false;
 
+let hasUnsavedChanges = false;
+
 const updates = new DesktopUpdater(
 	process.platform === 'linux' && process.env.APPIMAGE
 		? createAppImageUpdater(electronUpdater.AppImageUpdater)
@@ -417,7 +419,12 @@ function createMainWindow() {
 	});
 
 	mainWindowRef = mainWindow;
+	mainWindow.on('close', (event) => {
+		if (!confirmDiscardUnsavedChanges()) event.preventDefault();
+	});
 	mainWindow.on('closed', () => {
+		hasUnsavedChanges = false;
+
 		if (mainWindowRef === mainWindow) {
 			mainWindowRef = null;
 		}
@@ -481,6 +488,35 @@ function requireUpdateRenderer(event) {
 	}
 }
 
+ipcMain.handle('sprocket:set-unsaved-changes', (event, value) => {
+	requireUpdateRenderer(event);
+	hasUnsavedChanges = value === true;
+});
+
+function confirmDiscardUnsavedChanges() {
+	// Quitting and installing start only after the user already chose to discard.
+	if (
+		isQuitting ||
+		updates.getState().status === 'installing' ||
+		!hasUnsavedChanges ||
+		!mainWindowRef ||
+		mainWindowRef.isDestroyed()
+	) {
+		return true;
+	}
+
+	const choice = dialog.showMessageBoxSync(mainWindowRef, {
+		type: 'question',
+		buttons: ['Leave', 'Stay'],
+		title: 'Leave Sprocket?',
+		message: 'Changes you made may not be saved.',
+		defaultId: 0,
+		cancelId: 1
+	});
+
+	return choice === 0;
+}
+
 ipcMain.handle('sprocket:get-update-state', (event) => {
 	requireUpdateRenderer(event);
 
@@ -500,6 +536,8 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 	if (updateInstallationPending || updates.getState().status !== 'downloaded') {
 		return updates.getState();
 	}
+
+	if (!confirmDiscardUnsavedChanges()) return updates.getState();
 
 	updateInstallationPending = true;
 
@@ -684,6 +722,12 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
+	if (!confirmDiscardUnsavedChanges()) {
+		event.preventDefault();
+
+		return;
+	}
+
 	isQuitting = true;
 	clearInterval(updateTimer);
 

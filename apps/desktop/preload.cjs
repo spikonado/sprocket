@@ -20,5 +20,6 @@ contextBridge.exposeInMainWorld('sprocketDesktopBridge', {
 		return () => ipcRenderer.removeListener('sprocket:workspace-launch', listener);
 	},
 	openExternal: (url) => ipcRenderer.invoke('sprocket:open-external', url),
-	focusWindow: () => ipcRenderer.invoke('sprocket:focus-window')
+	focusWindow: () => ipcRenderer.invoke('sprocket:focus-window'),
+	setUnsavedChanges: (value) => ipcRenderer.invoke('sprocket:set-unsaved-changes', value)
 });

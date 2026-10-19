@@ -378,8 +378,22 @@ export function useArtifactPanel() {
 	useStore(panel);
 
 	useEffect(() => {
-		// Electron would block quitting without a prompt, after the local server already stopped.
-		if (window.sprocketDesktopBridge) return;
+		const bridge = window.sprocketDesktopBridge;
+
+		// Electron cancels unloads without prompting, so the desktop app asks before quitting instead.
+		if (bridge) {
+			let reported: boolean | null = null;
+
+			const report = () => {
+				if (panel.hasFileDrafts === reported) return;
+				reported = panel.hasFileDrafts;
+				void bridge.setUnsavedChanges(reported);
+			};
+
+			report();
+
+			return panel.subscribe(report);
+		}
 
 		const warn = (event: BeforeUnloadEvent) => {
 			if (panel.hasFileDrafts) event.preventDefault();
