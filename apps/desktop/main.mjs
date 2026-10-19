@@ -438,6 +438,19 @@ function createMainWindow() {
 
 	mainWindow.webContents.on('will-navigate', preventUntrustedNavigation);
 	mainWindow.webContents.on('will-redirect', preventUntrustedNavigation);
+	// Electron cancels the close without asking unless this answers the page's `beforeunload`.
+	mainWindow.webContents.on('will-prevent-unload', (event) => {
+		const choice = dialog.showMessageBoxSync(mainWindow, {
+			type: 'question',
+			buttons: ['Leave', 'Stay'],
+			title: 'Leave Sprocket?',
+			message: 'Changes you made may not be saved.',
+			defaultId: 0,
+			cancelId: 1
+		});
+
+		if (choice === 0) event.preventDefault();
+	});
 	mainWindow.webContents.on(
 		'did-fail-load',
 		(_event, errorCode, errorDescription, validatedURL, isMainFrame) => {

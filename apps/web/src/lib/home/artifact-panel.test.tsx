@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
+import { Text } from '@codemirror/state';
 import { expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import {
@@ -195,4 +196,19 @@ it('opens each file once and keeps its tab across renames until it is deleted', 
 
 	panel.closeFile('/repo', 'lib');
 	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual([undefined, 'README.md']);
+});
+
+it('reports unsaved file edits in any scope until they are saved', () => {
+	const panel = new ArtifactPanel();
+	const doc = Text.of(['edited']);
+
+	panel.selectScope(scope('robot'));
+	panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
+	panel.setFileDraft(panel.activeTab.id, { doc, base: Text.of(['saved']), version: 'v1' });
+	panel.selectScope(scope('other'));
+	expect(panel.hasFileDrafts).toBe(true);
+
+	panel.selectScope(scope('robot'));
+	panel.setFileDraft(panel.activeTab.id, undefined);
+	expect(panel.hasFileDrafts).toBe(false);
 });

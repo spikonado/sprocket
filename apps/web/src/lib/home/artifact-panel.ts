@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Watch } from 'convex/react';
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
@@ -75,6 +75,18 @@ export class ArtifactPanel implements Store<number> {
 
 	get activeTab() {
 		return this.panel.tabs.find((tab) => tab.id === this.panel.activeTabId) ?? this.panel.tabs[0]!;
+	}
+
+	get hasFileDrafts() {
+		const hasDraft = (panel: SidePanelSnapshot) => panel.tabs.some((tab) => tab.draft);
+
+		// The current scope's snapshot is stale until the panel leaves it again.
+		return (
+			hasDraft(this.panel) ||
+			[...this.#snapshots].some(
+				([scopeKey, snapshot]) => scopeKey !== this.#panelScopeKey && hasDraft(snapshot)
+			)
+		);
 	}
 
 	selectScope(scope: ArtifactsWatchRequest | null) {
@@ -364,6 +376,16 @@ export class ArtifactPanel implements Store<number> {
 export function useArtifactPanel() {
 	const [panel] = useState(() => new ArtifactPanel());
 	useStore(panel);
+
+	useEffect(() => {
+		const warn = (event: BeforeUnloadEvent) => {
+			if (panel.hasFileDrafts) event.preventDefault();
+		};
+
+		window.addEventListener('beforeunload', warn);
+
+		return () => window.removeEventListener('beforeunload', warn);
+	}, [panel]);
 
 	return panel;
 }
