@@ -3,8 +3,23 @@ use std::time::Duration;
 use anyhow::Context;
 use serde::Deserialize;
 
-use super::{CliRunRequest, RunContext};
-use crate::cli_protocol::{CliModel, CliModelsResponse};
+use crate::cli_protocol::{CliModel, CliModelsResponse, CliRunRequest};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RunContext {
+    pub gateway_url: String,
+    pub thread: Option<ThreadSettings>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ThreadSettings {
+    pub repository_key: String,
+    pub selected_model: String,
+    pub reasoning_effort: String,
+    pub fast_mode: bool,
+}
 
 #[derive(Deserialize)]
 struct Response {
