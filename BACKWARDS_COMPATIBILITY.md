@@ -46,7 +46,7 @@ Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:
 
 ### Artifact `createdAt`
 
-Released servers require `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from `_creationTime`. Remove that field once those servers age out.
+Released servers require an integer `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from the floored `_creationTime`. Remove that field once those servers age out.
 
 ## Convex data shims
 

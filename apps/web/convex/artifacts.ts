@@ -422,7 +422,10 @@ export const listArtifacts = query({
 
 		return {
 			...result,
-			page: result.page.map((artifact) => ({ ...artifact, createdAt: artifact._creationTime }))
+			page: result.page.map((artifact) => ({
+				...artifact,
+				createdAt: Math.floor(artifact._creationTime)
+			}))
 		};
 	}
 });
