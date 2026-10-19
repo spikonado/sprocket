@@ -102,6 +102,7 @@ async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
 }
 
 async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache: &Path) {
+    use super::super::image_urls::ImageUrlMap;
     use crate::types::{
         AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
     };
@@ -111,7 +112,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     assert_eq!(path.parent().unwrap(), cache.canonicalize().unwrap());
     assert_eq!(tokio::fs::read(path).await.unwrap(), png());
     assert!(!metadata.to_string().contains("iVBORw0KGgo"));
-    let output = replay_image_tool_output(&metadata).await.unwrap();
+    let output = replay_tool_output(&metadata, None).await.unwrap();
     let saved_path = format!("Image saved to: {}", path.display());
     let expected = rig::message::ToolResultContent::image_base64(
         base64::engine::general_purpose::STANDARD.encode(png()),
@@ -143,7 +144,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
             }],
         }],
     }];
-    super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), true).await;
+    super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), true, None).await;
     let AgentHistoryContent::ToolResult { items, .. } = &history[0].contents[0] else {
         panic!("missing result")
     };
@@ -160,7 +161,31 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     };
     assert_eq!(image_json, &serde_json::to_string(&expected).unwrap());
 
-    super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), false).await;
+    let url = "https://example.convex.cloud/api/storage/image";
+    let stored = ImageUrlMap::from([(
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(png())),
+        url.to_string(),
+    )]);
+    let items = super::super::parse_file::replay_local_tool_output(&metadata)
+        .await
+        .unwrap()
+        .into_history_items(&stored)
+        .unwrap();
+    let rig::message::ToolResultContent::Image(by_url) = rig::message::ToolResultContent::image_url(
+        url,
+        Some(rig::message::ImageMediaType::PNG),
+        None,
+    ) else {
+        unreachable!()
+    };
+    assert!(matches!(
+        &items[1],
+        AgentHistoryToolResultItem::Image { image_json }
+            if image_json == &serde_json::to_string(&by_url).unwrap()
+    ));
+
+    super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), false, None)
+        .await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("Image omitted"));
     assert!(!serialized.contains("imageJson"));
@@ -168,7 +193,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     tokio::fs::remove_file(metadata["path"].as_str().unwrap())
         .await
         .unwrap();
-    super::super::hydrate_tool_history(&mut history, &[part], true).await;
+    super::super::hydrate_tool_history(&mut history, &[part], true, None).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("not available in the local cache"));
     assert!(!serialized.contains("imageJson"));

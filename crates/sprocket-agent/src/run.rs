@@ -812,7 +812,9 @@ async fn load_prior_history(
         .and_then(|part| part.prompt.as_ref())
         .map(|prompt| prompt.text_with_attachments());
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
-    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
+    let image_urls = crate::tools::ConvexImageUrls::new(runtime, run_id);
+    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images, Some(&image_urls))
+        .await;
     Ok(PriorHistory {
         current_prompt,
         messages: deserialize_agent_history(history)?,
