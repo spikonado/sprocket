@@ -120,7 +120,8 @@ describe('linked pull requests', () => {
 		['was unsettled after its PRs merged', false]
 	])('leaves a thread unsettled when it %s', async (_, active) => {
 		const t = initConvexTest();
-		const { asUser, threadId } = active ? await startRun(t) : await seedOwnedThread(t);
+		const started = active ? await startRun(t) : await seedOwnedThread(t);
+		const { asUser, threadId } = started;
 
 		const merge = (title?: string) =>
 			asUser.mutation(api.pullRequests.updateStates, {
@@ -140,5 +141,89 @@ describe('linked pull requests', () => {
 
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.archivedAt).toBeUndefined();
+		expect(thread?.settleWhenIdle).toBe(active || undefined);
+	});
+
+	it('settles after the run finishes when PRs merged while it was still working', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged') }]
+		});
+
+		expect(await t.run((ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			archivedAt: undefined,
+			settleWhenIdle: true
+		});
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'done'
+		});
+
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeTypeOf('number');
+		expect(thread?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('settles after the run finishes when the agent linked already-merged PRs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...caller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		expect(await t.run((ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			archivedAt: undefined,
+			settleWhenIdle: true
+		});
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'done'
+		});
+
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeTypeOf('number');
+		expect(thread?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('drops a pending settle if the setting is turned off before the run finishes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged') }]
+		});
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: false });
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'done'
+		});
+
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeUndefined();
+		expect(thread?.settleWhenIdle).toBeUndefined();
 	});
 });
