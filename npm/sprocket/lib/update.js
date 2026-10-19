@@ -4,6 +4,8 @@ import { promises as fsPromises, readFileSync, realpathSync, statSync } from 'no
 import os from 'node:os';
 import path from 'node:path';
 
+import { installedNativeVersion } from './native.js';
+
 export const PACKAGE_NAME = '@spikonado/sprocket';
 
 export const UPDATE_API_FILENAME = 'update-api.js';
@@ -475,6 +477,7 @@ export function createHost(overrides = {}) {
 		pid: overrides.pid ?? process.pid,
 		packageRoot,
 		currentVersion: overrides.currentVersion,
+		nativeVersion: overrides.nativeVersion ?? installedNativeVersion,
 		tmpdir: overrides.tmpdir ?? (() => os.tmpdir()),
 		homedir: overrides.homedir ?? (() => os.homedir()),
 		fetch: overrides.fetch ?? globalThis.fetch.bind(globalThis),
@@ -560,14 +563,17 @@ export async function checkForUpdate(host) {
 	const registryVersion = await fetchChannelVersion(host, channel, currentVersion);
 	const decision = channelUpdate(currentVersion, registryVersion);
 
-	if (decision.status === 'idle') {
+	const nativeMismatch =
+		registryVersion === currentVersion && host.nativeVersion() !== currentVersion;
+
+	if (decision.status === 'idle' && !nativeMismatch) {
 		return makePayload({ status: 'idle', currentVersion });
 	}
 
 	return makePayload({
 		status: 'available',
 		currentVersion,
-		version: decision.version
+		version: registryVersion
 	});
 }
 

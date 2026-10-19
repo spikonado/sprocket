@@ -6,13 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-	ensureExecutable,
-	launch,
-	nativePackage,
-	RESTART_EXIT_CODE,
-	run
-} from '../lib/launcher.js';
+import { ensureExecutable, launch, RESTART_EXIT_CODE, run } from '../lib/launcher.js';
+import { nativePackage } from '../lib/native.js';
 
 function successfulChild(code = 0) {
 	const child = new EventEmitter();

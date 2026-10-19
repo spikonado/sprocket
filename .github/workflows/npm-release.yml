@@ -261,6 +261,23 @@ jobs:
               )
             fi
           done
+      - name: Wait for native packages on the registry
+        if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # Installs that resolve the root before its native packages keep the old binary.
+          for package in npm-dist/*-*; do
+            name="$(node -p "require('./$package/package.json').name")"
+            for attempt in $(seq 60); do
+              if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+                continue 2
+              fi
+              sleep 15
+            done
+            echo "::error::$name@$VERSION is not on the registry after 15 minutes."
+            exit 1
+          done
       - name: Publish root package last
         if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
         env:

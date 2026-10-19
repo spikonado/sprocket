@@ -146,6 +146,7 @@ function testHost(options = {}) {
 		execPath: options.execPath ?? '/usr/bin/node',
 		packageRoot: options.packageRoot ?? NPM_PACKAGE,
 		currentVersion: options.currentVersion ?? '0.3.4',
+		nativeVersion: () => options.nativeVersion ?? options.currentVersion ?? '0.3.4',
 		pid: options.pid ?? 1001,
 		env: options.env ?? { PATH: '/usr/bin' },
 		tmpdir: options.tmpdir ?? (() => '/tmp'),
@@ -410,6 +411,18 @@ test('check reports unavailable, idle, and available without installing', async 
 		false
 	);
 	assert.match(fetched[0], /\/latest$/);
+});
+
+test('offers a reinstall when the native package version differs from the launcher', async () => {
+	const payload = await checkForUpdate(
+		testHost({
+			manifest: versionDoc('0.3.4'),
+			nativeVersion: '0.3.3'
+		}).host
+	);
+
+	assert.equal(payload.status, 'available');
+	assert.equal(payload.version, '0.3.4');
 });
 
 test('does not offer a stable or canary downgrade when the installed version is newer', async () => {
