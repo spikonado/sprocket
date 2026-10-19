@@ -201,3 +201,83 @@ async fn failed_heartbeat_keeps_cached_presence() {
 
     let _ = tokio::fs::remove_dir_all(dir).await;
 }
+
+async fn drive_heartbeat_loop(task: &tokio::task::JoinHandle<()>) {
+    tokio::time::advance(HEARTBEAT_INTERVAL).await;
+    for _ in 0..16 {
+        if task.is_finished() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn heartbeat_loop_retries_after_a_transient_failure() {
+    let (dir, manager) = manager_for_test();
+    let heartbeat = manager.spawn_heartbeat("user-a".into());
+    {
+        let mut accounts = manager.accounts.lock().await;
+        accounts.insert(
+            "user-a".into(),
+            AccountPresence {
+                heartbeat: tokio::spawn(std::future::pending()),
+            },
+        );
+    }
+
+    drive_heartbeat_loop(&heartbeat).await;
+    assert!(
+        !heartbeat.is_finished(),
+        "the first failed heartbeat must not stop the loop"
+    );
+    drive_heartbeat_loop(&heartbeat).await;
+    assert!(
+        !heartbeat.is_finished(),
+        "the loop must attempt another heartbeat after a transient failure"
+    );
+
+    heartbeat.abort();
+    if let Some(presence) = manager.accounts.lock().await.remove("user-a") {
+        presence.heartbeat.abort();
+    }
+    let _ = tokio::fs::remove_dir_all(dir).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn heartbeat_loop_stops_once_presence_is_gone() {
+    let (dir, manager) = manager_for_test();
+    let heartbeat = manager.spawn_heartbeat("user-a".into());
+    {
+        let mut accounts = manager.accounts.lock().await;
+        accounts.insert(
+            "user-a".into(),
+            AccountPresence {
+                heartbeat: tokio::spawn(std::future::pending()),
+            },
+        );
+    }
+
+    drive_heartbeat_loop(&heartbeat).await;
+    assert!(!heartbeat.is_finished());
+    if let Some(presence) = manager.accounts.lock().await.remove("user-a") {
+        presence.heartbeat.abort();
+    }
+    drive_heartbeat_loop(&heartbeat).await;
+    assert!(
+        heartbeat.is_finished(),
+        "clearing presence must stop further heartbeats"
+    );
+
+    let _ = tokio::fs::remove_dir_all(dir).await;
+}
+
+#[test]
+fn signed_out_errors_stop_heartbeats() {
+    assert!(is_terminal_heartbeat_error(&anyhow::Error::from(
+        sprocket_convex::AuthSignedOut
+    )));
+    assert!(!is_terminal_heartbeat_error(&anyhow::anyhow!(
+        "machine heartbeat timed out"
+    )));
+}
