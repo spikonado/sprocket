@@ -168,7 +168,6 @@ export type TranscriptDisplayPage = {
 	syncing: boolean;
 	stale: boolean;
 	nextBefore?: number;
-	endSequence: number;
 	revision: number;
 	persistedStreams: TranscriptDisplayStream[];
 	changes: Array<{ id: TranscriptDisplayRow['id']; row: TranscriptDisplayRow | null }>;
@@ -176,7 +175,7 @@ export type TranscriptDisplayPage = {
 	moreChanges: boolean;
 };
 
-export type TranscriptChangeCursor = { revision: number; sequence: number };
+export type TranscriptChangeCursor = { revision: number; position: number };
 
 export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
 

@@ -95,8 +95,7 @@ describe('assistant timeline', () => {
 			expect.objectContaining({
 				type: 'tool',
 				callId: 'call-1',
-				output: 'latest',
-				completedAt: 2_000
+				output: 'latest'
 			}),
 			{ type: 'text', id: 't1', text: 'Done' }
 		]);

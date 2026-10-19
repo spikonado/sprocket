@@ -26,8 +26,6 @@ function message(number: number): TranscriptDisplayRow {
 		text: `Message ${number}`,
 		attachments: [],
 		sequence: number,
-		itemCount: 0,
-		pendingTools: 0,
 		closed: true,
 		revision: 1
 	};
@@ -285,8 +283,7 @@ describe('transcript viewport paging', () => {
 					: {
 							...message(3),
 							kind: 'work',
-							id: 'work-3',
-							itemCount: 3
+							id: 'work-3'
 						};
 
 			const { props, viewport, setProps } = await renderTranscript([response]);
@@ -362,7 +359,6 @@ describe('transcript viewport paging', () => {
 							...message(3),
 							kind: 'work',
 							id: 'work-3',
-							itemCount: calls.length,
 							toolCounts: {
 								exec_cmd: 3,
 								read_skill: 3,
@@ -718,9 +714,7 @@ describe('transcript viewport paging', () => {
 							...message(3),
 							kind: 'work',
 							id: 'work-3',
-							itemCount: 1,
-							closed: true,
-							pendingTools: 0
+							closed: true
 						};
 
 			const { viewport, setProps } = await renderTranscript([response]);
@@ -838,14 +832,13 @@ describe('transcript viewport paging', () => {
 			const launch: TranscriptDisplayRow = {
 				...message(2),
 				kind: 'work',
-				id: 'launch-work',
-				itemCount: 1
+				id: 'launch-work'
 			};
 
 			const poll: TranscriptMessage =
 				kind === 'live'
 					? { ...liveMessage(), parts: pollParts }
-					: { ...message(3), kind: 'work', id: 'poll-work', itemCount: 1 };
+					: { ...message(3), kind: 'work', id: 'poll-work' };
 
 			const { viewport, setProps } = await renderTranscript([launch, poll]);
 			setProps({
@@ -918,7 +911,7 @@ describe('transcript viewport paging', () => {
 		);
 
 		setProps({
-			messages: [{ ...message(2), kind: 'work', id: 'launch-work', itemCount: 1 }, poll]
+			messages: [{ ...message(2), kind: 'work', id: 'launch-work' }, poll]
 		});
 		await settle();
 		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
@@ -933,8 +926,7 @@ describe('transcript viewport paging', () => {
 			id: 'work-3',
 			closed: false,
 			toolCounts: { exec_cmd: 2 },
-			unpersistedToolCallIds: ['running'],
-			pendingTools: 1
+			unpersistedToolCallIds: ['running']
 		};
 
 		const live: LiveTranscriptMessage = {
@@ -970,9 +962,7 @@ describe('transcript viewport paging', () => {
 			...message(3),
 			kind: 'work',
 			id: 'work-3',
-			closed: false,
-			startedAt: 1_000,
-			itemCount: 1
+			closed: false
 		};
 
 		const live: LiveTranscriptMessage = {
@@ -1028,9 +1018,7 @@ describe('transcript viewport paging', () => {
 			...message(3),
 			kind: 'work',
 			id: 'work-3',
-			closed: false,
-			startedAt: 1_000,
-			itemCount: 1
+			closed: false
 		};
 
 		const live: LiveTranscriptMessage = {
@@ -1073,7 +1061,6 @@ describe('transcript viewport paging', () => {
 			id: `work-${number}`,
 			kind: 'work',
 			text: '',
-			itemCount: 4_000,
 			toolCounts: { read_skill: 1_000, exec_cmd: 2_000, apply_patch: 1_000 }
 		});
 
@@ -1144,7 +1131,6 @@ describe('transcript viewport paging', () => {
 				...message(2),
 				id: 'work',
 				kind: 'work',
-				itemCount: 10,
 				closed: true,
 				toolCounts: viewingError ? { exec_cmd: 9, apply_patch: 1 } : { exec_cmd: 10 }
 			};
@@ -1352,8 +1338,7 @@ describe('transcript viewport paging', () => {
 		const work: TranscriptDisplayRow = {
 			...message(5),
 			id: 'work:5',
-			kind: 'work',
-			itemCount: 1
+			kind: 'work'
 		};
 
 		const { props, viewport, setProps } = await renderTranscript([

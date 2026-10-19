@@ -72,8 +72,6 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 			kind: 'work',
 			text: '',
 			sequence: 1,
-			itemCount: 100,
-			pendingTools: 0,
 			closed: !inProgress,
 			revision: 1
 		},

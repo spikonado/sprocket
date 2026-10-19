@@ -66,7 +66,10 @@ fn newest_first_parts_converge_to_one_section() {
     assert_eq!(page["indexing"], false);
     assert_eq!(page["syncing"], true);
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
-    assert_eq!(page["rows"][0]["itemCount"], 1);
+    assert_eq!(
+        page["rows"][0]["sequence"],
+        super::sections::POSITION_STRIDE
+    );
     assert_eq!(
         page["persistedStreams"],
         json!([{"runId":"run","streamId":"1"}])
@@ -84,7 +87,7 @@ fn newest_first_parts_converge_to_one_section() {
 
     let page = replica.page(None, 10, None, &[], false).unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
-    assert_eq!(page["rows"][0]["itemCount"], 2);
+    assert_eq!(page["rows"][0]["sequence"], 0);
     assert_eq!(page["syncing"], false);
     let details = replica
         .details("section", None, None, true, 10, false)
@@ -113,8 +116,8 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
     event.created_at = Some(10);
     replica.save_parts("thread", &[event]).unwrap();
     assert_eq!(
-        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["pendingTools"],
-        1
+        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["unpersistedToolCallIds"],
+        json!(["call"])
     );
     let details = replica
         .details("section", None, None, true, 10, false)
@@ -210,7 +213,11 @@ fn artifact_calls_and_results_appear_in_work_details() {
         started.tool.as_mut().unwrap().name = name.into();
         replica.save_parts("thread", &[started]).unwrap();
         let page = replica.page(None, 10, None, &[], false).unwrap();
-        assert_eq!(page["rows"][0]["pendingTools"], 1, "{name}");
+        assert_eq!(
+            page["rows"][0]["unpersistedToolCallIds"],
+            json!(["repeated"]),
+            "{name}"
+        );
         let completion = assigned_part(
             1,
             vec![json!({"type":"tool-call","callId":"repeated","name":name,"input":{}})],
@@ -223,8 +230,12 @@ fn artifact_calls_and_results_appear_in_work_details() {
             .save_parts("thread", &[completion, finished])
             .unwrap();
         let page = replica.page(None, 10, None, &[], false).unwrap();
-        assert_eq!(page["rows"][0]["itemCount"], 1, "{name}");
-        assert_eq!(page["rows"][0]["pendingTools"], 0, "{name}");
+        assert_eq!(page["rows"][0]["toolCounts"][name], 1, "{name}");
+        assert_eq!(
+            page["rows"][0]["unpersistedToolCallIds"],
+            json!([]),
+            "{name}"
+        );
         let details = replica
             .details("section", None, None, true, 10, false)
             .unwrap();
@@ -324,9 +335,7 @@ fn command_calls_settle_on_their_own_snapshot_results() {
             let parts = command_snapshot_parts(poll_running);
             replica.save_parts("thread", &parts[..2]).unwrap();
             let initial = replica.page(None, 10, None, &[], false).unwrap()["rows"][0].clone();
-            assert_eq!(initial["pendingTools"], 0);
             assert_eq!(initial["closed"], true);
-            assert_eq!(initial["completedAt"], 20.0);
             let initial_details = replica
                 .details("section", None, None, true, 10, false)
                 .unwrap()["parts"]
@@ -353,8 +362,7 @@ fn command_calls_settle_on_their_own_snapshot_results() {
             }
             let page = replica.page(None, 10, None, &[], false).unwrap();
             assert_eq!(page["rows"][0], initial);
-            assert_eq!(page["rows"][2]["pendingTools"], 0);
-            assert_eq!(page["rows"][2]["completedAt"], 50.0);
+            assert_eq!(page["rows"][2]["id"], "poll-section");
             assert_eq!(
                 replica
                     .details("section", None, None, true, 10, false)
@@ -375,39 +383,50 @@ fn command_calls_settle_on_their_own_snapshot_results() {
                     .unwrap()
                     .clone()
             );
-            assert_eq!(poll_details["parts"][1]["completedAt"], 50.0);
         }
     }
 }
 
 #[test]
-fn old_command_session_caches_migrate_without_losing_transcript_data() {
+fn caches_from_other_schema_versions_rebuild_on_open() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let parts = command_snapshot_parts(false);
-    replica.save_parts("thread", &parts).unwrap();
-    replica.set_remote_total(6).unwrap();
-    let before = replica.page(None, 10, None, &[], false).unwrap();
+    replica
+        .save_parts("thread", &command_snapshot_parts(false))
+        .unwrap();
+    let identity: String = replica.state("replicaId").unwrap().unwrap();
+    replica.db.execute_batch("PRAGMA user_version=0;").unwrap();
     drop(replica);
 
-    let db = rusqlite::Connection::open(dir.path().join("history.sqlite3")).unwrap();
-    let identity: String = db
-        .query_row("SELECT value FROM state WHERE key='replicaId'", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    db.execute_batch(
-        "ALTER TABLE source_refs ADD COLUMN session TEXT;
-        UPDATE sections SET body=json_set(body,'$.pendingTools',1,'$.completedAt',100) WHERE key='section';
-        UPDATE rows SET body=json_set(body,'$.pendingTools',1,'$.completedAt',100) WHERE id='section';
-        DELETE FROM source_refs;",
-    ).unwrap();
-    drop(db);
-
     let replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    for part in &parts {
-        assert_eq!(replica.part(part.number).unwrap().unwrap(), *part);
-    }
+    assert_ne!(
+        replica.state::<String>("replicaId").unwrap().unwrap(),
+        identity
+    );
+    assert_eq!(replica.part(0).unwrap(), None);
+    assert_eq!(
+        replica.page(None, 10, None, &[], false).unwrap()["rows"],
+        json!([])
+    );
+}
+
+#[test]
+fn emptied_sections_reach_the_change_feed_as_deletions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts("thread", &[tool_part(0, "one", "started", json!(null))])
+        .unwrap();
+    let before = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(before["rows"][0]["id"], "section");
+
+    let completion = assigned_part(
+        1,
+        vec![json!({"type":"tool-call","callId":"repeated","name":"read_file"})],
+        json!({"ranges":[{"start":0,"end":1,"sectionKey":"other"}],
+            "toolInvocations":[{"item":0,"toolInvocationId":"one"}]}),
+    );
+    replica.save_parts("thread", &[completion]).unwrap();
     let page = replica
         .page(
             None,
@@ -417,53 +436,13 @@ fn old_command_session_caches_migrate_without_losing_transcript_data() {
             false,
         )
         .unwrap();
-    assert_eq!(page["rows"][0]["pendingTools"], 0);
-    assert_eq!(page["rows"][0]["completedAt"], 20.0);
-    assert_eq!(page["rows"][0]["closed"], before["rows"][0]["closed"]);
-    assert_eq!(page["rows"][2]["closed"], before["rows"][2]["closed"]);
-    assert_eq!(page["changes"][0]["id"], "section");
-    assert_eq!(
-        replica
-            .details("section", None, None, true, 10, false)
-            .unwrap()["parts"][1]["output"]["running"],
-        true
-    );
-    drop(replica);
-
-    let db = rusqlite::Connection::open(dir.path().join("history.sqlite3")).unwrap();
-    assert_eq!(
-        db.query_row("SELECT value FROM state WHERE key='replicaId'", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .unwrap(),
-        identity
-    );
-    assert_eq!(
-        db.query_row("SELECT value FROM state WHERE key='total'", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .unwrap(),
-        "6"
-    );
-    assert_eq!(
-        db.query_row("SELECT end FROM coverage WHERE start=0", [], |row| row
-            .get::<_, u32>(0))
-            .unwrap(),
-        3
-    );
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"][0]["id"], "other");
     assert!(
-        !db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('source_refs') WHERE name='session')",
-            [],
-            |row| row.get::<_, bool>(0)
-        )
-        .unwrap()
-    );
-    drop(db);
-    let reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
-    assert_eq!(
-        reopened.page(None, 10, None, &[], false).unwrap()["revision"],
-        page["revision"]
+        page["changes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"id":"section","row":null}))
     );
 }
 
@@ -511,8 +490,10 @@ fn tool_counts_follow_displayed_calls_in_both_download_orders() {
             replica.save_parts("thread", &[part]).unwrap();
         }
         let page = replica.page(None, 10, None, &[], false).unwrap();
-        assert_eq!(page["rows"][0]["itemCount"], 6);
-        assert_eq!(page["rows"][0]["pendingTools"], 1);
+        assert_eq!(
+            page["rows"][0]["unpersistedToolCallIds"],
+            json!(["repeated"])
+        );
         assert_eq!(
             page["rows"][0]["toolCounts"],
             json!({"read_file":2,"list_artifacts":1,"poll_cmd":1,"control_cmd":1})
@@ -570,53 +551,4 @@ fn tool_counts_split_one_completion_across_sections() {
     let rows = &replica.page(None, 10, None, &[], false).unwrap()["rows"];
     assert_eq!(rows[0]["toolCounts"], json!({"exec_cmd":1}));
     assert_eq!(rows[1]["toolCounts"], json!({"exec_cmd":3}));
-}
-
-#[test]
-fn cached_sections_without_tool_counts_rebuild_on_open() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let part = assigned_part(
-        0,
-        vec![json!({"type":"tool-call","callId":"one","name":"read_file"})],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}]}),
-    );
-    replica.save_parts("thread", &[part]).unwrap();
-    let before = replica.page(None, 10, None, &[], false).unwrap();
-    replica
-        .db
-        .execute_batch(
-            "UPDATE sections SET body=json_remove(body,'$.toolCounts','$.unpersistedToolCallIds');
-            UPDATE rows SET body=json_remove(body,'$.toolCounts','$.unpersistedToolCallIds');",
-        )
-        .unwrap();
-    drop(replica);
-
-    let replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let page = replica
-        .page(
-            None,
-            10,
-            Some((before["revision"].as_u64().unwrap(), -1)),
-            &[],
-            false,
-        )
-        .unwrap();
-    assert_eq!(
-        page["changes"][0]["row"]["toolCounts"],
-        json!({"read_file":1})
-    );
-    assert_eq!(page["revision"], before["revision"].as_i64().unwrap() + 1);
-    assert!(
-        replica
-            .details("section", None, None, true, 10, false)
-            .is_ok()
-    );
-    drop(replica);
-
-    let reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
-    assert_eq!(
-        reopened.page(None, 10, None, &[], false).unwrap()["revision"],
-        page["revision"]
-    );
 }

@@ -32,8 +32,6 @@ function displayRow(sequence: number): TranscriptDisplayRow {
 		sequence,
 		kind: 'text',
 		text: 'Working',
-		itemCount: 0,
-		pendingTools: 0,
 		closed: true,
 		revision: sequence
 	};

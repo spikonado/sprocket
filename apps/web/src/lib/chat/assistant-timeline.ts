@@ -16,8 +16,6 @@ export type AssistantTimelineTool = {
 	input: JsonValue;
 	output?: JsonValue;
 	job?: ExecutorJob;
-	startedAt?: number;
-	completedAt?: number;
 };
 
 export type AssistantTimelineItem =
@@ -355,10 +353,7 @@ export function buildAssistantTimeline(
 			type: 'tool',
 			callId: part.callId,
 			name: part.name,
-			input: part.input,
-			startedAt: part.startedAt ?? job?.enqueuedAt,
-			// The call's completedAt ends argument generation, not tool execution.
-			completedAt: result?.completedAt ?? job?.completedAt
+			input: part.input
 		};
 
 		if (result) {
@@ -382,8 +377,6 @@ export function buildAssistantTimeline(
 			callId: job.callId ?? `executor-job:${job._id}`,
 			name: job.kind,
 			input: job.payload,
-			startedAt: job.enqueuedAt,
-			completedAt: job.completedAt,
 			job
 		};
 

@@ -154,14 +154,6 @@ A server process started before an update returns HTTP 401 instead of 409 for CL
 
 Transcripts from released clients lack `providerMetadata.rigNative` and `origin`. `transcript/history.rs` rebuilds native items from their older `providerMetadata` fields, and `assign_unidentified_legacy_history_origin` assigns the selected model's origin. A missing `reasoningIssuer` means `openai`. Keep these fallbacks until a versioned migration rewrites all stored local JSONL and Convex transcripts.
 
-### Command history cache
-
-On open, `replica/history.sqlite3` caches with the old `source_refs.session` column rebuild their read index and work summaries from retained transcript parts. Remove this migration once supported installations no longer have such caches.
-
-### Local work section tool counts
-
-On open, `replica/history.sqlite3` work rows without `toolCounts` rebuild from retained transcript parts. Remove `migrate_tool_counts` once supported installations no longer have such caches.
-
 ## Permanent history formats
 
 Stored executor jobs and transcripts keep accepting these historical shapes so history stays readable. No lossless rewrite exists, so they have no removal gate:

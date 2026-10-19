@@ -84,11 +84,10 @@ function emptyDisplayPage(replicaId: string): TranscriptDisplayPage {
 		indexing: false,
 		syncing: false,
 		stale: false,
-		endSequence: 0,
 		revision: 0,
 		persistedStreams: [],
 		changes: [],
-		changesCursor: { revision: 0, sequence: -1 },
+		changesCursor: { revision: 0, position: -1 },
 		moreChanges: false
 	};
 }
@@ -1089,8 +1088,6 @@ it('renders remote history progressively and allows sending while older parts lo
 		sequence: 40,
 		kind: 'text',
 		text: 'The latest robot update',
-		itemCount: 0,
-		pendingTools: 0,
 		closed: true,
 		revision: 1
 	};

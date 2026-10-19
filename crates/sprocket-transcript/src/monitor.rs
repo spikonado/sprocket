@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
 
 use super::WorkReplica;
-use super::read_index::DISPLAY_ITEM;
+use super::read_index::{DISPLAY_ITEM, ITEM_COLUMNS, ReadIndex, read_item};
 use super::sections::POSITION_STRIDE;
 use super::sections::WorkItem;
 use super::store::TranscriptStore;
@@ -306,12 +306,14 @@ fn resume_entry(
             .strip_prefix("patch-")
             .context("invalid patch resume identity")?
             .parse()?;
-        let source: String = replica.db.query_row(
-            "SELECT body FROM source_refs WHERE sequence=?",
-            [i64::try_from(sequence)?],
-            |row| row.get(0),
+        let source = replica.db.query_row(
+            &format!("SELECT {ITEM_COLUMNS} FROM source_refs s WHERE number=? AND offset=?"),
+            [
+                i64::try_from(sequence / POSITION_STRIDE)?,
+                i64::try_from(sequence % POSITION_STRIDE / 2)?,
+            ],
+            read_item,
         )?;
-        let source: WorkItem = serde_json::from_str(&source)?;
         let MonitorEntry::Patch {
             ok, mut changes, ..
         } = replica
@@ -339,7 +341,7 @@ fn resume_entry(
         let row: Option<(String, String)> = replica
             .db
             .query_row(
-                "SELECT kind, json_extract(body,'$.text') FROM rows WHERE id=?",
+                "SELECT kind, json_extract(body,'$.text') FROM rows WHERE id=? AND body IS NOT NULL",
                 [&resume.id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -370,24 +372,21 @@ fn resume_entry(
 impl WorkReplica {
     fn patch_sources(&self, after: u64, boundary: u64) -> anyhow::Result<Vec<WorkItem>> {
         let sql = format!(
-            "SELECT s.body FROM source_refs s JOIN parts p ON p.number=s.number
-            WHERE sequence>=? AND sequence<? AND CASE WHEN canonical=1
+            "SELECT {ITEM_COLUMNS} FROM source_refs s JOIN parts p ON p.number=s.number
+            WHERE s.number BETWEEN ?1/{POSITION_STRIDE} AND (?2-1)/{POSITION_STRIDE}
+            AND sequence>=?1 AND sequence<?2 AND CASE WHEN canonical=1
                 THEN json_extract(p.body,'$.completion.items['||s.offset||'].name')
                 ELSE json_extract(p.body,'$.tool.name') END='apply_patch'
             AND {DISPLAY_ITEM} ORDER BY sequence"
         );
-        let bodies = self
+        Ok(self
             .db
             .prepare(&sql)?
             .query_map(
                 rusqlite::params![i64::try_from(after)?, i64::try_from(boundary)?],
-                |row| row.get::<_, String>(0),
+                read_item,
             )?
-            .collect::<Result<Vec<_>, _>>()?;
-        bodies
-            .into_iter()
-            .map(|body| Ok(serde_json::from_str(&body)?))
-            .collect()
+            .collect::<Result<_, _>>()?)
     }
 
     fn completion_boundary(&self, after: u64, boundary: u64) -> anyhow::Result<u64> {
@@ -403,24 +402,9 @@ impl WorkReplica {
     fn patch_result_number(&self, source: &WorkItem) -> anyhow::Result<Option<u32>> {
         Ok(match source.result_part {
             Some(number) => Some(number),
-            None => {
-                let identity = source.identity();
-                let (key, value) = if source.tool_invocation_id.is_some() {
-                    ("identity", identity.as_deref())
-                } else {
-                    ("call_id", source.call_id.as_deref())
-                };
-                self.db
-                    .query_row(
-                        &format!(
-                            "SELECT number FROM source_refs WHERE run=?
-                    AND {key}=? AND canonical=0 AND terminal=1 ORDER BY sequence LIMIT 1"
-                        ),
-                        rusqlite::params![source.run_id, value],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-            }
+            None => ReadIndex(&self.db)
+                .result_event(source)?
+                .and_then(|event| event.result_part),
         })
     }
 
@@ -459,7 +443,7 @@ impl WorkReplica {
         let boundary_i = i64::try_from(boundary)?;
         let mut statement = self.db.prepare(
             "SELECT id, sequence, kind, json_extract(body,'$.text') FROM rows
-            WHERE sequence>=? AND sequence<? AND kind IN ('prompt','text')
+            WHERE sequence>=? AND sequence<? AND body IS NOT NULL AND kind IN ('prompt','text')
             ORDER BY sequence",
         )?;
         let rows: Vec<(String, i64, String, Option<String>)> = statement

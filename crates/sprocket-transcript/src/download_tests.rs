@@ -44,8 +44,8 @@ async fn assert_saved(store: &TranscriptStore, start: u32, end: u32) {
             for number in numbers {
                 assert_eq!(replica.part(number)?, Some(part(number)));
                 let text: String = replica.db.query_row(
-                    "SELECT json_extract(body,'$.text') FROM rows WHERE part=? AND kind='prompt'",
-                    [number],
+                    "SELECT json_extract(body,'$.text') FROM rows WHERE id=?",
+                    [format!("prompt-{number}")],
                     |row| row.get(0),
                 )?;
                 assert_eq!(text, format!("part {number}"));
@@ -76,7 +76,7 @@ async fn assert_empty(store: &TranscriptStore) {
         .with_work_replica("user", "thread", |replica| {
             let counts: (u32, u32, u32) = replica.db.query_row(
                 "SELECT (SELECT COUNT(*) FROM parts), (SELECT COUNT(*) FROM rows),
-                    (SELECT COUNT(*) FROM coverage)",
+                    (SELECT COUNT(*) FROM state WHERE key='downloadedPrefix')",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
