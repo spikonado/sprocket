@@ -378,6 +378,9 @@ export function useArtifactPanel() {
 	useStore(panel);
 
 	useEffect(() => {
+		// Electron would block quitting without a prompt, after the local server already stopped.
+		if (window.sprocketDesktopBridge) return;
+
 		const warn = (event: BeforeUnloadEvent) => {
 			if (panel.hasFileDrafts) event.preventDefault();
 		};
