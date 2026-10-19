@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
+import { runStartedAt } from '@convex/lib/runs';
 
 export type PersistedWork = NonNullable<Doc<'threadTranscriptParts'>['work']>;
 
@@ -32,7 +33,7 @@ export function sectionDisplayOrder(
 	return `${String(startedAt).padStart(16, '0')}:${runId}:${String(sectionOrdinal).padStart(12, '0')}`;
 }
 
-async function persistedSectionDisplayOrder(
+async function newSectionDisplayOrder(
 	ctx: MutationCtx,
 	runId: Id<'runs'>,
 	sectionOrdinal: number
@@ -41,7 +42,7 @@ async function persistedSectionDisplayOrder(
 
 	if (!run) throw new Error('Section run not found.');
 
-	return sectionDisplayOrder(run.startedAt, run._id, sectionOrdinal);
+	return sectionDisplayOrder(runStartedAt(run), run._id, sectionOrdinal);
 }
 
 async function updateSummary(
@@ -61,12 +62,6 @@ async function updateSummary(
 ) {
 	validateOrdinal(args.metadata.sectionOrdinal);
 
-	const displayOrder = await persistedSectionDisplayOrder(
-		ctx,
-		args.runId,
-		args.metadata.sectionOrdinal
-	);
-
 	const existing = await ctx.db
 		.query('threadTranscriptWorkSections')
 		.withIndex('by_threadId_and_key', (q) =>
@@ -83,7 +78,7 @@ async function updateSummary(
 			key: args.metadata.sectionKey,
 			runId: args.runId,
 			sectionOrdinal: args.metadata.sectionOrdinal,
-			displayOrder,
+			displayOrder: await newSectionDisplayOrder(ctx, args.runId, args.metadata.sectionOrdinal),
 			first,
 			end,
 			closed: args.metadata.closed,
@@ -97,19 +92,12 @@ async function updateSummary(
 		return;
 	}
 
-	if (
-		existing.runId !== args.runId ||
-		(existing.displayOrder !== undefined && existing.displayOrder !== displayOrder) ||
-		(existing.sectionOrdinal !== undefined &&
-			existing.sectionOrdinal !== args.metadata.sectionOrdinal)
-	) {
+	if (existing.runId !== args.runId || existing.sectionOrdinal !== args.metadata.sectionOrdinal) {
 		throw new Error('Section identity conflicts with an existing section.');
 	}
 
 	const pendingTools = Math.max(0, existing.pendingTools + args.pendingDelta);
 	await ctx.db.patch('threadTranscriptWorkSections', existing._id, {
-		sectionOrdinal: args.metadata.sectionOrdinal,
-		displayOrder,
 		end:
 			existing.end.part > end.part ||
 			(existing.end.part === end.part && existing.end.item >= end.item)

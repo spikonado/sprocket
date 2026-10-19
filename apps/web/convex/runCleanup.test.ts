@@ -540,12 +540,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'large-run', 'secret');
 		const jobs = await seedJobs(t, runId, 35, true);
-		await t.run((ctx) =>
-			ctx.db.patch('runs', runId, {
-				cancellationRequestedAt: Date.now() - 100,
-				cancellationDeadlineAt: Date.now() - 1
-			})
-		);
+		await t.run((ctx) => ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() }));
 
 		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId })).toBe(true);
 		const run = await t.run((ctx) => ctx.db.get('runs', runId));

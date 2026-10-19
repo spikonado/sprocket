@@ -59,7 +59,6 @@ export type QueuedRunRequest = {
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	fastMode: boolean;
 	executionSecret: string;
-	protocolVersion: number;
 	agentVersion?: string;
 	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
@@ -73,18 +72,13 @@ type CreatedGatewayRun = {
 	promptPart?: Doc<'threadTranscriptParts'>;
 };
 
-type GatewayRunTelemetry = {
-	gatewayProtocolVersion: number;
-	agentVersion?: string;
-};
-
 export async function submissionReadiness(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
 	let latestRun = await ctx.db
 		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 		.order('desc')
 		.first();
 
@@ -211,7 +205,7 @@ export async function createQueuedRunRecord(
 
 	const latestRunRecord = await ctx.db
 		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
+		.withIndex('by_threadId', (query) => query.eq('threadId', threadRecord._id))
 		.order('desc')
 		.first();
 
@@ -265,14 +259,6 @@ export async function createQueuedRunRecord(
 		throw new ConvexError(SPROCKET_SUBMISSION_WAITING);
 	}
 
-	const gatewayFields: GatewayRunTelemetry = {
-		gatewayProtocolVersion: args.protocolVersion
-	};
-
-	if (args.agentVersion) {
-		gatewayFields.agentVersion = args.agentVersion;
-	}
-
 	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
 		threadId: threadRecord._id,
 		userId: args.userId,
@@ -282,10 +268,10 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		completionProvider,
 		reasoningEffort: args.reasoningEffort,
-		fastMode: args.fastMode,
-		startedAt: Date.now(),
-		...gatewayFields
+		fastMode: args.fastMode
 	};
+
+	if (args.agentVersion) runRecord.agentVersion = args.agentVersion;
 
 	if (machineId) runRecord.machineId = machineId;
 

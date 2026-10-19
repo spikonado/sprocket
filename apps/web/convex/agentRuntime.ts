@@ -51,6 +51,7 @@ import { enabledProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
+import { runStartedAt } from '@convex/lib/runs';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -143,7 +144,6 @@ export const insertGatewayRun = internalMutation({
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
-		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs'))
@@ -193,7 +193,6 @@ export const createGatewayRun = action({
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
 			executionSecret: args.executionSecret,
-			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
 			machineId: args.machineId
 		};
@@ -331,7 +330,7 @@ function getContextResult(args: {
 			completionProvider: args.run.completionProvider,
 			reasoningEffort: args.run.reasoningEffort,
 			fastMode: args.run.fastMode,
-			startedAt: args.run.startedAt,
+			startedAt: runStartedAt(args.run),
 			continuationOfRunId: args.run.continuationOfRunId,
 			parentThreadId: args.parentThreadId
 		},

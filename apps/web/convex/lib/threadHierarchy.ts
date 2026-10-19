@@ -11,7 +11,7 @@ export async function threadOwnActivity(
 ): Promise<boolean> {
 	const latest = await db
 		.query('runs')
-		.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+		.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
 		.order('desc')
 		.first();
 

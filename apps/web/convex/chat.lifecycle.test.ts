@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
@@ -68,6 +68,8 @@ describe('chat.selectedThreadLifecycle', { timeout: 20_000 }, () => {
 });
 
 describe('durable run cancellation', { timeout: 30_000 }, () => {
+	afterEach(() => vi.useRealTimers());
+
 	it('leaves the latest question answerable when an older completed run is stopped', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId, questionId } = await runWithQuestion(t);
@@ -75,7 +77,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 		const older = await t.run((ctx) =>
 			ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
 				.order('asc')
 				.first()
 		);
@@ -190,6 +192,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 	});
 
 	it('writes the request, blocks new work, and force-cancels after the deadline', async () => {
+		vi.useFakeTimers();
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'cancel-secret';
@@ -244,9 +247,6 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 		).toBe(true);
 		const requested = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(requested?.cancellationRequestedAt).toEqual(expect.any(Number));
-		expect(requested?.cancellationDeadlineAt).toBe(
-			(requested?.cancellationRequestedAt ?? 0) + CANCELLATION_FORCE_AFTER_MS
-		);
 		expect(requested?.status).toBe('running');
 		expect(await asUser.query(api.chat.selectedThreadLifecycle, { threadId })).toMatchObject({
 			phase: 'cancellation_requested'
@@ -279,18 +279,15 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			})
 		).rejects.toThrow('Run is cancelled.');
 
-		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId: created.runId })).toBe(
-			false
-		);
-		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', created.runId, { cancellationDeadlineAt: Date.now() - 1 });
-		});
-		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId: created.runId })).toBe(
-			true
-		);
-		expect(await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status)).toBe(
-			'cancelled'
-		);
+		const runStatus = async () =>
+			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status);
+
+		await vi.advanceTimersByTimeAsync(CANCELLATION_FORCE_AFTER_MS - 1);
+		await t.finishInProgressScheduledFunctions();
+		expect(await runStatus()).toBe('running');
+		await vi.advanceTimersByTimeAsync(1);
+		await t.finishInProgressScheduledFunctions();
+		expect(await runStatus()).toBe('cancelled');
 	});
 
 	it('lets completed win before the deadline and maps executor failure to cancelled', async () => {

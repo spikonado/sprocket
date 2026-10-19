@@ -195,3 +195,19 @@ export const runMachineProcessIdBackfill = internalMutation({
 		return null;
 	}
 });
+
+export const unsetRetiredRunFields = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) =>
+		run.startedAt === undefined &&
+		run.gatewayProtocolVersion === undefined &&
+		run.cancellationDeadlineAt === undefined
+			? undefined
+			: {
+					startedAt: undefined,
+					gatewayProtocolVersion: undefined,
+					cancellationDeadlineAt: undefined
+				}
+});
+
+export const removeRetiredRunFields = migrations.runner(internal.migrations.unsetRetiredRunFields);

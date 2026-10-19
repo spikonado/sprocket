@@ -21,8 +21,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
-			executionSecret: 'new-thread-secret',
-			protocolVersion: 1
+			executionSecret: 'new-thread-secret'
 		});
 
 		const [thread, run] = await t.run(async (ctx) =>

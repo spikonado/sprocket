@@ -18,7 +18,7 @@ export const selectedThreadLifecycle = query({
 
 		const latestRun = await ctx.db
 			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.withIndex('by_threadId', (query) => query.eq('threadId', args.threadId))
 			.order('desc')
 			.first();
 

@@ -288,7 +288,7 @@ export async function questionContinuation(
 		knownRun !== undefined ? Promise.resolve(knownRun) : ctx.db.get('runs', question.runId),
 		ctx.db
 			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', question.threadId))
+			.withIndex('by_threadId', (query) => query.eq('threadId', question.threadId))
 			.order('desc')
 			.first()
 	]);
@@ -418,7 +418,7 @@ export async function cancelPendingQuestionsForThread(
 
 	const latest = await ctx.db
 		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 		.order('desc')
 		.first();
 

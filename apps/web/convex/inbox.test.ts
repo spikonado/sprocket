@@ -111,7 +111,7 @@ describe('thread inbox', () => {
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 				.first();
 
 			if (!run) throw new Error('Missing fixture run.');

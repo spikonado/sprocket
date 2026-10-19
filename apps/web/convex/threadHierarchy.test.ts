@@ -117,7 +117,7 @@ describe('thread hierarchy', () => {
 		await t.run(async (ctx) => {
 			const run = (await ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', branch.threadId))
+				.withIndex('by_threadId', (q) => q.eq('threadId', branch.threadId))
 				.unique())!;
 
 			await ctx.db.patch('threadRecords', branch.threadId, {
@@ -315,7 +315,7 @@ describe('thread hierarchy', () => {
 		await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
-				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 				.first();
 
 			await setRunAndThreadStatus(ctx, run!, 'running');

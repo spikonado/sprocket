@@ -45,7 +45,7 @@ export const state = query({
 
 		const latest = await ctx.db
 			.query('runs')
-			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', run.threadId))
+			.withIndex('by_threadId', (q) => q.eq('threadId', run.threadId))
 			.order('desc')
 			.first();
 

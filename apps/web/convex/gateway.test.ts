@@ -135,15 +135,6 @@ describe('gateway quota', () => {
 		expect(after.meters.find((meter) => meter.id === 'modelUsage')?.used).toBe(usedBefore);
 	}, 15_000);
 
-	it('snapshots the gateway protocol on new runs', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const created = await createQueuedRun(t, asUser, threadId, 'gateway-run', 'gateway-secret');
-		expect(created.created).toBe(true);
-		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
-		expect(run?.gatewayProtocolVersion).toBe(1);
-	});
-
 	it('does not issue gateway credentials for direct OpenAI runs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
