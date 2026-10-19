@@ -148,12 +148,23 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
             "src/nested/important.tmp",
         ])
     );
-    assert!(listing.git_status.contains(&GitStatusEntry {
+    let untracked = GitStatusEntry {
         path: "src/main.rs".to_string(),
         status: GitFileStatus::Untracked,
-    }));
+    };
+    // fff publishes git status from a background worker after the scan finishes.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !index
+        .list_paths(&root)
+        .unwrap()
+        .git_status
+        .contains(&untracked)
+    {
+        assert!(Instant::now() < deadline, "git status did not load in time");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert_eq!(
-        listing.content_hash(),
+        index.list_paths(&root).unwrap().content_hash(),
         index.list_paths(&root).unwrap().content_hash()
     );
 }
