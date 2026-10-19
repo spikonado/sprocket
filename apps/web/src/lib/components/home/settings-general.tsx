@@ -36,7 +36,6 @@ export default function SettingsGeneral() {
 					<PreferenceToggle
 						title="Automatically name threads"
 						description="Name threads after the first user prompt."
-						descriptionId="automatic-thread-titles-description"
 						savedEnabled={preferences?.automaticThreadTitles ?? true}
 						disabled={disabled}
 						save={setAutomaticThreadTitles}
@@ -44,15 +43,12 @@ export default function SettingsGeneral() {
 					<PreferenceToggle
 						title="Continue agents automatically after restarts"
 						description="Automatically resume interrupted agents after an update, crash, or machine restart."
-						descriptionId="automatic-agent-continuation-description"
 						savedEnabled={preferences?.automaticAgentContinuation ?? true}
 						disabled={disabled}
 						save={setAutomaticAgentContinuation}
 					/>
 					<PreferenceToggle
 						title="Settle threads when their PRs merge"
-						description="Settle a thread once every PR linked to it is merged."
-						descriptionId="settle-merged-threads-description"
 						savedEnabled={preferences?.settleMergedThreads ?? false}
 						disabled={disabled}
 						save={setSettleMergedThreads}

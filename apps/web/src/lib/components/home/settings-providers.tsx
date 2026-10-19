@@ -183,7 +183,6 @@ export default function SettingsProviders({
 					<PreferenceToggle
 						title="Restrict subagents to the parent's provider"
 						description="When off, agents can delegate to models from any enabled provider. When on, subagents only use models from the provider running the parent agent."
-						descriptionId="restrict-subagents-to-provider-description"
 						savedEnabled={preferences?.restrictSubagentsToProvider ?? false}
 						disabled={disabled}
 						save={setRestrictSubagentsToProvider}

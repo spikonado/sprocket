@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { cn } from '$lib/utils';
 
 export function SwitchTrack({ enabled }: { enabled: boolean }) {
@@ -23,18 +23,17 @@ export function SwitchTrack({ enabled }: { enabled: boolean }) {
 export default function PreferenceToggle({
 	title,
 	description,
-	descriptionId,
 	savedEnabled,
 	disabled,
 	save
 }: {
 	title: string;
-	description: string;
-	descriptionId: string;
+	description?: string;
 	savedEnabled: boolean;
 	disabled: boolean;
 	save: (args: { enabled: boolean }) => Promise<null>;
 }) {
+	const descriptionId = useId();
 	const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const enabled = pendingEnabled ?? savedEnabled;
@@ -62,16 +61,18 @@ export default function PreferenceToggle({
 				role="switch"
 				aria-checked={enabled}
 				aria-label={title}
-				aria-describedby={descriptionId}
+				aria-describedby={description ? descriptionId : undefined}
 				disabled={disabled || saving}
 				className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-wait disabled:opacity-50"
 				onClick={() => void toggle()}
 			>
 				<span className="flex-1">
 					<span className="block font-medium">{title}</span>
-					<span id={descriptionId} className="text-muted-foreground mt-1 block text-[13px]">
-						{description}
-					</span>
+					{description && (
+						<span id={descriptionId} className="text-muted-foreground mt-1 block text-[13px]">
+							{description}
+						</span>
+					)}
 				</span>
 				<SwitchTrack enabled={enabled} />
 			</button>
