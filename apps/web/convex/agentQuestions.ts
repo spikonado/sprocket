@@ -234,7 +234,9 @@ export async function answerPendingQuestion(
 		return {
 			kind: 'alreadyAnswered',
 			question,
-			continuation: await questionContinuation(ctx, question)
+			continuation: question.continuationClaim
+				? undefined
+				: await questionContinuation(ctx, question)
 		};
 	}
 
