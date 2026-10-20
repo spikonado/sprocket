@@ -356,6 +356,10 @@ export const timeout = internalMutation({
 			return null;
 		}
 
+		if (question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))) {
+			return null;
+		}
+
 		const before = await captureThreadActivityBeforeChange(ctx, question.threadId);
 
 		await ctx.db.patch('agentQuestions', question._id, {

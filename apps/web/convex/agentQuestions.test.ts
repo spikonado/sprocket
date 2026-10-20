@@ -529,6 +529,60 @@ describe('agentQuestions', () => {
 		expect(snapshot?.status).toBe('cancelled');
 	});
 
+	it('keeps a timed question after the run finishes so the answer can continue', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-08-01T10:00:00.000Z'));
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+			runId,
+			claimId,
+			question: 'Which database?',
+			options: [{ id: 'postgres', label: 'PostgreSQL' }],
+			timeoutMs: 1_000,
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'failed',
+			lastError: 'Stopped before receiving the answer.',
+			executionSecret
+		});
+
+		await t.finishAllScheduledFunctions(() => {
+			vi.advanceTimersByTime(2_000);
+		});
+
+		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', question.questionId));
+
+		expect(stored?.status).toBe('pending');
+		await expect(
+			asUser.query(api.agentQuestions.headPendingForThread, { threadId })
+		).resolves.toMatchObject({
+			questionId: question.questionId,
+			status: 'pending'
+		});
+
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: question.questionId,
+				optionId: 'postgres'
+			})
+		).resolves.toMatchObject({
+			continuation: {
+				runId,
+				prompt: 'PostgreSQL'
+			}
+		});
+
+		vi.useRealTimers();
+	});
+
 	it('uses the answer as the continuation prompt for one terminal question', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
