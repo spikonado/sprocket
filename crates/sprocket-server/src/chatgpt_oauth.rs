@@ -77,24 +77,32 @@ impl PendingLogins {
                 "Too many pending sign-ins. Retry later."
             )));
         }
-        logins.attempts.insert(value.clone(), PendingLogin {
-            session,
-            user,
-            connection,
-            expires: Instant::now() + LOGIN_LIFETIME,
-            nonce,
-            verifier,
-            redirect_uri,
-            processing: false,
-            result: None,
-        });
+        logins.attempts.insert(
+            value.clone(),
+            PendingLogin {
+                session,
+                user,
+                connection,
+                expires: Instant::now() + LOGIN_LIFETIME,
+                nonce,
+                verifier,
+                redirect_uri,
+                processing: false,
+                result: None,
+            },
+        );
         Ok(StartedLogin {
             state: value,
             authorize_url,
         })
     }
 
-    pub(crate) async fn poll(&self, session: &str, user: &str, state: &str) -> Option<LoginResult> {
+    pub(crate) async fn poll(
+        &self,
+        session: &str,
+        user: &str,
+        state: &str,
+    ) -> Option<LoginResult> {
         let logins = self.logins.lock().await;
         let login = logins.attempts.get(state).filter(|login| {
             login.session == session && login.user == user && login.expires > Instant::now()

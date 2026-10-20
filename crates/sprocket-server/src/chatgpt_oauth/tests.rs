@@ -21,12 +21,9 @@ async fn fixture() -> (tempfile::TempDir, Arc<PendingLogins>, String) {
 async fn callback_records_failure_once_without_exposing_oauth_material() {
     let (_directory, pending, session) = fixture().await;
     let value = secret();
-    pending
-        .logins
-        .lock()
-        .await
-        .attempts
-        .insert(value.clone(), PendingLogin {
+    pending.logins.lock().await.attempts.insert(
+        value.clone(),
+        PendingLogin {
             session,
             user: "user-a".into(),
             connection: None,
@@ -36,7 +33,8 @@ async fn callback_records_failure_once_without_exposing_oauth_material() {
             redirect_uri: "http://127.0.0.1:1234/auth/callback".into(),
             processing: false,
             result: None,
-        });
+        },
+    );
     let query = || CallbackQuery {
         state: Some(value.clone()),
         code: None,

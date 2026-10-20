@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -41,9 +42,9 @@ fn request(path: &str, session: &str, user: &str) -> Request<Body> {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(serde_json::json!({"userId":user}).to_string()))
         .unwrap();
-    request.extensions_mut().insert(ConnectInfo(
-        "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
-    ));
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()));
     request
 }
 
