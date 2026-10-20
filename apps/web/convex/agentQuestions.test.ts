@@ -653,18 +653,34 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		await expect(
-			asUser.mutation(api.agentQuestions.answer, {
-				threadId,
-				questionId: question.questionId,
-				optionId: 'postgres',
-				text: 'Use the existing container'
-			})
-		).resolves.toMatchObject({
+		const first = await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: question.questionId,
+			optionId: 'postgres',
+			text: 'Use the existing container'
+		});
+
+		expect(first).toMatchObject({
 			continuation: {
 				runId,
 				prompt: 'PostgreSQL: Use the existing container'
 			}
+		});
+
+		const retry = await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: question.questionId,
+			optionId: 'mysql'
+		});
+
+		expect(retry.question.answer).toMatchObject({
+			optionId: 'postgres',
+			optionLabel: 'PostgreSQL',
+			text: 'Use the existing container'
+		});
+		expect(retry.continuation).toMatchObject({
+			runId,
+			prompt: 'PostgreSQL: Use the existing container'
 		});
 	});
 
@@ -881,6 +897,7 @@ describe('agentQuestions', () => {
 		});
 
 		expect(repeat.question.answer).toMatchObject({ optionId: 'a', optionLabel: 'A' });
+		expect(repeat).not.toHaveProperty('continuation');
 
 		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', question.questionId));
 		expect(stored?.answer).toMatchObject({ optionId: 'a' });
