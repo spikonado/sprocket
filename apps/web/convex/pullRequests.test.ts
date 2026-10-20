@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { api } from '@convex/_generated/api';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import {
 	abandonRun,
@@ -395,6 +396,43 @@ describe('linked pull requests', () => {
 		expect(
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt
 		).toBeUndefined();
+	});
+
+	it('keeps a pending settle when a new run abandons an expired claim', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...caller,
+			pullRequests: [pr(1, 'merged')]
+		});
+		await t.run((ctx) => patchRunExecution(ctx, caller.runId, { claimExpiresAt: Date.now() - 1 }));
+
+		const continued = await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.start, {
+			runId: continued.runId,
+			claimId: 'follow-up-claim',
+			executionSecret: 'follow-up-secret'
+		});
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: continued.runId,
+			expectedClaimId: 'follow-up-claim',
+			executionSecret: 'follow-up-secret',
+			status: 'completed',
+			text: 'done'
+		});
+
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
 	});
 
 	it('drops a pending settle as soon as the setting is turned off', async () => {
