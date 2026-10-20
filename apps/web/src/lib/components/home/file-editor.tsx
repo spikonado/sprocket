@@ -7,9 +7,9 @@ import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
 import { leafName, type FileDraft } from '$lib/chat/side-panel';
-import type { DesktopApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
+import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type FileEditorApi = Pick<DesktopApi, 'readWorkspaceFile' | 'writeWorkspaceFile'>;
+export type FileEditorApi = Pick<LocalApi, 'readWorkspaceFile' | 'writeWorkspaceFile'>;
 
 type Props = {
 	api: FileEditorApi | null;

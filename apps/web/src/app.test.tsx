@@ -11,7 +11,7 @@ import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import type { UpdateState } from '$lib/updates';
 import type {
-	DesktopApi,
+	LocalApi,
 	ProjectAttachment,
 	TranscriptDisplayPage,
 	TranscriptDisplayRow
@@ -92,15 +92,15 @@ function emptyDisplayPage(replicaId: string): TranscriptDisplayPage {
 	};
 }
 
-function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
+function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
-		fetchBrowserStatus: vi.fn<DesktopApi['fetchBrowserStatus']>(async () => ({
+		fetchBrowserStatus: vi.fn<LocalApi['fetchBrowserStatus']>(async () => ({
 			state: 'ready',
 			error: null
 		})),
-		startBrowser: vi.fn<DesktopApi['startBrowser']>(async () => ({ state: 'ready', error: null })),
+		startBrowser: vi.fn<LocalApi['startBrowser']>(async () => ({ state: 'ready', error: null })),
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
 		listRunningCommands: vi.fn(async () => ({ commands: [] })),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
@@ -190,9 +190,9 @@ function preferChatGpt(client: ConvexTestClient) {
 	});
 }
 
-function createRuntime(desktopApi: DesktopApi): AppRuntime {
+function createRuntime(localApi: LocalApi): AppRuntime {
 	return {
-		resolveDesktopApi: async () => desktopApi,
+		resolveLocalApi: async () => localApi,
 		fetchGatewayModelCatalog: async () => modelCatalog
 	};
 }
@@ -213,8 +213,8 @@ async function renderThreadLaunch() {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Robot work');
 	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
 	client.registerQuery(api.threads.getByThreadId, {
@@ -229,7 +229,7 @@ async function renderThreadLaunch() {
 	});
 	await renderApp(
 		client,
-		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], runAgent }))
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], runAgent }))
 	);
 	fireEvent.click(await screen.findByText('Robot work'));
 
@@ -305,7 +305,7 @@ it('populates projects from the desktop client resolved during boot', async () =
 
 	await renderApp(
 		createConvexFixtures(),
-		createRuntime(createDesktopApi({ listProjectAttachments }))
+		createRuntime(createLocalApi({ listProjectAttachments }))
 	);
 
 	expect(await projectTrigger('Alpha')).toBeTruthy();
@@ -339,14 +339,14 @@ it('deletes an attached project artifact through the local server and keeps fail
 	});
 
 	const deleteArtifact = vi
-		.fn<DesktopApi['deleteArtifact']>()
+		.fn<LocalApi['deleteArtifact']>()
 		.mockRejectedValueOnce(new Error('artifact deletion timed out'))
 		.mockResolvedValue(undefined);
 
 	await renderApp(
 		client,
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [
 					projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')
 				],
@@ -372,23 +372,23 @@ it('deletes an attached project artifact through the local server and keeps fail
 });
 
 it('opens the managed browser dashboard without a thread and keeps it mounted when expanded', async () => {
-	const startBrowser = vi.fn<DesktopApi['startBrowser']>(async () => ({
+	const startBrowser = vi.fn<LocalApi['startBrowser']>(async () => ({
 		state: 'ready',
 		error: null
 	}));
 
-	const desktopApi = createDesktopApi({
+	const localApi = createLocalApi({
 		listProjectAttachments: async () => [projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')],
 		startBrowser
 	});
 
-	await renderApp(createConvexFixtures(), createRuntime(desktopApi));
+	await renderApp(createConvexFixtures(), createRuntime(localApi));
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
 	expect(startBrowser).not.toHaveBeenCalled();
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
 	const iframe = await screen.findByTitle('Agent browser dashboard');
-	expect(iframe.getAttribute('src')).toBe(desktopApi.browserDashboardUrl);
+	expect(iframe.getAttribute('src')).toBe(localApi.browserDashboardUrl);
 	expect(startBrowser).toHaveBeenCalledOnce();
 	fireEvent.click(screen.getByRole('button', { name: 'Expand to full workspace' }));
 	expect(screen.getByTitle('Agent browser dashboard')).toBe(iframe);
@@ -412,7 +412,7 @@ it('shares local message recency across the project menus and recent directories
 	await renderApp(
 		createConvexFixtures(),
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [alpha, gamma, beta],
 				browseFilesystem: async () => ({ parentPath: '/home', entries: [] })
 			})
@@ -443,13 +443,13 @@ it('refreshes message recency after a successful send even when another project 
 	};
 
 	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	let sent = false;
 	await renderApp(
 		createConvexFixtures(),
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [alpha, { ...beta, lastMessageSentAt: sent ? 20 : 0 }],
 				resolveWorkspacePath: async ({ workspacePath }) =>
 					workspacePath === beta.workspacePath ? beta : alpha,
@@ -498,7 +498,7 @@ it('surfaces a verification failure for the initially selected project', async (
 
 	await renderApp(
 		createConvexFixtures(),
-		createRuntime(createDesktopApi({ listProjectAttachments: async () => [unavailable] }))
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [unavailable] }))
 	);
 
 	expect(await projectTrigger('Alpha')).toBeTruthy();
@@ -535,7 +535,7 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 
 	await renderApp(
 		createConvexFixtures(),
-		createRuntime(createDesktopApi({ listProjectAttachments, resolveWorkspacePath }))
+		createRuntime(createLocalApi({ listProjectAttachments, resolveWorkspacePath }))
 	);
 	await projectTrigger('Alpha');
 	await waitFor(() => expect(listCalls).toBe(3));
@@ -578,7 +578,7 @@ it('keeps a saved theme until the preference subscription advances', async () =>
 
 	client.registerQuery(api.uiPreferences.getMine, preferences);
 	client.registerMutation(api.uiPreferences.setTheme, save.promise);
-	await renderApp(client, createRuntime(createDesktopApi()));
+	await renderApp(client, createRuntime(createLocalApi()));
 	fireEvent.click(await screen.findByRole('button', { name: 'Switch to dark mode' }));
 	await act(async () => {
 		save.resolve(null);
@@ -610,7 +610,7 @@ it('applies a remote theme update received while a local theme save is pending',
 
 	client.registerQuery(api.uiPreferences.getMine, preferences);
 	client.registerMutation(api.uiPreferences.setTheme, save.promise);
-	await renderApp(client, createRuntime(createDesktopApi()));
+	await renderApp(client, createRuntime(createLocalApi()));
 	fireEvent.click(await screen.findByRole('button', { name: 'Switch to dark mode' }));
 	expect(document.documentElement.dataset.theme).toBe('dark');
 	await act(async () => {
@@ -655,7 +655,7 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	await renderApp(
 		createConvexFixtures(),
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments,
 				resolveWorkspacePath: async () => ({
 					workspacePath: changedAlpha.workspacePath,
@@ -694,8 +694,8 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 
 it('keeps a local submission Starting beyond the old timeout until it starts', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Existing robot work');
 	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
 	const priorRunId = 'prior-run' as Id<'runs'>;
@@ -716,7 +716,7 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 	await renderApp(
 		client,
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [alpha],
 				resolveWorkspacePath: async () => alpha,
 				runAgent
@@ -758,12 +758,12 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 it('restores the submitted prompt and error when an agent launch fails', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const listProjectAttachments = vi.fn(async () => [alpha]);
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	await renderApp(
 		createConvexFixtures(),
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments,
 				resolveWorkspacePath: async () => alpha,
 				runAgent
@@ -825,11 +825,11 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 
 it('launches ChatGPT with a gateway model and a connected local account', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 
 	const runtime = createRuntime(
-		createDesktopApi({
+		createLocalApi({
 			listProjectAttachments: async () => [alpha],
 			resolveWorkspacePath: async () => alpha,
 			fetchChatGptStatus: async () => ({
@@ -876,12 +876,12 @@ it('launches ChatGPT with a gateway model and a connected local account', async 
 
 it('sends on Spikonado while the ChatGPT fallback check is pending', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => new Promise(() => {}));
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => new Promise(() => {}));
 
 	await renderApp(
 		createConvexFixtures(),
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [alpha],
 				resolveWorkspacePath: async () => alpha,
 				fetchChatGptStatus: () => new Promise(() => {}),
@@ -936,7 +936,7 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 
 	await renderApp(
 		client,
-		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha] }))
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha] }))
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
@@ -1004,7 +1004,7 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 	});
 	await renderApp(
 		client,
-		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha] }))
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha] }))
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
@@ -1035,13 +1035,13 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
 
-	const watchers = new Map<string, Parameters<DesktopApi['watchTranscript']>[1]['onEvent']>();
+	const watchers = new Map<string, Parameters<LocalApi['watchTranscript']>[1]['onEvent']>();
 
 	let stale = true;
 	await renderApp(
 		client,
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [alpha],
 				fetchTranscriptDisplay: async ({ threadId }) => ({
 					...emptyDisplayPage(`replica-${threadId}`),
@@ -1082,10 +1082,10 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 it('renders remote history progressively and allows sending while older parts load', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Remote robot work');
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const initial = Promise.withResolvers<TranscriptDisplayPage>();
-	let update: Parameters<DesktopApi['watchTranscript']>[1]['onEvent'] | undefined;
+	let update: Parameters<LocalApi['watchTranscript']>[1]['onEvent'] | undefined;
 
 	const recent: TranscriptDisplayRow = {
 		id: 'text-40-0',
@@ -1115,7 +1115,7 @@ it('renders remote history progressively and allows sending while older parts lo
 	await renderApp(
 		client,
 		createRuntime(
-			createDesktopApi({
+			createLocalApi({
 				listProjectAttachments: async () => [alpha],
 				resolveWorkspacePath: async () => alpha,
 				runAgent,
@@ -1215,7 +1215,7 @@ it('launches the continuation prompt after an agent question is answered', async
 
 	await renderApp(
 		client,
-		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], runAgent }))
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], runAgent }))
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
@@ -1269,13 +1269,13 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 		continuation: { runId: Id<'runs'>; prompt: string };
 	}>();
 
-	const status = Promise.withResolvers<Awaited<ReturnType<DesktopApi['fetchChatGptStatus']>>>();
+	const status = Promise.withResolvers<Awaited<ReturnType<LocalApi['fetchChatGptStatus']>>>();
 
 	const configuration =
 		Promise.withResolvers<FunctionReturnType<typeof api.providerCredentials.getMyConfiguration>>();
 
-	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
-	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
+	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const client = createConvexFixtures();
 	preferChatGpt(client);
 	client.handleAction(api.providerCredentials.getMyConfiguration, () => configuration.promise);
@@ -1294,7 +1294,7 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	client.registerMutation(api.agentQuestions.answer, answer.promise);
 
 	const runtime = createRuntime(
-		createDesktopApi({
+		createLocalApi({
 			listProjectAttachments: async () => [alpha],
 			fetchChatGptStatus: () => status.promise,
 			runAgent
@@ -1354,7 +1354,7 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 
 it('opens General by default and resets to it when reopening settings', async () => {
 	const client = createConvexFixtures();
-	await renderApp(client, createRuntime(createDesktopApi()));
+	await renderApp(client, createRuntime(createLocalApi()));
 	fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
 	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'General', current: 'page' })).toBeTruthy();
@@ -1367,7 +1367,7 @@ it('opens General by default and resets to it when reopening settings', async ()
 });
 
 it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
-	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
+	await renderApp(createConvexFixtures(), createRuntime(createLocalApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
 	const layout = document.querySelector('.inbox-layout');
 	const controls = document.querySelector<HTMLElement>('.inbox-floating-controls');
@@ -1382,7 +1382,7 @@ it('floats logo and settings over a full-width transcript when the sidebar is cl
 });
 
 it('shows a retained-account sign-out failure in Account settings', async () => {
-	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
+	await renderApp(createConvexFixtures(), createRuntime(createLocalApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
 	fireEvent.click(screen.getByRole('button', { name: 'Account' }));
 	await screen.findByRole('button', { name: 'Sign Out' });

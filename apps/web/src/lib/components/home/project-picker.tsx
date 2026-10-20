@@ -7,7 +7,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent
 } from 'react';
 import { ArrowLeft, Folder, LoaderCircle } from 'lucide-react';
-import type { DesktopApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
+import type { LocalApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
 import {
 	getBrowseLeafPathSegment,
 	isFilesystemBrowseQuery,
@@ -23,7 +23,7 @@ type RecentProjectPath = {
 	displayName: string;
 };
 
-type ProjectPickerDesktopApi = Pick<DesktopApi, 'browseFilesystem' | 'resolveWorkspacePath'>;
+type ProjectPickerLocalApi = Pick<LocalApi, 'browseFilesystem' | 'resolveWorkspacePath'>;
 
 export type ProjectSelection = {
 	workspacePath: string;
@@ -33,7 +33,7 @@ export type ProjectSelection = {
 
 export default function ProjectPicker({
 	open,
-	desktopApi,
+	localApi,
 	mode = 'add',
 	expectedDisplayName,
 	recentProjectPaths = [],
@@ -41,7 +41,7 @@ export default function ProjectPicker({
 	onSelect
 }: {
 	open: boolean;
-	desktopApi: ProjectPickerDesktopApi;
+	localApi: ProjectPickerLocalApi;
 	mode?: 'add' | 'reconnect';
 	expectedDisplayName?: string;
 	recentProjectPaths?: RecentProjectPath[];
@@ -83,7 +83,7 @@ export default function ProjectPicker({
 			setIsLoadingBrowse(true);
 
 			try {
-				const result = await desktopApi.browseFilesystem({
+				const result = await localApi.browseFilesystem({
 					partialPath: partialPath.trim().length > 0 ? partialPath : '~/'
 				});
 
@@ -113,7 +113,7 @@ export default function ProjectPicker({
 				}
 			}
 		},
-		[desktopApi, setVolumeListState]
+		[localApi, setVolumeListState]
 	);
 
 	const browseFilterQuery = getBrowseLeafPathSegment(query).toLowerCase();
@@ -318,7 +318,7 @@ export default function ProjectPicker({
 		setErrorMessage(null);
 
 		try {
-			const resolution = await desktopApi.resolveWorkspacePath({
+			const resolution = await localApi.resolveWorkspacePath({
 				workspacePath,
 				createIfMissing: willCreateDirectory
 			});

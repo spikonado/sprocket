@@ -21,11 +21,11 @@ import {
 	type SidePanelTab
 } from '$lib/chat/side-panel';
 import { useStore, type Store } from '$lib/store';
-import type { ArtifactsWatchRequest, DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
+import type { ArtifactsWatchRequest, LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
 
-type ArtifactLocalApi = Pick<DesktopApi, 'watchArtifacts'>;
+type ArtifactLocalApi = Pick<LocalApi, 'watchArtifacts'>;
 
 type ArtifactRegistryQuery = typeof api.artifacts.listArtifacts;
 

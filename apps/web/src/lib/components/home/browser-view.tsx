@@ -1,9 +1,9 @@
 import { ExternalLink, Globe, LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { BrowserStatus, DesktopApi } from '$lib/types/sprocket';
+import type { BrowserStatus, LocalApi } from '$lib/types/sprocket';
 
 export type BrowserApi = Pick<
-	DesktopApi,
+	LocalApi,
 	'fetchBrowserStatus' | 'startBrowser' | 'browserDashboardUrl'
 >;
 

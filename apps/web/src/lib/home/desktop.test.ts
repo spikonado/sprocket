@@ -8,7 +8,7 @@ import {
 	resolveSubmissionId,
 	upsertDesktopProjectAttachment
 } from '$lib/home/desktop';
-import type { DesktopApi, ProjectAttachment } from '$lib/types/sprocket';
+import type { LocalApi, ProjectAttachment } from '$lib/types/sprocket';
 
 function storageId(value: string): Id<'_storage'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -39,7 +39,7 @@ const recoveredSubmission = {
 	continuationOfRunId: runId('parent-run')
 };
 
-function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
+function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 	return {
 		fetchBrowserStatus: unusedDesktopCall,
 		startBrowser: unusedDesktopCall,
@@ -105,7 +105,7 @@ function projectAttachment(
 
 function launchArgs(
 	overrides: Partial<Parameters<typeof launchAgentRun>[0]> &
-		Pick<Parameters<typeof launchAgentRun>[0], 'desktopApi'>
+		Pick<Parameters<typeof launchAgentRun>[0], 'localApi'>
 ): Parameters<typeof launchAgentRun>[0] {
 	return {
 		userId: 'user-1',
@@ -159,10 +159,10 @@ function resolveRecoveredSubmission(
 describe('launchAgentRun', () => {
 	it('acknowledges a durably created desktop run', async () => {
 		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-1', threadId: 'thread-1' });
-		const desktopApi = createDesktopApi(runAgent);
+		const localApi = createLocalApi(runAgent);
 		const onStarted = vi.fn();
 
-		await launchAgentRun(launchArgs({ desktopApi, onStarted }));
+		await launchAgentRun(launchArgs({ localApi, onStarted }));
 
 		expect(runAgent).toHaveBeenCalledWith({
 			userId: 'user-1',
@@ -180,11 +180,11 @@ describe('launchAgentRun', () => {
 
 	it('forwards continuationOfRunId without a duplicated prompt', async () => {
 		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-2', threadId: 'thread-1' });
-		const desktopApi = createDesktopApi(runAgent);
+		const localApi = createLocalApi(runAgent);
 
 		await launchAgentRun(
 			launchArgs({
-				desktopApi,
+				localApi,
 				prompt: '',
 				storageIds: [],
 				continuationOfRunId: runId('run-1')
@@ -208,9 +208,9 @@ describe('launchAgentRun', () => {
 	it('reports asynchronous launch failures through onError', async () => {
 		const launchError = new Error('desktop launch failed');
 		const onError = vi.fn();
-		const desktopApi = createDesktopApi(vi.fn().mockRejectedValue(launchError));
+		const localApi = createLocalApi(vi.fn().mockRejectedValue(launchError));
 
-		await launchAgentRun(launchArgs({ desktopApi, onError }));
+		await launchAgentRun(launchArgs({ localApi, onError }));
 
 		expect(onError).toHaveBeenCalledWith(launchError);
 	});

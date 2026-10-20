@@ -24,10 +24,10 @@ import {
 import { createPortal } from 'react-dom';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import { leafName, trimSlash } from '$lib/chat/side-panel';
-import type { DesktopApi, WorkspaceFileTarget } from '$lib/types/sprocket';
+import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FilesApi = Pick<
-	DesktopApi,
+	LocalApi,
 	'listWorkspaceFiles' | 'createWorkspaceFile' | 'renameWorkspaceFile' | 'deleteWorkspaceFile'
 >;
 

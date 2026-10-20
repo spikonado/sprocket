@@ -6,7 +6,7 @@ import { api } from '@convex/_generated/api';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { cn } from '$lib/utils';
 import type {
-	DesktopApi,
+	LocalApi,
 	GitHubHostStatus,
 	GitHubSettingsUpdate,
 	GitHubStatus
@@ -18,7 +18,7 @@ const sourceLabels: Record<NonNullable<GitHubHostStatus['source']>, string> = {
 	gitHubCli: 'gh login'
 };
 
-type GitHubApi = Pick<DesktopApi, 'fetchGitHubStatus' | 'updateGitHubSettings'>;
+type GitHubApi = Pick<LocalApi, 'fetchGitHubStatus' | 'updateGitHubSettings'>;
 
 const caughtError = z.instanceof(Error).catch(new Error());
 
@@ -27,10 +27,10 @@ const tokenInputClass =
 
 export default function SettingsVersionControl({
 	userId,
-	desktopApi
+	localApi
 }: {
 	userId: string;
-	desktopApi: GitHubApi | null;
+	localApi: GitHubApi | null;
 }) {
 	const saveToken = useAction(api.githubCredentials.saveToken);
 	const removeToken = useAction(api.githubCredentials.removeToken);
@@ -40,12 +40,12 @@ export default function SettingsVersionControl({
 	const [error, setError] = useState<string | null>(null);
 
 	const check = useCallback(async () => {
-		if (!desktopApi) return;
+		if (!localApi) return;
 		setChecking(true);
 		setError(null);
 
 		try {
-			setStatus(await desktopApi.fetchGitHubStatus(userId));
+			setStatus(await localApi.fetchGitHubStatus(userId));
 		} catch (caught) {
 			setError(
 				convexClientErrorMessage(caughtError.parse(caught)) ??
@@ -54,7 +54,7 @@ export default function SettingsVersionControl({
 		} finally {
 			setChecking(false);
 		}
-	}, [desktopApi, userId]);
+	}, [localApi, userId]);
 
 	useEffect(() => {
 		void check();
@@ -62,12 +62,12 @@ export default function SettingsVersionControl({
 
 	/** Runs one change, then shows the status that results from it. */
 	async function change(key: string, run: (api: GitHubApi) => Promise<GitHubStatus>) {
-		if (!desktopApi || pendingKey) return false;
+		if (!localApi || pendingKey) return false;
 		setPendingKey(key);
 		setError(null);
 
 		try {
-			setStatus(await run(desktopApi));
+			setStatus(await run(localApi));
 
 			return true;
 		} catch (caught) {
@@ -104,7 +104,7 @@ export default function SettingsVersionControl({
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
-					{!desktopApi ? (
+					{!localApi ? (
 						<p className="text-muted-foreground text-sm leading-6">
 							Version control settings belong to the computer running Sprocket. Open Sprocket there
 							to change them.

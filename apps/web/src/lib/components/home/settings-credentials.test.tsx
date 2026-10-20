@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
-import type { ChatGptStatus, DesktopApi } from '$lib/types/sprocket';
+import type { ChatGptStatus, LocalApi } from '$lib/types/sprocket';
 import SettingsCredentials from './settings-credentials';
 
 const loginWindow = {
@@ -37,7 +37,7 @@ function statusFixture(overrides: Partial<ChatGptStatus> = {}): ChatGptStatus {
 	};
 }
 
-function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
+function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
@@ -91,11 +91,11 @@ function mount(
 	{
 		openAiConfigured = false,
 		chatGptStatus = statusFixture(),
-		desktopApi = createChatGptApi()
+		localApi = createChatGptApi()
 	}: {
 		openAiConfigured?: boolean;
 		chatGptStatus?: ChatGptStatus;
-		desktopApi?: DesktopApi;
+		localApi?: LocalApi;
 	} = {}
 ) {
 	const onConfigurationChange = vi.fn();
@@ -107,7 +107,7 @@ function mount(
 		return (
 			<SettingsCredentials
 				userId="user-a"
-				desktopApi={desktopApi}
+				localApi={localApi}
 				openAiConfigured={openAiConfigured}
 				chatGptStatus={status}
 				chatGptLoading={false}
@@ -204,13 +204,13 @@ it('opens browser sign-in on the first click and reports the refreshed status', 
 
 	const fetchStatus = vi.fn(async () => connectedStatus);
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: start,
 		fetchChatGptBrowserLoginResult: async () => ({ status: 'complete' }),
 		fetchChatGptStatus: fetchStatus
 	});
 
-	const view = mount(client, { desktopApi });
+	const view = mount(client, { localApi });
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
@@ -231,7 +231,7 @@ it('opens desktop sign-in without creating a browser popup', async () => {
 	const openExternal = vi.fn(async () => {});
 	vi.stubGlobal('sprocketDesktopBridge', { openExternal });
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: async () => ({
 			state: 'state-1',
 			authorizeUrl: 'https://auth.openai.test/authorize'
@@ -239,7 +239,7 @@ it('opens desktop sign-in without creating a browser popup', async () => {
 		fetchChatGptBrowserLoginResult: () => new Promise(() => {})
 	});
 
-	mount(new ConvexTestClient(), { desktopApi });
+	mount(new ConvexTestClient(), { localApi });
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
@@ -252,7 +252,7 @@ it('reports a blocked browser popup before starting a server login', async () =>
 	openLoginWindow.mockReturnValue(null);
 	const start = vi.fn();
 	mount(new ConvexTestClient(), {
-		desktopApi: createChatGptApi({ startChatGptBrowserLogin: start })
+		localApi: createChatGptApi({ startChatGptBrowserLogin: start })
 	});
 	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	expect(await screen.findByRole('alert')).toHaveProperty(
@@ -271,7 +271,7 @@ it('cancels a server login when the desktop browser cannot open', async () => {
 
 	const cancel = vi.fn(async () => {});
 	mount(new ConvexTestClient(), {
-		desktopApi: createChatGptApi({
+		localApi: createChatGptApi({
 			startChatGptBrowserLogin: async () => ({
 				state: 'state-1',
 				authorizeUrl: 'https://auth.openai.test/authorize'
@@ -289,7 +289,7 @@ it('cancels a server login when the desktop browser cannot open', async () => {
 
 it('closes the reserved popup when starting sign-in fails', async () => {
 	mount(new ConvexTestClient(), {
-		desktopApi: createChatGptApi({
+		localApi: createChatGptApi({
 			startChatGptBrowserLogin: async () => {
 				throw new Error('Could not start sign-in.');
 			}
@@ -308,7 +308,7 @@ it('reserves the popup before waiting for sign-in and closes a stale start', asy
 	const cancel = vi.fn(async () => {});
 
 	const view = mount(new ConvexTestClient(), {
-		desktopApi: createChatGptApi({
+		localApi: createChatGptApi({
 			startChatGptBrowserLogin: () => started.promise,
 			cancelChatGptBrowserLogin: cancel
 		})
@@ -329,7 +329,7 @@ it('cancels a stalled sign-in start and closes its reserved popup once it resolv
 	const cancel = vi.fn(async () => {});
 
 	mount(new ConvexTestClient(), {
-		desktopApi: createChatGptApi({
+		localApi: createChatGptApi({
 			startChatGptBrowserLogin: () => started.promise,
 			cancelChatGptBrowserLogin: cancel
 		})
@@ -349,7 +349,7 @@ it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: async () => ({
 			state: 'state-1',
 			authorizeUrl: 'https://auth.openai.test/authorize'
@@ -360,7 +360,7 @@ it('surfaces server-side login errors from the result poll', async () => {
 		})
 	});
 
-	mount(client, { desktopApi });
+	mount(client, { localApi });
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
@@ -376,7 +376,7 @@ it('cancels the pending browser login on unmount while its poll is in flight', a
 	const result = Promise.withResolvers<{ status: 'pending' | 'complete' | 'error' }>();
 	const cancel = vi.fn(async () => {});
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: async () => ({
 			state: 'state-1',
 			authorizeUrl: 'https://auth.openai.test/authorize'
@@ -385,7 +385,7 @@ it('cancels the pending browser login on unmount while its poll is in flight', a
 		cancelChatGptBrowserLogin: cancel
 	});
 
-	const view = mount(client, { desktopApi });
+	const view = mount(client, { localApi });
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
@@ -410,7 +410,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 
 	const cancel = vi.fn(async () => {});
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: start,
 		cancelChatGptBrowserLogin: cancel,
 		fetchChatGptBrowserLoginResult: async () => ({ status: 'pending' })
@@ -420,7 +420,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 		<ConvexTestProvider client={client}>
 			<SettingsCredentials
 				userId={userId}
-				desktopApi={desktopApi}
+				localApi={localApi}
 				openAiConfigured={false}
 				chatGptStatus={statusFixture()}
 				chatGptLoading={false}
@@ -449,7 +449,7 @@ it('ignores a stale login completion after the user cancels and starts again', a
 	const cancel = vi.fn(async () => {});
 	let startCount = 0;
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: async () => ({
 			state: `state-${++startCount}`,
 			authorizeUrl: 'https://auth.openai.test/authorize'
@@ -459,7 +459,7 @@ it('ignores a stale login completion after the user cancels and starts again', a
 		cancelChatGptBrowserLogin: cancel
 	});
 
-	const view = mount(client, { desktopApi });
+	const view = mount(client, { localApi });
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
@@ -496,12 +496,12 @@ it('switches the active account and reports the refreshed status', async () => {
 	const switchedStatus = { ...status, activeConnectionId: 'conn-2' };
 	const select = vi.fn(async () => {});
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		selectChatGptAccount: select,
 		fetchChatGptStatus: async () => switchedStatus
 	});
 
-	const view = mount(client, { chatGptStatus: status, desktopApi });
+	const view = mount(client, { chatGptStatus: status, localApi });
 	fireEvent.click(screen.getByRole('button', { name: 'Use' }));
 	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(switchedStatus));
 	expect(select).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-2' });
@@ -518,12 +518,12 @@ it('signs an account out on the first click and shows the server warning', async
 	const signedOutStatus = statusFixture();
 	const disconnect = vi.fn(async () => 'Remote revocation could not be confirmed.');
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		disconnectChatGptAccount: disconnect,
 		fetchChatGptStatus: async () => signedOutStatus
 	});
 
-	const view = mount(client, { chatGptStatus: status, desktopApi });
+	const view = mount(client, { chatGptStatus: status, localApi });
 	fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(signedOutStatus));
 	expect(disconnect).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-1' });
@@ -541,7 +541,7 @@ it('forgets a signed-out account before a follow-up status check settles', async
 
 	const view = mount(new ConvexTestClient(), {
 		chatGptStatus: status,
-		desktopApi: createChatGptApi({
+		localApi: createChatGptApi({
 			disconnectChatGptAccount: async () => null,
 			fetchChatGptStatus: () => pending.promise
 		})
@@ -574,12 +574,12 @@ it('reconnects a signed-out account through the browser flow', async () => {
 		authorizeUrl: 'https://auth.openai.test/authorize'
 	}));
 
-	const desktopApi = createChatGptApi({
+	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: start,
 		fetchChatGptBrowserLoginResult: () => new Promise(() => {})
 	});
 
-	mount(client, { chatGptStatus: status, desktopApi });
+	mount(client, { chatGptStatus: status, localApi });
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
 	});

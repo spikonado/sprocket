@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
-import type { DesktopApi, GitHubStatus } from '$lib/types/sprocket';
+import type { LocalApi, GitHubStatus } from '$lib/types/sprocket';
 import SettingsVersionControl from './settings-version-control';
 
 afterEach(cleanup);
@@ -37,17 +37,18 @@ function mount(status: GitHubStatus) {
 	const removeToken = vi.fn(async () => null);
 	client.handleAction(api.githubCredentials.saveToken, saveToken);
 	client.handleAction(api.githubCredentials.removeToken, removeToken);
-	const fetchGitHubStatus = vi.fn<DesktopApi['fetchGitHubStatus']>(async () => status);
+	const fetchGitHubStatus = vi.fn<LocalApi['fetchGitHubStatus']>(async () => status);
 
-	const updateGitHubSettings = vi.fn<DesktopApi['updateGitHubSettings']>(
-		async (_userId, update) => ({ ...status, enabled: update.enabled ?? status.enabled })
-	);
+	const updateGitHubSettings = vi.fn<LocalApi['updateGitHubSettings']>(async (_userId, update) => ({
+		...status,
+		enabled: update.enabled ?? status.enabled
+	}));
 
 	render(
 		<ConvexTestProvider client={client}>
 			<SettingsVersionControl
 				userId="user-a"
-				desktopApi={{ fetchGitHubStatus, updateGitHubSettings }}
+				localApi={{ fetchGitHubStatus, updateGitHubSettings }}
 			/>
 		</ConvexTestProvider>
 	);

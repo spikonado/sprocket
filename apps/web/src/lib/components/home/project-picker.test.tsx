@@ -3,7 +3,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ProjectPicker from './project-picker';
 
-function createDesktopApi() {
+function createLocalApi() {
 	const browseFilesystem = vi.fn(async ({ partialPath }: { partialPath: string }) => {
 		if (partialPath === '/home/me/Desktop/') {
 			return {
@@ -43,18 +43,18 @@ function createDesktopApi() {
 	}));
 
 	return {
-		desktopApi: { browseFilesystem, resolveWorkspacePath },
+		localApi: { browseFilesystem, resolveWorkspacePath },
 		browseFilesystem,
 		resolveWorkspacePath
 	};
 }
 
 function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> = {}) {
-	const api = createDesktopApi();
+	const api = createLocalApi();
 
 	const props: ComponentProps<typeof ProjectPicker> = {
 		open: true,
-		desktopApi: api.desktopApi,
+		localApi: api.localApi,
 		onClose: vi.fn(),
 		onSelect: vi.fn(),
 		...overrides
