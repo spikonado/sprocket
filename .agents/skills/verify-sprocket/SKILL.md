@@ -61,12 +61,13 @@ APP=$($V/app-url.sh)
 export AGENT_BROWSER_SESSION=verify-sprocket AGENT_BROWSER_RESTORE=verify-sprocket
 agent-browser open "$APP"
 agent-browser set viewport 1440 900
-agent-browser wait --fn "document.querySelector('[aria-label=\"Open side panel\"]') || document.body.innerText.includes('Sign in to continue')"
+agent-browser wait --text "New thread" --timeout 15000 || agent-browser wait --text "Sign in to continue"
 agent-browser snapshot -i
 ```
 
 - `AGENT_BROWSER_RESTORE` is the restore key itself. Keep both exports for every call: after an hour idle the browser closes, and the next command relaunches it with the cookie restored.
-- `button "New thread"` in the snapshot means signed in. `heading "Sign in to continue"` means follow [features/sign-in.md](features/sign-in.md) first. Use the same `wait` after every reload, since `New thread` shows about a second before the rest of the shell.
+- Do not wait with `--fn` that reads `document.body.innerText`. After `open`, that hits a CDP `Object reference chain is too long` error even when the page is up. `wait --text` is the check that actually returns.
+- `button "New thread"` in the snapshot means signed in. `heading "Sign in to continue"` means follow [features/sign-in.md](features/sign-in.md) first. Use the same `wait` after every reload, since `New thread` shows about a second before the rest of the shell. Signed-in reloads hit the first wait; the signed-out gate hits the second.
 
 ## Drive
 

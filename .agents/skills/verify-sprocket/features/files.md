@@ -30,7 +30,7 @@ Precondition: the side panel shows `tab "Files" [selected]`, as in [side-panel.m
 - **Create.** On `tab "Files"`, click `button "New file"`. A `treeitem "untitled"` with `textbox "Rename untitled"` appears. `agent-browser press Control+a`, type `new.ts` and press Enter. `tab "new.ts" [selected]` opens and the file exists in the scratch repo.
 - **Rename.** Right-click `treeitem "new.ts"` as in Drive in `SKILL.md`. `menu "new.ts actions"` lists `Open`, `New file…`, `New folder…`, `Rename…`, `Delete…`, `Copy path` and `Copy relative path`. Choose `menuitem "Rename…"`, replace the text in `textbox "Rename new.ts"` with `renamed.ts`, and press Enter. The tab becomes `tab "renamed.ts"` and the file on disk is renamed.
 - **Delete.** Right-click `treeitem "renamed.ts"` and choose `menuitem "Delete…"`. `dialog "Delete renamed.ts?"` says "You can’t undo this." Click `button "Delete"`. The row, its tab and the file are gone.
-- **Search.** On `tab "Files"`, click `textbox "Search files"` and type `index`. `1 of 1`, `button "Clear search"` and `treeitem "index.ts"` show. `agent-browser press Enter` opens `tab "index.ts" [selected]`.
+- **Search.** On `tab "Files"`, click `textbox "Search files"` and type `index`. The search box shows `1 of 1` on screen, but `snapshot -i` omits that counter. Drive on `button "Clear search"` and `treeitem "index.ts"`. `agent-browser press Enter` opens `tab "index.ts" [selected]`.
 
 ## Gotchas
 
