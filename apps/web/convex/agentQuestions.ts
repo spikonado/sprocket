@@ -356,8 +356,14 @@ export const timeout = internalMutation({
 			return null;
 		}
 
-		if (question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))) {
-			return null;
+		// After a root run ends, the pending question is how the user continues.
+		// Child questions still time out so the parent subtree can go idle.
+		if (run !== null && isRunFinalStatus(run.status)) {
+			const thread = await ctx.db.get('threadRecords', question.threadId);
+
+			if (thread?.parentThreadId === undefined) {
+				return null;
+			}
 		}
 
 		const before = await captureThreadActivityBeforeChange(ctx, question.threadId);
