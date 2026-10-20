@@ -37,9 +37,10 @@
 
 ## Completing a task
 
-- When possible, try to test/use your changes to ensure they work as intended.
 - Run tests/checks relevant to your changes.
-- Upon completion, give the user a summary of your changes and, when relevant, screenshots/videos of the change working.
+- When possible, verify your changes live to ensure they work as intended.
+- When possible, give the user screenshots/videos of the change working. If you create PRs for the change, attach the screenshots/videos there also.
+- Give the user a summary of your changes.
 
 ## Writing comments and docs for maintainers
 
