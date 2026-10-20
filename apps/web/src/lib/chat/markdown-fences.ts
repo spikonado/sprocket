@@ -14,10 +14,12 @@ function parseFence(line: string): Fence | undefined {
 	return { marker: match[2], info: match[3], indent: match[1].length };
 }
 
+function canClose(line: Fence, open: Fence) {
+	return line.marker[0] === open.marker[0] && line.marker.length >= open.marker.length;
+}
+
 function closes(line: Fence, open: Fence) {
-	return (
-		!line.info && line.marker[0] === open.marker[0] && line.marker.length >= open.marker.length
-	);
+	return !line.info && canClose(line, open);
 }
 
 function nestedMarkdownFence(source: string): Tokens.Code | undefined {
@@ -27,8 +29,8 @@ function nestedMarkdownFence(source: string): Tokens.Code | undefined {
 
 	if (!outer || !language || !MARKDOWN_LANGUAGES.has(language) || firstLineEnd === -1) return;
 
-	// Agents often nest fences with the same marker inside a Markdown block. An inner fence that
-	// names a language must open a nested block, so the next bare fence closes it instead of ours.
+	// Agents often nest same-length fences inside a Markdown block. An inner fence that names a
+	// language must open a nested block, so the next bare fence closes it instead of ours.
 	const inner: Fence[] = [];
 	const content: string[] = [];
 	let nested = false;
@@ -46,7 +48,7 @@ function nestedMarkdownFence(source: string): Tokens.Code | undefined {
 		} else if (fence && !open && closes(fence, outer)) {
 			end = lineStart + line.length;
 			break;
-		} else if (fence?.info && !open) {
+		} else if (fence?.info && !open && canClose(fence, outer)) {
 			inner.push(fence);
 			nested = true;
 		}
