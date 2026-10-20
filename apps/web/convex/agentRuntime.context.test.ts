@@ -10,6 +10,7 @@ import {
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
+	seedThreadRecord,
 	type ConvexTestInstance
 } from './test.setup';
 
@@ -38,6 +39,14 @@ const callTokens = {
 	cacheWriteTokens: 1_000,
 	outputTokens: 500,
 	reasoningTokens: 200
+};
+
+const emptyTokens = {
+	inputTokens: 0,
+	cacheReadTokens: 0,
+	cacheWriteTokens: 0,
+	outputTokens: 0,
+	reasoningTokens: 0
 };
 
 function modelCall(overrides: Partial<ModelCallUsage> = {}): ModelCallUsage {
@@ -205,14 +214,6 @@ describe('agentRuntime context accounting', () => {
 			usage: { contextTokens: 300_000, call: modelCall({ longContext: true }) }
 		});
 
-		const emptyTokens = {
-			inputTokens: 0,
-			cacheReadTokens: 0,
-			cacheWriteTokens: 0,
-			outputTokens: 0,
-			reasoningTokens: 0
-		};
-
 		const firstCall = { calls: 1, standard: callTokens, longContext: emptyTokens };
 		const secondCall = { calls: 1, standard: emptyTokens, longContext: callTokens };
 		const usage = await readThreadUsage(t, threadId);
@@ -255,6 +256,51 @@ describe('agentRuntime context accounting', () => {
 				})
 			])
 		);
+
+		expect(await asUser.query(api.aiUsage.getRunUsage, { runId })).toEqual([
+			expect.objectContaining({ calls: 2, standard: callTokens, longContext: callTokens })
+		]);
+
+		const days = await asUser.query(api.aiUsage.getMyUsageBuckets, {
+			granularity: 'day',
+			from: Date.parse('2026-08-02T00:00:00.000Z'),
+			to: Date.parse('2026-08-03T00:00:00.000Z')
+		});
+
+		expect(days).toEqual([
+			expect.objectContaining({
+				bucketStart: Date.parse('2026-08-02T00:00:00.000Z'),
+				...secondCall
+			})
+		]);
+	});
+
+	it('reports subagent totals with the parent thread usage', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const subagentId = await seedThreadRecord(t, subject, 'alpha');
+
+		const totals = {
+			provider: 'spikonado' as const,
+			model: 'gpt-5.6-sol',
+			serviceTier: 'standard' as const,
+			calls: 1,
+			standard: callTokens,
+			longContext: emptyTokens
+		};
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', subagentId, {
+				parentThreadId: threadId,
+				title: 'Research'
+			});
+			await ctx.db.insert('threadTokenUsage', { threadId: subagentId, userId: subject, ...totals });
+		});
+
+		expect(await asUser.query(api.aiUsage.getThreadUsage, { threadId })).toEqual({
+			totals: [],
+			subagents: [{ threadId: subagentId, title: 'Research', totals: [totals] }]
+		});
 	});
 
 	it('does not record usage when a completion has no durable items', async () => {
