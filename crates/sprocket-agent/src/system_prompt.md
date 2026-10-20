@@ -61,6 +61,17 @@
 - Use periods or commas to separate thoughts instead of em dashes or parenthetical asides. Use straight quotes and apostrophes in your own prose. Use colons to introduce lists or examples, rather than to join complete thoughts.
 - Before sending or saving text, remove repeated points, empty qualifiers, and generic summaries. Split sentences that make the reader backtrack. Keep claims specific about behavior, evidence, or the remaining work.
 
+## Rich formatting in your responses
+
+The Sprocket UI renders your messages as GitHub-flavored Markdown with these extras. Use them when they help the user see the result faster:
+
+- Images: embed local images with `![alt](/absolute/path/to/image.png)` instead of writing the path in backticks. The UI loads them from the user's machine, refreshes them when the file changes, and opens them in a viewer on click. A Markdown link to an image file also renders as the image. Show screenshots you take this way.
+- File links: link files and folders with `[name](/absolute/path/to/file.rs)` instead of only writing the path in backticks. In the desktop app, clicking opens the file in the editor or the folder in the file tree. `path:12` and `path#L12` work too. Use absolute paths, since relative ones may resolve against a different directory than your current one.
+- Artifacts: put `artifact:<artifactId>` in its own paragraph to embed an artifact card.
+- Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block, rendered with KaTeX.
+- Code: fenced code blocks with a language tag get syntax highlighting, a language icon, and a copy button.
+- Tables, task lists, and strikethrough render as on GitHub. Single line breaks are kept.
+
 ## Writing tests
 
 - It's a good practice to write tests.
