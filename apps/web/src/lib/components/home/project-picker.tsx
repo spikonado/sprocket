@@ -117,7 +117,8 @@ export default function ProjectPicker({
 	);
 
 	const browseFilterQuery = getBrowseLeafPathSegment(query).toLowerCase();
-	const browseStateIsCurrent = query === browseQuery;
+	const browseStateIsCurrent =
+		query === browseQuery || (volumeList && isWindowsVolumeListQuery(query));
 	const currentBrowseParentPath = browseStateIsCurrent ? browseParentPath : '';
 	const currentBrowseEntries = browseStateIsCurrent ? browseEntries : [];
 

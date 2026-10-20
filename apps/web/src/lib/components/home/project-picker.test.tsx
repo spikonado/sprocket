@@ -135,6 +135,54 @@ describe('ProjectPicker', () => {
 		expect(resolveWorkspacePath).not.toHaveBeenCalled();
 	});
 
+	it('keeps the Windows drive list while typing a drive letter', async () => {
+		const browseFilesystem = vi.fn(async ({ partialPath }: { partialPath: string }) => {
+			if (partialPath === '\\' || partialPath === '/') {
+				return {
+					parentPath: '',
+					volumeList: true,
+					entries: [
+						{ name: 'C:', fullPath: 'C:\\' },
+						{ name: 'D:', fullPath: 'D:\\' }
+					]
+				};
+			}
+
+			return { parentPath: '/home/me', entries: [] };
+		});
+
+		renderPicker({
+			desktopApi: {
+				browseFilesystem,
+				resolveWorkspacePath: vi.fn()
+			}
+		});
+
+		const input = document.querySelector<HTMLInputElement>(
+			'[aria-label="Project directory path"]'
+		)!;
+
+		fireEvent.change(input, { target: { value: '\\' } });
+
+		await waitFor(() => {
+			expect(document.querySelectorAll('[role="option"]')).toHaveLength(2);
+		});
+
+		fireEvent.change(input, { target: { value: 'D:' } });
+
+		await waitFor(() => {
+			expect(document.body.textContent).not.toContain('Loading directories…');
+			expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+			expect(document.querySelector('[role="option"]')?.textContent).toContain('D:');
+		});
+
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 250));
+		});
+
+		expect(browseFilesystem).not.toHaveBeenCalledWith({ partialPath: 'D:' });
+	});
+
 	it('adds the current directory with Ctrl+Enter', async () => {
 		const { props, resolveWorkspacePath } = renderPicker();
 		await waitForDirectories();
