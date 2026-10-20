@@ -903,6 +903,42 @@ describe('agentQuestions', () => {
 		expect(stored?.answer).toMatchObject({ optionId: 'a' });
 	});
 
+	it('does not start a follow-up when retrying an answer the run already used', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+			runId,
+			claimId,
+			question: 'Choose?',
+			options: [{ id: 'a', label: 'A' }],
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: question.questionId,
+			optionId: 'a'
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'completed',
+			executionSecret
+		});
+
+		const retry = await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: question.questionId,
+			optionId: 'b'
+		});
+
+		expect(retry.question.answer).toMatchObject({ optionId: 'a' });
+		expect(retry).not.toHaveProperty('continuation');
+	});
+
 	it('rejects answers once cancellation is requested, before terminal cleanup', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
