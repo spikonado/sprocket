@@ -234,7 +234,9 @@ export async function answerPendingQuestion(
 		return {
 			kind: 'alreadyAnswered',
 			question,
-			continuation: await questionContinuation(ctx, question)
+			continuation: question.continuationClaim
+				? undefined
+				: await questionContinuation(ctx, question)
 		};
 	}
 
@@ -310,15 +312,18 @@ export async function questionContinuation(
 		.order('asc')
 		.collect();
 
-	const prompt = formatQuestionContinuationPrompt(
-		runQuestions.flatMap((entry) =>
-			entry.requiresContinuation && entry.answer
-				? [{ question: entry.question, answer: entry.answer }]
-				: []
-		)
+	const continuationAnswers = runQuestions.flatMap((entry) =>
+		entry.requiresContinuation && entry.answer
+			? [{ question: entry.question, answer: entry.answer }]
+			: []
 	);
 
-	return { runId: continuationOfRunId, prompt };
+	if (continuationAnswers.length === 0) return undefined;
+
+	return {
+		runId: continuationOfRunId,
+		prompt: formatQuestionContinuationPrompt(continuationAnswers)
+	};
 }
 
 export const timeout = internalMutation({
