@@ -134,10 +134,6 @@ Command transcript retries hydrate an existing part's absent input through the e
 
 An absent `credentials/<account>/store.json` means automatic: keyring storage with file fallback. Released clients never wrote `"keyring"` when it was their default. Keep reading `"keyring"` and `"file"` while profiles from released clients are supported.
 
-### Thread-relative model images
-
-Stored model messages can reference `parse_file/…`, `screenshot_url/…` or `scrape_url/…` images relative to their transcript directory. `/workspace/image` checks the workspace first, then falls back to the thread cache, using the optional user/thread scope. Remove this after a migration replaces every stored tool-cache image reference and supported agents stop emitting those paths.
-
 ### Artifact binding scopes
 
 Older `bindings.json` rows carry `scope` and `thread_id`. The first locked load drops them and keeps every ID, path and baseline. Remove legacy-field detection once supported data directories have been migrated.

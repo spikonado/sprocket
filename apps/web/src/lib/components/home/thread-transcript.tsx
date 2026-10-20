@@ -43,7 +43,6 @@ import type {
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
-	userId?: string;
 	messages: TranscriptMessage[];
 	actions: ExecutorJob[];
 	activeRunId: TranscriptMessage['runId'] | null;
@@ -77,7 +76,6 @@ type ScrollAnchor = {
 };
 
 export default function ThreadTranscript({
-	userId,
 	messages,
 	actions,
 	activeRunId,
@@ -524,10 +522,7 @@ export default function ThreadTranscript({
 	}
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
-		const imageScope = {
-			workspacePath: cwd ?? project?.workspacePath,
-			transcript: userId ? { userId, threadId: message.threadId } : undefined
-		};
+		const imageScope = { workspacePath: cwd ?? project?.workspacePath };
 
 		if (message.kind === 'prompt') {
 			return (

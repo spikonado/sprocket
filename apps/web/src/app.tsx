@@ -2824,7 +2824,6 @@ export default function App({
 							{currentThreadId && (
 								<ThreadTranscript
 									key={`${currentThreadId}:${transcript.windowVersion}`}
-									userId={signedInUserId ?? undefined}
 									messages={visibleMessages}
 									actions={visibleActions}
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}

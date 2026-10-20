@@ -24,17 +24,10 @@ export default function MarkdownHtml({
 }) {
 	const workspacePath = imageScope?.workspacePath;
 	const documentPath = imageScope?.documentPath;
-	const userId = imageScope?.transcript?.userId;
-	const threadId = imageScope?.transcript?.threadId;
 
 	const html = useMemo(
-		() =>
-			prepareMarkdownImages(sourceHtml, {
-				workspacePath,
-				documentPath,
-				transcript: userId && threadId ? { userId, threadId } : undefined
-			}),
-		[sourceHtml, workspacePath, documentPath, userId, threadId]
+		() => prepareMarkdownImages(sourceHtml, { workspacePath, documentPath }),
+		[sourceHtml, workspacePath, documentPath]
 	);
 
 	const ref = useRef<HTMLDivElement>(null);
