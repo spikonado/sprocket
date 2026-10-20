@@ -215,7 +215,7 @@ describe('PromptComposer file drag and drop', () => {
 
 		dispatchDrag(composer, 'dragenter', transfer);
 		expect(document.querySelector('[role="status"]')).not.toBeNull();
-		rerender({ ...props, isRunning: true });
+		rerender({ ...props, isSubmitting: true });
 		expect(within(composer).queryByText('Drop files to attach')).toBeNull();
 
 		dispatchDrag(composer, 'dragover', transfer);
@@ -484,8 +484,9 @@ describe('PromptComposer submission', () => {
 });
 
 describe('PromptComposer attachments', () => {
-	it('renders attachment status and removes by local id', async () => {
+	it('renders attachment status and removes by local id during a run', async () => {
 		const { props } = renderComposer({
+			isRunning: true,
 			attachments: [
 				{
 					localId: 'ready-1',
@@ -529,8 +530,8 @@ describe('PromptComposer attachments', () => {
 		expect(props.onRemoveAttachment).toHaveBeenCalledWith('ready-1');
 	});
 
-	it('attaches pasted files when the clipboard has no text', async () => {
-		const { props, textarea } = renderComposer();
+	it('attaches pasted files during a run when the clipboard has no text', async () => {
+		const { props, textarea } = renderComposer({ isRunning: true });
 		const file = new File(['png'], 'shot.png', { type: 'image/png' });
 		const event = new Event('paste', { bubbles: true, cancelable: true });
 		Object.defineProperty(event, 'clipboardData', {

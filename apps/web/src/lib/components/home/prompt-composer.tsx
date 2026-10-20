@@ -235,7 +235,7 @@ export function PromptComposerView({
 
 	const canSubmitContent = answeringQuestion ? canAnswerQuestion : hasMessageContent;
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
-	const canAttachMore = !composerLocked && !answeringQuestion;
+	const canAttachMore = !isSubmitting && !answeringQuestion;
 	const skillMention = getActiveSkillMention(prompt, caretPosition);
 	const skillQuery = skillMention?.query ?? null;
 	const skillPrefix = skillMention?.prefix ?? '$';
@@ -783,7 +783,7 @@ export function PromptComposerView({
 								{attachments.length > 0 && !answeringQuestion ? (
 									<ComposerAttachments
 										attachments={attachments}
-										disabled={composerLocked}
+										disabled={isSubmitting}
 										onRemove={onRemoveAttachment}
 									/>
 								) : null}
