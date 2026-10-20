@@ -125,11 +125,6 @@ export const removeMachinesCreatedAt = migrations.define({
 	migrateOne: clearCreatedAt
 });
 
-export const removeThreadUsageEventsCreatedAt = migrations.define({
-	table: 'threadUsageEvents',
-	migrateOne: clearCreatedAt
-});
-
 export const removeAgentQuestionsCreatedAt = migrations.define({
 	table: 'agentQuestions',
 	migrateOne: clearCreatedAt
@@ -153,7 +148,6 @@ export const removeMandateChargesCreatedAt = migrations.define({
 export const removeCreatedAt = migrations.runner([
 	internal.migrations.removeUsersCreatedAt,
 	internal.migrations.removeMachinesCreatedAt,
-	internal.migrations.removeThreadUsageEventsCreatedAt,
 	internal.migrations.removeAgentQuestionsCreatedAt,
 	internal.migrations.removeArtifactsCreatedAt,
 	internal.migrations.removeMandatesCreatedAt,

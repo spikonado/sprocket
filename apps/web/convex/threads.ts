@@ -5,8 +5,6 @@ import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vDescendantStatusCounts } from '@convex/lib/validators';
-import { vThreadWithUsageDoc } from '@convex/lib/docs';
-import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import schema from '@convex/schema';
 import {
 	listDirectChildrenPage,
@@ -65,13 +63,11 @@ export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: vThreadWithUsageDoc,
+	returns: schema.doc('threadRecords'),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const usage = await getThreadUsageValues(ctx, thread);
 
-		return { ...thread, ...usage };
+		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 	}
 });
 

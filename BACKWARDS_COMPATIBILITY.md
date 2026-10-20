@@ -56,6 +56,10 @@ Released clients call `machines:tryRegister` with a `credentialHash`, then `mach
 
 Released agents report claim lease loss through `agentRuntime.finalizeClaimFailure` with `lastError` set to `RUN_ABANDONED_BY_AGENT`. That mutation maps the text to `failureKind: 'abandoned'`. Remove the mapping once those agents age out.
 
+### Processed-token usage
+
+Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
+
 ## Convex data shims
 
 ### Billing subscription projection
@@ -92,7 +96,7 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 
 ### Legacy `createdAt` fields
 
-`users`, `machines`, `threadUsageEvents`, `agentQuestions`, `artifacts`, `mandates` and `mandateCharges` rows written before `_creationTime` replaced `createdAt` still carry it, so the schema keeps it as `legacyCreatedAt`. The hourly `migrations.removeCreatedAt` cron clears it. Once that migration completes on every deployment, remove `legacyCreatedAt`, the migrations and the cron.
+`users`, `machines`, `agentQuestions`, `artifacts`, `mandates` and `mandateCharges` rows written before `_creationTime` replaced `createdAt` still carry it, so the schema keeps it as `legacyCreatedAt`. The hourly `migrations.removeCreatedAt` cron clears it. Once that migration completes on every deployment, remove `legacyCreatedAt`, the migrations and the cron.
 
 ### Legacy thread record fields
 

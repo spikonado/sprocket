@@ -395,7 +395,7 @@ describe('hostedParse', () => {
 			const run = await seedParseJob(t, { executionSecret: 'hosted-success-secret', kind });
 
 			const usageBefore = await t.run(async (ctx) => {
-				return await ctx.db.query('threadUsageEvents').take(32);
+				return await ctx.db.query('modelCallUsage').take(32);
 			});
 
 			const created = await run.asUser.mutation(api.hostedParse.createUpload, {
@@ -472,7 +472,7 @@ describe('hostedParse', () => {
 			});
 			expect(await t.run(async (ctx) => ctx.db.system.get('_storage', inputId))).toBeNull();
 			expect(await t.run(async (ctx) => ctx.db.system.get('_storage', resultId))).not.toBeNull();
-			const usageAfter = await t.run(async (ctx) => ctx.db.query('threadUsageEvents').take(32));
+			const usageAfter = await t.run(async (ctx) => ctx.db.query('modelCallUsage').take(32));
 			expect(usageAfter).toEqual(usageBefore);
 			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 			expect(job?.status).toBe('claimed');
@@ -717,7 +717,7 @@ describe('hostedParse', () => {
 		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', inputId))).toBeNull();
 		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 		expect(job?.status).toBe('claimed');
-		expect(await t.run(async (ctx) => ctx.db.query('threadUsageEvents').take(8))).toEqual([]);
+		expect(await t.run(async (ctx) => ctx.db.query('modelCallUsage').take(8))).toEqual([]);
 	});
 
 	it('deletes late results from cancelled callbacks and does not complete the job', async () => {

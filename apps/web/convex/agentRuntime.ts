@@ -16,12 +16,8 @@ import {
 	getProviderHandoff,
 	throughPartNumberForHandoff
 } from '@convex/lib/contextHandoff';
-import {
-	clearThreadContextTokens,
-	getThreadContextTokens,
-	recordThreadUsageEvent,
-	usageEventId
-} from '@convex/lib/threadUsage';
+import { getThreadContextTokens, setThreadContextTokens } from '@convex/lib/threadUsage';
+import { recordModelCallUsage } from '@convex/lib/tokenUsage';
 import {
 	executorFinalizationResult,
 	finalizeRunRecord,
@@ -68,6 +64,7 @@ import {
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vCompletionProvider,
+	vModelCallUsage,
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
@@ -430,7 +427,9 @@ export const saveContextHandoff = mutation({
 		summary: v.string(),
 		completionAttemptSeq: v.number(),
 		beforePrompt: v.boolean(),
-		processedTokens: v.optional(v.number())
+		/** Sent by released agents; ignored. */
+		processedTokens: v.optional(v.number()),
+		handoffCalls: v.optional(v.array(vModelCallUsage))
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
@@ -479,14 +478,16 @@ export const saveContextHandoff = mutation({
 			contextSummaryHandoffKey: handoffKey
 		});
 
-		if (args.processedTokens !== undefined) {
-			await recordThreadUsageEvent(ctx, thread, {
-				eventId: usageEventId('usage', run._id, args.claimId, args.completionAttemptSeq),
-				processedTokens: args.processedTokens
+		for (const [index, call] of (args.handoffCalls ?? []).entries()) {
+			await recordModelCallUsage(ctx, thread, {
+				runId: run._id,
+				eventId: `handoff:${args.claimId}:${args.completionAttemptSeq}:${index}`,
+				kind: 'handoff',
+				call
 			});
 		}
 
-		await clearThreadContextTokens(ctx, thread._id);
+		await setThreadContextTokens(ctx, thread, undefined);
 
 		return true;
 	}
@@ -608,7 +609,9 @@ export const finalizeCompletionCall = mutation({
 		usage: v.optional(
 			v.object({
 				contextTokens: v.number(),
-				processedTokens: v.number()
+				/** Sent by released agents; ignored. */
+				processedTokens: v.optional(v.number()),
+				call: v.optional(vModelCallUsage)
 			})
 		),
 		executionSecret: v.string()
@@ -767,11 +770,16 @@ export const finalizeCompletionCall = mutation({
 
 		if (part && args.usage) {
 			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
-			await recordThreadUsageEvent(ctx, thread, {
-				eventId: usageEventId('usage', run._id, args.claimId, args.attemptSeq),
-				contextTokens: args.usage.contextTokens,
-				processedTokens: args.usage.processedTokens
-			});
+			await setThreadContextTokens(ctx, thread, args.usage.contextTokens);
+
+			if (args.usage.call) {
+				await recordModelCallUsage(ctx, thread, {
+					runId: run._id,
+					eventId: `turn:${args.claimId}:${args.attemptSeq}`,
+					kind: 'turn',
+					call: args.usage.call
+				});
+			}
 		}
 
 		return part;

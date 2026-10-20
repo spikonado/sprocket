@@ -19,7 +19,6 @@
 		"@codemirror/state": "^6.7.6",
 		"@codemirror/view": "^6.43.14",
 		"@convex-dev/action-retrier": "^0.3.1",
-		"@convex-dev/aggregate": "^0.3.0",
 		"@convex-dev/migrations": "^0.3.6",
 		"@convex-dev/rate-limiter": "^0.4.0",
 		"@convex-dev/workpool": "^0.4.10",

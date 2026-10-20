@@ -217,11 +217,7 @@ async function renderThreadLaunch() {
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: undefined,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'idle',
@@ -703,11 +699,7 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 	const nextRunId = 'run-new' as Id<'runs'>;
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: 0,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'completed',
@@ -924,11 +916,7 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: undefined,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.agentQuestions.headPendingForThread, question);
 	client.registerMutation(api.agentRuntime.requestCancellation, true);
 
@@ -991,11 +979,7 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 	const error = 'ChatGPT usage limit reached. Try again after it resets or switch providers.';
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: undefined,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'failed',
@@ -1102,11 +1086,7 @@ it('renders remote history progressively and allows sending while older parts lo
 	let synced = false;
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: 0,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'completed',
@@ -1197,11 +1177,7 @@ it('launches the continuation prompt after an agent question is answered', async
 
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: undefined,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'waiting_for_input',
@@ -1280,11 +1256,7 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	preferChatGpt(client);
 	client.handleAction(api.providerCredentials.getMyConfiguration, () => configuration.promise);
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
-	client.registerQuery(api.threads.getByThreadId, {
-		...thread,
-		contextTokens: undefined,
-		totalTokensProcessed: 0
-	});
+	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'waiting_for_input',

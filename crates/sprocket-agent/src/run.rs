@@ -1127,6 +1127,10 @@ pub async fn run_agent(
                     fast_mode,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
+                    long_context_threshold_tokens: capabilities.long_context_threshold_tokens,
+                    handoff_long_context_threshold_tokens: handoff_model
+                        .as_ref()
+                        .and_then(|(_, capabilities)| capabilities.long_context_threshold_tokens),
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,

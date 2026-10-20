@@ -185,6 +185,8 @@ pub struct CatalogModelCapabilities {
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_required_tool_choice: bool,
+    /// Input size above which the direct provider API charges long-context rates.
+    pub long_context_threshold_tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
