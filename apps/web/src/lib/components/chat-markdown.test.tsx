@@ -208,13 +208,14 @@ describe('links', () => {
 		const { getByRole } = render(
 			<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
 				<ChatMarkdown
-					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs:4) [make](Makefile:12) [site](https://sprocket.dev) [call](tel:1234567890)"
+					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs:4) [make](Makefile:12) [site](https://sprocket.dev) [call](tel:1234567890) [![thumb](thumb.png)](full.png)"
+					imageScope={{ workspacePath: '/repo' }}
 					openLinksInNewTab
 				/>
 			</MarkdownFileLinksContext>
 		);
 
-		for (const name of ['main', 'lib', 'make', 'site', 'call']) {
+		for (const name of ['main', 'lib', 'make', 'site', 'call', 'thumb']) {
 			fireEvent.click(getByRole('link', { name }));
 		}
 

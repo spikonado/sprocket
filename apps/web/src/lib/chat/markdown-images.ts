@@ -83,7 +83,10 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 		if (link.querySelector('img')) {
 			const url = markdownImageUrl(source, scope);
 
-			if (url) link.setAttribute('href', url);
+			if (url) {
+				link.setAttribute('href', url);
+				link.setAttribute('data-image-link', '');
+			}
 
 			continue;
 		}
