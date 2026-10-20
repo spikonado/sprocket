@@ -190,6 +190,7 @@ it('opens each file once and keeps its tab across renames until it is deleted', 
 	panel.openFile(file);
 	expect(panel.panel.tabs.filter((tab) => tab.view === 'file')).toHaveLength(2);
 	expect(panel.activeTab.file).toEqual(file);
+	expect(panel.panel.open).toBe(true);
 
 	panel.renameFile('/repo', 'src', 'lib');
 	expect(panel.activeTab.file).toEqual({ workspacePath: '/repo', path: 'lib/main.rs' });

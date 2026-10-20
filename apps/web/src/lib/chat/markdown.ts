@@ -6,7 +6,11 @@ import { markdownMath } from './markdown-math';
 const marked = new Marked({ gfm: true, breaks: true }, markdownMath);
 
 DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
-	if (node.nodeName !== 'IMG' || attribute.attrName !== 'src') return;
+	const isPath =
+		(node.nodeName === 'IMG' && attribute.attrName === 'src') ||
+		(node.nodeName === 'A' && attribute.attrName === 'href');
+
+	if (!isPath) return;
 
 	const source = stripImageFileScheme(attribute.attrValue);
 

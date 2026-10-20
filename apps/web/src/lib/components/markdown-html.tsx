@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import CodeBlockControls from './code-block-controls';
 import ImageViewer, { type ViewerImage } from './image-viewer';
+import { MarkdownFileLinksContext, markdownFileTarget } from '$lib/chat/markdown-file-links';
 import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
 import { watchMarkdownImage } from '$lib/chat/markdown-image-watch';
@@ -38,6 +39,7 @@ export default function MarkdownHtml({
 
 	const ref = useRef<HTMLDivElement>(null);
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
+	const fileLinks = use(MarkdownFileLinksContext);
 
 	useEffect(() => {
 		const images = ref.current?.querySelectorAll<HTMLImageElement>('img[data-local-image-url]');
@@ -176,6 +178,18 @@ export default function MarkdownHtml({
 		});
 	}
 
+	function openFileLink(event: MouseEvent) {
+		if (!fileLinks || !(event.target instanceof Element)) return;
+
+		const href = event.target.closest('a[href]')?.getAttribute('href');
+		const file = href ? markdownFileTarget(href, fileLinks.roots, imageScope) : null;
+
+		if (!file) return;
+
+		event.preventDefault();
+		fileLinks.openFile(file);
+	}
+
 	return (
 		<>
 			<div
@@ -183,6 +197,8 @@ export default function MarkdownHtml({
 				className="chat-markdown-html"
 				onClick={(event) => {
 					if (event.target instanceof HTMLImageElement) openImage(event.target);
+
+					openFileLink(event);
 				}}
 				onKeyDown={(event) => {
 					if (

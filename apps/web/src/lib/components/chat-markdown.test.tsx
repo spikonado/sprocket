@@ -4,6 +4,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { highlightCode } from '$lib/chat/code-highlighting';
 import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
+import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
 import ChatMarkdown from './chat-markdown';
 
 const artifact: ArtifactEntry = {
@@ -199,6 +200,28 @@ describe('links', () => {
 		const link = document.querySelector('a');
 		expect(link?.target).toBe('_blank');
 		expect(link?.rel).toBe('noopener noreferrer');
+	});
+
+	it('opens workspace file links in the files tab', () => {
+		const openFile = vi.fn();
+
+		const { getByRole } = render(
+			<MarkdownFileLinksContext value={{ roots: ['/repo'], openFile }}>
+				<ChatMarkdown
+					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs) [site](https://sprocket.dev)"
+					openLinksInNewTab
+				/>
+			</MarkdownFileLinksContext>
+		);
+
+		for (const name of ['main', 'lib', 'site']) {
+			fireEvent.click(getByRole('link', { name }));
+		}
+
+		expect(openFile.mock.calls).toEqual([
+			[{ workspacePath: '/repo', path: 'src/main.rs' }],
+			[{ workspacePath: '/repo', path: 'src/lib.rs' }]
+		]);
 	});
 });
 

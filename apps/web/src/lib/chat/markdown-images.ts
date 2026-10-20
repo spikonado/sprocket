@@ -11,7 +11,7 @@ export type MarkdownImageScope = {
 	transcript?: { userId: string; threadId: string };
 };
 
-function decodeImagePath(source: string) {
+export function decodeImagePath(source: string) {
 	const path = source.split(/[?#]/, 1)[0];
 
 	try {
