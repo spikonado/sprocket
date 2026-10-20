@@ -1,10 +1,6 @@
 import { createContext } from 'react';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
-import {
-	isAbsoluteImagePath,
-	isWindowsImagePath,
-	stripImageFileScheme
-} from './markdown-image-path';
+import { isAbsoluteImagePath, isWindowsImagePath } from './markdown-image-path';
 import { decodeImagePath, type MarkdownImageScope } from './markdown-images';
 
 /** `directory` is true when the link itself shows a folder; otherwise the machine is asked. */
@@ -70,14 +66,11 @@ export function markdownFileTarget(
 	roots: readonly string[],
 	scope?: MarkdownImageScope
 ): MarkdownLinkTarget | null {
-	const source = stripImageFileScheme(href);
+	if (href.startsWith('//')) return null;
 
-	if (source.startsWith('//')) return null;
+	if (/^[a-z][a-z\d+.-]*:/i.test(href) && !isWindowsImagePath(href)) return null;
 
-	if (/^[a-z][a-z\d+.-]*:/i.test(source) && !isWindowsImagePath(source)) return null;
-
-	// Agents often point at a line with `path:12` or `path#L12`; the editor opens the whole file.
-	const path = decodeImagePath(source).replace(/:\d+(?::\d+)?$/, '');
+	const path = decodeImagePath(href);
 
 	if (!path) return null;
 

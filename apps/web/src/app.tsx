@@ -2829,6 +2829,7 @@ export default function App({
 									actions={visibleActions}
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 									project={currentProject}
+									cwd={threadCwd}
 									artifacts={artifactPanel.artifacts}
 									onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
 									loadingOlder={transcript.loadingOlder}

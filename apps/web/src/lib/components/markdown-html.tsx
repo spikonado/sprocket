@@ -181,7 +181,7 @@ export default function MarkdownHtml({
 	function openFileLink(event: MouseEvent) {
 		if (!fileLinks || !(event.target instanceof Element)) return;
 
-		const href = event.target.closest('a[href]:not([data-image-link])')?.getAttribute('href');
+		const href = event.target.closest('a[href]')?.getAttribute('href');
 		const target = href ? markdownFileTarget(href, fileLinks.roots, imageScope) : null;
 
 		if (!target) return;

@@ -70,41 +70,38 @@ describe('links', () => {
 		['assets/board.svg', undefined, 'assets/board.svg', null],
 		['/tmp/board.jpg', undefined, '/tmp/board.jpg', null],
 		['parse_file/board.png', 'docs/notes.md', 'docs/parse_file/board.png', null]
-	])(
-		'renders local image link %s inline using its Markdown scope',
-		(source, documentPath, path, threadId) => {
-			const { getByRole } = render(
-				<ChatMarkdown
-					content={`[Rendering screenshot](${source})`}
-					openLinksInNewTab
-					imageScope={{
-						workspacePath: '/workspace',
-						documentPath,
-						transcript: { userId: 'user', threadId: 'thread' }
-					}}
-				/>
-			);
+	])('renders local image %s using its Markdown scope', (source, documentPath, path, threadId) => {
+		const { getByRole } = render(
+			<ChatMarkdown
+				content={`![Rendering screenshot](${source})`}
+				openLinksInNewTab
+				imageScope={{
+					workspacePath: '/workspace',
+					documentPath,
+					transcript: { userId: 'user', threadId: 'thread' }
+				}}
+			/>
+		);
 
-			const image = getByRole('button', { name: 'View Rendering screenshot' });
-			const url = new URL(image.getAttribute('src') ?? '', window.location.href);
+		const image = getByRole('button', { name: 'View Rendering screenshot' });
+		const url = new URL(image.getAttribute('src') ?? '', window.location.href);
 
-			expect(url.pathname).toBe('/api/workspace/image');
-			expect(url.searchParams.get('path')).toBe(path);
-			expect(url.searchParams.get('workspacePath')).toBe('/workspace');
-			expect(url.searchParams.get('threadId')).toBe(threadId);
-			expect(url.searchParams.get('userId')).toBe(threadId ? 'user' : null);
-			expect(image.getAttribute('alt')).toBe('Rendering screenshot');
-			expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
-		}
-	);
+		expect(url.pathname).toBe('/api/workspace/image');
+		expect(url.searchParams.get('path')).toBe(path);
+		expect(url.searchParams.get('workspacePath')).toBe('/workspace');
+		expect(url.searchParams.get('threadId')).toBe(threadId);
+		expect(url.searchParams.get('userId')).toBe(threadId ? 'user' : null);
+		expect(image.getAttribute('alt')).toBe('Rendering screenshot');
+		expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
+	});
 
-	it('uses the configured machine API for image links and updates their thread scope', () => {
+	it('uses the configured machine API for images and updates their thread scope', () => {
 		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
 
 		try {
 			const { getByRole, rerender } = render(
 				<ChatMarkdown
-					content="[Screenshot](parse_file/screenshot.png)"
+					content="![Screenshot](parse_file/screenshot.png)"
 					imageScope={{ transcript: { userId: 'user', threadId: 'first' } }}
 				/>
 			);
@@ -115,7 +112,7 @@ describe('links', () => {
 
 			rerender(
 				<ChatMarkdown
-					content="[Screenshot](parse_file/screenshot.png)"
+					content="![Screenshot](parse_file/screenshot.png)"
 					imageScope={{ transcript: { userId: 'user', threadId: 'second' } }}
 				/>
 			);
@@ -125,7 +122,7 @@ describe('links', () => {
 		}
 	});
 
-	it.each(['docs/notes.md', 'assets/archive.zip', 'docs/notes.md?image=board.png', '#diagram.png'])(
+	it.each(['docs/notes.md', 'assets/board.png', 'https://example.com/board.png', '#diagram.png'])(
 		'preserves ordinary link %s',
 		(source) => {
 			const { getByRole } = render(
@@ -135,61 +132,6 @@ describe('links', () => {
 			expect(getByRole('link').getAttribute('href')).toBe(source);
 		}
 	);
-
-	it.each(['https://example.com/board.png', '//example.com/board.png'])(
-		'renders remote image link %s inline and opens the image viewer',
-		(source) => {
-			const { getByRole, container } = render(
-				<ChatMarkdown
-					content={`Before [**Board**](${source} "Board layout") after.`}
-					openLinksInNewTab
-				/>
-			);
-
-			const image = getByRole('button', { name: 'View Board' });
-			expect(image.getAttribute('src')).toBe(source);
-			expect(image.getAttribute('alt')).toBe('Board');
-			expect(image.getAttribute('title')).toBe('Board layout');
-			expect(container.querySelector('a')).toBeNull();
-			expect(container.textContent?.trim()).toBe('Before  after.');
-			fireEvent.click(image);
-			expect(getByRole('dialog', { name: 'Image preview: Board' }).querySelector('img')?.src).toBe(
-				new URL(source, window.location.href).href
-			);
-		}
-	);
-
-	it('preserves an explicitly linked image', () => {
-		const { getByRole } = render(
-			<ChatMarkdown content="[![Thumbnail](https://example.com/thumb.png)](https://example.com/full.png)" />
-		);
-
-		expect(getByRole('link').getAttribute('href')).toBe('https://example.com/full.png');
-		expect(getByRole('img', { name: 'Thumbnail' }).getAttribute('src')).toBe(
-			'https://example.com/thumb.png'
-		);
-	});
-
-	it('opens the full-size local image from an explicitly linked thumbnail', () => {
-		const { getByRole } = render(
-			<ChatMarkdown
-				content="[![Thumbnail](thumb.png)](full.png)"
-				imageScope={{ workspacePath: '/workspace' }}
-			/>
-		);
-
-		const link = new URL(getByRole('link').getAttribute('href') ?? '', window.location.href);
-
-		const image = new URL(
-			getByRole('img', { name: 'Thumbnail' }).getAttribute('src') ?? '',
-			window.location.href
-		);
-
-		expect(link.pathname).toBe('/api/workspace/image');
-		expect(link.searchParams.get('workspacePath')).toBe('/workspace');
-		expect(link.searchParams.get('path')).toBe('full.png');
-		expect(image.searchParams.get('path')).toBe('thumb.png');
-	});
 
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
@@ -208,21 +150,21 @@ describe('links', () => {
 		const { getByRole } = render(
 			<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
 				<ChatMarkdown
-					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs:4) [make](Makefile:12) [site](https://sprocket.dev) [call](tel:1234567890) [![thumb](thumb.png)](full.png)"
+					content="[main](src/main.rs) [lib](/repo/src/lib.rs) [site](https://sprocket.dev) [call](tel:1234567890) [![thumb](thumb.png)](full.png)"
 					imageScope={{ workspacePath: '/repo' }}
 					openLinksInNewTab
 				/>
 			</MarkdownFileLinksContext>
 		);
 
-		for (const name of ['main', 'lib', 'make', 'site', 'call', 'thumb']) {
+		for (const name of ['main', 'lib', 'site', 'call', 'thumb']) {
 			fireEvent.click(getByRole('link', { name }));
 		}
 
 		expect(open.mock.calls).toEqual([
 			[{ workspacePath: '/repo', path: 'src/main.rs', directory: false }],
 			[{ workspacePath: '/repo', path: 'src/lib.rs', directory: false }],
-			[{ workspacePath: '/repo', path: 'Makefile', directory: false }]
+			[{ workspacePath: '/repo', path: 'full.png', directory: false }]
 		]);
 	});
 });
@@ -603,27 +545,6 @@ describe('images', () => {
 		unmount();
 	});
 
-	it.each([
-		['![Board](file:///workspace/board%20layout.png)', '/workspace/board layout.png'],
-		['![Board](file://assets/board.png)', 'assets/board.png'],
-		['![Board](file://C:/workspace/board.png)', 'C:/workspace/board.png'],
-		['![Board](file:///C:/workspace/board.png)', 'C:/workspace/board.png'],
-		['![Board](file:///C:/workspace/board%20layout.png)', 'C:/workspace/board layout.png'],
-		['<img src="file:///tmp/100%ready.png" alt="Board">', '/tmp/100%ready.png'],
-		['<img src="file:///workspace/board.png" alt="Board">', '/workspace/board.png'],
-		['<img src="file://C:/workspace/board.png" alt="Board">', 'C:/workspace/board.png']
-	])('renders %s through the existing image path resolution', (content, path) => {
-		const { getByRole } = render(
-			<ChatMarkdown content={content} imageScope={{ workspacePath: '/workspace' }} />
-		);
-
-		const image = getByRole('button', { name: 'View Board' });
-		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
-
-		expect(url.pathname).toBe('/api/workspace/image');
-		expect(url.searchParams.get('path')).toBe(path);
-	});
-
 	it('offers the original remote image instead of CORS-dependent read actions', () => {
 		const { getByRole, queryByRole } = render(
 			<ChatMarkdown content="![Board](https://example.com/board.png)" />
@@ -637,16 +558,13 @@ describe('images', () => {
 		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
 	});
 
-	it.each(['![Board](/tmp/board.png)', '![Board](file:///tmp/board.png)'])(
-		'renders %s without a workspace',
-		(content) => {
-			const { getByRole } = render(<ChatMarkdown content={content} />);
-			const image = getByRole('button', { name: 'View Board' });
-			const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+	it('renders absolute image paths without a workspace', () => {
+		const { getByRole } = render(<ChatMarkdown content="![Board](/tmp/board.png)" />);
+		const image = getByRole('button', { name: 'View Board' });
+		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
 
-			expect(url.searchParams.get('path')).toBe('/tmp/board.png');
-		}
-	);
+		expect(url.searchParams.get('path')).toBe('/tmp/board.png');
+	});
 
 	it('renders Windows absolute image paths through sanitization', () => {
 		const { getByRole } = render(

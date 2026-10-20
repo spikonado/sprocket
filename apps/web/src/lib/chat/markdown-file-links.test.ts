@@ -7,12 +7,9 @@ const roots = [thread, '/repo'];
 
 it.each([
 	['src/main%20file.rs', { workspacePath: thread, path: 'src/main file.rs', directory: false }],
-	['./src/main.rs:12:4', { workspacePath: thread, path: 'src/main.rs', directory: false }],
+	['./src/main.rs', { workspacePath: thread, path: 'src/main.rs', directory: false }],
 	['/repo/README.md#L3', { workspacePath: '/repo', path: 'README.md', directory: false }],
-	[
-		'file:///repo/.worktrees/feature/a.ts',
-		{ workspacePath: thread, path: 'a.ts', directory: false }
-	],
+	['/repo/.worktrees/feature/a.ts', { workspacePath: thread, path: 'a.ts', directory: false }],
 	['../../Cargo.toml', { workspacePath: '/repo', path: 'Cargo.toml', directory: false }],
 	['src/', { workspacePath: thread, path: 'src', directory: true }],
 	['/repo', { workspacePath: '/repo', path: '', directory: true }],

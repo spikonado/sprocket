@@ -48,6 +48,7 @@ type Props = {
 	actions: ExecutorJob[];
 	activeRunId: TranscriptMessage['runId'] | null;
 	project: Project | null;
+	cwd?: string;
 	emptyStateMessage?: string;
 	loadingOlder?: boolean;
 	nextBefore?: number;
@@ -81,6 +82,7 @@ export default function ThreadTranscript({
 	actions,
 	activeRunId,
 	project,
+	cwd,
 	emptyStateMessage = project
 		? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 		: 'Add a project to begin.',
@@ -523,7 +525,7 @@ export default function ThreadTranscript({
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
 		const imageScope = {
-			workspacePath: project?.workspacePath,
+			workspacePath: cwd ?? project?.workspacePath,
 			transcript: userId ? { userId, threadId: message.threadId } : undefined
 		};
 

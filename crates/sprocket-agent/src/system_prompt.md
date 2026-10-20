@@ -65,8 +65,9 @@
 
 The Sprocket UI renders your messages as GitHub-flavored Markdown with these extras. Use them when they help the user see the result faster:
 
-- Images: embed local images with `![alt](/absolute/path/to/image.png)` instead of writing the path in backticks. The UI loads them from the user's machine, refreshes them when the file changes, and opens them in a viewer on click. A Markdown link to an image file also renders as the image. Show screenshots you take this way.
-- File links: link files and folders with `[name](/absolute/path/to/file.rs)` instead of only writing the path in backticks. Clicking opens the file in the editor or the folder in the file tree. `path:12` and `path#L12` work too. Use absolute paths, since relative ones may resolve against a different directory than your current one.
+- Images: embed local images with `![alt](path/to/image.png)` instead of writing the path in backticks. The UI loads them from the user's machine, refreshes them when the file changes, and opens them in a viewer on click. Show screenshots you take this way.
+- File links: link files and folders with `[name](path/to/file.rs)` instead of only writing the path in backticks. Clicking opens the file in the editor or the folder in the file tree.
+- Paths: use paths relative to your current working directory. Use absolute paths only for files outside it, such as `/tmp/screenshot.png`. Write plain paths, without `file://`.
 - Artifacts: put `artifact:<artifactId>` in its own paragraph to embed an artifact card.
 - Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block, rendered with KaTeX.
 - Code: fenced code blocks with a language tag get syntax highlighting, a language icon, and a copy button.

@@ -1,9 +1,5 @@
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
-import {
-	isAbsoluteImagePath,
-	isWindowsImagePath,
-	stripImageFileScheme
-} from './markdown-image-path';
+import { isAbsoluteImagePath, isWindowsImagePath } from './markdown-image-path';
 
 export type MarkdownImageScope = {
 	workspacePath?: string;
@@ -22,8 +18,6 @@ export function decodeImagePath(source: string) {
 }
 
 export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
-	source = stripImageFileScheme(source);
-
 	if (/^(?:https?:|data:image\/|blob:|\/\/)/i.test(source)) return source;
 
 	if (!source) return null;
@@ -67,40 +61,6 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) {
 	const template = document.createElement('template');
 	template.innerHTML = html;
-
-	for (const link of template.content.querySelectorAll('a[href]')) {
-		const source = link.getAttribute('href') ?? '';
-
-		if (
-			/^[a-z][a-z\d+.-]*:/i.test(source) &&
-			!/^https?:/i.test(source) &&
-			!isWindowsImagePath(source)
-		)
-			continue;
-
-		if (!/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(decodeImagePath(source))) continue;
-
-		if (link.querySelector('img')) {
-			const url = markdownImageUrl(source, scope);
-
-			if (url) {
-				link.setAttribute('href', url);
-				link.setAttribute('data-image-link', '');
-			}
-
-			continue;
-		}
-
-		const image = document.createElement('img');
-		image.setAttribute('src', source);
-		image.alt = link.textContent || 'Image';
-
-		const title = link.getAttribute('title');
-
-		if (title) image.title = title;
-
-		link.replaceWith(image);
-	}
 
 	for (const image of template.content.querySelectorAll('img')) {
 		const source = image.getAttribute('src') ?? '';
