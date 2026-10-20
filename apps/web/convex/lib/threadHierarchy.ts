@@ -262,9 +262,10 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 }
 
 export async function unsettleRootOfThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
-	const root = await threadRoot(ctx.db, thread);
+	const rootId = (await threadRoot(ctx.db, thread))._id;
+	const root = await ctx.db.get('threadRecords', rootId);
 
-	if (root.archivedAt === undefined) return;
+	if (!root || root.archivedAt === undefined) return;
 
 	const restoreSettle =
 		allMerged(root.pullRequests ?? []) &&
