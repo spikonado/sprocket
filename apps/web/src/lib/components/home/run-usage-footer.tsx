@@ -30,6 +30,7 @@ export default function RunUsageFooter({
 	if (usage.status !== 'success' || usage.data.length === 0) return null;
 
 	const breakdown = breakdownOf(usage.data);
+	const cost = costOf(usage.data, modelCatalog);
 
 	return (
 		<p
@@ -40,7 +41,9 @@ export default function RunUsageFooter({
 			<span aria-hidden="true">·</span>
 			<span>{formatRate(cacheHitRate(breakdown))} cached</span>
 			<span aria-hidden="true">·</span>
-			<span title={API_COST_NOTE}>{formatCost(costOf(usage.data, modelCatalog))} API cost</span>
+			<span title={cost.partial ? `${API_COST_NOTE} Excludes unpriced models.` : API_COST_NOTE}>
+				{formatCost(cost)} API cost
+			</span>
 		</p>
 	);
 }

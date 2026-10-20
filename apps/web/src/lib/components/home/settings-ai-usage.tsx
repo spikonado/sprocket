@@ -106,6 +106,8 @@ export default function SettingsAiUsage({
 						<p className="text-muted-foreground text-sm">
 							Couldn’t load your AI usage right now. Try again in a moment.
 						</p>
+					) : usage.status !== 'success' ? (
+						<p className="text-muted-foreground text-sm">Loading AI usage…</p>
 					) : (
 						<>
 							<div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -231,12 +233,12 @@ function UsageChart({
 			<svg
 				viewBox={`0 -6 ${CHART_WIDTH} ${CHART_HEIGHT + 28}`}
 				className="block w-full"
-				role="img"
+				role="list"
 				aria-label={`${metric === 'cost' ? 'API cost' : 'Tokens'} by ${unit}, UTC`}
 				onMouseLeave={() => setHovered(null)}
 			>
 				{[0.5, 1].map((fraction) => (
-					<g key={fraction}>
+					<g key={fraction} aria-hidden="true">
 						<line
 							x1="0"
 							x2={PLOT_WIDTH}
@@ -256,13 +258,33 @@ function UsageChart({
 						) : null}
 					</g>
 				))}
-				<line x1="0" x2={PLOT_WIDTH} y1={CHART_HEIGHT} y2={CHART_HEIGHT} stroke="var(--hairline)" />
+				<line
+					x1="0"
+					x2={PLOT_WIDTH}
+					y1={CHART_HEIGHT}
+					y2={CHART_HEIGHT}
+					stroke="var(--hairline)"
+					aria-hidden="true"
+				/>
 				{stacks.map((stack, bucketIndex) => {
 					const x = bucketIndex * (barWidth + gap);
 					let top = CHART_HEIGHT;
 
+					const bucketValues = models
+						.map((model, modelIndex) => `${model.label} ${format(stack[modelIndex])}`)
+						.filter((_, modelIndex) => stack[modelIndex] > 0);
+
 					return (
-						<g key={buckets[bucketIndex].start} onMouseEnter={() => setHovered(bucketIndex)}>
+						<g
+							key={buckets[bucketIndex].start}
+							role="listitem"
+							tabIndex={0}
+							aria-label={`${bucketLabel(unit, buckets[bucketIndex].start)} UTC: ${bucketValues.join(', ') || 'no usage'}`}
+							className="outline-none"
+							onMouseEnter={() => setHovered(bucketIndex)}
+							onFocus={() => setHovered(bucketIndex)}
+							onBlur={() => setHovered(null)}
+						>
 							<rect
 								x={x}
 								y="0"

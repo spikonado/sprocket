@@ -156,9 +156,9 @@ const dollars = new Intl.NumberFormat('en-US', {
 export function formatCost(cost: CostSummary): string {
 	if (cost.usd === null) return '—';
 
-	if (cost.usd > 0 && cost.usd < 0.01) return '<$0.01';
+	const amount = cost.usd > 0 && cost.usd < 0.01 ? '<$0.01' : dollars.format(cost.usd);
 
-	return dollars.format(cost.usd);
+	return cost.partial ? `${amount}+` : amount;
 }
 
 export function formatRate(rate: number | null): string {

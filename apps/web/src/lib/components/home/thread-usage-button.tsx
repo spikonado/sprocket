@@ -171,7 +171,7 @@ function ThreadUsagePanel({
 				<UsageStat
 					label="API cost"
 					value={formatCost(cost)}
-					detail={cost.partial ? 'some models unpriced' : undefined}
+					detail={cost.partial ? 'excludes unpriced models' : undefined}
 				/>
 			</div>
 
