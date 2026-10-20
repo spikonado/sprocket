@@ -9,7 +9,7 @@ impl AppState {
         package_updates: Arc<sprocket_host::package_update::PackageUpdateManager>,
     ) -> Self {
         let host = Host::for_test(native_auth, &data_dir, package_updates);
-        let chatgpt_oauth = routes::chatgpt::PendingLogins::new(
+        let chatgpt_oauth = chatgpt_oauth::PendingLogins::new(
             Arc::clone(&host.chatgpt_credentials),
             Arc::clone(&auth),
         );

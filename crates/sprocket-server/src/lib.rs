@@ -1,4 +1,5 @@
 mod auth;
+mod chatgpt_oauth;
 pub mod cli_protocol;
 mod cli_sessions;
 mod config;
@@ -68,7 +69,7 @@ pub struct AppState {
     pub host: Host,
     pub(crate) cli_sessions: Arc<cli_sessions::CliSessions>,
     pub auth: Arc<auth::AuthState>,
-    pub(crate) chatgpt_oauth: Arc<routes::chatgpt::PendingLogins>,
+    pub(crate) chatgpt_oauth: Arc<chatgpt_oauth::PendingLogins>,
     pub http_base_url: String,
     pub loopback_desktop_login_supported: bool,
     pub web_ui_enabled: bool,
@@ -148,10 +149,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
-    let pending_chatgpt_oauth = routes::chatgpt::PendingLogins::new(
-        Arc::clone(&host.chatgpt_credentials),
-        Arc::clone(&auth),
-    );
+    let pending_chatgpt_oauth =
+        chatgpt_oauth::PendingLogins::new(Arc::clone(&host.chatgpt_credentials), Arc::clone(&auth));
     let cli_sessions = Arc::new(cli_sessions::CliSessions::new(
         Arc::clone(&host.lifetime),
         options.temporary,
@@ -253,7 +252,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         }
     };
     host_tasks.shutdown().await;
-    routes::chatgpt::shutdown(&pending_chatgpt_oauth).await;
+    pending_chatgpt_oauth.shutdown().await;
     result?;
     Ok(if host.lifetime.restart_requested() {
         ServerExit::Restart
