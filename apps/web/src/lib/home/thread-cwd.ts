@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { LocalResponseError } from '$lib/local/transport';
 import type { LocalApi } from '$lib/types/sprocket';
 
 /** Drops a saved thread cwd that no longer exists, like the agent does when its next run starts. */
@@ -13,10 +14,18 @@ export function useExistingThreadCwd(
 
 		let active = true;
 
-		api.resolveWorkspacePath({ workspacePath: cwd }).then(
-			() => active && setMissingCwd((missing) => (missing === cwd ? null : missing)),
-			() => active && setMissingCwd(cwd)
-		);
+		void (async () => {
+			try {
+				await api.resolveWorkspacePath({ workspacePath: cwd });
+
+				if (active) setMissingCwd((missing) => (missing === cwd ? null : missing));
+			} catch (error) {
+				// Only the server's rejection proves the directory is gone; a dropped connection doesn't.
+				if (active && error instanceof LocalResponseError && error.status === 400) {
+					setMissingCwd(cwd);
+				}
+			}
+		})();
 
 		return () => {
 			active = false;
