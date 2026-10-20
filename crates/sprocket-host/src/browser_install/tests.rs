@@ -12,6 +12,22 @@ async fn fixture_server(payload: &'static [u8]) -> (String, tokio::task::JoinHan
 }
 
 #[tokio::test]
+async fn run_trusts_the_os_certificate_store() {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "echo %AGENT_BROWSER_USE_SYSTEM_CA%"]);
+        command
+    } else {
+        let mut command = Command::new("printenv");
+        command.arg(AGENT_BROWSER_USE_SYSTEM_CA);
+        command
+    };
+    let output = run(&mut command).await.unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
+#[tokio::test]
 async fn publishes_verified_download_and_preserves_it_on_failed_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("agent-browser");
