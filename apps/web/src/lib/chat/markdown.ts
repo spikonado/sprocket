@@ -14,7 +14,10 @@ DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
 
 	const source = stripImageFileScheme(attribute.attrValue);
 
-	attribute.attrValue = isWindowsImagePath(source) ? `${source[0]}%3A${source.slice(2)}` : source;
+	// DOMPurify reads `C:` and the `README.md:` in `README.md:12` as URL schemes and drops them.
+	attribute.attrValue = isWindowsImagePath(source)
+		? `${source[0]}%3A${source.slice(2)}`
+		: source.replace(/^([^:/?#]+):(?=\d+(?::\d+)?$)/, '$1%3A');
 });
 
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {

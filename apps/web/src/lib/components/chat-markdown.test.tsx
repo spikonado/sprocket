@@ -208,19 +208,20 @@ describe('links', () => {
 		const { getByRole } = render(
 			<MarkdownFileLinksContext value={{ roots: ['/repo'], openFile }}>
 				<ChatMarkdown
-					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs) [site](https://sprocket.dev)"
+					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs:4) [readme](README.md:12) [site](https://sprocket.dev)"
 					openLinksInNewTab
 				/>
 			</MarkdownFileLinksContext>
 		);
 
-		for (const name of ['main', 'lib', 'site']) {
+		for (const name of ['main', 'lib', 'readme', 'site']) {
 			fireEvent.click(getByRole('link', { name }));
 		}
 
 		expect(openFile.mock.calls).toEqual([
 			[{ workspacePath: '/repo', path: 'src/main.rs' }],
-			[{ workspacePath: '/repo', path: 'src/lib.rs' }]
+			[{ workspacePath: '/repo', path: 'src/lib.rs' }],
+			[{ workspacePath: '/repo', path: 'README.md' }]
 		]);
 	});
 });
