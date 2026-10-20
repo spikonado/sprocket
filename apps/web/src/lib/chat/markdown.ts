@@ -1,9 +1,10 @@
 import DOMPurify from 'isomorphic-dompurify';
 import { Marked, type Token } from 'marked';
+import { markdownFences } from './markdown-fences';
 import { isWindowsImagePath, stripImageFileScheme } from './markdown-image-path';
 import { markdownMath } from './markdown-math';
 
-const marked = new Marked({ gfm: true, breaks: true }, markdownMath);
+const marked = new Marked({ gfm: true, breaks: true }, markdownFences, markdownMath);
 
 DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
 	const isPath =

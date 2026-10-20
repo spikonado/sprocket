@@ -95,6 +95,19 @@ describe('renderMarkdown', () => {
 		expect(html).not.toContain('<script>');
 		expect(html).toContain('<strong>safe</strong>');
 	});
+
+	it('keeps same-marker fences nested inside a Markdown code block', () => {
+		const notes = '## Use it now\n\n```sh\nnpx @spikonado/sprocket\n```\n\n## Changes';
+
+		expect(renderMarkdown(`Notes:\n\n\`\`\`markdown\n${notes}\n\`\`\`\n\nDone.`)).toBe(
+			'<p>Notes:</p>\n' +
+				'<pre><code class="language-markdown">## Use it now\n\n```sh\nnpx @spikonado/sprocket\n```\n\n## Changes\n</code></pre>\n' +
+				'<p>Done.</p>\n'
+		);
+		expect(renderMarkdown('````markdown\n```sh\nnpx sprocket\n````\n\nDone.')).toContain(
+			'</code></pre>\n<p>Done.</p>'
+		);
+	});
 });
 
 describe('renderMarkdownBlocks', () => {
