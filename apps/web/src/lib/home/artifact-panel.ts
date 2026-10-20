@@ -293,6 +293,28 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
+	/** Shows `directory` in the active files tab, the first files tab, an empty tab, or a new one. */
+	openDirectory(directory: WorkspaceFileTarget) {
+		const active = this.activeTab;
+
+		const target =
+			[active, ...this.panel.tabs].find((tab) => tab.view === 'files') ??
+			(active.view === null ? active : this.#createTab());
+
+		const tab: SidePanelTab = { ...target, view: 'files', directory };
+		const exists = this.panel.tabs.some((candidate) => candidate.id === tab.id);
+
+		this.panel = {
+			...this.panel,
+			open: true,
+			tabs: exists
+				? this.panel.tabs.map((candidate) => (candidate.id === tab.id ? tab : candidate))
+				: [...this.panel.tabs, tab],
+			activeTabId: tab.id
+		};
+		this.#emit();
+	}
+
 	/** Keeps open file tabs pointing at a renamed file or folder. */
 	renameFile(workspacePath: string, from: string, to: string) {
 		let changed = false;

@@ -34,6 +34,13 @@ pub enum WorkspaceFileWrite {
     Conflict { version: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceEntryKind {
+    File,
+    Directory,
+}
+
 struct FileSnapshot {
     version: String,
     size: u64,
@@ -55,6 +62,16 @@ pub fn read_workspace_file(root: &Path, path: &str) -> Result<WorkspaceFileConte
         version: snapshot.version,
         size: snapshot.size,
         unsupported,
+    })
+}
+
+pub fn workspace_entry_kind(root: &Path, path: &str) -> Result<WorkspaceEntryKind> {
+    let entry = resolve_entry(root, path, true)?;
+    let metadata = fs::metadata(&entry).map_err(|error| entry_error(error, path, "inspect"))?;
+    Ok(if metadata.is_dir() {
+        WorkspaceEntryKind::Directory
+    } else {
+        WorkspaceEntryKind::File
     })
 }
 

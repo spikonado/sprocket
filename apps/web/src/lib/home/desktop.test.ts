@@ -50,6 +50,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		listWorkspaceSkills: unusedDesktopCall,
 		searchWorkspace: unusedDesktopCall,
 		listWorkspaceFiles: unusedDesktopCall,
+		workspaceEntryKind: unusedDesktopCall,
 		readWorkspaceFile: unusedDesktopCall,
 		writeWorkspaceFile: unusedDesktopCall,
 		createWorkspaceFile: unusedDesktopCall,

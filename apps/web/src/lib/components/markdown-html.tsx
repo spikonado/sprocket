@@ -182,12 +182,12 @@ export default function MarkdownHtml({
 		if (!fileLinks || !(event.target instanceof Element)) return;
 
 		const href = event.target.closest('a[href]')?.getAttribute('href');
-		const file = href ? markdownFileTarget(href, fileLinks.roots, imageScope) : null;
+		const target = href ? markdownFileTarget(href, fileLinks.roots, imageScope) : null;
 
-		if (!file) return;
+		if (!target) return;
 
 		event.preventDefault();
-		fileLinks.openFile(file);
+		fileLinks.open(target);
 	}
 
 	return (

@@ -199,6 +199,17 @@ it('opens each file once and keeps its tab across renames until it is deleted', 
 	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual([undefined, 'README.md']);
 });
 
+it('shows linked folders in one files tab', () => {
+	const panel = new ArtifactPanel();
+	panel.openDirectory({ workspacePath: '/repo', path: 'src' });
+	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
+	panel.openDirectory({ workspacePath: '/tmp/build', path: '' });
+
+	expect(panel.panel.open).toBe(true);
+	expect(panel.panel.tabs.map((tab) => tab.view)).toEqual(['files', 'file']);
+	expect(panel.activeTab.directory).toEqual({ workspacePath: '/tmp/build', path: '' });
+});
+
 it('reports unsaved file edits in any scope until they are saved', () => {
 	const panel = new ArtifactPanel();
 	const doc = Text.of(['edited']);

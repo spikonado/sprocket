@@ -76,6 +76,8 @@ const workspaceFileWriteResultSchema = z.object({
 	version: z.string()
 });
 
+const workspaceEntrySchema = z.object({ kind: z.enum(['file', 'directory']) });
+
 const workspacePathResolutionSchema = z.object({
 	workspacePath: z.string(),
 	displayName: z.string(),
@@ -457,6 +459,15 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(input),
 				signal
 			}),
+		workspaceEntryKind: async (input, signal) => {
+			const { kind } = await request('/api/workspace/entry', workspaceEntrySchema, {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			return kind;
+		},
 		readWorkspaceFile: (input, signal) =>
 			request('/api/workspace/file/read', workspaceFileContentSchema, {
 				method: 'POST',

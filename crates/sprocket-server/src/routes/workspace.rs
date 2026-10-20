@@ -15,10 +15,10 @@ use sprocket_host::project_attachments::{
 };
 use sprocket_host::workspace_search::{MAX_QUERY_CHARS, PathListing, SearchOutcome};
 use sprocket_workspace::{
-    BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceFileContent,
-    WorkspaceFileWrite, browse_filesystem, create_workspace_entry, default_user_skills_dirs,
-    delete_workspace_entry, load_workspace_skills, read_workspace_file, rename_workspace_entry,
-    write_workspace_file,
+    BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceEntryKind,
+    WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
+    default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_file,
+    rename_workspace_entry, workspace_entry_kind, write_workspace_file,
 };
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
@@ -119,6 +119,11 @@ struct SkillSummary {
 }
 
 #[derive(Debug, Serialize)]
+struct WorkspaceEntryResponse {
+    kind: WorkspaceEntryKind,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceSkillsResponse {
     skills: Vec<SkillSummary>,
@@ -136,6 +141,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
         .route("/workspace/files", post(list_workspace_files))
+        .route("/workspace/entry", post(entry_kind))
         .route("/workspace/file/read", post(read_file))
         .route(
             "/workspace/file/write",
@@ -158,6 +164,17 @@ async fn in_workspace<T: Send + 'static>(
     .await
     .map_err(|error| ApiError::internal(error.into()))?
     .map_err(ApiError::bad_request)
+}
+
+async fn entry_kind(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceEntryRequest>,
+) -> Result<Json<WorkspaceEntryResponse>, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        workspace_entry_kind(root, &payload.path)
+    })
+    .await
+    .map(|kind| Json(WorkspaceEntryResponse { kind }))
 }
 
 async fn read_file(

@@ -74,7 +74,11 @@ import {
 } from '$lib/home/desktop';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
-import { MarkdownFileLinksContext, type MarkdownFileLinks } from '$lib/chat/markdown-file-links';
+import {
+	MarkdownFileLinksContext,
+	openMarkdownLink,
+	type MarkdownFileLinks
+} from '$lib/chat/markdown-file-links';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -951,13 +955,18 @@ export default function App({
 	const markdownFileLinks = useMemo<MarkdownFileLinks | null>(() => {
 		const roots = [threadCwd, projectWorkspacePath].filter((root): root is string => !!root);
 
-		if (!desktopApi || roots.length === 0) return null;
+		if (!desktopApi) return null;
 
 		return {
 			roots,
-			openFile: (file) => {
+			open: (target) => {
 				artifactPanel.setFullscreenKey(null);
-				artifactPanel.openFile(file);
+				void openMarkdownLink(target, {
+					roots,
+					entryKind: (entry) => desktopApi.workspaceEntryKind(entry),
+					openFile: (file) => artifactPanel.openFile(file),
+					openDirectory: (directory) => artifactPanel.openDirectory(directory)
+				});
 			}
 		};
 	}, [desktopApi, threadCwd, projectWorkspacePath, artifactPanel]);

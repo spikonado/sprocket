@@ -202,11 +202,11 @@ describe('links', () => {
 		expect(link?.rel).toBe('noopener noreferrer');
 	});
 
-	it('opens workspace file links in the files tab', () => {
-		const openFile = vi.fn();
+	it('opens local path links in the files tab', () => {
+		const open = vi.fn();
 
 		const { getByRole } = render(
-			<MarkdownFileLinksContext value={{ roots: ['/repo'], openFile }}>
+			<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
 				<ChatMarkdown
 					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs:4) [make](Makefile:12) [site](https://sprocket.dev) [call](tel:1234567890)"
 					openLinksInNewTab
@@ -218,10 +218,10 @@ describe('links', () => {
 			fireEvent.click(getByRole('link', { name }));
 		}
 
-		expect(openFile.mock.calls).toEqual([
-			[{ workspacePath: '/repo', path: 'src/main.rs' }],
-			[{ workspacePath: '/repo', path: 'src/lib.rs' }],
-			[{ workspacePath: '/repo', path: 'Makefile' }]
+		expect(open.mock.calls).toEqual([
+			[{ workspacePath: '/repo', path: 'src/main.rs', directory: false }],
+			[{ workspacePath: '/repo', path: 'src/lib.rs', directory: false }],
+			[{ workspacePath: '/repo', path: 'Makefile', directory: false }]
 		]);
 	});
 });

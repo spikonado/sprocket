@@ -7,10 +7,13 @@ import {
 } from './markdown-image-path';
 import { decodeImagePath, type MarkdownImageScope } from './markdown-images';
 
+/** `directory` is true when the link itself shows a folder; otherwise the machine is asked. */
+export type MarkdownLinkTarget = WorkspaceFileTarget & { directory: boolean };
+
 export type MarkdownFileLinks = {
-	/** Workspaces the files tab can open, with relative links resolving against the first. */
+	/** Workspaces whose tree shows linked entries, with relative links resolving against the first. */
 	roots: readonly string[];
-	openFile: (file: WorkspaceFileTarget) => void;
+	open: (target: MarkdownLinkTarget) => void;
 };
 
 export const MarkdownFileLinksContext = createContext<MarkdownFileLinks | null>(null);
@@ -40,11 +43,33 @@ function resolvePath(base: string | null | undefined, path: string) {
 	return base ? normalizePath(`${base}/${path}`) : null;
 }
 
+/** Returns `path` relative to `root`, `''` for the root itself, or null when outside. */
+function relativePath(root: string, path: string) {
+	const normalizedRoot = normalizePath(root);
+
+	if (!normalizedRoot) return null;
+
+	const windows = isWindowsImagePath(normalizedRoot);
+	const comparable = (value: string) => (windows ? value.toLowerCase() : value);
+
+	if (comparable(path) === comparable(normalizedRoot)) return '';
+
+	const prefix = normalizedRoot.endsWith('/') ? normalizedRoot : `${normalizedRoot}/`;
+
+	return comparable(path).startsWith(comparable(prefix)) ? path.slice(prefix.length) : null;
+}
+
+function joinPath(directory: string, name: string) {
+	if (!name) return directory;
+
+	return directory.endsWith('/') ? directory + name : `${directory}/${name}`;
+}
+
 export function markdownFileTarget(
 	href: string,
 	roots: readonly string[],
 	scope?: MarkdownImageScope
-): WorkspaceFileTarget | null {
+): MarkdownLinkTarget | null {
 	const source = stripImageFileScheme(href);
 
 	if (source.startsWith('//')) return null;
@@ -54,7 +79,7 @@ export function markdownFileTarget(
 	// Agents often point at a line with `path:12` or `path#L12`; the editor opens the whole file.
 	const path = decodeImagePath(source).replace(/:\d+(?::\d+)?$/, '');
 
-	if (!path || path.endsWith('/') || path.endsWith('\\')) return null;
+	if (!path) return null;
 
 	const documentPath = scope?.documentPath;
 
@@ -66,26 +91,59 @@ export function markdownFileTarget(
 
 	if (!absolute) return null;
 
-	let target: WorkspaceFileTarget | null = null;
+	let target: MarkdownLinkTarget | null = null;
 
 	for (const root of roots) {
-		const normalizedRoot = normalizePath(root);
+		const relative = relativePath(root, absolute);
 
-		if (!normalizedRoot) continue;
-
-		const prefix = normalizedRoot.endsWith('/') ? normalizedRoot : `${normalizedRoot}/`;
-
-		const inside = isWindowsImagePath(prefix)
-			? absolute.toLowerCase().startsWith(prefix.toLowerCase())
-			: absolute.startsWith(prefix);
-
-		if (!inside || absolute.length === prefix.length) continue;
-
-		const relative = absolute.slice(prefix.length);
-
-		if (!target || relative.length < target.path.length)
-			target = { workspacePath: root, path: relative };
+		if (relative !== null && (!target || relative.length < target.path.length)) {
+			target = { workspacePath: root, path: relative, directory: false };
+		}
 	}
 
-	return target;
+	const directory = /[\\/]$/.test(path) || target?.path === '';
+
+	if (target) return { ...target, directory };
+
+	const split = absolute.lastIndexOf('/') + 1;
+	const parent = absolute.slice(0, split - 1);
+
+	// Outside the workspaces, a folder becomes its own tree root and a file opens from its folder.
+	return directory || split === absolute.length
+		? { workspacePath: absolute, path: '', directory: true }
+		: {
+				workspacePath: /^(?:[a-z]:)?$/i.test(parent) ? absolute.slice(0, split) : parent,
+				path: absolute.slice(split),
+				directory: false
+			};
+}
+
+export async function openMarkdownLink(
+	target: MarkdownLinkTarget,
+	{
+		roots,
+		entryKind,
+		openFile,
+		openDirectory
+	}: {
+		roots: readonly string[];
+		entryKind: (entry: WorkspaceFileTarget) => Promise<'file' | 'directory'>;
+		openFile: (file: WorkspaceFileTarget) => void;
+		openDirectory: (directory: WorkspaceFileTarget) => void;
+	}
+) {
+	const { workspacePath, path } = target;
+	let directory = target.directory;
+
+	if (!directory) {
+		try {
+			directory = (await entryKind({ workspacePath, path })) === 'directory';
+		} catch {
+			// The file tab reports a missing or unreadable file.
+		}
+	}
+
+	if (!directory) openFile({ workspacePath, path });
+	else if (roots.includes(workspacePath)) openDirectory({ workspacePath, path });
+	else openDirectory({ workspacePath: joinPath(workspacePath, path), path: '' });
 }

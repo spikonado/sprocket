@@ -320,6 +320,8 @@ export default function SidePanel({
 							api={filesApi}
 							projectPath={workspacePath}
 							threadCwd={threadCwd}
+							location={tab.directory}
+							onLocationChange={(directory) => onUpdateTab(tab.id, { directory })}
 							active={tab.id === activeTabId}
 							onOpenFile={onOpenFile}
 							onRenamed={onFileRenamed}

@@ -13,7 +13,14 @@ import {
 	type UseFileTreeResult
 } from '@pierre/trees/react';
 import { FilePlus, FolderPlus, RefreshCw, Search, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import {
+	useEffect,
+	useEffectEvent,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type KeyboardEvent
+} from 'react';
 import { createPortal } from 'react-dom';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import { leafName, trimSlash } from '$lib/chat/side-panel';
@@ -30,6 +37,9 @@ type Props = {
 	api: FilesApi | null;
 	projectPath?: string;
 	threadCwd?: string;
+	/** A linked folder to reveal; a `workspacePath` outside both roots becomes the tree root. */
+	location?: WorkspaceFileTarget;
+	onLocationChange: (location: WorkspaceFileTarget | undefined) => void;
 	/** Polls for outside changes only while the tab is active. */
 	active: boolean;
 	onOpenFile: (file: WorkspaceFileTarget) => void;
@@ -95,6 +105,8 @@ export default function FilesView({
 	api,
 	projectPath,
 	threadCwd,
+	location,
+	onLocationChange,
 	active,
 	onOpenFile,
 	onRenamed,
@@ -119,8 +131,14 @@ export default function FilesView({
 	}>({ rename: () => {}, drop: () => {}, create: () => {} });
 
 	const canSwitchRoot = !!threadCwd && !!projectPath && threadCwd !== projectPath;
-	const rootPath = canSwitchRoot && root === 'project' ? projectPath : (threadCwd ?? projectPath);
+
+	const selectedRoot =
+		canSwitchRoot && root === 'project' ? projectPath : (threadCwd ?? projectPath);
+
+	const rootPath = location?.workspacePath ?? selectedRoot;
+	const browsingFolder = !!location && rootPath !== threadCwd && rootPath !== projectPath;
 	const current = listing?.path === rootPath ? listing : null;
+	const revealed = useRef<WorkspaceFileTarget | null>(null);
 
 	const pendingDelete =
 		deleteRequest && deleteRequest.root === rootPath ? deleteRequest.path : null;
@@ -243,6 +261,27 @@ export default function FilesView({
 		onOpenFile({ workspacePath: rootPath, path });
 	}
 
+	const revealLocation = useEffectEvent(() => {
+		if (!location?.path || revealed.current === location) return;
+
+		if (shown.current?.path !== location.workspacePath) return;
+
+		const directory = `${trimSlash(location.path)}/`;
+
+		if (!model.getItem(directory)) return;
+		revealed.current = location;
+
+		for (let end = directory.indexOf('/'); end !== -1; end = directory.indexOf('/', end + 1)) {
+			const item = model.getItem(directory.slice(0, end + 1));
+
+			if (item && 'expand' in item) item.expand();
+		}
+
+		model.scrollToPath(directory, { offset: 'center' });
+	});
+
+	useEffect(() => revealLocation(), [location]);
+
 	function confirmDelete(path: string) {
 		setDeleteRequest(null);
 		model.remove(path, { recursive: path.endsWith('/') });
@@ -329,6 +368,7 @@ export default function FilesView({
 						forceReset.current = false;
 					}
 
+					revealLocation();
 					setListing({
 						path: workspacePath,
 						count: shown.current?.path === workspacePath ? shown.current.paths.length : 0,
@@ -406,21 +446,29 @@ export default function FilesView({
 						aria-label="Files root"
 						className="bg-muted mr-1 flex shrink-0 rounded-full p-0.5 text-xs font-medium"
 					>
-						{ROOTS.map((item) => (
-							<button
-								key={item.id}
-								type="button"
-								aria-pressed={root === item.id}
-								onClick={() => setRoot(item.id)}
-								className={`focus-visible:ring-ring rounded-full px-2.5 py-0.5 transition focus-visible:ring-2 focus-visible:outline-none ${
-									root === item.id
-										? 'bg-background text-foreground shadow-sm'
-										: 'text-muted-foreground hover:text-foreground'
-								}`}
-							>
-								{item.label}
-							</button>
-						))}
+						{ROOTS.map((item) => {
+							const pressed = rootPath === (item.id === 'thread' ? threadCwd : projectPath);
+
+							return (
+								<button
+									key={item.id}
+									type="button"
+									aria-pressed={pressed}
+									onClick={() => {
+										setRoot(item.id);
+
+										if (location) onLocationChange(undefined);
+									}}
+									className={`focus-visible:ring-ring rounded-full px-2.5 py-0.5 transition focus-visible:ring-2 focus-visible:outline-none ${
+										pressed
+											? 'bg-background text-foreground shadow-sm'
+											: 'text-muted-foreground hover:text-foreground'
+									}`}
+								>
+									{item.label}
+								</button>
+							);
+						})}
 					</div>
 				) : null}
 				<span
@@ -429,6 +477,17 @@ export default function FilesView({
 				>
 					<bdi>{rootPath}</bdi>
 				</span>
+				{browsingFolder ? (
+					<button
+						type="button"
+						onClick={() => onLocationChange(undefined)}
+						aria-label="Back to workspace files"
+						title="Back to workspace files"
+						className={TOOL_BUTTON}
+					>
+						<X className="size-3.5" aria-hidden="true" />
+					</button>
+				) : null}
 				<button
 					type="button"
 					onClick={() => startCreate(false)}
