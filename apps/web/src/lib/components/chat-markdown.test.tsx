@@ -4,6 +4,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { highlightCode } from '$lib/chat/code-highlighting';
 import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
+import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
 import ChatMarkdown from './chat-markdown';
 
 const artifact: ArtifactEntry = {
@@ -199,6 +200,30 @@ describe('links', () => {
 		const link = document.querySelector('a');
 		expect(link?.target).toBe('_blank');
 		expect(link?.rel).toBe('noopener noreferrer');
+	});
+
+	it('opens local path links in the files tab', () => {
+		const open = vi.fn();
+
+		const { getByRole } = render(
+			<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
+				<ChatMarkdown
+					content="[main](src/main.rs) [lib](file:///repo/src/lib.rs:4) [make](Makefile:12) [site](https://sprocket.dev) [call](tel:1234567890) [![thumb](thumb.png)](full.png)"
+					imageScope={{ workspacePath: '/repo' }}
+					openLinksInNewTab
+				/>
+			</MarkdownFileLinksContext>
+		);
+
+		for (const name of ['main', 'lib', 'make', 'site', 'call', 'thumb']) {
+			fireEvent.click(getByRole('link', { name }));
+		}
+
+		expect(open.mock.calls).toEqual([
+			[{ workspacePath: '/repo', path: 'src/main.rs', directory: false }],
+			[{ workspacePath: '/repo', path: 'src/lib.rs', directory: false }],
+			[{ workspacePath: '/repo', path: 'Makefile', directory: false }]
+		]);
 	});
 });
 

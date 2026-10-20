@@ -74,6 +74,11 @@ import {
 } from '$lib/home/desktop';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
+import {
+	MarkdownFileLinksContext,
+	openMarkdownLink,
+	type MarkdownFileLinks
+} from '$lib/chat/markdown-file-links';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -943,6 +948,28 @@ export default function App({
 				desktopApi.searchWorkspace({ workspacePath: currentProjectPath, query }, signal)
 		};
 	}, [currentProjectPath, desktopApi]);
+
+	const threadCwd = currentActiveThread?.cwd;
+	const projectWorkspacePath = currentProject?.workspacePath;
+
+	const markdownFileLinks = useMemo<MarkdownFileLinks | null>(() => {
+		const roots = [threadCwd, projectWorkspacePath].filter((root): root is string => !!root);
+
+		if (!desktopApi) return null;
+
+		return {
+			roots,
+			open: (target) => {
+				artifactPanel.setFullscreenKey(null);
+				void openMarkdownLink(target, {
+					roots,
+					entryKind: (entry) => desktopApi.workspaceEntryKind(entry),
+					openFile: (file) => artifactPanel.openFile(file),
+					openDirectory: (directory) => artifactPanel.openDirectory(directory)
+				});
+			}
+		};
+	}, [desktopApi, threadCwd, projectWorkspacePath, artifactPanel]);
 
 	const composerProjectSkills = useMemo(() => {
 		const workspacePath = currentProject?.workspacePath ?? null;
@@ -2793,7 +2820,7 @@ export default function App({
 							/>
 						)
 					) : (
-						<>
+						<MarkdownFileLinksContext value={markdownFileLinks}>
 							{currentThreadId && (
 								<ThreadTranscript
 									key={`${currentThreadId}:${transcript.windowVersion}`}
@@ -2918,75 +2945,77 @@ export default function App({
 									/>
 								</div>
 							</div>
-						</>
+						</MarkdownFileLinksContext>
 					)}
 				</main>
 			</div>
 
-			{!settingsOpen && artifactPanel.panel.open && (
-				<div
-					className={
-						artifactPanel.panel.expanded
-							? 'bg-background fixed inset-0 z-50'
-							: 'absolute inset-y-0 right-0 z-40'
-					}
-					style={{ width: artifactPanel.panel.expanded ? undefined : sidePanelWidth.width }}
-					inert={artifactPanel.fullscreenArtifact ? true : undefined}
-				>
-					{!artifactPanel.panel.expanded && (
-						<SidePanelResizeHandle
-							width={sidePanelWidth.width}
-							minWidth={sidePanelWidth.minWidth}
-							maxWidth={sidePanelWidth.maxWidth}
-							onWidthChange={sidePanelWidth.setWidth}
-						/>
-					)}
-					<SidePanel
-						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
-						threadCwd={currentActiveThread?.cwd}
-						artifacts={artifactPanel.artifacts}
-						onDeleteArtifact={deleteArtifact}
-						tabs={artifactPanel.panel.tabs}
-						activeTabId={artifactPanel.activeTab.id}
-						browserApi={desktopApi}
-						filesApi={desktopApi}
-						expanded={artifactPanel.panel.expanded}
-						stale={artifactPanel.watchState.stale}
-						error={artifactPanel.watchState.error}
-						onNewTab={() => artifactPanel.newTab()}
-						onActivateTab={(id) => artifactPanel.activateTab(id)}
-						onCloseTab={(id) => artifactPanel.closeTab(id)}
-						onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
-						onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
-						onOpenFile={(file) => artifactPanel.openFile(file)}
-						onFileRenamed={(workspacePath, from, to) =>
-							artifactPanel.renameFile(workspacePath, from, to)
+			<MarkdownFileLinksContext value={markdownFileLinks}>
+				{!settingsOpen && artifactPanel.panel.open && (
+					<div
+						className={
+							artifactPanel.panel.expanded
+								? 'bg-background fixed inset-0 z-50'
+								: 'absolute inset-y-0 right-0 z-40'
 						}
-						onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
-						onOpenFullscreen={(key) => {
-							artifactPanel.setFullscreenKey(key);
-
-							// Request in the click gesture so Firefox keeps true browser
-							// fullscreen; the overlay only observes/exits the session.
-							if (!document.fullscreenElement) {
-								void document.documentElement.requestFullscreen?.().catch(() => {});
+						style={{ width: artifactPanel.panel.expanded ? undefined : sidePanelWidth.width }}
+						inert={artifactPanel.fullscreenArtifact ? true : undefined}
+					>
+						{!artifactPanel.panel.expanded && (
+							<SidePanelResizeHandle
+								width={sidePanelWidth.width}
+								minWidth={sidePanelWidth.minWidth}
+								maxWidth={sidePanelWidth.maxWidth}
+								onWidthChange={sidePanelWidth.setWidth}
+							/>
+						)}
+						<SidePanel
+							workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
+							threadCwd={currentActiveThread?.cwd}
+							artifacts={artifactPanel.artifacts}
+							onDeleteArtifact={deleteArtifact}
+							tabs={artifactPanel.panel.tabs}
+							activeTabId={artifactPanel.activeTab.id}
+							browserApi={desktopApi}
+							filesApi={desktopApi}
+							expanded={artifactPanel.panel.expanded}
+							stale={artifactPanel.watchState.stale}
+							error={artifactPanel.watchState.error}
+							onNewTab={() => artifactPanel.newTab()}
+							onActivateTab={(id) => artifactPanel.activateTab(id)}
+							onCloseTab={(id) => artifactPanel.closeTab(id)}
+							onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
+							onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
+							onOpenFile={(file) => artifactPanel.openFile(file)}
+							onFileRenamed={(workspacePath, from, to) =>
+								artifactPanel.renameFile(workspacePath, from, to)
 							}
-						}}
-						onToggleExpanded={() =>
-							artifactPanel.update({ expanded: !artifactPanel.panel.expanded })
-						}
-						onClose={() => artifactPanel.update({ open: false, expanded: false })}
-					/>
-				</div>
-			)}
+							onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
+							onOpenFullscreen={(key) => {
+								artifactPanel.setFullscreenKey(key);
 
-			{artifactPanel.fullscreenArtifact && (
-				<ArtifactScreenFullscreen
-					workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
-					artifact={artifactPanel.fullscreenArtifact}
-					onClose={() => artifactPanel.setFullscreenKey(null)}
-				/>
-			)}
+								// Request in the click gesture so Firefox keeps true browser
+								// fullscreen; the overlay only observes/exits the session.
+								if (!document.fullscreenElement) {
+									void document.documentElement.requestFullscreen?.().catch(() => {});
+								}
+							}}
+							onToggleExpanded={() =>
+								artifactPanel.update({ expanded: !artifactPanel.panel.expanded })
+							}
+							onClose={() => artifactPanel.update({ open: false, expanded: false })}
+						/>
+					</div>
+				)}
+
+				{artifactPanel.fullscreenArtifact && (
+					<ArtifactScreenFullscreen
+						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
+						artifact={artifactPanel.fullscreenArtifact}
+						onClose={() => artifactPanel.setFullscreenKey(null)}
+					/>
+				)}
+			</MarkdownFileLinksContext>
 
 			{desktopApi && projectPickerOpen && (
 				<ProjectPicker

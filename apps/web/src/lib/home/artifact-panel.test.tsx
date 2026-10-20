@@ -190,12 +190,24 @@ it('opens each file once and keeps its tab across renames until it is deleted', 
 	panel.openFile(file);
 	expect(panel.panel.tabs.filter((tab) => tab.view === 'file')).toHaveLength(2);
 	expect(panel.activeTab.file).toEqual(file);
+	expect(panel.panel.open).toBe(true);
 
 	panel.renameFile('/repo', 'src', 'lib');
 	expect(panel.activeTab.file).toEqual({ workspacePath: '/repo', path: 'lib/main.rs' });
 
 	panel.closeFile('/repo', 'lib');
 	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual([undefined, 'README.md']);
+});
+
+it('shows linked folders in one files tab', () => {
+	const panel = new ArtifactPanel();
+	panel.openDirectory({ workspacePath: '/repo', path: 'src' });
+	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
+	panel.openDirectory({ workspacePath: '/tmp/build', path: '' });
+
+	expect(panel.panel.open).toBe(true);
+	expect(panel.panel.tabs.map((tab) => tab.view)).toEqual(['files', 'file']);
+	expect(panel.activeTab.directory).toEqual({ workspacePath: '/tmp/build', path: '' });
 });
 
 it('reports unsaved file edits in any scope until they are saved', () => {

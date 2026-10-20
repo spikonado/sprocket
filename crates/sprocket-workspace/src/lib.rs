@@ -51,7 +51,7 @@ pub use skills::{
 };
 pub use workspace::resolve_workspace_root;
 pub use workspace_files::{
-    MAX_EDITABLE_FILE_BYTES, UnsupportedFile, WorkspaceFileContent, WorkspaceFileWrite,
-    create_workspace_entry, delete_workspace_entry, read_workspace_file, rename_workspace_entry,
-    write_workspace_file,
+    MAX_EDITABLE_FILE_BYTES, UnsupportedFile, WorkspaceEntryKind, WorkspaceFileContent,
+    WorkspaceFileWrite, create_workspace_entry, delete_workspace_entry, read_workspace_file,
+    rename_workspace_entry, workspace_entry_kind, write_workspace_file,
 };

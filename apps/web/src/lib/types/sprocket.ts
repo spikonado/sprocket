@@ -362,6 +362,10 @@ export type DesktopApi = {
 		input: { workspacePath: string; knownHash?: string },
 		signal?: AbortSignal
 	) => Promise<WorkspaceFilesResult>;
+	workspaceEntryKind: (
+		input: WorkspaceFileTarget,
+		signal?: AbortSignal
+	) => Promise<'file' | 'directory'>;
 	readWorkspaceFile: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal

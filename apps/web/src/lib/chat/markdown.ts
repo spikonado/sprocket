@@ -6,11 +6,21 @@ import { markdownMath } from './markdown-math';
 const marked = new Marked({ gfm: true, breaks: true }, markdownMath);
 
 DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
-	if (node.nodeName !== 'IMG' || attribute.attrName !== 'src') return;
+	const isPath =
+		(node.nodeName === 'IMG' && attribute.attrName === 'src') ||
+		(node.nodeName === 'A' && attribute.attrName === 'href');
+
+	if (!isPath) return;
 
 	const source = stripImageFileScheme(attribute.attrValue);
 
-	attribute.attrValue = isWindowsImagePath(source) ? `${source[0]}%3A${source.slice(2)}` : source;
+	// DOMPurify reads `C:` and the `README.md:` in `README.md:12` as URL schemes and drops them.
+	attribute.attrValue = isWindowsImagePath(source)
+		? `${source[0]}%3A${source.slice(2)}`
+		: source.replace(
+				/^(?!(?:callto|cid|mailto|matrix|sms|tel|xmpp):)([^:/?#]+):(?=\d+(?::\d+)?$)/i,
+				'$1%3A'
+			);
 });
 
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {

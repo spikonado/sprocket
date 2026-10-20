@@ -11,7 +11,7 @@ export type MarkdownImageScope = {
 	transcript?: { userId: string; threadId: string };
 };
 
-function decodeImagePath(source: string) {
+export function decodeImagePath(source: string) {
 	const path = source.split(/[?#]/, 1)[0];
 
 	try {
@@ -83,7 +83,10 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 		if (link.querySelector('img')) {
 			const url = markdownImageUrl(source, scope);
 
-			if (url) link.setAttribute('href', url);
+			if (url) {
+				link.setAttribute('href', url);
+				link.setAttribute('data-image-link', '');
+			}
 
 			continue;
 		}

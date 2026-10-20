@@ -58,6 +58,22 @@ fn reads_text_and_flags_binary_files() {
 }
 
 #[test]
+fn reports_entry_kinds() {
+    let dir = workspace();
+    let root = dir.path();
+
+    assert_eq!(
+        workspace_entry_kind(root, "src").unwrap(),
+        WorkspaceEntryKind::Directory
+    );
+    assert_eq!(
+        workspace_entry_kind(root, "src/main.rs").unwrap(),
+        WorkspaceEntryKind::File
+    );
+    assert!(workspace_entry_kind(root, "missing").is_err());
+}
+
+#[test]
 fn write_detects_conflicts() {
     let dir = workspace();
     let root = dir.path();

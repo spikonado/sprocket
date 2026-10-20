@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import FilesView, { type FilesApi } from './files-view';
-import type { WorkspaceFilesResult } from '$lib/types/sprocket';
+import type { WorkspaceFileTarget, WorkspaceFilesResult } from '$lib/types/sprocket';
 
 const listing: WorkspaceFilesResult = {
 	paths: ['src/', 'src/main.rs', 'README.md'],
@@ -20,12 +20,20 @@ function filesApi(): FilesApi {
 	};
 }
 
-function renderFiles(api: FilesApi, onOpenFile = vi.fn(), threadCwd = '/repo-worktree') {
+function renderFiles(
+	api: FilesApi,
+	onOpenFile = vi.fn(),
+	threadCwd = '/repo-worktree',
+	location?: WorkspaceFileTarget,
+	onLocationChange = vi.fn()
+) {
 	render(
 		<FilesView
 			api={api}
 			projectPath="/repo"
 			threadCwd={threadCwd}
+			location={location}
+			onLocationChange={onLocationChange}
 			active
 			onOpenFile={onOpenFile}
 			onRenamed={vi.fn()}
@@ -93,4 +101,37 @@ it('keeps expanded folders across a refresh and opens clicked files', async () =
 
 	fireEvent.click(row('src/lib.rs')!);
 	expect(onOpenFile).toHaveBeenCalledWith({ workspacePath: '/repo-worktree', path: 'src/lib.rs' });
+});
+
+it('reveals a linked folder inside the thread root', async () => {
+	renderFiles(filesApi(), vi.fn(), '/repo-worktree', {
+		workspacePath: '/repo-worktree',
+		path: 'src'
+	});
+
+	await waitFor(() => expect(row('src/main.rs')).toBeTruthy());
+	expect(row('src/')?.getAttribute('aria-expanded')).toBe('true');
+});
+
+it('browses a linked folder outside the workspace until asked to go back', async () => {
+	const api = filesApi();
+	const onLocationChange = vi.fn();
+	renderFiles(
+		api,
+		vi.fn(),
+		'/repo-worktree',
+		{ workspacePath: '/tmp/build', path: '' },
+		onLocationChange
+	);
+
+	await waitFor(() =>
+		expect(api.listWorkspaceFiles).toHaveBeenLastCalledWith(
+			{ workspacePath: '/tmp/build', knownHash: undefined },
+			expect.any(AbortSignal)
+		)
+	);
+	expect(screen.getByRole('button', { name: 'Thread' }).getAttribute('aria-pressed')).toBe('false');
+
+	fireEvent.click(screen.getByRole('button', { name: 'Back to workspace files' }));
+	expect(onLocationChange).toHaveBeenCalledWith(undefined);
 });

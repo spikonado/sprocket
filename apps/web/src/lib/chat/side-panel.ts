@@ -14,6 +14,8 @@ export type SidePanelTab = {
 	selectedKey: string | null;
 	/** Open workspace file, for the file view. */
 	file?: WorkspaceFileTarget;
+	/** Folder to show, for the files view; `workspacePath` overrides the thread or project root. */
+	directory?: WorkspaceFileTarget;
 	/** Unsaved edits in the file view; they live here so they outlive the editor. */
 	draft?: FileDraft;
 };
