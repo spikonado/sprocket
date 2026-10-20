@@ -10,7 +10,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use crate::browser_install::BrowserInstaller;
+use crate::browser_install::{AGENT_BROWSER_USE_SYSTEM_CA, BrowserInstaller};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,6 +208,7 @@ impl BrowserManager {
                 "AGENT_BROWSER_SKILLS_DIR".into(),
                 self.installer.skills_directory().into_os_string(),
             ),
+            (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
         ])
     }
 
