@@ -165,6 +165,10 @@ export function formatRate(rate: number | null): string {
 	return rate === null ? '—' : `${Math.round(rate * 100)}%`;
 }
 
+export function formatCalls(calls: number): string {
+	return `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`;
+}
+
 export const API_COST_NOTE = 'What this would cost calling the provider API directly.';
 
 type BucketUnit = 'hour' | 'day' | 'week' | 'month';

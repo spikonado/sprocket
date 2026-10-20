@@ -11,6 +11,7 @@ import {
 	bucketStartFor,
 	cacheHitRate,
 	costOf,
+	formatCalls,
 	formatCost,
 	formatRate,
 	formatTokens,
@@ -111,7 +112,7 @@ export default function SettingsAiUsage({
 								<UsageStat
 									label="Tokens"
 									value={formatTokens(billableTokens(breakdown))}
-									detail={`${breakdown.calls.toLocaleString()} calls`}
+									detail={formatCalls(breakdown.calls)}
 								/>
 								<UsageStat
 									label="Cache hits"
@@ -183,6 +184,10 @@ export default function SettingsAiUsage({
 
 const CHART_WIDTH = 760;
 
+const AXIS_WIDTH = 52;
+
+const PLOT_WIDTH = CHART_WIDTH - AXIS_WIDTH;
+
 const CHART_HEIGHT = 200;
 
 function UsageChart({
@@ -210,23 +215,21 @@ function UsageChart({
 		})
 	);
 
-	const max = Math.max(
-		1e-9,
-		...stacks.map((stack) => stack.reduce((sum, value) => sum + value, 0))
-	);
+	const peak = Math.max(0, ...stacks.map((stack) => stack.reduce((sum, value) => sum + value, 0)));
+	const max = peak || 1;
 
 	const format = (value: number) =>
 		metric === 'cost' ? formatCost({ usd: value, partial: false }) : formatTokens(value);
 
 	const gap = buckets.length > 20 ? 3 : 6;
-	const barWidth = (CHART_WIDTH - gap * (buckets.length - 1)) / buckets.length;
+	const barWidth = (PLOT_WIDTH - gap * (buckets.length - 1)) / buckets.length;
 	const labelEvery = Math.ceil(buckets.length / 8);
 	const hoveredBucket = hovered === null ? null : buckets[hovered];
 
 	return (
 		<div className="relative">
 			<svg
-				viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT + 22}`}
+				viewBox={`0 -6 ${CHART_WIDTH} ${CHART_HEIGHT + 28}`}
 				className="block w-full"
 				role="img"
 				aria-label={`${metric === 'cost' ? 'API cost' : 'Tokens'} by ${unit}, UTC`}
@@ -236,28 +239,24 @@ function UsageChart({
 					<g key={fraction}>
 						<line
 							x1="0"
-							x2={CHART_WIDTH}
+							x2={PLOT_WIDTH}
 							y1={CHART_HEIGHT * (1 - fraction)}
 							y2={CHART_HEIGHT * (1 - fraction)}
 							stroke="var(--hairline)"
 						/>
-						<text
-							x={CHART_WIDTH}
-							y={CHART_HEIGHT * (1 - fraction) + 12}
-							textAnchor="end"
-							className="fill-muted-foreground font-mono text-[10px]"
-						>
-							{format(max * fraction)}
-						</text>
+						{peak > 0 ? (
+							<text
+								x={CHART_WIDTH}
+								y={CHART_HEIGHT * (1 - fraction) + 4}
+								textAnchor="end"
+								className="fill-muted-foreground font-mono text-[10px]"
+							>
+								{format(peak * fraction)}
+							</text>
+						) : null}
 					</g>
 				))}
-				<line
-					x1="0"
-					x2={CHART_WIDTH}
-					y1={CHART_HEIGHT}
-					y2={CHART_HEIGHT}
-					stroke="var(--hairline)"
-				/>
+				<line x1="0" x2={PLOT_WIDTH} y1={CHART_HEIGHT} y2={CHART_HEIGHT} stroke="var(--hairline)" />
 				{stacks.map((stack, bucketIndex) => {
 					const x = bucketIndex * (barWidth + gap);
 					let top = CHART_HEIGHT;
@@ -287,14 +286,15 @@ function UsageChart({
 								) : null;
 							})}
 							{bucketIndex % labelEvery === 0 ? (
-								<text
-									x={x + barWidth / 2}
-									y={CHART_HEIGHT + 16}
-									textAnchor="middle"
-									className="fill-muted-foreground font-mono text-[10px]"
+								<AxisLabel
+									x={x}
+									barWidth={barWidth}
+									edge={
+										bucketIndex === 0 ? 'first' : bucketIndex === buckets.length - 1 ? 'last' : null
+									}
 								>
 									{bucketLabel(unit, buckets[bucketIndex].start)}
-								</text>
+								</AxisLabel>
 							) : null}
 						</g>
 					);
@@ -327,8 +327,39 @@ function UsageChart({
 	);
 }
 
+function AxisLabel({
+	x,
+	barWidth,
+	edge,
+	children
+}: {
+	x: number;
+	barWidth: number;
+	edge: 'first' | 'last' | null;
+	children: string;
+}) {
+	const anchor = edge === 'first' ? 'start' : edge === 'last' ? 'end' : 'middle';
+	const anchorX = edge === 'first' ? x : edge === 'last' ? x + barWidth : x + barWidth / 2;
+
+	return (
+		<text
+			x={anchorX}
+			y={CHART_HEIGHT + 16}
+			textAnchor={anchor}
+			className="fill-muted-foreground font-mono text-[10px]"
+		>
+			{children}
+		</text>
+	);
+}
+
+const modelHeaderCell =
+	'text-muted-foreground px-2.5 py-2 text-left text-[11.5px] font-normal whitespace-nowrap';
+
 const headerCell =
 	'text-muted-foreground px-2.5 py-2 text-right text-[11.5px] font-normal whitespace-nowrap';
+
+const modelBodyCell = 'px-2.5 py-2 text-left whitespace-nowrap';
 
 const bodyCell = 'px-2.5 py-2 text-right tabular-nums whitespace-nowrap';
 
@@ -342,7 +373,7 @@ function ModelTable({ models }: { models: ModelUsage[] }) {
 			<table className="w-full border-collapse text-[13px]">
 				<thead>
 					<tr className="border-b border-[var(--hairline)]">
-						<th className={`${headerCell} text-left`}>Model</th>
+						<th className={modelHeaderCell}>Model</th>
 						<th className={headerCell}>Calls</th>
 						<th className={headerCell}>Uncached input</th>
 						<th className={headerCell}>Cache read</th>
@@ -357,7 +388,7 @@ function ModelTable({ models }: { models: ModelUsage[] }) {
 				<tbody>
 					{models.map((model) => (
 						<tr key={model.key} className="border-b border-[var(--hairline)]">
-							<td className={`${bodyCell} text-left`}>
+							<td className={modelBodyCell}>
 								{model.label} <span className="text-muted-foreground">· {model.providerLabel}</span>
 							</td>
 							<td className={bodyCell}>{model.breakdown.calls.toLocaleString()}</td>

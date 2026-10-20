@@ -1,11 +1,12 @@
 # Settings
 
-Settings replaces the inbox sidebar with a page list and shows one page in the main area. General preference switches persist in Convex (`uiPreferences`). Account is profile, usage, and Sign Out. The GitHub switches live in the server profile. Settings has no URL, so a reload returns to the inbox.
+Settings replaces the inbox sidebar with a page list and shows one page in the main area. General preference switches persist in Convex (`uiPreferences`). Account is profile, usage, and Sign Out. AI Usage charts the account's recorded model calls. The GitHub switches live in the server profile. Settings has no URL, so a reload returns to the inbox.
 
 ## Sub-features
 
 - `settings-open` opens settings and leaves with Back.
-- `settings-nav` moves between General, Account, Providers, BYOK/BYOS, Version Control and Payments.
+- `settings-nav` moves between General, Account, AI Usage, Providers, BYOK/BYOS, Version Control and Payments.
+- `settings-ai-usage` switches the AI Usage range and metric.
 - `settings-pref` flips a preference switch that persists across a reload.
 - `settings-github` flips `Use GitHub` for this machine.
 
@@ -17,8 +18,9 @@ Settings replaces the inbox sidebar with a page list and shows one page in the m
 
 Precondition: the new-thread screen with the inbox sidebar visible.
 
-- **Open.** Click `button "Settings"`. `snapshot -i` shows `button "Back"`, `navigation "Settings"` with `button "General"`, `button "Account"`, `button "Providers"`, `button "BYOK/BYOS"`, `button "Version Control"` and `button "Payments"`, then `heading "General"` and three switches: `Automatically name threads`, `Continue agents automatically after restarts and crashes` and `Settle threads when their PRs merge`. Each switch shows only its title, with no description.
+- **Open.** Click `button "Settings"`. `snapshot -i` shows `button "Back"`, `navigation "Settings"` with `button "General"`, `button "Account"`, `button "AI Usage"`, `button "Providers"`, `button "BYOK/BYOS"`, `button "Version Control"` and `button "Payments"`, then `heading "General"` and three switches: `Automatically name threads`, `Continue agents automatically after restarts and crashes` and `Settle threads when their PRs merge`. Each switch shows only its title, with no description.
 - **Navigate.** Click each page button. The `heading` matches its name.
+- **AI Usage.** Send a prompt first, as in [threads.md](./threads.md). On AI Usage, `30 days` and `Tokens` are selected. Click `button "24 hours"`. The chart's x-axis shows UTC hours, the newest bar holds the prompt's tokens, and the `TOKENS` stat matches the table's `Uncached input` plus `Output`. Click `button "API cost"`. Cost stats read `—` while the gateway catalog has no `directApiPricing`.
 - **Preference.** Click `switch "Continue agents automatically after restarts and crashes"`. Its `checked` flips. Run `agent-browser reload`, wait for `New thread`, reopen Settings, and the switch keeps the new state. Click it again to restore it.
 - **GitHub.** On Version Control, wait until `switch "Use GitHub"` is present and not `[disabled]`. It starts as `Checking GitHub…` with the switch disabled. After a click it is disabled again until the save finishes; the JSON file updates first, then `checked`. Click it. It reads `[checked=false]`, plain `snapshot` shows "GitHub is off. Agents can’t link pull requests and their status won’t refresh.", and `~/.sprocket-dev-verify/github-settings.json` has `"disabled": true`. Click it again, wait until it is not disabled, and the file has `"disabled": false`.
 - **Back.** Click `button "Back"`. `button "New thread"` and `button "Open side panel"` return.

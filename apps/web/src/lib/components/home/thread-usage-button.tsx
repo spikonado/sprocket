@@ -10,6 +10,7 @@ import {
 	breakdownOf,
 	cacheHitRate,
 	costOf,
+	formatCalls,
 	formatCost,
 	formatRate,
 	formatTokens,
@@ -160,7 +161,7 @@ function ThreadUsagePanel({
 				<UsageStat
 					label="Tokens"
 					value={formatTokens(billableTokens(breakdown))}
-					detail={`${breakdown.calls.toLocaleString()} calls`}
+					detail={formatCalls(breakdown.calls)}
 				/>
 				<UsageStat
 					label="Cache hits"
