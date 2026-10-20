@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -139,7 +139,14 @@ async function appendFinishedToolPart(
 }
 
 describe('agentRuntime context accounting', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('records usage atomically with a durable completion', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-08-01T23:59:30.000Z'));
+
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'finalized-context-usage-secret';
@@ -185,6 +192,8 @@ describe('agentRuntime context accounting', () => {
 			usage: { contextTokens: 8_000, call: modelCall() },
 			executionSecret
 		});
+
+		vi.setSystemTime(new Date('2026-08-02T00:00:30.000Z'));
 		await finalizeTextCompletion(asUser, {
 			runId,
 			claimId: 'claim-finalized-usage',
@@ -195,7 +204,16 @@ describe('agentRuntime context accounting', () => {
 			usage: { contextTokens: 300_000, call: modelCall({ longContext: true }) }
 		});
 
-		const totals = { calls: 2, standard: callTokens, longContext: callTokens };
+		const emptyTokens = {
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+			reasoningTokens: 0
+		};
+
+		const firstCall = { calls: 1, standard: callTokens, longContext: emptyTokens };
+		const secondCall = { calls: 1, standard: emptyTokens, longContext: callTokens };
 		const usage = await readThreadUsage(t, threadId);
 
 		expect(usage.contextTokens).toBe(300_000);
@@ -203,12 +221,39 @@ describe('agentRuntime context accounting', () => {
 			'turn:claim-finalized-usage:1',
 			'turn:claim-finalized-usage:2'
 		]);
-		expect(usage.totals).toEqual([expect.objectContaining({ model: 'gpt-5.6-sol', ...totals })]);
-		expect(usage.userBuckets.map((bucket) => bucket.granularity).sort()).toEqual(['day', 'hour']);
-		expect(usage.userBuckets).toEqual([
-			expect.objectContaining(totals),
-			expect.objectContaining(totals)
+		expect(usage.totals).toEqual([
+			expect.objectContaining({
+				model: 'gpt-5.6-sol',
+				calls: 2,
+				standard: callTokens,
+				longContext: callTokens
+			})
 		]);
+		expect(usage.userBuckets).toHaveLength(4);
+		expect(usage.userBuckets).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					granularity: 'hour',
+					bucketStart: Date.parse('2026-08-01T23:00:00.000Z'),
+					...firstCall
+				}),
+				expect.objectContaining({
+					granularity: 'day',
+					bucketStart: Date.parse('2026-08-01T00:00:00.000Z'),
+					...firstCall
+				}),
+				expect.objectContaining({
+					granularity: 'hour',
+					bucketStart: Date.parse('2026-08-02T00:00:00.000Z'),
+					...secondCall
+				}),
+				expect.objectContaining({
+					granularity: 'day',
+					bucketStart: Date.parse('2026-08-02T00:00:00.000Z'),
+					...secondCall
+				})
+			])
+		);
 	});
 
 	it('does not record usage when a completion has no durable items', async () => {
