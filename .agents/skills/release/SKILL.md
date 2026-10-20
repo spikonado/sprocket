@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Release
 
-The user names the new version. The previous version is the latest tag (`gh release list -L 1`).
+The user names the new version. The previous version is the latest stable release (`gh release list --exclude-pre-releases --exclude-drafts -L 1`), so canary prereleases never become the baseline.
 
 ## 1. Version bump PR
 
