@@ -17,6 +17,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const INSTALL_LOCK: &str = "install.lock";
 const LEASE_LOCK: &str = "in-use.lock";
 const TOMBSTONE_SUFFIX: &str = ".removing";
+pub(crate) const AGENT_BROWSER_USE_SYSTEM_CA: &str = "AGENT_BROWSER_USE_SYSTEM_CA";
 
 pub(crate) struct BrowserInstaller {
     tool_dir: PathBuf,
@@ -219,7 +220,11 @@ async fn chromium_installed(cli: &Path) -> anyhow::Result<bool> {
 }
 
 async fn run(command: &mut Command) -> anyhow::Result<Output> {
-    let output = command.stdin(Stdio::null()).kill_on_drop(true).output();
+    let output = command
+        .env(AGENT_BROWSER_USE_SYSTEM_CA, "1")
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
     let output = tokio::time::timeout(COMMAND_TIMEOUT, output)
         .await
         .context("agent-browser timed out")??;
