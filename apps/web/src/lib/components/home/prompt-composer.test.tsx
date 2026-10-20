@@ -484,8 +484,9 @@ describe('PromptComposer submission', () => {
 });
 
 describe('PromptComposer attachments', () => {
-	it('renders attachment status and removes by local id', async () => {
+	it('renders attachment status and removes by local id during a run', async () => {
 		const { props } = renderComposer({
+			isRunning: true,
 			attachments: [
 				{
 					localId: 'ready-1',
