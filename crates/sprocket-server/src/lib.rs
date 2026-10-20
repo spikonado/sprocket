@@ -149,10 +149,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
-    let pending_chatgpt_oauth = chatgpt_oauth::PendingLogins::new(
-        Arc::clone(&host.chatgpt_credentials),
-        Arc::clone(&auth),
-    );
+    let pending_chatgpt_oauth =
+        chatgpt_oauth::PendingLogins::new(Arc::clone(&host.chatgpt_credentials), Arc::clone(&auth));
     let cli_sessions = Arc::new(cli_sessions::CliSessions::new(
         Arc::clone(&host.lifetime),
         options.temporary,

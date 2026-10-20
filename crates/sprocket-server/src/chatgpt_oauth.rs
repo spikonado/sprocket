@@ -97,12 +97,7 @@ impl PendingLogins {
         })
     }
 
-    pub(crate) async fn poll(
-        &self,
-        session: &str,
-        user: &str,
-        state: &str,
-    ) -> Option<LoginResult> {
+    pub(crate) async fn poll(&self, session: &str, user: &str, state: &str) -> Option<LoginResult> {
         let logins = self.logins.lock().await;
         let login = logins.attempts.get(state).filter(|login| {
             login.session == session && login.user == user && login.expires > Instant::now()
