@@ -860,33 +860,6 @@ export function PromptComposerView({
 
 								<div className="flex min-w-0 items-center justify-between gap-1 overflow-visible pt-2.5 sm:gap-3">
 									<div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1">
-										{usageThreadId ? (
-											<ThreadUsageButton threadId={usageThreadId} modelCatalog={modelCatalog} />
-										) : null}
-
-										{modelCatalog && selectedModel && selectedReasoningEffort ? (
-											<>
-												{usageThreadId ? (
-													<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-												) : null}
-
-												<ModelSelector
-													modelId={selectedModel}
-													models={modelCatalog.models.filter((model) =>
-														modelOptions.some((option) => option.id === model.id)
-													)}
-													reasoningEffort={selectedReasoningEffort}
-													fastMode={fastMode}
-													allowsFastMode={runsOnSpikonado}
-													disabled={composerLocked || answeringQuestion}
-													onSelect={handleModelChange}
-													onFastModeChange={onFastModeChange}
-												/>
-											</>
-										) : null}
-									</div>
-
-									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
 										<input
 											ref={attachmentInput}
 											type="file"
@@ -910,6 +883,31 @@ export function PromptComposerView({
 										>
 											<Paperclip className="size-4" aria-hidden="true" />
 										</button>
+
+										{modelCatalog && selectedModel && selectedReasoningEffort ? (
+											<>
+												<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+
+												<ModelSelector
+													modelId={selectedModel}
+													models={modelCatalog.models.filter((model) =>
+														modelOptions.some((option) => option.id === model.id)
+													)}
+													reasoningEffort={selectedReasoningEffort}
+													fastMode={fastMode}
+													allowsFastMode={runsOnSpikonado}
+													disabled={composerLocked || answeringQuestion}
+													onSelect={handleModelChange}
+													onFastModeChange={onFastModeChange}
+												/>
+											</>
+										) : null}
+									</div>
+
+									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
+										{usageThreadId ? (
+											<ThreadUsageButton threadId={usageThreadId} modelCatalog={modelCatalog} />
+										) : null}
 										{isRunning ? (
 											<button
 												type="button"

@@ -42,9 +42,9 @@ export function breakdownOf(rows: readonly TokenUsageTotals[]): TokenBreakdown {
 	);
 }
 
-/** Cached input is excluded, since the same context is re-read on every turn. */
-export function billableTokens(breakdown: TokenBreakdown): number {
-	return breakdown.uncachedInput + breakdown.output;
+/** Cache reads are excluded, since the same context is re-read on every turn. */
+export function newTokens(breakdown: TokenBreakdown): number {
+	return breakdown.uncachedInput + breakdown.cacheWrite + breakdown.output;
 }
 
 export function cacheHitRate(breakdown: TokenBreakdown): number | null {
@@ -53,25 +53,41 @@ export function cacheHitRate(breakdown: TokenBreakdown): number | null {
 	return input === 0 ? null : breakdown.cacheRead / input;
 }
 
+export type TokenTypeAmounts = Omit<TokenBreakdown, 'calls'>;
+
+function amountsBy(amount: (key: keyof TokenTypeAmounts) => number): TokenTypeAmounts {
+	return {
+		uncachedInput: amount('uncachedInput'),
+		cacheRead: amount('cacheRead'),
+		cacheWrite: amount('cacheWrite'),
+		output: amount('output'),
+		reasoning: amount('reasoning')
+	};
+}
+
 function countsCost(
 	counts: TokenCounts,
 	pricing: DirectApiPricing,
 	cacheWritePrice: number,
 	inputMultiplier: number,
 	outputMultiplier: number
-): number {
+): TokenTypeAmounts {
 	const uncached = counts.inputTokens - counts.cacheReadTokens - counts.cacheWriteTokens;
 
-	const input =
-		uncached * pricing.input +
-		counts.cacheReadTokens * pricing.cacheRead +
-		counts.cacheWriteTokens * cacheWritePrice;
-
-	return input * inputMultiplier + counts.outputTokens * pricing.output * outputMultiplier;
+	return {
+		uncachedInput: uncached * pricing.input * inputMultiplier,
+		cacheRead: counts.cacheReadTokens * pricing.cacheRead * inputMultiplier,
+		cacheWrite: counts.cacheWriteTokens * cacheWritePrice * inputMultiplier,
+		output: counts.outputTokens * pricing.output * outputMultiplier,
+		reasoning: counts.reasoningTokens * pricing.output * outputMultiplier
+	};
 }
 
-/** USD at today's direct-API list prices, or null when the catalog can't price the model or the row's cache writes. */
-export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined): number | null {
+/** USD per token type at today's direct-API list prices, or null when the catalog can't price the model or the row's cache writes. */
+export function apiCostByType(
+	row: TokenUsageTotals,
+	catalog: ModelCatalog | undefined
+): TokenTypeAmounts | null {
 	const pricing = catalog?.models.find((model) => model.id === row.model)?.directApiPricing;
 
 	if (!pricing) return null;
@@ -86,17 +102,38 @@ export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined
 	const tier = row.serviceTier === 'fast' ? pricing.fastMultiplier : 1;
 	const longContext = pricing.longContext ?? { inputMultiplier: 1, outputMultiplier: 1 };
 
-	const perMillion =
-		countsCost(row.standard, pricing, cacheWritePrice ?? 0, 1, 1) +
-		countsCost(
-			row.longContext,
-			pricing,
-			cacheWritePrice ?? 0,
-			longContext.inputMultiplier,
-			longContext.outputMultiplier
-		);
+	const standard = countsCost(row.standard, pricing, cacheWritePrice ?? 0, 1, 1);
 
-	return (perMillion * tier) / 1_000_000;
+	const long = countsCost(
+		row.longContext,
+		pricing,
+		cacheWritePrice ?? 0,
+		longContext.inputMultiplier,
+		longContext.outputMultiplier
+	);
+
+	return amountsBy((key) => ((standard[key] + long[key]) * tier) / 1_000_000);
+}
+
+export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined): number | null {
+	const cost = apiCostByType(row, catalog);
+
+	return cost && cost.uncachedInput + cost.cacheRead + cost.cacheWrite + cost.output;
+}
+
+/** Summed over the rows the catalog can price; `costOf` reports whether any were left out. */
+export function costByTypeOf(
+	rows: readonly TokenUsageTotals[],
+	catalog: ModelCatalog | undefined
+): TokenTypeAmounts {
+	return rows.reduce(
+		(total, row) => {
+			const cost = apiCostByType(row, catalog);
+
+			return cost ? amountsBy((key) => total[key] + cost[key]) : total;
+		},
+		amountsBy(() => 0)
+	);
 }
 
 export type CostSummary = { usd: number | null; partial: boolean };
@@ -151,7 +188,7 @@ export function usageByModel(
 				cost: costOf(group, catalog)
 			};
 		})
-		.sort((a, b) => billableTokens(b.breakdown) - billableTokens(a.breakdown));
+		.sort((a, b) => newTokens(b.breakdown) - newTokens(a.breakdown));
 }
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
@@ -181,6 +218,17 @@ export function formatRate(rate: number | null): string {
 
 export function formatCalls(calls: number): string {
 	return `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`;
+}
+
+/** Round axis ticks from 0 to at least `peak`, so gridlines land on readable values. */
+export function axisTicks(peak: number): number[] {
+	if (!(peak > 0)) return [];
+
+	const rough = peak / 4;
+	const magnitude = 10 ** Math.floor(Math.log10(rough));
+	const step = ([1, 2, 2.5, 5, 10].find((m) => m * magnitude >= rough) ?? 10) * magnitude;
+
+	return Array.from({ length: Math.ceil(peak / step - 1e-9) + 1 }, (_, index) => index * step);
 }
 
 export const API_COST_NOTE = 'What this would cost calling the provider API directly.';
@@ -246,13 +294,9 @@ export function rangeQuery(range: UsageRange, now: number) {
 	};
 }
 
+/** Hours are exact instants, so they show in local time. Days are stored as UTC days. */
 const bucketLabelFormats: Record<BucketUnit, Intl.DateTimeFormat> = {
-	hour: new Intl.DateTimeFormat('en-US', {
-		hour: '2-digit',
-		minute: '2-digit',
-		hourCycle: 'h23',
-		timeZone: 'UTC'
-	}),
+	hour: new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }),
 	day: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
 	week: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
 	month: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })

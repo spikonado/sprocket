@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
-import { apiCost, rangeQuery, usageRanges } from '$lib/chat/ai-usage';
+import {
+	apiCost,
+	apiCostByType,
+	axisTicks,
+	breakdownOf,
+	newTokens,
+	rangeQuery,
+	usageRanges
+} from '$lib/chat/ai-usage';
 
 const catalog: ModelCatalog = {
 	defaultModelId: 'sol',
@@ -69,6 +77,43 @@ describe('apiCost', () => {
 	);
 });
 
+describe('apiCostByType', () => {
+	it('prices each token type, with reasoning at the output rate', () => {
+		const none = {
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+			reasoningTokens: 0
+		};
+
+		const cost = apiCostByType(
+			{
+				provider: 'chatgpt',
+				model: 'sol',
+				serviceTier: 'standard',
+				cacheWriteTtl: '30m',
+				calls: 1,
+				standard: {
+					inputTokens: 1_000_000,
+					cacheReadTokens: 500_000,
+					cacheWriteTokens: 100_000,
+					outputTokens: 100_000,
+					reasoningTokens: 20_000
+				},
+				longContext: none
+			},
+			catalog
+		);
+
+		expect(cost?.uncachedInput).toBeCloseTo(0.8);
+		expect(cost?.cacheRead).toBeCloseTo(0.05);
+		expect(cost?.cacheWrite).toBeCloseTo(0.25);
+		expect(cost?.output).toBeCloseTo(1);
+		expect(cost?.reasoning).toBeCloseTo(0.2);
+	});
+});
+
 describe('rangeQuery', () => {
 	const now = Date.parse('2026-10-21T10:30:00.000Z');
 
@@ -84,5 +129,42 @@ describe('rangeQuery', () => {
 			from: Date.parse(from),
 			to: Date.parse(to)
 		});
+	});
+});
+
+describe('newTokens', () => {
+	it('counts uncached input, cache writes and output, but not cache reads', () => {
+		const counts = {
+			inputTokens: 1_000,
+			cacheReadTokens: 600,
+			cacheWriteTokens: 300,
+			outputTokens: 50,
+			reasoningTokens: 10
+		};
+
+		const breakdown = breakdownOf([
+			{
+				provider: 'spikonado',
+				model: 'sol',
+				serviceTier: 'standard',
+				cacheWriteTtl: '30m',
+				calls: 1,
+				standard: counts,
+				longContext: counts
+			}
+		]);
+
+		expect(newTokens(breakdown)).toBe(900);
+	});
+});
+
+describe('axisTicks', () => {
+	it.each([
+		[6_300, [0, 2_000, 4_000, 6_000, 8_000]],
+		[0.62, [0, 0.2, 0.4, 0.6, 0.8]],
+		[100, [0, 25, 50, 75, 100]],
+		[0, []]
+	])('covers %s with round steps', (peak, ticks) => {
+		expect(axisTicks(peak).map((tick) => Number(tick.toPrecision(6)))).toEqual(ticks);
 	});
 });

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { formatTokens, type TokenBreakdown } from '$lib/chat/ai-usage';
+import { formatTokens, type TokenTypeAmounts } from '$lib/chat/ai-usage';
 
 const tokenTypes = [
 	{ key: 'uncachedInput', label: 'Uncached input', color: 'oklch(0.55 0.13 250)' },
@@ -74,17 +74,58 @@ export function UsageStat({
 }) {
 	return (
 		<div className="min-w-0">
-			<p className="text-muted-foreground font-mono text-[10px] tracking-[0.18em] uppercase">
-				{label}
+			<p className="text-muted-foreground text-[12px]">{label}</p>
+			<p className="text-foreground mt-1 text-[1.4rem] leading-tight tracking-[-0.03em] tabular-nums">
+				{value}
 			</p>
-			<p className="text-foreground mt-1.5 text-xl tracking-[-0.02em] tabular-nums">{value}</p>
-			{detail ? <p className="text-muted-foreground mt-0.5 text-[11.5px]">{detail}</p> : null}
+			{detail ? (
+				<p className="text-muted-foreground mt-0.5 truncate text-[11.5px]">{detail}</p>
+			) : null}
 		</div>
 	);
 }
 
-export function TokenTypeBreakdown({ breakdown }: { breakdown: TokenBreakdown }) {
-	const total = tokenTypes.reduce((sum, type) => sum + breakdown[type.key], 0);
+export type ShareItem = {
+	key: string;
+	label: string;
+	detail?: string;
+	value: string;
+	share: number;
+};
+
+/** Rows with a bar for each item's share, for comparing models or subagents at a glance. */
+export function UsageShareList({ items }: { items: readonly ShareItem[] }) {
+	return (
+		<ul className="mt-2 space-y-2.5 text-[12.5px]">
+			{items.map((item) => (
+				<li key={item.key}>
+					<div className="flex items-baseline gap-2">
+						<span className="text-foreground min-w-0 flex-1 truncate">
+							{item.label}
+							{item.detail ? <span className="text-muted-foreground"> · {item.detail}</span> : null}
+						</span>
+						<span className="text-muted-foreground shrink-0 tabular-nums">{item.value}</span>
+					</div>
+					<div className="bg-hover-fill mt-1 h-1 overflow-hidden rounded-full" aria-hidden="true">
+						<div
+							className="bg-foreground/35 h-full rounded-full"
+							style={{ width: `${Math.max(item.share * 100, item.share > 0 ? 1 : 0)}%` }}
+						></div>
+					</div>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+export function TokenTypeBreakdown({
+	amounts,
+	format = formatTokens
+}: {
+	amounts: TokenTypeAmounts;
+	format?: (amount: number) => string;
+}) {
+	const total = tokenTypes.reduce((sum, type) => sum + amounts[type.key], 0);
 
 	return (
 		<div>
@@ -94,7 +135,7 @@ export function TokenTypeBreakdown({ breakdown }: { breakdown: TokenBreakdown })
 							<div
 								key={type.key}
 								style={{
-									width: `${(breakdown[type.key] / total) * 100}%`,
+									width: `${(amounts[type.key] / total) * 100}%`,
 									background: type.color
 								}}
 							></div>
@@ -109,12 +150,12 @@ export function TokenTypeBreakdown({ breakdown }: { breakdown: TokenBreakdown })
 							style={{ background: type.color }}
 						></span>
 						<dt className="text-muted-foreground flex-1">{type.label}</dt>
-						<dd className="text-foreground tabular-nums">{formatTokens(breakdown[type.key])}</dd>
+						<dd className="text-foreground tabular-nums">{format(amounts[type.key])}</dd>
 					</div>
 				))}
 				<div className="text-muted-foreground col-start-2 flex pl-4 text-[11.5px]">
 					<dt className="flex-1">of which reasoning</dt>
-					<dd className="tabular-nums">{formatTokens(breakdown.reasoning)}</dd>
+					<dd className="tabular-nums">{format(amounts.reasoning)}</dd>
 				</div>
 			</dl>
 		</div>
