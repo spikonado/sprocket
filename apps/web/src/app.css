@@ -240,6 +240,11 @@ body::after {
 			inset: min(0px, calc((100% - 44px) / 2));
 			content: '';
 		}
+
+		/* A later sibling paints on top, so it must not reach back over the previous button. */
+		.touch-target + .touch-target::before {
+			left: 0;
+		}
 	}
 }
 
