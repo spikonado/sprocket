@@ -6,11 +6,7 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { allMerged } from '@convex/lib/pullRequestState';
-import {
-	AUTOMATIC_RECOVERY_GRACE_MS,
-	awaitsAutomaticRecovery,
-	isAbandonedRun
-} from '@convex/lib/runRecovery';
+import { AUTOMATIC_RECOVERY_GRACE_MS, awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 async function latestThreadRun(db: DatabaseReader, threadId: Id<'threadRecords'>) {
@@ -112,11 +108,14 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 
 	if (existing) return existing;
 
+	const ownActive = await threadOwnActivity(ctx.db, threadId);
+
 	const initial: Omit<Doc<'threadHierarchyStates'>, '_id' | '_creationTime'> = {
 		threadId,
 		descendantCount: 0,
 		activeDescendantCount: 0,
-		workingDescendantCount: 0
+		workingDescendantCount: 0,
+		ownActive
 	};
 
 	const state = { ...initial, _id: await ctx.db.insert('threadHierarchyStates', initial) };
@@ -124,10 +123,9 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 
 	if (!thread) throw new Error('Thread not found.');
 
-	// A newly initialized ancestor has no stored contribution to reconcile later.
 	await applyAncestorCountChanges(ctx, thread, {
 		total: 0,
-		active: Number(await threadOwnActivity(ctx.db, threadId)),
+		active: Number(ownActive),
 		working: Number(thread.status === 'running')
 	});
 
@@ -183,16 +181,10 @@ export async function captureThreadActivityBeforeChange(
 
 	if (!thread) return null;
 
-	const before = { thread, active: await threadOwnActivity(ctx.db, threadId) };
-	const state = await hierarchyState(ctx.db, threadId);
+	const state =
+		(await hierarchyState(ctx.db, threadId)) ?? (await ensureHierarchyState(ctx, threadId));
 
-	if (!state) {
-		await ensureHierarchyState(ctx, threadId);
-
-		return before;
-	}
-
-	return before;
+	return { thread, active: state.ownActive ?? (await threadOwnActivity(ctx.db, threadId)) };
 }
 
 export async function updateThreadHierarchyAfterChange(
@@ -205,12 +197,17 @@ export async function updateThreadHierarchyAfterChange(
 
 	if (!thread) return;
 
+	const afterActive = await threadOwnActivity(ctx.db, thread._id);
+
 	await applyAncestorCountChanges(ctx, thread, {
 		total: 0,
-		active: Number(await threadOwnActivity(ctx.db, thread._id)) - Number(before.active),
+		active: Number(afterActive) - Number(before.active),
 		working: Number(thread.status === 'running') - Number(before.thread.status === 'running')
 	});
 
+	const state = await ensureHierarchyState(ctx, thread._id);
+
+	await ctx.db.patch('threadHierarchyStates', state._id, { ownActive: afterActive });
 	await applyPendingMergedSettle(ctx, thread);
 
 	if (await threadRunAwaitsAutomaticRecovery(ctx.db, thread._id)) {
@@ -265,15 +262,7 @@ export async function applyPendingMergedSettleAfterRecovery(
 
 	if (!before) return;
 
-	const latest = await latestThreadRun(ctx.db, threadId);
-
-	const recoveryExpired =
-		latest !== null && isAbandonedRun(latest) && !(await awaitsAutomaticRecovery(ctx.db, latest));
-
-	await updateThreadHierarchyAfterChange(ctx, {
-		...before,
-		active: recoveryExpired || before.active
-	});
+	await updateThreadHierarchyAfterChange(ctx, before);
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
