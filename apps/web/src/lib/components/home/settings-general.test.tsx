@@ -22,7 +22,7 @@ const toggles = [
 		defaultEnabled: true
 	},
 	{
-		name: 'Continue agents automatically after restarts',
+		name: 'Continue agents automatically after restarts and crashes',
 		field: 'automaticAgentContinuation',
 		mutation: api.uiPreferences.setAutomaticAgentContinuation,
 		defaultEnabled: true
