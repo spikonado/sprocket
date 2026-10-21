@@ -6,7 +6,7 @@ import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentE
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { allMerged } from '@convex/lib/pullRequestState';
-import { subtreeSummary, threadRunAwaitsAutomaticRecovery } from '@convex/lib/threadHierarchy';
+import { applyPendingMergedSettle } from '@convex/lib/threadHierarchy';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { vLinkedPullRequest, type LinkedPullRequest } from '@convex/lib/validators';
 
@@ -44,20 +44,8 @@ async function writeThreadPullRequests(
 		return;
 	}
 
-	if (
-		(await subtreeSummary(ctx.db, thread)).anyActive ||
-		(await threadRunAwaitsAutomaticRecovery(ctx.db, thread._id))
-	) {
-		await ctx.db.patch('threadRecords', thread._id, { pullRequests, settleWhenIdle: true });
-
-		return;
-	}
-
-	await ctx.db.patch('threadRecords', thread._id, {
-		pullRequests,
-		archivedAt: Date.now(),
-		settleWhenIdle: undefined
-	});
+	await ctx.db.patch('threadRecords', thread._id, { pullRequests, settleWhenIdle: true });
+	await applyPendingMergedSettle(ctx, { ...thread, pullRequests, settleWhenIdle: true });
 }
 
 /** Adds PRs the agent linked, with the states it read from GitHub on the user's machine. */
