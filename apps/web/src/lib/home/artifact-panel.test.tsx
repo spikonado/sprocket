@@ -182,14 +182,13 @@ it('keeps at most one new tab and focuses it instead of adding another', () => {
 	expect(panel.activeTab.id).toBe(emptyTabId);
 });
 
-it('opens each file once in the empty tab or a new one and keeps it across renames until deleted', () => {
+it('opens files in the empty tab, then new tabs, and keeps them across renames until deleted', () => {
 	const panel = new ArtifactPanel();
 	const file = { workspacePath: '/repo', path: 'src/main.rs' };
 	panel.openFile(file);
 	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
 	panel.openFile(file);
-	expect(panel.panel.tabs.filter((tab) => tab.view === 'file')).toHaveLength(2);
-	expect(panel.panel.tabs).toHaveLength(2);
+	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual(['src/main.rs', 'README.md']);
 	expect(panel.activeTab.file).toEqual(file);
 	expect(panel.panel.open).toBe(true);
 
