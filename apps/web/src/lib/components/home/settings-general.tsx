@@ -35,14 +35,12 @@ export default function SettingsGeneral() {
 				<div className="max-w-xl space-y-4">
 					<PreferenceToggle
 						title="Automatically name threads"
-						description="Name threads after the first user prompt."
 						savedEnabled={preferences?.automaticThreadTitles ?? true}
 						disabled={disabled}
 						save={setAutomaticThreadTitles}
 					/>
 					<PreferenceToggle
-						title="Continue agents automatically after restarts"
-						description="Automatically resume interrupted agents after an update, crash, or machine restart."
+						title="Continue agents automatically after restarts and crashes"
 						savedEnabled={preferences?.automaticAgentContinuation ?? true}
 						disabled={disabled}
 						save={setAutomaticAgentContinuation}
