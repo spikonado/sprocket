@@ -68,7 +68,8 @@ type Props = {
 	onFileDeleted: (workspacePath: string, path: string) => void;
 	/** Enter true browser fullscreen for a single artifact (content only). */
 	onOpenFullscreen: (key: string) => void;
-	onToggleExpanded: () => void;
+	/** Omitted when the panel can only be fullscreen. */
+	onToggleExpanded?: () => void;
 	onClose: () => void;
 };
 
@@ -206,13 +207,13 @@ export default function SidePanel(props: Props) {
 			}
 
 			event.preventDefault();
-			onToggleExpanded();
+			(onToggleExpanded ?? onClose)();
 		};
 
 		window.addEventListener('keydown', onKeyDown);
 
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [expanded, onToggleExpanded]);
+	}, [expanded, onToggleExpanded, onClose]);
 
 	return (
 		<aside
@@ -335,7 +336,7 @@ function Pane({
 			onPointerDownCapture={() => onFocusPane(pane.id)}
 			onFocusCapture={() => onFocusPane(pane.id)}
 		>
-			<div className="border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-2">
+			<div className="border-hairline flex min-h-10 shrink-0 items-center gap-1 border-b px-2">
 				<div
 					role="tablist"
 					aria-label="Side panel tabs"
@@ -447,20 +448,22 @@ function Pane({
 				</button>
 				{showsPanelButtons ? (
 					<>
-						<button
-							type="button"
-							className={ICON_BUTTON}
-							onClick={onToggleExpanded}
-							aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-							title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-							aria-pressed={expanded}
-						>
-							{expanded ? (
-								<Minimize2 className="size-4" aria-hidden="true" />
-							) : (
-								<Maximize2 className="size-4" aria-hidden="true" />
-							)}
-						</button>
+						{onToggleExpanded && (
+							<button
+								type="button"
+								className={ICON_BUTTON}
+								onClick={onToggleExpanded}
+								aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+								title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+								aria-pressed={expanded}
+							>
+								{expanded ? (
+									<Minimize2 className="size-4" aria-hidden="true" />
+								) : (
+									<Maximize2 className="size-4" aria-hidden="true" />
+								)}
+							</button>
+						)}
 						<button
 							type="button"
 							className={ICON_BUTTON}
