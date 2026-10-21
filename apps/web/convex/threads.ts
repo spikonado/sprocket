@@ -1,5 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -7,6 +7,7 @@ import { getUserId } from '@convex/lib/auth';
 import { vDescendantStatusCounts } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import {
+	applyPendingMergedSettle,
 	listDirectChildrenPage,
 	subtreeSummary,
 	threadAncestryIds
@@ -161,5 +162,19 @@ export const ancestorChain = query({
 		if (thread.parentThreadId === undefined) return [];
 
 		return await threadAncestryIds(ctx.db, thread);
+	}
+});
+
+export const retryPendingMergedSettle = internalMutation({
+	args: { threadId: v.id('threadRecords') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const thread = await ctx.db.get('threadRecords', args.threadId);
+
+		if (!thread) return null;
+
+		await applyPendingMergedSettle(ctx, thread);
+
+		return null;
 	}
 });
