@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use serde::Deserialize;
+use sprocket_agent::CompletionProvider;
 
 use crate::cli_protocol::{CliModel, CliModelsResponse, CliRunRequest};
 
@@ -19,6 +20,8 @@ pub(super) struct ThreadSettings {
     pub selected_model: String,
     pub reasoning_effort: String,
     pub fast_mode: bool,
+    #[serde(default)]
+    pub completion_provider: CompletionProvider,
 }
 
 #[derive(Deserialize)]
