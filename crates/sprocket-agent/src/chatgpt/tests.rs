@@ -307,6 +307,7 @@ async fn siwc_recovers_a_truncated_turn_without_repeating_committed_tools() {
             inner: reqwest::Client::builder().no_proxy().build().unwrap(),
             authorization: Some((credentials, Arc::clone(&client.connection))),
             responses_url: endpoint,
+            ..Default::default()
         },
     );
     let calls = Arc::new(AtomicUsize::new(0));
@@ -417,6 +418,7 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
                 .unwrap(),
             authorization: Some((credentials.clone(), Arc::clone(&client.connection))),
             responses_url: endpoint,
+            session_id: "thread-1".to_string(),
         },
     );
     let request = |history| {
@@ -543,6 +545,7 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
             Some(format!("Bearer token-{turn}").as_str())
         );
         assert_eq!(header("content-type"), Some("application/json"));
+        assert_eq!(header("session_id"), Some("thread-1"));
         let body = &request.body;
         assert_eq!(body["model"], "gpt-5.3-codex");
         assert_eq!(body["instructions"], "Base instructions.");
@@ -1093,7 +1096,7 @@ async fn stream_guard_wakes_an_idle_stream_when_the_connection_changes() {
 #[tokio::test]
 async fn nonstreaming_completion_is_rejected() {
     let (_, client) = stub_client("connection-1");
-    let model = client.completion_model("gpt-5.3-codex", "Base instructions.");
+    let model = client.completion_model("gpt-5.3-codex", "Base instructions.", "thread-1");
     let error = model
         .call(test_request(vec![Message::user("hello")]))
         .await
