@@ -75,6 +75,19 @@ export function reasoningEffortLabel(effort: string): string {
 	}
 }
 
+const price = z.number().nonnegative();
+
+const multiplier = z.number().positive();
+
+const directApiPricingSchema = z.object({
+	input: price,
+	cacheRead: price,
+	cacheWrite: z.record(z.string(), price),
+	output: price,
+	fastMultiplier: multiplier,
+	longContext: z.object({ inputMultiplier: multiplier, outputMultiplier: multiplier }).nullable()
+});
+
 const gatewayModelSchema = z.looseObject({
 	id: z.string().min(1),
 	label: z.string().min(1),
@@ -85,7 +98,9 @@ const gatewayModelSchema = z.looseObject({
 	reasoningEfforts: z.array(z.string()).min(1),
 	defaultReasoningEffort: z.string().min(1),
 	serviceTiers: z.array(z.string()).min(1),
-	usagePolicy: z.literal('unlimited').optional()
+	usagePolicy: z.literal('unlimited').optional(),
+	// Pricing only feeds the API cost display, so a bad entry must not break model selection.
+	directApiPricing: directApiPricingSchema.nullable().catch(null)
 });
 
 const gatewayModelsResponseSchema = z.object({
@@ -125,7 +140,8 @@ function catalogFromGatewayPayload(
 			reasoningEfforts: model.reasoningEfforts,
 			defaultReasoningEffort: model.defaultReasoningEffort,
 			supportsFastMode: model.serviceTiers.includes('fast'),
-			usagePolicy: model.usagePolicy
+			usagePolicy: model.usagePolicy,
+			directApiPricing: model.directApiPricing
 		}))
 	};
 }

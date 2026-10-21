@@ -61,6 +61,21 @@ function addCall(totals: UsageTotals | null, call: ModelCallUsage): UsageTotals 
 	};
 }
 
+export function sumModelCalls(calls: readonly ModelCallUsage[]): TokenUsageTotals[] {
+	const totals = new Map<string, TokenUsageTotals>();
+
+	for (const call of calls) {
+		const key = JSON.stringify(totalsKey(call));
+
+		totals.set(key, {
+			...totalsKey(call),
+			...addCall(totals.get(key) ?? null, call)
+		});
+	}
+
+	return [...totals.values()];
+}
+
 async function addToThreadTotals(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>,

@@ -1,4 +1,5 @@
 import {
+	Fragment,
 	useCallback,
 	useLayoutEffect,
 	useMemo,
@@ -60,6 +61,7 @@ type Props = {
 	) => Promise<TranscriptDisplayDetails>;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
+	renderRunFooter?: (runId: TranscriptMessage['runId']) => ReactNode;
 };
 
 const SCROLL_EPSILON_PX = 28;
@@ -90,7 +92,8 @@ export default function ThreadTranscript({
 	loadAttachment,
 	loadSectionDetails,
 	artifacts = [],
-	onOpenArtifact
+	onOpenArtifact,
+	renderRunFooter
 }: Props) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const contentRef = useRef<HTMLDivElement | null>(null);
@@ -698,6 +701,17 @@ export default function ThreadTranscript({
 		);
 	}
 
+	function endsSettledRun(messageIndex: number) {
+		const message = messages[messageIndex];
+
+		return (
+			renderRunFooter !== undefined &&
+			message.kind !== 'prompt' &&
+			message.runId !== activeRunId &&
+			messages[messageIndex + 1]?.runId !== message.runId
+		);
+	}
+
 	return (
 		<div className="relative min-h-0 flex-1">
 			<div
@@ -738,7 +752,14 @@ export default function ThreadTranscript({
 						) : null
 					) : (
 						<div className="transcript-messages space-y-8 pb-14">
-							{messages.map((message, messageIndex) => renderMessage(message, messageIndex))}
+							{messages.flatMap((message, messageIndex) => [
+								renderMessage(message, messageIndex),
+								endsSettledRun(messageIndex) ? (
+									<Fragment key={`${message.runId}:footer`}>
+										{renderRunFooter?.(message.runId)}
+									</Fragment>
+								) : null
+							])}
 						</div>
 					)}
 				</div>

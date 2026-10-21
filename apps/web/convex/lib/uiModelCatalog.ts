@@ -1,5 +1,16 @@
 import type { UsagePolicy } from '@convex/lib/models';
 
+/** The provider's own API list prices in USD per million tokens. */
+export type DirectApiPricing = {
+	input: number;
+	cacheRead: number;
+	/** Keyed by cache lifetime, matching each usage row's `cacheWriteTtl`. */
+	cacheWrite: Readonly<Record<string, number>>;
+	output: number;
+	fastMultiplier: number;
+	longContext: { inputMultiplier: number; outputMultiplier: number } | null;
+};
+
 /** Ids are opaque so gateway catalogs can add models. */
 export type CatalogModel = {
 	id: string;
@@ -12,6 +23,7 @@ export type CatalogModel = {
 	defaultReasoningEffort: string;
 	supportsFastMode: boolean;
 	usagePolicy?: UsagePolicy;
+	directApiPricing?: DirectApiPricing | null;
 };
 
 /** UI catalog mapped from `sprocket` on `GET /api/v1/models`. */

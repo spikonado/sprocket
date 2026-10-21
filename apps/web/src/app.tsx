@@ -46,6 +46,8 @@ import BrandMark from '$lib/components/brand-mark';
 import InboxSidebar, { type SidebarChildrenResolver } from '$lib/components/home/inbox-sidebar';
 import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
+import SettingsAiUsage from '$lib/components/home/settings-ai-usage';
+import RunUsageFooter from '$lib/components/home/run-usage-footer';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsCredentials from '$lib/components/home/settings-credentials';
@@ -2796,6 +2798,8 @@ export default function App({
 					{settingsOpen ? (
 						settingsPage === 'general' ? (
 							<SettingsGeneral />
+						) : settingsPage === 'aiUsage' ? (
+							<SettingsAiUsage modelCatalog={modelCatalog} />
 						) : settingsPage === 'providers' ? (
 							<SettingsProviders
 								configuredProviders={configuredProviders}
@@ -2850,6 +2854,9 @@ export default function App({
 									onLoadOlder={() => void loadOlderTranscript()}
 									loadAttachment={loadTranscriptAttachment}
 									loadSectionDetails={loadTranscriptSectionDetails}
+									renderRunFooter={(runId) => (
+										<RunUsageFooter runId={runId} modelCatalog={modelCatalog} />
+									)}
 								/>
 							)}
 
@@ -2935,6 +2942,7 @@ export default function App({
 													}
 												: null
 										}
+										usageThreadId={currentThreadId}
 										selectedQuestionOptionId={selectedQuestionOptionId}
 										onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
 										canSend={canSend}

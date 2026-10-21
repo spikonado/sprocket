@@ -11,6 +11,7 @@ The user sends a prompt in a project. The local agent runs it through the model 
 - `thread-rename` renames the thread from its sidebar row.
 - `thread-settle` moves the thread to `Settled Threads` and back.
 - `thread-persist` shows the same transcript after a reload or a server restart.
+- `thread-usage` shows token usage under each finished run and in the composer's `AI usage` popover.
 
 ## How to get to it (user POV)
 
@@ -29,6 +30,7 @@ Precondition: the dev deployment's `tiers` table has rows. See Known limits in `
 - **Rename.** `agent-browser dblclick` the row's title button. `textbox "Rename thread"` appears. `agent-browser press Control+a`, type `verify rename`, and press Enter. The row is `button "verify rename"`.
 - **Settle.** Hover the row, then click `button "Settle verify rename"`. Settle is disabled while the row still shows `Starting` or `Working`. The row leaves `Unsettled` and `region "Settled Threads"` is already expanded. An extra click on `button "Settled Threads"` collapses it. Hover the row there and click `button "Unsettle verify rename"`. It returns to `Unsettled`.
 - **Persist.** Reload or restart the server, then reopen the thread from `Unsettled`. Both the prompt and the reply show.
+- **Usage.** After the reply, plain `snapshot` shows `<n> tokens`, `<n>% cached` and `API cost` under it. Click `button "AI usage"` in the composer. `dialog "AI usage"` shows `TOKENS` with the same total, the token types and `BY MODEL`. After a prompt such as `Spawn one subagent with the prompt Reply with the single word ok. Then reply done.`, the dialog has `group "Usage scope"` with `button "This thread"` and `button "With subagents (1)"`. The two totals differ by the subagent's row under `SUBAGENTS`.
 - **Side effect.** The launch log shows `sprocket-agent: model completed <run id>` and then `sprocket-agent: mutation done agentRuntime:finalizeExecutorRun`.
 
 ## Gotchas

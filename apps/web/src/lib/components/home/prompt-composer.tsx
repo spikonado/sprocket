@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import { canSubmitQuestionAnswer, type AgentQuestionOption } from '@convex/lib/agentQuestions';
 import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
@@ -25,6 +26,7 @@ import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import ComposerNotice from '$lib/components/home/composer-notice';
+import ThreadUsageButton from '$lib/components/home/thread-usage-button';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
 import ModelSelector from '$lib/components/model-selector';
@@ -62,6 +64,7 @@ export type PromptComposerProps = {
 	showContinueWorking?: boolean;
 	onContinueWorking?: () => void;
 	runningCommands?: { api: CommandApi; scope: TranscriptScopeRequest } | null;
+	usageThreadId?: Id<'threadRecords'> | null;
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
 	canSend: boolean;
@@ -126,6 +129,7 @@ export function PromptComposerView({
 	showContinueWorking = false,
 	onContinueWorking,
 	runningCommands = null,
+	usageThreadId = null,
 	selectedQuestionOptionId = null,
 	onSelectedQuestionOptionIdChange,
 	canSend,
@@ -856,6 +860,33 @@ export function PromptComposerView({
 
 								<div className="flex min-w-0 items-center justify-between gap-1 overflow-visible pt-2.5 sm:gap-3">
 									<div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1">
+										{usageThreadId ? (
+											<ThreadUsageButton threadId={usageThreadId} modelCatalog={modelCatalog} />
+										) : null}
+
+										{modelCatalog && selectedModel && selectedReasoningEffort ? (
+											<>
+												{usageThreadId ? (
+													<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+												) : null}
+
+												<ModelSelector
+													modelId={selectedModel}
+													models={modelCatalog.models.filter((model) =>
+														modelOptions.some((option) => option.id === model.id)
+													)}
+													reasoningEffort={selectedReasoningEffort}
+													fastMode={fastMode}
+													allowsFastMode={runsOnSpikonado}
+													disabled={composerLocked || answeringQuestion}
+													onSelect={handleModelChange}
+													onFastModeChange={onFastModeChange}
+												/>
+											</>
+										) : null}
+									</div>
+
+									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
 										<input
 											ref={attachmentInput}
 											type="file"
@@ -879,28 +910,6 @@ export function PromptComposerView({
 										>
 											<Paperclip className="size-4" aria-hidden="true" />
 										</button>
-
-										{modelCatalog && selectedModel && selectedReasoningEffort ? (
-											<>
-												<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-
-												<ModelSelector
-													modelId={selectedModel}
-													models={modelCatalog.models.filter((model) =>
-														modelOptions.some((option) => option.id === model.id)
-													)}
-													reasoningEffort={selectedReasoningEffort}
-													fastMode={fastMode}
-													allowsFastMode={runsOnSpikonado}
-													disabled={composerLocked || answeringQuestion}
-													onSelect={handleModelChange}
-													onFastModeChange={onFastModeChange}
-												/>
-											</>
-										) : null}
-									</div>
-
-									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
 										{isRunning ? (
 											<button
 												type="button"
