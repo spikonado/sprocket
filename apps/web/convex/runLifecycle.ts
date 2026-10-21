@@ -89,7 +89,10 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			isAutomaticallyRecoverableRun(current, current.machineId)
 		) {
 			// A stopped abandoned run must stay terminal when its local agent returns.
+			const before = await captureThreadActivityBeforeChange(ctx, current.threadId);
+
 			await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
+			await updateThreadHierarchyAfterChange(ctx, before);
 
 			return true;
 		}
