@@ -6,7 +6,11 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { allMerged } from '@convex/lib/pullRequestState';
-import { AUTOMATIC_RECOVERY_GRACE_MS, awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
+import {
+	AUTOMATIC_RECOVERY_GRACE_MS,
+	awaitsAutomaticRecovery,
+	isAbandonedRun
+} from '@convex/lib/runRecovery';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 async function latestThreadRun(db: DatabaseReader, threadId: Id<'threadRecords'>) {
@@ -262,7 +266,17 @@ export async function applyPendingMergedSettleAfterRecovery(
 
 	if (!before) return;
 
-	await updateThreadHierarchyAfterChange(ctx, before);
+	const state = await hierarchyState(ctx.db, threadId);
+	const latest = await latestThreadRun(ctx.db, threadId);
+
+	const recoveryExpired =
+		latest !== null && isAbandonedRun(latest) && !(await awaitsAutomaticRecovery(ctx.db, latest));
+
+	// Rows created before ownActive still need this so an expired wait subtracts.
+	await updateThreadHierarchyAfterChange(ctx, {
+		...before,
+		active: state?.ownActive ?? (recoveryExpired || before.active)
+	});
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
