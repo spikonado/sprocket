@@ -287,7 +287,7 @@ describe('subscription and usage backend', () => {
 			key: userId,
 			config: {
 				kind: 'fixed window',
-				rate: 15 * UNITS_PER_DOLLAR,
+				rate: 75 * UNITS_PER_DOLLAR,
 				period: 30 * 86_400_000,
 				start: Date.parse('2026-02-03T00:00:00Z')
 			},
@@ -295,6 +295,7 @@ describe('subscription and usage backend', () => {
 			reserve: true
 		});
 		const asUser = t.withIdentity({ subject: userId });
+
 		const used = async () =>
 			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.used;
 
@@ -305,6 +306,7 @@ describe('subscription and usage backend', () => {
 			oneBatchOnly: true
 		});
 		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
+
 		const migrated = await t.run((ctx) =>
 			ctx.db
 				.query('subscriptions')
