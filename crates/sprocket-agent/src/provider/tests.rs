@@ -134,7 +134,7 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
     );
     let AssistantContent::ToolCall(call) = AssistantContent::ToolCall(call).with_native(json!({
         "type": "function_call", "id": "fc_1", "call_id": "call_1",
-        "name": "exec_cmd", "arguments": "{\"cmd\":\"pwd\"}", "futureField": "opaque"
+        "name": "exec_cmd", "arguments": "{\"cmd\": \"pwd\"}", "futureField": "opaque"
     })) else {
         unreachable!();
     };
@@ -149,10 +149,9 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
     );
     let durable = durable_items_json(&parts.parts, &metadata);
     assert_eq!(durable[0]["callId"], "call_1");
-    assert!(
-        durable[0]["providerMetadata"]["rigNative"]
-            .get("arguments")
-            .is_none()
+    assert_eq!(
+        durable[0]["providerMetadata"]["rigNative"]["arguments"],
+        "{\"cmd\": \"pwd\"}"
     );
 
     let transcript = serde_json::from_value::<Vec<sprocket_transcript::TranscriptPart>>(json!([

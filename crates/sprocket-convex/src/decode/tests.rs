@@ -1,6 +1,12 @@
 use super::*;
 
 #[test]
+fn integral_floats_decode_as_integers() {
+    let value = Value::Array(vec![Value::Float64(5.0), Value::Float64(0.5)]);
+    assert_eq!(value_to_plain_json(value).to_string(), "[5,0.5]");
+}
+
+#[test]
 fn cleans_masking_lines_prefixes_and_stack_frames() {
     let raw = concat!(
         "[Request ID: 84f5068c0836218d] Server Error\n",

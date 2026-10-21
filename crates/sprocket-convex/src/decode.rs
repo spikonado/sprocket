@@ -103,7 +103,7 @@ fn value_to_plain_json(value: Value) -> serde_json::Value {
     match value {
         Value::Null => serde_json::Value::Null,
         Value::Int64(number) => serde_json::json!(number),
-        Value::Float64(number) => serde_json::json!(number),
+        Value::Float64(number) => float_to_json(number),
         Value::Boolean(boolean) => serde_json::json!(boolean),
         Value::String(text) => serde_json::json!(text),
         Value::Bytes(bytes) => serde_json::json!(bytes),
@@ -119,6 +119,17 @@ fn value_to_plain_json(value: Value) -> serde_json::Value {
                 .map(|(key, value)| (key, value_to_plain_json(value)))
                 .collect(),
         ),
+    }
+}
+
+/// Convex stores every number as a float. Integers must decode back to `5`,
+/// not `5.0`, so replayed model history matches the bytes the model saw.
+fn float_to_json(number: f64) -> serde_json::Value {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    if number.fract() == 0.0 && number.abs() <= MAX_SAFE_INTEGER {
+        serde_json::json!(number as i64)
+    } else {
+        serde_json::json!(number)
     }
 }
 

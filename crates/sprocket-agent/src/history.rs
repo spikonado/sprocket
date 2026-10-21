@@ -430,15 +430,16 @@ fn tool_call_native_item(
     name: &str,
     arguments: &serde_json::Value,
 ) -> serde_json::Value {
-    let arguments = serde_json::json!(arguments.to_string());
     if let Some(native) = metadata.and_then(|metadata| metadata.get("rigNative")) {
         let mut native = native.clone();
-        native["arguments"] = arguments;
+        if native.get("arguments").is_none() {
+            native["arguments"] = serde_json::json!(arguments.to_string());
+        }
         return native;
     }
     let mut native = serde_json::json!({
         "type": "function_call", "id": item_id, "call_id": call_id,
-        "name": name, "arguments": arguments, "status": "completed"
+        "name": name, "arguments": arguments.to_string(), "status": "completed"
     });
     // Released transcripts store extra native fields beside the signature.
     if let Some(metadata) = metadata {
