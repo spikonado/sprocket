@@ -336,7 +336,7 @@ function Pane({
 			onPointerDownCapture={() => onFocusPane(pane.id)}
 			onFocusCapture={() => onFocusPane(pane.id)}
 		>
-			<div className="border-hairline flex min-h-10 shrink-0 items-center gap-1 border-b px-2">
+			<div className="border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-2">
 				<div
 					role="tablist"
 					aria-label="Side panel tabs"
