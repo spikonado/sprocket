@@ -42,9 +42,9 @@ export function breakdownOf(rows: readonly TokenUsageTotals[]): TokenBreakdown {
 	);
 }
 
-/** Cached input is excluded, since the same context is re-read on every turn. */
+/** Cache reads are excluded, since the same context is re-read on every turn. Cache writes are new input. */
 export function billableTokens(breakdown: TokenBreakdown): number {
-	return breakdown.uncachedInput + breakdown.output;
+	return breakdown.uncachedInput + breakdown.cacheWrite + breakdown.output;
 }
 
 export function cacheHitRate(breakdown: TokenBreakdown): number | null {

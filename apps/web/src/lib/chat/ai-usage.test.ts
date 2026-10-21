@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
-import { apiCost, rangeQuery, usageRanges } from '$lib/chat/ai-usage';
+import {
+	apiCost,
+	billableTokens,
+	emptyBreakdown,
+	rangeQuery,
+	usageRanges
+} from '$lib/chat/ai-usage';
 
 const catalog: ModelCatalog = {
 	defaultModelId: 'sol',
@@ -67,6 +73,20 @@ describe('apiCost', () => {
 			else expect(cost).toBeCloseTo(usd);
 		}
 	);
+});
+
+describe('billableTokens', () => {
+	it('counts cache writes as new input, as Anthropic reports a turn written to the cache', () => {
+		expect(
+			billableTokens({
+				...emptyBreakdown,
+				uncachedInput: 2,
+				cacheRead: 70_000,
+				cacheWrite: 2_000,
+				output: 100
+			})
+		).toBe(2_102);
+	});
 });
 
 describe('rangeQuery', () => {
