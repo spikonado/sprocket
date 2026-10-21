@@ -624,7 +624,7 @@
 		visibility 0s 220ms;
 }
 
-.inbox-sidebar-host > .app-sidebar-panel {
+.inbox-sidebar-host > * {
 	flex: none;
 	width: calc(var(--sidebar-width) - 1px);
 	height: 100%;
@@ -687,7 +687,7 @@
 		transform: translateX(calc(-100% - 40px));
 	}
 
-	.inbox-sidebar-host > .app-sidebar-panel {
+	.inbox-sidebar-host > * {
 		width: 100%;
 	}
 }
