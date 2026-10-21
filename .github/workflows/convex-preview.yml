@@ -39,4 +39,25 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
           CONVEX_PREVIEW_NAME: pr-${{ github.event.pull_request.number }}
         run: |
-          bunx convex deploy --preview-name "$CONVEX_PREVIEW_NAME"
+          bunx convex deploy --preview-name "$CONVEX_PREVIEW_NAME" \
+            --cmd-url-env-var-name CONVEX_PREVIEW_URL \
+            --cmd 'printf "%s" "$CONVEX_PREVIEW_URL" > "$RUNNER_TEMP/convex-preview-url"'
+
+      # Nothing uses the preview after this check, and leftover previews fill the team's deployment quota.
+      - name: Delete Convex preview
+        if: always()
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
+        run: |
+          url_file="$RUNNER_TEMP/convex-preview-url"
+          if [[ ! -s "$url_file" ]]; then
+            echo "No preview deployment was claimed."
+            exit 0
+          fi
+          host="$(<"$url_file")"
+          host="${host#https://}"
+          deployment="${host%%.*}"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $CONVEX_DEPLOY_KEY" \
+            "https://api.convex.dev/v1/deployments/$deployment/delete"
+          echo "Deleted preview deployment $deployment."
