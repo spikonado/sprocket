@@ -13,21 +13,17 @@ fn init_repo(root: &Path) -> gix::Repository {
 }
 
 fn init_linked_worktree(main: &Path, worktree: &Path) {
-    let repo = init_repo(main);
-    let signature = gix::actor::SignatureRef::from_bytes(b"sprocket <sprocket@test> 1 +0000")
-        .expect("signature");
+    init_repo(main);
+    append_git_config(
+        main,
+        "\n[user]\n\tname = sprocket\n\temail = sprocket@test\n",
+    );
+    let repo = gix::open(main).expect("open with user");
     let tree_id = repo
         .write_object(gix::objs::Tree::empty())
         .expect("write empty tree");
     let commit_id = repo
-        .commit_as(
-            signature,
-            signature,
-            "HEAD",
-            "init",
-            tree_id,
-            None::<gix::ObjectId>,
-        )
+        .commit("HEAD", "init", tree_id, None::<gix::ObjectId>)
         .expect("initial commit")
         .detach();
     repo.add_worktree(
@@ -39,11 +35,15 @@ fn init_linked_worktree(main: &Path, worktree: &Path) {
     .expect("add worktree");
 }
 
-fn set_origin(root: &Path, url: &str) {
+fn append_git_config(root: &Path, extra: &str) {
     let config_path = root.join(".git/config");
     let mut config = fs::read_to_string(&config_path).expect("read config");
-    config.push_str(&format!("\n[remote \"origin\"]\n\turl = {url}\n"));
+    config.push_str(extra);
     fs::write(config_path, config).expect("write config");
+}
+
+fn set_origin(root: &Path, url: &str) {
+    append_git_config(root, &format!("\n[remote \"origin\"]\n\turl = {url}\n"));
 }
 
 fn key_from_remote(url: &str) -> Option<String> {
