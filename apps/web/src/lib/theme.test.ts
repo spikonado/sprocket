@@ -7,7 +7,8 @@ function stubDocument(theme: string | undefined = undefined) {
 	if (theme) dataset.theme = theme;
 	const style = { colorScheme: '' };
 	vi.stubGlobal('document', {
-		documentElement: { dataset, style }
+		documentElement: { dataset, style },
+		querySelector: () => null
 	});
 
 	return { dataset, style };
