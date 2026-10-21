@@ -781,6 +781,28 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
 });
 
+it('restores a failed send after the composer held other text', async () => {
+	const { launch, runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	expect(composer).toHaveProperty('value', '');
+	fireEvent.click(screen.getByText('Other work'));
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Different note' } });
+	await act(async () => {
+		launch.reject(new Error('Local agent unavailable.'));
+	});
+	fireEvent.click(screen.getByText('Robot work'));
+	expect(screen.getByRole('combobox')).toHaveProperty('value', 'Different note');
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
+	await waitFor(() => expect(screen.getByRole('combobox')).toHaveProperty('value', 'Fix the robot'));
+	const group = screen.getByRole('group', { name: 'Message composer' });
+	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+});
+
 it('keeps a sent prompt cleared when returning to a thread before its lifecycle catches up', async () => {
 	const { client, thread, launch, runAgent } = await renderThreadLaunch();
 	const composer = screen.getByRole('combobox');
