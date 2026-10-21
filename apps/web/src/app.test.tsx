@@ -796,7 +796,9 @@ it('restores a failed send after the composer held other text', async () => {
 	fireEvent.click(screen.getByText('Robot work'));
 	expect(screen.getByRole('combobox')).toHaveProperty('value', 'Different note');
 	fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
-	await waitFor(() => expect(screen.getByRole('combobox')).toHaveProperty('value', 'Fix the robot'));
+	await waitFor(() =>
+		expect(screen.getByRole('combobox')).toHaveProperty('value', 'Fix the robot')
+	);
 	const group = screen.getByRole('group', { name: 'Message composer' });
 	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
 });
