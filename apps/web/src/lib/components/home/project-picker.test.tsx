@@ -152,7 +152,7 @@ describe('ProjectPicker', () => {
 		});
 
 		renderPicker({
-			desktopApi: {
+			localApi: {
 				browseFilesystem,
 				resolveWorkspacePath: vi.fn()
 			}
