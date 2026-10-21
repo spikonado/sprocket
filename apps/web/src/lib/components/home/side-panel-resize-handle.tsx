@@ -67,7 +67,7 @@ export default function SidePanelResizeHandle({ width, minWidth, maxWidth, onWid
 				aria-valuetext={`${Math.round(width)} pixels`}
 				tabIndex={0}
 				title="Drag to resize. Double-click to reset."
-				className={`after:bg-ring absolute inset-y-0 -left-1 z-50 w-2 cursor-col-resize touch-none outline-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 after:-translate-x-1/2 after:transition-opacity ${drag ? 'after:opacity-100' : 'after:opacity-0 hover:after:opacity-100 hover:after:delay-150 focus-visible:after:opacity-100'}`}
+				className={`after:bg-ring coarse:-left-3 coarse:w-6 absolute inset-y-0 -left-1 z-50 w-2 cursor-col-resize touch-none outline-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 after:-translate-x-1/2 after:transition-opacity ${drag ? 'after:opacity-100' : 'after:opacity-0 hover:after:opacity-100 hover:after:delay-150 focus-visible:after:opacity-100'}`}
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
 				onPointerUp={stopDrag}

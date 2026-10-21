@@ -85,7 +85,7 @@ const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIc
 ];
 
 const ICON_BUTTON =
-	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40';
+	'touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40';
 
 function tabIndexForKey(key: string, index: number, count: number) {
 	switch (key) {
@@ -402,7 +402,7 @@ function Pane({
 									}}
 									aria-label={`Close ${heading.label} tab`}
 									title="Close tab"
-									className={`hover:bg-hover-fill focus-visible:ring-ring mx-0.5 shrink-0 rounded p-0.5 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none ${active ? '' : 'opacity-0'}`}
+									className={`touch-target hover:bg-hover-fill focus-visible:ring-ring touch:opacity-100 mx-0.5 shrink-0 rounded p-0.5 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none ${active ? '' : 'opacity-0'}`}
 								>
 									<X className="size-3" aria-hidden="true" />
 								</button>
@@ -650,7 +650,7 @@ function ArtifactsView({
 									</ArtifactMenu>
 									<button
 										type="button"
-										className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+										className="touch-target text-muted-foreground hover:text-foreground touch:opacity-100 shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
 										onClick={() => onOpenFullscreen(artifact.key)}
 										aria-label={`Open ${artifact.title} fullscreen`}
 										title="Open fullscreen"

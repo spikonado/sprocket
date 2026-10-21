@@ -18,6 +18,13 @@
 	color: var(--muted-foreground);
 }
 
+@media (pointer: coarse) {
+	.inbox-icon {
+		width: 44px;
+		height: 44px;
+	}
+}
+
 .inbox-icon:hover,
 .inbox-menu-item:hover {
 	background: var(--hover-fill);
@@ -428,13 +435,16 @@
 	visibility: hidden;
 }
 
-.inbox-row:hover .inbox-row-actions {
-	opacity: 1;
-	visibility: visible;
-}
+/* Touch reaches these actions through the long-press menu. */
+@media (hover: hover) {
+	.inbox-row:hover .inbox-row-actions {
+		opacity: 1;
+		visibility: visible;
+	}
 
-.inbox-row:has(> .inbox-row-actions):hover .inbox-status {
-	visibility: hidden;
+	.inbox-row:has(> .inbox-row-actions):hover .inbox-status {
+		visibility: hidden;
+	}
 }
 
 .inbox-row-state-action,

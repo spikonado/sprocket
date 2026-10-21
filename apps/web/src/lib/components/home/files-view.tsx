@@ -67,7 +67,7 @@ const LIST_POLL_MS = 2_500;
 const SCAN_POLL_MS = 500;
 
 const TOOL_BUTTON =
-	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
+	'touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
 
 type TreeModel = UseFileTreeResult['model'];
 
@@ -748,7 +748,7 @@ function FileContextMenu({
 								context.close({ restoreFocus: !action.ownsFocus });
 								action.run();
 							}}
-							className={`hover:bg-muted focus:bg-muted flex w-full rounded-sm px-2 py-1 text-left text-xs outline-none ${
+							className={`hover:bg-muted focus:bg-muted flex w-full items-center rounded-sm px-2 py-1 text-left text-xs outline-none ${
 								action.destructive ? 'text-destructive' : ''
 							}`}
 						>
