@@ -27,6 +27,7 @@ export default function AppUpdate() {
 	const [busy, setBusyState] = useState(false);
 	const busyRef = useRef(false);
 	const revisionRef = useRef(0);
+	const restartWhenReadyRef = useRef(false);
 	const label = updateState ? updateLabel(updateState) : null;
 
 	const requestError =
@@ -86,6 +87,12 @@ export default function AppUpdate() {
 		};
 	}, []);
 
+	useEffect(() => {
+		if (!restartReady || working || !continuesAgents || !restartWhenReadyRef.current) return;
+		restartWhenReadyRef.current = false;
+		void update();
+	});
+
 	async function update(confirmed = false) {
 		if (!updateState || working) return;
 
@@ -96,6 +103,7 @@ export default function AppUpdate() {
 		}
 
 		setConfirmRestart(false);
+		restartWhenReadyRef.current = !restartReady;
 
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
