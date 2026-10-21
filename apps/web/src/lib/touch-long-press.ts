@@ -14,6 +14,7 @@ type Press = { pointerId: number; x: number; y: number; timer: number; opened: b
  */
 export function installTouchLongPress(): () => void {
 	let press: Press | null = null;
+	let swallowTimer: number | null = null;
 
 	function cancel() {
 		if (press) clearTimeout(press.timer);
@@ -25,15 +26,24 @@ export function installTouchLongPress(): () => void {
 		event.stopPropagation();
 	}
 
+	function stopSwallowing() {
+		if (swallowTimer === null) return;
+		clearTimeout(swallowTimer);
+		swallowTimer = null;
+
+		for (const type of RELEASE_EVENTS) window.removeEventListener(type, swallow, true);
+	}
+
 	function swallowReleaseEvents() {
+		stopSwallowing();
+
 		for (const type of RELEASE_EVENTS) window.addEventListener(type, swallow, true);
-		setTimeout(() => {
-			for (const type of RELEASE_EVENTS) window.removeEventListener(type, swallow, true);
-		}, RELEASE_EVENTS_WINDOW_MS);
+		swallowTimer = window.setTimeout(stopSwallowing, RELEASE_EVENTS_WINDOW_MS);
 	}
 
 	function onPointerDown(event: PointerEvent) {
 		cancel();
+		stopSwallowing();
 
 		if (event.pointerType !== 'touch' || !event.isPrimary) return;
 		const element = event.composedPath()[0];
@@ -95,6 +105,7 @@ export function installTouchLongPress(): () => void {
 
 	return () => {
 		cancel();
+		stopSwallowing();
 		window.removeEventListener('pointerdown', onPointerDown, true);
 		window.removeEventListener('pointermove', onPointerMove, true);
 		window.removeEventListener('pointerup', onPointerEnd, true);

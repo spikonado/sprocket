@@ -21,7 +21,7 @@ function touch(type: string, target: Element) {
 	);
 }
 
-it('opens the context menu on a touch hold and drops the release click', () => {
+it('opens the context menu on a touch hold, drops the release click, and takes the next tap', () => {
 	const onContextMenu = vi.fn((event: { preventDefault: () => void }) => event.preventDefault());
 	const onClick = vi.fn();
 	render(
@@ -38,4 +38,9 @@ it('opens the context menu on a touch hold and drops the release click', () => {
 
 	expect(onContextMenu).toHaveBeenCalledOnce();
 	expect(onClick).not.toHaveBeenCalled();
+
+	touch('pointerdown', row);
+	touch('pointerup', row);
+	fireEvent.click(row);
+	expect(onClick).toHaveBeenCalledOnce();
 });
