@@ -589,33 +589,44 @@
 }
 
 .inbox-layout {
+	--sidebar-width: 260px;
+	--sidebar-motion: 220ms cubic-bezier(0.2, 0, 0, 1);
 	position: relative;
 	display: grid;
 	height: 100dvh;
-	grid-template-columns: 260px minmax(0, 1fr);
+	grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 	overflow: hidden;
+	transition: grid-template-columns var(--sidebar-motion);
 }
 
 .inbox-layout.settings-open {
-	grid-template-columns: 292px minmax(0, 1fr);
+	--sidebar-width: 292px;
 }
 
 .inbox-layout.sidebar-hidden {
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: 0px minmax(0, 1fr);
 }
 
 .inbox-sidebar-host {
 	position: relative;
+	display: flex;
+	justify-content: flex-end;
 	min-height: 0;
 	overflow: hidden;
 	border-right: 1px solid var(--sidebar-border);
 }
 
+/* Hide only after the slide finishes, so the panel stays painted while it moves out. */
 .sidebar-hidden .inbox-sidebar-host {
-	display: none;
+	visibility: hidden;
+	transition:
+		transform var(--sidebar-motion),
+		visibility 0s 220ms;
 }
 
 .inbox-sidebar-host > .app-sidebar-panel {
+	flex: none;
+	width: calc(var(--sidebar-width) - 1px);
 	height: 100%;
 	border-right: 0;
 }
@@ -631,6 +642,17 @@
 	align-items: center;
 	justify-content: space-between;
 	pointer-events: none;
+	animation: inbox-fade-in 160ms 120ms both;
+}
+
+.inbox-sidebar-backdrop {
+	animation: inbox-fade-in var(--sidebar-motion) both;
+}
+
+@keyframes inbox-fade-in {
+	from {
+		opacity: 0;
+	}
 }
 
 .inbox-layout[inert] .inbox-floating-controls {
@@ -658,11 +680,24 @@
 		z-index: 150;
 		width: min(340px, 88vw);
 		box-shadow: 12px 0 40px #0004;
+		transition: transform var(--sidebar-motion);
+	}
+
+	.sidebar-hidden .inbox-sidebar-host {
+		transform: translateX(calc(-100% - 40px));
+	}
+
+	.inbox-sidebar-host > .app-sidebar-panel {
+		width: 100%;
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.inbox-sidebar * {
+	.inbox-sidebar *,
+	.inbox-layout,
+	.inbox-sidebar-host,
+	.inbox-floating-controls,
+	.inbox-sidebar-backdrop {
 		transition: none !important;
 		animation: none !important;
 		scroll-behavior: auto !important;

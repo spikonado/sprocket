@@ -2714,7 +2714,7 @@ export default function App({
 			>
 				{sidebarOpen && (
 					<button
-						className="fixed inset-0 z-[140] bg-black/40 md:hidden"
+						className="inbox-sidebar-backdrop fixed inset-0 z-[140] bg-black/40 md:hidden"
 						type="button"
 						aria-label="Close sidebar"
 						onClick={() => void closeSidebar()}
