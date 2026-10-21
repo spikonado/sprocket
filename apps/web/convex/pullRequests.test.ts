@@ -311,6 +311,7 @@ describe('linked pull requests', () => {
 			questionId,
 			optionId: 'yes'
 		});
+
 		const continuation = answered.continuation;
 		expect(continuation?.runId).toBe(caller.runId);
 
@@ -484,6 +485,7 @@ describe('linked pull requests', () => {
 				prompt: 'Open the PR',
 				machineId
 			});
+
 			const rootCaller = {
 				runId: root.runId,
 				claimId: 'root-claim',
@@ -514,6 +516,7 @@ describe('linked pull requests', () => {
 				prompt: 'Child A',
 				machineId
 			});
+
 			const runB = await insertQueuedRun(t, asUser, {
 				threadId: childB.threadId,
 				submissionId: 'sibling-b',
@@ -521,6 +524,7 @@ describe('linked pull requests', () => {
 				prompt: 'Child B',
 				machineId
 			});
+
 			const callerA = { runId: runA.runId, claimId: 'a-claim', executionSecret: 'a-secret' };
 			const callerB = { runId: runB.runId, claimId: 'b-claim', executionSecret: 'b-secret' };
 
@@ -580,6 +584,7 @@ describe('linked pull requests', () => {
 				prompt: 'Open the PR',
 				machineId
 			});
+
 			const caller = { runId: created.runId, claimId: 'pr-claim', executionSecret: 'pr-secret' };
 
 			await t.mutation(api.agentRuntime.start, caller);

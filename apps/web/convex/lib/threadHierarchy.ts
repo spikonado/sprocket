@@ -266,6 +266,7 @@ export async function applyPendingMergedSettleAfterRecovery(
 	if (!before) return;
 
 	const latest = await latestThreadRun(ctx.db, threadId);
+
 	const recoveryExpired =
 		latest !== null && isAbandonedRun(latest) && !(await awaitsAutomaticRecovery(ctx.db, latest));
 
