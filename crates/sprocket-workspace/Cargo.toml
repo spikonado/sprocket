@@ -26,4 +26,5 @@ tokio-util = "0.7.18"
 uuid = { version = "1.21.0", features = ["v4"] }
 
 [dev-dependencies]
+gix = { version = "0.89", default-features = false, features = ["worktree-mutation"] }
 tokio = { version = "1.52.1", features = ["test-util"] }
