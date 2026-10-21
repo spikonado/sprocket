@@ -53,25 +53,41 @@ export function cacheHitRate(breakdown: TokenBreakdown): number | null {
 	return input === 0 ? null : breakdown.cacheRead / input;
 }
 
+export type TokenTypeAmounts = Omit<TokenBreakdown, 'calls'>;
+
+function amountsBy(amount: (key: keyof TokenTypeAmounts) => number): TokenTypeAmounts {
+	return {
+		uncachedInput: amount('uncachedInput'),
+		cacheRead: amount('cacheRead'),
+		cacheWrite: amount('cacheWrite'),
+		output: amount('output'),
+		reasoning: amount('reasoning')
+	};
+}
+
 function countsCost(
 	counts: TokenCounts,
 	pricing: DirectApiPricing,
 	cacheWritePrice: number,
 	inputMultiplier: number,
 	outputMultiplier: number
-): number {
+): TokenTypeAmounts {
 	const uncached = counts.inputTokens - counts.cacheReadTokens - counts.cacheWriteTokens;
 
-	const input =
-		uncached * pricing.input +
-		counts.cacheReadTokens * pricing.cacheRead +
-		counts.cacheWriteTokens * cacheWritePrice;
-
-	return input * inputMultiplier + counts.outputTokens * pricing.output * outputMultiplier;
+	return {
+		uncachedInput: uncached * pricing.input * inputMultiplier,
+		cacheRead: counts.cacheReadTokens * pricing.cacheRead * inputMultiplier,
+		cacheWrite: counts.cacheWriteTokens * cacheWritePrice * inputMultiplier,
+		output: counts.outputTokens * pricing.output * outputMultiplier,
+		reasoning: counts.reasoningTokens * pricing.output * outputMultiplier
+	};
 }
 
-/** USD at today's direct-API list prices, or null when the catalog can't price the model or the row's cache writes. */
-export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined): number | null {
+/** USD per token type at today's direct-API list prices, or null when the catalog can't price the model or the row's cache writes. */
+export function apiCostByType(
+	row: TokenUsageTotals,
+	catalog: ModelCatalog | undefined
+): TokenTypeAmounts | null {
 	const pricing = catalog?.models.find((model) => model.id === row.model)?.directApiPricing;
 
 	if (!pricing) return null;
@@ -86,17 +102,38 @@ export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined
 	const tier = row.serviceTier === 'fast' ? pricing.fastMultiplier : 1;
 	const longContext = pricing.longContext ?? { inputMultiplier: 1, outputMultiplier: 1 };
 
-	const perMillion =
-		countsCost(row.standard, pricing, cacheWritePrice ?? 0, 1, 1) +
-		countsCost(
-			row.longContext,
-			pricing,
-			cacheWritePrice ?? 0,
-			longContext.inputMultiplier,
-			longContext.outputMultiplier
-		);
+	const standard = countsCost(row.standard, pricing, cacheWritePrice ?? 0, 1, 1);
 
-	return (perMillion * tier) / 1_000_000;
+	const long = countsCost(
+		row.longContext,
+		pricing,
+		cacheWritePrice ?? 0,
+		longContext.inputMultiplier,
+		longContext.outputMultiplier
+	);
+
+	return amountsBy((key) => ((standard[key] + long[key]) * tier) / 1_000_000);
+}
+
+export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined): number | null {
+	const cost = apiCostByType(row, catalog);
+
+	return cost && cost.uncachedInput + cost.cacheRead + cost.cacheWrite + cost.output;
+}
+
+/** Summed over the rows the catalog can price; `costOf` reports whether any were left out. */
+export function costByTypeOf(
+	rows: readonly TokenUsageTotals[],
+	catalog: ModelCatalog | undefined
+): TokenTypeAmounts {
+	return rows.reduce(
+		(total, row) => {
+			const cost = apiCostByType(row, catalog);
+
+			return cost ? amountsBy((key) => total[key] + cost[key]) : total;
+		},
+		amountsBy(() => 0)
+	);
 }
 
 export type CostSummary = { usd: number | null; partial: boolean };

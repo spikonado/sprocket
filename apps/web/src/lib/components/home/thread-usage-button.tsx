@@ -50,7 +50,10 @@ export default function ThreadUsageButton({
 
 			if (!trigger || !panel) return;
 			setPosition({
-				left: Math.max(8, Math.min(trigger.left, window.innerWidth - panel.width - 8)),
+				left: Math.max(
+					8,
+					Math.min(trigger.right - panel.width, window.innerWidth - panel.width - 8)
+				),
 				bottom: window.innerHeight - trigger.top + 12,
 				maxHeight: Math.max(0, trigger.top - 20)
 			});
@@ -200,7 +203,7 @@ function ThreadUsagePanel({
 				/>
 			</div>
 
-			<TokenTypeBreakdown breakdown={breakdown} />
+			<TokenTypeBreakdown amounts={breakdown} />
 
 			{modelItems.length > 1 ? (
 				<div className="border-t border-[var(--hairline)] pt-3">

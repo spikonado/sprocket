@@ -10,6 +10,7 @@ import {
 	bucketLabel,
 	bucketStartFor,
 	cacheHitRate,
+	costByTypeOf,
 	costOf,
 	formatCost,
 	formatRate,
@@ -220,9 +221,19 @@ function UsageReport({
 			</div>
 
 			<div>
-				<UsageLabel>Token types</UsageLabel>
+				<UsageLabel>{metric === 'cost' ? 'API cost by token type' : 'Token types'}</UsageLabel>
 				<div className="mt-3 max-w-xl">
-					<TokenTypeBreakdown breakdown={breakdown} />
+					{metric === 'cost' ? (
+						<TokenTypeBreakdown
+							amounts={costByTypeOf(visibleRows, modelCatalog)}
+							format={(usd) => formatCost({ usd: cost.usd === null ? null : usd, partial: false })}
+						/>
+					) : (
+						<TokenTypeBreakdown amounts={breakdown} />
+					)}
+					{metric === 'cost' && cost.partial ? (
+						<p className="text-muted-foreground mt-2 text-[11.5px]">Excludes unpriced models.</p>
+					) : null}
 				</div>
 			</div>
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { formatTokens, type TokenBreakdown } from '$lib/chat/ai-usage';
+import { formatTokens, type TokenTypeAmounts } from '$lib/chat/ai-usage';
 
 const tokenTypes = [
 	{ key: 'uncachedInput', label: 'Uncached input', color: 'oklch(0.55 0.13 250)' },
@@ -118,8 +118,14 @@ export function UsageShareList({ items }: { items: readonly ShareItem[] }) {
 	);
 }
 
-export function TokenTypeBreakdown({ breakdown }: { breakdown: TokenBreakdown }) {
-	const total = tokenTypes.reduce((sum, type) => sum + breakdown[type.key], 0);
+export function TokenTypeBreakdown({
+	amounts,
+	format = formatTokens
+}: {
+	amounts: TokenTypeAmounts;
+	format?: (amount: number) => string;
+}) {
+	const total = tokenTypes.reduce((sum, type) => sum + amounts[type.key], 0);
 
 	return (
 		<div>
@@ -129,7 +135,7 @@ export function TokenTypeBreakdown({ breakdown }: { breakdown: TokenBreakdown })
 							<div
 								key={type.key}
 								style={{
-									width: `${(breakdown[type.key] / total) * 100}%`,
+									width: `${(amounts[type.key] / total) * 100}%`,
 									background: type.color
 								}}
 							></div>
@@ -144,12 +150,12 @@ export function TokenTypeBreakdown({ breakdown }: { breakdown: TokenBreakdown })
 							style={{ background: type.color }}
 						></span>
 						<dt className="text-muted-foreground flex-1">{type.label}</dt>
-						<dd className="text-foreground tabular-nums">{formatTokens(breakdown[type.key])}</dd>
+						<dd className="text-foreground tabular-nums">{format(amounts[type.key])}</dd>
 					</div>
 				))}
 				<div className="text-muted-foreground col-start-2 flex pl-4 text-[11.5px]">
 					<dt className="flex-1">of which reasoning</dt>
-					<dd className="tabular-nums">{formatTokens(breakdown.reasoning)}</dd>
+					<dd className="tabular-nums">{format(amounts.reasoning)}</dd>
 				</div>
 			</dl>
 		</div>

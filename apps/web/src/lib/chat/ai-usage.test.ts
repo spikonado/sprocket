@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
 import {
 	apiCost,
+	apiCostByType,
 	axisTicks,
 	breakdownOf,
 	newTokens,
@@ -74,6 +75,43 @@ describe('apiCost', () => {
 			else expect(cost).toBeCloseTo(usd);
 		}
 	);
+});
+
+describe('apiCostByType', () => {
+	it('prices each token type, with reasoning at the output rate', () => {
+		const none = {
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+			reasoningTokens: 0
+		};
+
+		const cost = apiCostByType(
+			{
+				provider: 'chatgpt',
+				model: 'sol',
+				serviceTier: 'standard',
+				cacheWriteTtl: '30m',
+				calls: 1,
+				standard: {
+					inputTokens: 1_000_000,
+					cacheReadTokens: 500_000,
+					cacheWriteTokens: 100_000,
+					outputTokens: 100_000,
+					reasoningTokens: 20_000
+				},
+				longContext: none
+			},
+			catalog
+		);
+
+		expect(cost?.uncachedInput).toBeCloseTo(0.8);
+		expect(cost?.cacheRead).toBeCloseTo(0.05);
+		expect(cost?.cacheWrite).toBeCloseTo(0.25);
+		expect(cost?.output).toBeCloseTo(1);
+		expect(cost?.reasoning).toBeCloseTo(0.2);
+	});
 });
 
 describe('rangeQuery', () => {
