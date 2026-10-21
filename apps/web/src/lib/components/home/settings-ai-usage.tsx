@@ -199,6 +199,7 @@ function UsageReport({
 					/>
 				</div>
 				<UsageChart
+					key={range.id}
 					buckets={buckets}
 					unit={range.unit}
 					metric={metric}
@@ -370,7 +371,11 @@ function UsageChart({
 							count={buckets.length}
 							title={bucketLabel(unit, buckets[hovered].start)}
 							rows={entries[hovered]}
-							total={format(totals[hovered])}
+							total={
+								metric === 'cost'
+									? formatCost(costOf(buckets[hovered].rows, modelCatalog))
+									: format(totals[hovered])
+							}
 						/>
 					) : null}
 				</div>

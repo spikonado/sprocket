@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
-import { apiCost, axisTicks, rangeQuery, usageRanges } from '$lib/chat/ai-usage';
+import {
+	apiCost,
+	axisTicks,
+	breakdownOf,
+	newTokens,
+	rangeQuery,
+	usageRanges
+} from '$lib/chat/ai-usage';
 
 const catalog: ModelCatalog = {
 	defaultModelId: 'sol',
@@ -84,6 +91,32 @@ describe('rangeQuery', () => {
 			from: Date.parse(from),
 			to: Date.parse(to)
 		});
+	});
+});
+
+describe('newTokens', () => {
+	it('counts uncached input, cache writes and output, but not cache reads', () => {
+		const counts = {
+			inputTokens: 1_000,
+			cacheReadTokens: 600,
+			cacheWriteTokens: 300,
+			outputTokens: 50,
+			reasoningTokens: 10
+		};
+
+		const breakdown = breakdownOf([
+			{
+				provider: 'spikonado',
+				model: 'sol',
+				serviceTier: 'standard',
+				cacheWriteTtl: '30m',
+				calls: 1,
+				standard: counts,
+				longContext: counts
+			}
+		]);
+
+		expect(newTokens(breakdown)).toBe(900);
 	});
 });
 
