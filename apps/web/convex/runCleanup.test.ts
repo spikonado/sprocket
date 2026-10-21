@@ -607,7 +607,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		for (const runId of runIds) {
 			expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({
 				status: 'failed',
-				lastError: 'The local agent stopped responding before this run finished.'
+				lastError: 'The machine stopped responding before this run finished.'
 			});
 		}
 

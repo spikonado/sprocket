@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { LEGACY_RUN_ABANDONED_BY_AGENT, RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import { abandonRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -112,7 +112,7 @@ describe('automatic run recovery', () => {
 
 		for (const marker of [
 			{ failureKind: 'abandoned' as const, lastError: undefined },
-			{ failureKind: undefined, lastError: RUN_ABANDONED_BY_AGENT }
+			{ failureKind: undefined, lastError: LEGACY_RUN_ABANDONED_BY_AGENT }
 		]) {
 			await t.run((ctx) => ctx.db.patch('runs', runId, marker));
 			expect(await asUser.query(api.runRecovery.state, queryArgs)).toMatchObject({
@@ -157,11 +157,14 @@ describe('automatic run recovery', () => {
 				runId,
 				executionSecret: 'run-secret',
 				claimId: 'disconnected-agent',
-				text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}: claim renewal timed out`,
-				lastError: RUN_ABANDONED_BY_AGENT
+				text: `Run aborted: ${LEGACY_RUN_ABANDONED_BY_AGENT}: claim renewal timed out`,
+				lastError: LEGACY_RUN_ABANDONED_BY_AGENT
 			})
 		).toMatchObject({ accepted: true });
-		expect((await t.run((ctx) => ctx.db.get('runs', runId)))?.failureKind).toBe('abandoned');
+		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({
+			failureKind: 'abandoned',
+			lastError: RUN_ABANDONED_BY_MACHINE
+		});
 		await vi.advanceTimersByTimeAsync(10_000);
 		await t.finishInProgressScheduledFunctions();
 		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({

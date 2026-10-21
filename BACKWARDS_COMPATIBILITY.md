@@ -54,7 +54,7 @@ Released clients call `machines:tryRegister` with a `credentialHash`, then `mach
 
 ### Agent-reported claim lease loss
 
-Released agents report claim lease loss through `agentRuntime.finalizeClaimFailure` with `lastError` set to `RUN_ABANDONED_BY_AGENT`. That mutation maps the text to `failureKind: 'abandoned'`. Remove the mapping once those agents age out.
+Released agents report claim lease loss through `agentRuntime.finalizeClaimFailure` with `lastError` set to `LEGACY_RUN_ABANDONED_BY_AGENT`. That mutation maps the text to `failureKind: 'abandoned'` and stores `RUN_ABANDONED_BY_MACHINE` instead. Remove the mapping once those agents age out.
 
 ## Convex data shims
 
@@ -104,7 +104,7 @@ Older `threadTranscriptStates` and `threadTranscriptParts` rows still carry `use
 
 ### Run abandonment kind
 
-Abandoned runs written before `runs.failureKind` only carry `lastError: RUN_ABANDONED_BY_AGENT`, so `isAbandonedRun` also matches that text. The hourly `migrations.runRunFailureKindBackfill` cron sets `failureKind` on them. Once the backfill completes on every deployment, remove the text match, the migration and the cron.
+Abandoned runs written before `runs.failureKind` only carry `lastError: LEGACY_RUN_ABANDONED_BY_AGENT`, so `isAbandonedRun` also matches that text. The hourly `migrations.runRunFailureKindBackfill` cron sets `failureKind` on them. Once the backfill completes on every deployment, remove the text match, the migration and the cron.
 
 ### Stored executor job and result fields
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
 import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -142,7 +142,7 @@ describe('machines', () => {
 		await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-b' });
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
 			status: 'failed',
-			lastError: 'The local agent stopped responding before this run finished.'
+			lastError: 'The machine stopped responding before this run finished.'
 		});
 	});
 
@@ -189,7 +189,7 @@ describe('machines', () => {
 		await asUser.mutation(api.machines.endProcess, processArgs);
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
 			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT,
+			lastError: RUN_ABANDONED_BY_MACHINE,
 			failureKind: 'abandoned'
 		});
 		expect((await asUser.query(api.machines.listMine, {}))[0]).toMatchObject({

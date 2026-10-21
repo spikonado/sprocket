@@ -4,7 +4,7 @@ import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { LEGACY_RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, {
@@ -237,7 +237,7 @@ export const backfillRunFailureKind = migrations.define({
 	migrateOne: (_ctx, run) =>
 		run.failureKind === undefined &&
 		run.status === 'failed' &&
-		run.lastError === RUN_ABANDONED_BY_AGENT
+		run.lastError === LEGACY_RUN_ABANDONED_BY_AGENT
 			? { failureKind: 'abandoned' as const }
 			: undefined
 });

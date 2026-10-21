@@ -14,7 +14,7 @@ import {
 	type ExecutionRun
 } from '@convex/lib/runExecution';
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 
 type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
@@ -131,7 +131,7 @@ export async function finalizeRunRecord(
 export async function abandonRunRecord(ctx: MutationCtx, run: ExecutionRun): Promise<boolean> {
 	return await finalizeRunRecord(ctx, run, {
 		status: 'failed',
-		lastError: RUN_ABANDONED_BY_AGENT,
+		lastError: RUN_ABANDONED_BY_MACHINE,
 		failureKind: 'abandoned'
 	});
 }

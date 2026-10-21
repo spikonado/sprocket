@@ -15,7 +15,9 @@ export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSED
 // This exact wire sentinel means creation committed no run or prompt.
 export const SPROCKET_SUBMISSION_WAITING = 'SPROCKET_SUBMISSION_WAITING';
 
-export const RUN_ABANDONED_BY_AGENT =
+export const RUN_ABANDONED_BY_MACHINE = 'The machine stopped responding before this run finished.';
+
+export const LEGACY_RUN_ABANDONED_BY_AGENT =
 	'The local agent stopped responding before this run finished.';
 
 // Sentinels are ConvexErrors so production keeps their text: the executor

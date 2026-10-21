@@ -508,7 +508,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const abandonedRun = await t.run(async (ctx) => ctx.db.get('runs', abandoned.runId));
 		expect(abandonedRun).toMatchObject({
 			status: 'failed',
-			lastError: 'The local agent stopped responding before this run finished.'
+			lastError: 'The machine stopped responding before this run finished.'
 		});
 		// Aborted terminal text is not preserved: only runs and transcript
 		// parts written by completed model calls hold response content.
