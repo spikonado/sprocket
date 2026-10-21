@@ -223,7 +223,11 @@ async function schedulePendingMergedSettle(ctx: MutationCtx, threadId: Id<'threa
 	);
 }
 
-export async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+export async function applyPendingMergedSettle(
+	ctx: MutationCtx,
+	thread: Doc<'threadRecords'>,
+	fromRetry = false
+) {
 	const root = await threadRoot(ctx.db, thread);
 
 	if (!root.settleWhenIdle) return;
@@ -243,6 +247,14 @@ export async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'th
 	if (root.archivedAt !== undefined) return;
 
 	if ((await subtreeSummary(ctx.db, root)).anyActive) return;
+
+	if (!fromRetry) {
+		await ctx.scheduler.runAfter(0, internal.threads.retryPendingMergedSettle, {
+			threadId: thread._id
+		});
+
+		return;
+	}
 
 	const recoveringThreadId = await recoveringThreadInSubtree(ctx.db, root);
 
