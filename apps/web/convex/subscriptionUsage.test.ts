@@ -262,6 +262,59 @@ describe('subscription and usage backend', () => {
 		expect(await used()).toBe(3 * UNITS_PER_DOLLAR);
 	});
 
+	it('keeps old first-use usage after access backfill without a reset timestamp', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_legacy_usage_backfill';
+		const now = Date.parse('2026-02-10T00:00:00Z');
+		vi.setSystemTime(now);
+
+		await t.run((ctx) =>
+			ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'pro',
+				status: 'active',
+				eventAt: now - 1000,
+				dodoSubscriptionId: 'sub_legacy_usage_backfill',
+				dodoProductId: 'prod_pro',
+				billingInterval: 'monthly',
+				billingPeriodStart: now - 60_000,
+				billingPeriodEnd: now + 60_000
+			})
+		);
+		await t.mutation(components.rateLimiter.lib.rateLimit, {
+			name: 'modelUsageMonthly',
+			key: userId,
+			config: {
+				kind: 'fixed window',
+				rate: 15 * UNITS_PER_DOLLAR,
+				period: 30 * 86_400_000,
+				start: Date.parse('2026-02-03T00:00:00Z')
+			},
+			count: 2 * UNITS_PER_DOLLAR,
+			reserve: true
+		});
+		const asUser = t.withIdentity({ subject: userId });
+		const used = async () =>
+			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.used;
+
+		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
+		await t.mutation(internal.migrations.backfillSubscriptionAccess, {
+			cursor: null,
+			dryRun: false,
+			oneBatchOnly: true
+		});
+		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
+		const migrated = await t.run((ctx) =>
+			ctx.db
+				.query('subscriptions')
+				.withIndex('by_userId', (query) => query.eq('userId', userId))
+				.unique()
+		);
+
+		expect(migrated).toMatchObject({ quotaGeneration: 0 });
+	});
+
 	it('rolls the monthly usage window when the client supplies a later now', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
