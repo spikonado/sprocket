@@ -15,6 +15,7 @@ pub mod subagents;
 mod submission;
 mod tools;
 mod types;
+mod usage;
 
 pub use output::{RunOutcome, RunOutput};
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};

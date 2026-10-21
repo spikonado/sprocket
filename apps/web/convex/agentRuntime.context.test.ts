@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
-import { getThreadUsageValues } from '@convex/lib/threadUsage';
+import type { ModelCallUsage } from '@convex/lib/validators';
 import {
 	createQueuedRun,
 	emptyCompletionAssignments,
@@ -15,12 +15,41 @@ import {
 
 async function readThreadUsage(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
-		const thread = await ctx.db.get('threadRecords', threadId);
+		const contextRow = await ctx.db
+			.query('threadUsage')
+			.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+			.unique();
 
-		if (!thread) return null;
+		const totals = await ctx.db
+			.query('threadTokenUsage')
+			.withIndex('by_threadId_model', (query) => query.eq('threadId', threadId))
+			.collect();
 
-		return await getThreadUsageValues(ctx, thread);
+		const calls = await ctx.db.query('modelCallUsage').collect();
+		const userBuckets = await ctx.db.query('userTokenUsage').collect();
+
+		return { contextTokens: contextRow?.contextTokens, totals, calls, userBuckets };
 	});
+}
+
+const callTokens = {
+	inputTokens: 9_000,
+	cacheReadTokens: 6_000,
+	cacheWriteTokens: 1_000,
+	outputTokens: 500,
+	reasoningTokens: 200
+};
+
+function modelCall(overrides: Partial<ModelCallUsage> = {}): ModelCallUsage {
+	return {
+		provider: 'spikonado',
+		model: 'gpt-5.6-sol',
+		serviceTier: 'standard',
+		cacheWriteTtl: '30m',
+		longContext: false,
+		...callTokens,
+		...overrides
+	};
 }
 
 async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
@@ -43,7 +72,7 @@ async function finalizeTextCompletion(
 		attemptSeq: number;
 		streamId: string;
 		text: string;
-		usage?: { contextTokens: number; processedTokens: number };
+		usage?: { contextTokens: number; call?: ModelCallUsage };
 	}
 ) {
 	await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
@@ -111,7 +140,14 @@ async function appendFinishedToolPart(
 }
 
 describe('agentRuntime context accounting', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('records usage atomically with a durable completion', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-08-01T23:59:30.000Z'));
+
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'finalized-context-usage-secret';
@@ -138,7 +174,7 @@ describe('agentRuntime context accounting', () => {
 			attemptSeq: 1,
 			streamId: 'stream-finalized-usage',
 			text: 'Done',
-			usage: { contextTokens: 8_000, processedTokens: 9_000 }
+			usage: { contextTokens: 8_000, call: modelCall() }
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
@@ -154,14 +190,71 @@ describe('agentRuntime context accounting', () => {
 				}
 			],
 			...emptyCompletionAssignments,
-			usage: { contextTokens: 8_000, processedTokens: 9_000 },
+			usage: { contextTokens: 8_000, call: modelCall() },
 			executionSecret
 		});
 
-		expect(await readThreadUsage(t, threadId)).toMatchObject({
-			contextTokens: 8_000,
-			totalTokensProcessed: 9_000
+		vi.setSystemTime(new Date('2026-08-02T00:00:30.000Z'));
+		await finalizeTextCompletion(asUser, {
+			runId,
+			claimId: 'claim-finalized-usage',
+			executionSecret,
+			attemptSeq: 2,
+			streamId: 'stream-finalized-usage-2',
+			text: 'Done again',
+			usage: { contextTokens: 300_000, call: modelCall({ longContext: true }) }
 		});
+
+		const emptyTokens = {
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+			reasoningTokens: 0
+		};
+
+		const firstCall = { calls: 1, standard: callTokens, longContext: emptyTokens };
+		const secondCall = { calls: 1, standard: emptyTokens, longContext: callTokens };
+		const usage = await readThreadUsage(t, threadId);
+
+		expect(usage.contextTokens).toBe(300_000);
+		expect(usage.calls.map((call) => call.eventId)).toEqual([
+			'turn:claim-finalized-usage:1',
+			'turn:claim-finalized-usage:2'
+		]);
+		expect(usage.totals).toEqual([
+			expect.objectContaining({
+				model: 'gpt-5.6-sol',
+				calls: 2,
+				standard: callTokens,
+				longContext: callTokens
+			})
+		]);
+		expect(usage.userBuckets).toHaveLength(4);
+		expect(usage.userBuckets).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					granularity: 'hour',
+					bucketStart: Date.parse('2026-08-01T23:00:00.000Z'),
+					...firstCall
+				}),
+				expect.objectContaining({
+					granularity: 'day',
+					bucketStart: Date.parse('2026-08-01T00:00:00.000Z'),
+					...firstCall
+				}),
+				expect.objectContaining({
+					granularity: 'hour',
+					bucketStart: Date.parse('2026-08-02T00:00:00.000Z'),
+					...secondCall
+				}),
+				expect.objectContaining({
+					granularity: 'day',
+					bucketStart: Date.parse('2026-08-02T00:00:00.000Z'),
+					...secondCall
+				})
+			])
+		);
 	});
 
 	it('does not record usage when a completion has no durable items', async () => {
@@ -198,13 +291,13 @@ describe('agentRuntime context accounting', () => {
 				streamId: 'stream-empty-usage',
 				items: [],
 				...emptyCompletionAssignments,
-				usage: { contextTokens: 8_000, processedTokens: 9_000 },
+				usage: { contextTokens: 8_000, call: modelCall() },
 				executionSecret
 			})
 		).resolves.toBeNull();
 		const usage = await readThreadUsage(t, threadId);
-		expect(usage?.contextTokens).toBeUndefined();
-		expect(usage?.totalTokensProcessed).toBe(0);
+		expect(usage.contextTokens).toBeUndefined();
+		expect(usage.calls).toEqual([]);
 	});
 
 	it('rolls back the transcript when finalized usage is invalid', async () => {
@@ -235,47 +328,12 @@ describe('agentRuntime context accounting', () => {
 				attemptSeq: 1,
 				streamId: 'stream-invalid-finalized-usage',
 				text: 'Must not persist',
-				usage: { contextTokens: -1, processedTokens: 9_000 }
+				usage: { contextTokens: 8_000, call: modelCall({ cacheReadTokens: 10_000 }) }
 			})
 		).rejects.toThrow('Invalid token count.');
 
 		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(1);
-		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed).toBe(0);
-	});
-
-	it('getByThreadId returns the thread with usage counters merged in', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'merged-shape-secret';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'merged-shape',
-			executionSecret,
-			'Continue'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, {
-			runId,
-			claimId: 'claim-a',
-			executionSecret
-		});
-		await finalizeTextCompletion(asUser, {
-			runId,
-			claimId: 'claim-a',
-			executionSecret,
-			attemptSeq: 1,
-			streamId: 'stream-merged-shape',
-			text: 'Done',
-			usage: { contextTokens: 8_000, processedTokens: 9_000 }
-		});
-
-		await expect(asUser.query(api.threads.getByThreadId, { threadId })).resolves.toMatchObject({
-			contextTokens: 8_000,
-			totalTokensProcessed: 9_000
-		});
+		expect((await readThreadUsage(t, threadId)).totals).toEqual([]);
 	});
 
 	it('preserves opaque run model ids for the worker', async () => {
@@ -347,7 +405,7 @@ describe('agentRuntime context accounting', () => {
 			attemptSeq: 1,
 			streamId: 'stream-context-tokens',
 			text: 'Done',
-			usage: { contextTokens: 12_345, processedTokens: 13_000 }
+			usage: { contextTokens: 12_345 }
 		});
 		expect(
 			await asUser.query(api.agentRuntime.getContext, {
@@ -384,7 +442,7 @@ describe('agentRuntime context accounting', () => {
 			attemptSeq: 1,
 			streamId: 'stream-visible',
 			text: 'Finished the first step',
-			usage: { contextTokens: 4_000, processedTokens: 5_000 }
+			usage: { contextTokens: 4_000, call: modelCall() }
 		});
 
 		expect(completionNumber?.number).toBe(1);
@@ -408,7 +466,11 @@ describe('agentRuntime context accounting', () => {
 				summary: 'First step is done.',
 				completionAttemptSeq: 2,
 				beforePrompt: false,
-				processedTokens: 2_000
+				handoffCalls: [
+					modelCall(),
+					modelCall({ provider: 'chatgpt' }),
+					modelCall({ cacheWriteTtl: '1h' })
+				]
 			})
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
@@ -416,63 +478,26 @@ describe('agentRuntime context accounting', () => {
 			contextSummaryThroughPartNumber: 2
 		});
 		const usage = await readThreadUsage(t, threadId);
-		expect(usage?.contextTokens).toBeUndefined();
-		expect(usage?.totalTokensProcessed).toBe(7_000);
+		expect(usage.contextTokens).toBeUndefined();
+		expect(usage.calls.map((call) => [call.eventId, call.provider])).toEqual([
+			['turn:claim-handoff:1', 'spikonado'],
+			['handoff:claim-handoff:2:0', 'spikonado'],
+			['handoff:claim-handoff:2:1', 'chatgpt'],
+			['handoff:claim-handoff:2:2', 'spikonado']
+		]);
+		expect(usage.totals.map((total) => [total.provider, total.cacheWriteTtl, total.calls])).toEqual(
+			[
+				['chatgpt', '30m', 1],
+				['spikonado', '1h', 1],
+				['spikonado', '30m', 2]
+			]
+		);
 
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.historyFromNumber).toBe(3);
 		expect(state.contextSummary).toBe('First step is done.');
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion', 'tool']);
-	});
-
-	it('clears only contextTokens on a new handoff and keeps processed totals', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'handoff-clear-tokens-secret';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'handoff-clear-tokens',
-			executionSecret,
-			'Do the long task'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, {
-			runId,
-			claimId: 'claim-clear',
-			executionSecret
-		});
-		await finalizeTextCompletion(asUser, {
-			runId,
-			claimId: 'claim-clear',
-			executionSecret,
-			attemptSeq: 1,
-			streamId: 'stream-clear',
-			text: 'Finished the first step',
-			usage: { contextTokens: 8_000, processedTokens: 9_000 }
-		});
-		await registerCompletionAttempt(asUser, {
-			runId,
-			claimId: 'claim-clear',
-			executionSecret,
-			attemptSeq: 2
-		});
-		await expect(
-			asUser.mutation(api.agentRuntime.saveContextHandoff, {
-				runId,
-				claimId: 'claim-clear',
-				executionSecret,
-				summary: 'First step is done.',
-				completionAttemptSeq: 2,
-				beforePrompt: false,
-				processedTokens: 2_000
-			})
-		).resolves.toBe(true);
-		expect((await readThreadUsage(t, threadId))?.contextTokens).toBeUndefined();
-		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed).toBe(11_000);
 	});
 
 	it('keeps a stable cutoff when the same attempt retries after late parts', async () => {
@@ -516,7 +541,7 @@ describe('agentRuntime context accounting', () => {
 				summary: 'First step is done.',
 				completionAttemptSeq: 2,
 				beforePrompt: false,
-				processedTokens: 2_000
+				handoffCalls: [modelCall()]
 			})
 		).resolves.toBe(true);
 		await appendFinishedToolPart(t, {
@@ -532,13 +557,15 @@ describe('agentRuntime context accounting', () => {
 				summary: 'First step is done.',
 				completionAttemptSeq: 2,
 				beforePrompt: false,
-				processedTokens: 2_000
+				handoffCalls: [modelCall()]
 			})
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
 			contextSummaryThroughPartNumber: 1
 		});
-		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed).toBe(2_000);
+		expect((await readThreadUsage(t, threadId)).totals).toEqual([
+			expect.objectContaining({ calls: 1 })
+		]);
 		await expect(
 			asUser.mutation(api.agentRuntime.saveContextHandoff, {
 				runId,
@@ -776,7 +803,7 @@ describe('agentRuntime context accounting', () => {
 			attemptSeq: 1,
 			streamId: 'stream-omit',
 			text: 'Visible answer',
-			usage: { contextTokens: 10, processedTokens: 10 }
+			usage: { contextTokens: 10 }
 		});
 
 		expect(completion?.number).toBe(1);

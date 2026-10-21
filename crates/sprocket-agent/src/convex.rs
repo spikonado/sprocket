@@ -362,6 +362,7 @@ impl RuntimeClient {
         items: Vec<serde_json::Value>,
         assignments: crate::hooks::CompletionAssignments,
         usage_tokens: Option<u64>,
+        call_usage: Option<&crate::usage::ModelCallUsage>,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
         let mut args = self.run_args_with_claim(run_id, claim_id);
@@ -384,13 +385,11 @@ impl RuntimeClient {
             Value::try_from(serde_json::to_value(assignments.sections)?)?,
         );
         if let Some(tokens) = usage_tokens {
-            args.insert(
-                "usage".to_string(),
-                Value::try_from(serde_json::json!({
-                    "contextTokens": tokens,
-                    "processedTokens": tokens,
-                }))?,
-            );
+            let mut usage = serde_json::json!({ "contextTokens": tokens });
+            if let Some(call) = call_usage {
+                usage["call"] = serde_json::to_value(call)?;
+            }
+            args.insert("usage".to_string(), Value::try_from(usage)?);
         }
         let persisted: Option<PersistedTranscriptPart> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
@@ -474,7 +473,7 @@ impl RuntimeClient {
         summary: &str,
         completion_attempt_seq: u64,
         before_prompt: bool,
-        processed_tokens: u64,
+        handoff_calls: &[crate::usage::ModelCallUsage],
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("summary".to_string(), summary.to_string().into());
@@ -483,10 +482,10 @@ impl RuntimeClient {
             Value::Float64(completion_attempt_seq as f64),
         );
         args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
-        if processed_tokens > 0 {
+        if !handoff_calls.is_empty() {
             args.insert(
-                "processedTokens".to_string(),
-                Value::Float64(processed_tokens as f64),
+                "handoffCalls".to_string(),
+                Value::try_from(serde_json::to_value(handoff_calls)?)?,
             );
         }
         self.mutation_json("agentRuntime:saveContextHandoff", args)

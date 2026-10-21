@@ -1127,6 +1127,11 @@ pub async fn run_agent(
                     fast_mode,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
+                    usage_pricing: capabilities.usage_pricing.clone(),
+                    handoff_usage_pricing: handoff_model
+                        .as_ref()
+                        .map(|(_, capabilities)| capabilities.usage_pricing.clone())
+                        .unwrap_or_default(),
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,

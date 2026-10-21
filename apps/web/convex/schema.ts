@@ -23,8 +23,10 @@ import {
 	vExecutorJobResult,
 	vExecutorJobStatus,
 	vLinkedPullRequest,
+	vModelCallUsage,
 	vReasoningEffort,
 	vRunStatus,
+	vTokenUsageTotals,
 	vBillingInterval,
 	vSubscriptionStatus,
 	vTranscriptCompletionBody,
@@ -374,13 +376,32 @@ export default defineSchema({
 		userId: v.string(),
 		contextTokens: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
-	threadUsageEvents: defineTable({
+	modelCallUsage: defineTable({
+		userId: v.string(),
+		runId: v.id('runs'),
+		eventId: v.string(),
+		...vModelCallUsage.fields
+	}).index('by_runId_eventId', ['runId', 'eventId']),
+	threadTokenUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		eventId: v.string(),
-		processedTokens: v.number(),
-		createdAt: legacyCreatedAt
-	}).index('by_threadId_eventId', ['threadId', 'eventId']),
+		...vTokenUsageTotals.fields
+	}).index('by_threadId_model', ['threadId', 'provider', 'model', 'serviceTier', 'cacheWriteTtl']),
+	// UTC buckets; weeks and months are summed from `day` rows.
+	userTokenUsage: defineTable({
+		userId: v.string(),
+		granularity: v.union(v.literal('hour'), v.literal('day')),
+		bucketStart: v.number(),
+		...vTokenUsageTotals.fields
+	}).index('by_userId_bucket', [
+		'userId',
+		'granularity',
+		'bucketStart',
+		'provider',
+		'model',
+		'serviceTier',
+		'cacheWriteTtl'
+	]),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

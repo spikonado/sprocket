@@ -26,6 +26,11 @@ impl CompletionProvider {
         self == Self::Spikonado || vendor == "openai"
     }
 
+    /// Only the gateway has a fast tier; other providers run fast requests at standard speed.
+    pub(crate) fn serves_fast_mode(self) -> bool {
+        self == Self::Spikonado
+    }
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Spikonado => "spikonado",
@@ -185,6 +190,16 @@ pub struct CatalogModelCapabilities {
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_required_tool_choice: bool,
+    pub usage_pricing: UsagePricing,
+}
+
+/// Catalog facts recorded with each call, so its tokens can be priced later even after they change.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UsagePricing {
+    /// Input size above which the direct provider API charges long-context rates.
+    pub long_context_threshold_tokens: Option<u64>,
+    /// The cache lifetime the gateway's requests write at.
+    pub cache_write_ttl: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -11,13 +11,6 @@ import {
 
 /** Function argument/return validators derived from the schema plus hand-shaped results. */
 
-// getByThreadId's live response shape: thread record plus usage counters
-// merged in from the threadUsage table.
-export const vThreadWithUsageDoc = schema.doc('threadRecords').extend({
-	contextTokens: v.optional(v.number()),
-	totalTokensProcessed: v.number()
-});
-
 export const vTranscriptStateResult = v.object({
 	threadId: v.id('threadRecords'),
 	totalParts: v.number(),

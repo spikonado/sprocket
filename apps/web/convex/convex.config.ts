@@ -4,7 +4,6 @@ import firecrawl from '@firecrawl/firecrawl-convex/convex.config';
 import rateLimiter from '@convex-dev/rate-limiter/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
 import migrations from '@convex-dev/migrations/convex.config';
-import aggregate from '@convex-dev/aggregate/convex.config';
 import actionRetrier from '@convex-dev/action-retrier/convex.config';
 import workpool from '@convex-dev/workpool/convex.config';
 
@@ -37,8 +36,6 @@ app.use(exa, { env: { EXA_API_KEY: app.env.EXA_API_KEY } });
 app.use(rateLimiter);
 
 app.use(migrations);
-
-app.use(aggregate);
 
 app.use(actionRetrier);
 

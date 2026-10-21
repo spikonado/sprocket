@@ -17,7 +17,20 @@ fn catalog_payload() -> GatewayModelsResponse {
                     "supportsImages": true,
                     "supportsRequiredToolChoice": true,
                     "contextWindowTokens": 100000,
-                    "autoCompactTokenLimit": 80000
+                    "autoCompactTokenLimit": 80000,
+                    "cacheWriteTtl": "30m",
+                    "directApiPricing": {
+                        "input": 2,
+                        "cacheRead": 0.1,
+                        "cacheWrite": { "30m": 2.5, "12h": 5 },
+                        "output": 10,
+                        "fastMultiplier": 2,
+                        "longContext": {
+                            "thresholdInputTokens": 272000,
+                            "inputMultiplier": 2,
+                            "outputMultiplier": 1.5
+                        }
+                    }
                 },
                 {
                     "id": "long-context-model",
@@ -46,6 +59,13 @@ fn reports_selected_model_metadata_from_one_payload() {
     assert_eq!(vision.vendor, "openai");
     assert_eq!(vision.context_budget.context_window_tokens, 100_000);
     assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
+    assert_eq!(
+        vision.usage_pricing,
+        UsagePricing {
+            long_context_threshold_tokens: Some(272_000),
+            cache_write_ttl: Some("30m".to_string()),
+        }
+    );
 
     let long_context = select_catalog_model(&catalog_payload().sprocket, "long-context-model")
         .expect("long-context model");
@@ -53,6 +73,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     assert_eq!(long_context.vendor, "other");
     assert!(!long_context.supports_required_tool_choice);
     assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
+    assert_eq!(long_context.usage_pricing, UsagePricing::default());
 }
 
 #[test]

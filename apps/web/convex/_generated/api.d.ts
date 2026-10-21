@@ -78,6 +78,7 @@ import type * as lib_threadHierarchy from "../lib/threadHierarchy.js";
 import type * as lib_threadRunStatus from "../lib/threadRunStatus.js";
 import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
+import type * as lib_tokenUsage from "../lib/tokenUsage.js";
 import type * as lib_toolJobs from "../lib/toolJobs.js";
 import type * as lib_transcriptDisplayTypes from "../lib/transcriptDisplayTypes.js";
 import type * as lib_transcriptParts from "../lib/transcriptParts.js";
@@ -188,6 +189,7 @@ declare const fullApi: ApiFromModules<{
   "lib/threadRunStatus": typeof lib_threadRunStatus;
   "lib/threadUsage": typeof lib_threadUsage;
   "lib/tiers": typeof lib_tiers;
+  "lib/tokenUsage": typeof lib_tokenUsage;
   "lib/toolJobs": typeof lib_toolJobs;
   "lib/transcriptDisplayTypes": typeof lib_transcriptDisplayTypes;
   "lib/transcriptParts": typeof lib_transcriptParts;
@@ -253,7 +255,6 @@ export declare const components: {
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
-  aggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregate">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;
   webSearchWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webSearchWorkpool">;
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;

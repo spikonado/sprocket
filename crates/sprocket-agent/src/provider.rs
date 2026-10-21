@@ -32,8 +32,9 @@ use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, working_directory_message};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
-    gateway_api_v1_url,
+    UsagePricing, gateway_api_v1_url,
 };
+use crate::usage::{ModelCallUsage, UsageSource};
 use sprocket_transcript::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts,
@@ -116,6 +117,9 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
+    pub(crate) usage_pricing: UsagePricing,
+    /// The provider-switch handoff model's pricing; the handoff runs on that model.
+    pub(crate) handoff_usage_pricing: UsagePricing,
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
@@ -168,10 +172,6 @@ impl AgentProvider {
             chatgpt_credentials,
             provider_handoff: context.provider_handoff.clone(),
         }
-    }
-
-    fn serves_fast_mode(&self) -> bool {
-        self.completion_provider == CompletionProvider::Spikonado
     }
 
     pub(crate) async fn run(
@@ -472,7 +472,7 @@ async fn run_with_completion_model(
             }
         };
     let target_params = |target: &AgentProvider| {
-        if target.serves_fast_mode() {
+        if target.completion_provider.serves_fast_mode() {
             fast_params.clone()
         } else {
             standard_params.clone()
@@ -481,7 +481,7 @@ async fn run_with_completion_model(
     let mut additional_params = if let Some(handoff) = &provider_switch {
         match completion_parameters(
             &handoff.reasoning_effort,
-            handoff.fast_mode && handoff.completion_provider == CompletionProvider::Spikonado,
+            handoff.fast_mode && handoff.completion_provider.serves_fast_mode(),
         ) {
             Ok(params) => params,
             Err(error) => {
@@ -627,7 +627,7 @@ async fn run_with_completion_model(
     let mut streamed_text = String::new();
     let mut observed_calls = 0;
     let mut completed_attempt = None;
-    let mut handoff_processed_tokens = 0_u64;
+    let mut handoff_calls: Vec<ModelCallUsage> = Vec::new();
 
     if request.omit_prior_reasoning {
         match runtime
@@ -699,7 +699,7 @@ async fn run_with_completion_model(
                     before_prompt = false;
                     additional_params = target_params(&target);
                     context_handoff_hook.restart();
-                    handoff_processed_tokens = 0;
+                    handoff_calls.clear();
                     final_text.clear();
                     final_response_received = false;
                     streamed_text.clear();
@@ -808,12 +808,35 @@ async fn run_with_completion_model(
                                 if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 completed_attempt = Some(transcript.attempt_seq);
+                                let (provider, model, fast, pricing) = match provider_switch
+                                    .as_ref()
+                                    .filter(|_| context_handoff_hook.is_writing())
+                                {
+                                    Some(handoff) => (
+                                        handoff.completion_provider,
+                                        &handoff.selected_model,
+                                        handoff.fast_mode,
+                                        &request.handoff_usage_pricing,
+                                    ),
+                                    None => (
+                                        target.completion_provider,
+                                        &target.model,
+                                        request.fast_mode,
+                                        &request.usage_pricing,
+                                    ),
+                                };
+                                let usage_source = UsageSource {
+                                    provider,
+                                    model: model.clone(),
+                                    fast: fast && provider.serves_fast_mode(),
+                                    pricing: pricing.clone(),
+                                };
+                                let call_usage = usage_source.call_usage(call.usage);
                                 let tokens = context_handoff_hook.record_usage(call.usage);
                                 if context_handoff_hook.is_writing() {
-                                    handoff_processed_tokens =
-                                        handoff_processed_tokens.saturating_add(tokens.unwrap_or(0));
+                                    handoff_calls.extend(call_usage);
                                 } else {
-                                    transcript.record_usage(tokens);
+                                    transcript.record_usage(tokens, call_usage);
                                     transcript.parts.order_stream_parts(&transcript.stream_id);
                                     transcript.tool_call_tracker.record_parts(&transcript.parts.parts);
                                     pending_origin_turn = Some(call.call_index + 1);
@@ -898,7 +921,7 @@ async fn run_with_completion_model(
                                 let save = runtime.save_context_handoff(
                                     &request.run_id, &request.claim_id, &summary,
                                     transcript.attempt_seq, before_prompt,
-                                    handoff_processed_tokens,
+                                    &handoff_calls,
                                 );
                                 let handoff_context: Vec<_> = initial_context
                                     .iter()
@@ -923,7 +946,7 @@ async fn run_with_completion_model(
                                     additional_params = target_params(&target);
                                 }
                                 context_handoff_hook.restart();
-                                handoff_processed_tokens = 0;
+                                handoff_calls.clear();
                                 final_text.clear();
                                 final_response_received = false;
                                 streamed_text.clear();
@@ -970,7 +993,7 @@ async fn run_with_completion_model(
                             Some(Ok(_)) => {}
                             Some(Err(error)) => {
                                 if let Some(handoff) = context_handoff_hook.take_request() {
-                                    handoff_processed_tokens = 0;
+                                    handoff_calls.clear();
                                     history = handoff.history;
                                     prompt = handoff_prompt();
                                     deferred_prompt = handoff.deferred_prompt;
@@ -1132,6 +1155,7 @@ struct TranscriptSink {
     streamed: bool,
     finalized: bool,
     usage_tokens: Option<u64>,
+    call_usage: Option<ModelCallUsage>,
     tool_call_tracker: ToolCallTracker,
 }
 
@@ -1162,6 +1186,7 @@ impl TranscriptSink {
             streamed: false,
             finalized: false,
             usage_tokens: None,
+            call_usage: None,
             tool_call_tracker,
         })
     }
@@ -1227,6 +1252,7 @@ impl TranscriptSink {
         self.streamed = false;
         self.finalized = false;
         self.usage_tokens = None;
+        self.call_usage = None;
     }
 
     async fn finalize_turn(&mut self) -> anyhow::Result<()> {
@@ -1240,6 +1266,7 @@ impl TranscriptSink {
                 self.items_json(),
                 self.tool_call_tracker.completion_assignments(),
                 self.usage_tokens,
+                self.call_usage.as_ref(),
             )
             .await?;
         self.streamed = false;
@@ -1285,9 +1312,12 @@ impl TranscriptSink {
         self.unpublished > 0
     }
 
-    fn record_usage(&mut self, tokens: Option<u64>) {
+    fn record_usage(&mut self, tokens: Option<u64>, call_usage: Option<ModelCallUsage>) {
         if tokens.is_some() {
             self.usage_tokens = tokens;
+        }
+        if call_usage.is_some() {
+            self.call_usage = call_usage;
         }
     }
 

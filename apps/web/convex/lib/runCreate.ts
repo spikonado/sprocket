@@ -192,7 +192,6 @@ export async function createQueuedRunRecord(
 			lastMessageAt: now
 		});
 
-		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 
 		if (parentThread) {
