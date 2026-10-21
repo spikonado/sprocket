@@ -1,3 +1,4 @@
+import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader, MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { paginationOptsValidator } from 'convex/server';
@@ -5,7 +6,10 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { allMerged } from '@convex/lib/pullRequestState';
-import { awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
+import {
+	AUTOMATIC_RECOVERY_GRACE_MS,
+	awaitsAutomaticRecovery
+} from '@convex/lib/runRecovery';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 async function latestThreadRun(db: DatabaseReader, threadId: Id<'threadRecords'>) {
@@ -207,7 +211,30 @@ export async function updateThreadHierarchyAfterChange(
 	await applyPendingMergedSettle(ctx, thread);
 }
 
-async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+async function schedulePendingMergedSettle(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+	const latest = await latestThreadRun(ctx.db, threadId);
+
+	if (latest?.completedAt === undefined) return;
+
+	await ctx.scheduler.runAt(
+		latest.completedAt + AUTOMATIC_RECOVERY_GRACE_MS,
+		internal.threads.retryPendingMergedSettle,
+		{ threadId }
+	);
+}
+
+async function deferPendingMergedSettleWhileRecovering(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+) {
+	if (!(await threadRunAwaitsAutomaticRecovery(ctx.db, threadId))) return false;
+
+	await schedulePendingMergedSettle(ctx, threadId);
+
+	return true;
+}
+
+export async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
 	const root = await threadRoot(ctx.db, thread);
 
 	if (!root.settleWhenIdle) return;
@@ -228,9 +255,9 @@ async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRec
 
 	if ((await subtreeSummary(ctx.db, root)).anyActive) return;
 
-	if (await threadRunAwaitsAutomaticRecovery(ctx.db, thread._id)) return;
+	if (await deferPendingMergedSettleWhileRecovering(ctx, thread._id)) return;
 
-	if (thread._id !== root._id && (await threadRunAwaitsAutomaticRecovery(ctx.db, root._id))) {
+	if (thread._id !== root._id && (await deferPendingMergedSettleWhileRecovering(ctx, root._id))) {
 		return;
 	}
 
