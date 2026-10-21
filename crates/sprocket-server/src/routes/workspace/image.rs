@@ -76,27 +76,6 @@ fn read_local_image(
     workspace_path: Option<PathBuf>,
     image_path: String,
 ) -> anyhow::Result<LocalImage> {
-    let (file, metadata) = open_local_image(workspace_path, image_path)?;
-    let mut contents = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_LOCAL_IMAGE_BYTES + 1)
-        .read_to_end(&mut contents)
-        .with_context(|| "failed to read local image")?;
-    if contents.len() as u64 > MAX_LOCAL_IMAGE_BYTES {
-        anyhow::bail!("local image exceeds the 20 MiB limit");
-    }
-
-    let media_type = detect_image_media_type(&contents)
-        .ok_or_else(|| anyhow::anyhow!("local file is not a supported image"))?;
-    Ok(LocalImage {
-        contents,
-        media_type,
-    })
-}
-
-fn open_local_image(
-    workspace_path: Option<PathBuf>,
-    image_path: String,
-) -> anyhow::Result<(std::fs::File, std::fs::Metadata)> {
     let image_path = Path::new(&image_path);
     let image_path = if image_path.is_absolute() {
         image_path.to_path_buf()
@@ -129,7 +108,20 @@ fn open_local_image(
         anyhow::bail!("local image exceeds the 20 MiB limit");
     }
 
-    Ok((file, metadata))
+    let mut contents = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_LOCAL_IMAGE_BYTES + 1)
+        .read_to_end(&mut contents)
+        .with_context(|| "failed to read local image")?;
+    if contents.len() as u64 > MAX_LOCAL_IMAGE_BYTES {
+        anyhow::bail!("local image exceeds the 20 MiB limit");
+    }
+
+    let media_type = detect_image_media_type(&contents)
+        .ok_or_else(|| anyhow::anyhow!("local file is not a supported image"))?;
+    Ok(LocalImage {
+        contents,
+        media_type,
+    })
 }
 
 fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {

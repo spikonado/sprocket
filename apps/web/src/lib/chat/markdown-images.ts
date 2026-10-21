@@ -16,7 +16,7 @@ export function decodeImagePath(source: string) {
 	}
 }
 
-export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
+export function markdownImageUrl(source: string, scope?: MarkdownImageScope, render?: string) {
 	if (/^(?:https?:|data:image\/|blob:|\/\/)/i.test(source)) return source;
 
 	if (!source) return null;
@@ -38,6 +38,8 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 
 	query.set('path', resolvedPath);
 
+	if (render) query.set('render', render);
+
 	const baseUrl = resolveLocalApiBaseUrl();
 	const pathUrl = `/api/workspace/image?${query}`;
 
@@ -53,18 +55,13 @@ export function nextImageRender() {
 	return String(++renderCount);
 }
 
-export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope, render?: string) {
+export function prepareMarkdownImages(html: string, scope: MarkdownImageScope, render: string) {
 	const template = document.createElement('template');
 	template.innerHTML = html;
 
 	for (const image of template.content.querySelectorAll('img')) {
 		const source = image.getAttribute('src') ?? '';
-		let url = markdownImageUrl(source, scope);
-
-		if (url && render && new URL(url, window.location.href).pathname === '/api/workspace/image') {
-			url += `&render=${render}`;
-		}
-
+		const url = markdownImageUrl(source, scope, render);
 		image.setAttribute('loading', 'lazy');
 		image.setAttribute('decoding', 'async');
 		image.setAttribute('referrerpolicy', 'no-referrer');
