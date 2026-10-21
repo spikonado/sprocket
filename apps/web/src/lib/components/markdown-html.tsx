@@ -3,7 +3,11 @@ import { createPortal } from 'react-dom';
 import CodeBlockControls from './code-block-controls';
 import ImageViewer, { type ViewerImage } from './image-viewer';
 import { MarkdownFileLinksContext, markdownFileTarget } from '$lib/chat/markdown-file-links';
-import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
+import {
+	nextImageRender,
+	prepareMarkdownImages,
+	type MarkdownImageScope
+} from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
 
 type CodeControl = {
@@ -24,9 +28,11 @@ export default function MarkdownHtml({
 	const workspacePath = imageScope?.workspacePath;
 	const documentPath = imageScope?.documentPath;
 
+	const [imageRender] = useState(nextImageRender);
+
 	const html = useMemo(
-		() => prepareMarkdownImages(sourceHtml, { workspacePath, documentPath }),
-		[sourceHtml, workspacePath, documentPath]
+		() => prepareMarkdownImages(sourceHtml, { workspacePath, documentPath }, imageRender),
+		[sourceHtml, workspacePath, documentPath, imageRender]
 	);
 
 	const ref = useRef<HTMLDivElement>(null);

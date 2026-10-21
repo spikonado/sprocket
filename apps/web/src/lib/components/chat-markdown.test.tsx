@@ -340,6 +340,30 @@ describe('images', () => {
 		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
 	});
 
+	it('loads a re-sent local image fresh in each new message but keeps it across re-renders', () => {
+		const content = '![Board](/tmp/board.png)';
+
+		const { getAllByRole, rerender } = render(
+			<>
+				<ChatMarkdown content={content} />
+			</>
+		);
+
+		const [first] = getAllByRole('button', { name: 'View Board' });
+		const firstUrl = first!.getAttribute('src');
+
+		rerender(
+			<>
+				<ChatMarkdown content={content} />
+				<ChatMarkdown content={content} />
+			</>
+		);
+
+		const [kept, resent] = getAllByRole('button', { name: 'View Board' });
+		expect(kept!.getAttribute('src')).toBe(firstUrl);
+		expect(resent!.getAttribute('src')).not.toBe(firstUrl);
+	});
+
 	it('renders Windows absolute image paths through sanitization', () => {
 		const { getByRole } = render(
 			<ChatMarkdown

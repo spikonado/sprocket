@@ -46,13 +46,25 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 		: pathUrl;
 }
 
-export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) {
+let renderCount = 0;
+
+/** Browsers reuse decoded images by URL, so each message render needs its own URL to show the file as it is now. */
+export function nextImageRender() {
+	return String(++renderCount);
+}
+
+export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope, render?: string) {
 	const template = document.createElement('template');
 	template.innerHTML = html;
 
 	for (const image of template.content.querySelectorAll('img')) {
 		const source = image.getAttribute('src') ?? '';
-		const url = markdownImageUrl(source, scope);
+		let url = markdownImageUrl(source, scope);
+
+		if (url && render && new URL(url, window.location.href).pathname === '/api/workspace/image') {
+			url += `&render=${render}`;
+		}
+
 		image.setAttribute('loading', 'lazy');
 		image.setAttribute('decoding', 'async');
 		image.setAttribute('referrerpolicy', 'no-referrer');
