@@ -26,6 +26,11 @@ impl CompletionProvider {
         self == Self::Spikonado || vendor == "openai"
     }
 
+    /// Only the gateway has a fast tier; other providers run fast requests at standard speed.
+    pub(crate) fn serves_fast_mode(self) -> bool {
+        self == Self::Spikonado
+    }
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Spikonado => "spikonado",

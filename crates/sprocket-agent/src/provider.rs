@@ -174,19 +174,6 @@ impl AgentProvider {
         }
     }
 
-    fn serves_fast_mode(&self) -> bool {
-        self.completion_provider == CompletionProvider::Spikonado
-    }
-
-    fn usage_source(&self, fast_mode: bool, pricing: UsagePricing) -> UsageSource {
-        UsageSource {
-            provider: self.completion_provider,
-            model: self.model.clone(),
-            fast: fast_mode && self.serves_fast_mode(),
-            pricing,
-        }
-    }
-
     pub(crate) async fn run(
         mut self,
         runtime: RuntimeClient,
@@ -485,7 +472,7 @@ async fn run_with_completion_model(
             }
         };
     let target_params = |target: &AgentProvider| {
-        if target.serves_fast_mode() {
+        if target.completion_provider.serves_fast_mode() {
             fast_params.clone()
         } else {
             standard_params.clone()
@@ -494,7 +481,7 @@ async fn run_with_completion_model(
     let mut additional_params = if let Some(handoff) = &provider_switch {
         match completion_parameters(
             &handoff.reasoning_effort,
-            handoff.fast_mode && handoff.completion_provider == CompletionProvider::Spikonado,
+            handoff.fast_mode && handoff.completion_provider.serves_fast_mode(),
         ) {
             Ok(params) => params,
             Err(error) => {
@@ -821,21 +808,28 @@ async fn run_with_completion_model(
                                 if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 completed_attempt = Some(transcript.attempt_seq);
-                                let usage_source = match provider_switch
+                                let (provider, model, fast, pricing) = match provider_switch
                                     .as_ref()
                                     .filter(|_| context_handoff_hook.is_writing())
                                 {
-                                    Some(handoff) => UsageSource {
-                                        provider: handoff.completion_provider,
-                                        model: handoff.selected_model.clone(),
-                                        fast: handoff.fast_mode
-                                            && handoff.completion_provider == CompletionProvider::Spikonado,
-                                        pricing: request.handoff_usage_pricing.clone(),
-                                    },
-                                    None => target.usage_source(
-                                        request.fast_mode,
-                                        request.usage_pricing.clone(),
+                                    Some(handoff) => (
+                                        handoff.completion_provider,
+                                        &handoff.selected_model,
+                                        handoff.fast_mode,
+                                        &request.handoff_usage_pricing,
                                     ),
+                                    None => (
+                                        target.completion_provider,
+                                        &target.model,
+                                        request.fast_mode,
+                                        &request.usage_pricing,
+                                    ),
+                                };
+                                let usage_source = UsageSource {
+                                    provider,
+                                    model: model.clone(),
+                                    fast: fast && provider.serves_fast_mode(),
+                                    pricing: pricing.clone(),
                                 };
                                 let call_usage = usage_source.call_usage(call.usage);
                                 let tokens = context_handoff_hook.record_usage(call.usage);
