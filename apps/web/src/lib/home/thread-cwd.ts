@@ -5,7 +5,9 @@ import type { LocalApi } from '$lib/types/sprocket';
 /** Drops a saved thread cwd that no longer exists, like the agent does when its next run starts. */
 export function useExistingThreadCwd(
 	api: Pick<LocalApi, 'resolveWorkspacePath'> | null,
-	cwd: string | undefined
+	cwd: string | undefined,
+	// A run can recreate a missing cwd and set_cwd to the same path, so recheck when runs change.
+	threadStatus: string | undefined
 ) {
 	const [missingCwd, setMissingCwd] = useState<string | null>(null);
 
@@ -30,7 +32,7 @@ export function useExistingThreadCwd(
 		return () => {
 			active = false;
 		};
-	}, [api, cwd]);
+	}, [api, cwd, threadStatus]);
 
 	return cwd === missingCwd ? undefined : cwd;
 }

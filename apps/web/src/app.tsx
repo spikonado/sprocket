@@ -950,7 +950,12 @@ export default function App({
 		};
 	}, [currentProjectPath, localApi]);
 
-	const threadCwd = useExistingThreadCwd(localApi, currentActiveThread?.cwd);
+	const threadCwd = useExistingThreadCwd(
+		localApi,
+		currentActiveThread?.cwd,
+		currentActiveThread?.status
+	);
+
 	const projectWorkspacePath = currentProject?.workspacePath;
 
 	const markdownFileLinks = useMemo<MarkdownFileLinks | null>(() => {
