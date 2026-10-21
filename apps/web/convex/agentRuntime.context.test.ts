@@ -45,6 +45,7 @@ function modelCall(overrides: Partial<ModelCallUsage> = {}): ModelCallUsage {
 		provider: 'spikonado',
 		model: 'gpt-5.6-sol',
 		serviceTier: 'standard',
+		cacheWriteTtl: '30m',
 		longContext: false,
 		...callTokens,
 		...overrides
@@ -465,7 +466,11 @@ describe('agentRuntime context accounting', () => {
 				summary: 'First step is done.',
 				completionAttemptSeq: 2,
 				beforePrompt: false,
-				handoffCalls: [modelCall(), modelCall({ provider: 'chatgpt' })]
+				handoffCalls: [
+					modelCall(),
+					modelCall({ provider: 'chatgpt' }),
+					modelCall({ cacheWriteTtl: '1h' })
+				]
 			})
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
@@ -477,12 +482,16 @@ describe('agentRuntime context accounting', () => {
 		expect(usage.calls.map((call) => [call.kind, call.provider])).toEqual([
 			['turn', 'spikonado'],
 			['handoff', 'spikonado'],
-			['handoff', 'chatgpt']
+			['handoff', 'chatgpt'],
+			['handoff', 'spikonado']
 		]);
-		expect(usage.totals.map((total) => [total.provider, total.calls])).toEqual([
-			['chatgpt', 1],
-			['spikonado', 2]
-		]);
+		expect(usage.totals.map((total) => [total.provider, total.cacheWriteTtl, total.calls])).toEqual(
+			[
+				['chatgpt', '30m', 1],
+				['spikonado', '1h', 1],
+				['spikonado', '30m', 2]
+			]
+		);
 
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.historyFromNumber).toBe(3);

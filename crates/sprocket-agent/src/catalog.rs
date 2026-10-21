@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     CatalogModelCapabilities, CompletionProvider, ContextBudget, ProviderHandoff, RunSnapshot,
-    gateway_api_v1_url,
+    UsagePricing, gateway_api_v1_url,
 };
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
@@ -64,6 +64,8 @@ struct GatewayCatalogModel {
     context_window_tokens: u64,
     #[serde(rename = "autoCompactTokenLimit")]
     auto_handoff_token_limit: u64,
+    #[serde(default)]
+    cache_write_ttl: Option<String>,
     #[serde(default)]
     direct_api_pricing: Option<GatewayDirectApiPricing>,
 }
@@ -194,11 +196,14 @@ fn select_catalog_model(
         },
         supports_images: model.supports_images,
         supports_required_tool_choice: model.supports_required_tool_choice,
-        long_context_threshold_tokens: model
-            .direct_api_pricing
-            .as_ref()
-            .and_then(|pricing| pricing.long_context.as_ref())
-            .map(|long_context| long_context.threshold_input_tokens),
+        usage_pricing: UsagePricing {
+            long_context_threshold_tokens: model
+                .direct_api_pricing
+                .as_ref()
+                .and_then(|pricing| pricing.long_context.as_ref())
+                .map(|long_context| long_context.threshold_input_tokens),
+            cache_write_ttl: model.cache_write_ttl.clone(),
+        },
     })
 }
 

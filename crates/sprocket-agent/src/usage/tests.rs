@@ -2,14 +2,17 @@ use rig::completion::Usage;
 use serde_json::json;
 
 use super::UsageSource;
-use crate::types::CompletionProvider;
+use crate::types::{CompletionProvider, UsagePricing};
 
 fn source(fast: bool, long_context_threshold_tokens: Option<u64>) -> UsageSource {
     UsageSource {
         provider: CompletionProvider::Spikonado,
         model: "gpt-6.1-sol".to_string(),
         fast,
-        long_context_threshold_tokens,
+        pricing: UsagePricing {
+            long_context_threshold_tokens,
+            cache_write_ttl: Some("30m".to_string()),
+        },
     }
 }
 
@@ -31,6 +34,7 @@ fn reports_the_call_breakdown_in_the_convex_shape() {
             "model": "gpt-6.1-sol",
             "serviceTier": "fast",
             "longContext": true,
+            "cacheWriteTtl": "30m",
             "inputTokens": 300_000,
             "cacheReadTokens": 250_000,
             "cacheWriteTokens": 10_000,

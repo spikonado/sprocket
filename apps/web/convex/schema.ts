@@ -43,6 +43,7 @@ const tokenUsageTotals = {
 	provider: vCompletionProvider,
 	model: v.string(),
 	serviceTier: vServiceTier,
+	cacheWriteTtl: v.union(v.string(), v.null()),
 	calls: v.number(),
 	standard: vTokenCounts,
 	longContext: vTokenCounts
@@ -398,7 +399,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		...tokenUsageTotals
-	}).index('by_threadId_model', ['threadId', 'provider', 'model', 'serviceTier']),
+	}).index('by_threadId_model', ['threadId', 'provider', 'model', 'serviceTier', 'cacheWriteTtl']),
 	// UTC buckets; weeks and months are summed from `day` rows.
 	userTokenUsage: defineTable({
 		userId: v.string(),
@@ -411,7 +412,8 @@ export default defineSchema({
 		'bucketStart',
 		'provider',
 		'model',
-		'serviceTier'
+		'serviceTier',
+		'cacheWriteTtl'
 	]),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),

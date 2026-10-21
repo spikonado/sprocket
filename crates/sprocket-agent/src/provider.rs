@@ -32,7 +32,7 @@ use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, working_directory_message};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
-    gateway_api_v1_url,
+    UsagePricing, gateway_api_v1_url,
 };
 use crate::usage::{ModelCallUsage, UsageSource};
 use sprocket_transcript::{
@@ -117,9 +117,9 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
-    pub(crate) long_context_threshold_tokens: Option<u64>,
-    /// The provider-switch handoff model's threshold; the handoff runs on that model.
-    pub(crate) handoff_long_context_threshold_tokens: Option<u64>,
+    pub(crate) usage_pricing: UsagePricing,
+    /// The provider-switch handoff model's pricing; the handoff runs on that model.
+    pub(crate) handoff_usage_pricing: UsagePricing,
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
@@ -178,16 +178,12 @@ impl AgentProvider {
         self.completion_provider == CompletionProvider::Spikonado
     }
 
-    fn usage_source(
-        &self,
-        fast_mode: bool,
-        long_context_threshold_tokens: Option<u64>,
-    ) -> UsageSource {
+    fn usage_source(&self, fast_mode: bool, pricing: UsagePricing) -> UsageSource {
         UsageSource {
             provider: self.completion_provider,
             model: self.model.clone(),
             fast: fast_mode && self.serves_fast_mode(),
-            long_context_threshold_tokens,
+            pricing,
         }
     }
 
@@ -834,12 +830,11 @@ async fn run_with_completion_model(
                                         model: handoff.selected_model.clone(),
                                         fast: handoff.fast_mode
                                             && handoff.completion_provider == CompletionProvider::Spikonado,
-                                        long_context_threshold_tokens: request
-                                            .handoff_long_context_threshold_tokens,
+                                        pricing: request.handoff_usage_pricing.clone(),
                                     },
                                     None => target.usage_source(
                                         request.fast_mode,
-                                        request.long_context_threshold_tokens,
+                                        request.usage_pricing.clone(),
                                     ),
                                 };
                                 let call_usage = usage_source.call_usage(call.usage);

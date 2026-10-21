@@ -16,6 +16,16 @@ const emptyCounts: TokenCounts = {
 
 type UsageTotals = Pick<Doc<'threadTokenUsage'>, 'calls' | 'standard' | 'longContext'>;
 
+/** The fields that pick a call's totals row. */
+function totalsKey(call: ModelCallUsage) {
+	return {
+		provider: call.provider,
+		model: call.model,
+		serviceTier: call.serviceTier,
+		cacheWriteTtl: call.cacheWriteTtl
+	};
+}
+
 function callCounts(call: ModelCallUsage): TokenCounts {
 	const counts = {
 		inputTokens: call.inputTokens,
@@ -74,6 +84,7 @@ async function addToThreadTotals(
 				.eq('provider', call.provider)
 				.eq('model', call.model)
 				.eq('serviceTier', call.serviceTier)
+				.eq('cacheWriteTtl', call.cacheWriteTtl)
 		)
 		.unique();
 
@@ -85,9 +96,7 @@ async function addToThreadTotals(
 		await ctx.db.insert('threadTokenUsage', {
 			threadId: thread._id,
 			userId: thread.userId,
-			provider: call.provider,
-			model: call.model,
-			serviceTier: call.serviceTier,
+			...totalsKey(call),
 			...totals
 		});
 	}
@@ -114,6 +123,7 @@ async function addToUserBucket(
 				.eq('provider', call.provider)
 				.eq('model', call.model)
 				.eq('serviceTier', call.serviceTier)
+				.eq('cacheWriteTtl', call.cacheWriteTtl)
 		)
 		.unique();
 
@@ -126,9 +136,7 @@ async function addToUserBucket(
 			userId,
 			granularity,
 			bucketStart,
-			provider: call.provider,
-			model: call.model,
-			serviceTier: call.serviceTier,
+			...totalsKey(call),
 			...totals
 		});
 	}

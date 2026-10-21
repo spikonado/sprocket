@@ -185,8 +185,16 @@ pub struct CatalogModelCapabilities {
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_required_tool_choice: bool,
+    pub usage_pricing: UsagePricing,
+}
+
+/// Catalog facts recorded with each call, so its tokens can be priced later even after they change.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UsagePricing {
     /// Input size above which the direct provider API charges long-context rates.
     pub long_context_threshold_tokens: Option<u64>,
+    /// The cache lifetime the gateway's requests write at.
+    pub cache_write_ttl: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -30,11 +30,15 @@ export const vTokenCounts = v.object({
 
 export type TokenCounts = Infer<typeof vTokenCounts>;
 
-/** One completion call as the agent saw it. `longContext` means the call crossed the model's direct-API long-context price threshold. */
+/**
+ * One completion call as the agent saw it. `longContext` means the call crossed the model's direct-API long-context price threshold.
+ * `cacheWriteTtl` is the cache lifetime the catalog said writes use, or null when it didn't say; it keys the write price.
+ */
 export const vModelCallUsage = v.object({
 	provider: vCompletionProvider,
 	model: v.string(),
 	serviceTier: vServiceTier,
+	cacheWriteTtl: v.union(v.string(), v.null()),
 	longContext: v.boolean(),
 	...vTokenCounts.fields
 });

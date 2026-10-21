@@ -1,15 +1,15 @@
 use rig::completion::Usage;
 use serde::Serialize;
 
-use crate::types::CompletionProvider;
+use crate::types::{CompletionProvider, UsagePricing};
 
-/// The provider, model and price band a completion call ran under.
+/// The provider, model and pricing facts a completion call ran under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UsageSource {
     pub(crate) provider: CompletionProvider,
     pub(crate) model: String,
     pub(crate) fast: bool,
-    pub(crate) long_context_threshold_tokens: Option<u64>,
+    pub(crate) pricing: UsagePricing,
 }
 
 /// One completion call's tokens, in the shape `agentRuntime` records.
@@ -20,6 +20,7 @@ pub(crate) struct ModelCallUsage {
     model: String,
     service_tier: &'static str,
     long_context: bool,
+    cache_write_ttl: Option<String>,
     input_tokens: u64,
     cache_read_tokens: u64,
     cache_write_tokens: u64,
@@ -46,8 +47,10 @@ impl UsageSource {
             model: self.model.clone(),
             service_tier: if self.fast { "fast" } else { "standard" },
             long_context: self
+                .pricing
                 .long_context_threshold_tokens
                 .is_some_and(|threshold| input_tokens > threshold),
+            cache_write_ttl: self.pricing.cache_write_ttl.clone(),
             input_tokens,
             cache_read_tokens,
             cache_write_tokens,
