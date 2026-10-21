@@ -268,7 +268,7 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Shows the tab already editing the file, or opens a new one. */
+	/** Shows the tab already editing the file, reuses an empty tab, or opens a new one. */
 	openFile(file: WorkspaceFileTarget) {
 		const existing = this.panel.tabs.find(
 			(tab) =>
@@ -281,11 +281,17 @@ export class ArtifactPanel implements Store<number> {
 			if (this.panel.open && this.panel.activeTabId === existing.id) return;
 			this.panel = { ...this.panel, open: true, activeTabId: existing.id };
 		} else {
-			const tab: SidePanelTab = { ...this.#createTab(), view: 'file', file };
+			const active = this.activeTab;
+			const target = active.view === null ? active : this.#createTab();
+			const tab: SidePanelTab = { ...target, view: 'file', file };
+
 			this.panel = {
 				...this.panel,
 				open: true,
-				tabs: [...this.panel.tabs, tab],
+				tabs:
+					target === active
+						? this.panel.tabs.map((candidate) => (candidate.id === tab.id ? tab : candidate))
+						: [...this.panel.tabs, tab],
 				activeTabId: tab.id
 			};
 		}
