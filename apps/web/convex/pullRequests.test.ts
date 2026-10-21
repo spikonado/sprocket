@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
 import { patchRunExecution } from '@convex/lib/runExecution';
-import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
+import {
+	AUTOMATIC_RECOVERY_GRACE_MS,
+	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX
+} from '@convex/lib/runRecovery';
 import {
 	abandonRun,
 	createQueuedRun,
@@ -396,6 +399,61 @@ describe('linked pull requests', () => {
 		expect(
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt
 		).toBeUndefined();
+	});
+
+	it('settles after the automatic recovery wait expires', async () => {
+		vi.useFakeTimers();
+
+		try {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const machineId = 'settle-recovery-timeout-machine';
+
+			await asUser.mutation(api.machines.registerProcess, {
+				machineId,
+				processId: 'settle-timeout-process',
+				friendlyName: 'Workstation',
+				platform: 'linux',
+				platformVersion: 'test',
+				architecture: 'x86_64',
+				hostname: 'workstation',
+				appVersion: 'test'
+			});
+
+			const created = await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'interrupted-timeout-pr-run',
+				executionSecret: 'pr-secret',
+				prompt: 'Open the PR',
+				machineId
+			});
+
+			const caller = { runId: created.runId, claimId: 'pr-claim', executionSecret: 'pr-secret' };
+
+			await t.mutation(api.agentRuntime.start, caller);
+			await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+			await t.mutation(api.pullRequests.link, {
+				...caller,
+				pullRequests: [pr(1, 'merged')]
+			});
+
+			await abandonRun(t, created.runId);
+
+			const abandoned = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+			expect(abandoned?.archivedAt).toBeUndefined();
+			expect(abandoned?.settleWhenIdle).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
+			await t.finishInProgressScheduledFunctions();
+
+			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+			expect(settled?.archivedAt).toBeTypeOf('number');
+			expect(settled?.settleWhenIdle).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('keeps a pending settle when a new run abandons an expired claim', async () => {
