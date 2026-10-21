@@ -1,21 +1,49 @@
 use super::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 fn temp_dir(label: &str) -> PathBuf {
     crate::test_support::temp_workspace_labeled(&format!("sprocket-git-repo-{label}"))
 }
 
-fn init_repo(root: &Path) {
+fn init_repo(root: &Path) -> gix::Repository {
     fs::create_dir_all(root).expect("temp dir");
-    gix::init(root).expect("gix init");
+    gix::init(root).expect("gix init")
+}
+
+fn init_linked_worktree(main: &Path, worktree: &Path) {
+    init_repo(main);
+    append_git_config(
+        main,
+        "\n[user]\n\tname = sprocket\n\temail = sprocket@test\n",
+    );
+    let repo = gix::open(main).expect("open with user");
+    let tree_id = repo
+        .write_object(gix::objs::Tree::empty())
+        .expect("write empty tree");
+    let commit_id = repo
+        .commit("HEAD", "init", tree_id, None::<gix::ObjectId>)
+        .expect("initial commit")
+        .detach();
+    repo.add_worktree(
+        worktree,
+        gix::worktree::add::Head::Detached(commit_id),
+        gix::progress::Discard,
+        &AtomicBool::new(false),
+    )
+    .expect("add worktree");
+}
+
+fn append_git_config(root: &Path, extra: &str) {
+    let config_path = root.join(".git/config");
+    let mut config = fs::read_to_string(&config_path).expect("read config");
+    config.push_str(extra);
+    fs::write(config_path, config).expect("write config");
 }
 
 fn set_origin(root: &Path, url: &str) {
-    let config_path = root.join(".git/config");
-    let mut config = fs::read_to_string(&config_path).expect("read config");
-    config.push_str(&format!("\n[remote \"origin\"]\n\turl = {url}\n"));
-    fs::write(config_path, config).expect("write config");
+    append_git_config(root, &format!("\n[remote \"origin\"]\n\turl = {url}\n"));
 }
 
 fn key_from_remote(url: &str) -> Option<String> {
@@ -86,34 +114,9 @@ fn uses_origin_from_worktree_gitdir_pointer() {
     let root = temp_dir("worktree");
     let main = root.join("main");
     let worktree = root.join("feature");
-    init_repo(&main);
+    init_linked_worktree(&main, &worktree);
     let config_without_origin = fs::read_to_string(main.join(".git/config")).expect("read config");
     set_origin(&main, "git@github.com:spikonado/sprocket.git");
-
-    // Fabricate a linked-worktree layout (gix has no worktree-add API).
-    let main_git = main.join(".git");
-    let worktree_gitdir = main_git.join("worktrees").join("feature");
-    fs::create_dir_all(&worktree_gitdir).expect("worktree gitdir");
-    fs::create_dir_all(&worktree).expect("worktree dir");
-
-    let main_abs = fs::canonicalize(&main).expect("canonicalize main");
-    let worktree_abs = fs::canonicalize(&worktree).expect("canonicalize worktree");
-    fs::write(
-        worktree.join(".git"),
-        format!(
-            "gitdir: {}\n",
-            main_abs.join(".git/worktrees/feature").display()
-        ),
-    )
-    .expect("write worktree .git pointer");
-    fs::write(worktree_gitdir.join("commondir"), "../..\n").expect("write commondir");
-    fs::write(
-        worktree_gitdir.join("gitdir"),
-        format!("{}\n", worktree_abs.join(".git").display()),
-    )
-    .expect("write gitdir");
-    // gix discover requires a valid HEAD in the worktree-private gitdir.
-    fs::write(worktree_gitdir.join("HEAD"), "ref: refs/heads/feature\n").expect("write HEAD");
 
     let identity = resolve_git_repository_identity(&worktree);
     assert_eq!(identity.repository_key, "github.com/spikonado/sprocket");
