@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { ONLY_LATEST_RUN_CAN_CONTINUE, RUN_CANNOT_CONTINUE } from '@convex/lib/runResume';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
@@ -259,7 +259,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		expect(continuation.runId).not.toBe(abandoned.runId);
 		expect(await t.run(async (ctx) => ctx.db.get('runs', abandoned.runId))).toMatchObject({
 			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT,
+			lastError: RUN_ABANDONED_BY_MACHINE,
 			failureKind: 'abandoned'
 		});
 		expect(await t.run(async (ctx) => ctx.db.get('runs', continuation.runId))).toMatchObject({

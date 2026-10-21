@@ -32,7 +32,7 @@ describe('native run lifecycle', () => {
 		await t.finishInProgressScheduledFunctions();
 		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({
 			status: 'failed',
-			lastError: 'The local agent stopped responding before this run finished.'
+			lastError: 'The machine stopped responding before this run finished.'
 		});
 		expect(await t.run((ctx) => getRunExecutionState(ctx.db, runId))).not.toHaveProperty(
 			'lifecycleCheckId'

@@ -1,6 +1,6 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { LEGACY_RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 export const AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
@@ -32,7 +32,7 @@ export function isAbandonedRun(
 ): boolean {
 	return (
 		run.status === 'failed' &&
-		(run.failureKind === 'abandoned' || run.lastError === RUN_ABANDONED_BY_AGENT)
+		(run.failureKind === 'abandoned' || run.lastError === LEGACY_RUN_ABANDONED_BY_AGENT)
 	);
 }
 

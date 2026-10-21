@@ -35,7 +35,8 @@ import {
 } from '@convex/lib/transcriptWrites';
 import {
 	COMPLETION_STREAM_SUPERSEDED,
-	RUN_ABANDONED_BY_AGENT,
+	LEGACY_RUN_ABANDONED_BY_AGENT,
+	RUN_ABANDONED_BY_MACHINE,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
@@ -869,14 +870,15 @@ export const finalizeClaimFailure = mutation({
 	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		// Released agents still report claim lease loss through this mutation.
+		const abandoned = args.lastError === LEGACY_RUN_ABANDONED_BY_AGENT;
 
 		const accepted =
 			canFinalizeAfterClaimFailure(run, args.claimId) &&
 			(await finalizeRunRecord(ctx, run, {
 				status: 'failed',
-				lastError: args.lastError,
-				// Released agents still report claim lease loss through this mutation.
-				failureKind: args.lastError === RUN_ABANDONED_BY_AGENT ? 'abandoned' : undefined
+				lastError: abandoned ? RUN_ABANDONED_BY_MACHINE : args.lastError,
+				failureKind: abandoned ? 'abandoned' : undefined
 			}));
 
 		return executorFinalizationResult(ctx, run, accepted);
