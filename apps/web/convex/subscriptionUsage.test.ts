@@ -278,7 +278,7 @@ describe('subscription and usage backend', () => {
 				dodoSubscriptionId: 'sub_legacy_usage_backfill',
 				dodoProductId: 'prod_pro',
 				billingInterval: 'monthly',
-				billingPeriodStart: now - 60_000,
+				billingPeriodStart: Date.parse('2026-02-03T00:00:00Z'),
 				billingPeriodEnd: now + 60_000
 			})
 		);
