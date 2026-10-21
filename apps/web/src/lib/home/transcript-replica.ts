@@ -4,14 +4,14 @@ import { DisplayHistory } from '$lib/project/display-history';
 import { mergeLiveOverlays } from '$lib/project/transcript';
 import { useStore, type Store } from '$lib/store';
 import type {
-	DesktopApi,
+	LocalApi,
 	LiveCompletionOverlay,
 	TranscriptDisplayRow,
 	TranscriptMessage
 } from '$lib/types/sprocket';
 
 export type TranscriptReplicaApi = Pick<
-	DesktopApi,
+	LocalApi,
 	'fetchTranscriptDisplay' | 'watchTranscript' | 'watchLiveCompletion'
 >;
 

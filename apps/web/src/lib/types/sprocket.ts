@@ -338,7 +338,7 @@ export type BrowserStatus = {
 	error: string | null;
 };
 
-export type DesktopApi = {
+export type LocalApi = {
 	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;

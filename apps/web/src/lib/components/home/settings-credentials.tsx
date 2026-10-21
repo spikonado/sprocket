@@ -6,7 +6,7 @@ import Button from '$lib/components/ui/button/button';
 import ProviderLogo from '$lib/components/provider-logo';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { z } from 'zod';
-import type { ChatGptBrowserLoginStart, ChatGptStatus, DesktopApi } from '$lib/types/sprocket';
+import type { ChatGptBrowserLoginStart, ChatGptStatus, LocalApi } from '$lib/types/sprocket';
 
 type ProviderConfigurationChange = {
 	provider: 'openai';
@@ -20,7 +20,7 @@ type PendingBrowserLogin = {
 
 export default function SettingsCredentials({
 	userId,
-	desktopApi,
+	localApi,
 	openAiConfigured,
 	chatGptStatus,
 	chatGptLoading,
@@ -31,7 +31,7 @@ export default function SettingsCredentials({
 	onConfigurationChange
 }: {
 	userId: string;
-	desktopApi: DesktopApi | null;
+	localApi: LocalApi | null;
 	openAiConfigured: boolean;
 	chatGptStatus: ChatGptStatus | null;
 	chatGptLoading: boolean;
@@ -71,7 +71,7 @@ export default function SettingsCredentials({
 	}
 
 	function cancelLoginOnServer(pending: PendingBrowserLogin) {
-		desktopApi
+		localApi
 			?.cancelChatGptBrowserLogin({ userId: pending.userId, state: pending.login.state })
 			.catch(() => {});
 	}
@@ -98,16 +98,16 @@ export default function SettingsCredentials({
 			browserLoginRef.current = null;
 
 			if (pending) {
-				desktopApi
+				localApi
 					?.cancelChatGptBrowserLogin({ userId: pending.userId, state: pending.login.state })
 					.catch(() => {});
 			}
 		};
-	}, [desktopApi, userId]);
+	}, [localApi, userId]);
 
 	async function waitForBrowserLogin(
 		pending: PendingBrowserLogin,
-		api: DesktopApi,
+		api: LocalApi,
 		generation: number
 	) {
 		for (;;) {
@@ -135,7 +135,7 @@ export default function SettingsCredentials({
 
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
-				if (generation !== generationRef.current || api !== desktopApi) return;
+				if (generation !== generationRef.current || api !== localApi) return;
 				onChatGptStatusChange(status);
 
 				return;
@@ -156,7 +156,7 @@ export default function SettingsCredentials({
 	}
 
 	async function startBrowserLogin(connectionId?: string) {
-		const api = desktopApi;
+		const api = localApi;
 
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
@@ -224,7 +224,7 @@ export default function SettingsCredentials({
 	}
 
 	async function selectAccount(connectionId: string) {
-		const api = desktopApi;
+		const api = localApi;
 
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
@@ -237,7 +237,7 @@ export default function SettingsCredentials({
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
-			if (generation !== generationRef.current || api !== desktopApi) return;
+			if (generation !== generationRef.current || api !== localApi) return;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -253,7 +253,7 @@ export default function SettingsCredentials({
 	}
 
 	async function refreshChatGptStatus() {
-		const api = desktopApi;
+		const api = localApi;
 
 		if (!api || chatGptPending) return;
 		const generation = ++generationRef.current;
@@ -278,7 +278,7 @@ export default function SettingsCredentials({
 	}
 
 	async function signOutAccount(connectionId: string) {
-		const api = desktopApi;
+		const api = localApi;
 
 		if (!api || chatGptPending) return;
 		const pendingLogin = cancelLogin();
@@ -296,7 +296,7 @@ export default function SettingsCredentials({
 				connectionId
 			});
 
-			if (generation !== generationRef.current || api !== desktopApi) return;
+			if (generation !== generationRef.current || api !== localApi) return;
 			setSignOutWarning(warning);
 
 			if (chatGptStatus) {
@@ -316,7 +316,7 @@ export default function SettingsCredentials({
 
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
-			if (generation !== generationRef.current || api !== desktopApi) return;
+			if (generation !== generationRef.current || api !== localApi) return;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -407,7 +407,7 @@ export default function SettingsCredentials({
 							<button
 								type="button"
 								className="text-primary text-[13px] disabled:opacity-50"
-								disabled={!desktopApi || chatGptPending || chatGptLoading}
+								disabled={!localApi || chatGptPending || chatGptLoading}
 								onClick={() => void refreshChatGptStatus()}
 							>
 								Refresh
@@ -485,7 +485,7 @@ export default function SettingsCredentials({
 									</p>
 								) : (
 									<Button
-										disabled={chatGptPending || chatGptLoading || !desktopApi}
+										disabled={chatGptPending || chatGptLoading || !localApi}
 										onclick={() => void startBrowserLogin()}
 									>
 										{chatGptPending

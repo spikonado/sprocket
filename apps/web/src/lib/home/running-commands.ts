@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { DesktopApi, RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
+import type { LocalApi, RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
 
-export type CommandApi = Pick<DesktopApi, 'listRunningCommands' | 'terminateCommand'>;
+export type CommandApi = Pick<LocalApi, 'listRunningCommands' | 'terminateCommand'>;
 
 type CommandLifetime = {
 	api: CommandApi;

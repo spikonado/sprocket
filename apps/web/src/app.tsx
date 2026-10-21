@@ -126,11 +126,11 @@ import {
 import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
-import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveDesktopApi } from '$lib/local/client';
+import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
 	ChatGptStatus,
-	DesktopApi,
+	LocalApi,
 	ExecutorJob,
 	ThreadSummary,
 	ProjectAttachment
@@ -260,11 +260,11 @@ function ExpandedThreadChildren({
 }
 
 export type AppRuntime = {
-	resolveDesktopApi: () => Promise<DesktopApi>;
+	resolveLocalApi: () => Promise<LocalApi>;
 	fetchGatewayModelCatalog: (origin: string) => Promise<ModelCatalog>;
 };
 
-const productionAppRuntime: AppRuntime = { resolveDesktopApi, fetchGatewayModelCatalog };
+const productionAppRuntime: AppRuntime = { resolveLocalApi, fetchGatewayModelCatalog };
 
 function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: string | null) {
 	return threadId ? `thread:${threadId}` : workspacePath ? `draft:${workspacePath}` : null;
@@ -467,11 +467,11 @@ export default function App({
 		loadProviderConfigurationEvent(userId);
 	}, [authReady, signedInUserId]);
 
-	const [desktopApi, setDesktopApi] = useState<DesktopApi | null>(null);
-	const desktopApiRef = useRef(desktopApi);
-	const [desktopApiResolved, setDesktopApiResolved] = useState(false);
+	const [localApi, setLocalApi] = useState<LocalApi | null>(null);
+	const localApiRef = useRef(localApi);
+	const [localApiResolved, setLocalApiResolved] = useState(false);
 
-	const chatGptStatusLoadedFor = useRef<{ userId: string; api: DesktopApi } | null>(null);
+	const chatGptStatusLoadedFor = useRef<{ userId: string; api: LocalApi } | null>(null);
 	const chatGptStatusGeneration = useRef(0);
 
 	const chatGptStatusChangeEvent = useEffectEvent((status: ChatGptStatus) => {
@@ -481,7 +481,7 @@ export default function App({
 	useEffect(() => {
 		const userId = signedInUserId;
 
-		if (!authReady || !userId || !desktopApi) {
+		if (!authReady || !userId || !localApi) {
 			chatGptStatusLoadedFor.current = null;
 			setChatGptStatus(null);
 			setChatGptConfigured(false);
@@ -492,16 +492,16 @@ export default function App({
 
 		if (
 			chatGptStatusLoadedFor.current?.userId === userId &&
-			chatGptStatusLoadedFor.current.api === desktopApi
+			chatGptStatusLoadedFor.current.api === localApi
 		)
 			return;
-		chatGptStatusLoadedFor.current = { userId, api: desktopApi };
+		chatGptStatusLoadedFor.current = { userId, api: localApi };
 		const generation = ++chatGptStatusGeneration.current;
 		setChatGptStatus(null);
 		setChatGptConfigured(false);
 		setChatGptStatusLoading(true);
 		setChatGptStatusError(null);
-		desktopApi
+		localApi
 			.fetchChatGptStatus({ userId })
 			.then((status) => {
 				if (
@@ -541,7 +541,7 @@ export default function App({
 			chatGptStatusGeneration.current += 1;
 			chatGptStatusLoadedFor.current = null;
 		};
-	}, [authReady, signedInUserId, desktopApi]);
+	}, [authReady, signedInUserId, localApi]);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -675,7 +675,7 @@ export default function App({
 
 	const composerAttachments = useComposerAttachments({
 		context: {
-			api: desktopApi,
+			api: localApi,
 			userId: signedInUserId,
 			threadId: currentThreadId
 		},
@@ -704,7 +704,7 @@ export default function App({
 		spikonado: true,
 		openai: providerConfigurationReady || providerConfigurationError !== null,
 		chatgpt:
-			desktopApiResolved && (!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)
+			localApiResolved && (!localApi || chatGptStatus !== null || chatGptStatusError !== null)
 	};
 
 	const selectedCatalogModel =
@@ -851,14 +851,14 @@ export default function App({
 
 	const pullRequestStateSync = useMemo<PullRequestStateSync | null>(
 		() =>
-			desktopApi && authReady && signedInUserId
+			localApi && authReady && signedInUserId
 				? {
 						fetchStates: (pullRequests) =>
-							desktopApi.fetchPullRequestStates({ userId: signedInUserId, pullRequests }),
+							localApi.fetchPullRequestStates({ userId: signedInUserId, pullRequests }),
 						updateStates: (updates) => updatePullRequestStates({ updates })
 					}
 				: null,
-		[desktopApi, authReady, signedInUserId, updatePullRequestStates]
+		[localApi, authReady, signedInUserId, updatePullRequestStates]
 	);
 
 	const pullRequestRefresher = usePullRequestRefresher(pullRequestStateSync);
@@ -881,7 +881,7 @@ export default function App({
 
 	useEffect(() => {
 		const threadId = currentThreadId;
-		const api = desktopApi;
+		const api = localApi;
 
 		if (!threadId || !api || !isSignedIn) return;
 		const userId = signedInUserIdRef.current;
@@ -894,11 +894,11 @@ export default function App({
 			threadId,
 			isCurrent: () => currentThreadIdRef.current === threadId
 		});
-	}, [currentThreadId, desktopApi, isSignedIn, transcript, signedInUserId]);
+	}, [currentThreadId, localApi, isSignedIn, transcript, signedInUserId]);
 
 	useEffect(() => {
 		const threadId = currentThreadId;
-		const api = desktopApi;
+		const api = localApi;
 
 		if (!threadId || !api || !isSignedIn) return;
 		const userId = signedInUserIdRef.current;
@@ -911,7 +911,7 @@ export default function App({
 			threadId,
 			isCurrent: () => currentThreadIdRef.current === threadId
 		});
-	}, [currentThreadId, desktopApi, isSignedIn, transcript, signedInUserId]);
+	}, [currentThreadId, localApi, isSignedIn, transcript, signedInUserId]);
 
 	const currentThreadIdRef = useRef(currentThreadId);
 	const currentWorkspacePathRef = useRef(currentWorkspacePath);
@@ -940,14 +940,14 @@ export default function App({
 	const currentProjectPath = currentProject?.workspacePath ?? currentWorkspacePath;
 
 	const composerProjectPaths = useMemo(() => {
-		if (!currentProjectPath || !desktopApi) return null;
+		if (!currentProjectPath || !localApi) return null;
 
 		return {
 			workspacePath: currentProjectPath,
 			search: (query: string, signal: AbortSignal) =>
-				desktopApi.searchWorkspace({ workspacePath: currentProjectPath, query }, signal)
+				localApi.searchWorkspace({ workspacePath: currentProjectPath, query }, signal)
 		};
-	}, [currentProjectPath, desktopApi]);
+	}, [currentProjectPath, localApi]);
 
 	const threadCwd = currentActiveThread?.cwd;
 	const projectWorkspacePath = currentProject?.workspacePath;
@@ -955,7 +955,7 @@ export default function App({
 	const markdownFileLinks = useMemo<MarkdownFileLinks | null>(() => {
 		const roots = [threadCwd, projectWorkspacePath].filter((root): root is string => !!root);
 
-		if (!desktopApi) return null;
+		if (!localApi) return null;
 
 		return {
 			roots,
@@ -963,17 +963,17 @@ export default function App({
 				artifactPanel.setFullscreenKey(null);
 				void openMarkdownLink(target, {
 					roots,
-					entryKind: (entry) => desktopApi.workspaceEntryKind(entry),
+					entryKind: (entry) => localApi.workspaceEntryKind(entry),
 					openFile: (file) => artifactPanel.openFile(file),
 					openDirectory: (directory) => artifactPanel.openDirectory(directory)
 				});
 			}
 		};
-	}, [desktopApi, threadCwd, projectWorkspacePath, artifactPanel]);
+	}, [localApi, threadCwd, projectWorkspacePath, artifactPanel]);
 
 	const composerProjectSkills = useMemo(() => {
 		const workspacePath = currentProject?.workspacePath ?? null;
-		const api = desktopApi;
+		const api = localApi;
 
 		return {
 			workspacePath,
@@ -988,7 +988,7 @@ export default function App({
 				return result.skills;
 			}
 		};
-	}, [currentProject, desktopApi]);
+	}, [currentProject, localApi]);
 
 	const currentProjectThreads = useMemo<ThreadSummary[]>(() => {
 		if (!currentProject?.repositoryKey) return [];
@@ -1026,7 +1026,7 @@ export default function App({
 				: null;
 
 		return artifactPanel.watch({
-			localApi: desktopApi,
+			localApi,
 			artifactClient,
 			cloudReady: !convexAuth.isLoading && convexAuth.isAuthenticated,
 			scope
@@ -1036,7 +1036,7 @@ export default function App({
 		signedInUserId,
 		currentRepositoryKey,
 		currentWorkspacePath,
-		desktopApi,
+		localApi,
 		artifactClient,
 		convexAuth.isLoading,
 		convexAuth.isAuthenticated
@@ -1045,8 +1045,8 @@ export default function App({
 	const deleteArtifact =
 		currentRepositoryKey && convexAuth.isAuthenticated && !convexAuth.isLoading
 			? async (artifactId: string) => {
-					if (desktopApi && signedInUserId && currentWorkspacePath) {
-						await desktopApi.deleteArtifact({
+					if (localApi && signedInUserId && currentWorkspacePath) {
+						await localApi.deleteArtifact({
 							userId: signedInUserId,
 							repositoryKey: currentRepositoryKey,
 							workspacePath: currentWorkspacePath,
@@ -1152,7 +1152,7 @@ export default function App({
 	}
 
 	async function refreshDesktopProjectAttachments(
-		client = desktopApiRef.current
+		client = localApiRef.current
 	): Promise<Record<string, ProjectAttachment>> {
 		const refreshGeneration = ++desktopProjectAttachmentsGeneration.current;
 		const selectedWorkspacePath = currentWorkspacePathRef.current;
@@ -1207,7 +1207,7 @@ export default function App({
 	}
 
 	async function signOut() {
-		const api = desktopApi;
+		const api = localApi;
 		const userId = signedInUserIdRef.current;
 
 		if (api && userId) {
@@ -1217,9 +1217,9 @@ export default function App({
 		await authSignOut();
 	}
 
-	const registerAccountSession = useEffectEvent((api: DesktopApi, userId: string) => {
+	const registerAccountSession = useEffectEvent((api: LocalApi, userId: string) => {
 		void api.startAccountSession({ userId }).catch((error) => {
-			if (desktopApiRef.current === api && signedInUserIdRef.current === userId) {
+			if (localApiRef.current === api && signedInUserIdRef.current === userId) {
 				setCurrentError(
 					error instanceof Error ? error.message : 'Failed to register this Sprocket process.'
 				);
@@ -1228,9 +1228,9 @@ export default function App({
 	});
 
 	useEffect(() => {
-		if (!desktopApi || !signedInUserId || !authReady) return;
-		registerAccountSession(desktopApi, signedInUserId);
-	}, [desktopApi, signedInUserId, authReady]);
+		if (!localApi || !signedInUserId || !authReady) return;
+		registerAccountSession(localApi, signedInUserId);
+	}, [localApi, signedInUserId, authReady]);
 
 	function applyProjectSelection(
 		workspacePath: string,
@@ -1272,14 +1272,14 @@ export default function App({
 	async function attachLocalProject(
 		workspacePath: string,
 		replaceWorkspacePath?: string,
-		client = desktopApiRef.current
+		client = localApiRef.current
 	) {
 		if (!client) {
 			throw new Error(localServerRequiredMessage);
 		}
 
 		const attachment = await attachLocalProjectForPath({
-			desktopApi: client,
+			localApi: client,
 			workspacePath,
 			replaceWorkspacePath
 		});
@@ -1325,7 +1325,7 @@ export default function App({
 		mode: 'add' | 'reconnect' = 'add',
 		workspacePath: string | null = null
 	) {
-		if (!desktopApi) {
+		if (!localApi) {
 			setCurrentError(localServerRequiredMessage);
 
 			return;
@@ -1345,7 +1345,7 @@ export default function App({
 	}
 
 	async function handleProjectSelected(selection: ProjectSelection) {
-		if (!desktopApi) {
+		if (!localApi) {
 			setCurrentError(localServerRequiredMessage);
 
 			return;
@@ -1381,7 +1381,7 @@ export default function App({
 	async function addProjectSelection(
 		selection: ProjectSelection,
 		expectedUserId: string,
-		client?: DesktopApi
+		client?: LocalApi
 	) {
 		await attachLocalProject(selection.workspacePath, undefined, client);
 
@@ -1394,7 +1394,7 @@ export default function App({
 		selection: ProjectSelection,
 		previousWorkspacePath: string,
 		expectedUserId: string,
-		client?: DesktopApi
+		client?: LocalApi
 	) {
 		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
 		await attachLocalProject(
@@ -1434,7 +1434,7 @@ export default function App({
 		}
 	}
 
-	async function openLaunchedProject(workspacePath: string, client: DesktopApi, userId: string) {
+	async function openLaunchedProject(workspacePath: string, client: LocalApi, userId: string) {
 		const selection = await client.resolveWorkspacePath({ workspacePath });
 
 		if (signedInUserIdRef.current !== userId) return;
@@ -1443,7 +1443,7 @@ export default function App({
 
 	async function verifyProject(workspacePath: string) {
 		await verifyProjectAttachmentForExecution({
-			desktopApi,
+			localApi,
 			refreshDesktopProjectAttachments: async () => {
 				await refreshDesktopProjectAttachments();
 			},
@@ -1543,7 +1543,7 @@ export default function App({
 	}
 
 	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
-		const api = desktopApi;
+		const api = localApi;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
@@ -1558,7 +1558,7 @@ export default function App({
 		cursor: TranscriptDetailCursor,
 		signal: AbortSignal
 	) {
-		const api = desktopApi;
+		const api = localApi;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
@@ -1739,7 +1739,7 @@ export default function App({
 			return;
 		}
 
-		if (!desktopApi) {
+		if (!localApi) {
 			setCurrentError(localServerRequiredMessage);
 
 			return;
@@ -1915,7 +1915,7 @@ export default function App({
 
 		try {
 			if (!selectedThreadId) {
-				const resolution = await desktopApi.resolveWorkspacePath({ workspacePath });
+				const resolution = await localApi.resolveWorkspacePath({ workspacePath });
 
 				if (!isSubmissionCurrent()) return;
 
@@ -1977,7 +1977,7 @@ export default function App({
 
 			await launchAgentRun({
 				userId: submittedUserId,
-				desktopApi,
+				localApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 
@@ -2075,7 +2075,7 @@ export default function App({
 	useLayoutEffect(() => {
 		configRef.current = config;
 		signedInUserIdRef.current = signedInUserId;
-		desktopApiRef.current = desktopApi;
+		localApiRef.current = localApi;
 		currentThreadIdRef.current = currentThreadId;
 		currentWorkspacePathRef.current = currentWorkspacePath;
 		currentRepositoryKeyRef.current = currentRepositoryKey;
@@ -2087,7 +2087,7 @@ export default function App({
 	}, [
 		config,
 		signedInUserId,
-		desktopApi,
+		localApi,
 		currentThreadId,
 		currentWorkspacePath,
 		currentRepositoryKey,
@@ -2136,7 +2136,7 @@ export default function App({
 			return;
 		}
 
-		if (!desktopApi) {
+		if (!localApi) {
 			setCurrentError(localServerRequiredMessage);
 
 			return;
@@ -2172,7 +2172,7 @@ export default function App({
 
 			await launchAgentRun({
 				userId,
-				desktopApi,
+				localApi,
 				onError: (error) => {
 					setPendingAgentLaunches((launches) =>
 						clearPendingAgentLaunch(launches, threadId, launchId)
@@ -2265,7 +2265,7 @@ export default function App({
 	}, [pendingCreatedThreadId, threads]);
 
 	const startPendingProjectLaunch = useEffectEvent(
-		(workspacePath: string, client: DesktopApi, userId: string) => {
+		(workspacePath: string, client: LocalApi, userId: string) => {
 			setPendingProjectLaunches((launches) => launches.slice(1));
 			setProjectLaunchInFlight(true);
 			setHasResolvedInitialSelection(true);
@@ -2294,18 +2294,18 @@ export default function App({
 			!workspacePath ||
 			projectLaunchInFlight ||
 			!authReady ||
-			!desktopApi ||
+			!localApi ||
 			!signedInUserId ||
 			!hasLoadedDesktopProjectAttachments
 		) {
 			return;
 		}
 
-		startPendingProjectLaunch(workspacePath, desktopApi, signedInUserId);
+		startPendingProjectLaunch(workspacePath, localApi, signedInUserId);
 	}, [
 		pendingProjectLaunches,
 		projectLaunchInFlight,
-		desktopApi,
+		localApi,
 		signedInUserId,
 		authReady,
 		hasLoadedDesktopProjectAttachments
@@ -2403,7 +2403,7 @@ export default function App({
 			!composerContinuationOfRunId ||
 			!canSend ||
 			pendingAgentQuestion ||
-			!desktopApi ||
+			!localApi ||
 			!prompt.trim() ||
 			composerAttachments.items.some((attachment) => attachment.status !== 'ready')
 		) {
@@ -2417,7 +2417,7 @@ export default function App({
 		composerContinuationOfRunId,
 		canSend,
 		pendingAgentQuestion,
-		desktopApi,
+		localApi,
 		prompt,
 		composerAttachments
 	]);
@@ -2557,11 +2557,11 @@ export default function App({
 		}
 
 		void runtime
-			.resolveDesktopApi()
+			.resolveLocalApi()
 			.then(async (client) => {
-				setDesktopApi(client);
+				setLocalApi(client);
 				await reconcileNativeAuthentication();
-				setDesktopApiResolved(true);
+				setLocalApiResolved(true);
 				void refreshDesktopProjectAttachments(client).catch((error) => {
 					setCurrentError(
 						error instanceof Error ? error.message : 'Failed to load local project attachments.'
@@ -2572,7 +2572,7 @@ export default function App({
 				setCurrentError(
 					error instanceof Error ? error.message : 'Failed to connect to the Sprocket server.'
 				);
-				setDesktopApiResolved(true);
+				setLocalApiResolved(true);
 			});
 
 		return unsubscribeWorkspaceLaunch;
@@ -2630,7 +2630,7 @@ export default function App({
 		await focusSidebarControl(sidebarOpen);
 	}
 
-	if (!desktopApiResolved) {
+	if (!localApiResolved) {
 		return (
 			<CalmCentered
 				title="Connecting to Sprocket…"
@@ -2640,7 +2640,7 @@ export default function App({
 		);
 	}
 
-	if (!desktopApi) {
+	if (!localApi) {
 		return (
 			<CalmCentered
 				title="Connect to Sprocket"
@@ -2798,7 +2798,7 @@ export default function App({
 						) : settingsPage === 'credentials' && signedInUserId ? (
 							<SettingsCredentials
 								userId={signedInUserId}
-								desktopApi={desktopApi}
+								localApi={localApi}
 								openAiConfigured={openAiConfigured}
 								chatGptStatus={chatGptStatus}
 								chatGptLoading={chatGptStatusLoading}
@@ -2811,7 +2811,7 @@ export default function App({
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments />
 						) : settingsPage === 'versionControl' && signedInUserId ? (
-							<SettingsVersionControl userId={signedInUserId} desktopApi={desktopApi} />
+							<SettingsVersionControl userId={signedInUserId} localApi={localApi} />
 						) : (
 							<SettingsAccount
 								user={auth.user}
@@ -2922,9 +2922,9 @@ export default function App({
 										showContinueWorking={latestRunResumeKind != null}
 										onContinueWorking={() => void continueWorking()}
 										runningCommands={
-											currentThreadId && signedInUserId && desktopApi && authReady
+											currentThreadId && signedInUserId && localApi && authReady
 												? {
-														api: desktopApi,
+														api: localApi,
 														scope: { userId: signedInUserId, threadId: currentThreadId }
 													}
 												: null
@@ -2970,14 +2970,14 @@ export default function App({
 							/>
 						)}
 						<SidePanel
-							workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
+							workspacePath={localApi ? currentProject?.workspacePath : undefined}
 							threadCwd={currentActiveThread?.cwd}
 							artifacts={artifactPanel.artifacts}
 							onDeleteArtifact={deleteArtifact}
 							tabs={artifactPanel.panel.tabs}
 							activeTabId={artifactPanel.activeTab.id}
-							browserApi={desktopApi}
-							filesApi={desktopApi}
+							browserApi={localApi}
+							filesApi={localApi}
 							expanded={artifactPanel.panel.expanded}
 							stale={artifactPanel.watchState.stale}
 							error={artifactPanel.watchState.error}
@@ -3010,17 +3010,17 @@ export default function App({
 
 				{artifactPanel.fullscreenArtifact && (
 					<ArtifactScreenFullscreen
-						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
+						workspacePath={localApi ? currentProject?.workspacePath : undefined}
 						artifact={artifactPanel.fullscreenArtifact}
 						onClose={() => artifactPanel.setFullscreenKey(null)}
 					/>
 				)}
 			</MarkdownFileLinksContext>
 
-			{desktopApi && projectPickerOpen && (
+			{localApi && projectPickerOpen && (
 				<ProjectPicker
 					open={projectPickerOpen}
-					desktopApi={desktopApi}
+					localApi={localApi}
 					mode={projectPickerMode}
 					expectedDisplayName={projectPickerExpectedDisplayName}
 					recentProjectPaths={recentProjectDirectories}

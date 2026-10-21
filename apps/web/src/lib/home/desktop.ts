@@ -1,7 +1,7 @@
 import type { Id } from '@convex/_generated/dataModel';
 import type {
 	AgentRunRequest,
-	DesktopApi,
+	LocalApi,
 	LocalAttachmentAvailability,
 	Project,
 	ProjectAttachment,
@@ -103,7 +103,7 @@ export function lifecycleResumeKind(
 
 export function launchAgentRun(args: {
 	userId: string;
-	desktopApi: DesktopApi;
+	localApi: LocalApi;
 	onError: (error: Error) => void;
 	onStarted: (runId: Id<'runs'>, threadId: Id<'threadRecords'>) => void;
 	threadId?: Id<'threadRecords'>;
@@ -139,7 +139,7 @@ export function launchAgentRun(args: {
 		request.continuationOfRunId = args.continuationOfRunId;
 	}
 
-	return args.desktopApi
+	return args.localApi
 		.runAgent(request)
 		.then(({ runId, threadId }) => {
 			args.onStarted(runId, threadId);
@@ -224,16 +224,16 @@ export function upsertDesktopProjectAttachment(
 	return nextAttachments;
 }
 
-export async function refreshDesktopProjectAttachments(desktopApi: DesktopApi | null) {
-	if (!desktopApi) {
+export async function refreshDesktopProjectAttachments(localApi: LocalApi | null) {
+	if (!localApi) {
 		return {};
 	}
 
-	return buildDesktopProjectAttachmentsByPath(await desktopApi.listProjectAttachments());
+	return buildDesktopProjectAttachmentsByPath(await localApi.listProjectAttachments());
 }
 
 export async function attachLocalProject(args: {
-	desktopApi: DesktopApi;
+	localApi: LocalApi;
 	workspacePath: string;
 	replaceWorkspacePath?: string;
 }) {
@@ -245,20 +245,20 @@ export async function attachLocalProject(args: {
 		request.replaceWorkspacePath = args.replaceWorkspacePath;
 	}
 
-	return await args.desktopApi.attachProject(request);
+	return await args.localApi.attachProject(request);
 }
 
 export async function verifyProjectAttachment(args: {
-	desktopApi: DesktopApi | null;
+	localApi: LocalApi | null;
 	refreshDesktopProjectAttachments: () => Promise<void>;
 	workspacePath: string;
 }) {
-	if (!args.desktopApi) {
+	if (!args.localApi) {
 		return;
 	}
 
 	try {
-		const attachment = (await args.desktopApi.listProjectAttachments()).find(
+		const attachment = (await args.localApi.listProjectAttachments()).find(
 			(candidate) => candidate.workspacePath === args.workspacePath
 		);
 

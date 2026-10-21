@@ -2,7 +2,7 @@ import type { AssistantPart } from '@convex/lib/assistantParts';
 import type { DataModel, Id } from '@convex/_generated/dataModel';
 import type {
 	ArtifactsWatchEvent,
-	DesktopApi,
+	LocalApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
 	ProjectAttachment
@@ -420,7 +420,7 @@ async function establishLocalSession(baseUrl: string) {
 	await bootstrapLocalSession(baseUrl);
 }
 
-export function createLocalClient(baseUrl: string): DesktopApi {
+export function createLocalClient(baseUrl: string): LocalApi {
 	const transport = createLocalTransport(baseUrl);
 	const { request } = transport;
 
@@ -726,7 +726,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 	};
 }
 
-export async function resolveDesktopApi(): Promise<DesktopApi> {
+export async function resolveLocalApi(): Promise<LocalApi> {
 	const baseUrl = resolveLocalApiBaseUrl();
 
 	if (!baseUrl) {

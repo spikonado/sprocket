@@ -8,10 +8,10 @@ import {
 	type ComposerAttachment
 } from '$lib/chat/attachments';
 import { useStore, type Store } from '$lib/store';
-import type { DesktopApi } from '$lib/types/sprocket';
+import type { LocalApi } from '$lib/types/sprocket';
 
 export type ComposerAttachmentApi = Pick<
-	DesktopApi,
+	LocalApi,
 	'uploadTranscriptAttachment' | 'discardTranscriptAttachment'
 >;
 
