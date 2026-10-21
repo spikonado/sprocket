@@ -86,6 +86,7 @@ pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     fallback_providers: VecDeque<CompletionProvider>,
     gateway_url: String,
+    thread_id: String,
     model: String,
     model_vendor: String,
     chatgpt_client: Option<ChatGptClient>,
@@ -166,6 +167,7 @@ impl AgentProvider {
             completion_provider,
             fallback_providers,
             gateway_url: gateway_url.to_string(),
+            thread_id: context.run.thread_id.clone(),
             model: context.run.selected_model.clone(),
             model_vendor: model_vendor.to_string(),
             chatgpt_client,
@@ -184,6 +186,7 @@ impl AgentProvider {
             completion_provider: handoff.completion_provider,
             fallback_providers: VecDeque::new(),
             gateway_url: self.gateway_url.clone(),
+            thread_id: self.thread_id.clone(),
             model: handoff.selected_model.clone(),
             model_vendor: String::new(),
             chatgpt_client: self.chatgpt_client.clone(),
@@ -349,7 +352,11 @@ impl AgentProvider {
                         ));
                     }
                 };
-                Ok(completion_client.completion_model(&self.model, base_instructions))
+                Ok(completion_client.completion_model(
+                    &self.model,
+                    base_instructions,
+                    &self.thread_id,
+                ))
             }
         }
     }
