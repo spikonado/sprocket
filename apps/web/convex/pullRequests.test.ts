@@ -51,6 +51,10 @@ async function registerMachine(
 	});
 }
 
+async function flushPendingMergedSettles(t: ConvexTestInstance) {
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+}
+
 describe('linked pull requests', () => {
 	it('adds new links after earlier ones and updates relinked PRs in place', async () => {
 		const t = initConvexTest();
@@ -457,7 +461,7 @@ describe('linked pull requests', () => {
 			expect(abandoned?.settleWhenIdle).toBe(true);
 
 			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
-			await t.finishInProgressScheduledFunctions();
+			await flushPendingMergedSettles(t);
 
 			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 
@@ -557,7 +561,7 @@ describe('linked pull requests', () => {
 			).toMatchObject({ state: 'recover' });
 
 			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
-			await t.finishInProgressScheduledFunctions();
+			await flushPendingMergedSettles(t);
 
 			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 			expect(settled?.archivedAt).toBeTypeOf('number');
@@ -604,7 +608,7 @@ describe('linked pull requests', () => {
 			expect(pending?.settleWhenIdle).toBe(true);
 
 			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
-			await t.finishInProgressScheduledFunctions();
+			await flushPendingMergedSettles(t);
 
 			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 			expect(settled?.archivedAt).toBeTypeOf('number');
