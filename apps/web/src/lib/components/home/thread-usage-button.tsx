@@ -6,7 +6,6 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
 import {
 	API_COST_NOTE,
-	billableTokens,
 	breakdownOf,
 	cacheHitRate,
 	costOf,
@@ -14,14 +13,18 @@ import {
 	formatCost,
 	formatRate,
 	formatTokens,
-	usageByModel
+	newTokens,
+	usageByModel,
+	type CostSummary
 } from '$lib/chat/ai-usage';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
 import {
 	TokenTypeBreakdown,
 	UsageLabel,
 	UsageSegmented,
-	UsageStat
+	UsageShareList,
+	UsageStat,
+	type ShareItem
 } from '$lib/components/home/ai-usage-parts';
 
 type Scope = 'thread' | 'subagents';
@@ -128,7 +131,7 @@ function ThreadUsagePanel({
 	}
 
 	if (usage.status !== 'success') {
-		return <p className="text-muted-foreground text-sm">Loading usage…</p>;
+		return <p className="text-muted-foreground text-sm">Loading AI usage…</p>;
 	}
 
 	const { subagents } = usage.data;
@@ -140,6 +143,28 @@ function ThreadUsagePanel({
 
 	const breakdown = breakdownOf(rows);
 	const cost = costOf(rows, modelCatalog);
+	const tokens = newTokens(breakdown);
+
+	const modelItems = shareItems(
+		tokens,
+		usageByModel(rows, modelCatalog).map((model) => ({
+			key: model.key,
+			label: model.label,
+			detail: model.providerLabel,
+			tokens: newTokens(model.breakdown),
+			cost: model.cost
+		}))
+	);
+
+	const subagentItems = shareItems(
+		tokens,
+		subagents.map((subagent) => ({
+			key: subagent.threadId,
+			label: subagent.title ?? 'Untitled subagent',
+			tokens: newTokens(breakdownOf(subagent.totals)),
+			cost: costOf(subagent.totals, modelCatalog)
+		}))
+	);
 
 	return (
 		<div className="space-y-4">
@@ -159,8 +184,13 @@ function ThreadUsagePanel({
 
 			<div className="grid grid-cols-3 gap-3">
 				<UsageStat
+					label="API cost"
+					value={formatCost(cost)}
+					detail={cost.partial ? 'Excludes unpriced models' : undefined}
+				/>
+				<UsageStat
 					label="Tokens"
-					value={formatTokens(billableTokens(breakdown))}
+					value={formatTokens(tokens)}
 					detail={formatCalls(breakdown.calls)}
 				/>
 				<UsageStat
@@ -168,57 +198,41 @@ function ThreadUsagePanel({
 					value={formatRate(cacheHitRate(breakdown))}
 					detail="of input"
 				/>
-				<UsageStat
-					label="API cost"
-					value={formatCost(cost)}
-					detail={cost.partial ? 'excludes unpriced models' : undefined}
-				/>
 			</div>
 
 			<TokenTypeBreakdown breakdown={breakdown} />
 
-			{rows.length > 0 ? (
+			{modelItems.length > 1 ? (
 				<div className="border-t border-[var(--hairline)] pt-3">
 					<UsageLabel>By model</UsageLabel>
-					<ul className="mt-2 space-y-1.5 text-[12.5px]">
-						{usageByModel(rows, modelCatalog).map((model) => (
-							<li key={model.key} className="flex items-center gap-2">
-								<span className="text-foreground min-w-0 flex-1 truncate">
-									{model.label}{' '}
-									<span className="text-muted-foreground">· {model.providerLabel}</span>
-								</span>
-								<span className="text-muted-foreground tabular-nums">
-									{formatTokens(billableTokens(model.breakdown))}
-								</span>
-								<span className="w-14 text-right tabular-nums">{formatCost(model.cost)}</span>
-							</li>
-						))}
-					</ul>
+					<UsageShareList items={modelItems} />
 				</div>
 			) : null}
 
 			{includeSubagents ? (
-				<div>
+				<div className="border-t border-[var(--hairline)] pt-3">
 					<UsageLabel>Subagents</UsageLabel>
-					<ul className="mt-2 space-y-1.5 text-[12.5px]">
-						{subagents.map((subagent) => (
-							<li key={subagent.threadId} className="flex items-center gap-2">
-								<span className="text-foreground min-w-0 flex-1 truncate">
-									{subagent.title ?? 'Untitled subagent'}
-								</span>
-								<span className="text-muted-foreground tabular-nums">
-									{formatTokens(billableTokens(breakdownOf(subagent.totals)))}
-								</span>
-								<span className="w-14 text-right tabular-nums">
-									{formatCost(costOf(subagent.totals, modelCatalog))}
-								</span>
-							</li>
-						))}
-					</ul>
+					<UsageShareList items={subagentItems} />
 				</div>
 			) : null}
 
 			<p className="text-muted-foreground text-[11.5px]">API cost: {API_COST_NOTE}</p>
 		</div>
 	);
+}
+
+/** Largest first, each sized by its share of `total` tokens. */
+function shareItems(
+	total: number,
+	entries: { key: string; label: string; detail?: string; tokens: number; cost: CostSummary }[]
+): ShareItem[] {
+	return [...entries]
+		.sort((a, b) => b.tokens - a.tokens)
+		.map((entry) => ({
+			key: entry.key,
+			label: entry.label,
+			detail: entry.detail,
+			value: `${formatTokens(entry.tokens)} · ${formatCost(entry.cost)}`,
+			share: total > 0 ? entry.tokens / total : 0
+		}));
 }

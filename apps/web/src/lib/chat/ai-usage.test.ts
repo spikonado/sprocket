@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
-import { apiCost, rangeQuery, usageRanges } from '$lib/chat/ai-usage';
+import { apiCost, axisTicks, rangeQuery, usageRanges } from '$lib/chat/ai-usage';
 
 const catalog: ModelCatalog = {
 	defaultModelId: 'sol',
@@ -84,5 +84,16 @@ describe('rangeQuery', () => {
 			from: Date.parse(from),
 			to: Date.parse(to)
 		});
+	});
+});
+
+describe('axisTicks', () => {
+	it.each([
+		[6_300, [0, 2_000, 4_000, 6_000, 8_000]],
+		[0.62, [0, 0.2, 0.4, 0.6, 0.8]],
+		[100, [0, 25, 50, 75, 100]],
+		[0, []]
+	])('covers %s with round steps', (peak, ticks) => {
+		expect(axisTicks(peak).map((tick) => Number(tick.toPrecision(6)))).toEqual(ticks);
 	});
 });

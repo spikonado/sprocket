@@ -42,9 +42,9 @@ export function breakdownOf(rows: readonly TokenUsageTotals[]): TokenBreakdown {
 	);
 }
 
-/** Cached input is excluded, since the same context is re-read on every turn. */
-export function billableTokens(breakdown: TokenBreakdown): number {
-	return breakdown.uncachedInput + breakdown.output;
+/** Cache reads are excluded, since the same context is re-read on every turn. */
+export function newTokens(breakdown: TokenBreakdown): number {
+	return breakdown.uncachedInput + breakdown.cacheWrite + breakdown.output;
 }
 
 export function cacheHitRate(breakdown: TokenBreakdown): number | null {
@@ -151,7 +151,7 @@ export function usageByModel(
 				cost: costOf(group, catalog)
 			};
 		})
-		.sort((a, b) => billableTokens(b.breakdown) - billableTokens(a.breakdown));
+		.sort((a, b) => newTokens(b.breakdown) - newTokens(a.breakdown));
 }
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
@@ -181,6 +181,17 @@ export function formatRate(rate: number | null): string {
 
 export function formatCalls(calls: number): string {
 	return `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`;
+}
+
+/** Round axis ticks from 0 to at least `peak`, so gridlines land on readable values. */
+export function axisTicks(peak: number): number[] {
+	if (!(peak > 0)) return [];
+
+	const rough = peak / 4;
+	const magnitude = 10 ** Math.floor(Math.log10(rough));
+	const step = ([1, 2, 2.5, 5, 10].find((m) => m * magnitude >= rough) ?? 10) * magnitude;
+
+	return Array.from({ length: Math.ceil(peak / step - 1e-9) + 1 }, (_, index) => index * step);
 }
 
 export const API_COST_NOTE = 'What this would cost calling the provider API directly.';
@@ -246,13 +257,9 @@ export function rangeQuery(range: UsageRange, now: number) {
 	};
 }
 
+/** Hours are exact instants, so they show in local time. Days are stored as UTC days. */
 const bucketLabelFormats: Record<BucketUnit, Intl.DateTimeFormat> = {
-	hour: new Intl.DateTimeFormat('en-US', {
-		hour: '2-digit',
-		minute: '2-digit',
-		hourCycle: 'h23',
-		timeZone: 'UTC'
-	}),
+	hour: new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }),
 	day: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
 	week: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
 	month: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })

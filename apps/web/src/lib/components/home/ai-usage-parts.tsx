@@ -74,12 +74,47 @@ export function UsageStat({
 }) {
 	return (
 		<div className="min-w-0">
-			<p className="text-muted-foreground font-mono text-[10px] tracking-[0.18em] uppercase">
-				{label}
+			<p className="text-muted-foreground text-[12px]">{label}</p>
+			<p className="text-foreground mt-1 text-[1.4rem] leading-tight tracking-[-0.03em] tabular-nums">
+				{value}
 			</p>
-			<p className="text-foreground mt-1.5 text-xl tracking-[-0.02em] tabular-nums">{value}</p>
-			{detail ? <p className="text-muted-foreground mt-0.5 text-[11.5px]">{detail}</p> : null}
+			{detail ? (
+				<p className="text-muted-foreground mt-0.5 truncate text-[11.5px]">{detail}</p>
+			) : null}
 		</div>
+	);
+}
+
+export type ShareItem = {
+	key: string;
+	label: string;
+	detail?: string;
+	value: string;
+	share: number;
+};
+
+/** Rows with a bar for each item's share, for comparing models or subagents at a glance. */
+export function UsageShareList({ items }: { items: readonly ShareItem[] }) {
+	return (
+		<ul className="mt-2 space-y-2.5 text-[12.5px]">
+			{items.map((item) => (
+				<li key={item.key}>
+					<div className="flex items-baseline gap-2">
+						<span className="text-foreground min-w-0 flex-1 truncate">
+							{item.label}
+							{item.detail ? <span className="text-muted-foreground"> · {item.detail}</span> : null}
+						</span>
+						<span className="text-muted-foreground shrink-0 tabular-nums">{item.value}</span>
+					</div>
+					<div className="bg-hover-fill mt-1 h-1 overflow-hidden rounded-full" aria-hidden="true">
+						<div
+							className="bg-foreground/35 h-full rounded-full"
+							style={{ width: `${Math.max(item.share * 100, item.share > 0 ? 1 : 0)}%` }}
+						></div>
+					</div>
+				</li>
+			))}
+		</ul>
 	);
 }
 
