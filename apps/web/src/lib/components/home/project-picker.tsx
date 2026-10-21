@@ -427,7 +427,7 @@ export default function ProjectPicker({
 
 	return (
 		<div
-			className="bg-overlay fixed inset-0 z-50 flex items-start justify-center px-4 pt-[7vh] backdrop-blur-[2px]"
+			className="bg-overlay fixed inset-0 z-50 flex items-start justify-center px-4 pt-[7dvh] backdrop-blur-[2px]"
 			role="presentation"
 			onClick={(event) => {
 				if (event.target === event.currentTarget) {
@@ -436,7 +436,7 @@ export default function ProjectPicker({
 			}}
 		>
 			<div
-				className="border-border bg-popover text-foreground flex h-[min(34rem,80vh)] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-[1.4rem] border shadow-2xl"
+				className="border-border bg-popover text-foreground flex h-[min(34rem,80dvh)] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-[1.4rem] border shadow-2xl"
 				role="dialog"
 				aria-modal="true"
 				aria-label={mode === 'reconnect' ? 'Reconnect project' : 'Add project'}

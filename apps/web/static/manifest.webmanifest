@@ -1,0 +1,12 @@
+{
+	"name": "Sprocket",
+	"short_name": "Sprocket",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#f2f7ed",
+	"theme_color": "#f2f7ed",
+	"icons": [
+		{ "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml" },
+		{ "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+	]
+}

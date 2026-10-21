@@ -23,7 +23,7 @@ export default function CalmCentered({
 	return (
 		<div
 			className={cn(
-				'app-entry-shell relative flex min-h-screen items-center justify-center px-8 py-10 text-center',
+				'app-entry-shell relative flex min-h-dvh items-center justify-center px-8 py-10 text-center',
 				className
 			)}
 		>

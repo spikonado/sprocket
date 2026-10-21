@@ -181,7 +181,6 @@
 
 	body {
 		height: 100%;
-		min-height: 100vh;
 		background: var(--workspace-bg);
 		color: var(--foreground);
 		font-family: var(--font-sans);
@@ -219,6 +218,16 @@ body::after {
 
 .hide-scrollbar::-webkit-scrollbar {
 	display: none;
+}
+
+/* iOS zooms the page when a focused field's text is under 16px. */
+@media (pointer: coarse) {
+	input,
+	textarea,
+	select,
+	[contenteditable='true'] {
+		font-size: 16px !important;
+	}
 }
 
 .app-sidebar-panel {

@@ -112,7 +112,7 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 		<div
 			ref={rootRef}
 			data-artifact-screen-fullscreen=""
-			className="bg-background fixed inset-0 z-200 flex h-screen w-screen flex-col outline-none"
+			className="bg-background fixed inset-0 z-200 flex flex-col outline-none"
 			role="dialog"
 			aria-modal="true"
 			aria-label={`${artifact.title} fullscreen. Press Escape to exit.`}
