@@ -6,11 +6,7 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { allMerged } from '@convex/lib/pullRequestState';
-import {
-	AUTOMATIC_RECOVERY_GRACE_MS,
-	awaitsAutomaticRecovery,
-	isAbandonedRun
-} from '@convex/lib/runRecovery';
+import { AUTOMATIC_RECOVERY_GRACE_MS, awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 async function latestThreadRun(db: DatabaseReader, threadId: Id<'threadRecords'>) {
@@ -39,6 +35,21 @@ export async function threadOwnActivity(
 	if (latest && !isRunFinalStatus(latest.status)) return true;
 
 	if (latest && (await awaitsAutomaticRecovery(db, latest))) return true;
+
+	return (await headActionablePendingQuestion(db, threadId)) !== null;
+}
+
+async function countedOwnActivity(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>,
+	ownActive: boolean | undefined
+): Promise<boolean> {
+	if (ownActive !== undefined) return ownActive;
+
+	const latest = await latestThreadRun(db, threadId);
+
+	// Pre-ownActive rows subtracted on abandon. Recovery was not stored activity.
+	if (latest && !isRunFinalStatus(latest.status)) return true;
 
 	return (await headActionablePendingQuestion(db, threadId)) !== null;
 }
@@ -188,7 +199,7 @@ export async function captureThreadActivityBeforeChange(
 	const state =
 		(await hierarchyState(ctx.db, threadId)) ?? (await ensureHierarchyState(ctx, threadId));
 
-	return { thread, active: state.ownActive ?? (await threadOwnActivity(ctx.db, threadId)) };
+	return { thread, active: await countedOwnActivity(ctx.db, threadId, state.ownActive) };
 }
 
 export async function updateThreadHierarchyAfterChange(
@@ -266,17 +277,7 @@ export async function applyPendingMergedSettleAfterRecovery(
 
 	if (!before) return;
 
-	const state = await hierarchyState(ctx.db, threadId);
-	const latest = await latestThreadRun(ctx.db, threadId);
-
-	const recoveryExpired =
-		latest !== null && isAbandonedRun(latest) && !(await awaitsAutomaticRecovery(ctx.db, latest));
-
-	// Rows created before ownActive still need this so an expired wait subtracts.
-	await updateThreadHierarchyAfterChange(ctx, {
-		...before,
-		active: state?.ownActive ?? (recoveryExpired || before.active)
-	});
+	await updateThreadHierarchyAfterChange(ctx, before);
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {

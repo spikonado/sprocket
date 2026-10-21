@@ -756,6 +756,131 @@ describe('linked pull requests', () => {
 		expect(settled?.settleWhenIdle).toBeUndefined();
 	});
 
+	it('finishes new work on a child abandoned before ownActive existed', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const machineId = 'settle-legacy-own-active';
+
+		await registerMachine(asUser, machineId);
+
+		const root = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'legacy-root',
+			executionSecret: 'root-secret',
+			prompt: 'Open the PR',
+			machineId
+		});
+
+		const rootCaller = {
+			runId: root.runId,
+			claimId: 'root-claim',
+			executionSecret: 'root-secret'
+		};
+
+		await t.mutation(api.agentRuntime.start, rootCaller);
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...rootCaller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		const childA = await seedOwnedThread(t);
+		const childB = await seedOwnedThread(t);
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', childA.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', childA.threadId))!);
+			await ctx.db.patch('threadRecords', childB.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', childB.threadId))!);
+		});
+
+		const runA = await insertQueuedRun(t, asUser, {
+			threadId: childA.threadId,
+			submissionId: 'legacy-a',
+			executionSecret: 'a-secret',
+			prompt: 'Child A',
+			machineId
+		});
+
+		const runB = await insertQueuedRun(t, asUser, {
+			threadId: childB.threadId,
+			submissionId: 'legacy-b',
+			executionSecret: 'b-secret',
+			prompt: 'Child B',
+			machineId
+		});
+
+		const callerA = { runId: runA.runId, claimId: 'a-claim', executionSecret: 'a-secret' };
+		const callerB = { runId: runB.runId, claimId: 'b-claim', executionSecret: 'b-secret' };
+
+		await t.mutation(api.agentRuntime.start, callerA);
+		await t.mutation(api.agentRuntime.start, callerB);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: rootCaller.runId,
+			expectedClaimId: rootCaller.claimId,
+			executionSecret: rootCaller.executionSecret,
+			status: 'completed',
+			text: 'parent done'
+		});
+		await abandonRun(t, runA.runId);
+
+		await t.run(async (ctx) => {
+			const childState = await ctx.db
+				.query('threadHierarchyStates')
+				.withIndex('by_threadId', (q) => q.eq('threadId', childA.threadId))
+				.unique();
+
+			const rootState = await ctx.db
+				.query('threadHierarchyStates')
+				.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+				.unique();
+
+			await ctx.db.patch('threadHierarchyStates', childState!._id, { ownActive: undefined });
+			await ctx.db.patch('threadHierarchyStates', rootState!._id, {
+				activeDescendantCount: rootState!.activeDescendantCount - 1
+			});
+		});
+
+		const next = await insertQueuedRun(t, asUser, {
+			threadId: childA.threadId,
+			submissionId: 'legacy-a-next',
+			executionSecret: 'next-secret',
+			prompt: 'Continue without stored recovery',
+			machineId
+		});
+
+		await t.mutation(api.agentRuntime.start, {
+			runId: next.runId,
+			claimId: 'next-claim',
+			executionSecret: 'next-secret'
+		});
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: next.runId,
+			expectedClaimId: 'next-claim',
+			executionSecret: 'next-secret',
+			status: 'completed',
+			text: 'child a done'
+		});
+
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: callerB.runId,
+			expectedClaimId: callerB.claimId,
+			executionSecret: callerB.executionSecret,
+			status: 'completed',
+			text: 'child b done'
+		});
+
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+	});
+
 	it('settles a late merge after the recovery wait expires', async () => {
 		vi.useFakeTimers();
 
