@@ -12,6 +12,7 @@ it('uses the configured local API origin for local images', () => {
 
 it.each([
 	['./board%20layout.png', 'docs/./board layout.png'],
+	['board.png?download=1#preview', 'docs/board.png'],
 	['../assets/board.svg', 'docs/../assets/board.svg'],
 	['/workspace/assets/board.png', '/workspace/assets/board.png'],
 	['C:\\workspace\\assets\\board.png', 'C:\\workspace\\assets\\board.png']

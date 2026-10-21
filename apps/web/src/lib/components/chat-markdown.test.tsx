@@ -61,50 +61,6 @@ describe('math', () => {
 });
 
 describe('links', () => {
-	it.each([
-		['assets/board.svg', undefined, 'assets/board.svg'],
-		['shots/board%20layout.PNG', undefined, 'shots/board layout.PNG'],
-		['shots/board.png?download=1#preview', undefined, 'shots/board.png'],
-		['/tmp/board.jpg', undefined, '/tmp/board.jpg'],
-		['shots/board.png', 'docs/notes.md', 'docs/shots/board.png']
-	])('renders local image %s using its Markdown scope', (source, documentPath, path) => {
-		const { getByRole } = render(
-			<ChatMarkdown
-				content={`![Rendering screenshot](${source})`}
-				openLinksInNewTab
-				imageScope={{ workspacePath: '/workspace', documentPath }}
-			/>
-		);
-
-		const image = getByRole('button', { name: 'View Rendering screenshot' });
-		const url = new URL(image.getAttribute('src') ?? '', window.location.href);
-
-		expect(url.pathname).toBe('/api/workspace/image');
-		expect(url.searchParams.get('path')).toBe(path);
-		expect(url.searchParams.get('workspacePath')).toBe('/workspace');
-		expect(image.getAttribute('alt')).toBe('Rendering screenshot');
-		expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
-	});
-
-	it('uses the configured machine API for images', () => {
-		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
-
-		try {
-			const { getByRole } = render(
-				<ChatMarkdown
-					content="![Screenshot](shots/screenshot.png)"
-					imageScope={{ workspacePath: '/workspace' }}
-				/>
-			);
-
-			expect(new URL(getByRole('button').getAttribute('src') ?? '').origin).toBe(
-				'https://machine.example.com'
-			);
-		} finally {
-			vi.unstubAllEnvs();
-		}
-	});
-
 	it.each(['docs/notes.md', 'assets/board.png', 'https://example.com/board.png', '#diagram.png'])(
 		'preserves ordinary link %s',
 		(source) => {
@@ -469,14 +425,6 @@ describe('images', () => {
 		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
 	});
 
-	it('renders absolute image paths without a workspace', () => {
-		const { getByRole } = render(<ChatMarkdown content="![Board](/tmp/board.png)" />);
-		const image = getByRole('button', { name: 'View Board' });
-		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
-
-		expect(url.searchParams.get('path')).toBe('/tmp/board.png');
-	});
-
 	it('renders Windows absolute image paths through sanitization', () => {
 		const { getByRole } = render(
 			<ChatMarkdown
@@ -510,6 +458,7 @@ describe('images', () => {
 
 		expect(trigger.getAttribute('src')).toContain('path=docs%2F..%2Fassets%2Fboard+layout.png');
 		expect(trigger.getAttribute('loading')).toBe('lazy');
+		expect(trigger.getAttribute('referrerpolicy')).toBe('no-referrer');
 		trigger.focus();
 		fireEvent.keyDown(trigger, { key: 'Enter' });
 

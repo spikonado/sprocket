@@ -29,17 +29,20 @@ pub(super) struct LocalImageRequest {
 
 pub(super) async fn local_image(
     MachineSession: MachineSession,
-    Query(payload): Query<LocalImageRequest>,
+    Query(LocalImageRequest {
+        workspace_path,
+        path,
+        revision_only,
+    }): Query<LocalImageRequest>,
 ) -> Result<Response, ApiError> {
-    let workspace_path = payload.workspace_path;
     let permit = LOCAL_IMAGE_READS
         .acquire()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
-    if payload.revision_only {
+    if revision_only {
         let revision = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let (_, metadata) = open_local_image(workspace_path, payload.path).ok()?;
+            let (_, metadata) = open_local_image(workspace_path, path).ok()?;
             let modified = metadata.modified().ok()?;
             let nanos = modified
                 .duration_since(std::time::UNIX_EPOCH)
@@ -53,7 +56,7 @@ pub(super) async fn local_image(
     }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        read_local_image(workspace_path, payload.path)
+        read_local_image(workspace_path, path)
     })
     .await
     .map_err(|error| ApiError::internal(error.into()))?
