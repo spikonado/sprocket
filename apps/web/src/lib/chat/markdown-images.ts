@@ -16,7 +16,7 @@ export function decodeImagePath(source: string) {
 	}
 }
 
-export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
+export function markdownImageUrl(source: string, scope?: MarkdownImageScope, render?: string) {
 	if (/^(?:https?:|data:image\/|blob:|\/\/)/i.test(source)) return source;
 
 	if (!source) return null;
@@ -38,6 +38,8 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 
 	query.set('path', resolvedPath);
 
+	if (render) query.set('render', render);
+
 	const baseUrl = resolveLocalApiBaseUrl();
 	const pathUrl = `/api/workspace/image?${query}`;
 
@@ -46,29 +48,27 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 		: pathUrl;
 }
 
-export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) {
+let renderCount = 0;
+
+/** Browsers reuse decoded images by URL, so each message render needs its own URL to show the file as it is now. */
+export function nextImageRender() {
+	return String(++renderCount);
+}
+
+export function prepareMarkdownImages(html: string, scope: MarkdownImageScope, render: string) {
 	const template = document.createElement('template');
 	template.innerHTML = html;
 
 	for (const image of template.content.querySelectorAll('img')) {
 		const source = image.getAttribute('src') ?? '';
-		const url = markdownImageUrl(source, scope);
+		const url = markdownImageUrl(source, scope, render);
 		image.setAttribute('loading', 'lazy');
 		image.setAttribute('decoding', 'async');
 		image.setAttribute('referrerpolicy', 'no-referrer');
 		image.removeAttribute('srcset');
-		image.removeAttribute('data-local-image-url');
 
 		if (url) {
 			image.src = url;
-			const parsed = new URL(url, window.location.href);
-
-			if (
-				parsed.pathname === '/api/workspace/image' &&
-				parsed.origin === resolveLocalApiBaseUrl()
-			) {
-				image.setAttribute('data-local-image-url', url);
-			}
 		} else {
 			image.removeAttribute('src');
 			image.alt = `${image.alt || 'Image'} (unavailable)`;

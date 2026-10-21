@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { highlightCode } from '$lib/chat/code-highlighting';
 import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
@@ -322,94 +322,9 @@ describe('artifact references', () => {
 
 describe('images', () => {
 	afterEach(() => {
-		vi.useRealTimers();
 		vi.unstubAllGlobals();
 		vi.unstubAllEnvs();
 		vi.restoreAllMocks();
-	});
-
-	it('does not watch a local image URL supplied in remote image HTML', () => {
-		const { container } = render(
-			<ChatMarkdown content='<img src="https://example.com/board.png" data-local-image-url="/api/workspace/image?path=/tmp/board.png" alt="Board">' />
-		);
-
-		expect(container.querySelector('img')?.hasAttribute('data-local-image-url')).toBe(false);
-	});
-
-	it('refreshes local images and the open viewer without replacing code blocks or remote images', async () => {
-		vi.useFakeTimers();
-		vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-
-		const fetch = vi
-			.fn()
-			.mockResolvedValueOnce(new Response(JSON.stringify('100-1')))
-			.mockResolvedValueOnce(new Response(JSON.stringify('100-2')));
-
-		vi.stubGlobal('fetch', fetch);
-
-		const { container, getByRole, unmount } = render(
-			<ChatMarkdown
-				content={
-					'![Board](/tmp/board.png)\n\n![Remote](https://example.com/remote.png)\n\n```\nhello\n```'
-				}
-			/>
-		);
-
-		const code = container.querySelector('pre');
-		const remote = getByRole('button', { name: 'View Remote' }).getAttribute('src');
-		const image = getByRole('button', { name: 'View Board' });
-		await act(() => vi.advanceTimersByTimeAsync(2_000));
-		const original = image.getAttribute('src');
-		fireEvent.click(image);
-		await act(() => vi.advanceTimersByTimeAsync(2_000));
-		expect(image.getAttribute('src')).not.toBe(original);
-		expect(getByRole('dialog').querySelector('img')?.getAttribute('src')).toBe(
-			image.getAttribute('src')
-		);
-		expect(container.querySelector('pre')).toBe(code);
-		expect(getByRole('button', { name: 'View Remote' }).getAttribute('src')).toBe(remote);
-		expect(fetch).toHaveBeenCalledTimes(2);
-		unmount();
-	});
-
-	it('watches local images using credentials on the configured machine API', async () => {
-		vi.stubEnv('VITE_LOCAL_API_URL', 'http://127.0.0.1:7731');
-		vi.useFakeTimers();
-		vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-		const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify('100-1')));
-		vi.stubGlobal('fetch', fetch);
-
-		const { getByRole, unmount } = render(
-			<ChatMarkdown
-				content="![Board](shots/board.png)"
-				imageScope={{ workspacePath: '/workspace' }}
-			/>
-		);
-
-		const image = getByRole('button', { name: 'View Board' });
-		expect(image.getAttribute('crossorigin')).toBe('use-credentials');
-		await act(() => vi.advanceTimersByTimeAsync(2_000));
-		const request = new URL(fetch.mock.calls[0][0]);
-		expect(request.origin).toBe('http://127.0.0.1:7731');
-		expect(request.searchParams.get('revisionOnly')).toBe('true');
-		expect(fetch.mock.calls[0][1].credentials).toBe('include');
-		expect(new URL(image.getAttribute('src') ?? '').searchParams.get('revision')).toBe('100-1');
-		unmount();
-	});
-
-	it('restores enlargement after an initially missing local image becomes available', async () => {
-		vi.useFakeTimers();
-		vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify('100-1'))));
-		const { getByRole, unmount } = render(<ChatMarkdown content="![Board](/tmp/board.png)" />);
-		const image = getByRole('button', { name: 'View Board' });
-		fireEvent.error(image);
-		expect(getByRole('img', { name: 'Board (unavailable)' })).toBe(image);
-		await act(() => vi.advanceTimersByTimeAsync(2_000));
-		expect(getByRole('button', { name: 'View Board' })).toBe(image);
-		fireEvent.keyDown(image, { key: 'Enter' });
-		expect(getByRole('dialog', { name: 'Image preview: Board' })).toBeTruthy();
-		unmount();
 	});
 
 	it('offers the original remote image instead of CORS-dependent read actions', () => {
@@ -423,6 +338,42 @@ describe('images', () => {
 			'https://example.com/board.png'
 		);
 		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
+	});
+
+	it('loads a re-sent local image fresh in each new message but keeps it across re-renders', () => {
+		const content = '![Board](/tmp/board.png)';
+
+		const { getAllByRole, rerender } = render(
+			<>
+				<ChatMarkdown content={content} />
+			</>
+		);
+
+		const [first] = getAllByRole('button', { name: 'View Board' });
+		const firstUrl = first!.getAttribute('src');
+
+		rerender(
+			<>
+				<ChatMarkdown content={content} />
+				<ChatMarkdown content={content} />
+			</>
+		);
+
+		const [kept, resent] = getAllByRole('button', { name: 'View Board' });
+		expect(kept!.getAttribute('src')).toBe(firstUrl);
+		expect(resent!.getAttribute('src')).not.toBe(firstUrl);
+	});
+
+	it('sends credentials with images from a separate machine API', () => {
+		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
+
+		const { getByRole } = render(
+			<ChatMarkdown content="![Board](board.png)" imageScope={{ workspacePath: '/workspace' }} />
+		);
+
+		expect(getByRole('button', { name: 'View Board' }).getAttribute('crossorigin')).toBe(
+			'use-credentials'
+		);
 	});
 
 	it('renders Windows absolute image paths through sanitization', () => {
