@@ -237,29 +237,10 @@ export class ArtifactPanel implements Store<number> {
 
 	/** Focuses a tab already showing the artifact, reuses an empty tab, or opens a new one. */
 	openArtifact(key: string) {
-		const existing = this.panel.tabs.find(
-			(tab) => tab.view === 'artifacts' && tab.selectedKey === key
+		this.#show(
+			this.panel.tabs.find((tab) => tab.view === 'artifacts' && tab.selectedKey === key),
+			{ view: 'artifacts', selectedKey: key }
 		);
-
-		const active = this.activeTab;
-		let tabs = this.panel.tabs;
-		let activeTabId: string;
-
-		if (existing) {
-			activeTabId = existing.id;
-		} else if (active.view === null) {
-			activeTabId = active.id;
-			tabs = tabs.map((tab) =>
-				tab.id === active.id ? { ...tab, view: 'artifacts', selectedKey: key } : tab
-			);
-		} else {
-			const tab = { ...this.#createTab(), view: 'artifacts' as const, selectedKey: key };
-			activeTabId = tab.id;
-			tabs = [...tabs, tab];
-		}
-
-		this.panel = { ...this.panel, open: true, tabs, activeTabId };
-		this.#emit();
 	}
 
 	setFullscreenKey(key: string | null) {
@@ -268,7 +249,7 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Shows the tab already editing the file, or opens a new one. */
+	/** Shows the tab already editing the file, reuses an empty tab, or opens a new one. */
 	openFile(file: WorkspaceFileTarget) {
 		const existing = this.panel.tabs.find(
 			(tab) =>
@@ -277,42 +258,16 @@ export class ArtifactPanel implements Store<number> {
 				tab.file.path === file.path
 		);
 
-		if (existing) {
-			if (this.panel.open && this.panel.activeTabId === existing.id) return;
-			this.panel = { ...this.panel, open: true, activeTabId: existing.id };
-		} else {
-			const tab: SidePanelTab = { ...this.#createTab(), view: 'file', file };
-			this.panel = {
-				...this.panel,
-				open: true,
-				tabs: [...this.panel.tabs, tab],
-				activeTabId: tab.id
-			};
-		}
-
-		this.#emit();
+		if (existing && this.panel.open && this.panel.activeTabId === existing.id) return;
+		this.#show(existing, { view: 'file', file });
 	}
 
 	/** Shows `directory` in the active files tab, the first files tab, an empty tab, or a new one. */
 	openDirectory(directory: WorkspaceFileTarget) {
-		const active = this.activeTab;
-
-		const target =
-			[active, ...this.panel.tabs].find((tab) => tab.view === 'files') ??
-			(active.view === null ? active : this.#createTab());
-
-		const tab: SidePanelTab = { ...target, view: 'files', directory };
-		const exists = this.panel.tabs.some((candidate) => candidate.id === tab.id);
-
-		this.panel = {
-			...this.panel,
-			open: true,
-			tabs: exists
-				? this.panel.tabs.map((candidate) => (candidate.id === tab.id ? tab : candidate))
-				: [...this.panel.tabs, tab],
-			activeTabId: tab.id
-		};
-		this.#emit();
+		this.#show(
+			[this.activeTab, ...this.panel.tabs].find((tab) => tab.view === 'files'),
+			{ view: 'files', directory }
+		);
 	}
 
 	/** Keeps open file tabs pointing at a renamed file or folder. */
@@ -344,6 +299,24 @@ export class ArtifactPanel implements Store<number> {
 
 	#createTab(): SidePanelTab {
 		return { id: `tab-${this.#nextTabId++}`, view: null, selectedKey: null };
+	}
+
+	/** Puts `content` in `existing`, else the active tab when it's empty, else a new tab, and focuses it. */
+	#show(existing: SidePanelTab | undefined, content: Partial<Omit<SidePanelTab, 'id'>>) {
+		const active = this.activeTab;
+		const target = existing ?? (active.view === null ? active : this.#createTab());
+		const tab = { ...target, ...content };
+		const exists = this.panel.tabs.includes(target);
+
+		this.panel = {
+			...this.panel,
+			open: true,
+			tabs: exists
+				? this.panel.tabs.map((candidate) => (candidate === target ? tab : candidate))
+				: [...this.panel.tabs, tab],
+			activeTabId: tab.id
+		};
+		this.#emit();
 	}
 
 	#emit() {
