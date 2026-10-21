@@ -207,21 +207,32 @@ function UsageChart({
 }) {
 	const [hovered, setHovered] = useState<number | null>(null);
 
+	// Null marks a model with usage in the bucket but no price, so it isn't shown as idle.
 	const stacks = buckets.map((bucket) =>
 		models.map((model) => {
 			const rows = bucket.rows.filter((row) => modelUsageKey(row) === model.key);
 
 			return metric === 'cost'
-				? (costOf(rows, modelCatalog).usd ?? 0)
+				? rows.length === 0
+					? 0
+					: costOf(rows, modelCatalog).usd
 				: billableTokens(breakdownOf(rows));
 		})
 	);
 
-	const peak = Math.max(0, ...stacks.map((stack) => stack.reduce((sum, value) => sum + value, 0)));
+	const peak = Math.max(
+		0,
+		...stacks.map((stack) => stack.reduce<number>((sum, value) => sum + (value ?? 0), 0))
+	);
+
 	const max = peak || 1;
 
-	const format = (value: number) =>
-		metric === 'cost' ? formatCost({ usd: value, partial: false }) : formatTokens(value);
+	const format = (value: number | null) =>
+		metric === 'cost' || value === null
+			? formatCost({ usd: value, partial: false })
+			: formatTokens(value);
+
+	const shown = (value: number | null) => value === null || value > 0;
 
 	const gap = buckets.length > 20 ? 3 : 6;
 	const barWidth = (PLOT_WIDTH - gap * (buckets.length - 1)) / buckets.length;
@@ -272,7 +283,7 @@ function UsageChart({
 
 					const bucketValues = models
 						.map((model, modelIndex) => `${model.label} ${format(stack[modelIndex])}`)
-						.filter((_, modelIndex) => stack[modelIndex] > 0);
+						.filter((_, modelIndex) => shown(stack[modelIndex]));
 
 					return (
 						<g
@@ -293,7 +304,7 @@ function UsageChart({
 								fill={hovered === bucketIndex ? 'var(--hover-fill)' : 'transparent'}
 							/>
 							{stack.map((value, modelIndex) => {
-								const height = (value / max) * CHART_HEIGHT;
+								const height = ((value ?? 0) / max) * CHART_HEIGHT;
 								top -= height;
 
 								return height > 0 ? (
@@ -329,7 +340,7 @@ function UsageChart({
 				>
 					<p className="mb-1 opacity-75">{bucketLabel(unit, hoveredBucket.start)} UTC</p>
 					{models.map((model, modelIndex) =>
-						stacks[hovered][modelIndex] > 0 ? (
+						shown(stacks[hovered][modelIndex]) ? (
 							<p key={model.key} className="flex items-center gap-2">
 								<span
 									className="size-2 rounded-[2px]"
