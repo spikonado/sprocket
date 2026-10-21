@@ -16,13 +16,7 @@
 	height: 28px;
 	border-radius: 6px;
 	color: var(--muted-foreground);
-}
-
-@media (pointer: coarse) {
-	.inbox-icon {
-		width: 44px;
-		height: 44px;
-	}
+	position: relative;
 }
 
 .inbox-icon:hover,
@@ -673,13 +667,6 @@
 	pointer-events: auto;
 	width: 32px;
 	height: 32px;
-}
-
-@media (pointer: coarse) {
-	.inbox-floating-controls .inbox-icon {
-		width: 44px;
-		height: 44px;
-	}
 }
 
 .inbox-floating-controls .inbox-icon span {

@@ -67,7 +67,7 @@ const LIST_POLL_MS = 2_500;
 const SCAN_POLL_MS = 500;
 
 const TOOL_BUTTON =
-	'touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
+	'touch-target relative text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
 
 type TreeModel = UseFileTreeResult['model'];
 

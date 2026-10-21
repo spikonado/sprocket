@@ -233,13 +233,12 @@ body::after {
 }
 
 @layer components {
+	/* The element must be positioned for the 44px tap area to anchor to it. */
 	@media (pointer: coarse) {
-		.touch-target {
-			display: inline-flex;
-			align-items: center;
-			justify-content: center;
-			min-width: 44px;
-			min-height: 44px;
+		.touch-target::before {
+			position: absolute;
+			inset: min(0px, calc((100% - 44px) / 2));
+			content: '';
 		}
 	}
 }

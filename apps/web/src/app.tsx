@@ -2763,12 +2763,12 @@ export default function App({
 					<div className="inbox-floating-controls">
 						<BrandMark
 							size="sm"
-							class="inbox-icon"
+							class="inbox-icon touch-target"
 							label="Open sidebar"
 							onclick={() => void openSidebar()}
 						/>
 						<button
-							className="inbox-icon"
+							className="inbox-icon touch-target"
 							type="button"
 							aria-label="Settings"
 							title="Settings"
