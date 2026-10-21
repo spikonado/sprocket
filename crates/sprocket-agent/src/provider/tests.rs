@@ -130,11 +130,14 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
 
     let call = ToolCall::from_wire(
         "call_1",
-        ToolFunction::new("exec_cmd".try_into().unwrap(), json!({"cmd": "pwd"})),
+        ToolFunction::new(
+            "exec_cmd".try_into().unwrap(),
+            json!({"cmd": "pwd", "timeoutMs": 1.0}),
+        ),
     );
     let AssistantContent::ToolCall(call) = AssistantContent::ToolCall(call).with_native(json!({
         "type": "function_call", "id": "fc_1", "call_id": "call_1",
-        "name": "exec_cmd", "arguments": "{\"cmd\": \"pwd\"}", "futureField": "opaque"
+        "name": "exec_cmd", "arguments": "{\"cmd\":\"pwd\",\"timeoutMs\":1.0}", "futureField": "opaque"
     })) else {
         unreachable!();
     };
@@ -151,7 +154,7 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
     assert_eq!(durable[0]["callId"], "call_1");
     assert_eq!(
         durable[0]["providerMetadata"]["rigNative"]["arguments"],
-        "{\"cmd\": \"pwd\"}"
+        "{\"cmd\":\"pwd\",\"timeoutMs\":1.0}"
     );
 
     let transcript = serde_json::from_value::<Vec<sprocket_transcript::TranscriptPart>>(json!([

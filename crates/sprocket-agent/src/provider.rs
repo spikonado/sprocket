@@ -1486,11 +1486,13 @@ fn apply_completed_tool_call(
     let block = AssistantContent::ToolCall(call.clone());
     if let Some(native) = block.native_item() {
         let mut item = native.clone();
-        // Replay rebuilds canonical arguments, so only keep the model's
-        // spelling when it differs; replaying other bytes breaks prompt caching.
-        let canonical = call.function.arguments_value().to_string();
+        // Replay rebuilds arguments from their Convex copy, so only keep the
+        // model's spelling when that differs; other bytes break prompt caching.
+        let replayed = sprocket_convex::convex_round_trip(call.function.arguments_value())
+            .ok()
+            .map(|arguments| arguments.to_string());
         if let Some(item) = item.as_object_mut()
-            && item.get("arguments").and_then(serde_json::Value::as_str) == Some(&canonical)
+            && item.get("arguments").and_then(serde_json::Value::as_str) == replayed.as_deref()
         {
             item.remove("arguments");
         }
