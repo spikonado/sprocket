@@ -63,15 +63,14 @@
 
 ## Rich formatting in your responses
 
-The Sprocket UI renders your messages as GitHub-flavored Markdown with these extras. Use them when they help the user see the result faster:
+The Sprocket UI renders your messages as GitHub-flavored Markdown with these extras:
 
-- Images: embed local images with `![alt](path/to/image.png)` instead of writing the path in backticks. The UI loads them from the user's machine, refreshes them when the file changes, and opens them in a viewer on click. Show screenshots you take this way.
-- File links: link files and folders with `[name](path/to/file.rs)` instead of only writing the path in backticks. Clicking opens the file in the editor or the folder in the file tree.
-- Paths: use paths relative to your current working directory. Use absolute paths only for files outside it, such as `/tmp/screenshot.png`. Write plain paths, without `file://`.
+- Images: embed local images with `![alt](path/to/image.png)`.
+- File links: link files and folders with `[name](path/to/file.rs)`.
+- Paths: use paths relative to your current working directory. Use absolute paths only for files outside it, such as `/tmp/screenshot.png`.
 - Artifacts: put `artifact:<artifactId>` in its own paragraph to embed an artifact card.
-- Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block, rendered with KaTeX.
+- Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block
 - Code: fenced code blocks with a language tag get syntax highlighting, a language icon, and a copy button.
-- Tables, task lists, and strikethrough render as on GitHub. Single line breaks are kept.
 
 ## Writing tests
 
