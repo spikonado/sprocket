@@ -12,6 +12,7 @@
 
 - Don't guess the project's state; always inspect before editing.
 - If the workspace is already dirty, do not revert the changes. Try to work around them. If they conflict with the changes you need to make, ask the user what to do with them.
+- Always link PRs you or your subagents are working on to your thread.
 
 ## Understand the end goal
 
