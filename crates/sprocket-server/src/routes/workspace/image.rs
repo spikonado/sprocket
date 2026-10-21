@@ -5,11 +5,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use axum::Json;
 use axum::body::Body;
 use axum::extract::Query;
 use axum::http::header;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use serde::Deserialize;
 
 use crate::routes::api_error::ApiError;
@@ -23,8 +22,6 @@ static LOCAL_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const
 pub(super) struct LocalImageRequest {
     workspace_path: Option<PathBuf>,
     path: String,
-    #[serde(default)]
-    revision_only: bool,
 }
 
 pub(super) async fn local_image(
@@ -32,28 +29,12 @@ pub(super) async fn local_image(
     Query(LocalImageRequest {
         workspace_path,
         path,
-        revision_only,
     }): Query<LocalImageRequest>,
 ) -> Result<Response, ApiError> {
     let permit = LOCAL_IMAGE_READS
         .acquire()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
-    if revision_only {
-        let revision = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            let (_, metadata) = open_local_image(workspace_path, path).ok()?;
-            let modified = metadata.modified().ok()?;
-            let nanos = modified
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_nanos();
-            Some(format!("{}-{nanos}", metadata.len()))
-        })
-        .await
-        .map_err(|error| ApiError::internal(error.into()))?;
-        return Ok(([(header::CACHE_CONTROL, "no-store")], Json(revision)).into_response());
-    }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         read_local_image(workspace_path, path)

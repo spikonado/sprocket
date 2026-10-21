@@ -121,64 +121,6 @@ async fn local_image_serves_relative_and_absolute_images_without_an_attachment()
 }
 
 #[tokio::test]
-async fn local_image_revision_tracks_overwrites_and_missing_files_without_reading_contents() {
-    let data = tempfile::tempdir().unwrap();
-    let workspace = tempfile::tempdir().unwrap();
-    let path = workspace.path().join("board.png");
-    let (app, token) = image_test_app(data.path()).await;
-    let revision_request = |token: Option<&str>| {
-        let mut request = image_request(Some(workspace.path()), "board.png", token);
-        *request.uri_mut() = format!("{}&revisionOnly=true", request.uri())
-            .parse()
-            .unwrap();
-        request
-    };
-    let denied = app.clone().oneshot(revision_request(None)).await.unwrap();
-    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
-    let missing = app
-        .clone()
-        .oneshot(revision_request(Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(missing.status(), StatusCode::OK);
-    assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
-    let contents = to_bytes(missing.into_body(), 1024).await.unwrap();
-    assert_eq!(contents.as_ref(), b"null");
-
-    let mut revisions = Vec::new();
-    for (contents, seconds) in [(b"first", 1), (b"other", 2)] {
-        std::fs::write(&path, contents).unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_times(
-                std::fs::FileTimes::new()
-                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
-            )
-            .unwrap();
-        let response = app
-            .clone()
-            .oneshot(revision_request(Some(&token)))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        revisions.push(serde_json::from_slice::<String>(&body).unwrap());
-    }
-    assert_ne!(revisions[0], revisions[1]);
-    let image = app
-        .oneshot(image_request(
-            Some(workspace.path()),
-            "board.png",
-            Some(&token),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(image.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
 async fn local_image_serves_images_outside_the_workspace() {
     let data = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();

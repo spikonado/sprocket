@@ -5,7 +5,6 @@ import ImageViewer, { type ViewerImage } from './image-viewer';
 import { MarkdownFileLinksContext, markdownFileTarget } from '$lib/chat/markdown-file-links';
 import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
-import { watchMarkdownImage } from '$lib/chat/markdown-image-watch';
 
 type CodeControl = {
 	target: HTMLElement;
@@ -33,37 +32,6 @@ export default function MarkdownHtml({
 	const ref = useRef<HTMLDivElement>(null);
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
 	const fileLinks = use(MarkdownFileLinksContext);
-
-	useEffect(() => {
-		const images = ref.current?.querySelectorAll<HTMLImageElement>('img[data-local-image-url]');
-
-		const stops = [...(images ?? [])].map((image) => {
-			const source = image.getAttribute('data-local-image-url');
-
-			if (!source) return () => {};
-
-			const alt = image.alt;
-
-			return watchMarkdownImage(source, (url) => {
-				const previousUrl = image.src;
-				image.classList.remove('markdown-image-error');
-				image.alt = alt;
-
-				if (!image.closest('a')) {
-					image.tabIndex = 0;
-					image.setAttribute('role', 'button');
-					image.setAttribute('aria-label', `View ${alt || 'image'}`);
-				}
-
-				image.src = url;
-				setViewerImage((current) => (current?.url === previousUrl ? { ...current, url } : current));
-			});
-		});
-
-		return () => {
-			for (const stop of stops) stop();
-		};
-	}, [html]);
 
 	const [controls, setControls] = useState<{ html: string; blocks: CodeControl[] }>({
 		html,
