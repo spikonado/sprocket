@@ -8,7 +8,8 @@ import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { allMerged } from '@convex/lib/pullRequestState';
 import {
 	AUTOMATIC_RECOVERY_GRACE_MS,
-	awaitsAutomaticRecovery
+	awaitsAutomaticRecovery,
+	isAbandonedRun
 } from '@convex/lib/runRecovery';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
@@ -20,7 +21,7 @@ async function latestThreadRun(db: DatabaseReader, threadId: Id<'threadRecords'>
 		.first();
 }
 
-export async function threadRunAwaitsAutomaticRecovery(
+async function threadRunAwaitsAutomaticRecovery(
 	db: DatabaseReader,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
@@ -36,6 +37,8 @@ export async function threadOwnActivity(
 	const latest = await latestThreadRun(db, threadId);
 
 	if (latest && !isRunFinalStatus(latest.status)) return true;
+
+	if (latest && (await awaitsAutomaticRecovery(db, latest))) return true;
 
 	return (await headActionablePendingQuestion(db, threadId)) !== null;
 }
@@ -209,6 +212,10 @@ export async function updateThreadHierarchyAfterChange(
 	});
 
 	await applyPendingMergedSettle(ctx, thread);
+
+	if (await threadRunAwaitsAutomaticRecovery(ctx.db, thread._id)) {
+		await schedulePendingMergedSettle(ctx, thread._id);
+	}
 }
 
 async function schedulePendingMergedSettle(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
@@ -223,11 +230,7 @@ async function schedulePendingMergedSettle(ctx: MutationCtx, threadId: Id<'threa
 	);
 }
 
-export async function applyPendingMergedSettle(
-	ctx: MutationCtx,
-	thread: Doc<'threadRecords'>,
-	fromRetry = false
-) {
+export async function applyPendingMergedSettle(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
 	const root = await threadRoot(ctx.db, thread);
 
 	if (!root.settleWhenIdle) return;
@@ -248,50 +251,28 @@ export async function applyPendingMergedSettle(
 
 	if ((await subtreeSummary(ctx.db, root)).anyActive) return;
 
-	if (!fromRetry) {
-		await ctx.scheduler.runAfter(0, internal.threads.retryPendingMergedSettle, {
-			threadId: thread._id
-		});
-
-		return;
-	}
-
-	const recoveringThreadId = await recoveringThreadInSubtree(ctx.db, root);
-
-	if (recoveringThreadId) {
-		await schedulePendingMergedSettle(ctx, recoveringThreadId);
-
-		return;
-	}
-
 	await ctx.db.patch('threadRecords', root._id, {
 		archivedAt: Date.now(),
 		settleWhenIdle: undefined
 	});
 }
 
-async function recoveringThreadInSubtree(
-	db: DatabaseReader,
-	root: Doc<'threadRecords'>
-): Promise<Id<'threadRecords'> | null> {
-	const pending = [root._id];
+export async function applyPendingMergedSettleAfterRecovery(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+) {
+	const before = await captureThreadActivityBeforeChange(ctx, threadId);
 
-	while (pending.length > 0) {
-		const threadId = pending.pop()!;
+	if (!before) return;
 
-		if (await threadRunAwaitsAutomaticRecovery(db, threadId)) return threadId;
+	const latest = await latestThreadRun(ctx.db, threadId);
+	const recoveryExpired =
+		latest !== null && isAbandonedRun(latest) && !(await awaitsAutomaticRecovery(ctx.db, latest));
 
-		const children = await db
-			.query('threadRecords')
-			.withIndex('by_userId_parentThreadId', (query) =>
-				query.eq('userId', root.userId).eq('parentThreadId', threadId)
-			)
-			.collect();
-
-		for (const child of children) pending.push(child._id);
-	}
-
-	return null;
+	await updateThreadHierarchyAfterChange(ctx, {
+		...before,
+		active: recoveryExpired || before.active
+	});
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {

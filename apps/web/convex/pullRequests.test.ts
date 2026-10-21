@@ -51,10 +51,6 @@ async function registerMachine(
 	});
 }
 
-async function flushPendingMergedSettles(t: ConvexTestInstance) {
-	await t.finishInProgressScheduledFunctions();
-}
-
 describe('linked pull requests', () => {
 	it('adds new links after earlier ones and updates relinked PRs in place', async () => {
 		const t = initConvexTest();
@@ -140,8 +136,6 @@ describe('linked pull requests', () => {
 			await asUser.mutation(api.pullRequests.updateStates, {
 				updates: [{ threadId, ...pr(2, 'merged') }]
 			});
-			await flushPendingMergedSettles(t);
-
 			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 
 			expect(settled?.archivedAt !== undefined).toBe(enabled);
@@ -160,8 +154,6 @@ describe('linked pull requests', () => {
 		await asUser.mutation(api.pullRequests.updateStates, {
 			updates: [{ threadId, ...pr(1, 'merged') }]
 		});
-		await flushPendingMergedSettles(t);
-
 		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 
 		expect(settled?.archivedAt).toBeTypeOf('number');
@@ -248,8 +240,6 @@ describe('linked pull requests', () => {
 			status: 'completed',
 			text: 'done'
 		});
-		await flushPendingMergedSettles(t);
-
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.archivedAt).toBeTypeOf('number');
 		expect(thread?.settleWhenIdle).toBeUndefined();
@@ -276,8 +266,6 @@ describe('linked pull requests', () => {
 			status: 'completed',
 			text: 'done'
 		});
-		await flushPendingMergedSettles(t);
-
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.archivedAt).toBeTypeOf('number');
 		expect(thread?.settleWhenIdle).toBeUndefined();
@@ -323,8 +311,6 @@ describe('linked pull requests', () => {
 			questionId,
 			optionId: 'yes'
 		});
-		await flushPendingMergedSettles(t);
-
 		const continuation = answered.continuation;
 		expect(continuation?.runId).toBe(caller.runId);
 
@@ -361,8 +347,6 @@ describe('linked pull requests', () => {
 			status: 'completed',
 			text: 'done'
 		});
-		await flushPendingMergedSettles(t);
-
 		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(settled?.archivedAt).toBeTypeOf('number');
 		expect(settled?.settleWhenIdle).toBeUndefined();
@@ -655,8 +639,6 @@ describe('linked pull requests', () => {
 			status: 'completed',
 			text: 'done'
 		});
-		await flushPendingMergedSettles(t);
-
 		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 
 		expect(settled?.archivedAt).toBeTypeOf('number');

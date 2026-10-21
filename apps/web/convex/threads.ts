@@ -7,7 +7,7 @@ import { getUserId } from '@convex/lib/auth';
 import { vDescendantStatusCounts } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import {
-	applyPendingMergedSettle,
+	applyPendingMergedSettleAfterRecovery,
 	listDirectChildrenPage,
 	subtreeSummary,
 	threadAncestryIds
@@ -225,11 +225,7 @@ export const retryPendingMergedSettle = internalMutation({
 	args: { threadId: v.id('threadRecords') },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const thread = await ctx.db.get('threadRecords', args.threadId);
-
-		if (!thread) return null;
-
-		await applyPendingMergedSettle(ctx, thread, true);
+		await applyPendingMergedSettleAfterRecovery(ctx, args.threadId);
 
 		return null;
 	}
