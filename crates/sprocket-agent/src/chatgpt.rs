@@ -191,6 +191,8 @@ struct SiwcHttpClient {
     inner: reqwest::Client,
     authorization: Option<(Arc<dyn ChatGptCredentials>, SharedConnection)>,
     responses_url: String,
+    // Without it, the SIWC route spreads requests across cache machines and most prompt cache reads miss.
+    session_id: String,
 }
 
 impl std::fmt::Debug for SiwcHttpClient {
@@ -265,6 +267,10 @@ impl HttpClientExt for SiwcHttpClient {
                 http::header::AUTHORIZATION,
                 HeaderValue::from_str(&format!("Bearer {token}"))
                     .map_err(http_client::Error::from)?,
+            );
+            request.headers_mut().insert(
+                "session_id",
+                HeaderValue::from_str(&this.session_id).map_err(http_client::Error::from)?,
             );
             check_connection(connection)?;
             let response = this
@@ -568,6 +574,7 @@ impl ChatGptClient {
         &self,
         model: impl Into<String>,
         instructions: &str,
+        session_id: &str,
     ) -> DynModel<Completion> {
         let wire = openai::responses_api::wire::Responses::new(
             openai::OpenAIConfig::new("siwc-managed-by-transport").with_instructions(instructions),
@@ -579,6 +586,7 @@ impl ChatGptClient {
                 inner: self.http.clone(),
                 authorization: Some((Arc::clone(&self.credentials), Arc::clone(&self.connection))),
                 responses_url: OPENAI_RESPONSES_URL.to_string(),
+                session_id: session_id.to_string(),
             },
         )
         .erase()
