@@ -47,6 +47,7 @@ fn thread_settings(
         selected_model: selected_model.into(),
         reasoning_effort: reasoning_effort.into(),
         fast_mode,
+        completion_provider: Default::default(),
     }
 }
 
@@ -213,4 +214,36 @@ fn catalog_default_model_must_exist() {
 
     assert!(list_models(&catalog).is_err());
     assert!(select(catalog, &fresh_context(), &run_request()).is_err());
+}
+
+#[test]
+fn thread_settings_keep_the_stored_completion_provider() {
+    let openai: ThreadSettings = serde_json::from_value(serde_json::json!({
+        "repositoryKey": "repo",
+        "selectedModel": "gpt",
+        "reasoningEffort": "high",
+        "fastMode": false,
+        "completionProvider": "openai"
+    }))
+    .unwrap();
+    assert_eq!(openai.completion_provider, CompletionProvider::Openai);
+
+    let chatgpt: ThreadSettings = serde_json::from_value(serde_json::json!({
+        "repositoryKey": "repo",
+        "selectedModel": "gpt",
+        "reasoningEffort": "high",
+        "fastMode": false,
+        "completionProvider": "chatgpt"
+    }))
+    .unwrap();
+    assert_eq!(chatgpt.completion_provider, CompletionProvider::Chatgpt);
+
+    let missing: ThreadSettings = serde_json::from_value(serde_json::json!({
+        "repositoryKey": "repo",
+        "selectedModel": "gpt",
+        "reasoningEffort": "high",
+        "fastMode": false
+    }))
+    .unwrap();
+    assert_eq!(missing.completion_provider, CompletionProvider::Spikonado);
 }
