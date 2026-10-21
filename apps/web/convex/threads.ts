@@ -173,7 +173,7 @@ export const retryPendingMergedSettle = internalMutation({
 
 		if (!thread) return null;
 
-		await applyPendingMergedSettle(ctx, thread);
+		await applyPendingMergedSettle(ctx, thread, true);
 
 		return null;
 	}
