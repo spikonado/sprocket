@@ -72,7 +72,7 @@ async function finalizeTextCompletion(
 		attemptSeq: number;
 		streamId: string;
 		text: string;
-		usage?: { contextTokens: number; processedTokens?: number; call?: ModelCallUsage };
+		usage?: { contextTokens: number; call?: ModelCallUsage };
 	}
 ) {
 	await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
@@ -803,7 +803,7 @@ describe('agentRuntime context accounting', () => {
 			attemptSeq: 1,
 			streamId: 'stream-omit',
 			text: 'Visible answer',
-			usage: { contextTokens: 10, processedTokens: 10 }
+			usage: { contextTokens: 10 }
 		});
 
 		expect(completion?.number).toBe(1);
