@@ -245,13 +245,3 @@ it('dismisses a preview menu before collapsing the expanded sidebar', () => {
 	fireEvent.keyDown(window, { key: 'Escape' });
 	expect(onToggleExpanded).toHaveBeenCalledOnce();
 });
-
-it('closes a fullscreen-only panel on Escape', () => {
-	const onClose = vi.fn();
-	render(
-		<SidePanel {...sidePanelProps({ expanded: true, onToggleExpanded: undefined, onClose })} />
-	);
-	expect(screen.queryByRole('button', { name: 'Exit full workspace' })).toBeNull();
-	fireEvent.keyDown(window, { key: 'Escape' });
-	expect(onClose).toHaveBeenCalledOnce();
-});

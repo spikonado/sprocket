@@ -192,7 +192,7 @@ export default function SidePanel(props: Props) {
 	}
 
 	useEffect(() => {
-		if (!expanded) return;
+		if (!expanded || !onToggleExpanded) return;
 
 		const onKeyDown = (event: globalThis.KeyboardEvent) => {
 			if (event.key !== 'Escape') return;
@@ -207,13 +207,13 @@ export default function SidePanel(props: Props) {
 			}
 
 			event.preventDefault();
-			(onToggleExpanded ?? onClose)();
+			onToggleExpanded();
 		};
 
 		window.addEventListener('keydown', onKeyDown);
 
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [expanded, onToggleExpanded, onClose]);
+	}, [expanded, onToggleExpanded]);
 
 	return (
 		<aside
