@@ -479,11 +479,11 @@ describe('agentRuntime context accounting', () => {
 		});
 		const usage = await readThreadUsage(t, threadId);
 		expect(usage.contextTokens).toBeUndefined();
-		expect(usage.calls.map((call) => [call.kind, call.provider])).toEqual([
-			['turn', 'spikonado'],
-			['handoff', 'spikonado'],
-			['handoff', 'chatgpt'],
-			['handoff', 'spikonado']
+		expect(usage.calls.map((call) => [call.eventId, call.provider])).toEqual([
+			['turn:claim-handoff:1', 'spikonado'],
+			['handoff:claim-handoff:2:0', 'spikonado'],
+			['handoff:claim-handoff:2:1', 'chatgpt'],
+			['handoff:claim-handoff:2:2', 'spikonado']
 		]);
 		expect(usage.totals.map((total) => [total.provider, total.cacheWriteTtl, total.calls])).toEqual(
 			[

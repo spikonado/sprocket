@@ -30,20 +30,34 @@ export const vTokenCounts = v.object({
 
 export type TokenCounts = Infer<typeof vTokenCounts>;
 
-/**
- * One completion call as the agent saw it. `longContext` means the call crossed the model's direct-API long-context price threshold.
- * `cacheWriteTtl` is the cache lifetime the catalog said writes use, or null when it didn't say; it keys the write price.
- */
-export const vModelCallUsage = v.object({
+/** The fields that pick a call's totals row. `cacheWriteTtl` is null when the catalog didn't say; it keys the write price. */
+const usageKeyFields = {
 	provider: vCompletionProvider,
 	model: v.string(),
 	serviceTier: vServiceTier,
-	cacheWriteTtl: v.union(v.string(), v.null()),
+	cacheWriteTtl: v.union(v.string(), v.null())
+};
+
+/**
+ * One completion call as the agent saw it. `longContext` means the call crossed the model's direct-API long-context price threshold.
+ */
+export const vModelCallUsage = v.object({
+	...usageKeyFields,
 	longContext: v.boolean(),
 	...vTokenCounts.fields
 });
 
 export type ModelCallUsage = Infer<typeof vModelCallUsage>;
+
+/** Totals for one usage key, with long-context calls kept apart for pricing. */
+export const vTokenUsageTotals = v.object({
+	...usageKeyFields,
+	calls: v.number(),
+	standard: vTokenCounts,
+	longContext: vTokenCounts
+});
+
+export type TokenUsageTotals = Infer<typeof vTokenUsageTotals>;
 
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();

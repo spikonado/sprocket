@@ -482,7 +482,6 @@ export const saveContextHandoff = mutation({
 			await recordModelCallUsage(ctx, thread, {
 				runId: run._id,
 				eventId: `handoff:${args.claimId}:${args.completionAttemptSeq}:${index}`,
-				kind: 'handoff',
 				call
 			});
 		}
@@ -776,7 +775,6 @@ export const finalizeCompletionCall = mutation({
 				await recordModelCallUsage(ctx, thread, {
 					runId: run._id,
 					eventId: `turn:${args.claimId}:${args.attemptSeq}`,
-					kind: 'turn',
 					call: args.usage.call
 				});
 			}

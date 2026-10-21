@@ -26,8 +26,7 @@ import {
 	vModelCallUsage,
 	vReasoningEffort,
 	vRunStatus,
-	vServiceTier,
-	vTokenCounts,
+	vTokenUsageTotals,
 	vBillingInterval,
 	vSubscriptionStatus,
 	vTranscriptCompletionBody,
@@ -38,16 +37,6 @@ import {
 
 // Cleared by `migrations.removeCreatedAt`; `_creationTime` replaces it.
 const legacyCreatedAt = v.optional(v.number());
-
-const tokenUsageTotals = {
-	provider: vCompletionProvider,
-	model: v.string(),
-	serviceTier: vServiceTier,
-	cacheWriteTtl: v.union(v.string(), v.null()),
-	calls: v.number(),
-	standard: vTokenCounts,
-	longContext: vTokenCounts
-};
 
 export default defineSchema({
 	users: defineTable({
@@ -389,23 +378,21 @@ export default defineSchema({
 	}).index('by_threadId', ['threadId']),
 	modelCallUsage: defineTable({
 		userId: v.string(),
-		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
 		eventId: v.string(),
-		kind: v.union(v.literal('turn'), v.literal('handoff')),
 		...vModelCallUsage.fields
 	}).index('by_runId_eventId', ['runId', 'eventId']),
 	threadTokenUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		...tokenUsageTotals
+		...vTokenUsageTotals.fields
 	}).index('by_threadId_model', ['threadId', 'provider', 'model', 'serviceTier', 'cacheWriteTtl']),
 	// UTC buckets; weeks and months are summed from `day` rows.
 	userTokenUsage: defineTable({
 		userId: v.string(),
 		granularity: v.union(v.literal('hour'), v.literal('day')),
 		bucketStart: v.number(),
-		...tokenUsageTotals
+		...vTokenUsageTotals.fields
 	}).index('by_userId_bucket', [
 		'userId',
 		'granularity',

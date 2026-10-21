@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import type { ModelCallUsage, TokenCounts } from '@convex/lib/validators';
+import type { ModelCallUsage, TokenCounts, TokenUsageTotals } from '@convex/lib/validators';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -14,9 +14,8 @@ const emptyCounts: TokenCounts = {
 	reasoningTokens: 0
 };
 
-type UsageTotals = Pick<Doc<'threadTokenUsage'>, 'calls' | 'standard' | 'longContext'>;
+type UsageTotals = Pick<TokenUsageTotals, 'calls' | 'standard' | 'longContext'>;
 
-/** The fields that pick a call's totals row. */
 function totalsKey(call: ModelCallUsage) {
 	return {
 		provider: call.provider,
@@ -26,23 +25,19 @@ function totalsKey(call: ModelCallUsage) {
 	};
 }
 
-function callCounts(call: ModelCallUsage): TokenCounts {
-	const counts = {
-		inputTokens: call.inputTokens,
-		cacheReadTokens: call.cacheReadTokens,
-		cacheWriteTokens: call.cacheWriteTokens,
-		outputTokens: call.outputTokens,
-		reasoningTokens: call.reasoningTokens
-	};
-
+function assertValidCounts(call: ModelCallUsage): void {
 	const valid =
-		Object.values(counts).every((count) => Number.isSafeInteger(count) && count >= 0) &&
-		counts.cacheReadTokens + counts.cacheWriteTokens <= counts.inputTokens &&
-		counts.reasoningTokens <= counts.outputTokens;
+		[
+			call.inputTokens,
+			call.cacheReadTokens,
+			call.cacheWriteTokens,
+			call.outputTokens,
+			call.reasoningTokens
+		].every((count) => Number.isSafeInteger(count) && count >= 0) &&
+		call.cacheReadTokens + call.cacheWriteTokens <= call.inputTokens &&
+		call.reasoningTokens <= call.outputTokens;
 
 	if (!valid) throw new Error('Invalid token count.');
-
-	return counts;
 }
 
 function addCounts(total: TokenCounts, call: TokenCounts): TokenCounts {
@@ -55,26 +50,21 @@ function addCounts(total: TokenCounts, call: TokenCounts): TokenCounts {
 	};
 }
 
-function addCall(
-	totals: UsageTotals | null,
-	call: ModelCallUsage,
-	counts: TokenCounts
-): UsageTotals {
+function addCall(totals: UsageTotals | null, call: ModelCallUsage): UsageTotals {
 	const standard = totals?.standard ?? emptyCounts;
 	const longContext = totals?.longContext ?? emptyCounts;
 
 	return {
 		calls: (totals?.calls ?? 0) + 1,
-		standard: call.longContext ? standard : addCounts(standard, counts),
-		longContext: call.longContext ? addCounts(longContext, counts) : longContext
+		standard: call.longContext ? standard : addCounts(standard, call),
+		longContext: call.longContext ? addCounts(longContext, call) : longContext
 	};
 }
 
 async function addToThreadTotals(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>,
-	call: ModelCallUsage,
-	counts: TokenCounts
+	call: ModelCallUsage
 ) {
 	const existing = await ctx.db
 		.query('threadTokenUsage')
@@ -88,7 +78,7 @@ async function addToThreadTotals(
 		)
 		.unique();
 
-	const totals = addCall(existing, call, counts);
+	const totals = addCall(existing, call);
 
 	if (existing) {
 		await ctx.db.patch('threadTokenUsage', existing._id, totals);
@@ -107,8 +97,7 @@ async function addToUserBucket(
 	userId: string,
 	granularity: 'hour' | 'day',
 	now: number,
-	call: ModelCallUsage,
-	counts: TokenCounts
+	call: ModelCallUsage
 ) {
 	const size = granularity === 'hour' ? HOUR_MS : DAY_MS;
 	const bucketStart = now - (now % size);
@@ -127,7 +116,7 @@ async function addToUserBucket(
 		)
 		.unique();
 
-	const totals = addCall(existing, call, counts);
+	const totals = addCall(existing, call);
 
 	if (existing) {
 		await ctx.db.patch('userTokenUsage', existing._id, totals);
@@ -149,11 +138,10 @@ export async function recordModelCallUsage(
 	args: {
 		runId: Id<'runs'>;
 		eventId: string;
-		kind: Doc<'modelCallUsage'>['kind'];
 		call: ModelCallUsage;
 	}
 ): Promise<void> {
-	const counts = callCounts(args.call);
+	assertValidCounts(args.call);
 
 	const existing = await ctx.db
 		.query('modelCallUsage')
@@ -166,15 +154,13 @@ export async function recordModelCallUsage(
 
 	await ctx.db.insert('modelCallUsage', {
 		userId: thread.userId,
-		threadId: thread._id,
 		runId: args.runId,
 		eventId: args.eventId,
-		kind: args.kind,
 		...args.call
 	});
 
 	const now = Date.now();
-	await addToThreadTotals(ctx, thread, args.call, counts);
-	await addToUserBucket(ctx, thread.userId, 'hour', now, args.call, counts);
-	await addToUserBucket(ctx, thread.userId, 'day', now, args.call, counts);
+	await addToThreadTotals(ctx, thread, args.call);
+	await addToUserBucket(ctx, thread.userId, 'hour', now, args.call);
+	await addToUserBucket(ctx, thread.userId, 'day', now, args.call);
 }
