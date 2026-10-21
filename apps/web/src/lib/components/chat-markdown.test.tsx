@@ -364,6 +364,18 @@ describe('images', () => {
 		expect(resent!.getAttribute('src')).not.toBe(firstUrl);
 	});
 
+	it('sends credentials with images from a separate machine API', () => {
+		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
+
+		const { getByRole } = render(
+			<ChatMarkdown content="![Board](board.png)" imageScope={{ workspacePath: '/workspace' }} />
+		);
+
+		expect(getByRole('button', { name: 'View Board' }).getAttribute('crossorigin')).toBe(
+			'use-credentials'
+		);
+	});
+
 	it('renders Windows absolute image paths through sanitization', () => {
 		const { getByRole } = render(
 			<ChatMarkdown
