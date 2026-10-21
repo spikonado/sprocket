@@ -43,11 +43,11 @@ import type {
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
-	userId?: string;
 	messages: TranscriptMessage[];
 	actions: ExecutorJob[];
 	activeRunId: TranscriptMessage['runId'] | null;
 	project: Project | null;
+	cwd?: string;
 	emptyStateMessage?: string;
 	loadingOlder?: boolean;
 	nextBefore?: number;
@@ -76,11 +76,11 @@ type ScrollAnchor = {
 };
 
 export default function ThreadTranscript({
-	userId,
 	messages,
 	actions,
 	activeRunId,
 	project,
+	cwd,
 	emptyStateMessage = project
 		? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 		: 'Add a project to begin.',
@@ -522,10 +522,7 @@ export default function ThreadTranscript({
 	}
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
-		const imageScope = {
-			workspacePath: project?.workspacePath,
-			transcript: userId ? { userId, threadId: message.threadId } : undefined
-		};
+		const imageScope = { workspacePath: cwd ?? project?.workspacePath };
 
 		if (message.kind === 'prompt') {
 			return (

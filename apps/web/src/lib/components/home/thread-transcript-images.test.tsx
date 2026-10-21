@@ -5,15 +5,14 @@ import type { TranscriptDisplayRow, TranscriptMessage } from '$lib/types/sprocke
 import ThreadTranscript from './thread-transcript';
 
 it.each(['persisted', 'live-fallback', 'live-section'])(
-	'resolves %s model images within their message thread with or without a project',
+	"resolves %s model images against the thread's cwd, falling back to the project",
 	(kind) => {
 		// SAFETY: Fixture IDs never leave the mounted component.
 		const threadId = 'image-thread' as Id<'threadRecords'>;
 		// SAFETY: Fixture IDs never leave the mounted component.
 		const runId = 'image-run' as Id<'runs'>;
 
-		const text =
-			'![Model screenshot](parse_file/screenshot.png)\n\n[Rendering screenshot](parse_file/screenshot.png)';
+		const text = '![Model screenshot](shots/a.png)';
 
 		const message: TranscriptMessage =
 			kind === 'persisted'
@@ -38,7 +37,6 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 					};
 
 		const props = {
-			userId: 'image-user',
 			currentError: null,
 			runError: null,
 			messages: [message],
@@ -46,12 +44,8 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 			activeRunId: null
 		};
 
-		const { getByRole, queryByRole, rerender } = render(
-			<ThreadTranscript
-				{...props}
-				project={{ repositoryKey: 'repo', displayName: 'Repo', workspacePath: '/workspace' }}
-			/>
-		);
+		const project = { repositoryKey: 'repo', displayName: 'Repo', workspacePath: '/workspace' };
+		const { getByRole, rerender } = render(<ThreadTranscript {...props} project={project} />);
 
 		const imageUrl = () =>
 			new URL(
@@ -59,20 +53,10 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 				window.location.href
 			);
 
-		expect(imageUrl().searchParams.get('userId')).toBe('image-user');
-		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
 		expect(imageUrl().searchParams.get('workspacePath')).toBe('/workspace');
-		expect(imageUrl().searchParams.get('path')).toBe('parse_file/screenshot.png');
-		expect(getByRole('button', { name: 'View Rendering screenshot' }).getAttribute('src')).toBe(
-			getByRole('button', { name: 'View Model screenshot' }).getAttribute('src')
-		);
-		expect(queryByRole('link')).toBeNull();
-		rerender(<ThreadTranscript {...props} project={null} />);
-		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
-		expect(imageUrl().searchParams.get('workspacePath')).toBeNull();
-		expect(getByRole('button', { name: 'View Rendering screenshot' }).getAttribute('src')).toBe(
-			getByRole('button', { name: 'View Model screenshot' }).getAttribute('src')
-		);
+		expect(imageUrl().searchParams.get('path')).toBe('shots/a.png');
+		rerender(<ThreadTranscript {...props} project={project} cwd="/workspace/.worktrees/a" />);
+		expect(imageUrl().searchParams.get('workspacePath')).toBe('/workspace/.worktrees/a');
 	}
 );
 

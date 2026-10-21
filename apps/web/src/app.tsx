@@ -56,6 +56,7 @@ import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
 import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
+import { useExistingThreadCwd } from '$lib/home/thread-cwd';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
@@ -949,7 +950,12 @@ export default function App({
 		};
 	}, [currentProjectPath, localApi]);
 
-	const threadCwd = currentActiveThread?.cwd;
+	const threadCwd = useExistingThreadCwd(
+		localApi,
+		currentActiveThread?.cwd,
+		currentActiveThread?.status
+	);
+
 	const projectWorkspacePath = currentProject?.workspacePath;
 
 	const markdownFileLinks = useMemo<MarkdownFileLinks | null>(() => {
@@ -2824,11 +2830,11 @@ export default function App({
 							{currentThreadId && (
 								<ThreadTranscript
 									key={`${currentThreadId}:${transcript.windowVersion}`}
-									userId={signedInUserId ?? undefined}
 									messages={visibleMessages}
 									actions={visibleActions}
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 									project={currentProject}
+									cwd={threadCwd}
 									artifacts={artifactPanel.artifacts}
 									onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
 									loadingOlder={transcript.loadingOlder}
@@ -2971,7 +2977,7 @@ export default function App({
 						)}
 						<SidePanel
 							workspacePath={localApi ? currentProject?.workspacePath : undefined}
-							threadCwd={currentActiveThread?.cwd}
+							threadCwd={threadCwd}
 							artifacts={artifactPanel.artifacts}
 							onDeleteArtifact={deleteArtifact}
 							tabs={artifactPanel.panel.tabs}

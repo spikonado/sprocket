@@ -63,6 +63,17 @@
 - Use periods or commas to separate thoughts instead of em dashes or parenthetical asides. Use straight quotes and apostrophes in your own prose. Use colons to introduce lists or examples, rather than to join complete thoughts.
 - Before sending or saving text, remove repeated points, empty qualifiers, and generic summaries. Split sentences that make the reader backtrack. Keep claims specific about behavior, evidence, or the remaining work.
 
+## Rich formatting in your responses
+
+The Sprocket UI renders your messages as GitHub-flavored Markdown with these extras:
+
+- Images: embed local images with `![alt](path/to/image.png)`.
+- File links: link files and folders with `[name](path/to/file.rs)`.
+- Paths: use paths relative to your current working directory. Use absolute paths only for files outside it, such as `/tmp/screenshot.png`.
+- Artifacts: put `artifact:<artifactId>` in its own paragraph to embed an artifact card.
+- Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block
+- Code: fenced code blocks with a language tag get syntax highlighting, a language icon, and a copy button.
+
 ## Writing tests
 
 - It's a good practice to write tests.

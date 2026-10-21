@@ -2,19 +2,16 @@
 mod tests;
 
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use axum::Json;
 use axum::body::Body;
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, header};
+use axum::extract::Query;
+use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
-use crate::AppState;
-use crate::auth::require_session_user;
 use crate::routes::api_error::ApiError;
 use crate::routes::session::MachineSession;
 
@@ -26,45 +23,26 @@ static LOCAL_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const
 pub(super) struct LocalImageRequest {
     workspace_path: Option<PathBuf>,
     path: String,
-    user_id: Option<String>,
-    thread_id: Option<String>,
     #[serde(default)]
     revision_only: bool,
 }
 
 pub(super) async fn local_image(
-    State(state): State<AppState>,
     MachineSession: MachineSession,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Query(payload): Query<LocalImageRequest>,
+    Query(LocalImageRequest {
+        workspace_path,
+        path,
+        revision_only,
+    }): Query<LocalImageRequest>,
 ) -> Result<Response, ApiError> {
-    let root = match (&payload.user_id, &payload.thread_id) {
-        (None, None) => LocalImageRoot::Workspace(payload.workspace_path),
-        (Some(user_id), Some(thread_id)) => {
-            require_session_user(&state.auth, &headers, &jar, user_id)
-                .await
-                .map_err(ApiError::unauthorized)?;
-            validate_thread_image_path(thread_id, &payload.path).map_err(ApiError::bad_request)?;
-            LocalImageRoot::Thread(
-                state.host.transcript.thread_dir(user_id, thread_id),
-                payload.workspace_path,
-            )
-        }
-        _ => {
-            return Err(ApiError::bad_request(anyhow::anyhow!(
-                "local image scope requires both userId and threadId"
-            )));
-        }
-    };
     let permit = LOCAL_IMAGE_READS
         .acquire()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
-    if payload.revision_only {
+    if revision_only {
         let revision = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let (_, metadata) = open_local_image(root, payload.path).ok()?;
+            let (_, metadata) = open_local_image(workspace_path, path).ok()?;
             let modified = metadata.modified().ok()?;
             let nanos = modified
                 .duration_since(std::time::UNIX_EPOCH)
@@ -78,7 +56,7 @@ pub(super) async fn local_image(
     }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        read_local_image(root, payload.path)
+        read_local_image(workspace_path, path)
     })
     .await
     .map_err(|error| ApiError::internal(error.into()))?
@@ -113,42 +91,11 @@ struct LocalImage {
     media_type: &'static str,
 }
 
-enum LocalImageRoot {
-    Workspace(Option<PathBuf>),
-    Thread(PathBuf, Option<PathBuf>),
-}
-
-fn validate_thread_image_path(thread_id: &str, image_path: &str) -> anyhow::Result<()> {
-    if thread_id.is_empty()
-        || thread_id.eq_ignore_ascii_case("blobs")
-        || thread_id.eq_ignore_ascii_case("pending-attachments")
-        || !thread_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
-        anyhow::bail!("invalid transcript thread ID");
-    }
-
-    let mut components = Path::new(image_path).components();
-    let is_tool_cache = matches!(
-        components.next(),
-        Some(Component::Normal(name))
-            if matches!(name.to_str(), Some("parse_file" | "screenshot_url" | "scrape_url"))
-    );
-    if !is_tool_cache
-        || !matches!(components.next(), Some(Component::Normal(_)))
-        || !components.all(|component| matches!(component, Component::Normal(_)))
-        || image_path
-            .split(['/', '\\'])
-            .any(|part| matches!(part, "." | ".."))
-    {
-        anyhow::bail!("thread image paths must be relative tool-cache paths without traversal");
-    }
-    Ok(())
-}
-
-fn read_local_image(root: LocalImageRoot, image_path: String) -> anyhow::Result<LocalImage> {
-    let (file, metadata) = open_local_image(root, image_path)?;
+fn read_local_image(
+    workspace_path: Option<PathBuf>,
+    image_path: String,
+) -> anyhow::Result<LocalImage> {
+    let (file, metadata) = open_local_image(workspace_path, image_path)?;
     let mut contents = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_LOCAL_IMAGE_BYTES + 1)
         .read_to_end(&mut contents)
@@ -166,45 +113,16 @@ fn read_local_image(root: LocalImageRoot, image_path: String) -> anyhow::Result<
 }
 
 fn open_local_image(
-    root: LocalImageRoot,
+    workspace_path: Option<PathBuf>,
     image_path: String,
 ) -> anyhow::Result<(std::fs::File, std::fs::Metadata)> {
     let image_path = Path::new(&image_path);
-    let image_path = match root {
-        LocalImageRoot::Workspace(workspace_path) => {
-            if image_path.is_absolute() {
-                image_path.to_path_buf()
-            } else {
-                workspace_path
-                    .context("relative image paths require a workspace directory")?
-                    .join(image_path)
-            }
-        }
-        LocalImageRoot::Thread(thread_dir, workspace_path) => {
-            if let Some(workspace_path) = workspace_path {
-                match workspace_path.join(image_path).canonicalize() {
-                    Ok(path) => {
-                        return open_local_image(
-                            LocalImageRoot::Workspace(None),
-                            path.to_string_lossy().into_owned(),
-                        );
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error).context("failed to resolve workspace image"),
-                }
-            }
-            let resolved_image = thread_dir
-                .join(image_path)
-                .canonicalize()
-                .context("failed to resolve thread image")?;
-            let thread_dir = thread_dir
-                .canonicalize()
-                .context("failed to resolve transcript directory")?;
-            if !resolved_image.starts_with(&thread_dir) {
-                anyhow::bail!("thread image must remain inside its transcript directory");
-            }
-            resolved_image
-        }
+    let image_path = if image_path.is_absolute() {
+        image_path.to_path_buf()
+    } else {
+        workspace_path
+            .context("relative image paths require a workspace directory")?
+            .join(image_path)
     };
     if !image_path.is_absolute() {
         anyhow::bail!("image path must resolve to an absolute path");

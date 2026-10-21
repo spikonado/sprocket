@@ -87,7 +87,7 @@ Proof goes in `OUT=/tmp/verify-sprocket/$(date +%Y%m%d-%H%M%S)-<feature>`, one p
 - Every mutation gets a second view besides the screen: files in the scratch repo, `~/.sprocket-dev-verify/project-attachments.json`, network requests, the launch log, or the page after a reload.
 - Drive only the user path. Use UI actions, never internal setters, test-only routes, or Convex functions called from the CLI.
 - Open each screenshot with `parse_file` before describing it.
-- Share images as WebP, since PNGs are about 1 MB: `nix shell nixpkgs#libwebp -c cwebp -quiet -q 70 -resize 1400 0 in.png -o out.webp`. The box has no ImageMagick, PIL or ffmpeg. Embed them in one HTML artifact with a stable filename, because the artifact title follows the filename.
+- Share images as WebP, since PNGs are about 1 MB: `nix shell nixpkgs#libwebp -c cwebp -quiet -q 70 -resize 1400 0 in.png -o out.webp`. The box has no ImageMagick, PIL or ffmpeg.
 - A user who wants to try it gets `$APP` and signs in there with their own device code.
 
 ## Cleanup

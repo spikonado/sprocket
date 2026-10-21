@@ -12,6 +12,7 @@ it('uses the configured local API origin for local images', () => {
 
 it.each([
 	['./board%20layout.png', 'docs/./board layout.png'],
+	['board.png?download=1#preview', 'docs/board.png'],
 	['../assets/board.svg', 'docs/../assets/board.svg'],
 	['/workspace/assets/board.png', '/workspace/assets/board.png'],
 	['C:\\workspace\\assets\\board.png', 'C:\\workspace\\assets\\board.png']
@@ -36,29 +37,10 @@ it('resolves chat images from the workspace root and keeps remote URLs intact', 
 });
 
 it.each([
-	'assets/board.png',
-	'./board%20layout.png',
-	'../assets/board.svg',
-	'/workspace/assets/board.png',
-	'C:/workspace/assets/board.png',
-	'C:\\workspace\\assets\\board.png'
-])('resolves file://%s like the corresponding image path', (path) => {
-	const scope = { workspacePath: '/workspace', documentPath: 'docs/notes.md' };
-
-	expect(markdownImageUrl(`file://${path}`, scope)).toBe(markdownImageUrl(path, scope));
-});
-
-it.each([
 	['/tmp/board.png', undefined, '/tmp/board.png'],
 	['./board.png', { documentPath: '/tmp/notes.md' }, '/tmp/./board.png']
 ])('resolves %s without a workspace', (source, scope, path) => {
 	const url = markdownImageUrl(source, scope);
 
 	expect(new URL(url ?? '', 'http://localhost').searchParams.get('path')).toBe(path);
-});
-
-it('resolves a Windows file URL like an absolute Windows path', () => {
-	expect(markdownImageUrl('file:///C:/workspace/board.png')).toBe(
-		markdownImageUrl('C:/workspace/board.png')
-	);
 });

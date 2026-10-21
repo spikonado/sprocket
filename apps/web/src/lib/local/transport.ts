@@ -61,9 +61,19 @@ async function failedResponseError(response: Response, baseUrl: string): Promise
 		return new Error('Local API returned an unexpected response.');
 	}
 
-	return new Error(
-		parsed.data.error ? parsed.data.error : `Local request failed (${response.status}).`
+	return new LocalResponseError(
+		parsed.data.error ? parsed.data.error : `Local request failed (${response.status}).`,
+		response.status
 	);
+}
+
+export class LocalResponseError extends Error {
+	constructor(
+		message: string,
+		readonly status: number
+	) {
+		super(message);
+	}
 }
 
 async function requireSuccessfulResponse(response: Response, baseUrl: string): Promise<Response> {
