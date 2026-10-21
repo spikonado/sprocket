@@ -4,7 +4,8 @@ import type { UsagePolicy } from '@convex/lib/models';
 export type DirectApiPricing = {
 	input: number;
 	cacheRead: number;
-	cacheWrite: number;
+	/** Keyed by cache lifetime, matching each usage row's `cacheWriteTtl`. */
+	cacheWrite: Readonly<Record<string, number>>;
 	output: number;
 	fastMultiplier: number;
 	longContext: { inputMultiplier: number; outputMultiplier: number } | null;

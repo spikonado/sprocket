@@ -65,12 +65,10 @@ export function sumModelCalls(calls: readonly ModelCallUsage[]): TokenUsageTotal
 	const totals = new Map<string, TokenUsageTotals>();
 
 	for (const call of calls) {
-		const key = JSON.stringify([call.provider, call.model, call.serviceTier]);
+		const key = JSON.stringify(totalsKey(call));
 
 		totals.set(key, {
-			provider: call.provider,
-			model: call.model,
-			serviceTier: call.serviceTier,
+			...totalsKey(call),
 			...addCall(totals.get(key) ?? null, call, callCounts(call))
 		});
 	}

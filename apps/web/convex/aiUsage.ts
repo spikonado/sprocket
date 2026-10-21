@@ -11,14 +11,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RANGE_MS = { hour: 2 * DAY_MS, day: 400 * DAY_MS } as const;
 
 function totalsOf(rows: readonly Doc<'threadTokenUsage'>[]): TokenUsageTotals[] {
-	return rows.map(({ provider, model, serviceTier, calls, standard, longContext }) => ({
-		provider,
-		model,
-		serviceTier,
-		calls,
-		standard,
-		longContext
-	}));
+	return rows.map(
+		({ provider, model, serviceTier, cacheWriteTtl, calls, standard, longContext }) => ({
+			provider,
+			model,
+			serviceTier,
+			cacheWriteTtl,
+			calls,
+			standard,
+			longContext
+		})
+	);
 }
 
 async function threadTotals(ctx: QueryCtx, threadId: Id<'threadRecords'>) {
@@ -114,11 +117,21 @@ export const getMyUsageBuckets = query({
 			.collect();
 
 		return rows.map(
-			({ bucketStart, provider, model, serviceTier, calls, standard, longContext }) => ({
+			({
 				bucketStart,
 				provider,
 				model,
 				serviceTier,
+				cacheWriteTtl,
+				calls,
+				standard,
+				longContext
+			}) => ({
+				bucketStart,
+				provider,
+				model,
+				serviceTier,
+				cacheWriteTtl,
 				calls,
 				standard,
 				longContext

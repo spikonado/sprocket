@@ -19,7 +19,7 @@ const catalog: ModelCatalog = {
 			directApiPricing: {
 				input: 2,
 				cacheRead: 0.1,
-				cacheWrite: 2.5,
+				cacheWrite: { '30m': 2.5, '12h': 5 },
 				output: 10,
 				fastMultiplier: 2,
 				longContext: { inputMultiplier: 2, outputMultiplier: 1.5 }
@@ -29,34 +29,44 @@ const catalog: ModelCatalog = {
 };
 
 describe('apiCost', () => {
-	it('prices each token type with long-context and fast multipliers', () => {
-		const cost = apiCost(
-			{
-				provider: 'chatgpt',
-				model: 'sol',
-				serviceTier: 'fast',
-				calls: 2,
-				standard: {
-					inputTokens: 1_000_000,
-					cacheReadTokens: 500_000,
-					cacheWriteTokens: 100_000,
-					outputTokens: 100_000,
-					reasoningTokens: 0
+	// Standard 0.8 + 0.05 + writes + 1, long context 4 + 1.5, all doubled for fast.
+	it.each([
+		['30m', 15.2],
+		['12h', 15.7],
+		['5m', null],
+		[null, null]
+	])(
+		'prices %s cache writes at their own rate, with long-context and fast multipliers',
+		(ttl, usd) => {
+			const cost = apiCost(
+				{
+					provider: 'chatgpt',
+					model: 'sol',
+					serviceTier: 'fast',
+					cacheWriteTtl: ttl,
+					calls: 2,
+					standard: {
+						inputTokens: 1_000_000,
+						cacheReadTokens: 500_000,
+						cacheWriteTokens: 100_000,
+						outputTokens: 100_000,
+						reasoningTokens: 0
+					},
+					longContext: {
+						inputTokens: 1_000_000,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						outputTokens: 100_000,
+						reasoningTokens: 0
+					}
 				},
-				longContext: {
-					inputTokens: 1_000_000,
-					cacheReadTokens: 0,
-					cacheWriteTokens: 0,
-					outputTokens: 100_000,
-					reasoningTokens: 0
-				}
-			},
-			catalog
-		);
+				catalog
+			);
 
-		// Standard 0.8 + 0.05 + 0.25 + 1, long context 4 + 1.5, all doubled for fast.
-		expect(cost).toBeCloseTo(15.2);
-	});
+			if (usd === null) expect(cost).toBeNull();
+			else expect(cost).toBeCloseTo(usd);
+		}
+	);
 });
 
 describe('rangeQuery', () => {

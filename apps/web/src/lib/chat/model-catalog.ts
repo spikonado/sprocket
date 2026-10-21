@@ -82,7 +82,7 @@ const multiplier = z.number().positive();
 const directApiPricingSchema = z.object({
 	input: price,
 	cacheRead: price,
-	cacheWrite: price,
+	cacheWrite: z.record(z.string(), price),
 	output: price,
 	fastMultiplier: multiplier,
 	longContext: z.object({ inputMultiplier: multiplier, outputMultiplier: multiplier }).nullable()

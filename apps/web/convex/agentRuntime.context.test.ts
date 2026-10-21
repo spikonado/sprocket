@@ -284,6 +284,7 @@ describe('agentRuntime context accounting', () => {
 			provider: 'spikonado' as const,
 			model: 'gpt-5.6-sol',
 			serviceTier: 'standard' as const,
+			cacheWriteTtl: '30m',
 			calls: 1,
 			standard: callTokens,
 			longContext: emptyTokens

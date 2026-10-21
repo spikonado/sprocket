@@ -56,6 +56,7 @@ export function cacheHitRate(breakdown: TokenBreakdown): number | null {
 function countsCost(
 	counts: TokenCounts,
 	pricing: DirectApiPricing,
+	cacheWritePrice: number,
 	inputMultiplier: number,
 	outputMultiplier: number
 ): number {
@@ -64,23 +65,36 @@ function countsCost(
 	const input =
 		uncached * pricing.input +
 		counts.cacheReadTokens * pricing.cacheRead +
-		counts.cacheWriteTokens * pricing.cacheWrite;
+		counts.cacheWriteTokens * cacheWritePrice;
 
 	return input * inputMultiplier + counts.outputTokens * pricing.output * outputMultiplier;
 }
 
-/** USD at today's direct-API list prices, or null when the catalog has no price for the model. */
+/** USD at today's direct-API list prices, or null when the catalog can't price the model or the row's cache writes. */
 export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined): number | null {
 	const pricing = catalog?.models.find((model) => model.id === row.model)?.directApiPricing;
 
 	if (!pricing) return null;
 
+	const cacheWritePrice =
+		row.cacheWriteTtl === null ? undefined : pricing.cacheWrite[row.cacheWriteTtl];
+
+	const writes = row.standard.cacheWriteTokens + row.longContext.cacheWriteTokens;
+
+	if (cacheWritePrice === undefined && writes > 0) return null;
+
 	const tier = row.serviceTier === 'fast' ? pricing.fastMultiplier : 1;
 	const longContext = pricing.longContext ?? { inputMultiplier: 1, outputMultiplier: 1 };
 
 	const perMillion =
-		countsCost(row.standard, pricing, 1, 1) +
-		countsCost(row.longContext, pricing, longContext.inputMultiplier, longContext.outputMultiplier);
+		countsCost(row.standard, pricing, cacheWritePrice ?? 0, 1, 1) +
+		countsCost(
+			row.longContext,
+			pricing,
+			cacheWritePrice ?? 0,
+			longContext.inputMultiplier,
+			longContext.outputMultiplier
+		);
 
 	return (perMillion * tier) / 1_000_000;
 }
