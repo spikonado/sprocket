@@ -1,5 +1,5 @@
 import { query, type QueryCtx } from '@convex/_generated/server';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
@@ -10,27 +10,25 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const MAX_RANGE_MS = { hour: 2 * DAY_MS, day: 400 * DAY_MS } as const;
 
-function totalsOf(rows: readonly Doc<'threadTokenUsage'>[]): TokenUsageTotals[] {
-	return rows.map(
-		({ provider, model, serviceTier, cacheWriteTtl, calls, standard, longContext }) => ({
-			provider,
-			model,
-			serviceTier,
-			cacheWriteTtl,
-			calls,
-			standard,
-			longContext
-		})
-	);
+function totalsOf({
+	provider,
+	model,
+	serviceTier,
+	cacheWriteTtl,
+	calls,
+	standard,
+	longContext
+}: TokenUsageTotals): TokenUsageTotals {
+	return { provider, model, serviceTier, cacheWriteTtl, calls, standard, longContext };
 }
 
 async function threadTotals(ctx: QueryCtx, threadId: Id<'threadRecords'>) {
-	return totalsOf(
-		await ctx.db
-			.query('threadTokenUsage')
-			.withIndex('by_threadId_model', (q) => q.eq('threadId', threadId))
-			.collect()
-	);
+	const rows = await ctx.db
+		.query('threadTokenUsage')
+		.withIndex('by_threadId_model', (q) => q.eq('threadId', threadId))
+		.collect();
+
+	return rows.map(totalsOf);
 }
 
 /** The thread's own totals, plus every descendant subagent thread's totals. */
@@ -116,26 +114,6 @@ export const getMyUsageBuckets = query({
 			)
 			.collect();
 
-		return rows.map(
-			({
-				bucketStart,
-				provider,
-				model,
-				serviceTier,
-				cacheWriteTtl,
-				calls,
-				standard,
-				longContext
-			}) => ({
-				bucketStart,
-				provider,
-				model,
-				serviceTier,
-				cacheWriteTtl,
-				calls,
-				standard,
-				longContext
-			})
-		);
+		return rows.map((row) => ({ bucketStart: row.bucketStart, ...totalsOf(row) }));
 	}
 });

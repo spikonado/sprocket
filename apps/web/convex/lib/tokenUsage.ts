@@ -69,7 +69,7 @@ export function sumModelCalls(calls: readonly ModelCallUsage[]): TokenUsageTotal
 
 		totals.set(key, {
 			...totalsKey(call),
-			...addCall(totals.get(key) ?? null, call, callCounts(call))
+			...addCall(totals.get(key) ?? null, call)
 		});
 	}
 
