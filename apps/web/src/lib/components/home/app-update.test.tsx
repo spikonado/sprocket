@@ -56,7 +56,7 @@ it('installs a package update on the first click and prevents another request wh
 		.mockReturnValueOnce(installation.promise);
 
 	vi.stubGlobal('fetch', fetcher);
-	mount();
+	mount(false);
 
 	const button = await screen.findByRole('button', { name: 'Update available' });
 
@@ -75,6 +75,31 @@ it('installs a package update on the first click and prevents another request wh
 		'disabled',
 		false
 	);
+});
+
+it('restarts once the update installs when automatic continuation is on', async () => {
+	vi.useFakeTimers({ shouldAdvanceTime: true });
+	const restarted = Promise.withResolvers<Response>();
+
+	const fetcher = vi
+		.fn()
+		.mockResolvedValueOnce(Response.json(available))
+		.mockResolvedValueOnce(Response.json({ ...available, status: 'installing' }))
+		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
+		.mockReturnValueOnce(restarted.promise);
+
+	vi.stubGlobal('fetch', fetcher);
+	mount(true);
+	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
+	await act(() => vi.advanceTimersByTimeAsync(5_000));
+	expect(fetcher).toHaveBeenNthCalledWith(
+		4,
+		expect.stringContaining('/api/update/restart'),
+		expect.objectContaining({ method: 'POST' })
+	);
+	expect(screen.queryByRole('dialog')).toBeNull();
+	await act(async () => restarted.reject(new Error('Restart failed')));
+	expect(fetcher).toHaveBeenCalledTimes(4);
 });
 
 it.each([undefined, true])(
@@ -116,7 +141,7 @@ it('drops an install error once a later check shows the update installed', async
 		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }));
 
 	vi.stubGlobal('fetch', fetcher);
-	mount();
+	mount(false);
 	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
 	expect(await screen.findByText('Connection lost')).toBeTruthy();
 
