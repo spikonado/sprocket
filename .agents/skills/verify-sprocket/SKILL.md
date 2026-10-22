@@ -75,7 +75,7 @@ agent-browser snapshot -i
 
 - `snapshot -i` gives refs. Plain `snapshot` also shows alerts, banners and errors.
 - Take refs with `$V/ref.sh`, for example `agent-browser click $($V/ref.sh 'button "Files"')`. Dialogs show in plain `snapshot` only, while `snapshot -i` lists their controls.
-- `click` has no right button. For a context menu, read the target's center from `agent-browser get box @eN`, then run `mouse move <x> <y>`, `mouse down right` and `mouse up right`. This also reaches rows inside shadow roots, such as the Files tree.
+- `click` has no right button. For a context menu, read the target's center from `agent-browser get box @eN`, round that center to integers, then run `mouse move <x> <y>`, `mouse down right` and `mouse up right`. Floats fail with "Missing arguments". This also reaches rows inside shadow roots, such as the Files tree.
 - A hot reload resets UI state such as the open side panel. Re-open it and re-take refs after each source edit.
 - API checks go through the signed-in page: `fetch` in `agent-browser eval --stdin`, or `agent-browser network requests --filter /api/`. Plain `curl` to `/api/*` gets 403 or 401.
 

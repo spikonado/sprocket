@@ -36,3 +36,4 @@ Precondition: the side panel shows `tab "Files" [selected]`, as in [side-panel.m
 
 - An edited tab's accessible name gains ` Unsaved changes`. Match on `tab "README.md` without the closing quote while it is dirty.
 - Clicking the row of a file that already has a tab selects that tab instead of the Files tab. Click `tab "Files"` before the next tree action.
+- `agent-browser get box` prints float `x`/`y`/`width`/`height`. Round the center to integers before `mouse move`; floats fail with "Missing arguments".

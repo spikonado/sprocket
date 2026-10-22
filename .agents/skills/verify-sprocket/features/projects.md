@@ -7,12 +7,14 @@ A project is a local directory attached to this machine's server profile. New th
 - `project-add-empty` adds the first project from the empty state.
 - `project-add-menu` adds another project from the heading's project menu.
 - `project-switch` picks a different project for the next thread.
+- `project-inbox-filter` filters the inbox to one project or all of them.
 
 ## How to get to it (user POV)
 
 - With no projects, choose `Add project` under "What should we work on?".
 - With projects, open the heading's `Select project. Current project: <name>` button and choose `menuitem "Add project"`.
 - In the sidebar, choose `button "Create or add project"`.
+- In the sidebar, open `All projects` and pick one project, or `All projects` again.
 
 ## Driving it with agent-browser
 
@@ -29,6 +31,7 @@ Preconditions:
 - **Side effect.** `python3 -m json.tool ~/.sprocket-dev-verify/project-attachments.json` has an entry with `"workspacePath": "/tmp/verify-sprocket-projects"` and `"displayName": "verify-sprocket-projects"`.
 - **Switch.** Open the heading menu and choose `menuitemradio "verify-sprocket-scratch"`. The heading names `verify-sprocket-scratch` again.
 - **Sidebar.** Click `button "Create or add project"`. `dialog "Add project"` opens. `agent-browser press Escape` closes it.
+- **Inbox filter.** Unsettled already lists threads from more than one project. The closed control is `DisclosureTriangle "All projects"` in plain `snapshot` and is omitted from `snapshot -i`. Open it with `agent-browser find text "All projects" click`. Then `snapshot -i` shows `textbox "Search projects"`, `button "All projects"`, and one button per project. Click `button "verify-sprocket-scratch"`. The menu closes, the disclosure heading becomes `verify-sprocket-scratch`, and `region "Unsettled"` keeps that project's rows while a sprocket row such as `Project Exploration Overview` is gone. Reopen with `agent-browser find text "verify-sprocket-scratch" click`, take fresh refs, then click `button "All projects"`. The sprocket row returns.
 
 ## Gotchas
 
