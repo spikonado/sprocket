@@ -107,6 +107,12 @@ fn question_results_return_status_and_answer_with_ids_only_on_creation() {
     }
 }
 
+#[test]
+fn cancelled_questions_fail_the_poll_as_an_ordinary_tool_error() {
+    let error = question_result_from_snapshot(&snapshot("q1", "cancelled")).unwrap_err();
+    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Other);
+}
+
 #[tokio::test(start_paused = true)]
 async fn pending_zero_polls_are_atomic_per_question_and_rejections_do_not_reset_them() {
     let polls = QuestionPolls::default();
