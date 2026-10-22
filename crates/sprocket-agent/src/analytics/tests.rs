@@ -2,7 +2,9 @@ use rig::agent::CompletionCallEvent;
 use rig::completion::{Message, Usage};
 use serde_json::json;
 
-use super::{GenerationCall, MAX_CONTENT_BYTES, bounded, generation_properties, input_delta};
+use super::{
+    GenerationCall, MAX_CONTENT_BYTES, analytics_id, bounded, generation_properties, input_delta,
+};
 use crate::types::CompletionProvider;
 
 #[test]
@@ -63,4 +65,12 @@ fn generation_properties_describe_the_call() {
     assert_eq!(properties["$ai_span_name"], "context_handoff");
     assert!(!properties.contains_key("$ai_cache_read_input_tokens"));
     assert!(!properties.contains_key("$ai_input"));
+}
+
+#[test]
+fn analytics_id_matches_convex() {
+    assert_eq!(
+        analytics_id("thread-1"),
+        "4b0a5fefc328e6b9257bc535e3c5d26fec36b52f92e277618bf5b30fc3885e58"
+    );
 }

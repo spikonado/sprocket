@@ -113,4 +113,11 @@ crons.interval(
 	{}
 );
 
+crons.daily(
+	'send daily usage to PostHog',
+	{ hourUTC: 0, minuteUTC: 15 },
+	internal.analytics.sendDailyUsage,
+	{}
+);
+
 export default crons;

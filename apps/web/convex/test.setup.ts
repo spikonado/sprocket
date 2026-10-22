@@ -6,6 +6,7 @@ import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
+import posthogTest from '@posthog/convex/test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -79,6 +80,7 @@ export function initConvexTest(): ConvexTestInstance {
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
 	workpoolTest.register(backend, 'billingWebhookWorkpool');
 	workpoolTest.register(backend, 'billingReconciliationWorkpool');
+	posthogTest.register(backend);
 
 	return t;
 }

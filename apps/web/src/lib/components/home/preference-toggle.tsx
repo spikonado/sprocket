@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { cn } from '$lib/utils';
 
 export function SwitchTrack({ enabled }: { enabled: boolean }) {
@@ -28,7 +28,7 @@ export default function PreferenceToggle({
 	save
 }: {
 	title: string;
-	description?: string;
+	description?: ReactNode;
 	savedEnabled: boolean;
 	disabled: boolean;
 	save: (args: { enabled: boolean }) => Promise<null>;
@@ -66,16 +66,14 @@ export default function PreferenceToggle({
 				className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-wait disabled:opacity-50"
 				onClick={() => void toggle()}
 			>
-				<span className="flex-1">
-					<span className="block font-medium">{title}</span>
-					{description && (
-						<span id={descriptionId} className="text-muted-foreground mt-1 block text-[13px]">
-							{description}
-						</span>
-					)}
-				</span>
+				<span className="flex-1 font-medium">{title}</span>
 				<SwitchTrack enabled={enabled} />
 			</button>
+			{description && (
+				<p id={descriptionId} className="text-muted-foreground -mt-1 px-3 pr-15 text-[13px]">
+					{description}
+				</p>
+			)}
 			{saveError && (
 				<p role="alert" className="text-destructive px-3 text-sm">
 					{saveError}

@@ -22,7 +22,7 @@ import {
 } from '@convex/lib/tiers';
 import { usageMeters, type UsageMeterId } from '@convex/lib/usageMeters';
 import { billingWindow, type BillingWindowSubscription } from '@convex/lib/billingWindows';
-import { captureEvent } from '@convex/lib/analytics';
+import { posthog } from '@convex/lib/analytics';
 
 export { usageMeters, type UsageMeterId };
 
@@ -264,7 +264,11 @@ export async function applyGatewayUsageCharge(
 	);
 
 	if (exhausted) {
-		await captureEvent(ctx, { distinctId: userId, event: 'quota_exhausted', properties: { tier } });
+		await posthog.capture(ctx, {
+			distinctId: userId,
+			event: 'quota_exhausted',
+			properties: { tier }
+		});
 	}
 }
 

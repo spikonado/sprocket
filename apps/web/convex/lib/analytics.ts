@@ -1,28 +1,27 @@
-import { v, type Infer } from 'convex/values';
-import { internal } from '@convex/_generated/api';
-import { env, type MutationCtx } from '@convex/_generated/server';
-import { vJsonValue } from '@convex/lib/json';
+import { PostHog } from '@posthog/convex';
+import { components } from '@convex/_generated/api';
 
-export const vAnalyticsEvent = v.object({
-	distinctId: v.string(),
-	event: v.string(),
-	properties: v.record(v.string(), vJsonValue),
-	// Convex field names can't start with `$`, so `send` maps this to `$set`.
-	personProperties: v.optional(v.record(v.string(), v.string()))
+export const posthog = new PostHog(components.posthog, {
+	beforeSend: (event) => ({ ...event, properties: { ...event.properties, site: 'sprocket_app' } })
 });
 
-export function analyticsEnabled(): boolean {
-	return Boolean(env.POSTHOG_PROJECT_TOKEN);
+type CaptureProperties = NonNullable<Parameters<typeof posthog.capture>[1]['properties']>;
+
+/** SHA-256 hex, matching the Rust agent's `analytics_id`, so traces and sessions line up. */
+export async function analyticsId(id: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id));
+
+	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function captureEvent(
-	ctx: MutationCtx,
-	event: Infer<typeof vAnalyticsEvent>
+/** Conversation events go to a hashed id with no person profile, so they never link to a user. */
+export async function captureAnonymous(
+	ctx: Parameters<typeof posthog.capture>[0],
+	args: { distinctId: string; event: string; properties: CaptureProperties }
 ): Promise<void> {
-	if (!analyticsEnabled()) return;
-
-	await ctx.scheduler.runAfter(0, internal.analytics.send, {
-		...event,
-		timestamp: new Date().toISOString()
+	await posthog.capture(ctx, {
+		distinctId: args.distinctId,
+		event: args.event,
+		properties: { ...args.properties, $process_person_profile: false }
 	});
 }

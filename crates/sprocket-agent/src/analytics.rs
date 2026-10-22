@@ -9,6 +9,7 @@ use rig::agent::{
 use rig::completion::{FinishReason, Message, Usage};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::types::CompletionProvider;
 
@@ -19,10 +20,9 @@ const MAX_CONTENT_BYTES: usize = 256 * 1024;
 /// send one `$ai_generation` event with provider facts only the provider loop knows.
 #[derive(Clone)]
 pub(crate) struct GenerationTracker {
-    run_id: String,
-    thread_id: String,
-    // Runs stay personless; cost per user joins `$ai_trace_id` to Convex's `run_completed`.
-    distinct_id: String,
+    // Hashed ids, also the personless distinct id, so generations don't link to the user.
+    trace_id: String,
+    session_id: String,
     share_content: bool,
     state: Arc<Mutex<TrackerState>>,
 }
@@ -52,9 +52,8 @@ pub(crate) struct GenerationCall<'a> {
 impl GenerationTracker {
     pub(crate) fn new(run_id: &str, thread_id: &str, share_content: bool) -> Self {
         Self {
-            run_id: run_id.to_string(),
-            thread_id: thread_id.to_string(),
-            distinct_id: uuid::Uuid::new_v4().to_string(),
+            trace_id: analytics_id(run_id),
+            session_id: analytics_id(thread_id),
             share_content,
             state: Arc::default(),
         }
@@ -66,12 +65,18 @@ impl GenerationTracker {
             .lock()
             .ok()
             .and_then(|mut state| state.turns.remove(&call.turn));
-        let mut event = posthog_rs::Event::new("$ai_generation", self.distinct_id.as_str());
-        for (key, value) in generation_properties(&self.run_id, &self.thread_id, &call, pending) {
+        let mut event = posthog_rs::Event::new("$ai_generation", self.trace_id.as_str());
+        for (key, value) in generation_properties(&self.trace_id, &self.session_id, &call, pending)
+        {
             let _ = event.insert_prop(key, value);
         }
         posthog_rs::capture(event);
     }
+}
+
+/// Matches Convex's `analyticsId`, so its run and thread events share these trace and session ids.
+fn analytics_id(id: &str) -> String {
+    hex::encode(Sha256::digest(id.as_bytes()))
 }
 
 impl AgentHook for GenerationTracker {
@@ -140,8 +145,8 @@ fn bounded(content: Value) -> Value {
 }
 
 fn generation_properties(
-    run_id: &str,
-    thread_id: &str,
+    trace_id: &str,
+    session_id: &str,
     call: &GenerationCall<'_>,
     pending: Option<PendingGeneration>,
 ) -> Map<String, Value> {
@@ -151,8 +156,8 @@ fn generation_properties(
             properties.insert(key.to_string(), value);
         }
     };
-    set("$ai_trace_id", json!(run_id));
-    set("$ai_session_id", json!(thread_id));
+    set("$ai_trace_id", json!(trace_id));
+    set("$ai_session_id", json!(session_id));
     set("$ai_model", json!(call.model));
     set("$ai_provider", to_json(call.provider));
     set("$ai_stream", json!(true));

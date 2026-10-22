@@ -56,7 +56,8 @@ export default defineConfig({
 					'@convex-dev/migrations',
 					'@convex-dev/aggregate',
 					'@convex-dev/action-retrier',
-					'@convex-dev/workpool'
+					'@convex-dev/workpool',
+					'@posthog/convex'
 				]
 			}
 		},

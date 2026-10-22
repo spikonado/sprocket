@@ -4,7 +4,22 @@ import {
 	useQuery_experimental as useConvexQueryResult
 } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { ExternalLink } from 'lucide-react';
 import PreferenceToggle from '$lib/components/home/preference-toggle';
+
+function DescriptionLink({ href, children }: { href: string; children: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="text-foreground inline-flex items-center gap-0.5 hover:underline"
+		>
+			{children}
+			<ExternalLink className="size-3" aria-hidden="true" />
+		</a>
+	);
+}
 
 export default function SettingsGeneral() {
 	const convexAuth = useConvexAuth();
@@ -54,8 +69,19 @@ export default function SettingsGeneral() {
 						save={setSettleMergedThreads}
 					/>
 					<PreferenceToggle
-						title="Share conversation content"
-						description="Include prompts and model output in analytics, and record session replays without masking text."
+						title="Share anonymous conversation data to help improve Sprocket for everyone"
+						description={
+							<>
+								We don't sell your data:{' '}
+								<DescriptionLink href="https://spikonado.com/privacy">
+									our Privacy Policy
+								</DescriptionLink>
+								. Sprocket is{' '}
+								<DescriptionLink href="https://github.com/spikonado/sprocket">
+									fair-source
+								</DescriptionLink>
+							</>
+						}
 						savedEnabled={preferences?.shareConversationContent ?? true}
 						disabled={disabled}
 						save={setShareConversationContent}

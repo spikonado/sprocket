@@ -33,6 +33,7 @@
 		"@fontsource/ibm-plex-mono": "^5.3.0",
 		"@lezer/highlight": "^1.2.5",
 		"@pierre/trees": "1.0.0-beta.6",
+		"@posthog/convex": "2.1.7",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"clsx": "^2.1.1",
 		"codemirror": "^6.0.2",

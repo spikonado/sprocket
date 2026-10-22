@@ -6,31 +6,31 @@ const SHARE_CONTENT_STORAGE_KEY = 'sprocket.analytics.shareConversationContent';
 
 let initialized = false;
 
-let replayMasked = false;
+let masked = false;
 
-let recording = false;
+function maskingConfig(mask: boolean) {
+	return {
+		mask_all_text: mask,
+		mask_all_element_attributes: mask,
+		session_recording: mask
+			? { maskAllInputs: true, maskTextSelector: '*' }
+			: { maskAllInputs: false }
+	};
+}
 
 export function initAnalytics(config: RuntimeConfig): void {
 	const key = config.env.PUBLIC_POSTHOG_KEY?.trim();
 
 	if (!key || initialized) return;
 	initialized = true;
-
-	// The replay recorder reads masking once at start, so the last synced preference sets it for this load.
-	replayMasked = localStorage.getItem(SHARE_CONTENT_STORAGE_KEY) === 'false';
-
-	const session_recording = replayMasked
-		? { maskAllInputs: true, maskTextSelector: '*' }
-		: { maskAllInputs: false };
+	masked = localStorage.getItem(SHARE_CONTENT_STORAGE_KEY) === 'false';
 
 	posthog.init(key, {
 		api_host: config.env.PUBLIC_POSTHOG_HOST || 'https://eu.i.posthog.com',
 		ui_host: 'https://eu.posthog.com',
 		defaults: '2026-08-30',
 		capture_exceptions: true,
-		session_recording,
-		// A fresh browser can't know the account's preference, so replay waits for it.
-		disable_session_recording: true
+		...maskingConfig(masked)
 	});
 	posthog.register({
 		site: 'sprocket_app',
@@ -56,13 +56,15 @@ export function syncShareConversationContent(share: boolean): void {
 	if (!initialized) return;
 	localStorage.setItem(SHARE_CONTENT_STORAGE_KEY, String(share));
 
-	const allowed = share || replayMasked;
+	if (masked === !share) return;
+	masked = !share;
+	posthog.set_config(maskingConfig(masked));
 
-	if (allowed === recording) return;
-	recording = allowed;
-
-	if (allowed) posthog.startSessionRecording();
-	else posthog.stopSessionRecording();
+	// The recorder reads masking when it starts, so restart it to apply the change.
+	if (posthog.sessionRecordingStarted()) {
+		posthog.stopSessionRecording();
+		posthog.startSessionRecording();
+	}
 }
 
 export function captureRenderError(error: Error, componentStack: string | null | undefined): void {

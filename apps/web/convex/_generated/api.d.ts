@@ -266,4 +266,5 @@ export declare const components: {
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;
   billingWebhookWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"billingWebhookWorkpool">;
   billingReconciliationWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"billingReconciliationWorkpool">;
+  posthog: import("@posthog/convex/_generated/component.js").ComponentApi<"posthog">;
 };

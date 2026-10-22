@@ -394,15 +394,17 @@ export default defineSchema({
 		granularity: v.union(v.literal('hour'), v.literal('day')),
 		bucketStart: v.number(),
 		...vTokenUsageTotals.fields
-	}).index('by_userId_bucket', [
-		'userId',
-		'granularity',
-		'bucketStart',
-		'provider',
-		'model',
-		'serviceTier',
-		'cacheWriteTtl'
-	]),
+	})
+		.index('by_userId_bucket', [
+			'userId',
+			'granularity',
+			'bucketStart',
+			'provider',
+			'model',
+			'serviceTier',
+			'cacheWriteTtl'
+		])
+		.index('by_granularity_bucket', ['granularity', 'bucketStart']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

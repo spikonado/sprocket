@@ -34,7 +34,7 @@ const toggles = [
 		defaultEnabled: false
 	},
 	{
-		name: 'Share conversation content',
+		name: 'Share anonymous conversation data to help improve Sprocket for everyone',
 		field: 'shareConversationContent',
 		mutation: api.uiPreferences.setShareConversationContent,
 		defaultEnabled: true

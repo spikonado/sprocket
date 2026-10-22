@@ -7,7 +7,7 @@ import type {
 import type { DataModel } from '@convex/_generated/dataModel';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { withRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
-import { captureEvent } from '@convex/lib/analytics';
+import { posthog } from '@convex/lib/analytics';
 
 export async function getUserId(
 	ctx: GenericActionCtx<DataModel> | GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>
@@ -110,11 +110,10 @@ export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Pro
 
 	if (!created) throw new Error('Failed to create the user record.');
 
-	await captureEvent(ctx, {
+	await posthog.capture(ctx, {
 		distinctId: identity.subject,
 		event: 'user_signed_up',
-		properties: {},
-		personProperties: { email }
+		properties: { $set: { email } }
 	});
 
 	return created;

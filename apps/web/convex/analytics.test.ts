@@ -1,102 +1,72 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { internal } from '@convex/_generated/api';
-import type { Doc } from '@convex/_generated/dataModel';
-import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import { analyticsId } from '@convex/lib/analytics';
+import { initConvexTest, seedThreadRecord, type ConvexTestInstance } from './test.setup';
 
-afterEach(() => {
-	vi.unstubAllEnvs();
-	vi.unstubAllGlobals();
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function scheduledCaptures(t: ConvexTestInstance) {
+	const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+
+	return scheduled
+		.filter((job) => job.name.endsWith('lib:capture'))
+		.map((job) => {
+			const [args] = job.args;
+
+			return { distinctId: args.distinctId, event: args.event, ...JSON.parse(args.properties) };
+		});
+}
+
+it('hashes ids like the Rust agent', async () => {
+	expect(await analyticsId('thread-1')).toBe(
+		'4b0a5fefc328e6b9257bc535e3c5d26fec36b52f92e277618bf5b30fc3885e58'
+	);
 });
 
-describe('run_completed', () => {
-	it('summarizes usage, tools, handoffs and question waits', async () => {
-		vi.stubEnv('POSTHOG_PROJECT_TOKEN', 'phc_test');
-		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
-		vi.stubGlobal('fetch', fetchMock);
+it('sends per-user daily token usage and thread counts', async () => {
+	const t = initConvexTest();
+	const now = Date.now();
+	const dayStart = now - (now % DAY_MS);
+	await seedThreadRecord(t, 'user_alice', 'alpha');
+	await seedThreadRecord(t, 'user_alice', 'alpha');
+	await seedThreadRecord(t, 'user_bob', 'alpha');
 
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
+	const counts = {
+		inputTokens: 100,
+		cacheReadTokens: 40,
+		cacheWriteTokens: 0,
+		outputTokens: 10,
+		reasoningTokens: 5
+	};
 
-		const { runId } = await insertQueuedRun(t, asUser, {
-			threadId,
-			submissionId: 'analytics-run',
-			executionSecret: 'analytics-secret',
-			prompt: 'Read a skill'
-		});
+	await t.run((ctx) =>
+		ctx.db.insert('userTokenUsage', {
+			userId: 'user_alice',
+			granularity: 'day',
+			bucketStart: dayStart,
+			provider: 'spikonado',
+			model: 'gpt-5.6-sol',
+			serviceTier: 'standard',
+			cacheWriteTtl: null,
+			calls: 3,
+			standard: counts,
+			longContext: { ...counts, inputTokens: 1 }
+		})
+	);
 
-		await t.run(async (ctx) => {
-			const usage = {
-				provider: 'spikonado' as const,
-				model: 'gpt-5.6-sol',
-				serviceTier: 'standard' as const,
-				cacheWriteTtl: null,
-				longContext: false,
-				inputTokens: 100,
-				cacheReadTokens: 40,
-				cacheWriteTokens: 0,
-				outputTokens: 10,
-				reasoningTokens: 5
-			};
+	await t.mutation(internal.analytics.sendDailyTokenUsage, { dayStart, cursor: null });
+	await t.mutation(internal.analytics.sendDailyThreadsCreated, { dayStart, cursor: null });
 
-			for (const eventId of ['turn:1', 'handoff:claim:1:0', 'handoff:claim:1:1']) {
-				await ctx.db.insert('modelCallUsage', { userId: 'user_alice', runId, eventId, ...usage });
-			}
-
-			const job = (
-				sequence: number,
-				kind: 'read_skill' | 'spawn_subagent',
-				payload: Doc<'executorJobs'>['payload']
-			) =>
-				ctx.db.insert('executorJobs', {
-					threadId,
-					runId,
-					kind,
-					payload,
-					status: 'completed',
-					enqueuedAt: 0,
-					sequence
-				});
-
-			await job(1, 'read_skill', { name: 'cleanup' });
-			await job(2, 'read_skill', { name: 'cleanup' });
-			const questionJobId = await job(3, 'spawn_subagent', { prompt: 'Help' });
-
-			const questionId = await ctx.db.insert('agentQuestions', {
-				threadId,
-				runId,
-				jobId: questionJobId,
-				question: 'Continue?',
-				options: [],
-				status: 'answered',
-				sequence: 1
-			});
-
-			const question = await ctx.db.get('agentQuestions', questionId);
-			await ctx.db.patch('agentQuestions', questionId, {
-				answeredAt: question!._creationTime + 2_000
-			});
-		});
-
-		await t.action(internal.analytics.captureRunCompleted, { runId });
-
-		const [url, init] = fetchMock.mock.calls[0];
-		expect(url).toBe('https://eu.i.posthog.com/i/v0/e/');
-		expect(JSON.parse(String(init?.body))).toMatchObject({
-			api_key: 'phc_test',
-			event: 'run_completed',
-			distinct_id: 'user_alice',
-			properties: {
-				run_id: runId,
-				site: 'sprocket_app',
-				model_calls: 3,
-				context_handoffs: 1,
-				input_tokens: 300,
-				output_tokens: 30,
-				question_wait_ms: 2_000,
-				tool_calls: { read_skill: 2, spawn_subagent: 1 },
-				subagents_spawned: 1,
-				skills_read: ['cleanup']
-			}
-		});
-	});
+	expect(await scheduledCaptures(t)).toEqual([
+		expect.objectContaining({
+			distinctId: 'user_alice',
+			event: 'daily_token_usage',
+			model: 'gpt-5.6-sol',
+			calls: 3,
+			input_tokens: 101,
+			output_tokens: 20
+		}),
+		expect.objectContaining({ distinctId: 'user_alice', event: 'daily_threads_created', count: 2 }),
+		expect.objectContaining({ distinctId: 'user_bob', event: 'daily_threads_created', count: 1 })
+	]);
 });
