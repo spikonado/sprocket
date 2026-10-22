@@ -1,9 +1,15 @@
 import { v } from 'convex/values';
-import { vCommandStdinResult } from '@convex/lib/validators';
 
 export const commandSnapshot = v.object({
 	command: v.string(),
 	workdir: v.string(),
 	machineId: v.string(),
-	result: vCommandStdinResult.omit('command', 'workdir', 'completeLogPath', 'eventsPath')
+	result: v.object({
+		output: v.string(),
+		exitCode: v.optional(v.number()),
+		success: v.boolean(),
+		running: v.boolean(),
+		timedOut: v.boolean(),
+		error: v.optional(v.string())
+	})
 });

@@ -41,6 +41,24 @@ impl StubSession {
         self.completion.send(Some(completed_ok())).unwrap();
     }
 
+    async fn archive(&self, root: &Path, id: &str) {
+        let preview = self.output.lock().await.full_preview();
+        super::CommandHistory {
+            user_id: String::new(),
+            thread_id: String::new(),
+            machine_id: String::new(),
+            command: "test".into(),
+            workdir: root.to_string_lossy().into_owned(),
+            max_output_chars: 20_000,
+            result: super::completion_output(&completed_ok(), preview),
+            pending_output: None,
+        }
+        .save(&super::history_path(&root.join("logs"), id).unwrap())
+        .await
+        .unwrap();
+        self.complete();
+    }
+
     async fn observe(&self, mode: ObservationMode) -> anyhow::Result<CommandOutput> {
         self.session.output_snapshot(None, None, mode).await
     }
@@ -190,7 +208,7 @@ async fn waiting_poll_returns_incremental_output_while_command_is_running() {
     stub.complete();
     let finished = poll(&sessions, &stub.session.id, 10_000).await;
     assert!(finished.success);
-    assert_eq!(finished.output, "ready:done");
+    assert_eq!(finished.output, ":done");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -237,8 +255,8 @@ async fn zero_yield_poll_reveals_output_zero_yield_controls_hide_it() {
     assert!(finished.success);
     assert!(!finished.running);
     assert_eq!(
-        finished.output, "ready:done",
-        "completed output includes bytes already observed by earlier runs"
+        finished.output, ":done",
+        "completed output omits bytes already returned by earlier observations"
     );
     assert_eq!(
         fs::read(&finished.complete_log_path).unwrap(),
@@ -248,7 +266,7 @@ async fn zero_yield_poll_reveals_output_zero_yield_controls_hide_it() {
 }
 
 #[tokio::test]
-async fn completed_session_replays_cached_output_and_skips_yield_waits() {
+async fn completed_session_returns_output_once_and_skips_yield_waits() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let (id, _started) = exec_running_with_timeout(&sessions, "printf done", None).await;
@@ -260,12 +278,12 @@ async fn completed_session_replays_cached_output_and_skips_yield_waits() {
     for _ in 0..2 {
         let replay = poll(&sessions, &id, 0).await;
         assert!(!replay.running);
-        assert_eq!(replay.output, "done");
+        assert_eq!(replay.output, "");
         assert_eq!(replay.exit_code, Some(0));
     }
     let replay = poll(&sessions, &id, 270_000).await;
-    assert_eq!(
-        replay.output, "done",
+    assert!(
+        replay.success,
         "a waiting poll on a completed session must return immediately, not wait for new output"
     );
     fs::remove_dir_all(root).unwrap();
@@ -318,7 +336,6 @@ async fn output_preserves_observed_stream_order() {
             "timedOut": false,
             "output": "starting\nfailed\ncleaning up\n",
             "completeLogPath": output.result.complete_log_path,
-            "eventsPath": output.result.events_path,
         })
     );
     fs::remove_dir_all(root).unwrap();
@@ -343,17 +360,13 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         .unwrap();
     let id = started.session_id.as_deref().unwrap();
     let log_path = &started.result.complete_log_path;
-    let events_path = &started.result.events_path;
     assert_eq!(
         serde_json::to_value(&started).unwrap(),
         serde_json::json!({
             "sessionId": id,
-            "success": false,
             "running": true,
             "timedOut": false,
-            "output": "",
             "completeLogPath": log_path,
-            "eventsPath": events_path,
         })
     );
     let running = sessions
@@ -365,12 +378,9 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::json!({
             "command": command,
             "workdir": root.to_string_lossy(),
-            "success": false,
             "running": true,
             "timedOut": false,
-            "output": "",
             "completeLogPath": log_path,
-            "eventsPath": events_path,
         })
     );
     let finished = sessions
@@ -394,7 +404,6 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
             "timedOut": false,
             "output": "done",
             "completeLogPath": log_path,
-            "eventsPath": events_path,
         })
     );
     fs::remove_dir_all(root).unwrap();
@@ -592,6 +601,7 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         workdir: root.to_string_lossy().into_owned(),
         max_output_chars: 100,
         result: super::completion_output(&CommandCompletion::default(), output.preview_metadata()),
+        pending_output: None,
     };
     let mut process = super::build_shell_command(command, &default_command_shell());
     process.current_dir(&root).kill_on_drop(true);
@@ -627,7 +637,7 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
 }
 
 #[tokio::test]
-async fn completed_session_can_be_observed_again() {
+async fn concurrent_observers_return_completed_output_once() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let started = sessions
@@ -654,11 +664,15 @@ async fn completed_session_can_be_observed_again() {
         sessions.poll_command(WorkspaceCancellation::new(), &id, 5_000),
     );
     let finished = finished.unwrap();
-    assert_eq!(concurrent.unwrap().result.output, finished.result.output);
+    let concurrent = concurrent.unwrap();
+    assert_eq!(
+        [finished.result.output.as_str(), &concurrent.result.output].concat(),
+        "done"
+    );
     let repeated = poll(&sessions, &id, 10_000).await;
 
     assert!(!repeated.running);
-    assert_eq!(repeated.output, finished.result.output);
+    assert!(repeated.output.is_empty());
     assert_eq!(repeated.exit_code, finished.result.exit_code);
     fs::remove_dir_all(root).unwrap();
 }
@@ -1131,66 +1145,71 @@ async fn cancelled_exec_keeps_the_started_command_discoverable() {
 async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let [running_id, observed_id, completed_id] =
+        std::array::from_fn(|_| uuid::Uuid::new_v4().to_string());
     let running = stub_session(&root).await;
     sessions
         .sessions
         .lock()
         .await
-        .insert("running".into(), running.session.clone());
+        .insert(running_id.clone(), running.session.clone());
     let observed = stub_session(&root).await;
-    observed.complete();
+    observed.archive(&root, &observed_id).await;
     sessions
         .sessions
         .lock()
         .await
-        .insert("observed".into(), observed.session.clone());
+        .insert(observed_id.clone(), observed.session.clone());
     let completed = stub_session(&root).await;
-    completed.complete();
+    completed.append(b"unreturned").await;
+    completed.archive(&root, &completed_id).await;
     sessions
         .sessions
         .lock()
         .await
-        .insert("completed".into(), completed.session);
+        .insert(completed_id.clone(), completed.session);
     sessions.prune_completed().await;
     let retained = sessions.sessions.lock().await;
     assert_eq!(retained.len(), 2);
-    assert!(retained.contains_key("running"));
-    assert!(retained.contains_key("observed"));
+    assert!(retained.contains_key(&running_id));
+    assert!(retained.contains_key(&observed_id));
     drop(retained);
+    assert_eq!(poll(&sessions, &completed_id, 0).await.output, "unreturned");
     drop(observed);
     sessions.prune_completed().await;
-    assert!(!sessions.sessions.lock().await.contains_key("observed"));
+    assert!(!sessions.sessions.lock().await.contains_key(&observed_id));
     sessions.stop_all().await;
     fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
-async fn later_runs_replay_full_output_after_cleanup_and_server_restart() {
+async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let (id, started) = exec_running(&sessions, "printf ready; read value; printf ':done'").await;
     wait_for_log(&started.complete_log_path, b"ready").await;
     assert_eq!(poll(&sessions, &id, 0).await.output, "ready");
     write(&sessions, &id, "go\n", 0).await;
-    let finished = poll(&sessions, &id, 5_000).await;
-    assert_eq!(finished.output, "ready:done");
+    await_completion(&sessions, &id).await;
     sessions.prune_completed().await;
     assert!(sessions.sessions.lock().await.is_empty());
+    assert!(terminate(&sessions, &id, 0).await.output.is_empty());
     let replay = sessions
         .poll_command(WorkspaceCancellation::new(), &id, 270_000)
         .await
         .unwrap();
     assert_eq!(replay.command, "printf ready; read value; printf ':done'");
-    assert_eq!(replay.result.output, "ready:done");
+    assert_eq!(replay.result.output, ":done");
     assert_eq!(replay.result.exit_code, Some(0));
     assert!(replay.result.success);
-    assert_eq!(replay.result.complete_log_path, finished.complete_log_path);
+    assert_eq!(replay.result.complete_log_path, started.complete_log_path);
+    assert!(poll(&sessions, &id, 0).await.output.is_empty());
     sessions.stop_all().await;
     drop(sessions);
     let restarted = CommandSessionManager::new(root.clone(), root.join("logs"));
-    assert_eq!(poll(&restarted, &id, 0).await.output, "ready:done");
-    assert!(terminate(&restarted, &id, 0).await.output.is_empty());
-    assert_eq!(poll(&restarted, &id, 0).await.output, "ready:done");
+    let restarted_replay = poll(&restarted, &id, 0).await;
+    assert!(restarted_replay.success);
+    assert!(restarted_replay.output.is_empty());
     let other = CommandSessionManager::new(root.clone(), root.join("other-thread"));
     assert!(
         other
@@ -1311,6 +1330,7 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
     )
     .unwrap();
     remote.machine_id = "origin".into();
+    remote.pending_output = None;
     remote.result.running = true;
     remote.result.success = false;
     remote.result.exit_code = None;
@@ -1329,7 +1349,7 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
     while sessions.history_fetch_lock.try_lock().is_ok() {
         tokio::task::yield_now().await;
     }
-    assert_eq!(poll(&sessions, &completed_id, 0).await.output, "cached");
+    assert_eq!(poll(&sessions, &completed_id, 0).await.exit_code, Some(0));
     tokio::time::advance(Duration::from_secs(10)).await;
     let cached = fetching.await.unwrap();
     assert!(cached.running);
@@ -1610,7 +1630,7 @@ async fn completion_seen_after_capture_lock_bypasses_zero_poll_cooldown() {
         .observe(ObservationMode::ZeroPoll)
         .await
         .expect("cached completions bypass the cooldown");
-    assert_eq!(replay.output, "late");
+    assert!(replay.output.is_empty());
     assert_eq!(replay.exit_code, Some(0));
     assert_eq!(stub.last_zero_poll().await, last_poll);
     fs::remove_dir_all(root).unwrap();
@@ -1633,7 +1653,7 @@ async fn completed_reads_do_not_touch_zero_poll_cooldown() {
     );
 
     let waiting = stub.observe(ObservationMode::Output).await.unwrap();
-    assert_eq!(waiting.output, "done");
+    assert!(waiting.output.is_empty());
     let metadata = stub.observe(ObservationMode::Metadata).await.unwrap();
     assert!(metadata.output.is_empty());
     assert_eq!(metadata.exit_code, Some(0));

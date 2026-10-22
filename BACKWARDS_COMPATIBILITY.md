@@ -176,6 +176,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, and `screenshot_url`.
 - Scope and thread metadata on artifact tool payloads and results.
 - `parse_file` URL sources, legacy command results and `mandate_status` results without `description`.
+- `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.

@@ -388,13 +388,13 @@ const vLegacyCommandResult = v.object({
 });
 
 const vCommandOutput = v.object({
-	output: v.string(),
+	output: v.optional(v.string()),
 	exitCode: v.optional(v.number()),
-	success: v.boolean(),
+	success: v.optional(v.boolean()),
 	running: v.boolean(),
 	timedOut: v.boolean(),
 	completeLogPath: v.string(),
-	eventsPath: v.string(),
+	eventsPath: v.optional(v.string()),
 	error: v.optional(v.string())
 });
 
