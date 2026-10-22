@@ -390,7 +390,7 @@ export const getForExecutor = query({
 			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 			const question = await ctx.db.get('agentQuestions', args.questionId);
 
-			if (!question || question.runId !== run._id) {
+			if (!question || question.threadId !== run.threadId) {
 				return null;
 			}
 

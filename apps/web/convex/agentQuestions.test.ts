@@ -500,6 +500,50 @@ describe('agentQuestions', () => {
 		vi.useRealTimers();
 	});
 
+	it('serves a question to later runs in the same thread only', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const first = await startRun(t, threadId);
+
+		const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+			runId: first.runId,
+			claimId: first.claimId,
+			question: 'Which board?',
+			options: [{ id: 'esp32', label: 'ESP32' }],
+			executionSecret: first.executionSecret
+		});
+
+		await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: created.questionId,
+			optionId: 'esp32'
+		});
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: first.runId,
+			text: '',
+			status: 'completed',
+			executionSecret: first.executionSecret
+		});
+
+		const later = await createQueuedRun(t, asUser, threadId, 'later', 'later-secret', 'Next');
+		const otherThread = await startRun(t, (await seedOwnedThread(t, 'user_alice')).threadId);
+
+		await expect(
+			t.query(api.agentQuestions.getForExecutor, {
+				runId: later.runId,
+				questionId: created.questionId,
+				executionSecret: 'later-secret'
+			})
+		).resolves.toMatchObject({ status: 'answered', answer: { optionId: 'esp32' } });
+		await expect(
+			t.query(api.agentQuestions.getForExecutor, {
+				runId: otherThread.runId,
+				questionId: created.questionId,
+				executionSecret: otherThread.executionSecret
+			})
+		).resolves.toBeNull();
+	});
+
 	it('cancels no-expiry questions when the run is cancelled', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
