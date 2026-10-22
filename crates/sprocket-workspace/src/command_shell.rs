@@ -25,10 +25,7 @@ pub(crate) fn resolve_command_shell(shell: &str, cwd: &Path) -> Result<String> {
     #[cfg(windows)]
     {
         let _ = cwd;
-        Ok(windows::resolve_shell(
-            shell,
-            std::env::var_os("PATH").as_deref(),
-        ))
+        windows::resolve_shell(shell, std::env::var_os("PATH").as_deref())
     }
 }
 
@@ -36,6 +33,8 @@ pub(crate) fn resolve_command_shell(shell: &str, cwd: &Path) -> Result<String> {
 mod windows {
     use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
+
+    use anyhow::Result;
 
     // These directories hold WSL launchers named bash.exe, which run commands
     // inside a Linux distro that can't see Windows paths.
@@ -70,13 +69,20 @@ mod windows {
             .unwrap_or_else(|| "powershell.exe".to_string())
     }
 
-    pub(super) fn resolve_shell(shell: &str, path: Option<&OsStr>) -> String {
-        if (shell.eq_ignore_ascii_case("bash") || shell.eq_ignore_ascii_case("bash.exe"))
-            && let Some(bash) = find_bash(path)
-        {
-            return bash.to_string_lossy().into_owned();
+    pub(super) fn resolve_shell(shell: &str, path: Option<&OsStr>) -> Result<String> {
+        if !(shell.eq_ignore_ascii_case("bash") || shell.eq_ignore_ascii_case("bash.exe")) {
+            return Ok(shell.to_string());
         }
-        shell.to_string()
+        let bash = find_bash(path).ok_or_else(|| {
+            anyhow::Error::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "shell executable was not found",
+            ))
+            .context(format!(
+                "failed to start shell \"{shell}\": no Windows bash.exe was found (WSL launchers are skipped); install Git for Windows, or omit `shell` to use PowerShell"
+            ))
+        })?;
+        Ok(bash.to_string_lossy().into_owned())
     }
 
     pub(crate) fn is_powershell(shell: &str) -> bool {

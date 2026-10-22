@@ -28,16 +28,17 @@ fn default_finds_git_bash_and_skips_wsl_launchers() {
         git_bash.to_string_lossy()
     );
     assert_eq!(
-        resolve_shell("bash", Some(path.as_os_str())),
+        resolve_shell("bash", Some(path.as_os_str())).unwrap(),
         git_bash.to_string_lossy()
     );
 }
 
 #[test]
-fn default_falls_back_to_powershell_without_bash() {
+fn powershell_is_the_default_when_only_wsl_bash_exists() {
     let directory = tempfile::tempdir().unwrap();
     executable(directory.path(), r"System32\bash.exe");
     let path = directory.path().join("System32");
     assert_eq!(default_shell(Some(path.as_os_str())), "powershell.exe");
     assert_eq!(default_shell(None), "powershell.exe");
+    assert!(resolve_shell("bash", Some(path.as_os_str())).is_err());
 }
