@@ -38,8 +38,8 @@ if (unexpectedArguments.length > 0) {
 
 const childEnv = { ...process.env };
 
-// Dev runs stay out of production analytics unless a key is set explicitly.
-childEnv.PUBLIC_POSTHOG_KEY ??= '';
+// Bun loads the root `.env`, so this clears its production key. An `--env-file` can opt back in.
+childEnv.PUBLIC_POSTHOG_KEY = '';
 
 if (envFile) {
 	const filePath = path.resolve(repositoryRoot, envFile);

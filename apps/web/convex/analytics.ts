@@ -7,8 +7,10 @@ import { vJsonValue, type JsonObject } from '@convex/lib/json';
 
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com';
 
-// executorJobs payloads can hold whole files, so pages stay small.
-const TOOL_PAGE_SIZE = 50;
+// executorJobs payloads can hold whole files, so pages are also bounded by bytes read.
+const TOOL_PAGE_SIZE = 200;
+
+const TOOL_PAGE_MAX_BYTES = 1_000_000;
 
 type PostHogEvent = Infer<typeof vAnalyticsEvent> & { timestamp: string };
 
@@ -127,13 +129,16 @@ export const runToolPage = internalQuery({
 		const page = await ctx.db
 			.query('executorJobs')
 			.withIndex('by_runId_sequence', (q) => q.eq('runId', runId))
-			.paginate({ cursor, numItems: TOOL_PAGE_SIZE });
+			.paginate({ cursor, numItems: TOOL_PAGE_SIZE, maximumBytesRead: TOOL_PAGE_MAX_BYTES });
 
 		return {
 			...page,
 			page: page.page.map((job) => ({
 				kind: job.kind,
-				skill: job.kind === 'read_skill' && 'name' in job.payload ? job.payload.name : null
+				skill:
+					job.kind === 'read_skill' && job.status === 'completed' && 'name' in job.payload
+						? job.payload.name
+						: null
 			}))
 		};
 	}
