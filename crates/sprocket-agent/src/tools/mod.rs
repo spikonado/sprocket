@@ -28,6 +28,7 @@ use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use self::artifacts::{
     AddArtifactTool, DeleteArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool,
 };
+pub(crate) use self::async_tools::max_yield_ms;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
@@ -166,6 +167,7 @@ pub(crate) fn agent_tools(
     skills: Arc<[WorkspaceSkill]>,
     command_sessions: CommandSessionManager,
     subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
+    max_yield_ms: u64,
 ) -> AgentToolSet {
     let context = AgentToolContext {
         runtime,
@@ -181,6 +183,7 @@ pub(crate) fn agent_tools(
         supports_images,
         tool_call_tracker,
         command_sessions,
+        max_yield_ms,
         question_polls: questions::QuestionPolls::default(),
         subagent_polls: subagents::SubagentPolls::default(),
         subagent_launcher,

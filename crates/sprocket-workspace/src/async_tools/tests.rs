@@ -1,18 +1,5 @@
-use super::{MAX_YIELD_MS, MIN_POLL_YIELD_MS, YieldMode, ZeroPollCooldown};
+use super::ZeroPollCooldown;
 use std::time::Duration;
-
-#[test]
-fn action_and_poll_yields_share_a_cap_but_have_different_minimums() {
-    for yield_time_ms in [0, 1, MIN_POLL_YIELD_MS - 1, MIN_POLL_YIELD_MS] {
-        assert_eq!(YieldMode::Action.normalize(yield_time_ms), yield_time_ms);
-    }
-    assert_eq!(YieldMode::Poll.normalize(0), 0);
-    assert_eq!(YieldMode::Poll.normalize(1), MIN_POLL_YIELD_MS);
-    assert_eq!(YieldMode::Poll.normalize(MAX_YIELD_MS), MAX_YIELD_MS);
-    for mode in [YieldMode::Action, YieldMode::Poll] {
-        assert_eq!(mode.normalize(u64::MAX), MAX_YIELD_MS);
-    }
-}
 
 #[tokio::test(start_paused = true)]
 async fn checks_do_not_start_or_extend_the_cooldown() {

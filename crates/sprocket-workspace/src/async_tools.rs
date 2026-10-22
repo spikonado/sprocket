@@ -1,29 +1,10 @@
-//! Shared timing policy for asynchronous tool actions and observations.
+//! Cooldown for immediate observations of pending asynchronous resources.
 
 use std::time::Duration;
 
 use tokio::time::Instant;
 
-pub const DEFAULT_YIELD_MS: u64 = 10_000;
-pub const MAX_YIELD_MS: u64 = 270_000;
-pub const MIN_POLL_YIELD_MS: u64 = 10_000;
 const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(10);
-
-#[derive(Clone, Copy, Debug)]
-pub enum YieldMode {
-    Action,
-    Poll,
-}
-
-impl YieldMode {
-    pub fn normalize(self, yield_time_ms: u64) -> u64 {
-        match self {
-            Self::Action => yield_time_ms.min(MAX_YIELD_MS),
-            Self::Poll if yield_time_ms == 0 => 0,
-            Self::Poll => yield_time_ms.clamp(MIN_POLL_YIELD_MS, MAX_YIELD_MS),
-        }
-    }
-}
 
 /// Tracks successful immediate observations of a pending resource.
 ///

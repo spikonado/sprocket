@@ -1,9 +1,11 @@
 use super::*;
-use sprocket_workspace::async_tools::{DEFAULT_YIELD_MS, MAX_YIELD_MS, MIN_POLL_YIELD_MS};
+use crate::tools::async_tools::{DEFAULT_YIELD_MS, MIN_POLL_YIELD_MS};
+
+const MAX_YIELD_MS: u64 = 1_770_000;
 
 #[test]
 fn exec_command_schema_does_not_expose_the_preview_limit() {
-    let schema = exec_command_parameters();
+    let schema = exec_command_parameters(MAX_YIELD_MS);
     let properties = schema["properties"].as_object().unwrap();
     assert_eq!(properties.len(), 4);
     assert!(!properties.contains_key("maxOutputChars"));
@@ -13,7 +15,7 @@ fn exec_command_schema_does_not_expose_the_preview_limit() {
 
 #[test]
 fn exec_command_schema_shell_has_no_default() {
-    let schema = exec_command_parameters();
+    let schema = exec_command_parameters(MAX_YIELD_MS);
     let shell = &schema["properties"]["shell"];
     assert_eq!(
         shell["description"],
@@ -24,7 +26,7 @@ fn exec_command_schema_shell_has_no_default() {
 
 #[test]
 fn control_schema_requires_session_and_action_with_action_constraints() {
-    let schema = control_command_parameters();
+    let schema = control_command_parameters(MAX_YIELD_MS);
     assert_eq!(schema["required"], json!(["sessionId", "action"]));
     assert_eq!(schema["additionalProperties"], json!(false));
     assert_eq!(schema["properties"]["sessionId"]["type"], "string");
@@ -136,7 +138,7 @@ fn control_action_and_chars_are_validated_before_dispatch() {
 
 #[test]
 fn poll_schema_only_takes_a_session_and_a_yield_window() {
-    let schema = poll_command_parameters();
+    let schema = poll_command_parameters(MAX_YIELD_MS);
     assert_eq!(schema["required"], json!(["sessionId"]));
     assert_eq!(schema["additionalProperties"], json!(false));
     let properties = schema["properties"].as_object().unwrap();
@@ -170,7 +172,10 @@ fn poll_args_deserialize_strictly() {
 
 #[test]
 fn exec_and_control_advertise_the_same_yield_window() {
-    for schema in [exec_command_parameters(), control_command_parameters()] {
+    for schema in [
+        exec_command_parameters(MAX_YIELD_MS),
+        control_command_parameters(MAX_YIELD_MS),
+    ] {
         let yield_time = &schema["properties"]["yieldTimeMs"];
         assert_eq!(yield_time["default"], json!(DEFAULT_YIELD_MS));
         assert_eq!(yield_time["type"], "integer");

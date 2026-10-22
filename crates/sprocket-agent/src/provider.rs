@@ -29,7 +29,7 @@ use crate::now_ms;
 use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
-use crate::tools::{agent_tools, working_directory_message};
+use crate::tools::{agent_tools, max_yield_ms, working_directory_message};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
     UsagePricing, gateway_api_v1_url,
@@ -308,6 +308,15 @@ impl AgentProvider {
         Ok(true)
     }
 
+    /// Rig fixes tool schemas when the agent is built, so one cap must cover
+    /// every provider the run can fall back to.
+    fn max_yield_ms(&self, cache_write_ttl: Option<&str>) -> u64 {
+        self.fallback_providers.iter().fold(
+            max_yield_ms(self.completion_provider, cache_write_ttl),
+            |cap, &provider| cap.min(max_yield_ms(provider, cache_write_ttl)),
+        )
+    }
+
     async fn completion_model(
         &self,
         runtime: &RuntimeClient,
@@ -519,6 +528,7 @@ async fn run_with_completion_model(
         request.skills.clone(),
         request.command_sessions.clone(),
         request.subagent_launcher.clone(),
+        target.max_yield_ms(request.usage_pricing.cache_write_ttl.as_deref()),
     );
     let cwd = tools.cwd.clone();
     let context_handoff_hook = ContextHandoffHook::new(
