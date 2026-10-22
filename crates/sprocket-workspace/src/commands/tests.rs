@@ -1204,6 +1204,11 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
     assert!(replay.result.success);
     assert_eq!(replay.result.complete_log_path, started.complete_log_path);
     assert!(poll(&sessions, &id, 0).await.output.is_empty());
+    let saved: super::CommandHistory = serde_json::from_slice(
+        &fs::read(super::history_path(&root.join("logs"), &id).unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.result.output, "ready:done");
     sessions.stop_all().await;
     drop(sessions);
     let restarted = CommandSessionManager::new(root.clone(), root.join("logs"));

@@ -233,10 +233,11 @@ impl CommandSessionManager {
             return CommandHistory::load(&self.log_directory, session_id).await;
         }
         if consume_output && let Some(pending) = &mut history.pending_output {
-            history.result.output = std::mem::take(pending);
-            if !history.result.output.is_empty() {
+            let output = std::mem::take(pending);
+            if !output.is_empty() {
                 history.save(&path).await?;
             }
+            history.result.output = output;
         }
         Ok(CommandStdinOutput {
             command: history.command,
