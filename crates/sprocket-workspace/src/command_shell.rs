@@ -71,13 +71,12 @@ mod windows {
     }
 
     pub(super) fn resolve_shell(shell: &str, path: Option<&OsStr>) -> String {
-        let bash = (shell.eq_ignore_ascii_case("bash") || shell.eq_ignore_ascii_case("bash.exe"))
-            .then(|| find_bash(path))
-            .flatten();
-        bash.map_or_else(
-            || shell.to_string(),
-            |bash| bash.to_string_lossy().into_owned(),
-        )
+        if (shell.eq_ignore_ascii_case("bash") || shell.eq_ignore_ascii_case("bash.exe"))
+            && let Some(bash) = find_bash(path)
+        {
+            return bash.to_string_lossy().into_owned();
+        }
+        shell.to_string()
     }
 
     pub(crate) fn is_powershell(shell: &str) -> bool {
