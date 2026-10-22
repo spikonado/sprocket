@@ -23,6 +23,7 @@ pub(crate) fn working_directory_message(cwd: &Path) -> Message {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SetCwdArgs {
     /// Directory to switch to. Relative paths resolve from the current working directory.
     pub(crate) path: String,

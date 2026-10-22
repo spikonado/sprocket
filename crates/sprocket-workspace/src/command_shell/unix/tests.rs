@@ -11,17 +11,17 @@ fn shell_file(directory: &Path, name: &str) -> PathBuf {
 }
 
 #[test]
-fn default_uses_available_configured_shell() {
+fn default_prefers_bash_over_configured_shell() {
     let directory = tempfile::tempdir().unwrap();
     let configured = shell_file(directory.path(), "user-shell");
-    shell_file(directory.path(), "bash");
+    let bash = shell_file(directory.path(), "bash");
     assert_eq!(
         default_shell(
             configured.to_str(),
             Some(directory.path().as_os_str()),
             directory.path(),
         ),
-        configured.to_string_lossy()
+        bash.to_string_lossy()
     );
 }
 
@@ -51,22 +51,14 @@ fn default_works_without_shell_or_path_environment() {
 }
 
 #[test]
-fn default_skips_shell_executable_only_by_other_users() {
+fn shell_executable_only_by_other_users_is_unavailable() {
     if unsafe { libc::geteuid() } == 0 {
         return;
     }
     let directory = tempfile::tempdir().unwrap();
     let configured = shell_file(directory.path(), "user-shell");
     fs::set_permissions(&configured, fs::Permissions::from_mode(0o601)).unwrap();
-    let bash = shell_file(directory.path(), "bash");
-    assert_eq!(
-        default_shell(
-            configured.to_str(),
-            Some(directory.path().as_os_str()),
-            directory.path(),
-        ),
-        bash.to_string_lossy()
-    );
+    assert!(resolve_shell(configured.to_str().unwrap(), None, directory.path()).is_err());
 }
 
 #[test]

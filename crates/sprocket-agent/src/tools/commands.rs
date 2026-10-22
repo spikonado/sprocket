@@ -19,10 +19,6 @@ pub(crate) struct ControlCmdTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PollCmdTool(pub(super) AgentToolContext);
 
-fn is_default_shell(shell: &String) -> bool {
-    shell == &default_command_shell()
-}
-
 pub(super) fn exec_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
@@ -79,13 +75,10 @@ pub(super) fn poll_command_parameters() -> serde_json::Value {
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     pub(crate) cmd: String,
-    /// Shell binary to launch; resolved to an available shell when omitted.
-    #[serde(
-        default = "default_command_shell",
-        skip_serializing_if = "is_default_shell"
-    )]
-    #[schemars(default = "default_command_shell")]
-    pub(crate) shell: String,
+    /// Shell binary to launch, e.g. bash or pwsh. Defaults to the machine's shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub(crate) shell: Option<String>,
     /// Maximum process runtime. Without a limit, the command runs until it exits or is terminated.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
@@ -179,7 +172,7 @@ impl rig::tool::Tool for ExecCmdTool {
                     cancellation,
                     &args.cmd,
                     &cwd.to_string_lossy(),
-                    &args.shell,
+                    &args.shell.clone().unwrap_or_else(default_command_shell),
                     args.timeout_ms,
                     args.yield_time_ms,
                     DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
@@ -198,7 +191,7 @@ impl rig::tool::Tool for ControlCmdTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write text to a command's stdin or request termination of its process tree.".to_string()
+        "Write text to a command's stdin or terminate its process tree.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
