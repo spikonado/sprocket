@@ -38,6 +38,7 @@ import {
 import { startRunLifecycle } from '@convex/runLifecycle';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
+import { captureEvent } from '@convex/lib/analytics';
 import {
 	isRunFinalStatus,
 	type CompletionProvider,
@@ -193,6 +194,17 @@ export async function createQueuedRunRecord(
 		});
 
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
+
+		await captureEvent(ctx, {
+			distinctId: args.userId,
+			event: 'thread_created',
+			properties: {
+				thread_id: threadId,
+				is_subagent: parentThread !== null,
+				model: args.selectedModel,
+				provider: completionProvider
+			}
+		});
 
 		if (parentThread) {
 			await registerChildThread(ctx, threadRecord);

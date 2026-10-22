@@ -1,0 +1,205 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use rig::agent::{
+    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
+    ModelTurnFinished,
+};
+use rig::completion::{FinishReason, Message, Usage};
+use serde::Serialize;
+use serde_json::{Map, Value, json};
+
+use crate::types::CompletionProvider;
+
+/// One oversized tool result would otherwise get the whole capture batch rejected.
+const MAX_CONTENT_BYTES: usize = 256 * 1024;
+
+/// Records each model call's input and output so the stream's completion-call item can
+/// send one `$ai_generation` event with provider facts only the provider loop knows.
+#[derive(Clone)]
+pub(crate) struct GenerationTracker {
+    run_id: String,
+    thread_id: String,
+    // Runs stay personless; cost per user joins `$ai_trace_id` to Convex's `run_completed`.
+    distinct_id: String,
+    share_content: bool,
+    state: Arc<Mutex<TrackerState>>,
+}
+
+#[derive(Default)]
+struct TrackerState {
+    conversation_len: usize,
+    turns: HashMap<usize, PendingGeneration>,
+}
+
+struct PendingGeneration {
+    started_at: Instant,
+    input: Option<Value>,
+    output: Option<Value>,
+}
+
+pub(crate) struct GenerationCall<'a> {
+    pub(crate) turn: usize,
+    pub(crate) provider: CompletionProvider,
+    pub(crate) model: &'a str,
+    pub(crate) usage: Usage,
+    pub(crate) finish_reason: Option<&'a FinishReason>,
+    pub(crate) context_handoff: bool,
+    pub(crate) provider_fallback: bool,
+}
+
+impl GenerationTracker {
+    pub(crate) fn new(run_id: &str, thread_id: &str, share_content: bool) -> Self {
+        Self {
+            run_id: run_id.to_string(),
+            thread_id: thread_id.to_string(),
+            distinct_id: uuid::Uuid::new_v4().to_string(),
+            share_content,
+            state: Arc::default(),
+        }
+    }
+
+    pub(crate) fn capture(&self, call: GenerationCall<'_>) {
+        let pending = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.turns.remove(&call.turn));
+        let mut event = posthog_rs::Event::new("$ai_generation", self.distinct_id.as_str());
+        for (key, value) in generation_properties(&self.run_id, &self.thread_id, &call, pending) {
+            let _ = event.insert_prop(key, value);
+        }
+        posthog_rs::capture(event);
+    }
+}
+
+impl AgentHook for GenerationTracker {
+    async fn on_completion_call(
+        &self,
+        _context: &HookContext,
+        event: CompletionCallEvent<'_>,
+    ) -> CompletionCallAction {
+        if let Ok(mut state) = self.state.lock() {
+            let input = self
+                .share_content
+                .then(|| bounded(input_delta(event, state.conversation_len)));
+            state.conversation_len = event.history.len() + 1;
+            state.turns.insert(
+                event.turn,
+                PendingGeneration {
+                    started_at: Instant::now(),
+                    input,
+                    output: None,
+                },
+            );
+        }
+        CompletionCallAction::Continue
+    }
+
+    async fn on_model_turn_finished(
+        &self,
+        _context: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
+        if self.share_content
+            && let Ok(mut state) = self.state.lock()
+            && let Some(pending) = state.turns.get_mut(&event.turn)
+        {
+            pending.output = Some(bounded(
+                json!([{ "role": "assistant", "content": event.content }]),
+            ));
+        }
+        ModelTurnAction::Continue
+    }
+}
+
+/// The messages added since the previous call, without the previous call's own output.
+/// A run's first call sends only its prompt.
+fn input_delta(event: CompletionCallEvent<'_>, previous_len: usize) -> Value {
+    let added = if event.turn == 1 || previous_len > event.history.len() {
+        &[][..]
+    } else {
+        &event.history[previous_len..]
+    };
+    let messages: Vec<&Message> = added
+        .iter()
+        .filter(|message| !matches!(message, Message::Assistant(_)))
+        .chain([event.prompt])
+        .collect();
+    serde_json::to_value(messages).unwrap_or(Value::Null)
+}
+
+fn bounded(content: Value) -> Value {
+    let size = content.to_string().len();
+    if size > MAX_CONTENT_BYTES {
+        Value::String(format!("[{size} bytes omitted]"))
+    } else {
+        content
+    }
+}
+
+fn generation_properties(
+    run_id: &str,
+    thread_id: &str,
+    call: &GenerationCall<'_>,
+    pending: Option<PendingGeneration>,
+) -> Map<String, Value> {
+    let mut properties = Map::new();
+    let mut set = |key: &str, value: Value| {
+        if !value.is_null() {
+            properties.insert(key.to_string(), value);
+        }
+    };
+    set("$ai_trace_id", json!(run_id));
+    set("$ai_session_id", json!(thread_id));
+    set("$ai_model", json!(call.model));
+    set("$ai_provider", to_json(call.provider));
+    set("$ai_stream", json!(true));
+    set("$ai_input_tokens", json!(call.usage.input_tokens));
+    set("$ai_output_tokens", json!(call.usage.output_tokens));
+    set(
+        "$ai_cache_read_input_tokens",
+        json!(call.usage.cached_input_tokens),
+    );
+    set(
+        "$ai_cache_creation_input_tokens",
+        json!(call.usage.cache_creation_input_tokens),
+    );
+    set("$ai_reasoning_tokens", json!(call.usage.reasoning_tokens));
+    set("$ai_stop_reason", to_json(call.finish_reason));
+    set("$process_person_profile", json!(false));
+    set("provider_fallback", json!(call.provider_fallback));
+    if call.context_handoff {
+        set("$ai_span_name", json!("context_handoff"));
+    }
+    if let Some(pending) = pending {
+        set(
+            "$ai_latency",
+            json!(pending.started_at.elapsed().as_secs_f64()),
+        );
+        set("$ai_input", pending.input.unwrap_or(Value::Null));
+        set("$ai_output_choices", pending.output.unwrap_or(Value::Null));
+    }
+    properties
+}
+
+fn to_json(value: impl Serialize) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
+/// Run failures carry the user so PostHog groups them with that person's errors.
+pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, run_id: &str) {
+    let source: &(dyn std::error::Error + Send + Sync + 'static) = error.as_ref();
+    let Ok(options) = posthog_rs::CaptureExceptionOptions::new()
+        .distinct_id(user_id)
+        .property("run_id", run_id)
+    else {
+        return;
+    };
+    // Errors only mean analytics is off.
+    let _ = posthog_rs::capture_exception_with(source, options).await;
+}
+
+#[cfg(test)]
+mod tests;

@@ -38,6 +38,8 @@ type Env = {
   readonly FIRECRAWL_API_KEY: string;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
+  readonly POSTHOG_HOST: string | undefined;
+  readonly POSTHOG_PROJECT_TOKEN: string | undefined;
   readonly PRAVA_BACKEND_URL:
     "https://sandbox.api.prava.space" | "https://api.prava.space";
   readonly PRAVA_SECRET_KEY: string | undefined;

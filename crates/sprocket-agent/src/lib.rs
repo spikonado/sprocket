@@ -1,3 +1,4 @@
+mod analytics;
 mod catalog;
 mod chatgpt;
 mod context_handoff;

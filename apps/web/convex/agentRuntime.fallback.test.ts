@@ -49,7 +49,7 @@ describe('provider fallback', () => {
 		});
 	});
 
-	it('reports the provider preferences runners fall back with', async () => {
+	it('reports the preferences runners read', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'preferences-secret';
@@ -62,6 +62,7 @@ describe('provider fallback', () => {
 			]
 		});
 		await asUser.mutation(api.uiPreferences.setRestrictSubagentsToProvider, { enabled: true });
+		await asUser.mutation(api.uiPreferences.setShareConversationContent, { enabled: false });
 
 		const { runId } = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -70,9 +71,12 @@ describe('provider fallback', () => {
 			prompt: 'Delegate'
 		});
 
-		expect(
-			(await asUser.query(api.agentRuntime.getContext, { runId, executionSecret }))
-				.providerPreferences
-		).toEqual({ enabledProviders: ['chatgpt', 'openai'], restrictSubagentsToProvider: true });
+		const context = await asUser.query(api.agentRuntime.getContext, { runId, executionSecret });
+
+		expect(context.providerPreferences).toEqual({
+			enabledProviders: ['chatgpt', 'openai'],
+			restrictSubagentsToProvider: true
+		});
+		expect(context.shareConversationContent).toBe(false);
 	});
 });

@@ -38,6 +38,9 @@ if (unexpectedArguments.length > 0) {
 
 const childEnv = { ...process.env };
 
+// Dev runs stay out of production analytics unless a key is set explicitly.
+childEnv.PUBLIC_POSTHOG_KEY ??= '';
+
 if (envFile) {
 	const filePath = path.resolve(repositoryRoot, envFile);
 	const fileEnv = parseEnv(readFileSync(filePath, 'utf8'));

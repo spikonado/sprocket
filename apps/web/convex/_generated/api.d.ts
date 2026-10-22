@@ -11,6 +11,7 @@
 import type * as agentQuestions from "../agentQuestions.js";
 import type * as agentRuntime from "../agentRuntime.js";
 import type * as aiUsage from "../aiUsage.js";
+import type * as analytics from "../analytics.js";
 import type * as artifacts from "../artifacts.js";
 import type * as authBootstrap from "../authBootstrap.js";
 import type * as billing from "../billing.js";
@@ -32,6 +33,7 @@ import type * as inbox from "../inbox.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentQuestions from "../lib/agentQuestions.js";
+import type * as lib_analytics from "../lib/analytics.js";
 import type * as lib_artifactRegistry from "../lib/artifactRegistry.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -123,6 +125,7 @@ declare const fullApi: ApiFromModules<{
   agentQuestions: typeof agentQuestions;
   agentRuntime: typeof agentRuntime;
   aiUsage: typeof aiUsage;
+  analytics: typeof analytics;
   artifacts: typeof artifacts;
   authBootstrap: typeof authBootstrap;
   billing: typeof billing;
@@ -144,6 +147,7 @@ declare const fullApi: ApiFromModules<{
   "lib/access": typeof lib_access;
   "lib/agentErrors": typeof lib_agentErrors;
   "lib/agentQuestions": typeof lib_agentQuestions;
+  "lib/analytics": typeof lib_analytics;
   "lib/artifactRegistry": typeof lib_artifactRegistry;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/auth": typeof lib_auth;

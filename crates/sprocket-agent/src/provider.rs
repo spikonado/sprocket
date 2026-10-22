@@ -130,6 +130,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) gateway_url: String,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
+    pub(crate) share_conversation_content: bool,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -604,6 +605,12 @@ async fn run_with_completion_model(
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
     let completion_origin = CompletionOrigin::default();
+    let generation_tracker = crate::analytics::GenerationTracker::new(
+        &request.run_id,
+        &request.thread_id,
+        request.share_conversation_content,
+    );
+    let initial_provider = target.completion_provider;
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
     let initial_context: Arc<[Message]> = request.initial_context.into();
@@ -745,6 +752,7 @@ async fn run_with_completion_model(
                 .add_hook(context_handoff_hook.clone())
                 .add_hook(prompt_hook.clone())
                 .add_hook(stream_recovery.clone())
+                .add_hook(generation_tracker.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .stream();
             loop {
@@ -839,6 +847,15 @@ async fn run_with_completion_model(
                                     pricing: pricing.clone(),
                                 };
                                 let call_usage = usage_source.call_usage(call.usage);
+                                generation_tracker.capture(crate::analytics::GenerationCall {
+                                    turn: call.call_index + 1,
+                                    provider,
+                                    model,
+                                    usage: call.usage,
+                                    finish_reason: call.finish_reason.as_ref(),
+                                    context_handoff: context_handoff_hook.is_writing(),
+                                    provider_fallback: provider != initial_provider,
+                                });
                                 let tokens = context_handoff_hook.record_usage(call.usage);
                                 if context_handoff_hook.is_writing() {
                                     handoff_calls.extend(call_usage);

@@ -1,8 +1,24 @@
 import path from 'node:path';
+import posthog from '@posthog/rollup-plugin';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
+
+const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, SPROCKET_RELEASE_VERSION } = process.env;
+
+// Release builds upload source maps for PostHog error tracking; builds without the keys skip it.
+const posthogSourceMaps =
+	POSTHOG_PERSONAL_API_KEY && POSTHOG_PROJECT_ID
+		? [
+				posthog({
+					personalApiKey: POSTHOG_PERSONAL_API_KEY,
+					projectId: POSTHOG_PROJECT_ID,
+					host: 'https://eu.i.posthog.com',
+					sourcemaps: { releaseName: 'sprocket-app', releaseVersion: SPROCKET_RELEASE_VERSION }
+				})
+			]
+		: [];
 
 export default defineConfig({
 	publicDir: 'static',
@@ -28,7 +44,7 @@ export default defineConfig({
 			}
 		}
 	},
-	plugins: [tailwindcss(), react()],
+	plugins: [tailwindcss(), react(), ...posthogSourceMaps],
 	test: {
 		// Component `/test` entrypoints use `import.meta.glob`; Vite must transform them.
 		server: {

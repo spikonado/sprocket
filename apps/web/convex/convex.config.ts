@@ -25,7 +25,9 @@ const app = defineApp({
 			v.literal('https://api.prava.space')
 		),
 		MODEL_GATEWAY_URL: v.optional(v.string()),
-		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string())
+		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string()),
+		POSTHOG_PROJECT_TOKEN: v.optional(v.string()),
+		POSTHOG_HOST: v.optional(v.string())
 	}
 });
 

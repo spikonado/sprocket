@@ -311,7 +311,8 @@ export default defineSchema({
 		automaticAgentContinuation: v.optional(v.boolean()),
 		settleMergedThreads: v.optional(v.boolean()),
 		providerOrder: v.optional(v.array(vProviderOrderEntry)),
-		restrictSubagentsToProvider: v.optional(v.boolean())
+		restrictSubagentsToProvider: v.optional(v.boolean()),
+		shareConversationContent: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),

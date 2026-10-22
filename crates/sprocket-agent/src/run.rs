@@ -1139,10 +1139,14 @@ pub async fn run_agent(
                     gateway_url: gateway_url.clone(),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
+                    share_conversation_content: context.share_conversation_content,
                 },
             )
             .await;
 
+        if let AgentProviderResult::Failed { error, .. } = &provider_result {
+            crate::analytics::capture_run_failure(error, &context.run.user_id, &run_id).await;
+        }
         finalize_provider_result(&runtime, &run_id, &claim_id, provider_result).await
     })
     .await

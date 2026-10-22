@@ -22,6 +22,8 @@ export default function SettingsGeneral() {
 
 	const setSettleMergedThreads = useMutation(api.uiPreferences.setSettleMergedThreads);
 
+	const setShareConversationContent = useMutation(api.uiPreferences.setShareConversationContent);
+
 	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
 	const disabled = preferencesQuery.status !== 'success';
 
@@ -50,6 +52,13 @@ export default function SettingsGeneral() {
 						savedEnabled={preferences?.settleMergedThreads ?? false}
 						disabled={disabled}
 						save={setSettleMergedThreads}
+					/>
+					<PreferenceToggle
+						title="Share conversation content"
+						description="Include prompts and model output in analytics, and record session replays without masking text."
+						savedEnabled={preferences?.shareConversationContent ?? true}
+						disabled={disabled}
+						save={setShareConversationContent}
 					/>
 					{preferencesQuery.status === 'pending' && (
 						<p role="status" className="text-muted-foreground px-3 text-sm">

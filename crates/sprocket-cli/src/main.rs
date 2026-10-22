@@ -199,7 +199,10 @@ fn serve_local(
                 );
             }
 
-            run(
+            if let Err(error) = init_analytics().await {
+                tracing::warn!("analytics disabled: {error:#}");
+            }
+            let exit = run(
                 server,
                 RunOptions {
                     temporary,
@@ -208,12 +211,43 @@ fn serve_local(
                     workspace_path,
                 },
             )
-            .await
+            .await;
+            posthog_rs::shutdown().await;
+            exit
         })?;
     Ok(match exit {
         ServerExit::Stopped => 0,
         ServerExit::Restart => RESTART_EXIT_CODE,
     })
+}
+
+async fn init_analytics() -> anyhow::Result<()> {
+    // Dev runs set an empty key, which keeps analytics off.
+    let Some(api_key) = std::env::var("PUBLIC_POSTHOG_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+    else {
+        return Ok(());
+    };
+    let error_tracking = posthog_rs::ErrorTrackingOptionsBuilder::default()
+        .capture_panics(true)
+        .build()?;
+    let options = posthog_rs::ClientOptionsBuilder::default()
+        .api_key(api_key)
+        .host(posthog_rs::EU_INGESTION_ENDPOINT)
+        .is_server(false)
+        // Bounds how long exit and restart wait on an unreachable PostHog.
+        .request_timeout_seconds(5)
+        .shutdown_timeout_ms(2_000)
+        .error_tracking(error_tracking)
+        .before_send(|mut event| {
+            let _ = event.insert_prop("site", "sprocket_app");
+            let _ = event.insert_prop("app_version", SPROCKET_VERSION);
+            Some(event)
+        })
+        .build()?;
+    posthog_rs::init_global(options).await?;
+    Ok(())
 }
 
 async fn open_running_web_app(

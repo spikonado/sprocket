@@ -22,6 +22,7 @@ import {
 } from '@convex/lib/tiers';
 import { usageMeters, type UsageMeterId } from '@convex/lib/usageMeters';
 import { billingWindow, type BillingWindowSubscription } from '@convex/lib/billingWindows';
+import { captureEvent } from '@convex/lib/analytics';
 
 export { usageMeters, type UsageMeterId };
 
@@ -206,7 +207,7 @@ async function chargeMeterLimits(
 	subscription: MeterWindowSubscription | null,
 	now: number,
 	count: number
-): Promise<void> {
+): Promise<boolean> {
 	const { window, used, migrated } = await usedInWindow(
 		ctx,
 		meterId,
@@ -222,6 +223,8 @@ async function chargeMeterLimits(
 		count: count + (migrated ? 0 : used),
 		reserve: true
 	});
+
+	return used < limits[meterId] && used + count >= limits[meterId];
 }
 
 export async function getMeterWindow(
@@ -249,7 +252,8 @@ export async function applyGatewayUsageCharge(
 	if (!Number.isFinite(count) || count <= 0) return;
 	const now = Date.now();
 	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
-	await chargeMeterLimits(
+
+	const exhausted = await chargeMeterLimits(
 		ctx,
 		'modelUsage',
 		userId,
@@ -258,6 +262,10 @@ export async function applyGatewayUsageCharge(
 		now,
 		count
 	);
+
+	if (exhausted) {
+		await captureEvent(ctx, { distinctId: userId, event: 'quota_exhausted', properties: { tier } });
+	}
 }
 
 export const checkUsageLimits = internalMutation({

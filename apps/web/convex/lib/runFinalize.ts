@@ -15,6 +15,7 @@ import {
 } from '@convex/lib/runExecution';
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
+import { analyticsEnabled } from '@convex/lib/analytics';
 
 type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
@@ -124,6 +125,10 @@ export async function finalizeRunRecord(
 		jobCursor: -1,
 		questionCursor: -1
 	});
+
+	if (analyticsEnabled()) {
+		await ctx.scheduler.runAfter(0, internal.analytics.captureRunCompleted, { runId: run._id });
+	}
 
 	return true;
 }

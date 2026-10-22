@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 const runtimeConfigSchema = z.object({
 	env: z.record(z.string(), z.string()),
-	machine: z.boolean().optional().default(false)
+	machine: z.boolean().optional().default(false),
+	version: z.string().optional()
 });
 
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
