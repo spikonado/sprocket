@@ -7,6 +7,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const PAGE_SIZE = 100;
 
+// Thread records can hold large context summaries, so thread pages are also bounded by bytes read.
+const THREAD_PAGE_MAX_BYTES = 4_000_000;
+
 const vPage = { dayStart: v.number(), cursor: v.union(v.string(), v.null()) };
 
 // Per-user usage goes out as daily totals stamped at the day's start, so it can't be
@@ -81,7 +84,11 @@ export const sendDailyThreadsCreated = internalMutation({
 			.withIndex('by_creation_time', (query) =>
 				query.gte('_creationTime', args.dayStart).lt('_creationTime', args.dayStart + DAY_MS)
 			)
-			.paginate({ cursor: args.cursor, numItems: PAGE_SIZE });
+			.paginate({
+				cursor: args.cursor,
+				numItems: PAGE_SIZE,
+				maximumBytesRead: THREAD_PAGE_MAX_BYTES
+			});
 
 		const counts = new Map<string, number>();
 
