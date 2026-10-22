@@ -122,11 +122,6 @@ fn value_to_plain_json(value: Value) -> serde_json::Value {
     }
 }
 
-/// The JSON that `value` decodes back to after a round trip through Convex.
-pub fn convex_round_trip(value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-    Value::try_from(value).map(value_to_plain_json)
-}
-
 /// Convex stores every number as a float. Integers must decode back to `5`,
 /// not `5.0`, so replayed model history matches the bytes the model saw.
 fn float_to_json(number: f64) -> serde_json::Value {

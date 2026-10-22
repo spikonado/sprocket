@@ -17,8 +17,8 @@ mod tests;
 
 use auth::AuthState;
 pub use decode::{
-    convex_round_trip, decode_function_result, decode_labeled_function_result,
-    deserialize_convex_u32, deserialize_convex_u64,
+    decode_function_result, decode_labeled_function_result, deserialize_convex_u32,
+    deserialize_convex_u64,
 };
 
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
