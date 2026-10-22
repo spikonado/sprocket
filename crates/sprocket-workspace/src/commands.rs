@@ -1051,11 +1051,7 @@ pub struct CommandStdinOutput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandOutput {
-    #[serde(
-        default,
-        deserialize_with = "deserialize_exit_code",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     pub success: bool,
     pub running: bool,
@@ -1067,23 +1063,6 @@ pub struct CommandOutput {
     pub events_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-fn deserialize_exit_code<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<i32>, D::Error> {
-    Option::<f64>::deserialize(deserializer)?
-        .map(|value| {
-            if !value.is_finite()
-                || value.fract() != 0.0
-                || value < i32::MIN as f64
-                || value > i32::MAX as f64
-            {
-                return Err(serde::de::Error::custom("invalid command exit code"));
-            }
-            Ok(value as i32)
-        })
-        .transpose()
 }
 
 #[cfg(test)]

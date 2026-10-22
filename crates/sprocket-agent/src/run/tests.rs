@@ -156,7 +156,7 @@ fn base_instructions_include_the_selected_model_identity() {
 }
 
 #[test]
-fn identity_includes_the_current_thread_id_and_transcript_location() {
+fn thread_section_includes_the_thread_id_and_transcript_location() {
     for (data_dir, thread_id) in [
         ("/home/user/.sprocket", "first-thread-id"),
         ("/srv/custom sprocket data", "second-thread-id"),
@@ -174,15 +174,12 @@ fn identity_includes_the_current_thread_id_and_transcript_location() {
             thread_id,
             &transcript_dir,
         );
-        let identity = prompt_context
+        let thread_section = prompt_context
             .base_instructions
-            .split_once("## Identity\n")
+            .split_once("\n## This thread\n")
             .unwrap()
-            .1
-            .split_once("\n## Basic instructions")
-            .unwrap()
-            .0;
-        assert!(identity.contains(&format!(
+            .1;
+        assert!(thread_section.contains(&format!(
             "- This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.",
             transcript_dir.display()
         )));
@@ -196,7 +193,7 @@ fn identity_includes_the_current_thread_id_and_transcript_location() {
                 .base_instructions
                 .contains(super::TRANSCRIPT_DIR_PLACEHOLDER)
         );
-        assert!(!identity.contains("~/.sprocket/"));
+        assert!(!thread_section.contains("~/.sprocket/"));
     }
 }
 

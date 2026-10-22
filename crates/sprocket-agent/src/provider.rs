@@ -1486,7 +1486,12 @@ fn apply_completed_tool_call(
     let block = AssistantContent::ToolCall(call.clone());
     if let Some(native) = block.native_item() {
         let mut item = native.clone();
-        if let Some(item) = item.as_object_mut() {
+        // Replay rebuilds canonical arguments, so only keep the model's
+        // spelling when it differs; replaying other bytes breaks prompt caching.
+        let canonical = call.function.arguments_value().to_string();
+        if let Some(item) = item.as_object_mut()
+            && item.get("arguments").and_then(serde_json::Value::as_str) == Some(&canonical)
+        {
             item.remove("arguments");
         }
         provider_metadata.insert(key, serde_json::json!({ "rigNative": item }));
