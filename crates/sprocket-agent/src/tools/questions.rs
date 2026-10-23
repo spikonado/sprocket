@@ -389,7 +389,9 @@ fn question_result_from_snapshot(
             result["answer"] = json!(snapshot.answer);
             Ok(result)
         }
-        "cancelled" => Err(cancelled_error()),
+        "cancelled" => Err(tool_failure(
+            "Question was cancelled before it was answered.",
+        )),
         other => Err(tool_failure(format!(
             "Unexpected question status '{other}'"
         ))),
