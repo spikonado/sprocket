@@ -92,7 +92,7 @@ export function useRevealInboxThread(
 	root: Doc<'threadRecords'> | null,
 	repositoryKeys: readonly string[],
 	sections: readonly InboxSectionData[]
-): Doc<'threadRecords'> | null {
+) {
 	const visibleRoot = root && repositoryKeys.includes(root.repositoryKey) ? root : null;
 	const emptyPage = { rows: [], loading: false, canLoadMore: false, loadMore: () => {} };
 
@@ -102,6 +102,4 @@ export function useRevealInboxThread(
 		visibleRoot?._id ?? null,
 		sections.find((section) => section.state === state) ?? emptyPage
 	);
-
-	return visibleRoot;
 }

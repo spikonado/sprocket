@@ -171,7 +171,6 @@ function InboxSidebarContainer(
 ) {
 	const { pullRequestRefresher, ...sidebarProps } = props;
 	const expansion = useExpandedThreads(props.signedInUserId);
-	const { currentThreadId, onSettledOpenChange } = props;
 
 	useShownPullRequests(
 		pullRequestRefresher,
@@ -193,25 +192,11 @@ function InboxSidebarContainer(
 		args: props.mutationsEnabled && rootId ? { threadId: rootId } : 'skip'
 	});
 
-	const root = useRevealInboxThread(
+	useRevealInboxThread(
 		rootQuery.status === 'success' ? rootQuery.data : null,
 		props.repositoryKeys,
 		props.sections
 	);
-
-	const revealedSettledRef = useRef<Id<'threadRecords'> | null>(null);
-
-	useEffect(() => {
-		if (!root || root.archivedAt === undefined) {
-			revealedSettledRef.current = null;
-
-			return;
-		}
-
-		if (revealedSettledRef.current === currentThreadId) return;
-		revealedSettledRef.current = currentThreadId;
-		onSettledOpenChange(true);
-	}, [root, currentThreadId, onSettledOpenChange]);
 
 	const resolveChildren: SidebarChildrenResolver = useCallback(
 		({ threadId, renderRows }) => (
