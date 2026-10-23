@@ -2771,6 +2771,7 @@ export default function App({
 							type="button"
 							aria-label="Settings"
 							title="Settings"
+							data-ph-capture-attribute-action="open_settings"
 							onClick={() => void openSettingsFromFloatingControls()}
 						>
 							<Settings size={16} />
@@ -2788,6 +2789,7 @@ export default function App({
 							className="text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring absolute top-1.5 right-2 z-100 rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none"
 							onClick={() => artifactPanel.update({ open: true })}
 							aria-label="Open side panel"
+							data-ph-capture-attribute-action="open_side_panel"
 						>
 							<PanelRight className="size-4" aria-hidden="true" />
 						</button>

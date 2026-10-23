@@ -17,6 +17,8 @@ export default function ModelReasoningOptions({
 			className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2"
 			aria-label={`${reasoningEffortLabel(effort)}${effort === model.defaultReasoningEffort ? ' (default)' : ''}`}
 			aria-pressed={effort === reasoningEffort}
+			data-ph-capture-attribute-action="select_reasoning_effort"
+			data-ph-capture-attribute-reasoning_effort={effort}
 			data-default-reasoning={effort === model.defaultReasoningEffort ? '' : undefined}
 			title={effort === model.defaultReasoningEffort ? 'Default reasoning' : undefined}
 			onClick={() => onSelect(effort)}

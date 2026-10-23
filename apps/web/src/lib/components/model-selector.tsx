@@ -146,6 +146,7 @@ export default function ModelSelector({
 				type="button"
 				className="text-foreground focus-visible:ring-ring/60 inline-flex h-11 max-w-full items-center gap-2 rounded-lg px-2 text-[15px] outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 sm:h-9"
 				aria-label="Select model"
+				data-ph-capture-attribute-action="open_model_selector"
 				title={[selectedModel?.label ?? modelId, summary].filter(Boolean).join(' · ')}
 				aria-haspopup="dialog"
 				aria-expanded={isOpen}
@@ -199,6 +200,8 @@ export default function ModelSelector({
 									}}
 									type="button"
 									aria-label={model.label}
+									data-ph-capture-attribute-action="select_model"
+									data-ph-capture-attribute-model={model.id}
 									aria-pressed={model.id === modelId}
 									aria-haspopup={showsReasoningControl(model) ? 'true' : undefined}
 									className={cn(
@@ -257,6 +260,7 @@ export default function ModelSelector({
 									role="switch"
 									className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2"
 									aria-checked={fastMode}
+									data-ph-capture-attribute-action="toggle_fast_mode"
 									onClick={() => onFastModeChange?.(!fastMode)}
 								>
 									<Zap className="size-3.5 shrink-0 text-amber-400" />

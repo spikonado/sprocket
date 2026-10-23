@@ -63,6 +63,7 @@ export default function TranscriptPromptMessage({
 					type="button"
 					className="text-muted-foreground hover:text-muted-foreground inline-flex size-6 items-center justify-center rounded-md transition"
 					aria-label={copied ? 'Copied' : 'Copy message'}
+					data-ph-capture-attribute-action="copy_message"
 					onClick={onCopy}
 				>
 					{copied ? (

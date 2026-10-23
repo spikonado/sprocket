@@ -162,6 +162,7 @@ export default function CreateThreadHeading({
 								className="create-thread-project-trigger"
 								aria-label={`Select project. Current project: ${selectedProjectName}`}
 								aria-haspopup="menu"
+								data-ph-capture-attribute-action="open_project_selector"
 								aria-expanded={isOpen}
 								aria-controls={isOpen ? 'create-thread-project-menu' : undefined}
 								onClick={() => {

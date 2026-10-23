@@ -251,6 +251,7 @@ export default function SidePanel({
 				<button
 					type="button"
 					className={ICON_BUTTON}
+					data-ph-capture-attribute-action="new_side_panel_tab"
 					onClick={onNewTab}
 					aria-label="New tab"
 					title="New tab"
@@ -300,6 +301,8 @@ export default function SidePanel({
 									<li key={item.id}>
 										<button
 											type="button"
+											data-ph-capture-attribute-action="choose_side_panel_view"
+											data-ph-capture-attribute-side_panel_view={item.id}
 											onClick={(event) => {
 												onUpdateTab(tab.id, { view: item.id });
 												event.currentTarget.closest<HTMLElement>('[role="tabpanel"]')?.focus();

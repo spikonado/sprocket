@@ -467,7 +467,12 @@ export default function InboxSidebar({
 			</header>
 
 			<div className="px-3 pb-3">
-				<button className="inbox-menu-item inbox-primary-navigation" type="button" onClick={onNew}>
+				<button
+					className="inbox-menu-item inbox-primary-navigation"
+					type="button"
+					data-ph-capture-attribute-action="new_thread"
+					onClick={onNew}
+				>
 					<SquarePen size={15} />
 					New thread
 				</button>
@@ -523,6 +528,7 @@ export default function InboxSidebar({
 						className="inbox-icon inbox-add-project-button"
 						type="button"
 						aria-label="Create or add project"
+						data-ph-capture-attribute-action="add_project"
 						onClick={addProject}
 					>
 						<FolderPlus size={17} />
@@ -581,6 +587,7 @@ export default function InboxSidebar({
 				<button
 					className="inbox-menu-item inbox-primary-navigation"
 					type="button"
+					data-ph-capture-attribute-action="open_settings"
 					onClick={onSettings}
 				>
 					<Settings size={15} />
@@ -609,6 +616,7 @@ export default function InboxSidebar({
 								<button
 									type="button"
 									role="menuitem"
+									data-ph-capture-attribute-action="settle_thread"
 									disabled={
 										!mutationsEnabled ||
 										busy ||
@@ -625,6 +633,7 @@ export default function InboxSidebar({
 								<button
 									type="button"
 									role="menuitem"
+									data-ph-capture-attribute-action="unsettle_thread"
 									disabled={!mutationsEnabled || busy}
 									onClick={() => void change(menuThread, 'unsettled', false)}
 								>
@@ -635,6 +644,7 @@ export default function InboxSidebar({
 						<button
 							type="button"
 							role="menuitem"
+							data-ph-capture-attribute-action="rename_thread"
 							disabled={!mutationsEnabled}
 							onClick={() => beginRename(menuThread)}
 						>
@@ -644,6 +654,7 @@ export default function InboxSidebar({
 						<button
 							type="button"
 							role="menuitem"
+							data-ph-capture-attribute-action="regenerate_thread_title"
 							disabled={!mutationsEnabled || busy}
 							onClick={() => void regenerateTitle(menuThread)}
 						>
@@ -760,6 +771,7 @@ function ThreadTreeRow({
 							className="inbox-row-open inbox-row-title truncate"
 							type="button"
 							title={`${thread.title ?? 'New thread'}\n${projectName}`}
+							data-ph-capture-attribute-action="open_thread"
 							onClick={() => onChoose(thread)}
 							onDoubleClick={() => {
 								if (!mutationsEnabled || busy) return;
@@ -793,6 +805,7 @@ function ThreadTreeRow({
 								}
 								aria-label={`Settle ${thread.title ?? 'thread'}`}
 								data-tooltip="Settle"
+								data-ph-capture-attribute-action="settle_thread"
 								onClick={() => void onChange(thread, 'settled', summary?.anyActive === true)}
 							>
 								<Check size={14} />
@@ -804,6 +817,7 @@ function ThreadTreeRow({
 								disabled={!mutationsEnabled || busy}
 								aria-label={`Unsettle ${thread.title ?? 'thread'}`}
 								data-tooltip="Unsettle"
+								data-ph-capture-attribute-action="unsettle_thread"
 								onClick={() => void onChange(thread, 'unsettled', false)}
 							>
 								<RotateCcw size={14} />
@@ -817,6 +831,7 @@ function ThreadTreeRow({
 						type="button"
 						aria-expanded={expanded}
 						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}${subagentSummary ? `: ${subagentSummary}` : ''}`}
+						data-ph-capture-attribute-action="toggle_subagents"
 						onClick={() => {
 							if (expanded) {
 								expansion.collapse(thread._id);
