@@ -29,12 +29,13 @@ use crate::now_ms;
 use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
-use crate::tools::{agent_tools, max_yield_ms, working_directory_message};
+use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
     UsagePricing, gateway_api_v1_url,
 };
 use crate::usage::{ModelCallUsage, UsageSource};
+use crate::workspace_context::{HiddenPrompt, WorkspaceContext, unseen};
 use sprocket_transcript::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts,
@@ -109,7 +110,9 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
     pub(crate) handoff_base_instructions: Option<String>,
-    pub(crate) initial_context: Vec<Message>,
+    pub(crate) workspace_context: WorkspaceContext,
+    /// This run's workspace context prompts, which a handoff before the prompt keeps.
+    pub(crate) run_workspace_context: Vec<HiddenPrompt>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) cwd: PathBuf,
@@ -425,8 +428,8 @@ impl AgentHook for CompletionOrigin {
 
 pub(crate) async fn resume_context_handoff(
     agent: &mut rig::Agent,
-    initial_context: &[Message],
     summary: &str,
+    workspace_context: Vec<Message>,
     deferred_prompt: Option<Message>,
     save: impl std::future::Future<Output = anyhow::Result<bool>>,
     next_model: impl std::future::Future<Output = anyhow::Result<Option<DynModel<Completion>>>>,
@@ -437,14 +440,11 @@ pub(crate) async fn resume_context_handoff(
     if let Some(model) = next_model.await? {
         agent.set_model(model);
     }
-    let mut history = initial_context.to_vec();
-    let handoff = Message::user(context_summary_text(summary));
+    let mut history = vec![Message::user(context_summary_text(summary))];
+    history.extend(workspace_context);
     let prompt = match deferred_prompt {
-        Some(pending) => {
-            history.push(handoff);
-            pending
-        }
-        None => handoff,
+        Some(pending) => pending,
+        None => history.pop().expect("the history holds the summary"),
     };
     Ok(Some((history, prompt)))
 }
@@ -623,7 +623,6 @@ async fn run_with_completion_model(
     let initial_provider = target.completion_provider;
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
-    let initial_context: Arc<[Message]> = request.initial_context.into();
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -634,12 +633,7 @@ async fn run_with_completion_model(
         }
     };
 
-    let mut history: Vec<_> = initial_context
-        .iter()
-        .cloned()
-        .chain([working_directory_message(&cwd.get())])
-        .chain(request.prior_history)
-        .collect();
+    let mut history = request.prior_history;
     if let Some(origin) = &legacy_origin {
         crate::types::assign_unidentified_legacy_history_origin(&mut history, origin);
     }
@@ -952,18 +946,29 @@ async fn run_with_completion_model(
                                         None => Ok(None),
                                     }
                                 };
+                                // Parts before the cutoff leave the history, so
+                                // the context the model keeps must follow it.
+                                let kept_context = if before_prompt {
+                                    request.run_workspace_context.clone()
+                                } else {
+                                    Vec::new()
+                                };
+                                let missing_context = unseen(
+                                    &kept_context,
+                                    request.workspace_context.prompts(&cwd.get()),
+                                );
                                 let save = runtime.save_context_handoff(
                                     &request.run_id, &request.claim_id, &summary,
                                     transcript.attempt_seq, before_prompt,
-                                    &handoff_calls,
+                                    &handoff_calls, &missing_context,
                                 );
-                                let handoff_context: Vec<_> = initial_context
+                                let handoff_context = kept_context
                                     .iter()
-                                    .cloned()
-                                    .chain([working_directory_message(&cwd.get())])
+                                    .chain(&missing_context)
+                                    .map(HiddenPrompt::message)
                                     .collect();
                                 match resume_context_handoff(
-                                    &mut agent, &handoff_context, &summary,
+                                    &mut agent, &summary, handoff_context,
                                     deferred_prompt.take(), save, next_model,
                                 ).await {
                                     Ok(Some((next_history, next_prompt))) => {

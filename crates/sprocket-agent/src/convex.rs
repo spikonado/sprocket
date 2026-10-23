@@ -15,6 +15,7 @@ use crate::types::{
     CompletionProvider, CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse,
     RunAgentRequest, RunContextResponse, StartRunResponse,
 };
+use crate::workspace_context::HiddenPrompt;
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -474,6 +475,7 @@ impl RuntimeClient {
         completion_attempt_seq: u64,
         before_prompt: bool,
         handoff_calls: &[crate::usage::ModelCallUsage],
+        workspace_context: &[HiddenPrompt],
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("summary".to_string(), summary.to_string().into());
@@ -488,7 +490,29 @@ impl RuntimeClient {
                 Value::try_from(serde_json::to_value(handoff_calls)?)?,
             );
         }
+        if !workspace_context.is_empty() {
+            args.insert(
+                "workspaceContext".to_string(),
+                Value::try_from(serde_json::to_value(workspace_context)?)?,
+            );
+        }
         self.mutation_json("agentRuntime:saveContextHandoff", args)
+            .await
+    }
+
+    /// Returns false when the run no longer owns this claim.
+    pub(crate) async fn record_run_hidden_prompts(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        prompts: &[HiddenPrompt],
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert(
+            "prompts".to_string(),
+            Value::try_from(serde_json::to_value(prompts)?)?,
+        );
+        self.claim_mutation_with_retries("agentRuntime:recordRunHiddenPrompts", args)
             .await
     }
 

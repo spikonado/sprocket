@@ -625,6 +625,69 @@ describe('agentRuntime context accounting', () => {
 		).rejects.toThrow('Conflicting context handoff retry.');
 	});
 
+	it('records hidden workspace context prompts after the handoff cutoff', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'handoff-hidden-secret';
+		const claim = { claimId: 'claim-hidden', executionSecret };
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'handoff-hidden',
+			executionSecret,
+			'Do the long task'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
+		const environment = { kind: 'environment' as const, text: '# Environment' };
+
+		for (let attempt = 0; attempt < 2; attempt++) {
+			await expect(
+				asUser.mutation(api.agentRuntime.recordRunHiddenPrompts, {
+					runId,
+					...claim,
+					prompts: [environment]
+				})
+			).resolves.toBe(true);
+		}
+
+		await finalizeTextCompletion(asUser, {
+			runId,
+			...claim,
+			attemptSeq: 1,
+			streamId: 'stream-hidden',
+			text: 'Finished the first step'
+		});
+		await registerCompletionAttempt(asUser, { runId, ...claim, attemptSeq: 2 });
+		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
+			runId,
+			...claim,
+			summary: 'First step is done.',
+			completionAttemptSeq: 2,
+			beforePrompt: false,
+			workspaceContext: [environment]
+		});
+
+		const parts = await t.run(async (ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+
+		expect(parts.map((part) => [part.number, part.kind, part.prompt?.hidden])).toEqual([
+			[0, 'prompt', undefined],
+			[1, 'prompt', 'environment'],
+			[2, 'completion', undefined],
+			[3, 'prompt', 'environment']
+		]);
+		expect(await readThreadCutoff(t, threadId)).toMatchObject({
+			contextSummaryThroughPartNumber: 2
+		});
+	});
+
 	it('rejects a handoff that would move the cutoff backwards', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

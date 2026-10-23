@@ -686,8 +686,8 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let saved_summary = std::cell::RefCell::new(None);
     let failed_transition = resume_context_handoff(
         &mut agent,
-        std::slice::from_ref(&initial_context),
         &summary,
+        vec![initial_context.clone()],
         Some(pending_prompt.clone()),
         async {
             *saved_summary.borrow_mut() = Some(summary.clone());
@@ -710,8 +710,8 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     );
     let (history, prompt) = resume_context_handoff(
         &mut agent,
-        std::slice::from_ref(&initial_context),
         &summary,
+        vec![initial_context],
         Some(pending_prompt),
         async {
             assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
@@ -754,11 +754,11 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     assert_eq!(
         resume["input"],
         json!([
-            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": INITIAL_CONTEXT }] },
             { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": context_summary_text(&summary) }] },
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": INITIAL_CONTEXT }] },
             { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": DEFERRED_PROMPT }] }
         ]),
-        "new provider must receive only initial context, the handoff summary, and the pending prompt"
+        "new provider must receive only the handoff summary, the workspace context, and the pending prompt"
     );
 }
 

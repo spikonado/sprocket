@@ -2,6 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Value } from 'convex/values';
 import type {
+	HiddenPrompt,
 	TranscriptCompletionBody,
 	TranscriptPromptBody,
 	TranscriptToolBody
@@ -24,6 +25,11 @@ export function normalizeCompletionTiming(
 
 export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
+}
+
+/** `scope` keeps retries of one write idempotent and separates later writes. */
+export function hiddenPromptSourceKey(scope: string, kind: HiddenPrompt['kind']): string {
+	return `hiddenPrompt:${scope}:${kind}`;
 }
 
 export async function getPromptPart(

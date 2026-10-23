@@ -289,7 +289,11 @@ impl WorkReplica {
                 part: part.number,
                 item: 0,
             };
-            if let Some(prompt) = &part.prompt {
+            if let Some(prompt) = part
+                .prompt
+                .as_ref()
+                .filter(|prompt| prompt.hidden.is_none())
+            {
                 Self::put_row(
                     &tx,
                     json!({"id":format!("prompt-{}",part.number),"sequence":at.sequence(),

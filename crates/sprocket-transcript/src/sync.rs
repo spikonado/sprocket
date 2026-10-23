@@ -4,8 +4,8 @@ use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
 use super::store::TranscriptStore;
 use super::types::{
-    TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart, TranscriptPartKind,
-    TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
+    TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -69,6 +69,8 @@ struct RemoteTranscriptPart {
 struct RemotePrompt {
     text: String,
     image_uploads: Vec<RemoteAttachment>,
+    #[serde(default)]
+    hidden: Option<HiddenPromptKind>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -149,6 +151,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
                     local_path: None,
                 })
                 .collect(),
+            hidden: prompt.hidden,
         }),
         completion: part.completion.map(|completion| TranscriptCompletionBody {
             stream_id: completion.stream_id,

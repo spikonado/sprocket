@@ -27,6 +27,7 @@ import {
 import { requestRunCancellation, requestThreadTreeCancellation } from './runLifecycle';
 import {
 	recordCompletionTranscript,
+	recordHiddenPrompts,
 	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
@@ -65,6 +66,7 @@ import {
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vCompletionProvider,
+	vHiddenPrompt,
 	vModelCallUsage,
 	vReasoningEffort,
 	vRunFinalStatus,
@@ -433,7 +435,9 @@ export const saveContextHandoff = mutation({
 		beforePrompt: v.boolean(),
 		/** Sent by released agents; ignored. */
 		processedTokens: v.optional(v.number()),
-		handoffCalls: v.optional(v.array(vModelCallUsage))
+		handoffCalls: v.optional(v.array(vModelCallUsage)),
+		/** Shown after the summary; parts before the cutoff no longer reach the model. */
+		workspaceContext: v.optional(v.array(vHiddenPrompt))
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
@@ -482,6 +486,13 @@ export const saveContextHandoff = mutation({
 			contextSummaryHandoffKey: handoffKey
 		});
 
+		await recordHiddenPrompts(ctx, {
+			threadId: thread._id,
+			runId: run._id,
+			scope: handoffKey,
+			prompts: args.workspaceContext ?? []
+		});
+
 		for (const [index, call] of (args.handoffCalls ?? []).entries()) {
 			await recordModelCallUsage(ctx, thread, {
 				runId: run._id,
@@ -491,6 +502,31 @@ export const saveContextHandoff = mutation({
 		}
 
 		await setThreadContextTokens(ctx, thread, undefined);
+
+		return true;
+	}
+});
+
+/** Written right after the claim, before the run's first model call. */
+export const recordRunHiddenPrompts = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		prompts: v.array(vHiddenPrompt)
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+
+		await recordHiddenPrompts(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			scope: `${run._id}:${args.claimId}`,
+			prompts: args.prompts
+		});
 
 		return true;
 	}

@@ -9,7 +9,8 @@ use rig::message::{
     ToolName,
 };
 use sprocket_transcript::{
-    LiveAssistantParts, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPromptBody,
+    HiddenPromptKind, LiveAssistantParts, TranscriptAttachmentMeta, TranscriptCompletionBody,
+    TranscriptPromptBody,
 };
 
 fn prompt(number: u32, run_id: &str, text: &str) -> TranscriptPart {
@@ -22,6 +23,7 @@ fn prompt(number: u32, run_id: &str, text: &str) -> TranscriptPart {
         prompt: Some(TranscriptPromptBody {
             text: text.to_string(),
             image_uploads: Vec::new(),
+            hidden: None,
         }),
         completion: None,
         tool: None,
@@ -129,6 +131,62 @@ fn skips_the_current_run_prompt_until_that_run_has_finished_turns() {
     assert!(after.contains("now"));
 }
 
+fn hidden(number: u32, run_id: &str, kind: HiddenPromptKind, text: &str) -> TranscriptPart {
+    let mut part = prompt(number, run_id, text);
+    part.source_key = format!("hiddenPrompt:{number}");
+    part.prompt.as_mut().unwrap().hidden = Some(kind);
+    part
+}
+
+fn texts(history: &[AgentHistoryMessage]) -> Vec<&str> {
+    history
+        .iter()
+        .flat_map(|message| &message.contents)
+        .filter_map(|content| match content {
+            AgentHistoryContent::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn shows_workspace_context_recorded_after_a_prompt_before_it() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let mut answer = completion_with_call(2, "call");
+    answer.run_id = "earlier".into();
+    let parts = [
+        prompt(0, "earlier", "first task"),
+        hidden(1, "earlier", HiddenPromptKind::Environment, "env one"),
+        answer,
+        hidden(3, "earlier", HiddenPromptKind::Continuation, "continue"),
+        prompt(4, "current", "second task"),
+        hidden(5, "current", HiddenPromptKind::Instructions, "instructions"),
+    ];
+
+    assert_eq!(
+        pending_prompt_part(&state, &parts, "current")
+            .unwrap()
+            .number,
+        4
+    );
+    let history = agent_history_from_parts(&state, &parts, Some("current"));
+    assert_eq!(
+        texts(&history),
+        ["env one", "first task", "continue", "instructions"]
+    );
+    let shown: Vec<_> = shown_workspace_context(&state, &parts)
+        .into_iter()
+        .map(|(run_id, prompt)| (run_id, prompt.text))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("earlier", "env one".to_string()),
+            ("current", "instructions".to_string())
+        ]
+    );
+}
+
 #[test]
 fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
     let mut state = TranscriptState::new("user".into(), "thread".into());
@@ -169,6 +227,7 @@ fn continuation_of_a_run_without_output_answers_its_prompt() {
     let parts = [
         prompt(0, "earlier", "first task"),
         prompt(1, "parent", "original task"),
+        hidden(2, "parent", HiddenPromptKind::Environment, "environment"),
     ];
     let pending = pending_prompt_part(&state, &parts, "continuation").unwrap();
     assert_eq!(pending.number, 1);
@@ -399,6 +458,7 @@ fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
                         url: Some("https://files.example/shot.png".into()),
                         local_path: Some("/cache/user/blobs/st".into()),
                     }],
+                    hidden: None,
                 }),
                 completion: None,
                 tool: None,

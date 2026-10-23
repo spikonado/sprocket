@@ -1,12 +1,5 @@
-use rig::completion::Message;
-use rig::message::UserContent;
-use sprocket_workspace::{
-    SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
-};
-
 use super::{
-    build_workspace_prompt_context, should_continue_without_prompt,
-    submission_owned_by_another_executor,
+    base_instructions, should_continue_without_prompt, submission_owned_by_another_executor,
 };
 
 const MODEL_LABEL: &str = "GPT-5.6 Sol";
@@ -97,31 +90,6 @@ fn prompted_continuations_use_their_user_prompt() {
     assert!(should_continue_without_prompt(true, true, "Ship it"));
 }
 
-fn initial_context_text(message: &Message) -> &str {
-    match message {
-        Message::User { content } => match content.first() {
-            Some(UserContent::Text(text)) => &text.text,
-            other => panic!("expected initial context text, got {other:?}"),
-        },
-        other => panic!("expected initial context user message, got {other:?}"),
-    }
-}
-
-fn build_test_prompt_context(
-    workspace_instructions: &[WorkspaceInstruction],
-    skills: &[WorkspaceSkill],
-) -> super::WorkspacePromptContext {
-    build_workspace_prompt_context(
-        "/tmp/project",
-        workspace_instructions,
-        skills,
-        MODEL_LABEL,
-        MODEL_ID,
-        "thread-id",
-        std::path::Path::new("/tmp/transcripts/user/thread-id"),
-    )
-}
-
 #[test]
 fn submission_conflict_errors_match_the_convex_sentinel() {
     assert!(submission_owned_by_another_executor(
@@ -140,82 +108,14 @@ fn submission_conflict_errors_match_the_convex_sentinel() {
 
 #[test]
 fn base_instructions_include_the_selected_model_identity() {
-    let prompt_context = build_test_prompt_context(&[], &[]);
+    let instructions = base_instructions(MODEL_LABEL, MODEL_ID);
 
     assert!(
-        prompt_context
-            .base_instructions
+        instructions
             .lines()
             .any(|line| line == "- Your model is GPT-5.6 Sol (gpt-5.6-sol).")
     );
-    assert!(
-        !prompt_context
-            .base_instructions
-            .contains(super::MODEL_IDENTITY_PLACEHOLDER)
-    );
-}
-
-#[test]
-fn thread_section_includes_the_thread_id_and_transcript_location() {
-    for (data_dir, thread_id) in [
-        ("/home/user/.sprocket", "first-thread-id"),
-        ("/srv/custom sprocket data", "second-thread-id"),
-    ] {
-        let store = sprocket_transcript::TranscriptStore::new(
-            std::path::Path::new(data_dir).join("transcripts"),
-        );
-        let transcript_dir = store.thread_dir("user-id", thread_id);
-        let prompt_context = build_workspace_prompt_context(
-            "/tmp/project",
-            &[],
-            &[],
-            MODEL_LABEL,
-            MODEL_ID,
-            thread_id,
-            &transcript_dir,
-        );
-        let thread_section = prompt_context
-            .base_instructions
-            .split_once("\n## This thread\n")
-            .unwrap()
-            .1;
-        assert!(thread_section.contains(&format!(
-            "- This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.",
-            transcript_dir.display()
-        )));
-        assert!(
-            !prompt_context
-                .base_instructions
-                .contains(super::THREAD_ID_PLACEHOLDER)
-        );
-        assert!(
-            !prompt_context
-                .base_instructions
-                .contains(super::TRANSCRIPT_DIR_PLACEHOLDER)
-        );
-        assert!(!thread_section.contains("~/.sprocket/"));
-    }
-}
-
-#[test]
-fn initial_context_renders_skills_block() {
-    let skills = [WorkspaceSkill {
-        name: "pdf-processing".to_string(),
-        description: "Handle PDFs".to_string(),
-        disable_model_invocation: false,
-        source: SkillSource::BuiltIn {
-            contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
-        },
-    }];
-    let prompt_context = build_test_prompt_context(&[], &skills);
-    let initial_context = initial_context_text(&prompt_context.initial_context);
-    assert!(initial_context.starts_with("# Thread-Scoped Workspace Context\n"));
-    assert!(initial_context.contains("## Available Skills"));
-    assert!(initial_context.contains("<SKILLS>"));
-    assert!(initial_context.contains("- name: pdf-processing"));
-    assert!(initial_context.contains("description: Handle PDFs"));
-    assert!(!initial_context.contains("No skills are installed."));
-    assert!(!prompt_context.base_instructions.contains("pdf-processing"));
+    assert!(!instructions.contains(super::MODEL_IDENTITY_PLACEHOLDER));
 }
 
 #[test]
@@ -236,110 +136,5 @@ fn restore_cwd_uses_the_saved_directory_while_it_exists() {
     assert_eq!(
         super::restore_cwd(&root, Some(&nested.to_string_lossy())),
         root
-    );
-}
-
-#[test]
-fn initial_context_renders_empty_skills_line() {
-    let prompt_context = build_test_prompt_context(&[], &[]);
-    let initial_context = initial_context_text(&prompt_context.initial_context);
-    assert!(initial_context.contains("## Available Skills"));
-    assert!(initial_context.contains("No skills are installed."));
-    assert!(!initial_context.contains("<SKILLS>"));
-}
-
-#[test]
-fn initial_context_omits_disabled_skills() {
-    let skills = [
-        WorkspaceSkill {
-            name: "deploy".to_string(),
-            description: "Deploy production".to_string(),
-            disable_model_invocation: true,
-            source: SkillSource::BuiltIn { contents: "" },
-        },
-        WorkspaceSkill {
-            name: "ordinary".to_string(),
-            description: "Ordinary skill".to_string(),
-            disable_model_invocation: false,
-            source: SkillSource::BuiltIn { contents: "" },
-        },
-    ];
-    let prompt_context = build_test_prompt_context(&[], &skills);
-    let initial_context = initial_context_text(&prompt_context.initial_context);
-    assert!(initial_context.contains("- name: ordinary"));
-    assert!(!initial_context.contains("deploy"));
-    assert!(!initial_context.contains("Deploy production"));
-
-    let only_disabled = build_test_prompt_context(&[], &skills[..1]);
-    let initial_context = initial_context_text(&only_disabled.initial_context);
-    assert!(!initial_context.contains("deploy"));
-    assert!(!initial_context.contains("<SKILLS>"));
-}
-
-#[test]
-fn initial_context_collapses_multiline_skill_descriptions() {
-    let skills = [WorkspaceSkill {
-        name: "demo".to_string(),
-        description: "Line one\nline two".to_string(),
-        disable_model_invocation: false,
-        source: SkillSource::BuiltIn {
-            contents: "---\nname: demo\ndescription: Line one\n---\n",
-        },
-    }];
-    let prompt_context = build_test_prompt_context(&[], &skills);
-    let initial_context = initial_context_text(&prompt_context.initial_context);
-    assert!(initial_context.contains("description: Line one line two"));
-    assert!(!initial_context.contains("description: Line one\n"));
-}
-
-#[test]
-fn initial_context_renders_user_instructions_before_workspace_instructions() {
-    let user_instructions = "Use the user's preferred test runner.";
-    let workspace_instructions = "Keep generated board files in hardware/output.";
-    let instructions = [
-        WorkspaceInstruction {
-            path: "/home/user/.agents/AGENTS.md".to_string(),
-            directory: "/home/user/.agents".to_string(),
-            contents: user_instructions.to_string(),
-            truncated: false,
-            source: WorkspaceInstructionSource::User,
-        },
-        WorkspaceInstruction {
-            path: "/tmp/project/AGENTS.md".to_string(),
-            directory: "/tmp/project".to_string(),
-            contents: workspace_instructions.to_string(),
-            truncated: false,
-            source: WorkspaceInstructionSource::Workspace,
-        },
-    ];
-
-    let prompt_context = build_test_prompt_context(&instructions, &[]);
-    let initial_context = initial_context_text(&prompt_context.initial_context);
-
-    let user_heading = "### The user's AGENTS.md";
-    let workspace_heading = "### AGENTS.md instructions for /tmp/project";
-    let agents_heading = "## Preloaded AGENTS.md Instructions";
-    assert!(initial_context.contains(agents_heading));
-    assert!(initial_context.contains(user_heading));
-    assert!(initial_context.contains(workspace_heading));
-    assert!(initial_context.contains(user_instructions));
-    assert!(initial_context.contains(workspace_instructions));
-    assert!(
-        initial_context
-            .find(agents_heading)
-            .expect("agents heading")
-            < initial_context.find(user_heading).expect("user heading")
-    );
-    assert!(
-        initial_context.find(user_heading).expect("user heading")
-            < initial_context
-                .find(workspace_heading)
-                .expect("workspace heading")
-    );
-    assert!(!prompt_context.base_instructions.contains(user_instructions));
-    assert!(
-        !prompt_context
-            .base_instructions
-            .contains(workspace_instructions)
     );
 }

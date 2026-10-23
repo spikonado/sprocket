@@ -24,6 +24,7 @@ fn prompt_part(number: u32, attachments: Vec<TranscriptAttachmentMeta>) -> Trans
         prompt: Some(TranscriptPromptBody {
             text: "Continue".into(),
             image_uploads: attachments,
+            hidden: None,
         }),
         completion: None,
         tool: None,
@@ -460,6 +461,7 @@ async fn moves_staged_files_into_their_thread_without_size_or_count_caps() {
         prompt: Some(TranscriptPromptBody {
             text: String::new(),
             image_uploads: attachments,
+            hidden: None,
         }),
         completion: None,
         tool: None,
@@ -600,6 +602,7 @@ async fn expired_remote_files_do_not_block_history_and_cached_files_remain_usabl
         prompt: Some(TranscriptPromptBody {
             text: "Continue".into(),
             image_uploads: vec![cached, missing],
+            hidden: None,
         }),
         completion: None,
         tool: None,

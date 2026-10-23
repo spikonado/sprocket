@@ -3,9 +3,8 @@ use futures::StreamExt;
 use rig::completion::Message;
 use rig::message::UserContent;
 use sprocket_workspace::{
-    BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
-    default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
-    resolve_directory, resolve_workspace_root, simplified_path,
+    BUILTIN_SKILLS, WorkspaceSkill, default_user_skills_dirs, load_workspace_instructions,
+    load_workspace_skills, resolve_directory, resolve_workspace_root, simplified_path,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -18,15 +17,17 @@ use crate::catalog::catalog_models_for_run;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::history::{
     agent_history_from_parts, current_run_has_finished_turns, pending_prompt_part,
+    shown_workspace_context,
 };
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::{
     CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
 };
+use crate::workspace_context::{HiddenPrompt, WorkspaceContext, unseen};
 use sprocket_transcript::{
-    DownloadOrder, LiveCompletionHub, TranscriptPart, TranscriptState, TranscriptStore,
-    apply_remote_state, cache_prompt_attachments, parse_remote_parts,
+    DownloadOrder, HiddenPromptKind, LiveCompletionHub, TranscriptPart, TranscriptState,
+    TranscriptStore, apply_remote_state, cache_prompt_attachments, parse_remote_parts,
 };
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
@@ -48,8 +49,6 @@ const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a diff
 const CONTINUE_PROMPT: &str = "continue";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
-const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
-const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
 
 fn submission_owned_by_another_executor(error: &str) -> bool {
     error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
@@ -119,11 +118,6 @@ impl RunFinalStatus {
     }
 }
 
-struct WorkspacePromptContext {
-    base_instructions: String,
-    initial_context: Message,
-}
-
 /// Restores the thread's saved cwd, falling back to the workspace root when it
 /// is gone, e.g. a deleted worktree or a thread resumed on another machine.
 fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
@@ -139,89 +133,12 @@ fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
-fn build_workspace_prompt_context(
-    workspace_path: &str,
-    workspace_instructions: &[WorkspaceInstruction],
-    skills: &[WorkspaceSkill],
-    model_label: &str,
-    model_id: &str,
-    thread_id: &str,
-    transcript_dir: &Path,
-) -> WorkspacePromptContext {
-    let user_instructions = workspace_instructions
-        .iter()
-        .filter(|instruction| instruction.source == WorkspaceInstructionSource::User)
-        .map(|instruction| instruction.contents.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let project_instructions = workspace_instructions
-        .iter()
-        .filter(|instruction| instruction.source == WorkspaceInstructionSource::Workspace)
-        .map(|instruction| instruction.contents.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let instruction_block = if user_instructions.is_empty() && project_instructions.is_empty() {
-        "No AGENTS.md instructions were preloaded for the current workspace.".to_string()
-    } else {
-        let mut blocks = Vec::new();
-        if !user_instructions.is_empty() {
-            blocks.push(format!(
-                "### The user's AGENTS.md\n<INSTRUCTIONS>\n{user_instructions}\n</INSTRUCTIONS>"
-            ));
-        }
-        if !project_instructions.is_empty() {
-            blocks.push(format!(
-                "### AGENTS.md instructions for {workspace_path}\n<INSTRUCTIONS>\n{project_instructions}\n</INSTRUCTIONS>"
-            ));
-        }
-        blocks.join("\n\n")
-    };
-
-    let entries = skills
-        .iter()
-        .filter(|skill| !skill.disable_model_invocation)
-        .map(|skill| {
-            let description = collapse_whitespace(&skill.description);
-            format!("- name: {}\n  description: {description}", skill.name)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let skills_block = if entries.is_empty() {
-        "No skills are installed.".to_string()
-    } else {
-        format!("<SKILLS>\n{entries}\n</SKILLS>")
-    };
-
-    let model_identity = format!("Your model is {model_label} ({model_id}).");
-    let base_instructions = SYSTEM_PROMPT_TEMPLATE
-        .trim_end()
-        .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
-        .replace(THREAD_ID_PLACEHOLDER, thread_id)
-        .replace(
-            TRANSCRIPT_DIR_PLACEHOLDER,
-            &transcript_dir.display().to_string(),
-        );
-    let initial_context = Message::user(
-        [
-            "# Thread-Scoped Workspace Context",
-            "",
-            "The following workspace context was loaded when this conversation began.",
-            "",
-            "## Available Skills",
-            "",
-            &skills_block,
-            "",
-            "## Preloaded AGENTS.md Instructions",
-            "",
-            &instruction_block,
-        ]
-        .join("\n"),
-    );
-
-    WorkspacePromptContext {
-        base_instructions,
-        initial_context,
-    }
+/// Depends only on the model, so it stays the same across runs and machines.
+fn base_instructions(model_label: &str, model_id: &str) -> String {
+    SYSTEM_PROMPT_TEMPLATE.trim_end().replace(
+        MODEL_IDENTITY_PLACEHOLDER,
+        &format!("Your model is {model_label} ({model_id})."),
+    )
 }
 
 async fn cleanup_twice<T, F, Fut>(
@@ -762,6 +679,8 @@ pub async fn finalize_failed_start(
 
 struct PriorHistory {
     messages: Vec<Message>,
+    shown_workspace_context: Vec<HiddenPrompt>,
+    run_workspace_context: Vec<HiddenPrompt>,
     continue_from_finished_turns: bool,
     current_prompt: Option<String>,
 }
@@ -812,12 +731,21 @@ async fn load_prior_history(
         .and_then(|part| part.prompt.as_ref())
         .map(|prompt| prompt.text_with_attachments());
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
+    let shown = shown_workspace_context(&state, &parts);
+    let run_workspace_context = shown
+        .iter()
+        .filter(|(context_run_id, _)| *context_run_id == run_id)
+        .map(|(_, prompt)| prompt.clone())
+        .collect();
+    let shown_workspace_context = shown.into_iter().map(|(_, prompt)| prompt).collect();
     let image_urls = crate::tools::ConvexImageUrls::new(runtime, run_id);
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images, Some(&image_urls))
         .await;
     Ok(PriorHistory {
         current_prompt,
         messages: deserialize_agent_history(history)?,
+        shown_workspace_context,
+        run_workspace_context,
         continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
@@ -1008,26 +936,16 @@ pub async fn run_agent(
         let prompt = Message::User {
             content: prompt_contents,
         };
-        let prompt_context = build_workspace_prompt_context(
-            &request.workspace_path,
+        let workspace_context = WorkspaceContext::new(
             &workspace_instructions,
             &skills,
-            &capabilities.label,
-            &context.run.selected_model,
             &context.run.thread_id,
             &transcript_dir,
+            &workspace_root,
         );
+        let system_prompt = base_instructions(&capabilities.label, &context.run.selected_model);
         let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
-            build_workspace_prompt_context(
-                &request.workspace_path,
-                &workspace_instructions,
-                &skills,
-                &capabilities.label,
-                &handoff.selected_model,
-                &context.run.thread_id,
-                &transcript_dir,
-            )
-            .base_instructions
+            base_instructions(&capabilities.label, &handoff.selected_model)
         });
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
@@ -1037,7 +955,8 @@ pub async fn run_agent(
         Ok((
             prompt,
             provider,
-            prompt_context,
+            workspace_context,
+            system_prompt,
             handoff_base_instructions,
             skills,
             continue_without_prompt,
@@ -1047,7 +966,8 @@ pub async fn run_agent(
     let (
         prompt,
         provider,
-        prompt_context,
+        workspace_context,
+        system_prompt,
         handoff_base_instructions,
         skills,
         continue_without_prompt,
@@ -1095,6 +1015,48 @@ pub async fn run_agent(
         }
     }
 
+    // Written before the first model call so the transcript holds everything
+    // the model sees, and later runs replay the same messages.
+    let new_workspace_context = unseen(
+        &prior_history.shown_workspace_context,
+        workspace_context.prompts(&cwd),
+    );
+    let mut hidden_prompts = new_workspace_context.clone();
+    if continue_without_prompt {
+        hidden_prompts.push(HiddenPrompt {
+            kind: HiddenPromptKind::Continuation,
+            text: CONTINUE_PROMPT.to_string(),
+        });
+    }
+    if !hidden_prompts.is_empty() {
+        match timeout(
+            RUN_CLAIM_ATTEMPT_TIMEOUT,
+            runtime.record_run_hidden_prompts(&run_id, &claim_id, &hidden_prompts),
+        )
+        .await
+        {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => {
+                acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+                return Ok(());
+            }
+            Ok(Err(error)) => return abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+            Err(_) => {
+                return abort_after_claim(
+                    &runtime,
+                    &run_id,
+                    &claim_id,
+                    anyhow!("timed out recording the run's hidden prompts"),
+                )
+                .await;
+            }
+        }
+    }
+    let mut prior_messages = prior_history.messages;
+    prior_messages.extend(new_workspace_context.iter().map(HiddenPrompt::message));
+    let mut run_workspace_context = prior_history.run_workspace_context;
+    run_workspace_context.extend(new_workspace_context);
+
     match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
         let provider_result = provider
             .run(
@@ -1109,10 +1071,11 @@ pub async fn run_agent(
                     thread_id: request.thread_id.clone(),
                     live: live.clone(),
                     prompt,
-                    base_instructions: prompt_context.base_instructions,
+                    base_instructions: system_prompt,
                     handoff_base_instructions,
-                    initial_context: vec![prompt_context.initial_context],
-                    prior_history: prior_history.messages,
+                    workspace_context,
+                    run_workspace_context,
+                    prior_history: prior_messages,
                     artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),
                         &request.deployment_url,
@@ -1165,10 +1128,6 @@ pub async fn run_agent(
             }
         }
     }
-}
-
-fn collapse_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

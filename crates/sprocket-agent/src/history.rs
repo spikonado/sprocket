@@ -8,8 +8,9 @@ use crate::reasoning::opaque_encrypted;
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
+use crate::workspace_context::HiddenPrompt;
 use sprocket_transcript::{
-    TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
 };
 
 pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
@@ -46,6 +47,61 @@ pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) ->
         .any(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Completion)
 }
 
+fn hidden_kind(part: &TranscriptPart) -> Option<&HiddenPromptKind> {
+    part.prompt.as_ref()?.hidden.as_ref()
+}
+
+fn is_user_prompt(part: &TranscriptPart) -> bool {
+    part.kind == TranscriptPartKind::Prompt && hidden_kind(part).is_none()
+}
+
+fn is_workspace_context_part(part: &TranscriptPart) -> bool {
+    matches!(
+        hidden_kind(part),
+        Some(HiddenPromptKind::Instructions | HiddenPromptKind::Environment)
+    )
+}
+
+/// The order the model saw the parts in. A run records its workspace context
+/// right after the prompt Convex wrote at submission but shows it first.
+fn model_order(parts: &[TranscriptPart]) -> Vec<&TranscriptPart> {
+    let mut ordered = Vec::with_capacity(parts.len());
+    let mut index = 0;
+    while index < parts.len() {
+        let part = &parts[index];
+        let next = index + 1;
+        let end = if is_user_prompt(part) {
+            next + parts[next..]
+                .iter()
+                .take_while(|later| later.run_id == part.run_id && is_workspace_context_part(later))
+                .count()
+        } else {
+            next
+        };
+        ordered.extend(parts[next..end].iter());
+        ordered.push(part);
+        index = end;
+    }
+    ordered
+}
+
+/// Workspace context prompts in the history, oldest first, with their run.
+pub(crate) fn shown_workspace_context<'a>(
+    state: &TranscriptState,
+    parts: &'a [TranscriptPart],
+) -> Vec<(&'a str, HiddenPrompt)> {
+    model_order(parts)
+        .into_iter()
+        .filter(|part| part.number >= state.history_from_number && is_workspace_context_part(part))
+        .filter_map(|part| {
+            let prompt = part.prompt.as_ref()?;
+            let kind = prompt.hidden.clone()?;
+            let text = prompt.text.clone();
+            Some((part.run_id.as_str(), HiddenPrompt { kind, text }))
+        })
+        .collect()
+}
+
 /// The prompt a run should answer, kept out of its history. A continuation
 /// whose earlier runs ended without output re-answers the last user prompt
 /// instead of being told to "continue" work that never started.
@@ -59,11 +115,13 @@ pub(crate) fn pending_prompt_part<'a>(
     }
     parts
         .iter()
-        .find(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Prompt)
+        .find(|part| part.run_id == run_id && is_user_prompt(part))
         .or_else(|| {
             parts
                 .iter()
-                .filter(|part| part.number >= state.history_from_number)
+                .filter(|part| {
+                    part.number >= state.history_from_number && hidden_kind(part).is_none()
+                })
                 .max_by_key(|part| part.number)
                 .filter(|part| part.kind == TranscriptPartKind::Prompt)
         })
@@ -211,7 +269,7 @@ pub fn agent_history_from_parts(
     let mut pending_tools: HashMap<String, &TranscriptToolBody> = HashMap::new();
     let mut awaiting_results = Vec::new();
 
-    for part in parts {
+    for part in model_order(parts) {
         if part.number < state.history_from_number {
             continue;
         }
