@@ -68,7 +68,8 @@ type Props = {
 	onFileDeleted: (workspacePath: string, path: string) => void;
 	/** Enter true browser fullscreen for a single artifact (content only). */
 	onOpenFullscreen: (key: string) => void;
-	onToggleExpanded: () => void;
+	/** Omitted when the panel can only be fullscreen. */
+	onToggleExpanded?: () => void;
 	onClose: () => void;
 };
 
@@ -191,7 +192,7 @@ export default function SidePanel(props: Props) {
 	}
 
 	useEffect(() => {
-		if (!expanded) return;
+		if (!expanded || !onToggleExpanded) return;
 
 		const onKeyDown = (event: globalThis.KeyboardEvent) => {
 			if (event.key !== 'Escape') return;
@@ -447,20 +448,22 @@ function Pane({
 				</button>
 				{showsPanelButtons ? (
 					<>
-						<button
-							type="button"
-							className={ICON_BUTTON}
-							onClick={onToggleExpanded}
-							aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-							title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-							aria-pressed={expanded}
-						>
-							{expanded ? (
-								<Minimize2 className="size-4" aria-hidden="true" />
-							) : (
-								<Maximize2 className="size-4" aria-hidden="true" />
-							)}
-						</button>
+						{onToggleExpanded && (
+							<button
+								type="button"
+								className={ICON_BUTTON}
+								onClick={onToggleExpanded}
+								aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+								title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+								aria-pressed={expanded}
+							>
+								{expanded ? (
+									<Minimize2 className="size-4" aria-hidden="true" />
+								) : (
+									<Maximize2 className="size-4" aria-hidden="true" />
+								)}
+							</button>
+						)}
 						<button
 							type="button"
 							className={ICON_BUTTON}

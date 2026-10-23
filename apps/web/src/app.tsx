@@ -675,6 +675,9 @@ export default function App({
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
+	// Phones have no room beside the thread, so the side panel always covers it.
+	const phoneViewport = viewportWidth > 0 && viewportWidth < 768;
+	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
 	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
 
 	// Queries stay skipped until Convex confirms the token; running them on the
@@ -2699,13 +2702,13 @@ export default function App({
 				)}
 				style={{
 					paddingRight:
-						!settingsOpen && artifactPanel.panel.open && !artifactPanel.panel.expanded
+						!settingsOpen && artifactPanel.panel.open && !sidePanelFullscreen
 							? sidePanelWidth.width
 							: undefined
 				}}
 				inert={
 					artifactPanel.fullscreenArtifact ||
-					(artifactPanel.panel.open && artifactPanel.panel.expanded)
+					(!settingsOpen && artifactPanel.panel.open && sidePanelFullscreen)
 						? true
 						: undefined
 				}
@@ -2967,15 +2970,16 @@ export default function App({
 			<MarkdownFileLinksContext value={markdownFileLinks}>
 				{!settingsOpen && artifactPanel.panel.open && (
 					<div
-						className={
-							artifactPanel.panel.expanded
+						className={cn(
+							sidePanelFullscreen
 								? 'bg-background fixed inset-0 z-50'
-								: 'absolute inset-y-0 right-0 z-40'
-						}
-						style={{ width: artifactPanel.panel.expanded ? undefined : sidePanelWidth.width }}
+								: 'absolute inset-y-0 right-0 z-40',
+							phoneViewport && 'motion-safe:animate-side-panel-in'
+						)}
+						style={{ width: sidePanelFullscreen ? undefined : sidePanelWidth.width }}
 						inert={artifactPanel.fullscreenArtifact ? true : undefined}
 					>
-						{!artifactPanel.panel.expanded && (
+						{!sidePanelFullscreen && (
 							<SidePanelResizeHandle
 								width={sidePanelWidth.width}
 								minWidth={Math.min(
@@ -2998,7 +3002,7 @@ export default function App({
 							activePaneId={artifactPanel.activePane.id}
 							browserApi={localApi}
 							filesApi={localApi}
-							expanded={artifactPanel.panel.expanded}
+							expanded={sidePanelFullscreen}
 							stale={artifactPanel.watchState.stale}
 							error={artifactPanel.watchState.error}
 							onNewTab={(paneId) => artifactPanel.newTab(paneId)}
@@ -3023,8 +3027,10 @@ export default function App({
 									void document.documentElement.requestFullscreen?.().catch(() => {});
 								}
 							}}
-							onToggleExpanded={() =>
-								artifactPanel.update({ expanded: !artifactPanel.panel.expanded })
+							onToggleExpanded={
+								phoneViewport
+									? undefined
+									: () => artifactPanel.update({ expanded: !artifactPanel.panel.expanded })
 							}
 							onClose={() => artifactPanel.update({ open: false, expanded: false })}
 						/>

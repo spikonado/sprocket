@@ -48,6 +48,13 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 6px);
+	--animate-side-panel-in: side-panel-in 180ms ease-out;
+
+	@keyframes side-panel-in {
+		from {
+			transform: translateX(100%);
+		}
+	}
 }
 
 /* Light brand system — Spikonado parchment */
