@@ -1,30 +1,27 @@
 ---
-name: kicad-schematic-authoring
-description: 'Guide on authoring valid .kicad_sch / .kicad_pro files as text: the live KiCad s-expression format and kicad-cli validation. Use when writing, generating, or editing a KiCad schematic or project by hand. Only use when the user explicitly requests KiCAD or PCBs.'
+name: working-with-kicad
+description: 'Use when creating or editing KiCad projects (`.kicad_pro`) or schematics (`.kicad_sch`) by hand.'
 ---
-
-This skill is about producing **file-format-correct** KiCad schematics, i.e. what eeschema itself would write.
-This skill is not an electronics-design course; circuit facts come from current datasheets, and supplier descriptions, not from memory. Check with `scrape_url` / `web_search`.
 
 ## Ground truth order
 
-1. The **installed** KiCad symbol libraries (`share/kicad/symbols/*.kicad_sym`)
-   for symbol bodies, pins, and footprints. Never hand-invent a symbol body.
+1. The installed KiCad symbol libraries (`share/kicad/symbols/*.kicad_sym`)
+   for symbol bodies, pins, and footprints. Copy symbol bodies from them.
 2. `kicad-cli sch upgrade` on a stub, to learn the live `(version …)` and the
    instance dialect this KiCad emits.
 3. The shipped demos (`share/kicad/demos/**`) for sheet-level structure:
-   `sheet_instances`, `title_block`, `.kicad_pro` `sheets`, but not for cached
-   symbol bodies, which can lag the live libraries.
+   `sheet_instances`, `title_block`, `.kicad_pro` `sheets`. Their cached symbol
+   bodies can lag the live libraries.
 
-Match what eeschema writes; do not invent a parallel dialect.
+Match what eeschema writes.
 
 Circuit facts (pin names/numbers, strapping-pin behavior, regulator
 capacitor values, USB CC resistor values, reset timing, …) change and are
 vendor data. Check the current datasheet / hardware-design guidelines for the
-specific part with `scrape_url` / `web_search` instead of relying on memory,
-and prefer values from the vendor's own reference design when one exists.
+specific part with `scrape_url` / `web_search`, and prefer values from the
+vendor's own reference design when one exists.
 
-## Authoring steps
+## Writing a schematic
 
 ### 1. Learn the live version before writing
 
@@ -35,12 +32,12 @@ KiCad; copying them makes eeschema warn and rewrite on save. Write a stub
 
 ### 2. Embed `lib_symbols` from the installed libraries
 
-- Only the **top-level** symbol gets the `Lib:Name` id; unit drawings keep
-  the **short** name. `(symbol "Device:R" … (symbol "R_0_1" …))` is right;
-  `Device:R_0_1` -> `Failed to load schematic`.
+- Only the top-level symbol gets the `Lib:Name` id. Unit drawings keep
+  the short name. `(symbol "Device:R" … (symbol "R_0_1" …))` is right, and
+  `Device:R_0_1` fails with `Failed to load schematic`.
 - Library files indent top-level symbols with one tab; under `(lib_symbols`
   they need **two**. Extract the symbol **including its leading tab**, then
-  add one tab to every line. Do not strip tabs and re-indent from scratch.
+  add one tab to every line.
 - Flatten `(extends …)` before embedding: walk to the root that owns
   graphics/pins, copy that body, rename the top-level symbol and its `_0_1` /
   `_1_1` units to the **leaf** name, overlay the leaf's property values, drop
@@ -70,11 +67,10 @@ Keep the fields eeschema emits on instances: `body_style`, `in_pos_files`,
 property `show_name` / `do_not_autoplace`, quoted uuids, `(hide yes)`
 placement after `(at …)`.
 
-#### Instance reference/value visibility (hard rules)
+#### Instance reference/value visibility
 
-- **`#PWR…` References of power symbols are always hidden**: `(hide yes)`
-  on every one. A visible `#PWR01` on the sheet is a defect; eeschema never
-  shows them. Their `Value` (the net name) stays visible.
+- Hide every `#PWR…` Reference of a power symbol with `(hide yes)`, as
+  eeschema does. Their `Value` (the net name) stays visible.
 - `Footprint`, `Datasheet`, `Description`, `ki_*` on every symbol are hidden.
 - Component `Reference` / `Value` stay visible; place them deliberately
   (for vertical passives: ~+5.08 mm in X, ref above center, value below)
@@ -84,15 +80,14 @@ placement after `(at …)`.
 ### 4. Wire with short stubs; connect blocks with labels
 
 Keep wire segments to short stubs only (about one grid to a few mm):
-pin↔pin inside a tight cluster, pin↔power-symbol, or the stub under a
-local label. Cross-block nets use **paired local labels** (same name on both
-ends), not routed wires. Power nets use power symbols, not long `+3V3` wires.
-One name per net: a second label on an already-labeled net ->
-`multiple_net_names`.
+pin to pin inside a tight cluster, pin to power symbol, or the stub under a
+local label. Cross-block nets use paired local labels (same name on both
+ends). Power nets use power symbols. Give each net one name; a second label
+on an already-labeled net raises `multiple_net_names`.
 
 #### Local labels on pins
 
-Label `(at x y rot)` sits **on the pin connection point**; draw a short
+Label `(at x y rot)` sits on the pin connection point. Draw a short
 horizontal stub under the text, from the pin outward in the direction the
 text faces. Leave the stub tip open (ERC `unconnected_wire_endpoint` there
 is expected for this style).
@@ -108,8 +103,8 @@ junction can stay `rot 0` / `left bottom` with no stub.
 #### Global labels on pins (different from locals)
 
 Global labels are for signals crossing sheets (locals are sheet-scoped).
-Placement: stub of **exactly one grid step (1.27 mm)** from the pin outward,
-`global_label` at the **stub tip** (not on the pin), `justify left` (pin
+Draw a stub of exactly one grid step (1.27 mm) from the pin outward and put
+the `global_label` at the stub tip, not on the pin. Use `justify left` (pin
 opens right, `rot 0`) or `justify right` (pin opens left, `rot 180`), with no
 `bottom`. Set `(shape …)` to the role (`bidirectional` for GPIO-style nets).
 Globals carry a hidden `Intersheetrefs` property sharing the label's `(at)`.
@@ -117,20 +112,19 @@ Globals carry a hidden `Intersheetrefs` property sharing the label's `(at)`.
 ### 5. Power symbols
 
 For power inputs/outputs, place power-library symbols and set `Value` to the
-net name (a named tap like `+VOUT` reuses `power:+5V`). Do not sit a power
-symbol directly on a pin end: offset one grid step (1.27 mm) along the lead
-and connect with a short stub. Keep `Value` on the open side (`+5V` above,
-`GND` below). Reference hidden; see §3 hard rules.
+net name (a named tap like `+VOUT` reuses `power:+5V`). Offset each power
+symbol one grid step (1.27 mm) from the pin end along the lead and connect
+it with a short stub. Keep `Value` on the open side (`+5V` above, `GND`
+below).
 
 ### 6. Layout: zone the sheet
 
-Give each functional block empty area; gutter ≥ ~2.54 mm between bodies, more
-around large modules. Put pull-ups, buttons, LEDs, and decoupling caps in
-clear space, not parked on a large symbol's outline, and connect back with
-local labels or rail power symbols. Before finishing: no two non-power
-symbols share an origin, and no two body bounding boxes intersect.
+Give each functional block its own empty area, with a gutter of at least
+~2.54 mm between bodies and more around large modules. Put pull-ups,
+buttons, LEDs, and decoupling caps in clear space away from large symbol
+outlines, and connect them back with local labels or rail power symbols.
 
-### 7. Wire the project ↔ sheet UUID
+### 7. Match the project and sheet UUIDs
 
 These must be identical: the root schematic `(uuid "…")`, the `.kicad_pro`
 `sheets: [[ "<uuid>", "Root" ], …]` entry, and every symbol instance
@@ -157,9 +151,10 @@ kicad-cli sch erc board.kicad_sch       # review findings
 kicad-cli sch export netlist board.kicad_sch
 ```
 
-Run ERC, then still read the netlist: confirm every intended net (each module pin,
-each header pin, each rail) actually carries the nodes you meant. Geometry
-check: no shared origins, no intersecting bodies.
+After ERC, read the netlist and confirm every intended net (each module pin,
+each header pin, each rail) carries the nodes you meant. Then check geometry:
+no two non-power symbols share an origin, and no two body bounding boxes
+intersect.
 
-Ignore `power_pin_not_driven` when the circuit is otherwise fine. Omit
-`PWR_FLAG` unless the user asks for power flags.
+Omit `PWR_FLAG` unless the user asks for power flags, and ignore the
+resulting `power_pin_not_driven` ERC errors.
