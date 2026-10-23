@@ -437,6 +437,7 @@ pub async fn fetch(
             events_path: events.to_string_lossy().into_owned(),
             ..remote.result
         },
+        pending_output: None,
     };
     history.save(&history_path(directory, session_id)?).await?;
     Ok(Some(history))

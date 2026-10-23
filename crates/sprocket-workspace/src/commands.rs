@@ -190,9 +190,13 @@ impl CommandSessionManager {
         self
     }
 
-    async fn saved_result(&self, session_id: &str) -> Result<CommandStdinOutput> {
+    async fn saved_result(
+        &self,
+        session_id: &str,
+        consume_output: bool,
+    ) -> Result<CommandStdinOutput> {
         let path = history_path(&self.log_directory, session_id)?;
-        let local = match tokio::fs::read(path).await {
+        let local = match tokio::fs::read(&path).await {
             Ok(bytes) => Some(serde_json::from_slice::<CommandHistory>(&bytes)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
@@ -221,12 +225,19 @@ impl CommandSessionManager {
                 }
             }
         }
-        let Some(history) = local else {
+        let Some(mut history) = local else {
             bail!("unknown command session: {session_id}");
         };
         if history.machine_id == self.history_scope.2 && history.result.running {
             // The supervisor may have archived this session since the initial read.
             return CommandHistory::load(&self.log_directory, session_id).await;
+        }
+        if consume_output && let Some(pending) = &mut history.pending_output {
+            let output = std::mem::take(pending);
+            if !output.is_empty() {
+                history.save(&path).await?;
+            }
+            history.result.output = output;
         }
         Ok(CommandStdinOutput {
             command: history.command,
@@ -323,6 +334,7 @@ impl CommandSessionManager {
                 events_path: preview.events_path,
                 error: None,
             },
+            pending_output: None,
         };
         history.save(&history_path).await?;
         let launch: Result<_> = (|| {
@@ -425,7 +437,7 @@ impl CommandSessionManager {
         let Some(session) = self.session(session_id).await else {
             let mut output = tokio::select! {
                 _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id) => result?,
+                result = self.saved_result(session_id, yield_time_ms != 0) => result?,
             };
             if output.result.running {
                 bail!(
@@ -457,7 +469,7 @@ impl CommandSessionManager {
         let Some(session) = self.session(session_id).await else {
             return tokio::select! {
                 _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id) => result,
+                result = self.saved_result(session_id, true) => result,
             };
         };
         let yield_time_ms = YieldMode::Poll.normalize(yield_time_ms);
@@ -501,16 +513,35 @@ impl CommandSessionManager {
     }
 
     /// Release live handles only after their completed results are saved on disk.
+    /// Output the model hasn't received yet moves into the saved history so later
+    /// polls still return only new output.
     pub async fn prune_completed(&self) {
         let mut sessions = self.sessions.lock().await;
-        sessions.retain(|_, session| {
-            Arc::strong_count(session) > 1
-                || session
-                    .completion
-                    .borrow()
-                    .as_ref()
-                    .is_none_or(|completion| !completion.archived)
-        });
+        let archived = sessions
+            .iter()
+            .filter(|(_, session)| {
+                Arc::strong_count(session) == 1
+                    && session
+                        .completion
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|completion| completion.archived)
+            })
+            .map(|(id, session)| (id.clone(), session.clone()))
+            .collect::<Vec<_>>();
+        for (id, session) in archived {
+            // Retry on the next prune; until then the live session serves polls.
+            if self.save_pending_output(&id, &session).await.is_ok() {
+                sessions.remove(&id);
+            }
+        }
+    }
+
+    async fn save_pending_output(&self, session_id: &str, session: &CommandSession) -> Result<()> {
+        let path = history_path(&self.log_directory, session_id)?;
+        let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
+        history.pending_output = Some(session.output.lock().await.pending_output());
+        history.save(&path).await
     }
 
     /// True when no sessions remain and no clone still holds this manager.
@@ -671,8 +702,13 @@ impl CommandSession {
         mode: ObservationMode,
     ) -> Result<CommandOutput> {
         let mut observation = self.observation.lock().await;
-        let mut output = match observation.final_output.as_ref() {
-            Some(output) => output.clone(),
+        let mut output = match observation.final_output.clone() {
+            Some(mut output) => {
+                if !matches!(mode, ObservationMode::Metadata) {
+                    output.output = self.output.lock().await.take_preview().output;
+                }
+                output
+            }
             None => {
                 self.snapshot_output(completion, mode, &mut observation)
                     .await?
@@ -686,10 +722,10 @@ impl CommandSession {
             });
         }
         if !output.running {
-            observation.final_output = Some(output.clone());
-        }
-        if matches!(mode, ObservationMode::Metadata) {
-            output.output.clear();
+            observation.final_output = Some(CommandOutput {
+                output: String::new(),
+                ..output.clone()
+            });
         }
         Ok(output)
     }
@@ -710,12 +746,10 @@ impl CommandSession {
                 .check()
                 .map_err(|error| anyhow!(error.message("Command is still running.")))?;
         }
-        let preview = if completion.is_some() {
-            capture.full_preview()
-        } else if !matches!(mode, ObservationMode::Metadata) {
-            capture.take_preview()
-        } else {
+        let preview = if matches!(mode, ObservationMode::Metadata) {
             capture.preview_metadata()
+        } else {
+            capture.take_preview()
         };
         if pending_zero_poll {
             observation.zero_poll_cooldown.record_success();
@@ -1035,7 +1069,7 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
 pub struct CommandExecOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "serialize_for_model")]
     pub result: CommandOutput,
 }
 
@@ -1044,8 +1078,41 @@ pub struct CommandExecOutput {
 pub struct CommandStdinOutput {
     pub command: String,
     pub workdir: String,
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "serialize_for_model")]
     pub result: CommandOutput,
+}
+
+/// Command history keeps the full `CommandOutput`; models get only the fields that apply.
+fn serialize_for_model<S: serde::Serializer>(
+    output: &CommandOutput,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ModelCommandOutput<'a> {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        success: Option<bool>,
+        running: bool,
+        timed_out: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<&'a str>,
+        complete_log_path: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<&'a str>,
+    }
+
+    ModelCommandOutput {
+        exit_code: output.exit_code,
+        success: (!output.running).then_some(output.success),
+        running: output.running,
+        timed_out: output.timed_out,
+        output: (!output.output.is_empty()).then_some(output.output.as_str()),
+        complete_log_path: &output.complete_log_path,
+        error: output.error.as_deref(),
+    }
+    .serialize(serializer)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

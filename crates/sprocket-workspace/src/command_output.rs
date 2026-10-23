@@ -208,6 +208,11 @@ impl CapturedOutput {
         }
     }
 
+    /// Output not yet consumed by `take_preview`.
+    pub(crate) fn pending_output(&self) -> String {
+        self.preview.clone().render()
+    }
+
     pub(crate) async fn read_log_preview(path: &Path, max_chars: usize) -> Result<String> {
         use tokio::io::AsyncReadExt;
 

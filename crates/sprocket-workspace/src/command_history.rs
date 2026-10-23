@@ -16,6 +16,9 @@ pub struct CommandHistory {
     pub workdir: String,
     pub max_output_chars: usize,
     pub result: CommandOutput,
+    /// Output not yet returned to the model, saved once the live session is released.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_output: Option<String>,
 }
 
 #[cfg(test)]
