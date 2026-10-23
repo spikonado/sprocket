@@ -34,5 +34,6 @@ Precondition: the new-thread screen is open and the panel is closed.
 - A picker button and the tab it creates share a name, such as `button "Artifacts"` and `tab "Artifacts"`. Grep the role too.
 - `New tab` selects the existing empty tab instead of adding a second one. Pick a view first.
 - Each pane has its own `button "New tab"`, `button "Split right"` and `button "Split down"`, so take refs from the pane you mean.
+- Panes stay at least 240px wide and 160px tall, so `button "Split right"` is disabled at the default 320px width. Widen the panel first: focus `separator "Resize side panel"` and press `End`.
 - Opening an artifact or file from a thread uses the pane last clicked or focused.
 - The panel isn't rendered while Settings is open.

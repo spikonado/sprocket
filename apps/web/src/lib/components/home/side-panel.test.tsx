@@ -73,6 +73,7 @@ it('splits panes right and down, each with its own tabs, and closes empty panes'
 
 	const [, right] = screen.getAllByRole('tablist');
 	expect(right!.textContent).toBe('New tab');
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'New tab' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
 	expect(screen.getAllByRole('tabpanel')).toHaveLength(2);
 

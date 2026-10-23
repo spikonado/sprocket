@@ -16,7 +16,7 @@ import {
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
@@ -27,6 +27,7 @@ import type { ArtifactEntry } from '$lib/chat/artifacts';
 import {
 	layoutRects,
 	leafName,
+	MIN_PANE_SIZE,
 	topRightPane,
 	type FileDraft,
 	type LayoutRect,
@@ -84,7 +85,7 @@ const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIc
 ];
 
 const ICON_BUTTON =
-	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none';
+	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40';
 
 function tabIndexForKey(key: string, index: number, count: number) {
 	switch (key) {
@@ -117,9 +118,32 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 export default function SidePanel(props: Props) {
 	const { layout, activePaneId, expanded, onCloseTab, onResizeSplit, onToggleExpanded } = props;
 	const container = useRef<HTMLElement>(null);
+	const focusNewPane = useRef(false);
+	const [size, setSize] = useState<{ width: number; height: number } | null>(null);
 	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
 	const { panes, splits } = layoutRects(layout);
 	const cornerPaneId = topRightPane(layout).id;
+
+	const takeNewPaneFocus = useCallback(() => {
+		const take = focusNewPane.current;
+		focusNewPane.current = false;
+
+		return take;
+	}, []);
+
+	useEffect(() => {
+		const element = container.current;
+
+		if (!element || !globalThis.ResizeObserver) return;
+
+		const observer = new ResizeObserver(() =>
+			setSize({ width: element.clientWidth, height: element.clientHeight })
+		);
+
+		observer.observe(element);
+
+		return () => observer.disconnect();
+	}, []);
 
 	function requestCloseTab(id: string) {
 		const tab = panes.flatMap(({ pane }) => pane.tabs).find((candidate) => candidate.id === id);
@@ -167,6 +191,13 @@ export default function SidePanel(props: Props) {
 					rect={rect}
 					focused={panes.length === 1 || pane.id === activePaneId}
 					showsPanelButtons={pane.id === cornerPaneId}
+					canSplitRight={!size || rect.width * size.width >= 2 * MIN_PANE_SIZE.row}
+					canSplitDown={!size || rect.height * size.height >= 2 * MIN_PANE_SIZE.column}
+					onSplit={(direction) => {
+						focusNewPane.current = true;
+						props.onSplitPane(pane.id, direction);
+					}}
+					takeNewPaneFocus={takeNewPaneFocus}
 					onRequestCloseTab={requestCloseTab}
 				/>
 			))}
@@ -201,6 +232,10 @@ function Pane({
 	rect,
 	focused,
 	showsPanelButtons,
+	canSplitRight,
+	canSplitDown,
+	onSplit,
+	takeNewPaneFocus,
 	onRequestCloseTab,
 	artifacts,
 	workspacePath,
@@ -216,7 +251,6 @@ function Pane({
 	onUpdateTab,
 	onDraftChange,
 	onFocusPane,
-	onSplitPane,
 	onOpenFile,
 	onFileRenamed,
 	onFileDeleted,
@@ -229,6 +263,12 @@ function Pane({
 	/** Whether chat links open here; only shown when the panel is split. */
 	focused: boolean;
 	showsPanelButtons: boolean;
+	/** True until the panel is measured. */
+	canSplitRight: boolean;
+	canSplitDown: boolean;
+	onSplit: (direction: SplitDirection) => void;
+	/** True once, for the pane a split just created. */
+	takeNewPaneFocus: () => boolean;
 	onRequestCloseTab: (id: string) => void;
 }) {
 	const focusActiveTab = useRef(false);
@@ -238,11 +278,11 @@ function Pane({
 		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
 		tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 
-		if (focusActiveTab.current) {
+		if (focusActiveTab.current || takeNewPaneFocus()) {
 			focusActiveTab.current = false;
 			tab?.focus();
 		}
-	}, [activeTabId, tabs.length]);
+	}, [activeTabId, tabs.length, takeNewPaneFocus]);
 
 	return (
 		<div
@@ -345,18 +385,20 @@ function Pane({
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={() => onSplitPane(pane.id, 'row')}
+					onClick={() => onSplit('row')}
+					disabled={!canSplitRight}
 					aria-label="Split right"
-					title="Split right"
+					title={canSplitRight ? 'Split right' : 'Widen the panel to split right'}
 				>
 					<Columns2 className="size-4" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={() => onSplitPane(pane.id, 'column')}
+					onClick={() => onSplit('column')}
+					disabled={!canSplitDown}
 					aria-label="Split down"
-					title="Split down"
+					title={canSplitDown ? 'Split down' : 'Make the panel taller to split down'}
 				>
 					<Rows2 className="size-4" aria-hidden="true" />
 				</button>

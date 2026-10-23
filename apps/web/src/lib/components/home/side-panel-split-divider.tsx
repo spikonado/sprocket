@@ -1,7 +1,10 @@
 import { useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import type { LayoutRect, SidePanelSplit } from '$lib/chat/side-panel';
-
-const MIN_PANE_PX = 120;
+import {
+	MIN_PANE_SIZE,
+	paneSpan,
+	type LayoutRect,
+	type SidePanelSplit
+} from '$lib/chat/side-panel';
 
 type Props = {
 	split: SidePanelSplit;
@@ -27,9 +30,13 @@ export default function SidePanelSplitDivider({ split, rect, container, onResize
 			: { start: bounds.top + rect.top * bounds.height, size: rect.height * bounds.height };
 	}
 
+	/** Keeps every pane nested on either side at least `MIN_PANE_SIZE` along this split. */
 	function resize(ratio: number, size = regionPx().size) {
-		const min = Math.min(0.5, MIN_PANE_PX / size);
-		onResize(Math.max(min, Math.min(1 - min, ratio)));
+		const min = MIN_PANE_SIZE[split.direction];
+		const lowest = (min * paneSpan(split.first, split.direction)) / size;
+		const highest = 1 - (min * paneSpan(split.second, split.direction)) / size;
+
+		if (lowest <= highest) onResize(Math.max(lowest, Math.min(highest, ratio)));
 	}
 
 	function onPointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -101,7 +108,7 @@ export default function SidePanelSplitDivider({ split, rect, container, onResize
 				onPointerCancel={stopDrag}
 				onLostPointerCapture={stopDrag}
 				onKeyDown={onKeyDown}
-				onDoubleClick={() => onResize(0.5)}
+				onDoubleClick={() => resize(0.5)}
 			>
 				<div
 					className={`absolute transition-colors ${

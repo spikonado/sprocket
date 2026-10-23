@@ -82,6 +82,22 @@ export type SidePanelSplit = {
 
 export type SidePanelLayout = SidePanelPane | SidePanelSplit;
 
+/** Smallest pane, in pixels, that still fits its header and content along each split direction. */
+export const MIN_PANE_SIZE = { row: 240, column: 160 } as const satisfies Record<
+	SplitDirection,
+	number
+>;
+
+/** The most panes that sit next to each other along `direction` anywhere in `node`. */
+export function paneSpan(node: SidePanelLayout, direction: SplitDirection): number {
+	if (node.type === 'pane') return 1;
+
+	const first = paneSpan(node.first, direction);
+	const second = paneSpan(node.second, direction);
+
+	return node.direction === direction ? first + second : Math.max(first, second);
+}
+
 /** Fractions of the whole panel. */
 export type LayoutRect = { left: number; top: number; width: number; height: number };
 
