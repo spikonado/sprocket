@@ -69,6 +69,8 @@ export default function SettingsSidebar({
 							type="button"
 							className={`${navItemClass} ${activePage === item.id ? navItemActiveClass : navItemIdleClass}`}
 							aria-current={activePage === item.id ? 'page' : undefined}
+							data-ph-capture-attribute-action="open_settings_page"
+							data-ph-capture-attribute-settings_page={item.id}
 							onClick={() => {
 								onNavigate(item.id);
 							}}

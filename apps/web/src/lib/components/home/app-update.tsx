@@ -145,6 +145,7 @@ export default function AppUpdate() {
 				type="button"
 				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
 				disabled={working}
+				data-ph-capture-attribute-action={restartReady ? 'restart_to_update' : 'install_update'}
 				onClick={() => void update()}
 				title={updateState.version ? `Sprocket ${updateState.version}` : undefined}
 				aria-busy={working}

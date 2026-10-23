@@ -871,6 +871,7 @@ export function PromptComposerView({
 											type="button"
 											className="text-muted-foreground enabled:hover:text-foreground flex size-11 shrink-0 items-center justify-center rounded-lg transition enabled:cursor-pointer disabled:opacity-40 sm:size-9"
 											aria-label={ATTACH_TOOLTIP_LABEL}
+											data-ph-capture-attribute-action="attach_files"
 											disabled={!canAttachMore}
 											onMouseEnter={showAttachTooltip}
 											onMouseLeave={hideAttachTooltip}
@@ -913,6 +914,7 @@ export function PromptComposerView({
 												type="button"
 												className="flex size-11 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100 sm:size-10"
 												aria-label="Stop generation"
+												data-ph-capture-attribute-action="stop_run"
 												title="Stop"
 												onClick={onCancel}
 											>
@@ -933,6 +935,9 @@ export function PromptComposerView({
 													(!answeringQuestion && attachmentsPending)
 												}
 												aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
+												data-ph-capture-attribute-action={
+													answeringQuestion ? 'submit_answer' : 'send_message'
+												}
 											>
 												<ArrowUp className="size-4" />
 											</button>

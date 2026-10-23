@@ -43,6 +43,9 @@ export default function MobileModelSelector({
 				<button
 					type="button"
 					className="bg-primary text-primary-foreground focus-visible:ring-ring h-12 w-full rounded-2xl text-base font-semibold outline-none focus-visible:ring-2 disabled:opacity-40"
+					data-ph-capture-attribute-action="select_model"
+					data-ph-capture-attribute-model={model?.id}
+					data-ph-capture-attribute-reasoning_effort={draftEffort}
 					disabled={!model}
 					onClick={() => {
 						if (model) onApply(model, draftEffort, Boolean(fastAvailable && draftFast));
@@ -119,6 +122,7 @@ export default function MobileModelSelector({
 					role="switch"
 					aria-checked={draftFast}
 					aria-label="Fast mode"
+					data-ph-capture-attribute-action="toggle_fast_mode"
 					className="focus-visible:ring-ring flex min-h-14 w-full items-center gap-3 border-t border-[var(--hairline)] px-1 py-4 text-left outline-none focus-visible:ring-2"
 					onClick={() => setDraftFast(!draftFast)}
 				>
