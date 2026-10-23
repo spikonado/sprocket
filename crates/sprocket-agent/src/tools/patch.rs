@@ -11,6 +11,7 @@ use super::job::execute_tool_job;
 pub(crate) struct ApplyPatchTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ApplyPatchArgs {
     /// Prefer Begin Patch format.
     /// For Begin Patch, use `@@` or `@@ anchor`, never unified `@@ -n,m +p,q @@`.
@@ -35,7 +36,7 @@ impl rig::tool::Tool for ApplyPatchTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Use to create, update, delete, rename, or copy files.".to_string()
+        "Create, update, delete, rename, or copy files. Paths resolve from the current working directory. A patch applies fully or not at all.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {

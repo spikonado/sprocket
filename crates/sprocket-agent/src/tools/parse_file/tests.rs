@@ -47,8 +47,8 @@ fn png_of_size(width: u32, height: u32) -> Vec<u8> {
 }
 
 fn decoded_image(output: &ToolOutput) -> (ImageMediaType, u32, u32) {
-    let [_, ToolResultContent::Image(image)] = output.as_content() else {
-        panic!("expected saved path and image block");
+    let [ToolResultContent::Image(image)] = output.as_content() else {
+        panic!("expected only an image block");
     };
     let DocumentSourceKind::Base64(data) = &image.data else {
         panic!("expected base64 image");
@@ -61,7 +61,7 @@ fn decoded_image(output: &ToolOutput) -> (ImageMediaType, u32, u32) {
 
 fn assert_png_image_output(output: &ToolOutput, png: &[u8]) {
     match output.as_content() {
-        [ToolResultContent::Text(_), ToolResultContent::Image(image)] => {
+        [ToolResultContent::Image(image)] => {
             assert_eq!(image.media_type, Some(ImageMediaType::PNG));
             match &image.data {
                 DocumentSourceKind::Base64(data) => {
@@ -75,7 +75,7 @@ fn assert_png_image_output(output: &ToolOutput, png: &[u8]) {
                 other => panic!("expected base64 image, got {other:?}"),
             }
         }
-        other => panic!("expected saved path and Rig image block, got {other:?}"),
+        other => panic!("expected only a Rig image block, got {other:?}"),
     }
 }
 
@@ -340,26 +340,14 @@ async fn persist_and_replay_round_trip_from_a_local_path() {
 
     let output = replay_tool_output(&value, None).await.expect("replay");
     assert_png_image_output(&output, &png);
-    let ToolResultContent::Text(saved_path) = &output.as_content()[0] else {
-        panic!("missing image path");
-    };
-    assert_eq!(
-        saved_path.text,
-        format!("Image saved to: {}", value["path"].as_str().unwrap())
-    );
 
     let history = replay_local_tool_output(&value)
         .await
         .expect("history")
         .into_history_items(&ImageUrlMap::new())
         .expect("history");
-    assert_eq!(history.len(), 2);
-    let AgentHistoryToolResultItem::Text { text } = &history[0] else {
-        panic!("missing history image path");
-    };
-    assert_eq!(text, &saved_path.text);
-    match &history[1] {
-        AgentHistoryToolResultItem::Image { image_json } => {
+    match history.as_slice() {
+        [AgentHistoryToolResultItem::Image { image_json }] => {
             assert!(image_json.contains("base64") || image_json.contains("iVBORw0KGgo"));
         }
         other => panic!("expected history image, got {other:?}"),
