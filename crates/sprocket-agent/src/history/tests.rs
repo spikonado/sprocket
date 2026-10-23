@@ -228,6 +228,7 @@ fn continuation_of_a_run_without_output_answers_its_prompt() {
         prompt(0, "earlier", "first task"),
         prompt(1, "parent", "original task"),
         hidden(2, "parent", HiddenPromptKind::Environment, "environment"),
+        hidden(3, "continuation", HiddenPromptKind::Instructions, "moved"),
     ];
     let pending = pending_prompt_part(&state, &parts, "continuation").unwrap();
     assert_eq!(pending.number, 1);
@@ -237,6 +238,10 @@ fn continuation_of_a_run_without_output_answers_its_prompt() {
     );
     assert!(history.contains("first task"));
     assert!(!history.contains("original task"));
+    assert_eq!(
+        texts(&agent_history_from_parts(&state, &parts, None)),
+        ["first task", "environment", "moved", "original task"]
+    );
 }
 
 #[test]

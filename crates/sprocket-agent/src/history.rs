@@ -63,7 +63,8 @@ fn is_workspace_context_part(part: &TranscriptPart) -> bool {
 }
 
 /// The order the model saw the parts in. A run records its workspace context
-/// right after the prompt Convex wrote at submission but shows it first.
+/// right after the prompt it answers but shows it first. That run can be a
+/// continuation answering an earlier run's prompt.
 fn model_order(parts: &[TranscriptPart]) -> Vec<&TranscriptPart> {
     let mut ordered = Vec::with_capacity(parts.len());
     let mut index = 0;
@@ -73,7 +74,7 @@ fn model_order(parts: &[TranscriptPart]) -> Vec<&TranscriptPart> {
         let end = if is_user_prompt(part) {
             next + parts[next..]
                 .iter()
-                .take_while(|later| later.run_id == part.run_id && is_workspace_context_part(later))
+                .take_while(|later| is_workspace_context_part(later))
                 .count()
         } else {
             next
