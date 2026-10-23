@@ -16,6 +16,7 @@ import {
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
+import { runStartedAt } from '@convex/lib/runs';
 
 type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
@@ -136,7 +137,7 @@ export async function finalizeRunRecord(
 			$ai_session_id: await analyticsId(run.threadId),
 			status: finalStatus,
 			failure_kind: finalStatus === 'failed' ? (args.failureKind ?? null) : null,
-			duration_ms: run.startedAt === undefined ? null : completedAt - run.startedAt
+			duration_ms: completedAt - runStartedAt(run)
 		}
 	});
 
