@@ -103,13 +103,13 @@ impl rig::tool::Tool for ParseFileTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        let docs = "Use to parse ANY type of file into a format easily readable by you.";
+        let docs = format!(
+            "Read a local file as text or an image. Supports UTF-8 text, jpeg, png, gif, webp, PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, and CSV. Text over {MAX_PARSE_FILE_PREVIEW_CHARS} characters is truncated, and the full text is saved to a file."
+        );
         if self.0.supports_images {
-            docs.to_string()
+            docs
         } else {
-            format!(
-                "{docs} Your model architecture doesn't support images, so you can't read image files using this tool"
-            )
+            format!("{docs} This model can't view images, so image files fail.")
         }
     }
 
@@ -757,6 +757,9 @@ pub(super) struct ReplayedImage {
     pub(super) image: ModelImage,
     /// Hex sha256 of the bytes the model receives.
     pub(super) sha256: String,
+    /// Only downloaded images show their path; parse_file's cache holds a
+    /// downscaled copy of a file the model already has a path to.
+    show_path: bool,
 }
 
 pub(super) enum ReplayedOutput {
@@ -779,6 +782,7 @@ impl ReplayedOutput {
                 path,
                 image,
                 sha256,
+                show_path,
             }) => {
                 let media_type = Some(image.media_type);
                 let image = match urls.get(&sha256) {
@@ -789,10 +793,14 @@ impl ReplayedOutput {
                         None,
                     ),
                 };
-                vec![
-                    ToolResultContent::text(format!("Image saved to: {path}")),
-                    image,
-                ]
+                if show_path {
+                    vec![
+                        ToolResultContent::text(format!("Image saved to: {path}")),
+                        image,
+                    ]
+                } else {
+                    vec![image]
+                }
             }
         }
     }
@@ -825,6 +833,7 @@ async fn replay_image_output(
     byte_size: u64,
     width: u32,
     height: u32,
+    show_path: bool,
 ) -> anyhow::Result<ReplayedImage> {
     anyhow::ensure!(
         !path.is_empty(),
@@ -855,6 +864,7 @@ async fn replay_image_output(
         path: path.to_string(),
         image,
         sha256,
+        show_path,
     })
 }
 
@@ -887,7 +897,7 @@ async fn replay_parse_file_output(output: &serde_json::Value) -> anyhow::Result<
             height,
             ..
         } => ReplayedOutput::Image(
-            replay_image_output(&media_type, &path, byte_size, width, height).await?,
+            replay_image_output(&media_type, &path, byte_size, width, height, false).await?,
         ),
         ParseFilePersistedOutput::Text {
             path,
@@ -905,6 +915,7 @@ async fn replay_image_reference(output: &serde_json::Value) -> anyhow::Result<Re
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct ImageReference {
+        url: Option<String>,
         media_type: String,
         path: String,
         #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
@@ -923,6 +934,7 @@ async fn replay_image_reference(output: &serde_json::Value) -> anyhow::Result<Re
         image.byte_size,
         image.width,
         image.height,
+        image.url.is_some(),
     )
     .await
 }
