@@ -87,4 +87,5 @@ it('splits panes right and down, each with its own tabs, and closes empty panes'
 	expect(screen.getAllByRole('tablist')).toHaveLength(1);
 	expect(screen.queryByRole('separator')).toBeNull();
 	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Artifacts']);
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Artifacts' }));
 });

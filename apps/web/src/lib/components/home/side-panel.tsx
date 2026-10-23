@@ -116,13 +116,24 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 }
 
 export default function SidePanel(props: Props) {
-	const { layout, activePaneId, expanded, onCloseTab, onResizeSplit, onToggleExpanded } = props;
+	const {
+		layout,
+		activePaneId,
+		expanded,
+		onCloseTab,
+		onFocusPane,
+		onResizeSplit,
+		onToggleExpanded
+	} = props;
+
 	const container = useRef<HTMLElement>(null);
 	const focusNewPane = useRef(false);
 	const [size, setSize] = useState<{ width: number; height: number } | null>(null);
 	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
 	const { panes, splits } = layoutRects(layout);
 	const cornerPaneId = topRightPane(layout).id;
+	const activeTabId = panes.find(({ pane }) => pane.id === activePaneId)?.pane.activeTabId;
+	const previousPaneCount = useRef(panes.length);
 
 	const takeNewPaneFocus = useCallback(() => {
 		const take = focusNewPane.current;
@@ -144,6 +155,33 @@ export default function SidePanel(props: Props) {
 
 		return () => observer.disconnect();
 	}, []);
+
+	// Iframe clicks never reach the panes' capture handlers; the window blurs instead.
+	useEffect(() => {
+		const onBlur = () =>
+			setTimeout(() => {
+				const frame = document.activeElement;
+
+				if (!(frame instanceof HTMLIFrameElement)) return;
+
+				const paneId = frame.closest<HTMLElement>('[data-side-panel-pane]')?.dataset.sidePanelPane;
+
+				if (paneId) onFocusPane(paneId);
+			});
+
+		window.addEventListener('blur', onBlur);
+
+		return () => window.removeEventListener('blur', onBlur);
+	}, [onFocusPane]);
+
+	useEffect(() => {
+		const paneClosed = panes.length < previousPaneCount.current;
+		previousPaneCount.current = panes.length;
+
+		if (paneClosed && document.activeElement === document.body) {
+			document.getElementById(`side-panel-tab-${activeTabId}`)?.focus();
+		}
+	}, [panes.length, activeTabId]);
 
 	function requestCloseTab(id: string) {
 		const tab = panes.flatMap(({ pane }) => pane.tabs).find((candidate) => candidate.id === id);
@@ -293,6 +331,7 @@ function Pane({
 				height: `${rect.height * 100}%`
 			}}
 			className="absolute flex min-h-0 min-w-0 flex-col overflow-hidden"
+			data-side-panel-pane={pane.id}
 			onPointerDownCapture={() => onFocusPane(pane.id)}
 			onFocusCapture={() => onFocusPane(pane.id)}
 		>
