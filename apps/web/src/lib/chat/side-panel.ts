@@ -88,14 +88,16 @@ export const MIN_PANE_SIZE = { row: 240, column: 160 } as const satisfies Record
 	number
 >;
 
-/** The most panes that sit next to each other along `direction` anywhere in `node`. */
-export function paneSpan(node: SidePanelLayout, direction: SplitDirection): number {
-	if (node.type === 'pane') return 1;
+/** Pixels `node` needs along `direction` so every pane inside it, at its current ratios, keeps `MIN_PANE_SIZE`. */
+export function minLayoutSize(node: SidePanelLayout, direction: SplitDirection): number {
+	if (node.type === 'pane') return MIN_PANE_SIZE[direction];
 
-	const first = paneSpan(node.first, direction);
-	const second = paneSpan(node.second, direction);
+	const first = minLayoutSize(node.first, direction);
+	const second = minLayoutSize(node.second, direction);
 
-	return node.direction === direction ? first + second : Math.max(first, second);
+	return node.direction === direction
+		? Math.max(first / node.ratio, second / (1 - node.ratio))
+		: Math.max(first, second);
 }
 
 /** Fractions of the whole panel. */

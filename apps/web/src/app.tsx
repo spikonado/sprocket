@@ -57,6 +57,7 @@ import SettingsSidebar, { type SettingsPage } from '$lib/components/home/setting
 import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
 import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
+import { minLayoutSize } from '$lib/chat/side-panel';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
 import { useExistingThreadCwd } from '$lib/home/thread-cwd';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
@@ -2977,7 +2978,13 @@ export default function App({
 						{!artifactPanel.panel.expanded && (
 							<SidePanelResizeHandle
 								width={sidePanelWidth.width}
-								minWidth={sidePanelWidth.minWidth}
+								minWidth={Math.min(
+									sidePanelWidth.maxWidth,
+									Math.max(
+										sidePanelWidth.minWidth,
+										minLayoutSize(artifactPanel.panel.layout, 'row')
+									)
+								)}
 								maxWidth={sidePanelWidth.maxWidth}
 								onWidthChange={sidePanelWidth.setWidth}
 							/>

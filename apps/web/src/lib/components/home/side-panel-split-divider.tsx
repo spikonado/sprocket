@@ -1,10 +1,5 @@
 import { useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import {
-	MIN_PANE_SIZE,
-	paneSpan,
-	type LayoutRect,
-	type SidePanelSplit
-} from '$lib/chat/side-panel';
+import { minLayoutSize, type LayoutRect, type SidePanelSplit } from '$lib/chat/side-panel';
 
 type Props = {
 	split: SidePanelSplit;
@@ -30,11 +25,9 @@ export default function SidePanelSplitDivider({ split, rect, container, onResize
 			: { start: bounds.top + rect.top * bounds.height, size: rect.height * bounds.height };
 	}
 
-	/** Keeps every pane nested on either side at least `MIN_PANE_SIZE` along this split. */
 	function resize(ratio: number, size = regionPx().size) {
-		const min = MIN_PANE_SIZE[split.direction];
-		const lowest = (min * paneSpan(split.first, split.direction)) / size;
-		const highest = 1 - (min * paneSpan(split.second, split.direction)) / size;
+		const lowest = minLayoutSize(split.first, split.direction) / size;
+		const highest = 1 - minLayoutSize(split.second, split.direction) / size;
 
 		if (lowest <= highest) onResize(Math.max(lowest, Math.min(highest, ratio)));
 	}

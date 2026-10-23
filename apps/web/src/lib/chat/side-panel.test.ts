@@ -1,9 +1,9 @@
 import { expect, it } from 'vitest';
-import { paneSpan, type SidePanelLayout } from './side-panel';
+import { minLayoutSize, type SidePanelLayout } from './side-panel';
 
 const pane = (id: string): SidePanelLayout => ({ type: 'pane', id, tabs: [], activeTabId: '' });
 
-it('counts the most panes lined up along each direction', () => {
+it('sizes a layout so every nested pane keeps its minimum at the current ratios', () => {
 	const layout: SidePanelLayout = {
 		type: 'split',
 		id: 'outer',
@@ -20,13 +20,14 @@ it('counts the most panes lined up along each direction', () => {
 				type: 'split',
 				id: 'deep',
 				direction: 'row',
-				ratio: 0.5,
+				ratio: 0.75,
 				first: pane('c'),
 				second: pane('d')
 			}
 		}
 	};
 
-	expect(paneSpan(layout, 'row')).toBe(3);
-	expect(paneSpan(layout, 'column')).toBe(2);
+	// Pane d gets a quarter of a half, so the panel needs 8 × 240px.
+	expect(minLayoutSize(layout, 'row')).toBe(1920);
+	expect(minLayoutSize(layout, 'column')).toBe(320);
 });
