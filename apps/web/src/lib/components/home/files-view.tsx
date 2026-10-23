@@ -718,7 +718,7 @@ function FileContextMenu({
 			aria-label={`${item.name} actions`}
 			data-file-tree-context-menu-root="true"
 			ref={menuRef}
-			className="bg-popover text-popover-foreground fixed z-250 w-48 rounded-md border p-1 shadow-md"
+			className="bg-popover text-popover-foreground fixed z-250 max-h-[calc(100dvh-16px)] w-48 overflow-y-auto rounded-md border p-1 shadow-md"
 			onKeyDown={(event) => {
 				const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
 				const index = buttons.findIndex((button) => button === document.activeElement);
