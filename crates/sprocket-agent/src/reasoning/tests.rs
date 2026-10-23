@@ -64,7 +64,7 @@ fn edited_reasoning_uses_current_text_instead_of_stale_native_state() {
     let mut parts = LiveAssistantParts::default();
     let mut metadata = HashMap::new();
     apply_completed_reasoning(&mut parts, &mut metadata, "stream", "corr", &reasoning);
-    assert_eq!(reasoning_summary_text(&reasoning), "edited");
+    assert_eq!(completed_reasoning_text(&reasoning), "edited");
     assert_eq!(metadata["reasoning:stream:corr"], serde_json::json!({}));
 }
 

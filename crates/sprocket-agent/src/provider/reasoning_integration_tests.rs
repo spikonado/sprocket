@@ -689,6 +689,70 @@ fn output_items_sse(output: Vec<JsonValue>) -> String {
     output_items_sse_with_status(output, "completed")
 }
 
+#[tokio::test]
+async fn opus_thinking_keeps_its_raw_text_when_the_summary_is_empty() {
+    const THINKING: &str = "391 factors as 17 times 23.";
+    let done = json!({
+        "type": "reasoning", "id": ITEM_ID, "summary": [],
+        "content": [{ "type": "reasoning_text", "text": THINKING }],
+        "encrypted_content": ENVELOPE,
+    });
+    let message = json!({
+        "type": "message", "id": "msg_1", "role": "assistant", "status": "completed",
+        "content": [{ "type": "output_text", "text": TEXT }],
+    });
+    let body = [
+        json!({ "type": "response.created", "response": gateway_response("in_progress", vec![]) }),
+        json!({
+            "type": "response.output_item.added", "output_index": 0,
+            "item": { "type": "reasoning", "id": ITEM_ID, "summary": [] },
+        }),
+        json!({
+            "type": "response.reasoning_text.delta", "item_id": ITEM_ID,
+            "output_index": 0, "content_index": 0, "delta": THINKING,
+        }),
+        json!({ "type": "response.output_item.done", "output_index": 0, "item": done }),
+        json!({ "type": "response.output_item.added", "output_index": 1, "item": message }),
+        json!({ "type": "response.output_item.done", "output_index": 1, "item": message }),
+        json!({ "type": "response.completed", "response": gateway_response("completed", vec![done.clone(), message.clone()]) }),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(sequence, mut event)| {
+        event["sequence_number"] = json!(sequence);
+        sse(event)
+    })
+    .collect();
+    let (base_url, server) = spawn_responses_sse(vec![body]);
+    let mut stream = openai::OpenAIConfig::new("test-key")
+        .with_base_url(&base_url)
+        .client()
+        .responses("gateway-model")
+        .stream(CompletionRequest::new("hello"))
+        .expect("mocked responses stream");
+
+    let mut parts = LiveAssistantParts::default();
+    let mut provider_metadata = HashMap::new();
+    while let Some(item) = stream.next().await {
+        if let Item::Event(StreamEvent::End {
+            part,
+            content: AssistantContent::Reasoning(reasoning),
+        }) = item.expect("stream item")
+        {
+            apply_completed_reasoning(
+                &mut parts,
+                &mut provider_metadata,
+                STREAM_ID,
+                &format!("reasoning:{}", part.index()),
+                &reasoning,
+            );
+        }
+    }
+    server.join().expect("gateway mock thread");
+
+    assert_eq!(live_reasoning_text(&parts.parts), Some(THINKING));
+}
+
 fn output_items_sse_with_status(output: Vec<JsonValue>, status: &str) -> String {
     let mut events = vec![json!({
         "type": "response.created",

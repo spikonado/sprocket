@@ -48,23 +48,26 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
     )
 }
 
-pub(crate) fn reasoning_summary_text(reasoning: &Reasoning) -> String {
-    let Some(summary) = native_reasoning(reasoning)
+/// The OpenAI summary when it has text, otherwise the raw reasoning, which
+/// is where Opus thinking arrives.
+pub(crate) fn completed_reasoning_text(reasoning: &Reasoning) -> String {
+    let summary = native_reasoning(reasoning)
         .filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"))
         .and_then(|item| item.get("summary"))
         .and_then(JsonValue::as_array)
-    else {
-        return if reasoning.redacted {
-            String::new()
-        } else {
-            reasoning.text.clone()
-        };
-    };
-    summary
-        .iter()
-        .filter_map(|block| block.get("text").and_then(JsonValue::as_str))
-        .collect::<Vec<_>>()
-        .join("\n")
+        .map(|summary| {
+            summary
+                .iter()
+                .filter_map(|block| block.get("text").and_then(JsonValue::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    if summary.is_empty() && !reasoning.redacted {
+        reasoning.text.clone()
+    } else {
+        summary
+    }
 }
 
 pub(crate) fn apply_completed_reasoning(
@@ -76,7 +79,7 @@ pub(crate) fn apply_completed_reasoning(
 ) {
     let id = format!("{stream_id}:{correlator}");
     let key = format!("reasoning:{id}");
-    let text = reasoning_summary_text(reasoning);
+    let text = completed_reasoning_text(reasoning);
     let native = native_reasoning(reasoning);
     let openai =
         native.filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"));
