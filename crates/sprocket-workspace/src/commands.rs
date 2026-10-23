@@ -1056,11 +1056,12 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
 #[cfg(windows)]
 fn build_shell_command(command: &str, shell: &str) -> Command {
     let mut process = Command::new(shell);
-    process
-        .arg("-NoLogo")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg(command);
+    if crate::command_shell::is_powershell(shell) {
+        process.args(["-NoLogo", "-NoProfile", "-Command"]);
+    } else {
+        process.arg("-c");
+    }
+    process.arg(command);
     process
 }
 

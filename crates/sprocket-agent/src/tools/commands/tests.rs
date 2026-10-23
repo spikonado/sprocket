@@ -12,12 +12,12 @@ fn exec_command_schema_does_not_expose_the_preview_limit() {
 }
 
 #[test]
-fn exec_command_schema_shell_default_is_runtime_dependent() {
+fn exec_command_schema_shell_has_no_default() {
     let schema = exec_command_parameters();
     let shell = &schema["properties"]["shell"];
     assert_eq!(
         shell["description"],
-        "Shell binary to launch; resolved to an available shell when omitted."
+        "Shell binary to launch, e.g. bash or pwsh. Defaults to the machine's shell."
     );
     assert!(shell.get("default").is_none());
 }
