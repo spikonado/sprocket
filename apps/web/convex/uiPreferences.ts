@@ -84,6 +84,16 @@ export const getMine = query({
 	}
 });
 
+export const setShareConversationContent = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await savePreferences(ctx, { shareConversationContent: args.enabled });
+
+		return null;
+	}
+});
+
 export const setTheme = mutation({
 	args: {
 		theme: vTheme

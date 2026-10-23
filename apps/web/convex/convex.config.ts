@@ -6,6 +6,7 @@ import exa from '@exalabs/convex-exa/convex.config';
 import migrations from '@convex-dev/migrations/convex.config';
 import actionRetrier from '@convex-dev/action-retrier/convex.config';
 import workpool from '@convex-dev/workpool/convex.config';
+import posthog from '@posthog/convex/convex.config';
 
 const app = defineApp({
 	env: {
@@ -25,13 +26,22 @@ const app = defineApp({
 			v.literal('https://api.prava.space')
 		),
 		MODEL_GATEWAY_URL: v.optional(v.string()),
-		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string())
+		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string()),
+		// Dev and preview deployments use a dummy token; their sends fail.
+		POSTHOG_PROJECT_TOKEN: v.string()
 	}
 });
 
 app.use(firecrawl, { env: { FIRECRAWL_API_KEY: app.env.FIRECRAWL_API_KEY } });
 
 app.use(exa, { env: { EXA_API_KEY: app.env.EXA_API_KEY } });
+
+app.use(posthog, {
+	env: {
+		POSTHOG_PROJECT_TOKEN: app.env.POSTHOG_PROJECT_TOKEN,
+		POSTHOG_HOST: 'https://eu.i.posthog.com'
+	}
+});
 
 app.use(rateLimiter);
 

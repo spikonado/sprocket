@@ -12,6 +12,7 @@ use crate::repo_env::repo_env_vars;
 struct ConfigResponse {
     env: BTreeMap<String, String>,
     machine: bool,
+    version: &'static str,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -22,5 +23,6 @@ async fn config() -> Json<ConfigResponse> {
     Json(ConfigResponse {
         env: repo_env_vars(),
         machine: true,
+        version: sprocket_workspace::SPROCKET_VERSION,
     })
 }

@@ -319,6 +319,7 @@ function getContextResult(args: {
 	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
 	providerPreferences: Infer<typeof vGetContextResult>['providerPreferences'];
 	cwd: string | undefined;
+	shareConversationContent: boolean;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
 		run: {
@@ -334,7 +335,8 @@ function getContextResult(args: {
 			parentThreadId: args.parentThreadId
 		},
 		providerPreferences: args.providerPreferences,
-		prompt: args.prompt
+		prompt: args.prompt,
+		shareConversationContent: args.shareConversationContent
 	};
 
 	if (args.contextTokens !== undefined) {
@@ -377,7 +379,8 @@ export const getContext = query({
 				enabledProviders: enabledProviders(preferences?.providerOrder),
 				restrictSubagentsToProvider: preferences?.restrictSubagentsToProvider ?? false
 			},
-			cwd: thread?.cwd
+			cwd: thread?.cwd,
+			shareConversationContent: preferences?.shareConversationContent ?? true
 		});
 	}
 });

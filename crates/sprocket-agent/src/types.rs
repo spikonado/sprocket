@@ -142,6 +142,8 @@ pub struct RunContextResponse {
     /// Absent until the thread first calls set_cwd.
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub share_conversation_content: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

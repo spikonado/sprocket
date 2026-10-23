@@ -38,6 +38,9 @@ if (unexpectedArguments.length > 0) {
 
 const childEnv = { ...process.env };
 
+// Bun loads the root `.env`, so this clears its production key. An `--env-file` can opt back in.
+childEnv.PUBLIC_POSTHOG_KEY = '';
+
 if (envFile) {
 	const filePath = path.resolve(repositoryRoot, envFile);
 	const fileEnv = parseEnv(readFileSync(filePath, 'utf8'));

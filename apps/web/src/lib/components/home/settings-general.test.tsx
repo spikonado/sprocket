@@ -32,6 +32,12 @@ const toggles = [
 		field: 'settleMergedThreads',
 		mutation: api.uiPreferences.setSettleMergedThreads,
 		defaultEnabled: false
+	},
+	{
+		name: 'Share anonymous conversation data to help improve Sprocket for everyone',
+		field: 'shareConversationContent',
+		mutation: api.uiPreferences.setShareConversationContent,
+		defaultEnabled: true
 	}
 ] as const;
 
@@ -67,7 +73,7 @@ it.each([null, preferences])(
 		expect(allSwitches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(
 			toggles.map(({ defaultEnabled }) => String(defaultEnabled))
 		);
-		expect(disabledStates()).toEqual([false, false, false]);
+		expect(disabledStates()).toEqual(toggles.map(() => false));
 	}
 );
 
@@ -75,12 +81,12 @@ it('waits for preferences to load before allowing changes', async () => {
 	const client = new ConvexTestClient();
 	await mount(client);
 	expect(screen.getByRole('status').textContent).toBe('Loading preferences...');
-	expect(disabledStates()).toEqual([true, true, true]);
+	expect(disabledStates()).toEqual(toggles.map(() => true));
 	await act(async () => {
 		client.registerQuery(api.uiPreferences.getMine, preferences);
 	});
 	expect(screen.queryByRole('status')).toBeNull();
-	expect(disabledStates()).toEqual([false, false, false]);
+	expect(disabledStates()).toEqual(toggles.map(() => false));
 });
 
 it('shows a preference load error inline', async () => {
@@ -96,7 +102,7 @@ it('shows a preference load error inline', async () => {
 	await waitFor(() => {
 		expect(screen.getByRole('alert').textContent).toBe("Couldn't load your preferences right now.");
 	});
-	expect(disabledStates()).toEqual([true, true, true]);
+	expect(disabledStates()).toEqual(toggles.map(() => true));
 });
 
 describe.each(toggles)('$name', ({ name, field, mutation: preferenceMutation, defaultEnabled }) => {

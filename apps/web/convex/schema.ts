@@ -311,7 +311,8 @@ export default defineSchema({
 		automaticAgentContinuation: v.optional(v.boolean()),
 		settleMergedThreads: v.optional(v.boolean()),
 		providerOrder: v.optional(v.array(vProviderOrderEntry)),
-		restrictSubagentsToProvider: v.optional(v.boolean())
+		restrictSubagentsToProvider: v.optional(v.boolean()),
+		shareConversationContent: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),
@@ -393,15 +394,17 @@ export default defineSchema({
 		granularity: v.union(v.literal('hour'), v.literal('day')),
 		bucketStart: v.number(),
 		...vTokenUsageTotals.fields
-	}).index('by_userId_bucket', [
-		'userId',
-		'granularity',
-		'bucketStart',
-		'provider',
-		'model',
-		'serviceTier',
-		'cacheWriteTtl'
-	]),
+	})
+		.index('by_userId_bucket', [
+			'userId',
+			'granularity',
+			'bucketStart',
+			'provider',
+			'model',
+			'serviceTier',
+			'cacheWriteTtl'
+		])
+		.index('by_granularity_bucket', ['granularity', 'bucketStart']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

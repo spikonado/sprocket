@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { ConvexReactClient } from 'convex/react';
 import { canonicalDevWebUrl } from '../../desktop/local-config.mjs';
 import { loadRuntimeConfig } from '$lib/runtime-config';
+import { initAnalytics } from '$lib/analytics';
 import AuthProvider from './auth-provider';
 import App from './app';
 import Callback from './callback';
@@ -28,6 +29,7 @@ async function start() {
 
 	try {
 		const config = await loadRuntimeConfig();
+		initAnalytics(config);
 		const convexUrl = config.env.PUBLIC_CONVEX_URL;
 
 		if (!convexUrl) throw new Error('Sprocket is missing its Convex configuration.');

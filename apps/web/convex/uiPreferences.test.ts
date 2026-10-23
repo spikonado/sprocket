@@ -6,7 +6,8 @@ describe('theme preferences', () => {
 	it.each([
 		['automaticThreadTitles', api.uiPreferences.setAutomaticThreadTitles],
 		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation],
-		['restrictSubagentsToProvider', api.uiPreferences.setRestrictSubagentsToProvider]
+		['restrictSubagentsToProvider', api.uiPreferences.setRestrictSubagentsToProvider],
+		['shareConversationContent', api.uiPreferences.setShareConversationContent]
 	] as const)('syncs %s per account and preserves the theme', async (field, setPreference) => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });

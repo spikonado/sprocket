@@ -1,4 +1,5 @@
-import { Component, type ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { captureRenderError } from '$lib/analytics';
 import CalmCentered from '$lib/components/home/calm-centered';
 
 export default class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -6,6 +7,10 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
 
 	static getDerivedStateFromError() {
 		return { failed: true };
+	}
+
+	componentDidCatch(error: Error, info: ErrorInfo) {
+		captureRenderError(error, info.componentStack);
 	}
 
 	render() {

@@ -5,6 +5,7 @@ import { isJsonObject, isJsonString } from '@convex/lib/json';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
+import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
 
 export async function applyExecutorJobSuccess(
 	ctx: MutationCtx,
@@ -57,6 +58,25 @@ export async function applyExecutorJobSuccess(
 
 	if (args.job.kind === 'set_cwd' && isJsonString(cwd)) {
 		await ctx.db.patch('threadRecords', args.run.threadId, { cwd });
+	}
+
+	const skill =
+		args.job.kind === 'read_skill' && 'name' in args.job.payload
+			? args.job.payload.name
+			: undefined;
+
+	if (isJsonString(skill)) {
+		const traceId = await analyticsId(args.run._id);
+
+		await captureAnonymous(ctx, {
+			distinctId: traceId,
+			event: 'skill_read',
+			properties: {
+				skill,
+				$ai_trace_id: traceId,
+				$ai_session_id: await analyticsId(args.run.threadId)
+			}
+		});
 	}
 
 	await recordToolTranscript(ctx, {
