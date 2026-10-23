@@ -288,7 +288,7 @@ export default function ModelSelector({
 							ref={reasoningRef}
 							role="group"
 							aria-label={`Reasoning for ${previewModel.label}`}
-							className="bg-popover/96 max-h-[50vh] shrink-0 overflow-y-auto rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:absolute sm:right-0 sm:w-46"
+							className="bg-popover/96 max-h-[50dvh] shrink-0 overflow-y-auto rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:absolute sm:right-0 sm:w-46"
 							style={{ top: reasoningTop }}
 							onKeyDown={(event) => {
 								if (event.key === 'ArrowLeft') {

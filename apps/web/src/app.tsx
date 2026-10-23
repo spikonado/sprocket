@@ -2657,7 +2657,7 @@ export default function App({
 
 	if (!authReady) {
 		return (
-			<div className="bg-background h-screen overflow-hidden">
+			<div className="bg-background h-dvh overflow-hidden">
 				<AuthGate
 					authState={{
 						isLoading:

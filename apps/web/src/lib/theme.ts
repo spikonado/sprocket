@@ -14,9 +14,14 @@ let entryThemeDepth = 0;
 
 let themeBeforeEntry: SprocketTheme | null = null;
 
+const BROWSER_CHROME_COLOR: Record<SprocketTheme, string> = { light: '#f2f7ed', dark: '#09111a' };
+
 function writeTheme(theme: SprocketTheme): void {
 	document.documentElement.dataset.theme = theme;
 	document.documentElement.style.colorScheme = theme;
+	document
+		.querySelector('meta[name="theme-color"]')
+		?.setAttribute('content', BROWSER_CHROME_COLOR[theme]);
 }
 
 export function applyTheme(theme: SprocketTheme): void {

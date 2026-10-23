@@ -748,7 +748,7 @@ export function PromptComposerView({
 							) : null}
 							<div className="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
 								<div
-									className="mb-3 max-h-[min(30vh,16rem)] space-y-2 overflow-y-auto empty:hidden"
+									className="mb-3 max-h-[min(30dvh,16rem)] space-y-2 overflow-y-auto empty:hidden"
 									role="region"
 									aria-label="Conversation notices"
 									tabIndex={0}

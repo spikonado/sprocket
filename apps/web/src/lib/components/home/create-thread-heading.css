@@ -80,7 +80,7 @@
 	z-index: 50;
 	display: block;
 	width: min(17rem, calc(100vw - 2rem));
-	max-height: min(18rem, 60vh);
+	max-height: min(18rem, 60dvh);
 	overflow: hidden;
 	transform: translateX(-50%);
 	border: 1px solid var(--hairline);
@@ -98,7 +98,7 @@
 
 .create-thread-project-options {
 	display: block;
-	max-height: min(13rem, 45vh);
+	max-height: min(13rem, 45dvh);
 	overflow-y: auto;
 	padding: 5px;
 }
