@@ -385,6 +385,8 @@ function Pane({
 				<button
 					type="button"
 					className={ICON_BUTTON}
+					data-ph-capture-attribute-action="split_side_panel"
+					data-ph-capture-attribute-split_direction="row"
 					onClick={() => onSplit('row')}
 					disabled={!canSplitRight}
 					aria-label="Split right"
@@ -395,6 +397,8 @@ function Pane({
 				<button
 					type="button"
 					className={ICON_BUTTON}
+					data-ph-capture-attribute-action="split_side_panel"
+					data-ph-capture-attribute-split_direction="column"
 					onClick={() => onSplit('column')}
 					disabled={!canSplitDown}
 					aria-label="Split down"
