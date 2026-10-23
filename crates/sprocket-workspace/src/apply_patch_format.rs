@@ -66,9 +66,16 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchSection>> {
         .lines()
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>();
-    while lines.last().is_some_and(|line| line.is_empty()) {
-        lines.pop();
-    }
+    // Whitespace after `*** End Patch` is padding; without it, a trailing " "
+    // line is blank context.
+    let keep = match lines.iter().rposition(|line| !line.trim().is_empty()) {
+        Some(last) if lines[last].trim() == END_PATCH => last + 1,
+        _ => lines
+            .iter()
+            .rposition(|line| !line.is_empty())
+            .map_or(0, |last| last + 1),
+    };
+    lines.truncate(keep);
 
     let Some(first) = lines.first().map(|line| line.trim()) else {
         bail!("patch cannot be empty");

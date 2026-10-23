@@ -60,7 +60,7 @@ fn preserves_missing_trailing_newline() {
 
 #[test]
 fn parses_empty_add_file() {
-    let hunks = parse_apply_patch("*** Begin Patch\n*** Add File: empty.txt\n*** End Patch")
+    let hunks = parse_apply_patch("*** Begin Patch\n*** Add File: empty.txt\n*** End Patch\n \n")
         .expect("parse");
 
     match &hunks[..] {
