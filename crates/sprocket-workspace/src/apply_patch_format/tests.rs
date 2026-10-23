@@ -172,18 +172,22 @@ fn rejects_unified_style_hunk_headers_in_begin_patch() {
 
 #[test]
 fn parses_patch_without_envelope() {
-    let hunks =
-        parse_apply_patch("*** Delete File: a.txt\n*** Add File: b.txt\n+b  \n").expect("parse");
+    let hunks = parse_apply_patch(
+        "*** Delete File: a.txt\n*** Add File: b.txt\n+b  \n*** Update File: c.txt\n-old\n \n",
+    )
+    .expect("parse");
 
     match &hunks[..] {
         [
             PatchSection::Delete { path },
             PatchSection::Add { contents, .. },
+            PatchSection::Update { chunks, .. },
         ] => {
             assert_eq!(path, "a.txt");
             assert_eq!(contents, b"b  \n");
+            assert_eq!(chunks[0].old_lines, vec!["old".to_owned(), String::new()]);
         }
-        _ => panic!("expected delete and add sections"),
+        _ => panic!("expected delete, add, and update sections"),
     }
 }
 
@@ -258,6 +262,23 @@ fn out_of_order_hunk_must_match_one_place() {
         error
             .to_string()
             .contains("the expected lines match 2 places"),
+        "unexpected error: {error}"
+    );
+
+    let error = apply_update(
+        Path::new("file.txt"),
+        b"a\nb\nc\nd\n",
+        &[
+            chunk(None, &["b", "c"], &["B", "C"]),
+            chunk(Some("b"), &[], &["inserted"]),
+        ],
+    )
+    .err()
+    .expect("insertion inside an earlier hunk must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("the anchor line is inside lines an earlier hunk changes"),
         "unexpected error: {error}"
     );
 }

@@ -169,9 +169,9 @@ impl PatchFiles<'_> {
                 chunks,
             } => {
                 let (source, file) = self.existing_file(&path).await?;
+                let file = updated(&source, file, &chunks)?;
                 let destination = self.resolve(&copy_to)?;
                 self.ensure_vacant(&destination).await?;
-                let file = updated(&source, file, &chunks)?;
                 self.set(&destination, FileState::File(file));
                 change(&destination, PatchOperation::Copied, Some(source.as_path()))
             }
@@ -200,12 +200,12 @@ impl PatchFiles<'_> {
         Ok(&self.files[path])
     }
 
-    async fn existing_file(&mut self, path: &str) -> Result<(PathBuf, FileContents)> {
+    async fn existing_file(&mut self, path: &str) -> Result<(PathBuf, &FileContents)> {
         let path = self.resolve(path)?;
-        let state = self.tracked(&path).await?.current().clone();
-        match state {
+        let cwd = self.cwd;
+        match self.tracked(&path).await?.current() {
             FileState::File(contents) => Ok((path, contents)),
-            FileState::Missing => Err(self.path_error("path does not exist", &path)),
+            FileState::Missing => Err(path_error("path does not exist", &path, cwd)),
             FileState::NotAFile => bail!("patch path is not a file: {}", display_path(&path)),
         }
     }
@@ -215,7 +215,11 @@ impl PatchFiles<'_> {
         if vacant {
             Ok(())
         } else {
-            Err(self.path_error("patch destination already exists", path))
+            Err(path_error(
+                "patch destination already exists",
+                path,
+                self.cwd,
+            ))
         }
     }
 
@@ -225,23 +229,23 @@ impl PatchFiles<'_> {
             .expect("paths are tracked before they are set")
             .updated = Some(state);
     }
-
-    fn path_error(&self, message: &str, path: &Path) -> anyhow::Error {
-        anyhow!(
-            "{message}: {} (relative paths resolve from {})",
-            display_path(path),
-            display_path(self.cwd)
-        )
-    }
 }
 
-fn updated(path: &Path, file: FileContents, chunks: &[UpdateChunk]) -> Result<FileContents> {
+fn path_error(message: &str, path: &Path, cwd: &Path) -> anyhow::Error {
+    anyhow!(
+        "{message}: {} (relative paths resolve from {})",
+        display_path(path),
+        display_path(cwd)
+    )
+}
+
+fn updated(path: &Path, file: &FileContents, chunks: &[UpdateChunk]) -> Result<FileContents> {
     if chunks.is_empty() {
-        return Ok(file);
+        return Ok(file.clone());
     }
     Ok(FileContents {
         bytes: apply_update(path, &file.bytes, chunks)?,
-        permissions: file.permissions,
+        permissions: file.permissions.clone(),
     })
 }
 

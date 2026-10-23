@@ -66,7 +66,7 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchSection>> {
         .lines()
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>();
-    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+    while lines.last().is_some_and(|line| line.is_empty()) {
         lines.pop();
     }
 
@@ -371,6 +371,7 @@ impl Replacement {
 enum Miss {
     AnchorNotFound,
     AnchorAmbiguous(usize),
+    InsideEarlierHunk,
     LinesNotFound,
     LinesAmbiguous(usize),
 }
@@ -452,7 +453,7 @@ fn insertion(chunk: &UpdateChunk, after_anchor: Option<usize>, end: usize) -> Re
 fn locate_forward(lines: &[String], chunk: &UpdateChunk, cursor: usize) -> Option<Replacement> {
     let after_anchor = match &chunk.context {
         Some(context) => {
-            Some(find_matches(lines, std::slice::from_ref(context), cursor, false)?[0] + 1)
+            Some(find_matches(lines, std::slice::from_ref(context), cursor, false, 1)?[0] + 1)
         }
         None => None,
     };
@@ -461,7 +462,7 @@ fn locate_forward(lines: &[String], chunk: &UpdateChunk, cursor: usize) -> Optio
     }
     let start = after_anchor.unwrap_or(cursor);
     line_variants(chunk).find_map(|(old_lines, new_lines)| {
-        let position = find_matches(lines, old_lines, start, chunk.end_of_file)?[0];
+        let position = find_matches(lines, old_lines, start, chunk.end_of_file, 1)?[0];
         Some(Replacement {
             start: position,
             old_len: old_lines.len(),
@@ -479,7 +480,9 @@ fn locate_anywhere(
 ) -> Result<Replacement, Miss> {
     let after_anchor = match &chunk.context {
         Some(context) => {
-            match find_matches(lines, std::slice::from_ref(context), 0, false).as_deref() {
+            match find_matches(lines, std::slice::from_ref(context), 0, false, usize::MAX)
+                .as_deref()
+            {
                 None => return Err(Miss::AnchorNotFound),
                 Some([position]) => Some(position + 1),
                 Some(matches) => return Err(Miss::AnchorAmbiguous(matches.len())),
@@ -488,12 +491,20 @@ fn locate_anywhere(
         None => None,
     };
     if chunk.old_lines.is_empty() {
-        return Ok(insertion(chunk, after_anchor, lines.len()));
+        let inserted = insertion(chunk, after_anchor, lines.len());
+        if taken
+            .iter()
+            .any(|replacement| inserted.overlaps(replacement))
+        {
+            return Err(Miss::InsideEarlierHunk);
+        }
+        return Ok(inserted);
     }
 
     let start = after_anchor.unwrap_or(0);
     for (old_lines, new_lines) in line_variants(chunk) {
-        let Some(matches) = find_matches(lines, old_lines, start, chunk.end_of_file) else {
+        let Some(matches) = find_matches(lines, old_lines, start, chunk.end_of_file, usize::MAX)
+        else {
             continue;
         };
         let mut candidates = matches
@@ -542,13 +553,14 @@ fn uses_crlf(contents: &str) -> bool {
     saw_newline
 }
 
-/// Every position from `start` where `pattern` matches, using the strictest
-/// comparison that matches anywhere so exact context always wins.
+/// Up to `limit` positions from `start` where `pattern` matches, using the
+/// strictest comparison that matches anywhere so exact context always wins.
 fn find_matches(
     lines: &[String],
     pattern: &[String],
     start: usize,
     end_of_file: bool,
+    limit: usize,
 ) -> Option<Vec<usize>> {
     if pattern.len() > lines.len() || start > lines.len() - pattern.len() {
         return None;
@@ -574,6 +586,7 @@ fn find_matches(
                     .zip(pattern)
                     .all(|(line, expected)| matches(line, expected))
             })
+            .take(limit)
             .collect::<Vec<_>>();
         (!positions.is_empty()).then_some(positions)
     })
@@ -597,6 +610,9 @@ fn mismatch_error(
         Miss::AnchorAmbiguous(count) => format!(
             "the hunk was not found after the previous hunk, and its anchor matches {count} places"
         ),
+        Miss::InsideEarlierHunk => {
+            "the anchor line is inside lines an earlier hunk changes".to_owned()
+        }
         Miss::LinesNotFound => "the expected lines were not found".to_owned(),
         Miss::LinesAmbiguous(count) => {
             format!("the expected lines match {count} places; add context lines or an @@ anchor")
