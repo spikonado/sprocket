@@ -2707,7 +2707,8 @@ export default function App({
 							: undefined
 				}}
 				inert={
-					artifactPanel.fullscreenArtifact || (artifactPanel.panel.open && sidePanelFullscreen)
+					artifactPanel.fullscreenArtifact ||
+					(!settingsOpen && artifactPanel.panel.open && sidePanelFullscreen)
 						? true
 						: undefined
 				}
