@@ -69,8 +69,10 @@ import {
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
-	vTranscriptCompletionItem
+	vTranscriptCompletionItem,
+	vWorkspaceContext
 } from '@convex/lib/validators';
+import { recordedWorkspaceContext } from '@convex/lib/workspaceContexts';
 
 type RunClaimPatch = {
 	claimId: string;
@@ -320,6 +322,7 @@ function getContextResult(args: {
 	providerPreferences: Infer<typeof vGetContextResult>['providerPreferences'];
 	cwd: string | undefined;
 	shareConversationContent: boolean;
+	workspaceContext: Infer<typeof vGetContextResult>['workspaceContext'];
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
 		run: {
@@ -336,7 +339,8 @@ function getContextResult(args: {
 		},
 		providerPreferences: args.providerPreferences,
 		prompt: args.prompt,
-		shareConversationContent: args.shareConversationContent
+		shareConversationContent: args.shareConversationContent,
+		workspaceContext: args.workspaceContext
 	};
 
 	if (args.contextTokens !== undefined) {
@@ -380,7 +384,8 @@ export const getContext = query({
 				restrictSubagentsToProvider: preferences?.restrictSubagentsToProvider ?? false
 			},
 			cwd: thread?.cwd,
-			shareConversationContent: preferences?.shareConversationContent ?? true
+			shareConversationContent: preferences?.shareConversationContent ?? true,
+			workspaceContext: thread ? await recordedWorkspaceContext(ctx, thread) : { updates: [] }
 		});
 	}
 });
@@ -433,7 +438,9 @@ export const saveContextHandoff = mutation({
 		beforePrompt: v.boolean(),
 		/** Sent by released agents; ignored. */
 		processedTokens: v.optional(v.number()),
-		handoffCalls: v.optional(v.array(vModelCallUsage))
+		handoffCalls: v.optional(v.array(vModelCallUsage)),
+		/** The full workspace context shown with the handoff. Released agents omit it. */
+		workspaceContext: v.optional(vWorkspaceContext)
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
@@ -482,6 +489,15 @@ export const saveContextHandoff = mutation({
 			contextSummaryHandoffKey: handoffKey
 		});
 
+		if (args.workspaceContext) {
+			await ctx.db.insert('threadWorkspaceContexts', {
+				threadId: thread._id,
+				runId: run._id,
+				handoffKey,
+				context: args.workspaceContext
+			});
+		}
+
 		for (const [index, call] of (args.handoffCalls ?? []).entries()) {
 			await recordModelCallUsage(ctx, thread, {
 				runId: run._id,
@@ -491,6 +507,30 @@ export const saveContextHandoff = mutation({
 		}
 
 		await setThreadContextTokens(ctx, thread, undefined);
+
+		return true;
+	}
+});
+
+/** Records the workspace context sections this run shows before its turns. */
+export const recordWorkspaceContext = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		context: vWorkspaceContext
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+
+		await ctx.db.insert('threadWorkspaceContexts', {
+			threadId: run.threadId,
+			runId: run._id,
+			context: args.context
+		});
 
 		return true;
 	}

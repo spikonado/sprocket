@@ -32,7 +32,8 @@ import {
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
 	vTranscriptPromptBody,
-	vTranscriptToolBody
+	vTranscriptToolBody,
+	vWorkspaceContext
 } from '@convex/lib/validators';
 
 // Cleared by `migrations.removeCreatedAt`; `_creationTime` replaces it.
@@ -476,6 +477,15 @@ export default defineSchema({
 		.index('by_threadId_kind_number', ['threadId', 'kind', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
+	// Workspace context the agent showed the model, replayed so later requests
+	// keep the same prefix. A row holds only the sections that changed.
+	threadWorkspaceContexts: defineTable({
+		threadId: v.id('threadRecords'),
+		runId: v.id('runs'),
+		// Set on the full context written with that context handoff.
+		handoffKey: v.optional(v.string()),
+		context: vWorkspaceContext
+	}).index('by_threadId_and_handoffKey', ['threadId', 'handoffKey']),
 	threadTranscriptWorkSections: defineTable({
 		threadId: v.id('threadRecords'),
 		...workSectionFields,

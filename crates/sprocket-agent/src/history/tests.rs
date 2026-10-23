@@ -784,3 +784,77 @@ fn strips_reasoning_opaque_items_native_data_and_origin() {
     assert_eq!(call.function.arguments["cmd"], "pwd");
     assert!(call.native.is_none());
 }
+
+#[test]
+fn replays_workspace_context_where_each_run_showed_it() {
+    use crate::workspace_context::{LiveWorkspaceContext, WorkspaceContextUpdate};
+    use std::path::Path;
+
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let on_machine = |root: &str| {
+        LiveWorkspaceContext::new(
+            &[],
+            &[],
+            "thread",
+            &Path::new(root).join("transcripts"),
+            &Path::new(root).join("repo"),
+        )
+        .at(&Path::new(root).join("repo"))
+    };
+    let first_prompt = prompt(0, "first", "Start");
+    let completion = TranscriptPart {
+        number: 1,
+        source_key: "completion:first".into(),
+        kind: TranscriptPartKind::Completion,
+        run_id: "first".into(),
+        created_at: None,
+        prompt: None,
+        completion: Some(TranscriptCompletionBody {
+            stream_id: Some("s".into()),
+            items: vec![serde_json::json!({ "type": "text", "text": "Done" })],
+        }),
+        tool: None,
+        work: Default::default(),
+    };
+    let second_prompt = prompt(2, "second", "Again");
+    let json = |history: &[AgentHistoryMessage]| serde_json::to_value(history).unwrap();
+
+    let (mut first_live, shown) = agent_history_with_workspace_context(
+        &state,
+        std::slice::from_ref(&first_prompt),
+        Some("first"),
+        &RecordedWorkspaceContext::default(),
+    );
+    let full = shown.changes_to(&on_machine("/a")).unwrap();
+    assert_eq!(full, on_machine("/a"));
+    first_live.push(full.history_message());
+
+    let mut recorded = RecordedWorkspaceContext {
+        base: None,
+        updates: vec![WorkspaceContextUpdate {
+            run_id: "first".into(),
+            context: full,
+        }],
+    };
+    let parts = [first_prompt, completion, second_prompt];
+    let (mut second_live, shown) =
+        agent_history_with_workspace_context(&state, &parts, Some("second"), &recorded);
+    assert_eq!(
+        json(&second_live[..first_live.len()]),
+        json(first_live.as_slice())
+    );
+
+    let moved = shown.changes_to(&on_machine("/b")).unwrap();
+    second_live.push(moved.history_message());
+    recorded.updates.push(WorkspaceContextUpdate {
+        run_id: "second".into(),
+        context: moved,
+    });
+
+    let (replayed, shown) = agent_history_with_workspace_context(&state, &parts, None, &recorded);
+    assert_eq!(
+        json(&replayed[..second_live.len()]),
+        json(second_live.as_slice())
+    );
+    assert_eq!(shown.changes_to(&on_machine("/b")), None);
+}

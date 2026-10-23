@@ -93,6 +93,7 @@ import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workSections from "../lib/workSections.js";
 import type * as lib_workosVault from "../lib/workosVault.js";
+import type * as lib_workspaceContexts from "../lib/workspaceContexts.js";
 import type * as machines from "../machines.js";
 import type * as migrations from "../migrations.js";
 import type * as payments from "../payments.js";
@@ -207,6 +208,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validators": typeof lib_validators;
   "lib/workSections": typeof lib_workSections;
   "lib/workosVault": typeof lib_workosVault;
+  "lib/workspaceContexts": typeof lib_workspaceContexts;
   machines: typeof machines;
   migrations: typeof migrations;
   payments: typeof payments;

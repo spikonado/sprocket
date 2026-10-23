@@ -6,7 +6,8 @@ import {
 	vAskQuestionOption,
 	vCompletionProvider,
 	vRunStatus,
-	vSubscriptionTier
+	vSubscriptionTier,
+	vWorkspaceContext
 } from '@convex/lib/validators';
 
 /** Function argument/return validators derived from the schema plus hand-shaped results. */
@@ -17,6 +18,13 @@ export const vTranscriptStateResult = v.object({
 	historyFromNumber: v.number(),
 	contextSummary: v.optional(v.string()),
 	reasoningStrippedThroughPartNumber: v.optional(v.number())
+});
+
+export const vRecordedWorkspaceContext = v.object({
+	/** Written with the current context handoff. */
+	base: v.optional(vWorkspaceContext),
+	/** Later changes, oldest first. */
+	updates: v.array(v.object({ runId: v.id('runs'), context: vWorkspaceContext }))
 });
 
 export const vTranscriptPartsResult = v.object({
@@ -78,7 +86,8 @@ export const vGetContextResult = v.object({
 	contextTokens: v.optional(v.number()),
 	providerHandoff: v.optional(vProviderHandoff),
 	cwd: v.optional(v.string()),
-	shareConversationContent: v.boolean()
+	shareConversationContent: v.boolean(),
+	workspaceContext: vRecordedWorkspaceContext
 });
 
 export const vCompletionActor = v.object({

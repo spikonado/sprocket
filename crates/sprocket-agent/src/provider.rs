@@ -29,7 +29,7 @@ use crate::now_ms;
 use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
-use crate::tools::{agent_tools, max_yield_ms, working_directory_message};
+use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
     UsagePricing, gateway_api_v1_url,
@@ -109,7 +109,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
     pub(crate) handoff_base_instructions: Option<String>,
-    pub(crate) initial_context: Vec<Message>,
+    pub(crate) workspace_context: crate::workspace_context::LiveWorkspaceContext,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) cwd: PathBuf,
@@ -425,7 +425,7 @@ impl AgentHook for CompletionOrigin {
 
 pub(crate) async fn resume_context_handoff(
     agent: &mut rig::Agent,
-    initial_context: &[Message],
+    workspace_context: Message,
     summary: &str,
     deferred_prompt: Option<Message>,
     save: impl std::future::Future<Output = anyhow::Result<bool>>,
@@ -437,7 +437,7 @@ pub(crate) async fn resume_context_handoff(
     if let Some(model) = next_model.await? {
         agent.set_model(model);
     }
-    let mut history = initial_context.to_vec();
+    let mut history = vec![workspace_context];
     let handoff = Message::user(context_summary_text(summary));
     let prompt = match deferred_prompt {
         Some(pending) => {
@@ -623,7 +623,6 @@ async fn run_with_completion_model(
     let initial_provider = target.completion_provider;
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
-    let initial_context: Arc<[Message]> = request.initial_context.into();
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -634,12 +633,7 @@ async fn run_with_completion_model(
         }
     };
 
-    let mut history: Vec<_> = initial_context
-        .iter()
-        .cloned()
-        .chain([working_directory_message(&cwd.get())])
-        .chain(request.prior_history)
-        .collect();
+    let mut history = request.prior_history;
     if let Some(origin) = &legacy_origin {
         crate::types::assign_unidentified_legacy_history_origin(&mut history, origin);
     }
@@ -952,18 +946,14 @@ async fn run_with_completion_model(
                                         None => Ok(None),
                                     }
                                 };
+                                let workspace_context = request.workspace_context.at(&cwd.get());
                                 let save = runtime.save_context_handoff(
                                     &request.run_id, &request.claim_id, &summary,
                                     transcript.attempt_seq, before_prompt,
-                                    &handoff_calls,
+                                    &handoff_calls, &workspace_context,
                                 );
-                                let handoff_context: Vec<_> = initial_context
-                                    .iter()
-                                    .cloned()
-                                    .chain([working_directory_message(&cwd.get())])
-                                    .collect();
                                 match resume_context_handoff(
-                                    &mut agent, &handoff_context, &summary,
+                                    &mut agent, workspace_context.message(), &summary,
                                     deferred_prompt.take(), save, next_model,
                                 ).await {
                                     Ok(Some((next_history, next_prompt))) => {

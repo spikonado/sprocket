@@ -686,7 +686,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let saved_summary = std::cell::RefCell::new(None);
     let failed_transition = resume_context_handoff(
         &mut agent,
-        std::slice::from_ref(&initial_context),
+        initial_context.clone(),
         &summary,
         Some(pending_prompt.clone()),
         async {
@@ -710,7 +710,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     );
     let (history, prompt) = resume_context_handoff(
         &mut agent,
-        std::slice::from_ref(&initial_context),
+        initial_context,
         &summary,
         Some(pending_prompt),
         async {

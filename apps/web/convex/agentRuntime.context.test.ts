@@ -1045,4 +1045,73 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(false);
 		expect((await readThreadCutoff(t, threadId)).contextSummary).toBeFalsy();
 	});
+
+	it('returns the workspace context shown since the last handoff', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'workspace-context-secret';
+		const claimId = 'claim-workspace-context';
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'workspace-context',
+			executionSecret,
+			'Do the long task'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
+		const full = { skills: 'skills', instructions: 'agents', environment: 'cwd a' };
+
+		const record = (context: typeof full | { environment: string }) =>
+			asUser.mutation(api.agentRuntime.recordWorkspaceContext, {
+				runId,
+				claimId,
+				executionSecret,
+				context
+			});
+
+		const workspaceContext = async () =>
+			(await asUser.query(api.agentRuntime.getContext, { runId, executionSecret }))
+				.workspaceContext;
+
+		await expect(record(full)).resolves.toBe(true);
+		await expect(record({ environment: 'cwd b' })).resolves.toBe(true);
+		expect(await workspaceContext()).toEqual({
+			updates: [
+				{ runId, context: full },
+				{ runId, context: { environment: 'cwd b' } }
+			]
+		});
+
+		await finalizeTextCompletion(asUser, {
+			runId,
+			claimId,
+			executionSecret,
+			attemptSeq: 1,
+			streamId: 'stream-workspace-context',
+			text: 'Finished the first step'
+		});
+		await registerCompletionAttempt(asUser, { runId, claimId, executionSecret, attemptSeq: 2 });
+		const handoffContext = { ...full, environment: 'cwd c' };
+		await expect(
+			asUser.mutation(api.agentRuntime.saveContextHandoff, {
+				runId,
+				claimId,
+				executionSecret,
+				summary: 'First step is done.',
+				completionAttemptSeq: 2,
+				beforePrompt: false,
+				workspaceContext: handoffContext
+			})
+		).resolves.toBe(true);
+		await expect(record({ environment: 'cwd d' })).resolves.toBe(true);
+
+		expect(await workspaceContext()).toEqual({
+			base: handoffContext,
+			updates: [{ runId, context: { environment: 'cwd d' } }]
+		});
+	});
 });

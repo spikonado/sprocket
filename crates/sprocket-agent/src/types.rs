@@ -144,6 +144,8 @@ pub struct RunContextResponse {
     pub cwd: Option<String>,
     #[serde(default)]
     pub share_conversation_content: bool,
+    #[serde(default)]
+    pub workspace_context: crate::workspace_context::RecordedWorkspaceContext,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -474,6 +474,7 @@ impl RuntimeClient {
         completion_attempt_seq: u64,
         before_prompt: bool,
         handoff_calls: &[crate::usage::ModelCallUsage],
+        workspace_context: &crate::workspace_context::WorkspaceContext,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("summary".to_string(), summary.to_string().into());
@@ -488,7 +489,27 @@ impl RuntimeClient {
                 Value::try_from(serde_json::to_value(handoff_calls)?)?,
             );
         }
+        args.insert(
+            "workspaceContext".to_string(),
+            Value::try_from(serde_json::to_value(workspace_context)?)?,
+        );
         self.mutation_json("agentRuntime:saveContextHandoff", args)
+            .await
+    }
+
+    /// Not retried: a duplicate row would show the update twice.
+    pub(crate) async fn record_workspace_context(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        context: &crate::workspace_context::WorkspaceContext,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert(
+            "context".to_string(),
+            Value::try_from(serde_json::to_value(context)?)?,
+        );
+        self.mutation_json("agentRuntime:recordWorkspaceContext", args)
             .await
     }
 

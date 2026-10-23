@@ -949,6 +949,13 @@ export const vTranscriptPromptBody = v.object({
 	imageUploads: v.array(vTranscriptAttachmentMeta)
 });
 
+/** Rendered sections of the agent's workspace context message. */
+export const vWorkspaceContext = v.object({
+	skills: v.optional(v.string()),
+	instructions: v.optional(v.string()),
+	environment: v.optional(v.string())
+});
+
 export const vTranscriptCompletionBody = v.object({
 	streamId: v.optional(v.string()),
 	items: v.array(vTranscriptCompletionItem)

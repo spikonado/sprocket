@@ -8,6 +8,9 @@ use crate::reasoning::opaque_encrypted;
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
+use crate::workspace_context::{
+    RecordedWorkspaceContext, WorkspaceContext, WorkspaceContextUpdate,
+};
 use sprocket_transcript::{
     TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
 };
@@ -181,16 +184,25 @@ fn flush_pending_tools_for_completion(
     }
 }
 
-pub fn agent_history_from_parts(
+/// Shows each workspace context update before its run's first non-tool part,
+/// matching where the live run placed it. Also returns the context the
+/// history shows. Updates of runs with no such part are dropped.
+pub(crate) fn agent_history_with_workspace_context(
     state: &TranscriptState,
     parts: &[TranscriptPart],
     skip_run_id: Option<&str>,
-) -> Vec<AgentHistoryMessage> {
+    recorded: &RecordedWorkspaceContext,
+) -> (Vec<AgentHistoryMessage>, WorkspaceContext) {
     let pending_prompt_number = skip_run_id
         .and_then(|run_id| pending_prompt_part(state, parts, run_id))
         .map(|part| part.number);
     let protocol_call_ids = completion_call_ids(parts);
     let mut history = Vec::new();
+    let mut shown = recorded.base.clone().unwrap_or_default();
+    if let Some(base) = &recorded.base {
+        history.push(base.history_message());
+    }
+    let mut updates: Vec<&WorkspaceContextUpdate> = recorded.updates.iter().collect();
     if let Some(summary) = state
         .context_summary
         .as_deref()
@@ -217,6 +229,7 @@ pub fn agent_history_from_parts(
         }
         if part.kind != TranscriptPartKind::Tool {
             answer_unsettled_calls(&mut awaiting_results, &mut emitted_results, &mut history);
+            show_updates(&mut updates, &part.run_id, &mut history, &mut shown);
         }
         if pending_prompt_number == Some(part.number) {
             continue;
@@ -301,7 +314,26 @@ pub fn agent_history_from_parts(
         }
     }
     answer_unsettled_calls(&mut awaiting_results, &mut emitted_results, &mut history);
-    history
+    if let Some(run_id) = skip_run_id {
+        show_updates(&mut updates, run_id, &mut history, &mut shown);
+    }
+    (history, shown)
+}
+
+fn show_updates(
+    updates: &mut Vec<&WorkspaceContextUpdate>,
+    run_id: &str,
+    history: &mut Vec<AgentHistoryMessage>,
+    shown: &mut WorkspaceContext,
+) {
+    updates.retain(|update| {
+        if update.run_id != run_id {
+            return true;
+        }
+        history.push(update.context.history_message());
+        shown.apply(&update.context);
+        false
+    });
 }
 
 fn openai_field<'a>(item: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
@@ -457,4 +489,8 @@ fn tool_call_native_item(
 }
 
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use test_support::agent_history_from_parts;
