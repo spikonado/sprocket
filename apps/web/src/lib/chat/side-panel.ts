@@ -44,13 +44,109 @@ export type SidePanelSnapshot = {
 	open: boolean;
 	/** When true, the panel covers the full Sprocket workspace UI. */
 	expanded: boolean;
-	tabs: SidePanelTab[];
-	activeTabId: string;
+	layout: SidePanelLayout;
+	activePaneId: string;
 };
 
 export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 	open: false,
 	expanded: false,
-	tabs: [{ id: 'tab-0', view: null, selectedKey: null }],
-	activeTabId: 'tab-0'
+	layout: {
+		type: 'pane',
+		id: 'pane-0',
+		tabs: [{ id: 'tab-0', view: null, selectedKey: null }],
+		activeTabId: 'tab-0'
+	},
+	activePaneId: 'pane-0'
 };
+
+export type SidePanelPane = {
+	type: 'pane';
+	id: string;
+	tabs: SidePanelTab[];
+	activeTabId: string;
+};
+
+/** `row` puts `first` left of `second`; `column` puts it above. */
+export type SplitDirection = 'row' | 'column';
+
+export type SidePanelSplit = {
+	type: 'split';
+	id: string;
+	direction: SplitDirection;
+	/** Share of the split taken by `first`. */
+	ratio: number;
+	first: SidePanelLayout;
+	second: SidePanelLayout;
+};
+
+export type SidePanelLayout = SidePanelPane | SidePanelSplit;
+
+/** Fractions of the whole panel. */
+export type LayoutRect = { left: number; top: number; width: number; height: number };
+
+type PlacedLayout = {
+	panes: { pane: SidePanelPane; rect: LayoutRect }[];
+	splits: { split: SidePanelSplit; rect: LayoutRect }[];
+};
+
+export function panesOf(node: SidePanelLayout): SidePanelPane[] {
+	return node.type === 'pane' ? [node] : [...panesOf(node.first), ...panesOf(node.second)];
+}
+
+/** Replaces every pane with `map`'s result; a split whose side maps to null becomes its other side. */
+export function mapPanes(
+	node: SidePanelLayout,
+	map: (pane: SidePanelPane) => SidePanelLayout | null
+): SidePanelLayout | null {
+	if (node.type === 'pane') return map(node);
+
+	const first = mapPanes(node.first, map);
+	const second = mapPanes(node.second, map);
+
+	if (!first || !second) return first ?? second;
+
+	return { ...node, first, second };
+}
+
+export function mapSplit(
+	node: SidePanelLayout,
+	id: string,
+	map: (split: SidePanelSplit) => SidePanelLayout
+): SidePanelLayout {
+	if (node.type === 'pane') return node;
+
+	if (node.id === id) return map(node);
+
+	return { ...node, first: mapSplit(node.first, id, map), second: mapSplit(node.second, id, map) };
+}
+
+export function layoutRects(
+	node: SidePanelLayout,
+	rect: LayoutRect = { left: 0, top: 0, width: 1, height: 1 }
+): PlacedLayout {
+	if (node.type === 'pane') return { panes: [{ pane: node, rect }], splits: [] };
+
+	const row = node.direction === 'row';
+	const firstSize = (row ? rect.width : rect.height) * node.ratio;
+	const firstRect = row ? { ...rect, width: firstSize } : { ...rect, height: firstSize };
+
+	const secondRect = row
+		? { ...rect, left: rect.left + firstSize, width: rect.width - firstSize }
+		: { ...rect, top: rect.top + firstSize, height: rect.height - firstSize };
+
+	const first = layoutRects(node.first, firstRect);
+	const second = layoutRects(node.second, secondRect);
+
+	return {
+		panes: [...first.panes, ...second.panes],
+		splits: [{ split: node, rect }, ...first.splits, ...second.splits]
+	};
+}
+
+/** The pane in the panel's top-right corner, which holds the panel-wide buttons. */
+export function topRightPane(node: SidePanelLayout): SidePanelPane {
+	if (node.type === 'pane') return node;
+
+	return topRightPane(node.direction === 'row' ? node.second : node.first);
+}

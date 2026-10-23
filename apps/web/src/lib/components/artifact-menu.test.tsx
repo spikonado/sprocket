@@ -16,8 +16,13 @@ const artifact: ArtifactEntry = {
 function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {}) {
 	return {
 		artifacts: [artifact],
-		tabs: [{ id: 'tab', view: 'artifacts' as const, selectedKey: null }],
-		activeTabId: 'tab',
+		layout: {
+			type: 'pane' as const,
+			id: 'pane',
+			tabs: [{ id: 'tab', view: 'artifacts' as const, selectedKey: null }],
+			activeTabId: 'tab'
+		},
+		activePaneId: 'pane',
 		browserApi: null,
 		filesApi: null,
 		expanded: false,
@@ -26,6 +31,9 @@ function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {
 		onCloseTab: vi.fn(),
 		onUpdateTab: vi.fn(),
 		onDraftChange: vi.fn(),
+		onFocusPane: vi.fn(),
+		onSplitPane: vi.fn(),
+		onResizeSplit: vi.fn(),
 		onOpenFile: vi.fn(),
 		onFileRenamed: vi.fn(),
 		onFileDeleted: vi.fn(),
@@ -103,7 +111,15 @@ it('deletes from both the sidebar list and selected preview', async () => {
 	fireEvent.contextMenu(screen.getByText('Notes'));
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
 	view.rerender(
-		<SidePanel {...props} tabs={[{ id: 'tab', view: 'artifacts', selectedKey: artifact.key }]} />
+		<SidePanel
+			{...props}
+			layout={{
+				type: 'pane',
+				id: 'pane',
+				activeTabId: 'tab',
+				tabs: [{ id: 'tab', view: 'artifacts', selectedKey: artifact.key }]
+			}}
+		/>
 	);
 	fireEvent.click(screen.getByRole('button', { name: 'Notes actions' }));
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));

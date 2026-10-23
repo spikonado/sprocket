@@ -2987,18 +2987,21 @@ export default function App({
 							threadCwd={threadCwd}
 							artifacts={artifactPanel.artifacts}
 							onDeleteArtifact={deleteArtifact}
-							tabs={artifactPanel.panel.tabs}
-							activeTabId={artifactPanel.activeTab.id}
+							layout={artifactPanel.panel.layout}
+							activePaneId={artifactPanel.activePane.id}
 							browserApi={localApi}
 							filesApi={localApi}
 							expanded={artifactPanel.panel.expanded}
 							stale={artifactPanel.watchState.stale}
 							error={artifactPanel.watchState.error}
-							onNewTab={() => artifactPanel.newTab()}
+							onNewTab={(paneId) => artifactPanel.newTab(paneId)}
 							onActivateTab={(id) => artifactPanel.activateTab(id)}
 							onCloseTab={(id) => artifactPanel.closeTab(id)}
 							onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
 							onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
+							onFocusPane={(id) => artifactPanel.focusPane(id)}
+							onSplitPane={(id, direction) => artifactPanel.splitPane(id, direction)}
+							onResizeSplit={(id, ratio) => artifactPanel.resizeSplit(id, ratio)}
 							onOpenFile={(file) => artifactPanel.openFile(file)}
 							onFileRenamed={(workspacePath, from, to) =>
 								artifactPanel.renameFile(workspacePath, from, to)
