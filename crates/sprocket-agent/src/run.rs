@@ -1009,23 +1009,29 @@ pub async fn run_agent(
         }
     }
 
-    let mut prior_messages = prior_history.messages;
-    if let Some(update) = prior_history
+    let workspace_update = prior_history
         .shown_workspace_context
-        .changes_to(&workspace_context.at(&cwd))
-    {
-        // A lost write only costs the next run a cache miss: it sees the
-        // update missing and records it again.
-        if let Err(error) = runtime
-            .record_workspace_context(&run_id, &claim_id, &update)
-            .await
-        {
-            eprintln!("sprocket-agent: failed to record the workspace context: {error:#}");
-        }
-        prior_messages.push(update.message());
-    }
+        .changes_to(&workspace_context.at(&cwd));
+    let mut prior_messages = prior_history.messages;
+    prior_messages.extend(workspace_update.iter().map(WorkspaceContext::message));
 
     match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
+        if let Some(update) = &workspace_update {
+            // A lost write only costs the next run a cache miss: it sees the
+            // update missing and records it again.
+            match timeout(
+                RUN_CLAIM_ATTEMPT_TIMEOUT,
+                runtime.record_workspace_context(&run_id, &claim_id, update),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    eprintln!("sprocket-agent: failed to record the workspace context: {error:#}")
+                }
+                Err(_) => eprintln!("sprocket-agent: recording the workspace context timed out"),
+            }
+        }
         let provider_result = provider
             .run(
                 runtime.clone(),
