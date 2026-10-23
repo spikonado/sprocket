@@ -3,13 +3,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rig::agent::{
-    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
-    ModelTurnFinished,
+    AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
+    HookContext, ModelTurnAction, ModelTurnFinished, OutcomeAction, OutcomeEvent,
 };
 use rig::completion::{FinishReason, Message, Usage};
+use rig::effect::EffectId;
+use rig::message::AssistantContent;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::types::CompletionProvider;
 
@@ -17,7 +20,8 @@ use crate::types::CompletionProvider;
 const MAX_CONTENT_BYTES: usize = 256 * 1024;
 
 /// Joins each model call's input, the provider facts only the provider loop knows, and the
-/// call's output into one `$ai_generation` event.
+/// call's output into one `$ai_generation` event, and captures each tool run as an `$ai_span`
+/// under the generation that called it.
 #[derive(Clone)]
 pub(crate) struct GenerationTracker {
     // Hashed ids, also the personless distinct id, so generations don't link to the user.
@@ -31,13 +35,22 @@ pub(crate) struct GenerationTracker {
 struct TrackerState {
     conversation_len: usize,
     turns: HashMap<usize, PendingGeneration>,
+    /// Tools run after their model call and before the next one.
+    latest_generation_span_id: Option<String>,
+    tools: HashMap<EffectId, PendingTool>,
 }
 
 struct PendingGeneration {
+    span_id: String,
     started_at: Instant,
     input: Option<Value>,
     /// Rig streams a call's usage before the hook that sees its content, so the event waits here.
     event: Option<posthog_rs::Event>,
+}
+
+struct PendingTool {
+    started_at: Instant,
+    parent_id: Option<String>,
 }
 
 // Rig skips the content hook for a turn that ends the run or gets abandoned.
@@ -81,12 +94,48 @@ impl GenerationTracker {
             let _ = event.insert_prop(key, value);
         }
         match (state, pending) {
-            (Some(mut state), Some(mut pending)) if self.share_content => {
+            (Some(mut state), Some(mut pending)) => {
                 pending.event = Some(event);
                 state.turns.insert(call.turn, pending);
             }
             _ => posthog_rs::capture(event),
         }
+    }
+
+    fn capture_tool_span(&self, name: &str, pending: PendingTool, event: &OutcomeEvent<'_>) {
+        let mut span = posthog_rs::Event::new("$ai_span", self.trace_id.as_str());
+        let result = event.tool_result();
+        let (input, output) = if self.share_content {
+            (
+                event.tool_args().map(|args| bounded(tool_arguments(args))),
+                result.map(|result| bounded(to_json(result.output()))),
+            )
+        } else {
+            (None, None)
+        };
+        let properties = [
+            ("$ai_trace_id", json!(self.trace_id)),
+            ("$ai_session_id", json!(self.session_id)),
+            ("$ai_span_name", json!(name)),
+            ("$ai_parent_id", json!(pending.parent_id)),
+            (
+                "$ai_latency",
+                json!(pending.started_at.elapsed().as_secs_f64()),
+            ),
+            (
+                "$ai_is_error",
+                json!(result.is_none_or(|result| result.is_error())),
+            ),
+            ("$ai_input_state", json!(input)),
+            ("$ai_output_state", json!(output)),
+            ("$process_person_profile", json!(false)),
+        ];
+        for (key, value) in properties {
+            if !value.is_null() {
+                let _ = span.insert_prop(key, value);
+            }
+        }
+        posthog_rs::capture(span);
     }
 }
 
@@ -106,9 +155,12 @@ impl AgentHook for GenerationTracker {
                 .share_content
                 .then(|| bounded(input_delta(event, state.conversation_len)));
             state.conversation_len = event.history.len() + 1;
+            let span_id = Uuid::new_v4().to_string();
+            state.latest_generation_span_id = Some(span_id.clone());
             state.turns.insert(
                 event.turn,
                 PendingGeneration {
+                    span_id,
                     started_at: Instant::now(),
                     input,
                     event: None,
@@ -130,14 +182,68 @@ impl AgentHook for GenerationTracker {
             .and_then(|mut state| state.turns.remove(&turn.turn))
             .and_then(|mut pending| pending.event.take());
         if let Some(mut event) = event {
-            let _ = event.insert_prop(
-                "$ai_output_choices",
-                bounded(json!([{ "role": "assistant", "content": turn.content }])),
-            );
+            let tools = tools_called(turn.content);
+            if !tools.is_empty() {
+                let _ = event.insert_prop("$ai_tools_called", tools.join(","));
+                let _ = event.insert_prop("$ai_tool_call_count", tools.len());
+            }
+            if self.share_content {
+                let _ = event.insert_prop(
+                    "$ai_output_choices",
+                    bounded(json!([{ "role": "assistant", "content": turn.content }])),
+                );
+            }
             posthog_rs::capture(event);
         }
         ModelTurnAction::Continue
     }
+
+    async fn on_dispatch(
+        &self,
+        _context: &HookContext,
+        event: DispatchEvent<'_>,
+    ) -> DispatchAction {
+        if event.tool_name().is_some()
+            && let Ok(mut state) = self.state.lock()
+        {
+            let parent_id = state.latest_generation_span_id.clone();
+            state.tools.insert(
+                event.id,
+                PendingTool {
+                    started_at: Instant::now(),
+                    parent_id,
+                },
+            );
+        }
+        DispatchAction::Proceed
+    }
+
+    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        if let Some(name) = event.tool_name()
+            && let Some(pending) = self
+                .state
+                .lock()
+                .ok()
+                .and_then(|mut state| state.tools.remove(&event.id))
+        {
+            self.capture_tool_span(name, pending, &event);
+        }
+        OutcomeAction::Proceed
+    }
+}
+
+fn tools_called(content: &[AssistantContent]) -> Vec<&str> {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            AssistantContent::ToolCall(call) => Some(&*call.function.name),
+            _ => None,
+        })
+        .collect()
+}
+
+fn tool_arguments(args: &str) -> Value {
+    serde_json::from_str(args).unwrap_or_else(|_| json!(args))
 }
 
 /// The messages added since the previous call, without the previous call's own output.
@@ -200,6 +306,7 @@ fn generation_properties(
         set("$ai_span_name", json!("context_handoff"));
     }
     if let Some(pending) = pending {
+        set("$ai_span_id", json!(pending.span_id));
         set(
             "$ai_latency",
             json!(pending.started_at.elapsed().as_secs_f64()),

@@ -1,9 +1,11 @@
 use rig::agent::CompletionCallEvent;
 use rig::completion::{Message, Usage};
+use rig::message::{AssistantContent, ToolName};
 use serde_json::json;
 
 use super::{
     GenerationCall, MAX_CONTENT_BYTES, analytics_id, bounded, generation_properties, input_delta,
+    tools_called,
 };
 use crate::types::CompletionProvider;
 
@@ -65,6 +67,23 @@ fn generation_properties_describe_the_call() {
     assert_eq!(properties["$ai_span_name"], "context_handoff");
     assert!(!properties.contains_key("$ai_cache_read_input_tokens"));
     assert!(!properties.contains_key("$ai_input"));
+}
+
+#[test]
+fn tools_called_lists_each_call_in_order() {
+    let call =
+        |name: &str| AssistantContent::tool_call("", ToolName::new(name).unwrap(), json!({}));
+    let content = [
+        AssistantContent::text("checking"),
+        call("exec_cmd"),
+        call("apply_patch"),
+        call("exec_cmd"),
+    ];
+
+    assert_eq!(
+        tools_called(&content),
+        ["exec_cmd", "apply_patch", "exec_cmd"]
+    );
 }
 
 #[test]
