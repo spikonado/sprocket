@@ -103,11 +103,9 @@ impl rig::tool::Tool for ParseFileTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        let docs = format!(
-            "Read a local file as text or an image. Supports UTF-8 text, jpeg, png, gif, webp, PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, and CSV. Text over {MAX_PARSE_FILE_PREVIEW_CHARS} characters is truncated, and the full text is saved to a file."
-        );
+        let docs = "Read a local file as text or an image. Supports jpeg, png, gif, webp, PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, and CSV.";
         if self.0.supports_images {
-            docs
+            docs.to_string()
         } else {
             format!("{docs} This model can't view images, so image files fail.")
         }
