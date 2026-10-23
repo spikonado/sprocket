@@ -93,7 +93,7 @@ export default function SidePanelSplitDivider({ split, rect, container, onResize
 				title="Drag to resize. Double-click to even out."
 				style={position}
 				className={`group absolute z-30 touch-none outline-none select-none ${cursor} ${
-					row ? 'w-2 -translate-x-1/2' : 'h-2 -translate-y-1/2'
+					row ? 'coarse:w-6 w-2 -translate-x-1/2' : 'coarse:h-6 h-2 -translate-y-1/2'
 				}`}
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
