@@ -392,7 +392,7 @@ const vCommandOutput = v.object({
 	exitCode: v.optional(v.number()),
 	success: v.optional(v.boolean()),
 	running: v.boolean(),
-	timedOut: v.boolean(),
+	timedOut: v.optional(v.boolean()),
 	completeLogPath: v.string(),
 	eventsPath: v.optional(v.string()),
 	error: v.optional(v.string())

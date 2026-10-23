@@ -1092,7 +1092,8 @@ fn serialize_for_model<S: serde::Serializer>(
         #[serde(skip_serializing_if = "Option::is_none")]
         success: Option<bool>,
         running: bool,
-        timed_out: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timed_out: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         output: Option<&'a str>,
         complete_log_path: &'a str,
@@ -1104,7 +1105,7 @@ fn serialize_for_model<S: serde::Serializer>(
         exit_code: output.exit_code,
         success: (!output.running).then_some(output.success),
         running: output.running,
-        timed_out: output.timed_out,
+        timed_out: (!output.running).then_some(output.timed_out),
         output: (!output.output.is_empty()).then_some(output.output.as_str()),
         complete_log_path: &output.complete_log_path,
         error: output.error.as_deref(),
