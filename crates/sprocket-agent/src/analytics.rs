@@ -16,8 +16,8 @@ use crate::types::CompletionProvider;
 /// One oversized tool result would otherwise get the whole capture batch rejected.
 const MAX_CONTENT_BYTES: usize = 256 * 1024;
 
-/// Records each model call's input and output so the stream's completion-call item can
-/// send one `$ai_generation` event with provider facts only the provider loop knows.
+/// Joins each model call's input, the provider facts only the provider loop knows, and the
+/// call's output into one `$ai_generation` event.
 #[derive(Clone)]
 pub(crate) struct GenerationTracker {
     // Hashed ids, also the personless distinct id, so generations don't link to the user.
@@ -36,7 +36,17 @@ struct TrackerState {
 struct PendingGeneration {
     started_at: Instant,
     input: Option<Value>,
-    output: Option<Value>,
+    /// Rig streams a call's usage before the hook that sees its content, so the event waits here.
+    event: Option<posthog_rs::Event>,
+}
+
+// Rig skips the content hook for a turn that ends the run or gets abandoned.
+impl Drop for PendingGeneration {
+    fn drop(&mut self) {
+        if let Some(event) = self.event.take() {
+            posthog_rs::capture(event);
+        }
+    }
 }
 
 pub(crate) struct GenerationCall<'a> {
@@ -60,17 +70,23 @@ impl GenerationTracker {
     }
 
     pub(crate) fn capture(&self, call: GenerationCall<'_>) {
-        let pending = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|mut state| state.turns.remove(&call.turn));
+        let mut state = self.state.lock().ok();
+        let mut pending = state
+            .as_mut()
+            .and_then(|state| state.turns.remove(&call.turn));
         let mut event = posthog_rs::Event::new("$ai_generation", self.trace_id.as_str());
-        for (key, value) in generation_properties(&self.trace_id, &self.session_id, &call, pending)
+        for (key, value) in
+            generation_properties(&self.trace_id, &self.session_id, &call, pending.as_mut())
         {
             let _ = event.insert_prop(key, value);
         }
-        posthog_rs::capture(event);
+        match (state, pending) {
+            (Some(mut state), Some(mut pending)) if self.share_content => {
+                pending.event = Some(event);
+                state.turns.insert(call.turn, pending);
+            }
+            _ => posthog_rs::capture(event),
+        }
     }
 }
 
@@ -95,7 +111,7 @@ impl AgentHook for GenerationTracker {
                 PendingGeneration {
                     started_at: Instant::now(),
                     input,
-                    output: None,
+                    event: None,
                 },
             );
         }
@@ -105,15 +121,20 @@ impl AgentHook for GenerationTracker {
     async fn on_model_turn_finished(
         &self,
         _context: &HookContext,
-        event: ModelTurnFinished<'_>,
+        turn: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
-        if self.share_content
-            && let Ok(mut state) = self.state.lock()
-            && let Some(pending) = state.turns.get_mut(&event.turn)
-        {
-            pending.output = Some(bounded(
-                json!([{ "role": "assistant", "content": event.content }]),
-            ));
+        let event = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.turns.remove(&turn.turn))
+            .and_then(|mut pending| pending.event.take());
+        if let Some(mut event) = event {
+            let _ = event.insert_prop(
+                "$ai_output_choices",
+                bounded(json!([{ "role": "assistant", "content": turn.content }])),
+            );
+            posthog_rs::capture(event);
         }
         ModelTurnAction::Continue
     }
@@ -148,7 +169,7 @@ fn generation_properties(
     trace_id: &str,
     session_id: &str,
     call: &GenerationCall<'_>,
-    pending: Option<PendingGeneration>,
+    pending: Option<&mut PendingGeneration>,
 ) -> Map<String, Value> {
     let mut properties = Map::new();
     let mut set = |key: &str, value: Value| {
@@ -183,8 +204,7 @@ fn generation_properties(
             "$ai_latency",
             json!(pending.started_at.elapsed().as_secs_f64()),
         );
-        set("$ai_input", pending.input.unwrap_or(Value::Null));
-        set("$ai_output_choices", pending.output.unwrap_or(Value::Null));
+        set("$ai_input", pending.input.take().unwrap_or(Value::Null));
     }
     properties
 }
