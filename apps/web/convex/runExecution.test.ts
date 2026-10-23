@@ -169,11 +169,11 @@ describe('run execution state', () => {
 
 		const output: Infer<typeof vCommandExecResult> = {
 			running,
-			timedOut: false,
 			completeLogPath: '/transcripts/command/output.log'
 		};
 
-		if (!running) Object.assign(output, { exitCode: 0, success: true, output: 'ok\n' });
+		if (!running)
+			Object.assign(output, { exitCode: 0, success: true, timedOut: false, output: 'ok\n' });
 
 		if (kind === 'exec_cmd' && running) output.sessionId = '1';
 

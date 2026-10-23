@@ -365,7 +365,6 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::json!({
             "sessionId": id,
             "running": true,
-            "timedOut": false,
             "completeLogPath": log_path,
         })
     );
@@ -379,7 +378,6 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
             "command": command,
             "workdir": root.to_string_lossy(),
             "running": true,
-            "timedOut": false,
             "completeLogPath": log_path,
         })
     );
