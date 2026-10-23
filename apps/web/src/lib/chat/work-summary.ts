@@ -1,32 +1,49 @@
+import type { Infer } from 'convex/values';
+import type { vCurrentExecutorJobKind } from '@convex/lib/validators';
 import type { AssistantTimelineWorkBlock } from './assistant-timeline';
 
-const ACTIVITIES = [
-	{ names: ['read_skill'], verb: 'read', noun: 'skill' },
-	{ names: ['exec_cmd', 'exec_command'], verb: 'ran', noun: 'command' },
-	{ names: ['apply_patch'], verb: 'applied', noun: 'patch', plural: 'patches' },
-	{ names: ['control_cmd', 'control_command', 'write_stdin'], verb: 'controlled', noun: 'command' },
-	{ names: ['web_search'], verb: 'searched', noun: 'time' },
-	{ names: ['scrape_url'], verb: 'fetched', noun: 'page' },
-	{ names: ['parse_file'], verb: 'parsed', noun: 'file' },
-	{ names: ['screenshot_url'], verb: 'captured', noun: 'screenshot' },
-	{ names: ['spawn_subagent'], verb: 'started', noun: 'subagent' },
-	{ names: ['control_subagent'], verb: 'controlled', noun: 'subagent' },
-	{ names: ['list_subagents'], verb: 'listed', noun: 'subagent group' },
-	{ names: ['list_subagent_models'], verb: 'listed', noun: 'model group' },
-	{ names: ['ask_question'], verb: 'asked', noun: 'question' },
-	{ names: ['add_artifact', 'create_artifact'], verb: 'created', noun: 'artifact' },
-	{ names: ['edit_artifact', 'update_artifact'], verb: 'updated', noun: 'artifact' },
-	{ names: ['save_artifact'], verb: 'saved', noun: 'artifact' },
-	{ names: ['delete_artifact'], verb: 'deleted', noun: 'artifact' },
-	{ names: ['list_artifacts'], verb: 'listed', noun: 'artifact group' },
-	{ names: ['mandate_setup'], verb: 'set up', noun: 'mandate' },
-	{ names: ['mandate_list'], verb: 'listed', noun: 'mandate group' },
-	{ names: ['mandate_status'], verb: 'checked', noun: 'mandate' },
-	{ names: ['mandate_charge'], verb: 'charged', noun: 'payment' },
-	{ names: ['mandate_report'], verb: 'reported', noun: 'payment outcome' },
-	{ names: ['get_workspace_instructions'], verb: 'read', noun: 'instruction set' },
-	{ names: ['check_docs'], verb: 'checked', noun: 'document' }
-];
+type Activity = { verb: string; noun: string; plural?: string };
+
+type SummarizedToolName = Exclude<Infer<typeof vCurrentExecutorJobKind>, `poll_${string}`>;
+
+// Typed against the current tool list so a new tool fails typechecking until it has an entry here.
+const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
+	read_skill: { verb: 'read', noun: 'skill' },
+	exec_cmd: { verb: 'ran', noun: 'command' },
+	apply_patch: { verb: 'applied', noun: 'patch', plural: 'patches' },
+	control_cmd: { verb: 'controlled', noun: 'command' },
+	web_search: { verb: 'searched', noun: 'time' },
+	scrape_url: { verb: 'fetched', noun: 'page' },
+	parse_file: { verb: 'parsed', noun: 'file' },
+	screenshot_url: { verb: 'captured', noun: 'screenshot' },
+	set_cwd: { verb: 'changed', noun: 'directory', plural: 'directories' },
+	link_prs: { verb: 'linked', noun: 'PR group' },
+	spawn_subagent: { verb: 'started', noun: 'subagent' },
+	control_subagent: { verb: 'controlled', noun: 'subagent' },
+	list_subagents: { verb: 'listed', noun: 'subagent group' },
+	list_subagent_models: { verb: 'listed', noun: 'model group' },
+	ask_question: { verb: 'asked', noun: 'question' },
+	add_artifact: { verb: 'created', noun: 'artifact' },
+	edit_artifact: { verb: 'updated', noun: 'artifact' },
+	save_artifact: { verb: 'saved', noun: 'artifact' },
+	delete_artifact: { verb: 'deleted', noun: 'artifact' },
+	list_artifacts: { verb: 'listed', noun: 'artifact group' },
+	mandate_setup: { verb: 'set up', noun: 'mandate' },
+	mandate_list: { verb: 'listed', noun: 'mandate group' },
+	mandate_status: { verb: 'checked', noun: 'mandate' },
+	mandate_charge: { verb: 'charged', noun: 'payment' },
+	mandate_report: { verb: 'reported', noun: 'payment outcome' },
+	get_workspace_instructions: { verb: 'read', noun: 'instruction set' },
+	check_docs: { verb: 'checked', noun: 'document' }
+};
+
+const LEGACY_TOOL_NAMES = new Map<string, keyof typeof ACTIVITIES>([
+	['exec_command', 'exec_cmd'],
+	['control_command', 'control_cmd'],
+	['write_stdin', 'control_cmd'],
+	['create_artifact', 'add_artifact'],
+	['update_artifact', 'edit_artifact']
+]);
 
 function isPoll(name: string): boolean {
 	return name.startsWith('poll_') || name === 'await_question';
@@ -64,20 +81,26 @@ export function mergeWorkToolCounts(
 }
 
 export function workSummary(counts: Record<string, number>): string {
-	const remaining = new Map(Object.entries(counts).filter(([, count]) => count > 0));
-	const hasPolls = [...remaining.keys()].some(isPoll);
+	const remaining = new Map<string, number>();
+	let hasPolls = false;
 
-	for (const name of remaining.keys()) if (isPoll(name)) remaining.delete(name);
+	for (const [name, count] of Object.entries(counts)) {
+		if (count <= 0) continue;
+
+		if (isPoll(name)) {
+			hasPolls = true;
+			continue;
+		}
+
+		const currentName = LEGACY_TOOL_NAMES.get(name) ?? name;
+		remaining.set(currentName, (remaining.get(currentName) ?? 0) + count);
+	}
 
 	const phrases: string[] = [];
 
-	for (const activity of ACTIVITIES) {
-		let count = 0;
-
-		for (const name of activity.names) {
-			count += remaining.get(name) ?? 0;
-			remaining.delete(name);
-		}
+	for (const [name, activity] of Object.entries(ACTIVITIES)) {
+		const count = remaining.get(name) ?? 0;
+		remaining.delete(name);
 
 		if (count > 0) {
 			const noun = count === 1 ? activity.noun : (activity.plural ?? `${activity.noun}s`);
