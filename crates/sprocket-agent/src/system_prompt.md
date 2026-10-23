@@ -85,6 +85,12 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
   - Tests that repeat a constant defined in the code
   - Tests that verify incorrect behavior doesn't happen; instead, write tests that verify correct behavior happens
 
+## Working on hardware
+
+- Learn the hardware's physical constraints, where it will operate, and how people will use it.
+- Keep an up-to-date BOM in the project. If electronics are involved, keep an up-to-date schematic too.
+- Write assembly instructions in their own document, separate from the BOM and schematic.
+
 ## Your training data may be stale
 
 - Your training data is many months out of date and may no longer be relevant for the tasks you work on.
