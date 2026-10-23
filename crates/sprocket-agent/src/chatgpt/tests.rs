@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 
 use super::*;
 use crate::history::agent_history_from_parts;
-use crate::reasoning::{openai_reasoning_metadata, reasoning_summary_text};
+use crate::reasoning::{completed_reasoning_text, openai_reasoning_metadata};
 use crate::types::{ChatGptAccess, deserialize_agent_history};
 use sprocket_transcript::{TranscriptPart, TranscriptStore};
 
@@ -467,7 +467,7 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
             "number": 0, "sourceKey": "completion:siwc", "kind": "completion",
             "runId": "run", "completion": {"streamId": "stream", "items": [
                 {
-                    "type": "reasoning", "text": reasoning_summary_text(reasoning),
+                    "type": "reasoning", "text": completed_reasoning_text(reasoning),
                     "providerMetadata": openai_reasoning_metadata(
                         native_reasoning.item["id"].as_str(),
                         crate::reasoning::opaque_reasoning_blob(reasoning),

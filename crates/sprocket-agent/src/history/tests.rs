@@ -1,6 +1,6 @@
 use super::*;
 use crate::reasoning::{
-    apply_completed_reasoning, merge_provider_metadata, reasoning_summary_text,
+    apply_completed_reasoning, completed_reasoning_text, merge_provider_metadata,
 };
 use crate::types::deserialize_agent_history;
 use rig::completion::Message;
@@ -524,7 +524,7 @@ fn completed_reasoning_roundtrips_summary_and_one_envelope() {
         } else {
             assert!(restored.native.is_none());
         }
-        assert_eq!(reasoning_summary_text(restored), summary);
+        assert_eq!(completed_reasoning_text(restored), summary);
     }
 }
 
