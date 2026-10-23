@@ -525,7 +525,7 @@ export default function InboxSidebar({
 						</div>
 					</details>
 					<button
-						className="inbox-icon inbox-add-project-button"
+						className="inbox-icon touch-target inbox-add-project-button"
 						type="button"
 						aria-label="Create or add project"
 						data-ph-capture-attribute-action="add_project"

@@ -44,7 +44,7 @@ function ProviderRow({
 				type="button"
 				aria-label={`Reorder ${label}`}
 				disabled={disabled}
-				className="text-muted-foreground enabled:hover:text-foreground -ml-1 flex size-6 touch-none items-center justify-center rounded-md enabled:cursor-grab enabled:active:cursor-grabbing"
+				className="touch-target text-muted-foreground enabled:hover:text-foreground relative -ml-1 flex size-6 touch-none items-center justify-center rounded-md enabled:cursor-grab enabled:active:cursor-grabbing"
 			>
 				<GripVertical className="size-4" aria-hidden="true" />
 			</button>

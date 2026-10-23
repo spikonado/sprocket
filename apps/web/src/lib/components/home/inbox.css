@@ -16,6 +16,7 @@
 	height: 28px;
 	border-radius: 6px;
 	color: var(--muted-foreground);
+	position: relative;
 }
 
 .inbox-icon:hover,
@@ -428,13 +429,16 @@
 	visibility: hidden;
 }
 
-.inbox-row:hover .inbox-row-actions {
-	opacity: 1;
-	visibility: visible;
-}
+/* Touch reaches these actions through the long-press menu. */
+@media (hover: hover) {
+	.inbox-row:hover .inbox-row-actions {
+		opacity: 1;
+		visibility: visible;
+	}
 
-.inbox-row:has(> .inbox-row-actions):hover .inbox-status {
-	visibility: hidden;
+	.inbox-row:has(> .inbox-row-actions):hover .inbox-status {
+		visibility: hidden;
+	}
 }
 
 .inbox-row-state-action,

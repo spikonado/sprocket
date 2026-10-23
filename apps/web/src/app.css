@@ -6,6 +6,8 @@
 @import 'tailwindcss';
 
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+@custom-variant touch (@media (hover: none));
+@custom-variant coarse (@media (pointer: coarse));
 
 @theme inline {
 	--font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
@@ -227,6 +229,36 @@ body::after {
 	select,
 	[contenteditable='true'] {
 		font-size: 16px !important;
+	}
+}
+
+@layer components {
+	/* The element must be positioned for the 44px tap area to anchor to it. */
+	@media (pointer: coarse) {
+		.touch-target::before {
+			position: absolute;
+			inset: min(0px, calc((100% - 44px) / 2));
+			content: '';
+		}
+
+		/* A later sibling paints on top, so it must not reach back over the previous button. */
+		.touch-target + .touch-target::before {
+			left: 0;
+		}
+	}
+}
+
+@media (pointer: coarse) {
+	[role='menuitem'] {
+		min-height: 44px;
+	}
+}
+
+/* Holding a button opens its long-press menu instead of selecting its text. */
+@media (hover: none) {
+	button {
+		-webkit-touch-callout: none;
+		user-select: none;
 	}
 }
 
