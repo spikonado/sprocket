@@ -1,5 +1,6 @@
 import ArtifactMenu from '$lib/components/artifact-menu';
 import {
+	Columns2,
 	FileCode,
 	Files,
 	FileText,
@@ -10,22 +11,31 @@ import {
 	Minimize2,
 	PanelRight,
 	Plus,
+	Rows2,
 	SquarePlus,
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
+import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import {
+	layoutRects,
 	leafName,
+	MIN_PANE_SIZE,
+	topRightPane,
 	type FileDraft,
+	type LayoutRect,
+	type SidePanelLayout,
+	type SidePanelPane,
 	type SidePanelTab,
-	type SidePanelView
+	type SidePanelView,
+	type SplitDirection
 } from '$lib/chat/side-panel';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 import type { ArtifactType } from '@convex/lib/validators';
@@ -37,19 +47,22 @@ type Props = {
 	workspacePath?: string;
 	threadCwd?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
-	tabs: SidePanelTab[];
-	activeTabId: string;
+	layout: SidePanelLayout;
+	activePaneId: string;
 	browserApi: BrowserApi | null;
 	filesApi: (FilesApi & FileEditorApi) | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
 	error?: string | null;
-	onNewTab: () => void;
+	onNewTab: (paneId: string) => void;
 	onActivateTab: (id: string) => void;
 	onCloseTab: (id: string) => void;
 	onUpdateTab: (id: string, patch: TabPatch) => void;
 	onDraftChange: (id: string, draft: FileDraft | undefined) => void;
+	onFocusPane: (id: string) => void;
+	onSplitPane: (id: string, direction: SplitDirection) => void;
+	onResizeSplit: (id: string, ratio: number) => void;
 	onOpenFile: (file: WorkspaceFileTarget) => void;
 	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
 	onFileDeleted: (workspacePath: string, path: string) => void;
@@ -72,7 +85,7 @@ const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIc
 ];
 
 const ICON_BUTTON =
-	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none';
+	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40';
 
 function tabIndexForKey(key: string, index: number, count: number) {
 	switch (key) {
@@ -102,47 +115,80 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 	return VIEWS.find((item) => item.id === tab.view) ?? { label: 'New tab', icon: SquarePlus };
 }
 
-export default function SidePanel({
-	artifacts,
-	workspacePath,
-	threadCwd,
-	onDeleteArtifact,
-	tabs,
-	activeTabId,
-	browserApi,
-	filesApi,
-	expanded,
-	stale = false,
-	error = null,
-	onNewTab,
-	onActivateTab,
-	onCloseTab,
-	onUpdateTab,
-	onDraftChange,
-	onOpenFile,
-	onFileRenamed,
-	onFileDeleted,
-	onOpenFullscreen,
-	onToggleExpanded,
-	onClose
-}: Props) {
-	const focusActiveTab = useRef(false);
-	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
+export default function SidePanel(props: Props) {
+	const {
+		layout,
+		activePaneId,
+		expanded,
+		onCloseTab,
+		onFocusPane,
+		onResizeSplit,
+		onToggleExpanded
+	} = props;
 
-	function requestCloseTab(id: string) {
-		if (tabs.find((tab) => tab.id === id)?.draft) setConfirmCloseId(id);
-		else onCloseTab(id);
-	}
+	const container = useRef<HTMLElement>(null);
+	const focusNewPane = useRef(false);
+	const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
+	const { panes, splits } = layoutRects(layout);
+	const cornerPaneId = topRightPane(layout).id;
+	const activeTabId = panes.find(({ pane }) => pane.id === activePaneId)?.pane.activeTabId;
+	const previousPaneCount = useRef(panes.length);
+
+	const takeNewPaneFocus = useCallback(() => {
+		const take = focusNewPane.current;
+		focusNewPane.current = false;
+
+		return take;
+	}, []);
 
 	useEffect(() => {
-		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
-		tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+		const element = container.current;
 
-		if (focusActiveTab.current) {
-			focusActiveTab.current = false;
-			tab?.focus();
+		if (!element || !globalThis.ResizeObserver) return;
+
+		const observer = new ResizeObserver(() =>
+			setSize({ width: element.clientWidth, height: element.clientHeight })
+		);
+
+		observer.observe(element);
+
+		return () => observer.disconnect();
+	}, []);
+
+	// Iframe clicks never reach the panes' capture handlers; the window blurs instead.
+	useEffect(() => {
+		const onBlur = () =>
+			setTimeout(() => {
+				const frame = document.activeElement;
+
+				if (!(frame instanceof HTMLIFrameElement)) return;
+
+				const paneId = frame.closest<HTMLElement>('[data-side-panel-pane]')?.dataset.sidePanelPane;
+
+				if (paneId) onFocusPane(paneId);
+			});
+
+		window.addEventListener('blur', onBlur);
+
+		return () => window.removeEventListener('blur', onBlur);
+	}, [onFocusPane]);
+
+	useEffect(() => {
+		const paneClosed = panes.length < previousPaneCount.current;
+		previousPaneCount.current = panes.length;
+
+		if (paneClosed && document.activeElement === document.body) {
+			document.getElementById(`side-panel-tab-${activeTabId}`)?.focus();
 		}
-	}, [activeTabId, tabs.length]);
+	}, [panes.length, activeTabId]);
+
+	function requestCloseTab(id: string) {
+		const tab = panes.flatMap(({ pane }) => pane.tabs).find((candidate) => candidate.id === id);
+
+		if (tab?.draft) setConfirmCloseId(id);
+		else onCloseTab(id);
+	}
 
 	useEffect(() => {
 		if (!expanded) return;
@@ -170,8 +216,124 @@ export default function SidePanel({
 
 	return (
 		<aside
+			ref={container}
 			id="side-panel"
-			className={`bg-background flex h-full min-h-0 w-full flex-col ${expanded ? '' : 'border-hairline border-l'}`}
+			className={`bg-background relative h-full min-h-0 w-full overflow-hidden ${expanded ? '' : 'border-hairline border-l'}`}
+		>
+			{/* Panes render flat, keyed by id, so splitting never remounts a pane's browser or editor. */}
+			{panes.map(({ pane, rect }) => (
+				<Pane
+					key={pane.id}
+					{...props}
+					pane={pane}
+					rect={rect}
+					focused={panes.length === 1 || pane.id === activePaneId}
+					showsPanelButtons={pane.id === cornerPaneId}
+					canSplitRight={!size || rect.width * size.width >= 2 * MIN_PANE_SIZE.row}
+					canSplitDown={!size || rect.height * size.height >= 2 * MIN_PANE_SIZE.column}
+					onSplit={(direction) => {
+						focusNewPane.current = true;
+						props.onSplitPane(pane.id, direction);
+					}}
+					takeNewPaneFocus={takeNewPaneFocus}
+					onRequestCloseTab={requestCloseTab}
+				/>
+			))}
+			{splits.map(({ split, rect }) => (
+				<SidePanelSplitDivider
+					key={split.id}
+					split={split}
+					rect={rect}
+					container={container}
+					onResize={(ratio) => onResizeSplit(split.id, ratio)}
+				/>
+			))}
+			{confirmCloseId ? (
+				<ConfirmDialog
+					title="Discard unsaved changes?"
+					description="This file has edits that haven’t been saved. Closing the tab discards them."
+					confirmLabel="Discard and close"
+					destructive
+					onCancel={() => setConfirmCloseId(null)}
+					onConfirm={() => {
+						setConfirmCloseId(null);
+						onCloseTab(confirmCloseId);
+					}}
+				/>
+			) : null}
+		</aside>
+	);
+}
+
+function Pane({
+	pane,
+	rect,
+	focused,
+	showsPanelButtons,
+	canSplitRight,
+	canSplitDown,
+	onSplit,
+	takeNewPaneFocus,
+	onRequestCloseTab,
+	artifacts,
+	workspacePath,
+	threadCwd,
+	onDeleteArtifact,
+	browserApi,
+	filesApi,
+	expanded,
+	stale = false,
+	error = null,
+	onNewTab,
+	onActivateTab,
+	onUpdateTab,
+	onDraftChange,
+	onFocusPane,
+	onOpenFile,
+	onFileRenamed,
+	onFileDeleted,
+	onOpenFullscreen,
+	onToggleExpanded,
+	onClose
+}: Props & {
+	pane: SidePanelPane;
+	rect: LayoutRect;
+	/** Whether chat links open here; only shown when the panel is split. */
+	focused: boolean;
+	showsPanelButtons: boolean;
+	/** True until the panel is measured. */
+	canSplitRight: boolean;
+	canSplitDown: boolean;
+	onSplit: (direction: SplitDirection) => void;
+	/** True once, for the pane a split just created. */
+	takeNewPaneFocus: () => boolean;
+	onRequestCloseTab: (id: string) => void;
+}) {
+	const focusActiveTab = useRef(false);
+	const { tabs, activeTabId } = pane;
+
+	useEffect(() => {
+		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
+		tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+
+		if (focusActiveTab.current || takeNewPaneFocus()) {
+			focusActiveTab.current = false;
+			tab?.focus();
+		}
+	}, [activeTabId, tabs.length, takeNewPaneFocus]);
+
+	return (
+		<div
+			style={{
+				left: `${rect.left * 100}%`,
+				top: `${rect.top * 100}%`,
+				width: `${rect.width * 100}%`,
+				height: `${rect.height * 100}%`
+			}}
+			className="absolute flex min-h-0 min-w-0 flex-col overflow-hidden"
+			data-side-panel-pane={pane.id}
+			onPointerDownCapture={() => onFocusPane(pane.id)}
+			onFocusCapture={() => onFocusPane(pane.id)}
 		>
 			<div className="border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-2">
 				<div
@@ -204,7 +366,7 @@ export default function SidePanel({
 								key={tab.id}
 								className={`group flex max-w-40 min-w-20 shrink items-center rounded-md text-xs font-medium transition ${
 									active
-										? 'bg-muted text-foreground'
+										? `text-foreground ${focused ? 'bg-muted' : 'bg-muted/50'}`
 										: 'text-muted-foreground hover:bg-hover-fill hover:text-foreground'
 								}`}
 							>
@@ -218,7 +380,7 @@ export default function SidePanel({
 									title={'title' in heading ? heading.title : heading.label}
 									onClick={() => onActivateTab(tab.id)}
 									onAuxClick={(event) => {
-										if (event.button === 1) requestCloseTab(tab.id);
+										if (event.button === 1) onRequestCloseTab(tab.id);
 									}}
 									className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2.5 focus-visible:ring-2 focus-visible:outline-none"
 								>
@@ -236,7 +398,7 @@ export default function SidePanel({
 									tabIndex={active ? 0 : -1}
 									onClick={() => {
 										focusActiveTab.current = true;
-										requestCloseTab(tab.id);
+										onRequestCloseTab(tab.id);
 									}}
 									aria-label={`Close ${heading.label} tab`}
 									title="Close tab"
@@ -252,7 +414,7 @@ export default function SidePanel({
 					type="button"
 					className={ICON_BUTTON}
 					data-ph-capture-attribute-action="new_side_panel_tab"
-					onClick={onNewTab}
+					onClick={() => onNewTab(pane.id)}
 					aria-label="New tab"
 					title="New tab"
 				>
@@ -262,26 +424,54 @@ export default function SidePanel({
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={onToggleExpanded}
-					aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-					title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-					aria-pressed={expanded}
+					data-ph-capture-attribute-action="split_side_panel"
+					data-ph-capture-attribute-split_direction="row"
+					onClick={() => onSplit('row')}
+					disabled={!canSplitRight}
+					aria-label="Split right"
+					title={canSplitRight ? 'Split right' : 'Widen the panel to split right'}
 				>
-					{expanded ? (
-						<Minimize2 className="size-4" aria-hidden="true" />
-					) : (
-						<Maximize2 className="size-4" aria-hidden="true" />
-					)}
+					<Columns2 className="size-4" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
 					className={ICON_BUTTON}
-					onClick={onClose}
-					aria-label="Close panel"
-					title="Close panel"
+					data-ph-capture-attribute-action="split_side_panel"
+					data-ph-capture-attribute-split_direction="column"
+					onClick={() => onSplit('column')}
+					disabled={!canSplitDown}
+					aria-label="Split down"
+					title={canSplitDown ? 'Split down' : 'Make the panel taller to split down'}
 				>
-					<PanelRight className="size-4" aria-hidden="true" />
+					<Rows2 className="size-4" aria-hidden="true" />
 				</button>
+				{showsPanelButtons ? (
+					<>
+						<button
+							type="button"
+							className={ICON_BUTTON}
+							onClick={onToggleExpanded}
+							aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+							title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+							aria-pressed={expanded}
+						>
+							{expanded ? (
+								<Minimize2 className="size-4" aria-hidden="true" />
+							) : (
+								<Maximize2 className="size-4" aria-hidden="true" />
+							)}
+						</button>
+						<button
+							type="button"
+							className={ICON_BUTTON}
+							onClick={onClose}
+							aria-label="Close panel"
+							title="Close panel"
+						>
+							<PanelRight className="size-4" aria-hidden="true" />
+						</button>
+					</>
+				) : null}
 			</div>
 			{tabs.map((tab) => (
 				// Inactive tabs stay mounted so their browser session, scroll, and artifact state survive.
@@ -353,20 +543,7 @@ export default function SidePanel({
 					)}
 				</section>
 			))}
-			{confirmCloseId ? (
-				<ConfirmDialog
-					title="Discard unsaved changes?"
-					description="This file has edits that haven’t been saved. Closing the tab discards them."
-					confirmLabel="Discard and close"
-					destructive
-					onCancel={() => setConfirmCloseId(null)}
-					onConfirm={() => {
-						setConfirmCloseId(null);
-						onCloseTab(confirmCloseId);
-					}}
-				/>
-			) : null}
-		</aside>
+		</div>
 	);
 }
 

@@ -15,10 +15,16 @@ import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-ar
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
 	isSameOrInside,
+	mapPanes,
+	mapSplit,
+	panesOf,
 	renamedPath,
 	type FileDraft,
+	type SidePanelLayout,
+	type SidePanelPane,
 	type SidePanelSnapshot,
-	type SidePanelTab
+	type SidePanelTab,
+	type SplitDirection
 } from '$lib/chat/side-panel';
 import { useStore, type Store } from '$lib/store';
 import type { ArtifactsWatchRequest, LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
@@ -51,7 +57,7 @@ export class ArtifactPanel implements Store<number> {
 	#watchScope: string | null = null;
 	#snapshots = new Map<string, SidePanelSnapshot>();
 	#panelScopeKey: string | null = null;
-	#nextTabId = 1;
+	#nextId = 1;
 	#version = 0;
 	readonly #listeners = new Set<() => void>();
 
@@ -73,12 +79,29 @@ export class ArtifactPanel implements Store<number> {
 		return this.artifacts.find((artifact) => artifact.key === this.fullscreenKey) ?? null;
 	}
 
+	get panes() {
+		return panesOf(this.panel.layout);
+	}
+
+	get tabs() {
+		return this.panes.flatMap((pane) => pane.tabs);
+	}
+
+	get activePane() {
+		const panes = this.panes;
+
+		return panes.find((pane) => pane.id === this.panel.activePaneId) ?? panes[0]!;
+	}
+
 	get activeTab() {
-		return this.panel.tabs.find((tab) => tab.id === this.panel.activeTabId) ?? this.panel.tabs[0]!;
+		const pane = this.activePane;
+
+		return pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane.tabs[0]!;
 	}
 
 	get hasFileDrafts() {
-		const hasDraft = (panel: SidePanelSnapshot) => panel.tabs.some((tab) => tab.draft);
+		const hasDraft = (panel: SidePanelSnapshot) =>
+			panesOf(panel.layout).some((pane) => pane.tabs.some((tab) => tab.draft));
 
 		// The current scope's snapshot is stale until the panel leaves it again.
 		return (
@@ -173,8 +196,9 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	newTab() {
-		const empty = this.panel.tabs.find((tab) => tab.view === null);
+	newTab(paneId = this.panel.activePaneId) {
+		const pane = this.panes.find((candidate) => candidate.id === paneId) ?? this.activePane;
+		const empty = pane.tabs.find((tab) => tab.view === null);
 
 		if (empty) {
 			this.activateTab(empty.id);
@@ -183,53 +207,99 @@ export class ArtifactPanel implements Store<number> {
 		}
 
 		const tab = this.#createTab();
-		this.panel = { ...this.panel, tabs: [...this.panel.tabs, tab], activeTabId: tab.id };
+		this.#focus(pane, { tabs: [...pane.tabs, tab], activeTabId: tab.id });
 		this.#emit();
 	}
 
 	activateTab(id: string) {
-		if (this.panel.activeTabId === id) return;
-		this.panel = { ...this.panel, activeTabId: id };
+		const pane = this.#paneOf(id);
+
+		if (!pane || (this.activePane === pane && pane.activeTabId === id)) return;
+		this.#focus(pane, { activeTabId: id });
+		this.#emit();
+	}
+
+	focusPane(id: string) {
+		if (this.panel.activePaneId === id) return;
+		this.panel = { ...this.panel, activePaneId: id };
+		this.#emit();
+	}
+
+	/** Splits the pane in two; the new pane opens on the view picker and takes focus. */
+	splitPane(id: string, direction: SplitDirection) {
+		const tab = this.#createTab();
+
+		const pane: SidePanelPane = {
+			type: 'pane',
+			id: `pane-${this.#nextId++}`,
+			tabs: [tab],
+			activeTabId: tab.id
+		};
+
+		const splitId = `split-${this.#nextId++}`;
+
+		this.#setPanes((candidate) =>
+			candidate.id === id
+				? { type: 'split', id: splitId, direction, ratio: 0.5, first: candidate, second: pane }
+				: candidate
+		);
+		this.panel = { ...this.panel, activePaneId: pane.id };
+		this.#emit();
+	}
+
+	resizeSplit(id: string, ratio: number) {
+		this.panel = {
+			...this.panel,
+			layout: mapSplit(this.panel.layout, id, (split) => ({ ...split, ratio }))
+		};
 		this.#emit();
 	}
 
 	updateTab(id: string, patch: Partial<Omit<SidePanelTab, 'id'>>) {
-		this.panel = {
-			...this.panel,
-			tabs: this.panel.tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab))
-		};
+		this.#setTabs((tab) => (tab.id === id ? { ...tab, ...patch } : tab));
 		this.#emit();
 	}
 
 	/** Runs on every keystroke, so it only re-renders when the tab gains or loses its draft. */
 	setFileDraft(id: string, draft: FileDraft | undefined) {
-		const tab = this.panel.tabs.find((candidate) => candidate.id === id);
+		const tab = this.tabs.find((candidate) => candidate.id === id);
 
 		if (!tab) return;
-		this.panel = {
-			...this.panel,
-			tabs: this.panel.tabs.map((candidate) => (candidate === tab ? { ...tab, draft } : candidate))
-		};
+		this.#setTabs((candidate) => (candidate === tab ? { ...tab, draft } : candidate));
 
 		if (!tab.draft !== !draft) this.#emit();
 	}
 
+	/** Closing a pane's last tab closes the pane; closing the last pane resets the panel. */
 	closeTab(id: string) {
-		const index = this.panel.tabs.findIndex((tab) => tab.id === id);
+		const pane = this.#paneOf(id);
 
-		if (index === -1) return;
+		if (!pane) return;
 
-		const tabs = this.panel.tabs.filter((tab) => tab.id !== id);
+		const panes = this.panes;
+		const index = pane.tabs.findIndex((tab) => tab.id === id);
+		const tabs = pane.tabs.filter((tab) => tab.id !== id);
 
-		if (tabs.length === 0) {
+		if (tabs.length === 0 && panes.length === 1) {
 			this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
+		} else if (tabs.length === 0) {
+			const rest = panes.filter((candidate) => candidate !== pane);
+			const paneIndex = panes.indexOf(pane);
+
+			const activePaneId =
+				this.panel.activePaneId === pane.id
+					? rest[Math.min(paneIndex, rest.length - 1)]!.id
+					: this.panel.activePaneId;
+
+			this.#setPanes((candidate) => (candidate === pane ? null : candidate));
+			this.panel = { ...this.panel, activePaneId };
 		} else {
 			const activeTabId =
-				this.panel.activeTabId === id
-					? tabs[Math.min(index, tabs.length - 1)]!.id
-					: this.panel.activeTabId;
+				pane.activeTabId === id ? tabs[Math.min(index, tabs.length - 1)]!.id : pane.activeTabId;
 
-			this.panel = { ...this.panel, tabs, activeTabId };
+			this.#setPanes((candidate) =>
+				candidate === pane ? { ...pane, tabs, activeTabId } : candidate
+			);
 		}
 
 		this.#emit();
@@ -238,7 +308,7 @@ export class ArtifactPanel implements Store<number> {
 	/** Focuses a tab already showing the artifact, reuses an empty tab, or opens a new one. */
 	openArtifact(key: string) {
 		this.#show(
-			this.panel.tabs.find((tab) => tab.view === 'artifacts' && tab.selectedKey === key),
+			this.tabs.find((tab) => tab.view === 'artifacts' && tab.selectedKey === key),
 			{ view: 'artifacts', selectedKey: key }
 		);
 	}
@@ -251,21 +321,21 @@ export class ArtifactPanel implements Store<number> {
 
 	/** Shows the tab already editing the file, reuses an empty tab, or opens a new one. */
 	openFile(file: WorkspaceFileTarget) {
-		const existing = this.panel.tabs.find(
+		const existing = this.tabs.find(
 			(tab) =>
 				tab.view === 'file' &&
 				tab.file?.workspacePath === file.workspacePath &&
 				tab.file.path === file.path
 		);
 
-		if (existing && this.panel.open && this.panel.activeTabId === existing.id) return;
+		if (existing && this.panel.open && this.activeTab === existing) return;
 		this.#show(existing, { view: 'file', file });
 	}
 
 	/** Shows `directory` in the active files tab, the first files tab, an empty tab, or a new one. */
 	openDirectory(directory: WorkspaceFileTarget) {
 		this.#show(
-			[this.activeTab, ...this.panel.tabs].find((tab) => tab.view === 'files'),
+			[this.activeTab, ...this.tabs].find((tab) => tab.view === 'files'),
 			{ view: 'files', directory }
 		);
 	}
@@ -274,7 +344,7 @@ export class ArtifactPanel implements Store<number> {
 	renameFile(workspacePath: string, from: string, to: string) {
 		let changed = false;
 
-		const tabs = this.panel.tabs.map((tab) => {
+		this.#setTabs((tab) => {
 			if (tab.file?.workspacePath !== workspacePath) return tab;
 			const path = renamedPath(tab.file.path, from, to);
 
@@ -284,13 +354,11 @@ export class ArtifactPanel implements Store<number> {
 			return { ...tab, file: { workspacePath, path } };
 		});
 
-		if (!changed) return;
-		this.panel = { ...this.panel, tabs };
-		this.#emit();
+		if (changed) this.#emit();
 	}
 
 	closeFile(workspacePath: string, path: string) {
-		for (const tab of this.panel.tabs) {
+		for (const tab of this.tabs) {
 			if (tab.file?.workspacePath === workspacePath && isSameOrInside(tab.file.path, path)) {
 				this.closeTab(tab.id);
 			}
@@ -298,24 +366,41 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	#createTab(): SidePanelTab {
-		return { id: `tab-${this.#nextTabId++}`, view: null, selectedKey: null };
+		return { id: `tab-${this.#nextId++}`, view: null, selectedKey: null };
 	}
 
-	/** Puts `content` in `existing`, else the active tab when it's empty, else a new tab, and focuses it. */
+	#paneOf(tabId: string) {
+		return this.panes.find((pane) => pane.tabs.some((tab) => tab.id === tabId));
+	}
+
+	/** Callers never remove the last pane, so the layout stays non-empty. */
+	#setPanes(map: (pane: SidePanelPane) => SidePanelLayout | null) {
+		this.panel = { ...this.panel, layout: mapPanes(this.panel.layout, map)! };
+	}
+
+	#setTabs(map: (tab: SidePanelTab) => SidePanelTab) {
+		this.#setPanes((pane) => ({ ...pane, tabs: pane.tabs.map(map) }));
+	}
+
+	#focus(pane: SidePanelPane, patch: Partial<Pick<SidePanelPane, 'tabs' | 'activeTabId'>>) {
+		this.#setPanes((candidate) => (candidate === pane ? { ...pane, ...patch } : candidate));
+		this.panel = { ...this.panel, activePaneId: pane.id };
+	}
+
+	/** Puts `content` in `existing`, else the active tab when it's empty, else a new tab in the active pane, and focuses it. */
 	#show(existing: SidePanelTab | undefined, content: Partial<Omit<SidePanelTab, 'id'>>) {
 		const active = this.activeTab;
 		const target = existing ?? (active.view === null ? active : this.#createTab());
 		const tab = { ...target, ...content };
-		const exists = this.panel.tabs.includes(target);
+		const pane = this.#paneOf(target.id) ?? this.activePane;
 
-		this.panel = {
-			...this.panel,
-			open: true,
-			tabs: exists
-				? this.panel.tabs.map((candidate) => (candidate === target ? tab : candidate))
-				: [...this.panel.tabs, tab],
+		this.#focus(pane, {
+			tabs: pane.tabs.includes(target)
+				? pane.tabs.map((item) => (item === target ? tab : item))
+				: [...pane.tabs, tab],
 			activeTabId: tab.id
-		};
+		});
+		this.panel = { ...this.panel, open: true };
 		this.#emit();
 	}
 

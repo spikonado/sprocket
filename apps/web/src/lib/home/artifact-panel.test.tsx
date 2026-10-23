@@ -157,10 +157,10 @@ it('opens artifacts in the empty tab, then new tabs, and refocuses tabs already 
 	const panel = new ArtifactPanel();
 	panel.openArtifact('a');
 	panel.openArtifact('b');
-	expect(panel.panel.tabs.map((tab) => tab.selectedKey)).toEqual(['a', 'b']);
+	expect(panel.tabs.map((tab) => tab.selectedKey)).toEqual(['a', 'b']);
 
 	panel.openArtifact('a');
-	expect(panel.panel.tabs).toHaveLength(2);
+	expect(panel.tabs).toHaveLength(2);
 	expect(panel.activeTab.selectedKey).toBe('a');
 
 	panel.closeTab(panel.activeTab.id);
@@ -176,10 +176,34 @@ it('keeps at most one new tab and focuses it instead of adding another', () => {
 	panel.newTab();
 	const emptyTabId = panel.activeTab.id;
 
-	panel.activateTab(panel.panel.tabs[0]!.id);
+	panel.activateTab(panel.tabs[0]!.id);
 	panel.newTab();
-	expect(panel.panel.tabs).toHaveLength(2);
+	expect(panel.tabs).toHaveLength(2);
 	expect(panel.activeTab.id).toBe(emptyTabId);
+});
+
+it('opens chat links in the focused pane and refocuses tabs in other panes', () => {
+	const panel = new ArtifactPanel();
+	panel.openArtifact('a');
+	const left = panel.activePane.id;
+
+	panel.splitPane(left, 'row');
+	const right = panel.activePane.id;
+	expect(panel.panes.map((pane) => pane.id)).toEqual([left, right]);
+	expect(panel.activeTab.view).toBeNull();
+
+	panel.openArtifact('b');
+	expect(panel.panes.map((pane) => pane.tabs.map((tab) => tab.selectedKey))).toEqual([
+		['a'],
+		['b']
+	]);
+
+	panel.openArtifact('a');
+	expect(panel.activePane.id).toBe(left);
+
+	panel.closeTab(panel.activeTab.id);
+	expect(panel.panel.layout).toMatchObject({ type: 'pane', id: right });
+	expect(panel.activeTab.selectedKey).toBe('b');
 });
 
 it('opens files in the empty tab, then new tabs, and keeps them across renames until deleted', () => {
@@ -188,7 +212,7 @@ it('opens files in the empty tab, then new tabs, and keeps them across renames u
 	panel.openFile(file);
 	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
 	panel.openFile(file);
-	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual(['src/main.rs', 'README.md']);
+	expect(panel.tabs.map((tab) => tab.file?.path)).toEqual(['src/main.rs', 'README.md']);
 	expect(panel.activeTab.file).toEqual(file);
 	expect(panel.panel.open).toBe(true);
 
@@ -196,7 +220,7 @@ it('opens files in the empty tab, then new tabs, and keeps them across renames u
 	expect(panel.activeTab.file).toEqual({ workspacePath: '/repo', path: 'lib/main.rs' });
 
 	panel.closeFile('/repo', 'lib');
-	expect(panel.panel.tabs.map((tab) => tab.file?.path)).toEqual(['README.md']);
+	expect(panel.tabs.map((tab) => tab.file?.path)).toEqual(['README.md']);
 });
 
 it('shows linked folders in one files tab', () => {
@@ -206,7 +230,7 @@ it('shows linked folders in one files tab', () => {
 	panel.openDirectory({ workspacePath: '/tmp/build', path: '' });
 
 	expect(panel.panel.open).toBe(true);
-	expect(panel.panel.tabs.map((tab) => tab.view)).toEqual(['files', 'file']);
+	expect(panel.tabs.map((tab) => tab.view)).toEqual(['files', 'file']);
 	expect(panel.activeTab.directory).toEqual({ workspacePath: '/tmp/build', path: '' });
 });
 
