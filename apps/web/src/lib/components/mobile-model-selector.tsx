@@ -45,6 +45,7 @@ export default function MobileModelSelector({
 					className="bg-primary text-primary-foreground focus-visible:ring-ring h-12 w-full rounded-2xl text-base font-semibold outline-none focus-visible:ring-2 disabled:opacity-40"
 					data-ph-capture-attribute-action="select_model"
 					data-ph-capture-attribute-model={model?.id}
+					data-ph-capture-attribute-reasoning_effort={draftEffort}
 					disabled={!model}
 					onClick={() => {
 						if (model) onApply(model, draftEffort, Boolean(fastAvailable && draftFast));
