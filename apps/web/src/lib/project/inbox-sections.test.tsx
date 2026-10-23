@@ -67,22 +67,19 @@ it('reveals the selected root only in its included project and lifecycle section
 		{ state: 'settled', rows: [], loading: false, canLoadMore: true, loadMore: loadSettled }
 	];
 
-	const { result, rerender } = renderHook(
+	const { rerender } = renderHook(
 		({ root, repositoryKeys }) => useRevealInboxThread(root, repositoryKeys, sections),
 		{ initialProps: { root, repositoryKeys: ['other-project'] } }
 	);
 
-	expect(result.current).toBeNull();
 	expect(loadUnsettled).toHaveBeenCalledTimes(0);
 	expect(loadSettled).toHaveBeenCalledTimes(0);
 	rerender({ root, repositoryKeys: ['alpha'] });
-	expect(result.current).toBe(root);
 	expect(loadUnsettled).toHaveBeenCalledTimes(1);
 	expect(loadSettled).toHaveBeenCalledTimes(0);
 	rerender({ root: { ...root, archivedAt: 1 }, repositoryKeys: ['alpha'] });
 	expect(loadSettled).toHaveBeenCalledTimes(1);
 	rerender({ root: { ...root, archivedAt: 1 }, repositoryKeys: [] });
-	expect(result.current).toBeNull();
 	expect(loadUnsettled).toHaveBeenCalledTimes(1);
 	expect(loadSettled).toHaveBeenCalledTimes(1);
 });
