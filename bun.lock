@@ -74,6 +74,7 @@
       "devDependencies": {
         "@convex-dev/eslint-plugin": "5.0.0",
         "@edge-runtime/vm": "^5.0.0",
+        "@posthog/cli": "^0.18.12",
         "@posthog/rollup-plugin": "^1.6.2",
         "@sprocket/eslint-config": "workspace:*",
         "@sprocket/typescript-config": "workspace:*",
