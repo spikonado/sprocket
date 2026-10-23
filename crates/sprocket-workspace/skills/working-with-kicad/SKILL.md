@@ -1,6 +1,6 @@
 ---
-name: kicad-schematic-editing
-description: 'Use when creating or editing a KiCad schematic (`.kicad_sch`, `.kicad_pro`) by hand.'
+name: working-with-kicad
+description: 'Use when creating or editing KiCad projects (`.kicad_pro`) or schematics (`.kicad_sch`) by hand.'
 ---
 
 ## Ground truth order
@@ -21,7 +21,7 @@ vendor data. Check the current datasheet / hardware-design guidelines for the
 specific part with `scrape_url` / `web_search`, and prefer values from the
 vendor's own reference design when one exists.
 
-## Authoring steps
+## Writing a schematic
 
 ### 1. Learn the live version before writing
 
