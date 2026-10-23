@@ -47,8 +47,8 @@ fn png_of_size(width: u32, height: u32) -> Vec<u8> {
 }
 
 fn decoded_image(output: &ToolOutput) -> (ImageMediaType, u32, u32) {
-    let [_, ToolResultContent::Image(image)] = output.as_content() else {
-        panic!("expected saved path and image block");
+    let [ToolResultContent::Image(image)] = output.as_content() else {
+        panic!("expected only an image block");
     };
     let DocumentSourceKind::Base64(data) = &image.data else {
         panic!("expected base64 image");
