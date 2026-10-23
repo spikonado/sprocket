@@ -18,7 +18,6 @@ mod skill_name;
 mod skills;
 #[cfg(test)]
 mod test_support;
-mod unified_diff;
 mod workspace;
 mod workspace_files;
 

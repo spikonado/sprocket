@@ -13,10 +13,8 @@ pub(crate) struct ApplyPatchTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApplyPatchArgs {
-    /// Prefer Begin Patch format.
-    /// For Begin Patch, use `@@` or `@@ anchor`, never unified `@@ -n,m +p,q @@`.
+    /// Use `@@` or `@@ anchor`, never unified `@@ -n,m +p,q @@`.
     /// Supports `*** Delete File:`, `*** Move to:`, `*** Copy File:` / `*** Copy to:`.
-    /// Unified/`diff --git` also accepted; well-formed hunk line counts are auto-corrected.
     /// Example:
     /// *** Begin Patch
     /// *** Add File: path/to/new.txt

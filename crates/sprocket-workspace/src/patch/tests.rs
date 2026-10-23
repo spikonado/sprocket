@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Mutex;
 
-use super::{FileSnapshot, PatchSnapshot, apply_workspace_patch, restore_snapshot};
+use super::{FileContents, FileState, TrackedFile, apply_workspace_patch, display_path, restore};
 use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use crate::test_support::temp_workspace;
 use tempfile::tempdir;
@@ -146,7 +146,11 @@ fn partial_staged_write_preserves_original() {
             .enable_all()
             .build()
             .unwrap()
-            .block_on(super::replace_file(&target, &[b'x'; 4096], permissions))
+            .block_on(super::replace_file(
+                &target,
+                &[b'x'; 4096],
+                Some(permissions),
+            ))
             .expect_err("replacement must exceed the child process file-size limit");
 
         assert!(error.chain().any(|cause| {
@@ -200,23 +204,32 @@ async fn rollback_restores_deleted_file_and_removes_created_file() {
     let created = workspace.path().join("created.txt");
     fs::write(&deleted, "original\n").unwrap();
     let permissions = fs::metadata(&deleted).unwrap().permissions();
-    let snapshot = PatchSnapshot {
-        files: BTreeMap::from([
-            (
-                deleted.clone(),
-                Some(FileSnapshot {
-                    contents: b"original\n".to_vec(),
-                    permissions,
+    let files = BTreeMap::from([
+        (
+            deleted.clone(),
+            TrackedFile {
+                original: FileState::File(FileContents {
+                    bytes: b"original\n".to_vec(),
+                    permissions: Some(permissions),
                 }),
-            ),
-            (created.clone(), None),
-        ]),
-        missing_directories: Vec::new(),
-    };
+                updated: Some(FileState::Missing),
+            },
+        ),
+        (
+            created.clone(),
+            TrackedFile {
+                original: FileState::Missing,
+                updated: Some(FileState::File(FileContents {
+                    bytes: b"partial change\n".to_vec(),
+                    permissions: None,
+                })),
+            },
+        ),
+    ]);
     fs::remove_file(&deleted).unwrap();
     fs::write(&created, "partial change\n").unwrap();
 
-    restore_snapshot(&snapshot)
+    restore(&files, &[])
         .await
         .expect("rollback should restore the snapshot");
 
@@ -303,7 +316,10 @@ async fn applies_begin_patch_format() {
     assert_eq!(output.changes.len(), 3);
     assert!(output.changes[0].source.is_none());
     assert!(output.changes[1].source.is_none());
-    assert_eq!(output.changes[2].source.as_deref(), Some("source.txt"));
+    assert_eq!(
+        output.changes[2].source.as_deref(),
+        Some(display_path(&root.join("source.txt")).as_str())
+    );
     assert_eq!(
         fs::read_to_string(root.join("created.txt")).unwrap(),
         "created\n"
@@ -337,10 +353,11 @@ async fn copies_and_renames_with_begin_patch() {
         .expect("copy/rename envelope should apply");
 
     assert_eq!(output.changes.len(), 2);
-    assert_eq!(output.changes[0].path, "dest.txt");
-    assert_eq!(output.changes[0].source.as_deref(), Some("src.txt"));
-    assert_eq!(output.changes[1].path, "renamed.txt");
-    assert_eq!(output.changes[1].source.as_deref(), Some("old.txt"));
+    let absolute = |name: &str| display_path(&root.join(name));
+    assert_eq!(output.changes[0].path, absolute("dest.txt"));
+    assert_eq!(output.changes[0].source, Some(absolute("src.txt")));
+    assert_eq!(output.changes[1].path, absolute("renamed.txt"));
+    assert_eq!(output.changes[1].source, Some(absolute("old.txt")));
     assert_eq!(
         fs::read_to_string(root.join("src.txt")).unwrap(),
         "shared\n"
@@ -358,158 +375,90 @@ async fn copies_and_renames_with_begin_patch() {
 }
 
 #[tokio::test]
-async fn applies_unified_diff_without_git_header() {
+async fn applies_sections_in_order() {
     let root = temp_workspace();
-    fs::write(root.join("file.txt"), "before\n").unwrap();
-    let patch = "--- file.txt\n\
-            +++ file.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +after\n";
+    fs::write(root.join("replaced.txt"), "old\n").unwrap();
+    fs::write(root.join("twice.txt"), "one\ntwo\n").unwrap();
+    fs::write(root.join("source.txt"), "shared\n").unwrap();
+    let patch = "*** Begin Patch\n\
+            *** Delete File: replaced.txt\n\
+            *** Add File: replaced.txt\n\
+            +new\n\
+            *** Update File: twice.txt\n\
+            @@\n\
+            -one\n\
+            +ONE\n\
+            *** Update File: twice.txt\n\
+            @@\n\
+            -two\n\
+            +TWO\n\
+            *** Copy File: source.txt\n\
+            *** Copy to: copied.txt\n\
+            *** Update File: copied.txt\n\
+            *** Move to: moved.txt\n\
+            @@\n\
+            -shared\n\
+            +edited copy\n\
+            *** End Patch";
 
     apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
         .await
-        .expect("unified diff should apply");
+        .expect("later sections should see earlier ones");
 
     assert_eq!(
-        fs::read_to_string(root.join("file.txt")).unwrap(),
-        "after\n"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn strips_ab_prefixes_from_header_only_unified_diff() {
-    let root = temp_workspace();
-    fs::write(root.join("file.txt"), "before\n").unwrap();
-    let patch = "--- a/file.txt\n\
-            +++ b/file.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +after\n";
-
-    apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect("a/b unified diff should apply");
-
-    assert_eq!(
-        fs::read_to_string(root.join("file.txt")).unwrap(),
-        "after\n"
-    );
-    assert!(!root.join("a").exists());
-    assert!(!root.join("b").exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn applies_multi_file_patch() {
-    let root = temp_workspace();
-    fs::write(root.join("modify.txt"), "before\n").unwrap();
-    fs::write(root.join("delete.txt"), "delete me\n").unwrap();
-    let patch = "diff --git a/modify.txt b/modify.txt\n\
-            --- a/modify.txt\n\
-            +++ b/modify.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +after\n\
-            diff --git a/create.txt b/create.txt\n\
-            new file mode 100644\n\
-            --- /dev/null\n\
-            +++ b/create.txt\n\
-            @@ -0,0 +1 @@\n\
-            +created\n\
-            diff --git a/delete.txt b/delete.txt\n\
-            deleted file mode 100644\n\
-            --- a/delete.txt\n\
-            +++ /dev/null\n\
-            @@ -1 +0,0 @@\n\
-            -delete me\n";
-
-    let output = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect("patch should apply");
-
-    assert_eq!(output.changes.len(), 3);
-    assert_eq!(
-        fs::read_to_string(root.join("modify.txt")).unwrap(),
-        "after\n"
+        fs::read_to_string(root.join("replaced.txt")).unwrap(),
+        "new\n"
     );
     assert_eq!(
-        fs::read_to_string(root.join("create.txt")).unwrap(),
-        "created\n"
+        fs::read_to_string(root.join("twice.txt")).unwrap(),
+        "ONE\nTWO\n"
     );
-    assert!(!root.join("delete.txt").exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn applies_hunks_while_renaming() {
-    let root = temp_workspace();
-    fs::write(root.join("old.txt"), "before\n").unwrap();
-    let patch = "diff --git a/old.txt b/new.txt\n\
-            similarity index 50%\n\
-            rename from old.txt\n\
-            rename to new.txt\n\
-            --- a/old.txt\n\
-            +++ b/new.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +after\n";
-
-    apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect("rename patch should apply");
-
-    assert!(!root.join("old.txt").exists());
-    assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), "after\n");
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn applies_header_only_delete() {
-    let root = temp_workspace();
-    fs::write(root.join("delete.txt"), "content\n").unwrap();
-    let patch = "diff --git a/delete.txt b/delete.txt\n\
-            deleted file mode 100644\n\
-            index 1111111..0000000\n";
-
-    apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect("header-only delete should apply");
-
-    assert!(!root.join("delete.txt").exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn copies_one_source_to_multiple_files() {
-    let root = temp_workspace();
-    fs::write(root.join("source.txt"), "content\n").unwrap();
-    let patch = "diff --git a/source.txt b/first.txt\n\
-            similarity index 100%\n\
-            copy from source.txt\n\
-            copy to first.txt\n\
-            diff --git a/source.txt b/second.txt\n\
-            similarity index 100%\n\
-            copy from source.txt\n\
-            copy to second.txt\n";
-
-    apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect("copy patch should apply");
-
     assert_eq!(
         fs::read_to_string(root.join("source.txt")).unwrap(),
-        "content\n"
+        "shared\n"
+    );
+    assert!(!root.join("copied.txt").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("moved.txt")).unwrap(),
+        "edited copy\n"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn failed_section_leaves_every_file_unchanged() {
+    let root = temp_workspace();
+    fs::write(root.join("first.txt"), "before\n").unwrap();
+    let patch = "*** Begin Patch\n\
+            *** Update File: first.txt\n\
+            @@\n\
+            -before\n\
+            +after\n\
+            *** Add File: created.txt\n\
+            +created\n\
+            *** Update File: missing.txt\n\
+            @@\n\
+            -x\n\
+            +y\n\
+            *** End Patch";
+
+    let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+        .await
+        .expect_err("missing file should fail the whole patch");
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "path does not exist: {} (relative paths resolve from {})",
+            display_path(&root.join("missing.txt")),
+            display_path(&root)
+        )
     );
     assert_eq!(
         fs::read_to_string(root.join("first.txt")).unwrap(),
-        "content\n"
+        "before\n"
     );
-    assert_eq!(
-        fs::read_to_string(root.join("second.txt")).unwrap(),
-        "content\n"
-    );
+    assert!(!root.join("created.txt").exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -518,18 +467,8 @@ async fn serializes_overlapping_patches() {
     let root = temp_workspace();
     let contents = format!("before\n{}", "padding\n".repeat(100_000));
     fs::write(root.join("file.txt"), contents).unwrap();
-    let first_patch = "diff --git a/file.txt b/file.txt\n\
-            --- a/file.txt\n\
-            +++ b/file.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +first\n";
-    let second_patch = "diff --git a/file.txt b/file.txt\n\
-            --- a/file.txt\n\
-            +++ b/file.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +second\n";
+    let first_patch = "*** Update File: file.txt\n@@\n-before\n+first";
+    let second_patch = "*** Update File: file.txt\n@@\n-before\n+second";
 
     let (first, second) = tokio::join!(
         apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), first_patch),
@@ -549,12 +488,7 @@ async fn rejects_dangling_symlink_destination() {
 
     let root = temp_workspace();
     symlink("../outside.txt", root.join("created.txt")).unwrap();
-    let patch = "diff --git a/created.txt b/created.txt\n\
-            new file mode 100644\n\
-            --- /dev/null\n\
-            +++ b/created.txt\n\
-            @@ -0,0 +1 @@\n\
-            +content\n";
+    let patch = "*** Add File: created.txt\n+content";
 
     let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
         .await
@@ -611,10 +545,7 @@ async fn applies_patch_outside_workspace_root() {
         .expect("patch outside the workspace root should apply");
 
     assert_eq!(output.changes.len(), 1);
-    assert_eq!(
-        output.changes[0].path,
-        outside_file.to_string_lossy().replace('\\', "/")
-    );
+    assert_eq!(output.changes[0].path, display_path(&outside_file));
     assert_eq!(fs::read_to_string(&outside_file).unwrap(), "after\n");
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(outside).unwrap();
@@ -626,12 +557,7 @@ async fn cancelled_patch_does_not_mutate_files() {
     fs::write(root.join("file.txt"), "before\n").unwrap();
     let cancellation = WorkspaceCancellation::new();
     cancellation.cancel();
-    let patch = "diff --git a/file.txt b/file.txt\n\
-            --- a/file.txt\n\
-            +++ b/file.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +after\n";
+    let patch = "*** Update File: file.txt\n@@\n-before\n+after";
 
     let error = apply_workspace_patch(root.clone(), cancellation, patch)
         .await
@@ -646,102 +572,7 @@ async fn cancelled_patch_does_not_mutate_files() {
 }
 
 #[tokio::test]
-async fn applies_all_lines_when_hunk_count_under_declared() {
-    let root = temp_workspace();
-    // Declares 2 added lines but body has 3. Previously truncated silently.
-    let patch = "diff --git a/file.txt b/file.txt\n\
-            new file mode 100644\n\
-            --- /dev/null\n\
-            +++ b/file.txt\n\
-            @@ -0,0 +1,2 @@\n\
-            +one\n\
-            +two\n\
-            +three\n";
-
-    apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect("under-declared hunk counts should be corrected");
-
-    assert_eq!(
-        fs::read_to_string(root.join("file.txt")).unwrap(),
-        "one\ntwo\nthree\n"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn rejects_orphaned_hunk_body_after_junk() {
-    let root = temp_workspace();
-    let patch = "--- file.txt\n\
-            +++ file.txt\n\
-            @@ -1 +1 @@\n\
-            -before\n\
-            +after\n\
-            not-a-hunk-line\n\
-            +orphaned\n";
-    fs::write(root.join("file.txt"), "before\n").unwrap();
-
-    let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect_err("orphaned hunk lines must not be ignored");
-
-    assert!(
-        error.to_string().contains("unexpected hunk body line"),
-        "unexpected error: {error:#}"
-    );
-    assert_eq!(
-        fs::read_to_string(root.join("file.txt")).unwrap(),
-        "before\n"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn rejects_create_hunk_body_without_plus_prefixes() {
-    let root = temp_workspace();
-    let patch = "--- /dev/null\n\
-            +++ file.txt\n\
-            @@ -0,0 +1 @@\n\
-            hello\n";
-
-    let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect_err("create body without + prefixes must fail");
-
-    assert!(
-        error.to_string().contains("unexpected hunk body line"),
-        "unexpected error: {error:#}"
-    );
-    assert!(!root.join("file.txt").exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn rejects_update_hunk_body_that_is_only_junk() {
-    let root = temp_workspace();
-    fs::write(root.join("file.txt"), "before\n").unwrap();
-    let patch = "--- file.txt\n\
-            +++ file.txt\n\
-            @@ -1 +1 @@\n\
-            this is junk\n";
-
-    let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
-        .await
-        .expect_err("junk-only update body must fail");
-
-    assert!(
-        error.to_string().contains("unexpected hunk body line"),
-        "unexpected error: {error:#}"
-    );
-    assert_eq!(
-        fs::read_to_string(root.join("file.txt")).unwrap(),
-        "before\n"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn applies_non_ascii_content_via_begin_patch_and_unified_diff() {
+async fn applies_non_ascii_content() {
     let root = temp_workspace();
     fs::write(root.join("existing.txt"), "café\n").unwrap();
 
@@ -763,19 +594,6 @@ async fn applies_non_ascii_content_via_begin_patch_and_unified_diff() {
     assert_eq!(
         fs::read_to_string(root.join("existing.txt")).unwrap(),
         "café crème\n"
-    );
-
-    let unified = "--- existing.txt\n\
-            +++ existing.txt\n\
-            @@ -1 +1 @@\n\
-            -café crème\n\
-            +naïve résumé\n";
-    apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), unified)
-        .await
-        .expect("unified diff with non-ASCII should apply");
-    assert_eq!(
-        fs::read_to_string(root.join("existing.txt")).unwrap(),
-        "naïve résumé\n"
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -802,19 +620,17 @@ async fn applies_begin_patch_inside_markdown_fence() {
 }
 
 #[tokio::test]
-async fn preserves_trailing_whitespace_in_fenced_unified_diff() {
+async fn preserves_trailing_whitespace_in_fenced_patch() {
     let root = temp_workspace();
-    // Last hunk line ends with two spaces and a tab; it must survive fence stripping.
+    // The last line ends with two spaces and a tab; it must survive fence stripping.
     let patch = "```diff\n\
-            --- /dev/null\n\
-            +++ spaced.txt\n\
-            @@ -0,0 +1 @@\n\
+            *** Add File: spaced.txt\n\
             +final  \t\n\
             ```";
 
     apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
         .await
-        .expect("fenced unified diff should apply");
+        .expect("fenced patch should apply");
 
     assert_eq!(fs::read(root.join("spaced.txt")).unwrap(), b"final  \t\n");
     fs::remove_dir_all(root).unwrap();

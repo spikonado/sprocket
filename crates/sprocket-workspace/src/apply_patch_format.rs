@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -13,7 +14,11 @@ const COPY_TO: &str = "*** Copy to: ";
 const END_OF_FILE: &str = "*** End of File";
 const ENVIRONMENT_ID: &str = "*** Environment ID: ";
 
-pub(crate) enum PatchHunk {
+const SHOWN_LINE_CHARS: usize = 160;
+const REGION_CONTEXT_LINES: usize = 2;
+const REGION_MAX_LINES: usize = 24;
+
+pub(crate) enum PatchSection {
     Add {
         path: String,
         contents: Vec<u8>,
@@ -55,33 +60,47 @@ impl UpdateChunk {
     }
 }
 
-pub(crate) fn is_apply_patch_format(patch: &str) -> bool {
-    patch.trim_start().starts_with(BEGIN_PATCH)
-}
-
-pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
-    let lines = patch
-        .trim()
+pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchSection>> {
+    let mut lines = strip_surrounding_markdown_fence(patch)
+        .trim_start()
         .lines()
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>();
+    // Whitespace after `*** End Patch` is padding; without it, a trailing " "
+    // line is blank context.
+    let keep = match lines.iter().rposition(|line| !line.trim().is_empty()) {
+        Some(last) if lines[last].trim() == END_PATCH => last + 1,
+        _ => lines
+            .iter()
+            .rposition(|line| !line.is_empty())
+            .map_or(0, |last| last + 1),
+    };
+    lines.truncate(keep);
 
-    if lines.is_empty() {
-        bail!("Begin Patch input is empty");
-    }
-    if lines.first().map(|line| line.trim()) != Some(BEGIN_PATCH) {
+    let Some(first) = lines.first().map(|line| line.trim()) else {
+        bail!("patch cannot be empty");
+    };
+    let ends_with_end_patch = lines.last().map(|line| line.trim()) == Some(END_PATCH);
+    let mut index = if first == BEGIN_PATCH {
+        if !ends_with_end_patch {
+            bail!("patch starts with '{BEGIN_PATCH}' but does not end with '{END_PATCH}'");
+        }
+        1
+    } else if is_section_header(first) {
+        0
+    } else {
         bail!(
-            "Begin Patch input must start with '{BEGIN_PATCH}' (got '{}')",
-            lines[0].chars().take(40).collect::<String>()
+            "patch must start with '{BEGIN_PATCH}' or a '*** Add File:', '*** Update File:', \
+             '*** Delete File:', or '*** Copy File:' header (got {})",
+            quoted(first)
         );
-    }
-    if lines.last().map(|line| line.trim()) != Some(END_PATCH) {
-        bail!("Begin Patch input must end with '{END_PATCH}'");
+    };
+    if ends_with_end_patch {
+        lines.pop();
     }
 
-    let mut hunks = Vec::new();
-    let mut index = 1;
-    while index < lines.len() - 1 {
+    let mut sections = Vec::new();
+    while index < lines.len() {
         let header = lines[index].trim();
         if header.is_empty() || header.starts_with(ENVIRONMENT_ID) {
             index += 1;
@@ -92,23 +111,24 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
             let path = parse_path(path, index)?;
             index += 1;
             let mut contents = Vec::new();
-            while index < lines.len() - 1 && !is_file_header(lines[index]) {
+            while index < lines.len() && !is_file_header(lines[index]) {
                 let line = lines[index].strip_prefix('+').ok_or_else(|| {
                     anyhow!(
-                        "invalid add-file line {}: every content line must start with '+'",
-                        index + 1
+                        "invalid add-file line {} {}: every content line must start with '+'",
+                        index + 1,
+                        quoted(lines[index])
                     )
                 })?;
                 contents.extend_from_slice(line.as_bytes());
                 contents.push(b'\n');
                 index += 1;
             }
-            hunks.push(PatchHunk::Add { path, contents });
+            sections.push(PatchSection::Add { path, contents });
             continue;
         }
 
         if let Some(path) = header.strip_prefix(DELETE_FILE) {
-            hunks.push(PatchHunk::Delete {
+            sections.push(PatchSection::Delete {
                 path: parse_path(path, index)?,
             });
             index += 1;
@@ -120,20 +140,20 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
             index += 1;
             let mut move_to = None;
 
-            if index < lines.len() - 1 {
-                let line = lines[index].trim();
-                if let Some(destination) = line.strip_prefix(MOVE_TO) {
-                    move_to = Some(parse_path(destination, index)?);
-                    index += 1;
-                }
+            if let Some(destination) = lines
+                .get(index)
+                .and_then(|line| line.trim().strip_prefix(MOVE_TO))
+            {
+                move_to = Some(parse_path(destination, index)?);
+                index += 1;
             }
 
             let (chunks, next_index) = parse_update_chunks(&lines, index)?;
             index = next_index;
             if chunks.is_empty() && move_to.is_none() {
-                bail!("update-file hunk for '{path}' has no changes");
+                bail!("update-file section for '{path}' has no changes");
             }
-            hunks.push(PatchHunk::Update {
+            sections.push(PatchSection::Update {
                 path,
                 move_to,
                 chunks,
@@ -144,22 +164,21 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
         if let Some(path) = header.strip_prefix(COPY_FILE) {
             let path = parse_path(path, index)?;
             index += 1;
-            let copy_to = if index < lines.len() - 1 {
-                let line = lines[index].trim();
-                line.strip_prefix(COPY_TO)
-                    .map(|destination| parse_path(destination, index))
-                    .transpose()?
-            } else {
-                None
-            }
-            .ok_or_else(|| {
-                anyhow!("copy-file hunk for '{path}' must be followed by '{COPY_TO}<destination>'")
-            })?;
+            let copy_to = lines
+                .get(index)
+                .and_then(|line| line.trim().strip_prefix(COPY_TO))
+                .map(|destination| parse_path(destination, index))
+                .transpose()?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "copy-file section for '{path}' must be followed by '{COPY_TO}<destination>'"
+                    )
+                })?;
             index += 1;
 
             let (chunks, next_index) = parse_update_chunks(&lines, index)?;
             index = next_index;
-            hunks.push(PatchHunk::Copy {
+            sections.push(PatchSection::Copy {
                 path,
                 copy_to,
                 chunks,
@@ -168,15 +187,29 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
         }
 
         bail!(
-            "invalid apply_patch hunk header at line {}: '{header}'",
-            index + 1
+            "invalid file header at line {}: {}",
+            index + 1,
+            quoted(header)
         );
     }
 
-    if hunks.is_empty() {
+    if sections.is_empty() {
         bail!("patch does not contain any file changes");
     }
-    Ok(hunks)
+    Ok(sections)
+}
+
+fn shortened(line: &str) -> String {
+    let mut chars = line.chars();
+    let mut shown = chars.by_ref().take(SHOWN_LINE_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        shown.push('…');
+    }
+    shown
+}
+
+fn quoted(line: &str) -> String {
+    format!("'{}'", shortened(line))
 }
 
 fn parse_path(path: &str, index: usize) -> Result<String> {
@@ -187,15 +220,18 @@ fn parse_path(path: &str, index: usize) -> Result<String> {
     Ok(path.to_owned())
 }
 
+fn is_section_header(line: &str) -> bool {
+    line.starts_with(ADD_FILE)
+        || line.starts_with(DELETE_FILE)
+        || line.starts_with(UPDATE_FILE)
+        || line.starts_with(COPY_FILE)
+}
+
 fn is_file_header(line: &str) -> bool {
     // Do not trim leading whitespace: indented markers are valid context/content
     // lines (e.g. documentation that quotes apply_patch examples).
     let line = line.trim_end();
-    line == END_PATCH
-        || line.starts_with(ADD_FILE)
-        || line.starts_with(DELETE_FILE)
-        || line.starts_with(UPDATE_FILE)
-        || line.starts_with(COPY_FILE)
+    line == END_PATCH || is_section_header(line)
 }
 
 /// `@@ -n,m +p,q @@` / `@@ -n +p @@` (optional function suffix), not Begin Patch anchors.
@@ -216,20 +252,17 @@ fn is_unified_hunk_range(part: &str, prefix: char) -> bool {
     let Some(range) = part.strip_prefix(prefix) else {
         return false;
     };
-    if let Some((start, len)) = range.split_once(',') {
-        !start.is_empty()
-            && !len.is_empty()
-            && start.chars().all(|c| c.is_ascii_digit())
-            && len.chars().all(|c| c.is_ascii_digit())
-    } else {
-        !range.is_empty() && range.chars().all(|c| c.is_ascii_digit())
+    let is_number = |value: &str| !value.is_empty() && value.chars().all(|c| c.is_ascii_digit());
+    match range.split_once(',') {
+        Some((start, len)) => is_number(start) && is_number(len),
+        None => is_number(range),
     }
 }
 
 fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateChunk>, usize)> {
     let mut chunks: Vec<UpdateChunk> = Vec::new();
 
-    while index < lines.len() - 1 && !is_file_header(lines[index]) {
+    while index < lines.len() && !is_file_header(lines[index]) {
         let line = lines[index];
         let trimmed_end = line.trim_end();
         let previous_ended = chunks.last().is_some_and(|chunk| chunk.end_of_file);
@@ -245,9 +278,10 @@ fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateCh
         } else if let Some(context) = trimmed_end.strip_prefix("@@ ") {
             if is_unified_style_hunk_header(trimmed_end) {
                 bail!(
-                    "invalid update line {}: Begin Patch wants '@@' or '@@ anchor text' only; \
-                     unified hunk ranges like '{trimmed_end}' belong in unified/`diff --git` patches",
-                    index + 1
+                    "invalid update line {} {}: use '@@' or '@@ anchor text'; \
+                     unified hunk ranges are not supported",
+                    index + 1,
+                    quoted(line)
                 );
             }
             ensure_previous_chunk_has_lines(&chunks, index)?;
@@ -262,8 +296,9 @@ fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateCh
             }
         } else if previous_ended {
             bail!(
-                "invalid update line {}: expected '@@' after '{END_OF_FILE}'",
-                index + 1
+                "invalid update line {} {}: expected '@@' after '{END_OF_FILE}'",
+                index + 1,
+                quoted(line)
             );
         } else {
             if chunks.is_empty() {
@@ -282,8 +317,9 @@ fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateCh
                 chunk.new_lines.push(String::new());
             } else {
                 bail!(
-                    "invalid update line {}: lines must start with ' ', '+', or '-'",
-                    index + 1
+                    "invalid update line {} {}: lines must start with ' ', '+', or '-'",
+                    index + 1,
+                    quoted(line)
                 );
             }
         }
@@ -302,6 +338,49 @@ fn ensure_previous_chunk_has_lines(chunks: &[UpdateChunk], index: usize) -> Resu
         );
     }
     Ok(())
+}
+
+/// Strip a single surrounding markdown code fence (` ``` ` / ` ```diff `) when present.
+fn strip_surrounding_markdown_fence(patch: &str) -> &str {
+    let trimmed = patch.trim();
+    let Some(after_open) = trimmed.strip_prefix("```") else {
+        return patch;
+    };
+    let Some((language, body)) = after_open.split_once('\n') else {
+        return patch;
+    };
+    if language
+        .trim()
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    {
+        return patch;
+    }
+    match body.rsplit_once('\n') {
+        Some((content, fence)) if fence.trim() == "```" => content,
+        _ => patch,
+    }
+}
+
+/// A located hunk: replace `old_len` lines at `start` with `new_lines`.
+struct Replacement {
+    start: usize,
+    old_len: usize,
+    new_lines: Vec<String>,
+}
+
+impl Replacement {
+    fn overlaps(&self, other: &Replacement) -> bool {
+        self.start < other.start + other.old_len && other.start < self.start + self.old_len
+    }
+}
+
+enum Miss {
+    AnchorNotFound,
+    AnchorAmbiguous(usize),
+    InsideEarlierHunk,
+    LinesNotFound,
+    LinesAmbiguous(usize),
 }
 
 pub(crate) fn apply_update(
@@ -326,44 +405,23 @@ pub(crate) fn apply_update(
         lines.pop();
     }
 
-    let mut replacements = Vec::new();
+    let mut replacements: Vec<Replacement> = Vec::new();
     let mut cursor = 0;
-    for chunk in chunks {
-        let context_position = match &chunk.context {
-            Some(context) => Some(
-                find_sequence(&lines, std::slice::from_ref(context), cursor, false).ok_or_else(
-                    || anyhow!("failed to find context '{context}' in {}", path.display()),
-                )?,
-            ),
-            None => None,
-        };
-        if let Some(position) = context_position {
-            cursor = position + 1;
-        }
-
-        let (position, old_len, new_lines) = if chunk.old_lines.is_empty() {
-            let position = if chunk.end_of_file || context_position.is_none() {
-                lines.len()
-            } else {
-                cursor
-            };
-            (position, 0, chunk.new_lines.clone())
-        } else {
-            locate_chunk_lines(&lines, chunk, cursor).ok_or_else(|| {
-                anyhow!(
-                    "failed to find expected lines in {}:\n{}",
-                    path.display(),
-                    chunk.old_lines.join("\n")
-                )
-            })?
-        };
-
-        replacements.push((position, old_len, new_lines));
-        cursor = position + old_len;
+    for (index, chunk) in chunks.iter().enumerate() {
+        let replacement = locate_forward(&lines, chunk, cursor)
+            .filter(|found| !replacements.iter().any(|taken| found.overlaps(taken)))
+            .map_or_else(|| locate_anywhere(&lines, chunk, &replacements), Ok)
+            .map_err(|miss| mismatch_error(path, &lines, chunks.len(), index, chunk, miss))?;
+        cursor = replacement.start + replacement.old_len;
+        replacements.push(replacement);
     }
 
-    for (position, old_len, new_lines) in replacements.into_iter().rev() {
-        lines.splice(position..position + old_len, new_lines);
+    replacements.sort_by_key(|replacement| (replacement.start, replacement.old_len));
+    for replacement in replacements.into_iter().rev() {
+        lines.splice(
+            replacement.start..replacement.start + replacement.old_len,
+            replacement.new_lines,
+        );
     }
 
     if lines.is_empty() {
@@ -377,21 +435,107 @@ pub(crate) fn apply_update(
     Ok(output)
 }
 
-fn locate_chunk_lines(
+/// Trailing empty strings represent the file's final newline, which is
+/// stripped from the file's lines, so also try the hunk without them.
+fn line_variants(chunk: &UpdateChunk) -> impl Iterator<Item = (&[String], &[String])> {
+    let stripped = strip_trailing_empty(&chunk.old_lines).map(|old_lines| {
+        let new_lines = strip_trailing_empty(&chunk.new_lines).unwrap_or(&chunk.new_lines);
+        (old_lines, new_lines)
+    });
+    std::iter::once((chunk.old_lines.as_slice(), chunk.new_lines.as_slice())).chain(stripped)
+}
+
+fn insertion(chunk: &UpdateChunk, after_anchor: Option<usize>, end: usize) -> Replacement {
+    let start = match after_anchor {
+        Some(position) if !chunk.end_of_file => position,
+        _ => end,
+    };
+    Replacement {
+        start,
+        old_len: 0,
+        new_lines: chunk.new_lines.clone(),
+    }
+}
+
+fn locate_forward(lines: &[String], chunk: &UpdateChunk, cursor: usize) -> Option<Replacement> {
+    let after_anchor = match &chunk.context {
+        Some(context) => {
+            Some(find_matches(lines, std::slice::from_ref(context), cursor, false, 1)?[0] + 1)
+        }
+        None => None,
+    };
+    if chunk.old_lines.is_empty() {
+        return Some(insertion(chunk, after_anchor, lines.len()));
+    }
+    let start = after_anchor.unwrap_or(cursor);
+    line_variants(chunk).find_map(|(old_lines, new_lines)| {
+        let position = find_matches(lines, old_lines, start, chunk.end_of_file, 1)?[0];
+        Some(Replacement {
+            start: position,
+            old_len: old_lines.len(),
+            new_lines: new_lines.to_vec(),
+        })
+    })
+}
+
+/// Fallback for out-of-order hunks: the anchor (or, without one, the lines)
+/// must match exactly one place in the whole file.
+fn locate_anywhere(
     lines: &[String],
     chunk: &UpdateChunk,
-    cursor: usize,
-) -> Option<(usize, usize, Vec<String>)> {
-    if let Some(position) = find_sequence(lines, &chunk.old_lines, cursor, chunk.end_of_file) {
-        return Some((position, chunk.old_lines.len(), chunk.new_lines.clone()));
+    taken: &[Replacement],
+) -> Result<Replacement, Miss> {
+    let after_anchor = match &chunk.context {
+        Some(context) => {
+            match find_matches(lines, std::slice::from_ref(context), 0, false, usize::MAX)
+                .as_deref()
+            {
+                None => return Err(Miss::AnchorNotFound),
+                Some([position]) => Some(position + 1),
+                Some(matches) => return Err(Miss::AnchorAmbiguous(matches.len())),
+            }
+        }
+        None => None,
+    };
+    if chunk.old_lines.is_empty() {
+        let inserted = insertion(chunk, after_anchor, lines.len());
+        if taken
+            .iter()
+            .any(|replacement| inserted.overlaps(replacement))
+        {
+            return Err(Miss::InsideEarlierHunk);
+        }
+        return Ok(inserted);
     }
 
-    // Trailing empty strings represent the file's final newline, which
-    // is stripped from `lines` above.
-    let old_lines = strip_trailing_empty(&chunk.old_lines)?;
-    let new_lines = strip_trailing_empty(&chunk.new_lines).unwrap_or(&chunk.new_lines);
-    let position = find_sequence(lines, old_lines, cursor, chunk.end_of_file)?;
-    Some((position, old_lines.len(), new_lines.to_vec()))
+    let start = after_anchor.unwrap_or(0);
+    for (old_lines, new_lines) in line_variants(chunk) {
+        let Some(matches) = find_matches(lines, old_lines, start, chunk.end_of_file, usize::MAX)
+        else {
+            continue;
+        };
+        let mut candidates = matches
+            .into_iter()
+            .map(|start| Replacement {
+                start,
+                old_len: old_lines.len(),
+                new_lines: new_lines.to_vec(),
+            })
+            .filter(|candidate| {
+                !taken
+                    .iter()
+                    .any(|replacement| candidate.overlaps(replacement))
+            });
+        let Some(first) = candidates.next() else {
+            continue;
+        };
+        let others = candidates.count();
+        if after_anchor.is_none() && others > 0 {
+            return Err(Miss::LinesAmbiguous(others + 1));
+        }
+        return Ok(first);
+    }
+    Err(Miss::LinesNotFound)
 }
 
 fn strip_trailing_empty(lines: &[String]) -> Option<&[String]> {
@@ -416,15 +560,15 @@ fn uses_crlf(contents: &str) -> bool {
     saw_newline
 }
 
-fn find_sequence(
+/// Up to `limit` positions from `start` where `pattern` matches, using the
+/// strictest comparison that matches anywhere so exact context always wins.
+fn find_matches(
     lines: &[String],
     pattern: &[String],
     start: usize,
     end_of_file: bool,
-) -> Option<usize> {
-    if pattern.is_empty() {
-        return Some(start.min(lines.len()));
-    }
+    limit: usize,
+) -> Option<Vec<usize>> {
     if pattern.len() > lines.len() || start > lines.len() - pattern.len() {
         return None;
     }
@@ -435,20 +579,104 @@ fn find_sequence(
     } else {
         start..=last
     };
-    // Try progressively fuzzier matches so exact context always wins.
     let comparisons: [fn(&str, &str) -> bool; 3] = [
         |line, expected| line == expected,
         |line, expected| line.trim_end() == expected.trim_end(),
         |line, expected| line.trim() == expected.trim(),
     ];
     comparisons.into_iter().find_map(|matches| {
-        range.clone().find(|position| {
-            lines[*position..*position + pattern.len()]
-                .iter()
-                .zip(pattern)
-                .all(|(line, expected)| matches(line, expected))
-        })
+        let positions = range
+            .clone()
+            .filter(|position| {
+                lines[*position..*position + pattern.len()]
+                    .iter()
+                    .zip(pattern)
+                    .all(|(line, expected)| matches(line, expected))
+            })
+            .take(limit)
+            .collect::<Vec<_>>();
+        (!positions.is_empty()).then_some(positions)
     })
+}
+
+fn mismatch_error(
+    path: &Path,
+    lines: &[String],
+    total: usize,
+    index: usize,
+    chunk: &UpdateChunk,
+    miss: Miss,
+) -> anyhow::Error {
+    let anchor = chunk
+        .context
+        .as_ref()
+        .map(|context| format!(" (@@ {})", shortened(context)))
+        .unwrap_or_default();
+    let reason = match miss {
+        Miss::AnchorNotFound => "the anchor line was not found".to_owned(),
+        Miss::AnchorAmbiguous(count) => format!(
+            "the hunk was not found after the previous hunk, and its anchor matches {count} places"
+        ),
+        Miss::InsideEarlierHunk => {
+            "the anchor line is inside lines an earlier hunk changes".to_owned()
+        }
+        Miss::LinesNotFound => "the expected lines were not found".to_owned(),
+        Miss::LinesAmbiguous(count) => {
+            format!("the expected lines match {count} places; add context lines or an @@ anchor")
+        }
+    };
+    let pattern = chunk
+        .context
+        .iter()
+        .chain(&chunk.old_lines)
+        .collect::<Vec<_>>();
+    let region = closest_region(lines, &pattern).map_or_else(
+        || "No similar lines were found in the file.".to_owned(),
+        |(start, len)| format_region(lines, start, len),
+    );
+    anyhow!(
+        "hunk {} of {total}{anchor} did not match {}: {reason}. No files were changed.\n{region}",
+        index + 1,
+        path.display()
+    )
+}
+
+/// The window of `pattern.len()` lines sharing the most non-blank lines with
+/// `pattern`, ignoring indentation.
+fn closest_region(lines: &[String], pattern: &[&String]) -> Option<(usize, usize)> {
+    let wanted = pattern
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<HashSet<_>>();
+    if wanted.is_empty() || lines.is_empty() {
+        return None;
+    }
+    let window = pattern.len().clamp(1, lines.len());
+    let hit = |line: &String| usize::from(wanted.contains(line.trim()));
+    let mut score = lines[..window].iter().map(hit).sum::<usize>();
+    let (mut best_score, mut best_start) = (score, 0);
+    for start in 1..=lines.len() - window {
+        score = score + hit(&lines[start + window - 1]) - hit(&lines[start - 1]);
+        if score > best_score {
+            (best_score, best_start) = (score, start);
+        }
+    }
+    (best_score > 0).then_some((best_start, window))
+}
+
+fn format_region(lines: &[String], start: usize, len: usize) -> String {
+    let first = start.saturating_sub(REGION_CONTEXT_LINES);
+    let end = (start + len + REGION_CONTEXT_LINES)
+        .min(lines.len())
+        .min(first + REGION_MAX_LINES);
+    let width = end.to_string().len();
+    let mut region = format!("Closest region of the file (lines {}-{end}):", first + 1);
+    for (offset, line) in lines[first..end].iter().enumerate() {
+        let number = first + offset + 1;
+        region.push_str(&format!("\n{number:>width$} | {}", shortened(line)));
+    }
+    region
 }
 
 #[cfg(test)]
