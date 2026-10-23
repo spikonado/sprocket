@@ -57,6 +57,7 @@ pub(super) struct AgentToolContext {
     pub(super) supports_images: bool,
     pub(super) tool_call_tracker: ToolCallTracker,
     pub(super) command_sessions: CommandSessionManager,
+    pub(super) max_yield_ms: u64,
     pub(super) question_polls: super::questions::QuestionPolls,
     pub(super) subagent_polls: super::subagents::SubagentPolls,
     pub(super) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,

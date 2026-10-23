@@ -2,9 +2,9 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::{CommandAction, async_tools::YieldMode, default_command_shell};
+use sprocket_workspace::{CommandAction, default_command_shell};
 
-use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schema};
+use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_serialized_tool_job;
 
@@ -19,17 +19,18 @@ pub(crate) struct ControlCmdTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PollCmdTool(pub(super) AgentToolContext);
 
-pub(super) fn exec_command_parameters() -> serde_json::Value {
+pub(super) fn exec_command_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
     schema["additionalProperties"] = json!(false);
     schema
 }
 
-pub(super) fn control_command_parameters() -> serde_json::Value {
+pub(super) fn control_command_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ControlCommandArgs));
     schema["properties"]["action"] = json!({
         "type": "string",
@@ -42,6 +43,7 @@ pub(super) fn control_command_parameters() -> serde_json::Value {
     schema["properties"]["chars"]["default"] = json!("");
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
     schema["anyOf"] = json!([
@@ -62,10 +64,11 @@ pub(super) fn control_command_parameters() -> serde_json::Value {
     schema
 }
 
-pub(super) fn poll_command_parameters() -> serde_json::Value {
+pub(super) fn poll_command_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollCommandArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Poll,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.",
     );
     schema
@@ -156,7 +159,7 @@ impl rig::tool::Tool for ExecCmdTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        exec_command_parameters()
+        exec_command_parameters(self.0.max_yield_ms)
     }
 
     async fn call(
@@ -174,7 +177,7 @@ impl rig::tool::Tool for ExecCmdTool {
                     &cwd.to_string_lossy(),
                     &args.shell.clone().unwrap_or_else(default_command_shell),
                     args.timeout_ms,
-                    args.yield_time_ms,
+                    YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
                     DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
                 )
                 .await
@@ -195,7 +198,7 @@ impl rig::tool::Tool for ControlCmdTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        control_command_parameters()
+        control_command_parameters(self.0.max_yield_ms)
     }
 
     async fn call(
@@ -213,7 +216,7 @@ impl rig::tool::Tool for ControlCmdTool {
                     &args.session_id,
                     action,
                     &args.chars,
-                    args.yield_time_ms,
+                    YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
                 )
                 .await
                 .map_err(tool_error)
@@ -233,7 +236,7 @@ impl rig::tool::Tool for PollCmdTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        poll_command_parameters()
+        poll_command_parameters(self.0.max_yield_ms)
     }
 
     async fn call(
@@ -244,7 +247,11 @@ impl rig::tool::Tool for PollCmdTool {
         execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
             self.0
                 .command_sessions
-                .poll_command(cancellation, &args.session_id, args.yield_time_ms)
+                .poll_command(
+                    cancellation,
+                    &args.session_id,
+                    YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
+                )
                 .await
                 .map_err(tool_error)
         })

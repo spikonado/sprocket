@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::async_tools::{YieldMode, ZeroPollCooldown};
+use crate::async_tools::ZeroPollCooldown;
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
 use crate::command_shell::resolve_command_shell;
@@ -19,9 +19,6 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
-pub use crate::async_tools::{
-    MAX_YIELD_MS as MAX_COMMAND_YIELD_MS, MIN_POLL_YIELD_MS as MIN_COMMAND_POLL_YIELD_MS,
-};
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
 
@@ -472,7 +469,6 @@ impl CommandSessionManager {
                 result = self.saved_result(session_id, true) => result,
             };
         };
-        let yield_time_ms = YieldMode::Poll.normalize(yield_time_ms);
         let mode = if yield_time_ms == 0 {
             ObservationMode::ZeroPoll
         } else {
@@ -805,7 +801,7 @@ async fn wait_for_completion(
     tokio::select! {
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
         result = tokio::time::timeout(
-            Duration::from_millis(YieldMode::Action.normalize(yield_time_ms)),
+            Duration::from_millis(yield_time_ms),
             completion.changed(),
         ) => {
             match result {

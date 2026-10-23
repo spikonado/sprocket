@@ -1,6 +1,6 @@
+use super::async_tools::DEFAULT_YIELD_MS;
 use convex::Value;
 use rig::tool::{ToolErrorKind, ToolExecutionError};
-use sprocket_workspace::async_tools::DEFAULT_YIELD_MS;
 use sprocket_workspace::{SkillSource, WorkspaceOperationCancelled, WorkspaceSkill};
 
 use super::context::tool_error;

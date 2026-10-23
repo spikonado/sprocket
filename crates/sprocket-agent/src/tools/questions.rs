@@ -9,11 +9,11 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::async_tools::{YieldMode, ZeroPollCooldown};
+use sprocket_workspace::async_tools::ZeroPollCooldown;
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep_until};
 
-use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schema};
+use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_serialized_tool_job;
 use crate::convex::RuntimeClient;
@@ -32,10 +32,11 @@ pub(crate) struct AskQuestionTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PollQuestionTool(pub(super) AgentToolContext);
 
-fn ask_question_parameters() -> serde_json::Value {
+fn ask_question_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(AskQuestionArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
     schema["properties"]["timeoutMs"] = json!({
@@ -46,10 +47,11 @@ fn ask_question_parameters() -> serde_json::Value {
     schema
 }
 
-fn poll_question_parameters() -> serde_json::Value {
+fn poll_question_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollQuestionArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Poll,
+        max_yield_ms,
         "Maximum time to wait for an answer before returning the tool call. Zero returns an immediate status/answer snapshot.",
     );
     schema
@@ -174,7 +176,7 @@ impl rig::tool::Tool for AskQuestionTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        ask_question_parameters()
+        ask_question_parameters(self.0.max_yield_ms)
     }
 
     async fn call(
@@ -183,7 +185,7 @@ impl rig::tool::Tool for AskQuestionTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
-        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms);
+        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms);
         execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| {
             let runtime = self.0.runtime.clone();
             let run_id = self.0.run_id.clone();
@@ -219,7 +221,7 @@ impl rig::tool::Tool for PollQuestionTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        poll_question_parameters()
+        poll_question_parameters(self.0.max_yield_ms)
     }
 
     async fn call(
@@ -230,7 +232,7 @@ impl rig::tool::Tool for PollQuestionTool {
         if args.question_id.trim().is_empty() {
             return Err(tool_failure("questionId cannot be empty"));
         }
-        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms);
+        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms);
         execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| {
             let runtime = self.0.runtime.clone();
             let run_id = self.0.run_id.clone();

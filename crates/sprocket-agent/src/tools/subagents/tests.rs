@@ -21,7 +21,7 @@ fn spawn_accepts_only_creation_payloads() {
 
 #[test]
 fn spawn_schema_only_advertises_child_creation() {
-    let schema = spawn_subagent_parameters();
+    let schema = spawn_subagent_parameters(270_000);
     assert!(schema["properties"].get("threadId").is_none());
     assert_eq!(schema["additionalProperties"], false);
 }

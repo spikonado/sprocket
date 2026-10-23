@@ -14,7 +14,7 @@ fn snapshot(question_id: &str, status: &str) -> QuestionSnapshot {
 
 #[test]
 fn question_parameters_expose_optional_expiry_and_bounded_waits() {
-    let ask = ask_question_parameters();
+    let ask = ask_question_parameters(270_000);
     assert_eq!(ask["required"], json!(["question", "options"]));
     assert_eq!(ask["additionalProperties"], false);
     assert!(ask["properties"]["question"].get("description").is_none());
@@ -37,7 +37,7 @@ fn question_parameters_expose_optional_expiry_and_bounded_waits() {
     assert_eq!(timeout["minimum"], 0);
     assert!(timeout.get("default").is_none());
     assert!(timeout.get("maximum").is_none());
-    let poll_schema = poll_question_parameters();
+    let poll_schema = poll_question_parameters(270_000);
     assert_eq!(poll_schema["required"], json!(["questionId"]));
     assert_eq!(poll_schema["properties"]["yieldTimeMs"]["default"], 10_000);
     assert_eq!(
@@ -55,13 +55,16 @@ fn commands_and_questions_advertise_the_same_wait_policy() {
         control_command_parameters, exec_command_parameters, poll_command_parameters,
     };
 
-    let ask_wait = ask_question_parameters()["properties"]["yieldTimeMs"].clone();
-    for schema in [exec_command_parameters(), control_command_parameters()] {
+    let ask_wait = ask_question_parameters(270_000)["properties"]["yieldTimeMs"].clone();
+    for schema in [
+        exec_command_parameters(270_000),
+        control_command_parameters(270_000),
+    ] {
         assert_eq!(schema["properties"]["yieldTimeMs"], ask_wait);
     }
 
-    let mut command_wait = poll_command_parameters()["properties"]["yieldTimeMs"].clone();
-    let mut question_wait = poll_question_parameters()["properties"]["yieldTimeMs"].clone();
+    let mut command_wait = poll_command_parameters(270_000)["properties"]["yieldTimeMs"].clone();
+    let mut question_wait = poll_question_parameters(270_000)["properties"]["yieldTimeMs"].clone();
     command_wait.as_object_mut().unwrap().remove("description");
     question_wait.as_object_mut().unwrap().remove("description");
     assert_eq!(command_wait, question_wait);

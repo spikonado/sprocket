@@ -4,7 +4,8 @@ import { mintGatewayToken, verifyGatewayToken } from '@convex/lib/gatewayToken';
 
 const secret = 'test-gateway-token-secret';
 
-const MAX_GATEWAY_WAIT_MS = 270_000;
+/** The longest catalog cache TTL, 1h, minus the agent's 30s margin. */
+const MAX_GATEWAY_WAIT_MS = 3_570_000;
 
 describe('gateway token', () => {
 	it('round-trips a valid token and rejects expiry and tampering', async () => {

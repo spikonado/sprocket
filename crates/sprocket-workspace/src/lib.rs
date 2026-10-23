@@ -39,8 +39,7 @@ pub use command_output::CommandOutputLimits;
 pub use command_shell::default_command_shell;
 pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
-    MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, RunningCommand, WorkspaceCancellation,
-    WorkspaceOperationCancelled,
+    RunningCommand, WorkspaceCancellation, WorkspaceOperationCancelled,
 };
 pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};
 pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};

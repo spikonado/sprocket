@@ -10,14 +10,11 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::{
-    WorkspaceCancellation,
-    async_tools::{YieldMode, ZeroPollCooldown},
-};
+use sprocket_workspace::{WorkspaceCancellation, async_tools::ZeroPollCooldown};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep, timeout};
 
-use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schema};
+use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
 use crate::catalog::ProviderCatalog;
@@ -217,25 +214,27 @@ pub(crate) struct ListSubagentsArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ListSubagentModelsArgs {}
 
-fn spawn_subagent_parameters() -> serde_json::Value {
+fn spawn_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
     schema
 }
 
-fn poll_subagent_parameters() -> serde_json::Value {
+fn poll_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollSubagentArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Poll,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.",
     );
     schema
 }
 
-fn control_subagent_parameters() -> serde_json::Value {
+fn control_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ControlSubagentArgs));
     schema["properties"]["action"] = json!({
         "type": "string",
@@ -246,6 +245,7 @@ fn control_subagent_parameters() -> serde_json::Value {
     }
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
+        max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
     schema["anyOf"] = json!([
@@ -372,7 +372,7 @@ impl rig::tool::Tool for SpawnSubagentTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        spawn_subagent_parameters()
+        spawn_subagent_parameters(self.context.max_yield_ms)
     }
 
     async fn call(
@@ -545,7 +545,7 @@ async fn run_subagent(
     let mut result = action_settlement_result(
         context,
         &created.thread_id,
-        YieldMode::Action.normalize(args.yield_time_ms),
+        YieldMode::Action.normalize(args.yield_time_ms, context.max_yield_ms),
         &cancellation,
     )
     .await?;
@@ -603,7 +603,7 @@ impl rig::tool::Tool for PollSubagentTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        poll_subagent_parameters()
+        poll_subagent_parameters(self.context.max_yield_ms)
     }
 
     async fn call(
@@ -634,7 +634,8 @@ impl PollSubagentTool {
         args: PollSubagentArgs,
         cancellation: WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
-        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms);
+        let yield_time_ms =
+            YieldMode::Poll.normalize(args.yield_time_ms, self.context.max_yield_ms);
         cancelled_read(&cancellation, async {
             if yield_time_ms == 0 {
                 return self
@@ -670,7 +671,7 @@ impl rig::tool::Tool for ControlSubagentTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        control_subagent_parameters()
+        control_subagent_parameters(self.context.max_yield_ms)
     }
 
     async fn call(
@@ -832,7 +833,8 @@ impl ControlSubagentTool {
             }
         }
 
-        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms);
+        let yield_time_ms =
+            YieldMode::Action.normalize(args.yield_time_ms, self.context.max_yield_ms);
         let mut result = if matches!(args.action, SubagentControlAction::Stop) {
             let info = if let Some(run_id) = response.stopped_run_id.as_deref() {
                 wait_for_stopped_run_using(&cancellation, || {

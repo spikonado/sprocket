@@ -807,7 +807,7 @@ async fn exec_command_allows_workdir_outside_workspace() {
 }
 
 #[tokio::test]
-async fn action_waits_honor_short_budgets_and_cap_long_budgets() {
+async fn action_waits_honor_their_budgets() {
     let root = temp_workspace();
     let stub = stub_session(&root).await;
     stub.append(b"new").await;
@@ -819,7 +819,6 @@ async fn action_waits_honor_short_budgets_and_cap_long_budgets() {
         (30_000, 30_000),
         (90_000, 90_000),
         (270_000, 270_000),
-        (u64::MAX, 270_000),
     ] {
         let session = stub.session.clone();
         let waiting = tokio::spawn(async move {
@@ -840,41 +839,6 @@ async fn action_waits_honor_short_budgets_and_cap_long_budgets() {
     let zero = stub.observe(ObservationMode::Metadata).await.unwrap();
     assert!(zero.running);
     assert!(zero.output.is_empty());
-    tokio::time::resume();
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn polling_keeps_its_minimum_and_maximum_wait_budgets() {
-    let root = temp_workspace();
-    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-    let stub = stub_session(&root).await;
-    sessions
-        .sessions
-        .lock()
-        .await
-        .insert(stub.session.id.clone(), stub.session.clone());
-    tokio::time::pause();
-    for (requested_ms, expected_ms) in [
-        (1, 10_000),
-        (9_999, 10_000),
-        (10_000, 10_000),
-        (u64::MAX, 270_000),
-    ] {
-        let manager = sessions.clone();
-        let id = stub.session.id.clone();
-        let waiting = tokio::spawn(async move {
-            manager
-                .poll_command(WorkspaceCancellation::new(), &id, requested_ms)
-                .await
-                .unwrap()
-        });
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_millis(expected_ms - 1)).await;
-        assert!(!waiting.is_finished(), "yieldTimeMs: {requested_ms}");
-        tokio::time::advance(Duration::from_millis(1)).await;
-        assert!(waiting.await.unwrap().result.running);
-    }
     tokio::time::resume();
     fs::remove_dir_all(root).unwrap();
 }
