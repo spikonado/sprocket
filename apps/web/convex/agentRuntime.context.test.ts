@@ -829,6 +829,28 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(false);
 	});
 
+	it('reports a committed begin when its retry follows a stop', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'begun-stopped-secret';
+		const claim = { claimId: 'claim-begun-stopped', executionSecret };
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'begun-stopped',
+			executionSecret,
+			prompt: 'Begin, then stop',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
+		const begin = { runId, ...claim, workspaceContext: [] };
+		await asUser.mutation(api.agentRuntime.beginRun, begin);
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(asUser.mutation(api.agentRuntime.beginRun, begin)).resolves.toBe(true);
+	});
+
 	it('rejects a handoff that would move the cutoff backwards', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

@@ -996,7 +996,7 @@ async fn run_with_completion_model(
                                 let save = async {
                                     match begin {
                                         Some(begin) => RunBegin {
-                                            workspace_context: live_context.clone(),
+                                            workspace_context: live_context.to_vec(),
                                             ..begin
                                         }.write(
                                             &runtime, &request.run_id, &request.claim_id,

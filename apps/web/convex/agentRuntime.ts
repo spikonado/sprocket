@@ -567,11 +567,14 @@ export const beginRun = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (
-			!ownsActiveRunClaim(run, args.claimId, Date.now()) ||
-			run.cancellationRequestedAt !== undefined
-		) {
-			return false;
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+
+		// A retry after Stop still reports a begin that already wrote the prompt.
+		if (run.cancellationRequestedAt !== undefined) {
+			return (
+				run.pendingPrompt === undefined &&
+				(await getPromptPart(ctx, run.threadId, run._id)) !== null
+			);
 		}
 
 		if (args.handoff) {

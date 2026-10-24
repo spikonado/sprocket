@@ -367,6 +367,8 @@ export async function generateTitleAfterFirstPrompt(
 	promptPart: Doc<'threadTranscriptParts'>
 ): Promise<void> {
 	if (
+		// A renamed thread keeps its name.
+		thread.titleRenameKey !== undefined ||
 		(await firstUserPromptPart(ctx, thread._id))?._id !== promptPart._id ||
 		(await getUiPreferences(ctx.db, thread.userId))?.automaticThreadTitles === false
 	) {
