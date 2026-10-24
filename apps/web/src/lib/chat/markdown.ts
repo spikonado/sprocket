@@ -46,7 +46,13 @@ const VISUAL_LANGUAGES = new Map<string, VisualKind>([
 	['jsx-visual', 'react']
 ]);
 
-const CLOSING_FENCE = /\n {0,3}(?:`{3,}|~{3,})\s*$/;
+const FENCE_MARKERS = /^ {0,3}(`{3,}|~{3,})[^\n]*\n(?:[\s\S]*\n)? {0,3}(`{3,}|~{3,})\s*$/;
+
+function fenceIsClosed(raw: string) {
+	const [, open, close] = FENCE_MARKERS.exec(raw) ?? [];
+
+	return !!open && !!close && close[0] === open[0] && close.length >= open.length;
+}
 
 function specialBlock(
 	token: Token,
@@ -56,7 +62,7 @@ function specialBlock(
 		const kind = VISUAL_LANGUAGES.get(token.lang?.split(/\s/, 1)[0].toLowerCase() ?? '');
 
 		// A visual still streaming in stays a code block until its fence closes.
-		if (!kind || !CLOSING_FENCE.test(token.raw)) return;
+		if (!kind || !fenceIsClosed(token.raw)) return;
 
 		return { type: 'visual', kind, source: token.text };
 	}

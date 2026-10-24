@@ -121,6 +121,9 @@ describe('renderMarkdownBlocks', () => {
 		expect(renderMarkdownBlocks(visual, new Set())).toEqual([
 			{ type: 'html', html: expect.stringContaining('language-jsx-visual') }
 		]);
+		expect(renderMarkdownBlocks('````html-visual\n<pre>\n```\n', new Set())).toEqual([
+			{ type: 'html', html: expect.stringContaining('language-html-visual') }
+		]);
 	});
 
 	it('renders math on both sides of an artifact reference', () => {
