@@ -446,11 +446,7 @@ async fn submit_child(
                 context
                     .runtime
                     .mutation_checked(CREATE_OR_SEND, subagent_args(context, fields.clone())),
-                async {
-                    Ok(recover_submission(context, submission_id, child_execution_secret)
-                        .await?
-                        .map(|recovered| recovered.run))
-                },
+                recover_submission(context, submission_id, child_execution_secret),
             ) => result,
         };
         match result {
@@ -490,8 +486,8 @@ async fn run_subagent(
             .map_err(tool_error)
     })
     .await?;
-    let created = if let Some(recovered) = recovered {
-        recovered.run
+    let created = if let Some(created) = recovered {
+        created
     } else {
         let overrides = SubagentSettingsOverrides {
             model: args.model,
@@ -769,7 +765,7 @@ impl ControlSubagentTool {
             })
             .await?;
             let queued = match (recovered, response.continuation) {
-                (Some(recovered), _) => Some(recovered.run),
+                (Some(recovered), _) => Some(recovered),
                 (None, Some(continuation)) => {
                     require_launcher(&self.context)?;
                     let (settings, completion_provider) = cancelled_read(&cancellation, async {
@@ -1095,12 +1091,6 @@ async fn fetch_thread<T: DeserializeOwned>(
         .map_err(tool_error)
 }
 
-#[derive(Deserialize)]
-struct RecoveredSubmission {
-    #[serde(flatten)]
-    run: CreateSubagentRunResponse,
-}
-
 fn submission_fields(submission_id: &str, child_execution_secret: &str) -> BTreeMap<String, Value> {
     BTreeMap::from([
         ("submissionId".to_string(), submission_id.to_string().into()),
@@ -1115,7 +1105,7 @@ async fn recover_submission(
     context: &AgentToolContext,
     submission_id: &str,
     child_execution_secret: &str,
-) -> anyhow::Result<Option<RecoveredSubmission>> {
+) -> anyhow::Result<Option<CreateSubagentRunResponse>> {
     timeout(
         SUBMISSION_ATTEMPT_TIMEOUT,
         context.runtime.mutation_json(

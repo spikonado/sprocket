@@ -396,7 +396,7 @@ export const getContext = query({
 		return getContextResult({
 			run,
 			parentThreadId,
-			prompt: run.pendingPrompt?.text ?? promptPart?.prompt?.text ?? '',
+			prompt: promptPart?.prompt?.text ?? '',
 			pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
 			contextTokens,
 			providerHandoff,

@@ -240,14 +240,11 @@ export async function createQueuedRunRecord(
 	}
 
 	let taskDeadlineAt = args.taskDeadlineAt;
-	let inheritedPrompt: Doc<'runs'>['pendingPrompt'];
+	let parentPendingPrompt: Doc<'runs'>['pendingPrompt'];
 
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
-
-		// A parent that failed before it began never wrote its prompt.
-		if (!recordsPrompt) inheritedPrompt = parent.pendingPrompt;
-
+		parentPendingPrompt = parent.pendingPrompt;
 		const automaticRecovery = args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX);
 
 		if (
@@ -276,6 +273,11 @@ export async function createQueuedRunRecord(
 		throw new ConvexError(SPROCKET_SUBMISSION_WAITING);
 	}
 
+	// A parent that failed before it began never wrote its prompt.
+	const promptBody = recordsPrompt
+		? { text: prompt, imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds) }
+		: parentPendingPrompt;
+
 	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
 		threadId: threadRecord._id,
 		userId: args.userId,
@@ -295,6 +297,8 @@ export async function createQueuedRunRecord(
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 
 	if (taskDeadlineAt !== undefined) runRecord.taskDeadlineAt = taskDeadlineAt;
+
+	if (promptBody && args.deferPrompt) runRecord.pendingPrompt = promptBody;
 
 	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
 
@@ -321,14 +325,7 @@ export async function createQueuedRunRecord(
 
 	await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 
-	const promptBody = inheritedPrompt ?? {
-		text: prompt,
-		imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds)
-	};
-
-	if ((recordsPrompt || inheritedPrompt) && args.deferPrompt) {
-		await ctx.db.patch('runs', runId, { pendingPrompt: promptBody });
-	} else if (recordsPrompt || inheritedPrompt) {
+	if (promptBody && !args.deferPrompt) {
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
 			runId,

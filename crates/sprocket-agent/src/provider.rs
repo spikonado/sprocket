@@ -136,8 +136,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) share_conversation_content: bool,
 }
 
-/// What the run writes before its first model call, unless a handoff before
-/// the prompt replaces the workspace context with the full live context.
+/// What the run writes before its first model call.
 pub(crate) struct RunBegin {
     pub(crate) workspace_context: Vec<HiddenPrompt>,
     pub(crate) begun: tokio::sync::oneshot::Sender<()>,
@@ -150,14 +149,10 @@ impl RunBegin {
         runtime: &RuntimeClient,
         run_id: &str,
         claim_id: &str,
-        handoff: Option<(&ContextHandoffWrite<'_>, &[HiddenPrompt])>,
+        handoff: Option<&ContextHandoffWrite<'_>>,
     ) -> anyhow::Result<bool> {
-        let (handoff, workspace_context) = match handoff {
-            Some((handoff, workspace_context)) => (Some(handoff), workspace_context),
-            None => (None, self.workspace_context.as_slice()),
-        };
         let begun = runtime
-            .begin_run(run_id, claim_id, workspace_context, handoff)
+            .begin_run(run_id, claim_id, &self.workspace_context, handoff)
             .await?;
         if begun {
             let _ = self.begun.send(());
@@ -1000,9 +995,12 @@ async fn run_with_completion_model(
                                 let begin = if before_prompt { pending_begin.take() } else { None };
                                 let save = async {
                                     match begin {
-                                        Some(begin) => begin.write(
+                                        Some(begin) => RunBegin {
+                                            workspace_context: live_context.clone(),
+                                            ..begin
+                                        }.write(
                                             &runtime, &request.run_id, &request.claim_id,
-                                            Some((&handoff, live_context.as_slice())),
+                                            Some(&handoff),
                                         ).await,
                                         None => runtime.save_context_handoff(
                                             &request.run_id, &request.claim_id,

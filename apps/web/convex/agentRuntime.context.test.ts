@@ -643,7 +643,6 @@ describe('agentRuntime context accounting', () => {
 		await expect(
 			asUser.query(api.agentRuntime.getContext, { runId, executionSecret })
 		).resolves.toMatchObject({
-			prompt: 'Do the long task',
 			pendingPrompt: { text: 'Do the long task', imageUploads: [] }
 		});
 
@@ -805,7 +804,7 @@ describe('agentRuntime context accounting', () => {
 
 		await expect(
 			asUser.query(api.agentRuntime.getContext, { runId: continuation.runId, executionSecret })
-		).resolves.toMatchObject({ prompt: 'Lost before begin' });
+		).resolves.toMatchObject({ pendingPrompt: { text: 'Lost before begin' } });
 	});
 
 	it('does not begin a run the user stopped', async () => {
