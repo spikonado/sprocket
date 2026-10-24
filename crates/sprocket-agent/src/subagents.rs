@@ -205,7 +205,6 @@ pub struct SubagentLaunchRequest {
     pub submission_id: String,
     /// Child execution secret; never the parent run's secret.
     pub execution_secret: String,
-    pub prompt: String,
     /// Caller workspace root; the child runs in the same workspace.
     pub workspace_path: String,
     pub selected_model: String,

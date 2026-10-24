@@ -418,6 +418,8 @@ export default defineSchema({
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
+		// Set until the run begins, which writes it as the run's prompt part.
+		pendingPrompt: v.optional(vTranscriptPromptBody),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
 		startedAt: v.optional(v.number()),

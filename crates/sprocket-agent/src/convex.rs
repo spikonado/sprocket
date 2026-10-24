@@ -15,6 +15,7 @@ use crate::types::{
     CompletionProvider, CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse,
     RunAgentRequest, RunContextResponse, StartRunResponse,
 };
+use crate::workspace_context::HiddenPrompt;
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -75,6 +76,30 @@ pub(crate) enum FailedStartCleanup {
     Finalized,
     Pending,
     StandDown,
+}
+
+pub(crate) struct ContextHandoffWrite<'a> {
+    pub(crate) summary: &'a str,
+    pub(crate) completion_attempt_seq: u64,
+    pub(crate) handoff_calls: &'a [crate::usage::ModelCallUsage],
+}
+
+impl ContextHandoffWrite<'_> {
+    fn args(&self) -> anyhow::Result<BTreeMap<String, Value>> {
+        let mut args = BTreeMap::new();
+        args.insert("summary".to_string(), self.summary.to_string().into());
+        args.insert(
+            "completionAttemptSeq".to_string(),
+            Value::Float64(self.completion_attempt_seq as f64),
+        );
+        if !self.handoff_calls.is_empty() {
+            args.insert(
+                "handoffCalls".to_string(),
+                Value::try_from(serde_json::to_value(self.handoff_calls)?)?,
+            );
+        }
+        Ok(args)
+    }
 }
 
 #[derive(Clone)]
@@ -270,6 +295,7 @@ impl RuntimeClient {
                 continuation_of_run_id.clone().into(),
             );
         }
+        args.insert("deferPrompt".to_string(), Value::Boolean(true));
         self.add_execution_secret(&mut args);
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
@@ -419,8 +445,6 @@ impl RuntimeClient {
         if !request.thread_id.is_empty() {
             args.insert("threadId".to_string(), request.thread_id.clone().into());
         }
-        args.insert("prompt".to_string(), request.prompt.clone().into());
-        args.insert("storageIds".to_string(), string_array(&request.storage_ids));
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
@@ -470,25 +494,39 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         claim_id: &str,
-        summary: &str,
-        completion_attempt_seq: u64,
-        before_prompt: bool,
-        handoff_calls: &[crate::usage::ModelCallUsage],
+        handoff: &ContextHandoffWrite<'_>,
+        workspace_context: &[HiddenPrompt],
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
-        args.insert("summary".to_string(), summary.to_string().into());
-        args.insert(
-            "completionAttemptSeq".to_string(),
-            Value::Float64(completion_attempt_seq as f64),
-        );
-        args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
-        if !handoff_calls.is_empty() {
+        args.extend(handoff.args()?);
+        if !workspace_context.is_empty() {
             args.insert(
-                "handoffCalls".to_string(),
-                Value::try_from(serde_json::to_value(handoff_calls)?)?,
+                "workspaceContext".to_string(),
+                Value::try_from(serde_json::to_value(workspace_context)?)?,
             );
         }
         self.mutation_json("agentRuntime:saveContextHandoff", args)
+            .await
+    }
+
+    /// Writes the handoff, workspace context, and prompt the run's first model
+    /// call sees. Returns false when the run no longer owns this claim.
+    pub(crate) async fn begin_run(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        workspace_context: &[HiddenPrompt],
+        handoff: Option<&ContextHandoffWrite<'_>>,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert(
+            "workspaceContext".to_string(),
+            Value::try_from(serde_json::to_value(workspace_context)?)?,
+        );
+        if let Some(handoff) = handoff {
+            args.insert("handoff".to_string(), Value::Object(handoff.args()?));
+        }
+        self.claim_mutation_with_retries("agentRuntime:beginRun", args)
             .await
     }
 
@@ -496,10 +534,8 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         claim_id: &str,
-        before_prompt: bool,
     ) -> anyhow::Result<bool> {
-        let mut args = self.run_args_with_claim(run_id, claim_id);
-        args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
+        let args = self.run_args_with_claim(run_id, claim_id);
         self.claim_mutation_with_retries("agentRuntime:omitReasoningReplay", args)
             .await
     }

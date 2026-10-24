@@ -95,8 +95,6 @@ pub struct CreateRunResponse {
     pub run_id: String,
     pub thread_id: String,
     pub user_id: String,
-    #[serde(default)]
-    pub prompt_part: Option<serde_json::Value>,
     pub gateway_url: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub protocol_version: u64,
@@ -133,6 +131,12 @@ pub struct RenewClaimResponse {
 pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub prompt: String,
+    /// Set until the run begins.
+    #[serde(
+        default,
+        deserialize_with = "sprocket_transcript::deserialize_remote_prompt"
+    )]
+    pub pending_prompt: Option<sprocket_transcript::TranscriptPromptBody>,
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub context_tokens: u64,
     #[serde(default)]

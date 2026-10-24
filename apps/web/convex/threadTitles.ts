@@ -13,7 +13,7 @@ import {
 } from '@convex/_generated/server';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
-import { getPromptPart } from '@convex/lib/transcriptParts';
+import { firstUserPromptPart, getPromptPart } from '@convex/lib/transcriptParts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
@@ -59,13 +59,7 @@ async function currentRequest(
 
 	if ((await getUiPreferences(ctx.db, run.userId))?.automaticThreadTitles === false) return null;
 	const prompt = await getPromptPart(ctx, run.threadId, run._id);
-
-	const firstPrompt = await ctx.db
-		.query('threadTranscriptParts')
-		.withIndex('by_threadId_kind_number', (query) =>
-			query.eq('threadId', run.threadId).eq('kind', 'prompt')
-		)
-		.first();
+	const firstPrompt = await firstUserPromptPart(ctx, run.threadId);
 
 	if (!prompt || firstPrompt?._id !== prompt._id) return null;
 
@@ -138,7 +132,7 @@ export const readTranscript = internalQuery({
 		const messages: TitleMessage[] = [];
 
 		for (const part of page.page) {
-			if (part.kind === 'prompt' && part.prompt?.text.trim()) {
+			if (part.kind === 'prompt' && !part.prompt?.hidden && part.prompt?.text.trim()) {
 				messages.push({ role: 'user', content: part.prompt.text });
 			} else if (part.kind === 'completion' && part.completion) {
 				const text = part.completion.items

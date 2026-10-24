@@ -131,6 +131,7 @@ import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
+import { LocalResponseError } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
 	ChatGptStatus,
@@ -1869,7 +1870,7 @@ export default function App({
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 
-		const recoverSubmission = (message: string) => {
+		const recoverSubmission = (message: string, submissionId?: string) => {
 			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
@@ -1882,9 +1883,10 @@ export default function App({
 				continuationOfRunId: submittedContinuationOfRunId,
 				autoSubmit: false,
 				submissionId:
-					!selectedThreadId && recoveryScope === originatingRecoveryScope
+					submissionId ??
+					(!selectedThreadId && recoveryScope === originatingRecoveryScope
 						? threadSubmissionId
-						: runSubmissionId
+						: runSubmissionId)
 			});
 		};
 
@@ -2002,8 +2004,10 @@ export default function App({
 						}
 					}
 
+					// The server answered, so any run it created has already failed.
 					recoverSubmission(
-						error instanceof Error ? error.message : 'Failed to start the local agent run.'
+						error instanceof Error ? error.message : 'Failed to start the local agent run.',
+						error instanceof LocalResponseError ? crypto.randomUUID() : undefined
 					);
 				},
 				onStarted: (_runId, createdThreadId) => {

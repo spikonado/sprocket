@@ -61,22 +61,6 @@ export async function getOwnedImageUploadsByStorageIds(
 	);
 }
 
-export async function storageIdsForImageUploadIds(
-	ctx: MutationCtx | QueryCtx,
-	imageUploadIds: Id<'imageUploads'>[]
-): Promise<Id<'_storage'>[] | null> {
-	const storageIds: Id<'_storage'>[] = [];
-
-	for (const imageUploadId of imageUploadIds) {
-		const upload = await ctx.db.get('imageUploads', imageUploadId);
-
-		if (!upload) return null;
-		storageIds.push(upload.storageId);
-	}
-
-	return storageIds;
-}
-
 export async function markImageUploadsAttached(
 	ctx: MutationCtx,
 	uploads: Doc<'imageUploads'>[],

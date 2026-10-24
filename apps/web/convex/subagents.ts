@@ -104,6 +104,7 @@ export const recoverSubmission = mutation({
 				throw new Error('Submission belongs to a different executor.');
 			}
 
+			// Released agents compare it with the prompt they are about to send.
 			const prompt = (await getPromptPart(ctx, run.threadId, run._id))?.prompt?.text ?? '';
 
 			return {
@@ -173,7 +174,9 @@ export const createOrSend = mutation({
 		reasoning: vReasoningEffort,
 		fast: v.boolean(),
 		completionProvider: v.optional(vCompletionProvider),
-		timeoutMs: v.optional(v.number())
+		timeoutMs: v.optional(v.number()),
+		/** The run writes its prompt part in beginRun. Released agents omit it. */
+		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreatedSubagentRun,
 	handler: async (ctx, args) => {
@@ -249,6 +252,7 @@ export const createOrSend = mutation({
 				machineId: callerRun.machineId,
 				continuationOfRunId,
 				executionSecret: args.childExecutionSecret,
+				deferPrompt: args.deferPrompt,
 				taskDeadlineAt: timeoutMs === undefined ? undefined : Date.now() + timeoutMs
 			});
 

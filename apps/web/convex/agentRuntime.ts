@@ -1,11 +1,17 @@
-import { action, internalMutation, mutation, query } from '@convex/_generated/server';
+import {
+	action,
+	internalMutation,
+	mutation,
+	query,
+	type MutationCtx
+} from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
-import { latestRunForThread, patchRunExecution } from '@convex/lib/runExecution';
+import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -27,6 +33,8 @@ import {
 import { requestRunCancellation, requestThreadTreeCancellation } from './runLifecycle';
 import {
 	recordCompletionTranscript,
+	recordHiddenPrompts,
+	recordPromptTranscript,
 	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
@@ -41,6 +49,7 @@ import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
+	generateTitleAfterFirstPrompt,
 	submissionReadiness,
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
@@ -48,7 +57,11 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { enabledProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
-import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
+import {
+	getPromptPart,
+	hydratePromptUrls,
+	stripLegacyAttachmentImageUploadIds
+} from '@convex/lib/transcriptParts';
 import { runStartedAt } from '@convex/lib/runs';
 import {
 	canRegisterCompletionAttempt,
@@ -65,11 +78,14 @@ import {
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vCompletionProvider,
+	vHiddenPrompt,
 	vModelCallUsage,
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
-	vTranscriptCompletionItem
+	vTranscriptCompletionItem,
+	type HiddenPrompt,
+	type TranscriptPromptBody
 } from '@convex/lib/validators';
 
 type RunClaimPatch = {
@@ -145,7 +161,8 @@ export const insertGatewayRun = internalMutation({
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
-		continuationOfRunId: v.optional(v.id('runs'))
+		continuationOfRunId: v.optional(v.id('runs')),
+		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreatedGatewayRun,
 	handler: async (ctx, args) => {
@@ -167,7 +184,9 @@ export const createGatewayRun = action({
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
-		continuationOfRunId: v.optional(v.id('runs'))
+		continuationOfRunId: v.optional(v.id('runs')),
+		/** The run writes its prompt part in beginRun. Released clients omit it. */
+		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
@@ -195,6 +214,8 @@ export const createGatewayRun = action({
 			agentVersion: args.agentVersion,
 			machineId: args.machineId
 		};
+
+		if (args.deferPrompt) request.deferPrompt = true;
 
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
@@ -315,6 +336,7 @@ function getContextResult(args: {
 	run: Doc<'runs'>;
 	parentThreadId?: Doc<'threadRecords'>['_id'];
 	prompt: string;
+	pendingPrompt: TranscriptPromptBody | undefined;
 	contextTokens: number | undefined;
 	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
 	providerPreferences: Infer<typeof vGetContextResult>['providerPreferences'];
@@ -343,6 +365,8 @@ function getContextResult(args: {
 		result.contextTokens = args.contextTokens;
 	}
 
+	if (args.pendingPrompt !== undefined) result.pendingPrompt = args.pendingPrompt;
+
 	if (args.providerHandoff !== undefined) result.providerHandoff = args.providerHandoff;
 
 	if (args.cwd !== undefined) result.cwd = args.cwd;
@@ -365,14 +389,15 @@ export const getContext = query({
 		const providerHandoff = await getProviderHandoff(ctx, run, thread);
 		const preferences = await getUiPreferences(ctx.db, run.userId);
 
-		if (!promptPart?.prompt && !run.continuationOfRunId) {
+		if (!promptPart?.prompt && !run.pendingPrompt && !run.continuationOfRunId) {
 			throw new Error('Run does not contain a user prompt.');
 		}
 
 		return getContextResult({
 			run,
 			parentThreadId,
-			prompt: promptPart?.prompt?.text ?? '',
+			prompt: run.pendingPrompt?.text ?? promptPart?.prompt?.text ?? '',
+			pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
 			contextTokens,
 			providerHandoff,
 			providerPreferences: {
@@ -422,18 +447,99 @@ export const completionActor = query({
 	}
 });
 
+const vHandoffSummary = {
+	summary: v.string(),
+	completionAttemptSeq: v.number(),
+	handoffCalls: v.optional(v.array(vModelCallUsage))
+};
+
+/** Returns false when the claim or the completion attempt is no longer current. */
+async function recordContextHandoff(
+	ctx: MutationCtx,
+	run: ExecutionRun,
+	args: {
+		claimId: string;
+		summary: string;
+		completionAttemptSeq: number;
+		beforePrompt?: boolean;
+		handoffCalls?: Infer<typeof vModelCallUsage>[];
+		workspaceContext?: HiddenPrompt[];
+	}
+): Promise<boolean> {
+	if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
+		return false;
+	}
+
+	if (!args.summary.trim()) {
+		throw new Error('Invalid context handoff.');
+	}
+
+	const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+	const throughPartNumber = await throughPartNumberForHandoff(ctx, {
+		threadId: run.threadId,
+		runId: run._id,
+		beforePrompt: args.beforePrompt ?? false
+	});
+
+	const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
+	const existingCutoff = existingThroughPartNumber(thread);
+
+	if (thread.contextSummaryHandoffKey === handoffKey) {
+		if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
+			throw new Error('Invalid context handoff cutoff.');
+		}
+
+		if (thread.contextSummary !== args.summary) {
+			throw new Error('Conflicting context handoff retry.');
+		}
+
+		return true;
+	}
+
+	if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
+		throw new Error('Invalid context handoff cutoff.');
+	}
+
+	await ctx.db.patch('threadRecords', thread._id, {
+		contextSummary: args.summary,
+		contextSummaryThroughPartNumber: throughPartNumber,
+		contextSummaryHandoffKey: handoffKey
+	});
+
+	await recordHiddenPrompts(ctx, {
+		threadId: thread._id,
+		runId: run._id,
+		scope: handoffKey,
+		prompts: args.workspaceContext ?? []
+	});
+
+	for (const [index, call] of (args.handoffCalls ?? []).entries()) {
+		await recordModelCallUsage(ctx, thread, {
+			runId: run._id,
+			eventId: `handoff:${args.claimId}:${args.completionAttemptSeq}:${index}`,
+			call
+		});
+	}
+
+	await setThreadContextTokens(ctx, thread, undefined);
+
+	return true;
+}
+
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
 export const saveContextHandoff = mutation({
 	args: {
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string(),
-		summary: v.string(),
-		completionAttemptSeq: v.number(),
-		beforePrompt: v.boolean(),
+		...vHandoffSummary,
+		/** Sent by released agents; true places the cutoff before the run's prompt. */
+		beforePrompt: v.optional(v.boolean()),
 		/** Sent by released agents; ignored. */
 		processedTokens: v.optional(v.number()),
-		handoffCalls: v.optional(v.array(vModelCallUsage))
+		/** Shown after the summary; parts before the cutoff no longer reach the model. */
+		workspaceContext: v.optional(v.array(vHiddenPrompt))
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
@@ -441,56 +547,56 @@ export const saveContextHandoff = mutation({
 
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
 
-		if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
-			return false;
-		}
+		return await recordContextHandoff(ctx, run, args);
+	}
+});
 
-		if (!args.summary.trim()) {
-			throw new Error('Invalid context handoff.');
-		}
+/**
+ * Writes what the model sees before the run's first call, in model order: an
+ * optional handoff summary, the workspace context, then the run's prompt.
+ */
+export const beginRun = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		workspaceContext: v.array(vHiddenPrompt),
+		handoff: v.optional(v.object(vHandoffSummary))
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
 
-		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
-			threadId: run.threadId,
-			runId: run._id,
-			beforePrompt: args.beforePrompt
-		});
+		if (args.handoff) {
+			const recorded = await recordContextHandoff(ctx, run, {
+				...args.handoff,
+				claimId: args.claimId,
+				workspaceContext: args.workspaceContext
+			});
 
-		const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
-		const existingCutoff = existingThroughPartNumber(thread);
-
-		if (thread.contextSummaryHandoffKey === handoffKey) {
-			if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
-				throw new Error('Invalid context handoff cutoff.');
-			}
-
-			if (thread.contextSummary !== args.summary) {
-				throw new Error('Conflicting context handoff retry.');
-			}
-
-			return true;
-		}
-
-		if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
-			throw new Error('Invalid context handoff cutoff.');
-		}
-
-		await ctx.db.patch('threadRecords', thread._id, {
-			contextSummary: args.summary,
-			contextSummaryThroughPartNumber: throughPartNumber,
-			contextSummaryHandoffKey: handoffKey
-		});
-
-		for (const [index, call] of (args.handoffCalls ?? []).entries()) {
-			await recordModelCallUsage(ctx, thread, {
+			if (!recorded) return false;
+		} else {
+			await recordHiddenPrompts(ctx, {
+				threadId: run.threadId,
 				runId: run._id,
-				eventId: `handoff:${args.claimId}:${args.completionAttemptSeq}:${index}`,
-				call
+				scope: `${run._id}:${args.claimId}`,
+				prompts: args.workspaceContext
 			});
 		}
 
-		await setThreadContextTokens(ctx, thread, undefined);
+		if (run.pendingPrompt) {
+			const promptPart = await recordPromptTranscript(ctx, {
+				threadId: run.threadId,
+				runId: run._id,
+				prompt: run.pendingPrompt
+			});
+
+			await ctx.db.patch('runs', run._id, { pendingPrompt: undefined });
+			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+			await generateTitleAfterFirstPrompt(ctx, thread, promptPart);
+		}
 
 		return true;
 	}
@@ -501,7 +607,8 @@ export const omitReasoningReplay = mutation({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string(),
-		beforePrompt: v.boolean()
+		/** Sent by released agents; true places the cutoff before the run's prompt. */
+		beforePrompt: v.optional(v.boolean())
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
@@ -514,7 +621,7 @@ export const omitReasoningReplay = mutation({
 		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
 			threadId: run.threadId,
 			runId: run._id,
-			beforePrompt: args.beforePrompt
+			beforePrompt: args.beforePrompt ?? false
 		});
 
 		if (throughPartNumber > (thread.reasoningStrippedThroughPartNumber ?? -1)) {
@@ -848,8 +955,10 @@ export const finalizeFailedStart = mutation({
 	args: {
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
-		prompt: v.string(),
-		storageIds: v.array(v.id('_storage')),
+		/** Sent by released agents; ignored. */
+		prompt: v.optional(v.string()),
+		/** Sent by released agents; ignored. */
+		storageIds: v.optional(v.array(v.id('_storage'))),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,

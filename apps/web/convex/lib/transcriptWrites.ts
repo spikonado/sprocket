@@ -2,8 +2,8 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import {
 	appendTranscriptPart,
-	attachmentMetaForUploads,
 	completionSourceKey,
+	hiddenPromptSourceKey,
 	promptSourceKey,
 	toolInvocationIdForJob,
 	toolSourceKey
@@ -11,7 +11,12 @@ import {
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from '@convex/lib/json';
-import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
+import type {
+	HiddenPrompt,
+	TranscriptCompletionItem,
+	TranscriptPromptBody,
+	TranscriptToolBody
+} from '@convex/lib/validators';
 import {
 	writeCompletionSectionData,
 	writeToolSectionData,
@@ -62,8 +67,7 @@ export async function recordPromptTranscript(
 	args: {
 		threadId: Id<'threadRecords'>;
 		runId: Id<'runs'>;
-		text: string;
-		imageUploadIds?: Id<'imageUploads'>[];
+		prompt: TranscriptPromptBody;
 	}
 ): Promise<Doc<'threadTranscriptParts'>> {
 	const result = await appendTranscriptPart(ctx, {
@@ -71,14 +75,32 @@ export async function recordPromptTranscript(
 		sourceKey: promptSourceKey(args.runId),
 		kind: 'prompt',
 		runId: args.runId,
-		prompt: {
-			text: args.text,
-			imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds)
-		},
+		prompt: args.prompt,
 		work: { ranges: [] }
 	});
 
 	return result.part;
+}
+
+export async function recordHiddenPrompts(
+	ctx: MutationCtx,
+	args: {
+		threadId: Id<'threadRecords'>;
+		runId: Id<'runs'>;
+		scope: string;
+		prompts: HiddenPrompt[];
+	}
+): Promise<void> {
+	for (const prompt of args.prompts) {
+		await appendTranscriptPart(ctx, {
+			threadId: args.threadId,
+			sourceKey: hiddenPromptSourceKey(args.scope, prompt.kind),
+			kind: 'prompt',
+			runId: args.runId,
+			prompt: { text: prompt.text, imageUploads: [], hidden: prompt.kind },
+			work: { ranges: [] }
+		});
+	}
 }
 
 export async function recordCompletionTranscript(

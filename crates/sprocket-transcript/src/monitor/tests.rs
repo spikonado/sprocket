@@ -169,6 +169,14 @@ fn first_prompt_and_canonical_ordering_with_patch_sources() {
                     ]})),
                 ),
                 prompt_part(3, "second task"),
+                serde_json::from_value(json!({
+                    "number": 4,
+                    "sourceKey": "hiddenPrompt:run:claim:environment",
+                    "kind": "prompt",
+                    "runId": "run",
+                    "prompt": { "text": "# Environment", "imageUploads": [], "hidden": "environment" }
+                }))
+                .unwrap(),
             ],
         )
         .unwrap();

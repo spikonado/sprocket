@@ -24,7 +24,8 @@ impl SubagentLauncher for NativeSubagentLauncher {
                 submission_id: request.submission_id,
                 thread_id: Some(request.thread_id),
                 repository_key: None,
-                prompt: request.prompt,
+                // The child run already holds its prompt.
+                prompt: String::new(),
                 storage_ids: Vec::new(),
                 selected_model: request.selected_model,
                 completion_provider: request.completion_provider,

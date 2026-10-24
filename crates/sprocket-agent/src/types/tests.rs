@@ -188,47 +188,41 @@ fn rejects_orphaned_tool_results_before_provider_replay() {
 }
 
 #[test]
-fn deserializes_create_run_response_gateway_fields_from_convex_numbers() {
-    use super::CreateRunResponse;
-
-    let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
-        "created": true,
-        "runId": "jd7run",
-        "threadId": "jd7thread",
-        "userId": "user_1",
-        "promptPart": {
-            "number": 0.0,
-            "sourceKey": "prompt:jd7run",
-            "kind": "prompt",
-            "runId": "jd7run",
-            "prompt": {
-                "text": "hello",
-                "imageUploads": [{
-                    "name": "robot.png",
-                    "mediaType": "image/png",
-                    "size": 42.0,
-                    "storageId": "storage_1",
-                    "url": "https://example.com/robot.png"
-                }]
-            }
+fn deserializes_a_pending_prompt_from_convex_numbers() {
+    let context: super::RunContextResponse = serde_json::from_value(serde_json::json!({
+        "run": {
+            "_id": "jd7run",
+            "threadId": "jd7thread",
+            "userId": "user_1",
+            "selectedModel": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "fastMode": false,
+            "startedAt": 1.0
         },
-        "gatewayUrl": "https://preview.gateway.example",
-        "protocolVersion": 1.0
+        "prompt": "hello",
+        "pendingPrompt": {
+            "text": "hello",
+            "imageUploads": [{
+                "name": "robot.png",
+                "mediaType": "image/png",
+                "size": 42.0,
+                "storageId": "storage_1",
+                "url": "https://example.com/robot.png"
+            }]
+        }
     }))
-    .expect("create run response");
+    .expect("run context response");
 
-    assert_eq!(created.gateway_url, "https://preview.gateway.example");
-    assert_eq!(created.protocol_version, 1);
-    let prompt_part = created.prompt_part.expect("prompt transcript part");
-    let parts = sprocket_transcript::parse_remote_parts(serde_json::json!({
-        "parts": [prompt_part]
-    }))
-    .expect("prompt transcript part");
-    assert_eq!(parts[0].number, 0);
-    let attachment = &parts[0].prompt.as_ref().expect("prompt body").image_uploads[0];
+    let attachment = &context
+        .pending_prompt
+        .expect("pending prompt")
+        .image_uploads[0];
     assert_eq!(attachment.name, "robot.png");
     assert_eq!(attachment.size, 42);
-    assert_eq!(attachment.storage_id, "storage_1");
+    assert_eq!(
+        attachment.url.as_deref(),
+        Some("https://example.com/robot.png")
+    );
 }
 
 #[test]
@@ -247,24 +241,6 @@ fn context_handoff_budget_preserves_the_released_wire_field() {
             "autoCompactTokenLimit": 258000
         })
     );
-}
-
-#[test]
-fn deserializes_a_continuation_create_run_response_without_a_prompt() {
-    use super::CreateRunResponse;
-
-    let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
-        "created": true,
-        "runId": "jd7cont",
-        "threadId": "jd7thread",
-        "userId": "user_1",
-        "gatewayUrl": "https://preview.gateway.example",
-        "protocolVersion": 1.0
-    }))
-    .expect("continuation create run response");
-
-    assert_eq!(created.run_id, "jd7cont");
-    assert!(created.prompt_part.is_none());
 }
 
 #[test]

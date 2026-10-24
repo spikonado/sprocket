@@ -14,7 +14,9 @@ mod types;
 #[cfg(test)]
 mod work_tests;
 
-pub use attachments::{AttachmentUnavailable, cache_attachment, cache_prompt_attachments};
+pub use attachments::{
+    AttachmentUnavailable, cache_attachment, cache_attachments, cache_prompt_attachments,
+};
 pub use download::DownloadOrder;
 pub use live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
@@ -22,8 +24,10 @@ pub use live::{
 };
 pub use replica::WorkReplica;
 pub use store::TranscriptStore;
-pub use sync::{RemoteTranscriptState, apply_remote_state, parse_remote_page, parse_remote_parts};
+pub use sync::{
+    RemoteTranscriptState, apply_remote_state, deserialize_remote_prompt, parse_remote_page,
+};
 pub use types::{
-    TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta, TranscriptCompletionBody,
+    TranscriptPart, TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };

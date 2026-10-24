@@ -21,7 +21,7 @@ use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
-use crate::convex::RuntimeClient;
+use crate::convex::{ContextHandoffWrite, RuntimeClient};
 use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
@@ -29,12 +29,13 @@ use crate::now_ms;
 use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
-use crate::tools::{agent_tools, max_yield_ms, working_directory_message};
+use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
     UsagePricing, gateway_api_v1_url,
 };
 use crate::usage::{ModelCallUsage, UsageSource};
+use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
 use sprocket_transcript::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts,
@@ -109,7 +110,8 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
     pub(crate) handoff_base_instructions: Option<String>,
-    pub(crate) initial_context: Vec<Message>,
+    pub(crate) workspace_context: WorkspaceContext,
+    pub(crate) begin: RunBegin,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) cwd: PathBuf,
@@ -124,6 +126,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
+    /// The run answers a user prompt, so a handoff that is due goes before it.
     pub(crate) defer_prompt_for_context_handoff: bool,
     /// The previous provider could not write a handoff. Continue without reasoning replay.
     pub(crate) omit_prior_reasoning: bool,
@@ -131,6 +134,36 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub(crate) share_conversation_content: bool,
+}
+
+/// What the run writes before its first model call, unless a handoff before
+/// the prompt replaces the workspace context with the full live context.
+pub(crate) struct RunBegin {
+    pub(crate) workspace_context: Vec<HiddenPrompt>,
+    pub(crate) begun: tokio::sync::oneshot::Sender<()>,
+}
+
+impl RunBegin {
+    /// Returns false when the run no longer owns its claim.
+    async fn write(
+        self,
+        runtime: &RuntimeClient,
+        run_id: &str,
+        claim_id: &str,
+        handoff: Option<(&ContextHandoffWrite<'_>, &[HiddenPrompt])>,
+    ) -> anyhow::Result<bool> {
+        let (handoff, workspace_context) = match handoff {
+            Some((handoff, workspace_context)) => (Some(handoff), workspace_context),
+            None => (None, self.workspace_context.as_slice()),
+        };
+        let begun = runtime
+            .begin_run(run_id, claim_id, workspace_context, handoff)
+            .await?;
+        if begun {
+            let _ = self.begun.send(());
+        }
+        Ok(begun)
+    }
 }
 
 pub(crate) enum AgentProviderResult {
@@ -425,8 +458,8 @@ impl AgentHook for CompletionOrigin {
 
 pub(crate) async fn resume_context_handoff(
     agent: &mut rig::Agent,
-    initial_context: &[Message],
     summary: &str,
+    workspace_context: Vec<Message>,
     deferred_prompt: Option<Message>,
     save: impl std::future::Future<Output = anyhow::Result<bool>>,
     next_model: impl std::future::Future<Output = anyhow::Result<Option<DynModel<Completion>>>>,
@@ -437,14 +470,11 @@ pub(crate) async fn resume_context_handoff(
     if let Some(model) = next_model.await? {
         agent.set_model(model);
     }
-    let mut history = initial_context.to_vec();
-    let handoff = Message::user(context_summary_text(summary));
+    let mut history = vec![Message::user(context_summary_text(summary))];
+    history.extend(workspace_context);
     let prompt = match deferred_prompt {
-        Some(pending) => {
-            history.push(handoff);
-            pending
-        }
-        None => handoff,
+        Some(pending) => pending,
+        None => history.pop().expect("the history holds the summary"),
     };
     Ok(Some((history, prompt)))
 }
@@ -535,7 +565,6 @@ async fn run_with_completion_model(
     let context_handoff_hook = ContextHandoffHook::new(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
-        request.defer_prompt_for_context_handoff,
     );
     let agent = AgentBuilder::new(model)
         .tool(tools.apply_patch)
@@ -623,7 +652,6 @@ async fn run_with_completion_model(
     let initial_provider = target.completion_provider;
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
-    let initial_context: Arc<[Message]> = request.initial_context.into();
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -634,16 +662,12 @@ async fn run_with_completion_model(
         }
     };
 
-    let mut history: Vec<_> = initial_context
-        .iter()
-        .cloned()
-        .chain([working_directory_message(&cwd.get())])
-        .chain(request.prior_history)
-        .collect();
+    let mut history = request.prior_history;
     if let Some(origin) = &legacy_origin {
         crate::types::assign_unidentified_legacy_history_origin(&mut history, origin);
     }
     let mut prompt = request.prompt;
+    let mut pending_begin = Some(request.begin);
     let mut deferred_prompt = None;
     let mut before_prompt = false;
     let mut final_text = String::new();
@@ -655,11 +679,7 @@ async fn run_with_completion_model(
 
     if request.omit_prior_reasoning {
         match runtime
-            .omit_reasoning_replay(
-                &request.run_id,
-                &request.claim_id,
-                request.defer_prompt_for_context_handoff,
-            )
+            .omit_reasoning_replay(&request.run_id, &request.claim_id)
             .await
         {
             Ok(true) => {}
@@ -676,7 +696,9 @@ async fn run_with_completion_model(
         .is_some()
         .then(|| (history.clone(), prompt.clone()));
 
-    if provider_switch.is_some() {
+    if provider_switch.is_some()
+        || (request.defer_prompt_for_context_handoff && context_handoff_hook.handoff_due())
+    {
         before_prompt = request.defer_prompt_for_context_handoff;
         if before_prompt {
             deferred_prompt = Some(prompt);
@@ -702,11 +724,7 @@ async fn run_with_completion_model(
                 &mut agent,
                 resume_history,
                 resume_prompt,
-                runtime.omit_reasoning_replay(
-                    &request.run_id,
-                    &request.claim_id,
-                    request.defer_prompt_for_context_handoff,
-                ),
+                runtime.omit_reasoning_replay(&request.run_id, &request.claim_id),
                 target.start_model(
                     &runtime,
                     &request.run_id,
@@ -746,6 +764,25 @@ async fn run_with_completion_model(
 
     'agent_run: {
         'generations: loop {
+            // A handoff before the prompt begins the run once its summary exists.
+            if !(before_prompt && context_handoff_hook.is_writing())
+                && let Some(begin) = pending_begin.take()
+            {
+                match begin
+                    .write(&runtime, &request.run_id, &request.claim_id, None)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        break 'agent_run AgentProviderResult::Cancelled {
+                            text: String::new(),
+                        };
+                    }
+                    Err(error) => {
+                        break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                    }
+                }
+            }
             let mut pending_origin_turn = None;
             if let Ok(mut origin) = completion_origin.0.lock() {
                 *origin = None;
@@ -952,23 +989,37 @@ async fn run_with_completion_model(
                                         None => Ok(None),
                                     }
                                 };
-                                let save = runtime.save_context_handoff(
-                                    &request.run_id, &request.claim_id, &summary,
-                                    transcript.attempt_seq, before_prompt,
-                                    &handoff_calls,
-                                );
-                                let handoff_context: Vec<_> = initial_context
-                                    .iter()
-                                    .cloned()
-                                    .chain([working_directory_message(&cwd.get())])
-                                    .collect();
+                                // Parts before the cutoff leave the history, so
+                                // the context the model keeps must follow it.
+                                let live_context = request.workspace_context.prompts(&cwd.get());
+                                let handoff = ContextHandoffWrite {
+                                    summary: &summary,
+                                    completion_attempt_seq: transcript.attempt_seq,
+                                    handoff_calls: &handoff_calls,
+                                };
+                                let begin = if before_prompt { pending_begin.take() } else { None };
+                                let save = async {
+                                    match begin {
+                                        Some(begin) => begin.write(
+                                            &runtime, &request.run_id, &request.claim_id,
+                                            Some((&handoff, live_context.as_slice())),
+                                        ).await,
+                                        None => runtime.save_context_handoff(
+                                            &request.run_id, &request.claim_id,
+                                            &handoff, &live_context,
+                                        ).await,
+                                    }
+                                };
+                                let handoff_context =
+                                    live_context.iter().map(HiddenPrompt::message).collect();
                                 match resume_context_handoff(
-                                    &mut agent, &handoff_context, &summary,
+                                    &mut agent, &summary, handoff_context,
                                     deferred_prompt.take(), save, next_model,
                                 ).await {
                                     Ok(Some((next_history, next_prompt))) => {
                                         history = next_history;
                                         prompt = next_prompt;
+                                        before_prompt = false;
                                     }
                                     Ok(None) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
                                     Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
@@ -1026,12 +1077,10 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(_)) => {}
                             Some(Err(error)) => {
-                                if let Some(handoff) = context_handoff_hook.take_request() {
+                                if let Some(handoff_history) = context_handoff_hook.take_handoff_history() {
                                     handoff_calls.clear();
-                                    history = handoff.history;
+                                    history = handoff_history;
                                     prompt = handoff_prompt();
-                                    deferred_prompt = handoff.deferred_prompt;
-                                    before_prompt = handoff.before_prompt;
                                     context_handoff_hook.start_handoff();
                                     continue 'generations;
                                 }

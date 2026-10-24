@@ -18,12 +18,21 @@ export async function automaticAgentContinuationEnabled(
 export function isAutomaticallyRecoverableRun(
 	run: Pick<
 		Doc<'runs'>,
-		'status' | 'failureKind' | 'lastError' | 'cancellationRequestedAt' | 'machineId'
+		| 'status'
+		| 'failureKind'
+		| 'lastError'
+		| 'cancellationRequestedAt'
+		| 'machineId'
+		| 'pendingPrompt'
 	>,
 	machineId: string
 ): boolean {
+	// A run that never began has no prompt part for a continuation to answer.
 	return (
-		isAbandonedRun(run) && run.cancellationRequestedAt === undefined && run.machineId === machineId
+		isAbandonedRun(run) &&
+		run.cancellationRequestedAt === undefined &&
+		run.pendingPrompt === undefined &&
+		run.machineId === machineId
 	);
 }
 

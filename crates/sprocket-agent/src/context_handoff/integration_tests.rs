@@ -19,8 +19,8 @@ use rig::tool::{DynamicTool, Tool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffRequest,
-    HandoffTool, context_summary_text, handoff_prompt,
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffTool,
+    context_summary_text, handoff_prompt,
 };
 use crate::openai::stateless_responses_model;
 use crate::provider::{resume_context_handoff, resume_without_provider_handoff};
@@ -519,9 +519,9 @@ async fn drive(
         .expect("rig context handoff stream timed out")
 }
 
-fn take_handoff(hook: &ContextHandoffHook) -> HandoffRequest {
-    hook.take_request()
-        .expect("context handoff hook should stash a handoff request")
+fn take_handoff(hook: &ContextHandoffHook) -> Vec<Message> {
+    hook.take_handoff_history()
+        .expect("context handoff hook should stash the handoff history")
 }
 
 #[tokio::test]
@@ -539,7 +539,7 @@ async fn unsolicited_handoff_name_repair_keeps_the_pending_request_gate() {
 
 async fn assert_unsolicited_handoff_rejected(body: String) {
     let (base_url, server) = spawn_responses_sse(vec![body]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     tokio::time::timeout(DRIVE_TIMEOUT, async {
         let mut stream = agent
@@ -578,7 +578,7 @@ async fn assert_unsolicited_handoff_rejected(body: String) {
 #[tokio::test]
 async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
     let mut stream = agent
@@ -639,7 +639,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let (old_url, old_server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
     let (new_url, new_server) =
         spawn_responses_sse(vec![text_sse("continued on the new provider", 4, 4)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let mut agent = test_agent(&old_url, &hook);
     let initial_context = Message::user(INITIAL_CONTEXT);
     let history = vec![
@@ -686,8 +686,8 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let saved_summary = std::cell::RefCell::new(None);
     let failed_transition = resume_context_handoff(
         &mut agent,
-        std::slice::from_ref(&initial_context),
         &summary,
+        vec![initial_context.clone()],
         Some(pending_prompt.clone()),
         async {
             *saved_summary.borrow_mut() = Some(summary.clone());
@@ -710,8 +710,8 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     );
     let (history, prompt) = resume_context_handoff(
         &mut agent,
-        std::slice::from_ref(&initial_context),
         &summary,
+        vec![initial_context],
         Some(pending_prompt),
         async {
             assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
@@ -754,11 +754,11 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     assert_eq!(
         resume["input"],
         json!([
-            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": INITIAL_CONTEXT }] },
             { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": context_summary_text(&summary) }] },
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": INITIAL_CONTEXT }] },
             { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": DEFERRED_PROMPT }] }
         ]),
-        "new provider must receive only initial context, the handoff summary, and the pending prompt"
+        "new provider must receive only the handoff summary, the workspace context, and the pending prompt"
     );
 }
 
@@ -775,7 +775,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     let (old_url, old_server) = spawn_responses_sse(vec![text_sse("no handoff document", 4, 4)]);
     let (new_url, new_server) =
         spawn_responses_sse(vec![text_sse("continued without a handoff", 4, 4)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let mut agent = test_agent(&old_url, &hook);
     let history = vec![
         Message::user(INITIAL_CONTEXT),
@@ -877,7 +877,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
 
 #[tokio::test]
 async fn provider_switch_waits_for_a_durable_reasoning_cutoff() {
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let mut agent = test_agent("http://127.0.0.1:1", &hook);
     let error = resume_without_provider_handoff(
         &mut agent,
@@ -892,55 +892,35 @@ async fn provider_switch_waits_for_a_durable_reasoning_cutoff() {
 }
 
 #[tokio::test]
-async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
+async fn over_budget_prompt_waits_for_the_handoff() {
     let (base_url, server) = spawn_responses_sse(vec![
         handoff_document_sse(FIRST_SUMMARY),
         text_sse("continued from handoff", 4, 4),
     ]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT);
     let agent = test_agent(&base_url, &hook);
     let history = vec![
         Message::user(OLD_CONTEXT),
         Message::assistant("The previous run's final answer."),
     ];
     let prompt = Message::user(DEFERRED_PROMPT);
-
-    match drive(&agent, &hook, prompt.clone(), history.clone()).await {
-        DriveEnd::HandoffNeeded => {}
-        other => panic!("over-budget first call should stop before the model, got {other:?}"),
-    }
-
-    let request = take_handoff(&hook);
-    assert_eq!(request.history, history);
-    assert_eq!(request.deferred_prompt, Some(prompt.clone()));
-    assert!(request.before_prompt);
-    assert!(
-        !request
-            .history
-            .iter()
-            .any(|message| message_contains(message, DEFERRED_PROMPT)),
-        "deferred user prompt must stay out of the handoff history"
-    );
+    assert!(hook.handoff_due());
 
     hook.start_handoff();
-    match drive(&agent, &hook, handoff_prompt(), request.history.clone()).await {
+    match drive(&agent, &hook, handoff_prompt(), history).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("handoff tool should submit the document, got {other:?}"),
     }
 
     hook.restart();
     let summary = Message::user(context_summary_text(FIRST_SUMMARY));
-    match drive(&agent, &hook, prompt.clone(), vec![summary]).await {
+    match drive(&agent, &hook, prompt, vec![summary]).await {
         DriveEnd::Finished(text) => assert_eq!(text, "continued from handoff"),
         other => panic!("fresh runner should complete the deferred prompt, got {other:?}"),
     }
 
     let captured = server.join().expect("responses mock thread");
-    assert_eq!(
-        captured.len(),
-        2,
-        "stop-before-model then handoff then resume, got {captured:?}"
-    );
+    assert_eq!(captured.len(), 2, "handoff then resume, got {captured:?}");
 
     let handoff = parse_request(&captured[0]);
     assert_handoff_request(&handoff);
@@ -987,7 +967,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
         exec_command_sse(80, 20),
         handoff_document_sse(FIRST_SUMMARY),
     ]);
-    let hook = ContextHandoffHook::new(50, 0, false);
+    let hook = ContextHandoffHook::new(50, 0);
     let agent = test_agent(&base_url, &hook);
     let history = vec![Message::user(OLD_CONTEXT)];
     let prompt = Message::user("run pwd");
@@ -997,27 +977,23 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
         other => panic!("usage over the limit should stop the next completion, got {other:?}"),
     }
 
-    let request = take_handoff(&hook);
-    assert!(request.deferred_prompt.is_none());
-    assert!(!request.before_prompt);
+    let history = take_handoff(&hook);
     assert!(
-        request
-            .history
+        history
             .iter()
             .any(|message| message_contains(message, TOOL_RESULT)),
         "mid-run handoff history must include the pending tool result, got {:?}",
-        request.history
+        history
     );
     assert!(
-        request
-            .history
+        history
             .iter()
             .any(|message| message_contains(message, OLD_CONTEXT)),
         "mid-run handoff history should still carry earlier turns"
     );
 
     hook.start_handoff();
-    match drive(&agent, &hook, handoff_prompt(), request.history.clone()).await {
+    match drive(&agent, &hook, handoff_prompt(), history.clone()).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("handoff tool should submit the document, got {other:?}"),
     }
@@ -1062,7 +1038,7 @@ async fn context_handoff_repeats_after_restart() {
         exec_command_sse(90, 20),
         handoff_document_sse(SECOND_SUMMARY),
     ]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT);
     let agent = test_agent(&base_url, &hook);
     let prompt = Message::user(DEFERRED_PROMPT);
 
@@ -1079,7 +1055,7 @@ async fn context_handoff_repeats_after_restart() {
     }
     let first = take_handoff(&hook);
     hook.start_handoff();
-    match drive(&agent, &hook, handoff_prompt(), first.history).await {
+    match drive(&agent, &hook, handoff_prompt(), first).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("first handoff should submit, got {other:?}"),
     }
@@ -1097,25 +1073,21 @@ async fn context_handoff_repeats_after_restart() {
         other => panic!("usage on the fresh runner should trigger a second handoff, got {other:?}"),
     }
     let second = take_handoff(&hook);
-    assert!(second.deferred_prompt.is_none());
-    assert!(!second.before_prompt);
     assert!(
         second
-            .history
             .iter()
             .any(|message| message_contains(message, TOOL_RESULT)),
         "second handoff should keep the pending tool result from the fresh runner"
     );
     assert!(
         !second
-            .history
             .iter()
             .any(|message| message_contains(message, OLD_CONTEXT)),
         "second handoff must not revive the original pre-handoff context"
     );
 
     hook.start_handoff();
-    match drive(&agent, &hook, handoff_prompt(), second.history).await {
+    match drive(&agent, &hook, handoff_prompt(), second).await {
         DriveEnd::Submitted(document) => assert_eq!(document, SECOND_SUMMARY),
         other => panic!("second handoff should submit a new document, got {other:?}"),
     }
@@ -1141,7 +1113,7 @@ async fn context_handoff_repeats_after_restart() {
 #[tokio::test]
 async fn empty_handoff_document_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse("   ")]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -1159,7 +1131,7 @@ async fn empty_handoff_document_is_rejected() {
 #[tokio::test]
 async fn truncated_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![truncated_handoff_sse()]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -1174,7 +1146,7 @@ async fn truncated_handoff_turn_is_rejected() {
 #[tokio::test]
 async fn text_only_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![text_sse("I will summarise in prose", 8, 8)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -1189,7 +1161,7 @@ async fn text_only_handoff_turn_is_rejected() {
 #[tokio::test]
 async fn two_handoff_tool_calls_are_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![two_tool_calls_sse()]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -1204,7 +1176,7 @@ async fn two_handoff_tool_calls_are_rejected() {
 #[tokio::test]
 async fn handoff_turn_only_accepts_the_handoff_tool_even_with_other_tools_advertised() {
     let (base_url, server) = spawn_responses_sse(vec![exec_command_sse(4, 4)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -1222,7 +1194,7 @@ async fn handoff_turn_only_accepts_the_handoff_tool_even_with_other_tools_advert
 async fn handoff_typos_cannot_bypass_single_call_validation_through_repair() {
     let body = two_tool_calls_sse().replace("handoff_context", "handoff-context");
     let (base_url, server) = spawn_responses_sse(vec![body]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     hook.start_handoff();
     let agent = test_agent(&base_url, &hook);
     let mut stream = agent

@@ -32,7 +32,6 @@ pub(crate) use self::async_tools::max_yield_ms;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
-pub(crate) use self::cwd::working_directory_message;
 pub(crate) use self::image_urls::ConvexImageUrls;
 use self::image_urls::ImageUrlMap;
 use self::mandates::{
