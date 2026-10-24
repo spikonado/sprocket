@@ -567,7 +567,12 @@ export const beginRun = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+		if (
+			!ownsActiveRunClaim(run, args.claimId, Date.now()) ||
+			run.cancellationRequestedAt !== undefined
+		) {
+			return false;
+		}
 
 		if (args.handoff) {
 			const recorded = await recordContextHandoff(ctx, run, {

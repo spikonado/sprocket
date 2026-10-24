@@ -126,10 +126,6 @@ export async function createQueuedRunRecord(
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
 
-	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
-		throw new Error('Message cannot be empty.');
-	}
-
 	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
 	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || imageUploads.length > 0;
 	const machineId = args.machineId;
@@ -152,6 +148,10 @@ export async function createQueuedRunRecord(
 
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash);
+	}
+
+	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
+		throw new Error('Message cannot be empty.');
 	}
 
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
@@ -240,9 +240,12 @@ export async function createQueuedRunRecord(
 	}
 
 	let taskDeadlineAt = args.taskDeadlineAt;
+	let inheritedPrompt: Doc<'runs'>['pendingPrompt'];
 
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
+		// A parent that failed before it began never wrote its prompt.
+		if (!recordsPrompt) inheritedPrompt = parent.pendingPrompt;
 		const automaticRecovery = args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX);
 
 		if (
@@ -316,14 +319,14 @@ export async function createQueuedRunRecord(
 
 	await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 
-	const promptBody = {
+	const promptBody = inheritedPrompt ?? {
 		text: prompt,
 		imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds)
 	};
 
-	if (recordsPrompt && args.deferPrompt) {
+	if ((recordsPrompt || inheritedPrompt) && args.deferPrompt) {
 		await ctx.db.patch('runs', runId, { pendingPrompt: promptBody });
-	} else if (recordsPrompt) {
+	} else if (recordsPrompt || inheritedPrompt) {
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
 			runId,

@@ -793,6 +793,41 @@ describe('agentRuntime context accounting', () => {
 
 		expect(run).toMatchObject({ status: 'failed', pendingPrompt: { text: 'Lost before begin' } });
 		expect(thread?.archivedAt).toBeTypeOf('number');
+
+		const continuation = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'continue-never-began',
+			executionSecret,
+			prompt: '',
+			continuationOfRunId: runId,
+			deferPrompt: true
+		});
+
+		await expect(
+			asUser.query(api.agentRuntime.getContext, { runId: continuation.runId, executionSecret })
+		).resolves.toMatchObject({ prompt: 'Lost before begin' });
+	});
+
+	it('does not begin a run the user stopped', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'stopped-secret';
+		const claim = { claimId: 'claim-stopped', executionSecret };
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'stopped',
+			executionSecret,
+			prompt: 'Stop me',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(
+			asUser.mutation(api.agentRuntime.beginRun, { runId, ...claim, workspaceContext: [] })
+		).resolves.toBe(false);
 	});
 
 	it('rejects a handoff that would move the cutoff backwards', async () => {
