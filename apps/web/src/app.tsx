@@ -266,7 +266,7 @@ function getComposerRecoveryKey(userId: string, scope: string) {
 }
 
 type ComposerRecovery = {
-	message: string;
+	message: string | null;
 	prompt: string;
 	attachments?: ComposerAttachment[];
 	storageIds?: Id<'_storage'>[];
@@ -1870,7 +1870,7 @@ export default function App({
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 
-		const recoverSubmission = (message: string, submissionId?: string) => {
+		const recoverSubmission = (message: string | null, submissionId?: string) => {
 			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
@@ -1986,29 +1986,36 @@ export default function App({
 				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
 			}
 
+			const clearLaunch = () => {
+				if (!threadId) return;
+
+				const nextPendingAgentLaunches = clearPendingAgentLaunch(
+					pendingAgentLaunchesRef.current,
+					threadId,
+					launchId
+				);
+
+				if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
+					setPendingAgentLaunches(nextPendingAgentLaunches);
+				}
+			};
+
 			await launchAgentRun({
 				userId: submittedUserId,
 				localApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
-
-					if (threadId) {
-						const nextPendingAgentLaunches = clearPendingAgentLaunch(
-							pendingAgentLaunchesRef.current,
-							threadId,
-							launchId
-						);
-
-						if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
-							setPendingAgentLaunches(nextPendingAgentLaunches);
-						}
-					}
-
+					clearLaunch();
 					// The server answered, so any run it created has already failed.
 					recoverSubmission(
 						error instanceof Error ? error.message : 'Failed to start the local agent run.',
 						error instanceof LocalResponseError ? crypto.randomUUID() : undefined
 					);
+				},
+				onStopped: () => {
+					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					clearLaunch();
+					recoverSubmission(null, crypto.randomUUID());
 				},
 				onStarted: (_runId, createdThreadId) => {
 					if (isSubmittedUserCurrent()) {
@@ -2196,6 +2203,11 @@ export default function App({
 					setCurrentError(error.message);
 				},
 				onStarted: () => {},
+				onStopped: () => {
+					setPendingAgentLaunches((launches) =>
+						clearPendingAgentLaunch(launches, threadId, launchId)
+					);
+				},
 				threadId,
 				prompt: '',
 				storageIds: [],

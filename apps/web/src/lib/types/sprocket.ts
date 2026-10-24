@@ -107,6 +107,8 @@ export type AgentRunRequest = {
 export type AgentRunStart = {
 	runId: Id<'runs'>;
 	threadId: Id<'threadRecords'>;
+	/** The run was stopped before it began, so its prompt was never written. */
+	stopped: boolean;
 };
 
 export type LiveCompletionOverlay = {

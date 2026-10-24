@@ -109,7 +109,8 @@ const runningCommandsSchema = z.object({
 
 const agentRunStartSchema = z.object({
 	runId: z.string(),
-	threadId: z.string()
+	threadId: z.string(),
+	stopped: z.boolean()
 });
 
 const localTranscriptAttachmentSchema = z.object({
@@ -535,7 +536,11 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(requestBody)
 			});
 
-			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
+			return {
+				runId: asConvexId(result.runId),
+				threadId: asConvexId(result.threadId),
+				stopped: result.stopped
+			};
 		},
 		fetchTranscriptDisplay: async (requestBody, signal) =>
 			await request('/api/transcript/display', displayPageSchema, {

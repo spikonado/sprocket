@@ -58,6 +58,8 @@ pub struct AgentLaunchRequest {
 pub struct LaunchedRun {
     pub run_id: String,
     pub thread_id: String,
+    /// The run was stopped before it began, so its prompt was never written.
+    pub stopped: bool,
 }
 
 #[derive(Debug)]
@@ -326,15 +328,15 @@ async fn launch_agent_inner(
                 let result = tokio::select! {
                     biased;
                     Ok(()) = begun_receiver => {
-                        let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
+                        let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone(), false)));
                         running.await
                     }
                     result = &mut running => {
-                        let error = match &result {
-                            Ok(()) => "the run stopped before it started".to_string(),
-                            Err(error) => format!("{error:#}"),
+                        let started = match &result {
+                            Ok(()) => Ok((run_id.clone(), thread_id.clone(), true)),
+                            Err(error) => Err(format!("{error:#}")),
                         };
-                        let _ = start_result_sender.send(Err(error));
+                        let _ = start_result_sender.send(started);
                         result
                     }
                 };
@@ -361,12 +363,16 @@ async fn launch_agent_inner(
         }
     });
 
-    let (run_id, thread_id) = start_result_receiver
+    let (run_id, thread_id, stopped) = start_result_receiver
         .await
         .map_err(|_| anyhow!("agent launch task stopped unexpectedly"))
         .and_then(|started| started.map_err(|error| anyhow!(error)))
         .map_err(|error| LaunchError::Internal(error.context("failed to start agent run")))?;
-    Ok(LaunchedRun { run_id, thread_id })
+    Ok(LaunchedRun {
+        run_id,
+        thread_id,
+        stopped,
+    })
 }
 
 #[cfg(test)]
