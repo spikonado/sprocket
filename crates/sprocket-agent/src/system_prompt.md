@@ -70,6 +70,7 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
 - File links: link files and folders with `[name](path/to/file.rs)`.
 - Paths: use paths relative to your current working directory. Use absolute paths only for files outside it, such as `/tmp/screenshot.png`.
 - Artifacts: put `artifact:<artifactId>` in its own paragraph to embed an artifact card.
+- Visuals: a fenced block tagged `html-visual` or `jsx-visual` renders inline as a live page. Use one when a chart, table, diagram, or mockup says more than prose. Color it with the app's theme tokens, such as `var(--foreground)`, `var(--muted-foreground)`, `var(--border)`, and `var(--chart-1)` to `var(--chart-5)`, and leave the outermost element without a background or padding. The `artifacts` skill lists every token and layout rule.
 - Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block
 - Code: fenced code blocks with a language tag get syntax highlighting, a language icon, and a copy button.
 
