@@ -580,14 +580,11 @@ function scrapeFromPayload(payload: ExecutorJobPayload): ScrapeJobArgs {
 }
 
 function developerSearchFromPayload(payload: ExecutorJobPayload): DeveloperSearchArgs {
-	if (!('query' in payload) || payload.query === undefined) return { query: '' };
-	const args: DeveloperSearchArgs = { query: payload.query };
-
-	if ('types' in payload && payload.types) args.types = payload.types;
-
-	if ('repos' in payload && payload.repos) args.repos = payload.repos;
-
-	return args;
+	return {
+		query: ('query' in payload && payload.query) || '',
+		types: 'types' in payload ? payload.types : undefined,
+		repos: 'repos' in payload ? payload.repos : undefined
+	};
 }
 
 export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webRequests'>) {

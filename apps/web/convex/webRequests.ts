@@ -35,12 +35,6 @@ const JOB_KIND_BY_REQUEST_KIND = {
 	developer_search: 'developer_search'
 } as const satisfies Record<WebRequestKind, Doc<'executorJobs'>['kind']>;
 
-function isRequestJobKind(
-	kind: Doc<'executorJobs'>['kind']
-): kind is 'scrape_url' | 'developer_search' {
-	return kind === 'scrape_url' || kind === 'developer_search';
-}
-
 function poolFor(kind: WebRequestKind) {
 	return kind === 'scrape' ? contextDevPool : firecrawlPool;
 }
@@ -52,8 +46,6 @@ export const requestJob = internalMutation({
 
 		if (!active || active.job.status !== 'claimed' || active.job.cloudWorkId !== undefined)
 			return null;
-
-		if (!isRequestJobKind(active.job.kind)) return null;
 
 		return { kind: active.job.kind, payload: active.job.payload };
 	}

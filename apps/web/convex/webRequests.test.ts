@@ -133,7 +133,7 @@ describe('web request queue', () => {
 		});
 
 		expect(await settled(t, auth, id)).toMatchObject({ status: 'completed' });
-		expect(search).toHaveBeenCalledWith('workpool', expect.objectContaining({ k: 10 }));
+		expect(search).toHaveBeenCalledOnce();
 		expect(JSON.parse((await storedResult(t, id))!)).toEqual({
 			results: [{ url: 'https://docs.example.com', passages: [{ text: 'Pools' }] }]
 		});

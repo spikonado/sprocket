@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::context::{AgentToolContext, tool_error, tool_failure};
+use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job_with_id;
 use super::web::web_request_args;
 
@@ -39,7 +39,7 @@ impl rig::tool::Tool for DeveloperSearchTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        "Search developer documentation and GitHub issues, pull requests, and READMEs. Returns ranked pages with passages and their URLs. Prefer it over `web_search` for questions about libraries, APIs, SDKs, and bugs in open-source projects."
+        "Search developer documentation and GitHub issues, pull requests, and READMEs. Returns ranked pages with passages and their URLs."
             .to_string()
     }
 
@@ -52,9 +52,6 @@ impl rig::tool::Tool for DeveloperSearchTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        if args.query.trim().is_empty() {
-            return Err(tool_failure("Search query cannot be empty."));
-        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let mut results_file = None;
         let saved_file = &mut results_file;
