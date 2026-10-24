@@ -1,5 +1,6 @@
 import DOMPurify from 'isomorphic-dompurify';
 import { Marked, type Token } from 'marked';
+import type { VisualKind } from './artifact-preview';
 import { markdownFences } from './markdown-fences';
 import { isWindowsImagePath } from './markdown-image-path';
 import { markdownMath } from './markdown-math';
@@ -34,9 +35,37 @@ export function renderMarkdown(value: string) {
 }
 
 export type MarkdownBlock =
-	{ type: 'html'; html: string } | { type: 'artifact'; artifactId: string };
+	| { type: 'html'; html: string }
+	| { type: 'artifact'; artifactId: string }
+	| { type: 'visual'; kind: VisualKind; source: string };
 
 const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
+
+const VISUAL_LANGUAGES = new Map<string, VisualKind>([
+	['html-visual', 'html'],
+	['jsx-visual', 'react']
+]);
+
+const CLOSING_FENCE = /\n {0,3}(?:`{3,}|~{3,})\s*$/;
+
+function specialBlock(
+	token: Token,
+	availableArtifactIds: ReadonlySet<string>
+): MarkdownBlock | undefined {
+	if (token.type === 'code') {
+		const kind = VISUAL_LANGUAGES.get(token.lang?.split(/\s/, 1)[0].toLowerCase() ?? '');
+
+		// A visual still streaming in stays a code block until its fence closes.
+		if (!kind || !CLOSING_FENCE.test(token.raw)) return;
+
+		return { type: 'visual', kind, source: token.text };
+	}
+
+	const artifactId =
+		token.type === 'paragraph' ? ARTIFACT_REFERENCE.exec(token.raw)?.[1] : undefined;
+
+	if (artifactId && availableArtifactIds.has(artifactId)) return { type: 'artifact', artifactId };
+}
 
 export function renderMarkdownBlocks(
 	value: string,
@@ -55,16 +84,15 @@ export function renderMarkdownBlocks(
 	};
 
 	for (const token of marked.lexer(value)) {
-		const match = token.type === 'paragraph' ? ARTIFACT_REFERENCE.exec(token.raw) : null;
-		const artifactId = match?.[1];
+		const block = specialBlock(token, availableArtifactIds);
 
-		if (!artifactId || !availableArtifactIds.has(artifactId)) {
+		if (!block) {
 			markdownTokens.push(token);
 			continue;
 		}
 
 		flushMarkdown();
-		blocks.push({ type: 'artifact', artifactId });
+		blocks.push(block);
 	}
 
 	flushMarkdown();

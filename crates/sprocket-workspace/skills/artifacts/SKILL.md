@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Use when working on artifacts.
+description: Use when working on artifacts or writing `html-visual` and `jsx-visual` blocks.
 ---
 
 # Artifacts
@@ -40,3 +40,12 @@ function App() {
 ## HTML previews
 
 Provide a complete HTML document (`<!DOCTYPE html>…`) when React is unnecessary.
+
+## Visuals
+
+A fenced block tagged `html-visual` (an HTML document or fragment) or `jsx-visual` (React, following the rules above) renders inline in your message once its closing fence arrives. Use one for a chart, table, diagram, or mockup that belongs to this reply. Use an artifact instead when the user will revisit or edit the page.
+
+- The frame is as wide as the message column and grows to fit the page, up to 1600px. Don't size anything with `vh` or `height: 100%`; give charts fixed pixel heights.
+- The frame is transparent over the thread. Leave `html`, `body`, and the outermost element without a background, horizontal padding, border, or title. Give a box its own background only when it must stand apart, with at least 16px of padding and `var(--radius)` corners.
+- `:root` carries the app's theme, and it updates live when the user switches light or dark mode. Use these tokens instead of fixed colors: `--background`, `--foreground`, `--surface`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--primary`, `--primary-foreground`, `--secondary`, `--secondary-foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`, `--accent-strong`, `--accent-soft`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, `--chart-1` to `--chart-5` for data series, `--radius`, `--font-sans`, and `--font-mono`.
+- Check the page with `agent-browser` before sending it.

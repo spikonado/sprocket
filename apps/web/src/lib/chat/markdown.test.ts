@@ -111,6 +111,18 @@ describe('renderMarkdown', () => {
 });
 
 describe('renderMarkdownBlocks', () => {
+	it('renders a visual once its fence closes', () => {
+		const visual = '```jsx-visual\nfunction App() {}\n';
+
+		expect(renderMarkdownBlocks(`Before\n\n${visual}\`\`\``, new Set())).toEqual([
+			{ type: 'html', html: '<p>Before</p>\n' },
+			{ type: 'visual', kind: 'react', source: 'function App() {}' }
+		]);
+		expect(renderMarkdownBlocks(visual, new Set())).toEqual([
+			{ type: 'html', html: expect.stringContaining('language-jsx-visual') }
+		]);
+	});
+
 	it('renders math on both sides of an artifact reference', () => {
 		const blocks = renderMarkdownBlocks('$x^2$\n\nartifact:known\n\n\\[y_1\\]', new Set(['known']));
 
