@@ -91,11 +91,6 @@ export type RawDocument = {
 	contentType?: string;
 };
 
-type WebRequest = Pick<
-	Doc<'webRequests'>,
-	'_id' | 'runId' | 'claimId' | 'jobId' | 'kind' | 'rawDocument' | 'expiresAt'
->;
-
 function isRetryableHttpStatus(status: number): boolean {
 	return status === 408 || status === 425 || status === 429 || status >= 500;
 }
@@ -516,7 +511,7 @@ function scrapeFromPayload(payload: ExecutorJobPayload): ScrapeJobArgs {
 		: { url: payload.url };
 }
 
-export async function executeQueuedWebRequest(ctx: ActionCtx, request: WebRequest) {
+export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webRequests'>) {
 	const job = await ctx.runMutation(internal.webRequests.requestJob, {
 		jobId: request.jobId,
 		runId: request.runId,

@@ -414,10 +414,7 @@ export const vPageOutline = v.object({
 	headings: v.array(v.object({ level: v.number(), text: v.string() }))
 });
 
-/**
- * Stored scrape_url job result. Historical rows may include `truncated` or
- * `summary`; current rows carry `outline` instead.
- */
+/** Stored scrape_url job result. Historical rows may include `truncated` or `summary`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
