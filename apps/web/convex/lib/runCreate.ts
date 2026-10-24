@@ -244,8 +244,10 @@ export async function createQueuedRunRecord(
 
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
+
 		// A parent that failed before it began never wrote its prompt.
 		if (!recordsPrompt) inheritedPrompt = parent.pendingPrompt;
+
 		const automaticRecovery = args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX);
 
 		if (
