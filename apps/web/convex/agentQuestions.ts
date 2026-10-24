@@ -201,17 +201,15 @@ export const answer = mutation({
 
 		return {
 			question: toAgentQuestionSnapshot(result.question),
-			continuation: result.kind === 'answered' ? result.continuation : undefined
+			continuation: result.continuation
 		};
 	}
 });
 
 type QuestionAnswerResult = {
 	question: Doc<'agentQuestions'>;
-} & (
-	| { kind: 'answered'; continuation?: Awaited<ReturnType<typeof questionContinuation>> }
-	| { kind: 'alreadyAnswered' }
-);
+	continuation?: Awaited<ReturnType<typeof questionContinuation>>;
+} & ({ kind: 'answered' } | { kind: 'alreadyAnswered' });
 
 export async function answerPendingQuestion(
 	ctx: MutationCtx,
@@ -235,7 +233,10 @@ export async function answerPendingQuestion(
 
 		return {
 			kind: 'alreadyAnswered',
-			question
+			question,
+			continuation: question.continuationClaim
+				? undefined
+				: await questionContinuation(ctx, question)
 		};
 	}
 
@@ -311,15 +312,18 @@ export async function questionContinuation(
 		.order('asc')
 		.collect();
 
-	const prompt = formatQuestionContinuationPrompt(
-		runQuestions.flatMap((entry) =>
-			entry.requiresContinuation && entry.answer
-				? [{ question: entry.question, answer: entry.answer }]
-				: []
-		)
+	const continuationAnswers = runQuestions.flatMap((entry) =>
+		entry.requiresContinuation && entry.answer
+			? [{ question: entry.question, answer: entry.answer }]
+			: []
 	);
 
-	return { runId: continuationOfRunId, prompt };
+	if (continuationAnswers.length === 0) return undefined;
+
+	return {
+		runId: continuationOfRunId,
+		prompt: formatQuestionContinuationPrompt(continuationAnswers)
+	};
 }
 
 export const timeout = internalMutation({
