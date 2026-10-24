@@ -955,9 +955,21 @@ export const vTranscriptCompletionItem = v.union(
 	vAssistantToolCallPart
 );
 
+/** Prompts the agent writes for the model; the UI does not show them. */
+export const vHiddenPromptKind = v.union(
+	v.literal('instructions'),
+	v.literal('environment'),
+	v.literal('continuation')
+);
+
+export const vHiddenPrompt = v.object({ kind: vHiddenPromptKind, text: v.string() });
+
+export type HiddenPrompt = Infer<typeof vHiddenPrompt>;
+
 export const vTranscriptPromptBody = v.object({
 	text: v.string(),
-	imageUploads: v.array(vTranscriptAttachmentMeta)
+	imageUploads: v.array(vTranscriptAttachmentMeta),
+	hidden: v.optional(vHiddenPromptKind)
 });
 
 export const vTranscriptCompletionBody = v.object({

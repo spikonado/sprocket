@@ -106,6 +106,7 @@ export function launchAgentRun(args: {
 	localApi: LocalApi;
 	onError: (error: Error) => void;
 	onStarted: (runId: Id<'runs'>, threadId: Id<'threadRecords'>) => void;
+	onStopped: () => void;
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
@@ -141,8 +142,12 @@ export function launchAgentRun(args: {
 
 	return args.localApi
 		.runAgent(request)
-		.then(({ runId, threadId }) => {
-			args.onStarted(runId, threadId);
+		.then(({ runId, threadId, stopped }) => {
+			if (stopped) {
+				args.onStopped();
+			} else {
+				args.onStarted(runId, threadId);
+			}
 		})
 		.catch((error) => {
 			const failure = error instanceof Error ? error : new Error(String(error));

@@ -17,6 +17,7 @@ import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
 import { runStartedAt } from '@convex/lib/runs';
+import { getTranscriptState } from '@convex/lib/transcriptParts';
 
 type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
@@ -127,6 +128,8 @@ export async function finalizeRunRecord(
 		questionCursor: -1
 	});
 
+	await settleEmptyRootThread(ctx, run.threadId);
+
 	const traceId = await analyticsId(run._id);
 
 	await captureAnonymous(ctx, {
@@ -142,6 +145,17 @@ export async function finalizeRunRecord(
 	});
 
 	return true;
+}
+
+// A new thread whose first run stopped before it began has nothing to show.
+async function settleEmptyRootThread(ctx: MutationCtx, threadId: Doc<'threadRecords'>['_id']) {
+	const thread = await ctx.db.get('threadRecords', threadId);
+
+	if (!thread || thread.parentThreadId !== undefined || thread.archivedAt !== undefined) return;
+
+	if (((await getTranscriptState(ctx, threadId))?.totalParts ?? 0) > 0) return;
+
+	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
 }
 
 export async function abandonRunRecord(ctx: MutationCtx, run: ExecutionRun): Promise<boolean> {

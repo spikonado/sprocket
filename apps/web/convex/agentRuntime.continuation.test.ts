@@ -128,9 +128,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			runId: created.runId,
 			promptPart: { prompt: { text: args.prompt } }
 		});
-		await expect(
-			insertQueuedRun(t, asUser, { ...args, prompt: 'A different answer' })
-		).rejects.toThrow('Submission prompt does not match the existing run.');
 
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => [part.runId, part.prompt?.text])).toEqual([

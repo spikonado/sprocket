@@ -625,6 +625,232 @@ describe('agentRuntime context accounting', () => {
 		).rejects.toThrow('Conflicting context handoff retry.');
 	});
 
+	it('begins a deferred run with its context before its prompt', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'begin-secret';
+		const claim = { claimId: 'claim-begin', executionSecret };
+
+		const { runId, promptPart } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'begin',
+			executionSecret,
+			prompt: 'Do the long task',
+			deferPrompt: true
+		});
+
+		expect(promptPart).toBeUndefined();
+		await expect(
+			asUser.query(api.agentRuntime.getContext, { runId, executionSecret })
+		).resolves.toMatchObject({
+			pendingPrompt: { text: 'Do the long task', imageUploads: [] }
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
+		const environment = { kind: 'environment' as const, text: '# Environment' };
+
+		for (let attempt = 0; attempt < 2; attempt++) {
+			await expect(
+				asUser.mutation(api.agentRuntime.beginRun, {
+					runId,
+					...claim,
+					workspaceContext: [environment]
+				})
+			).resolves.toBe(true);
+		}
+
+		await expect(
+			asUser.query(api.agentRuntime.getContext, { runId, executionSecret })
+		).resolves.not.toHaveProperty('pendingPrompt');
+
+		await finalizeTextCompletion(asUser, {
+			runId,
+			...claim,
+			attemptSeq: 1,
+			streamId: 'stream-begin',
+			text: 'Finished the first step'
+		});
+		await registerCompletionAttempt(asUser, { runId, ...claim, attemptSeq: 2 });
+		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
+			runId,
+			...claim,
+			summary: 'First step is done.',
+			completionAttemptSeq: 2,
+			workspaceContext: [environment]
+		});
+
+		const parts = await t.run(async (ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+
+		expect(parts.map((part) => [part.kind, part.prompt?.hidden ?? part.prompt?.text])).toEqual([
+			['prompt', 'environment'],
+			['prompt', 'Do the long task'],
+			['completion', undefined],
+			['prompt', 'environment']
+		]);
+		expect(await readThreadCutoff(t, threadId)).toMatchObject({
+			contextSummaryThroughPartNumber: 2
+		});
+	});
+
+	it('begins a run with a handoff that covers the earlier runs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const first = await createQueuedRun(t, asUser, threadId, 'begin-first', 'first-secret');
+		const firstClaim = { claimId: 'claim-1', executionSecret: 'first-secret' };
+
+		await asUser.mutation(api.agentRuntime.start, { runId: first.runId, ...firstClaim });
+		await finalizeTextCompletion(asUser, {
+			runId: first.runId,
+			...firstClaim,
+			attemptSeq: 1,
+			streamId: 'stream-first',
+			text: 'Old work completed',
+			usage: { contextTokens: 90_000 }
+		});
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: first.runId,
+			expectedStatus: 'running',
+			expectedClaimId: 'claim-1',
+			text: 'Old work completed',
+			status: 'completed',
+			executionSecret: 'first-secret'
+		});
+
+		const claim = { claimId: 'claim-2', executionSecret: 'second-secret' };
+
+		const second = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'begin-second',
+			executionSecret: claim.executionSecret,
+			prompt: 'New prompt',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId: second.runId, ...claim });
+		await registerCompletionAttempt(asUser, { runId: second.runId, ...claim, attemptSeq: 1 });
+
+		await expect(
+			asUser.mutation(api.agentRuntime.beginRun, {
+				runId: second.runId,
+				...claim,
+				workspaceContext: [{ kind: 'environment', text: '# Environment' }],
+				handoff: {
+					summary: 'The old work is complete.',
+					completionAttemptSeq: 1,
+					handoffCalls: [modelCall()]
+				}
+			})
+		).resolves.toBe(true);
+
+		expect(await readThreadCutoff(t, threadId)).toEqual({
+			contextSummary: 'The old work is complete.',
+			contextSummaryThroughPartNumber: 1
+		});
+		expect((await readThreadUsage(t, threadId)).contextTokens).toBeUndefined();
+
+		const retained = await asUser.query(api.transcript.getParts, { threadId, numbers: [2, 3] });
+
+		expect(retained.parts.map((part) => part.prompt?.hidden ?? part.prompt?.text)).toEqual([
+			'environment',
+			'New prompt'
+		]);
+	});
+
+	it('settles a new thread whose first run fails before it begins', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'never-began-secret';
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'never-began',
+			executionSecret,
+			prompt: 'Lost before begin',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+			submissionId: 'never-began',
+			threadId,
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret,
+			text: '',
+			lastError: 'startup failed'
+		});
+
+		const { run, thread } = await t.run(async (ctx) => ({
+			run: await ctx.db.get('runs', runId),
+			thread: await ctx.db.get('threadRecords', threadId)
+		}));
+
+		expect(run).toMatchObject({ status: 'failed', pendingPrompt: { text: 'Lost before begin' } });
+		expect(thread?.archivedAt).toBeTypeOf('number');
+
+		const continuation = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'continue-never-began',
+			executionSecret,
+			prompt: '',
+			continuationOfRunId: runId,
+			deferPrompt: true
+		});
+
+		await expect(
+			asUser.query(api.agentRuntime.getContext, { runId: continuation.runId, executionSecret })
+		).resolves.toMatchObject({ pendingPrompt: { text: 'Lost before begin' } });
+	});
+
+	it('does not begin a run the user stopped', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'stopped-secret';
+		const claim = { claimId: 'claim-stopped', executionSecret };
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'stopped',
+			executionSecret,
+			prompt: 'Stop me',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(
+			asUser.mutation(api.agentRuntime.beginRun, { runId, ...claim, workspaceContext: [] })
+		).resolves.toBe(false);
+	});
+
+	it('reports a committed begin when its retry follows a stop', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'begun-stopped-secret';
+		const claim = { claimId: 'claim-begun-stopped', executionSecret };
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'begun-stopped',
+			executionSecret,
+			prompt: 'Begin, then stop',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
+		const begin = { runId, ...claim, workspaceContext: [] };
+		await asUser.mutation(api.agentRuntime.beginRun, begin);
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(asUser.mutation(api.agentRuntime.beginRun, begin)).resolves.toBe(true);
+	});
+
 	it('rejects a handoff that would move the cutoff backwards', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

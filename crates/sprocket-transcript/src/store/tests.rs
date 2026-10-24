@@ -11,6 +11,7 @@ fn prompt(number: u32, text: &str) -> TranscriptPart {
         prompt: Some(TranscriptPromptBody {
             text: text.to_string(),
             image_uploads: Vec::new(),
+            hidden: None,
         }),
         completion: None,
         tool: None,

@@ -131,6 +131,7 @@ import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
+import { LocalResponseError } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
 	ChatGptStatus,
@@ -265,7 +266,7 @@ function getComposerRecoveryKey(userId: string, scope: string) {
 }
 
 type ComposerRecovery = {
-	message: string;
+	message: string | null;
 	prompt: string;
 	attachments?: ComposerAttachment[];
 	storageIds?: Id<'_storage'>[];
@@ -1869,7 +1870,7 @@ export default function App({
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 
-		const recoverSubmission = (message: string) => {
+		const recoverSubmission = (message: string | null, submissionId?: string) => {
 			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
@@ -1882,9 +1883,10 @@ export default function App({
 				continuationOfRunId: submittedContinuationOfRunId,
 				autoSubmit: false,
 				submissionId:
-					!selectedThreadId && recoveryScope === originatingRecoveryScope
+					submissionId ??
+					(!selectedThreadId && recoveryScope === originatingRecoveryScope
 						? threadSubmissionId
-						: runSubmissionId
+						: runSubmissionId)
 			});
 		};
 
@@ -1984,27 +1986,36 @@ export default function App({
 				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
 			}
 
+			const clearLaunch = () => {
+				if (!threadId) return;
+
+				const nextPendingAgentLaunches = clearPendingAgentLaunch(
+					pendingAgentLaunchesRef.current,
+					threadId,
+					launchId
+				);
+
+				if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
+					setPendingAgentLaunches(nextPendingAgentLaunches);
+				}
+			};
+
 			await launchAgentRun({
 				userId: submittedUserId,
 				localApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
-
-					if (threadId) {
-						const nextPendingAgentLaunches = clearPendingAgentLaunch(
-							pendingAgentLaunchesRef.current,
-							threadId,
-							launchId
-						);
-
-						if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
-							setPendingAgentLaunches(nextPendingAgentLaunches);
-						}
-					}
-
+					clearLaunch();
+					// The server answered, so any run it created has already failed.
 					recoverSubmission(
-						error instanceof Error ? error.message : 'Failed to start the local agent run.'
+						error instanceof Error ? error.message : 'Failed to start the local agent run.',
+						error instanceof LocalResponseError ? crypto.randomUUID() : undefined
 					);
+				},
+				onStopped: () => {
+					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					clearLaunch();
+					recoverSubmission(null, crypto.randomUUID());
 				},
 				onStarted: (_runId, createdThreadId) => {
 					if (isSubmittedUserCurrent()) {
@@ -2192,6 +2203,11 @@ export default function App({
 					setCurrentError(error.message);
 				},
 				onStarted: () => {},
+				onStopped: () => {
+					setPendingAgentLaunches((launches) =>
+						clearPendingAgentLaunch(launches, threadId, launchId)
+					);
+				},
 				threadId,
 				prompt: '',
 				storageIds: [],

@@ -167,6 +167,7 @@ export async function insertQueuedRun(
 		fastMode?: boolean;
 		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
+		deferPrompt?: boolean;
 	}
 ) {
 	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
@@ -186,6 +187,8 @@ export async function insertQueuedRun(
 	};
 
 	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+
+	if (args.deferPrompt) request.deferPrompt = true;
 
 	return await t.mutation(internal.agentRuntime.insertGatewayRun, request);
 }

@@ -472,7 +472,8 @@ it('refreshes message recency after a successful send even when another project 
 			// SAFETY: fixture strings are only compared as opaque Convex document ids.
 			runId: 'run-new' as Id<'runs'>,
 			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			threadId: 'thread-new' as Id<'threadRecords'>
+			threadId: 'thread-new' as Id<'threadRecords'>,
+			stopped: false
 		});
 	});
 	fireEvent.click(await projectTrigger('Alpha'));
@@ -633,7 +634,8 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		runId: 'run-new' as Id<'runs'>,
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		threadId: 'thread-new' as Id<'threadRecords'>
+		threadId: 'thread-new' as Id<'threadRecords'>,
+		stopped: false
 	}));
 
 	let listCalls = 0;
@@ -734,7 +736,7 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 		expect(send).toHaveProperty('disabled', true);
 		expect(runAgent).toHaveBeenCalledOnce();
 		await act(async () => {
-			launch.resolve({ runId: nextRunId, threadId: thread._id });
+			launch.resolve({ runId: nextRunId, threadId: thread._id, stopped: false });
 			client.registerQuery(api.chat.selectedThreadLifecycle, {
 				threadId: thread._id,
 				phase: 'running',
@@ -794,7 +796,8 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 		launch.resolve({
 			// SAFETY: fixture strings are only compared as opaque Convex document ids.
 			runId: 'run-new' as Id<'runs'>,
-			threadId: thread._id
+			threadId: thread._id,
+			stopped: false
 		});
 		await vi.advanceTimersByTimeAsync(31_000);
 	});
@@ -1172,7 +1175,8 @@ it('launches the continuation prompt after an agent question is answered', async
 	const runAgent = vi.fn(async () => ({
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		runId: 'run-2' as Id<'runs'>,
-		threadId: thread._id
+		threadId: thread._id,
+		stopped: false
 	}));
 
 	const client = createConvexFixtures();

@@ -30,6 +30,7 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
                 reasoning: "high".into(),
                 fast: false,
             },
+            stopped: false,
         }));
     }
     let request = CliOutputRequest {
@@ -313,6 +314,7 @@ async fn concurrent_retries_recover_the_same_submission_and_reject_argument_chan
                 reasoning: "high".into(),
                 fast: false,
             },
+            stopped: false,
         }));
     }
     let (first, second) = tokio::join!(

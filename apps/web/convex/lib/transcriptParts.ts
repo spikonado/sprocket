@@ -2,6 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Value } from 'convex/values';
 import type {
+	HiddenPrompt,
 	TranscriptCompletionBody,
 	TranscriptPromptBody,
 	TranscriptToolBody
@@ -26,6 +27,11 @@ export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
 }
 
+/** `scope` keeps retries of one write idempotent and separates later writes. */
+export function hiddenPromptSourceKey(scope: string, kind: HiddenPrompt['kind']): string {
+	return `hiddenPrompt:${scope}:${kind}`;
+}
+
 export async function getPromptPart(
 	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>,
@@ -39,6 +45,22 @@ export async function getPromptPart(
 		.unique();
 
 	return part?.kind === 'prompt' && part.runId === runId && part.prompt ? part : null;
+}
+
+/** Skips the prompts the agent writes for the model. */
+export async function firstUserPromptPart(
+	ctx: MutationCtx | QueryCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'threadTranscriptParts'> | null> {
+	for await (const part of ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_kind_number', (query) =>
+			query.eq('threadId', threadId).eq('kind', 'prompt')
+		)) {
+		if (part.prompt?.hidden === undefined) return part;
+	}
+
+	return null;
 }
 
 export function completionSourceKey(runId: Id<'runs'>, streamId: string): string {
@@ -342,29 +364,31 @@ export async function attachmentMetaForUploads(
 	).filter((attachment) => attachment !== null);
 }
 
+export async function hydratePromptUrls(
+	ctx: MutationCtx | QueryCtx,
+	prompt: TranscriptPromptBody
+): Promise<TranscriptPromptBody> {
+	if (prompt.imageUploads.length === 0) return prompt;
+
+	const imageUploads = await Promise.all(
+		prompt.imageUploads.map(async (upload) => {
+			const url = await ctx.storage.getUrl(upload.storageId);
+
+			return url ? { ...upload, url } : upload;
+		})
+	);
+
+	return { ...prompt, imageUploads };
+}
+
 export async function hydrateTranscriptPartUrls(
 	ctx: MutationCtx | QueryCtx,
 	parts: Doc<'threadTranscriptParts'>[]
 ): Promise<Doc<'threadTranscriptParts'>[]> {
 	return await Promise.all(
-		parts.map(async (part) => {
-			if (!part.prompt || part.prompt.imageUploads.length === 0) {
-				return part;
-			}
-
-			const imageUploads = await Promise.all(
-				part.prompt.imageUploads.map(async (upload) => {
-					const url = await ctx.storage.getUrl(upload.storageId);
-
-					return url ? { ...upload, url } : upload;
-				})
-			);
-
-			return {
-				...part,
-				prompt: { ...part.prompt, imageUploads }
-			};
-		})
+		parts.map(async (part) =>
+			part.prompt ? { ...part, prompt: await hydratePromptUrls(ctx, part.prompt) } : part
+		)
 	);
 }
 

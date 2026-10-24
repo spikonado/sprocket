@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 
-use crate::{TranscriptAttachmentMeta, TranscriptPart, TranscriptStore};
+use crate::{TranscriptAttachmentMeta, TranscriptPart, TranscriptPromptBody, TranscriptStore};
 
 #[derive(Debug, thiserror::Error)]
 #[error("attachment is unavailable locally and its remote copy is missing or expired")]
@@ -129,21 +129,39 @@ where
 {
     for part in parts {
         let number = part.number;
-        let Some(prompt) = &mut part.prompt else {
-            continue;
-        };
-        for attachment in &mut prompt.image_uploads {
-            attachment.local_path =
-                match cache_attachment_with_url(store, user_id, thread_id, attachment, || {
-                    resolve(number, attachment.storage_id.clone())
-                })
-                .await
-                {
-                    Ok(path) => Some(path.to_string_lossy().into_owned()),
-                    Err(error) if error.is::<AttachmentUnavailable>() => None,
-                    Err(error) => return Err(error),
-                };
+        if let Some(prompt) = &mut part.prompt {
+            cache_attachments(store, user_id, thread_id, prompt, |storage_id| {
+                resolve(number, storage_id)
+            })
+            .await?;
         }
+    }
+    Ok(())
+}
+
+/// Sets each attachment's local path, or leaves it unset when the file is gone.
+pub async fn cache_attachments<F, Fut>(
+    store: &TranscriptStore,
+    user_id: &str,
+    thread_id: &str,
+    prompt: &mut TranscriptPromptBody,
+    mut resolve: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = anyhow::Result<Option<String>>>,
+{
+    for attachment in &mut prompt.image_uploads {
+        attachment.local_path =
+            match cache_attachment_with_url(store, user_id, thread_id, attachment, || {
+                resolve(attachment.storage_id.clone())
+            })
+            .await
+            {
+                Ok(path) => Some(path.to_string_lossy().into_owned()),
+                Err(error) if error.is::<AttachmentUnavailable>() => None,
+                Err(error) => return Err(error),
+            };
     }
     Ok(())
 }

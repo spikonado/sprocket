@@ -4,8 +4,8 @@ use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
 use super::store::TranscriptStore;
 use super::types::{
-    TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart, TranscriptPartKind,
-    TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
+    TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -69,6 +69,8 @@ struct RemoteTranscriptPart {
 struct RemotePrompt {
     text: String,
     image_uploads: Vec<RemoteAttachment>,
+    #[serde(default)]
+    hidden: Option<HiddenPromptKind>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -122,20 +124,9 @@ where
         .transpose()
 }
 
-fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
-    let kind = match part.kind.as_str() {
-        "prompt" => TranscriptPartKind::Prompt,
-        "completion" => TranscriptPartKind::Completion,
-        "tool" => TranscriptPartKind::Tool,
-        other => anyhow::bail!("unknown transcript part kind {other}"),
-    };
-    Ok(TranscriptPart {
-        number: part.number,
-        source_key: part.source_key,
-        kind,
-        run_id: part.run_id,
-        created_at: part.created_at,
-        prompt: part.prompt.map(|prompt| TranscriptPromptBody {
+impl From<RemotePrompt> for TranscriptPromptBody {
+    fn from(prompt: RemotePrompt) -> Self {
+        Self {
             text: prompt.text,
             image_uploads: prompt
                 .image_uploads
@@ -149,7 +140,35 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
                     local_path: None,
                 })
                 .collect(),
-        }),
+            hidden: prompt.hidden,
+        }
+    }
+}
+
+/// Reads a prompt body from a Convex function result.
+pub fn deserialize_remote_prompt<'de, D>(
+    deserializer: D,
+) -> Result<Option<TranscriptPromptBody>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<RemotePrompt>::deserialize(deserializer)?.map(TranscriptPromptBody::from))
+}
+
+fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
+    let kind = match part.kind.as_str() {
+        "prompt" => TranscriptPartKind::Prompt,
+        "completion" => TranscriptPartKind::Completion,
+        "tool" => TranscriptPartKind::Tool,
+        other => anyhow::bail!("unknown transcript part kind {other}"),
+    };
+    Ok(TranscriptPart {
+        number: part.number,
+        source_key: part.source_key,
+        kind,
+        run_id: part.run_id,
+        created_at: part.created_at,
+        prompt: part.prompt.map(TranscriptPromptBody::from),
         completion: part.completion.map(|completion| TranscriptCompletionBody {
             stream_id: completion.stream_id,
             items: completion.items,
@@ -190,7 +209,7 @@ pub async fn apply_remote_state(
         .await
 }
 
-pub fn parse_remote_parts(value: serde_json::Value) -> anyhow::Result<Vec<TranscriptPart>> {
+fn parse_remote_parts(value: serde_json::Value) -> anyhow::Result<Vec<TranscriptPart>> {
     let parsed: RemotePartsResult = serde_json::from_value(value)?;
     parsed.parts.into_iter().map(to_local_part).collect()
 }

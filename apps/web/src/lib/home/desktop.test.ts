@@ -111,6 +111,7 @@ function launchArgs(
 		userId: 'user-1',
 		onError: vi.fn(),
 		onStarted: vi.fn(),
+		onStopped: vi.fn(),
 		threadId: threadRecordId('thread-1'),
 		prompt: 'Inspect src/lib.rs',
 		storageIds: [storageId('storage-1')],
@@ -203,6 +204,20 @@ describe('launchAgentRun', () => {
 			workspacePath: '/workspaces/workspace-1',
 			continuationOfRunId: 'run-1'
 		});
+	});
+
+	it('reports a run stopped before it began through onStopped', async () => {
+		const runAgent = vi
+			.fn()
+			.mockResolvedValue({ runId: 'run-1', threadId: 'thread-1', stopped: true });
+
+		const onStarted = vi.fn();
+		const onStopped = vi.fn();
+
+		await launchAgentRun(launchArgs({ localApi: createLocalApi(runAgent), onStarted, onStopped }));
+
+		expect(onStopped).toHaveBeenCalledOnce();
+		expect(onStarted).not.toHaveBeenCalled();
 	});
 
 	it('reports asynchronous launch failures through onError', async () => {

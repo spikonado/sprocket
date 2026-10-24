@@ -58,6 +58,8 @@ pub struct AgentLaunchRequest {
 pub struct LaunchedRun {
     pub run_id: String,
     pub thread_id: String,
+    /// The run was stopped before it began, so its prompt was never written.
+    pub stopped: bool,
 }
 
 #[derive(Debug)]
@@ -300,41 +302,14 @@ async fn launch_agent_inner(
                         }
                     })
                     .with_lifetime_guard_factory(move || command_lifetime.run_guard());
-                let prompt_part = run.prompt_part().cloned();
-                let sent_at = prompt_part
-                    .as_ref()
-                    .map(|part| part.created_at.unwrap_or_else(crate::now_ms))
-                    .or_else(|| records_message.then(crate::now_ms));
-                if let Some(sent_at) = sent_at
+                if records_message
                     && let Err(error) = project_attachments
-                        .record_message_sent(&attachment_key, sent_at)
+                        .record_message_sent(&attachment_key, crate::now_ms())
                         .await
                 {
                     eprintln!(
                         "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
                     );
-                }
-                if let Some(prompt_part) = prompt_part {
-                    match transcript
-                        .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
-                        .await
-                    {
-                        Ok(appended) => {
-                            transcript_watchers
-                                .notify_local_update(
-                                    &user_id,
-                                    &thread_id,
-                                    prompt_part.number + 1,
-                                    appended.stale,
-                                )
-                                .await;
-                        }
-                        Err(error) => {
-                            eprintln!(
-                                "sprocket-server: failed to update local transcript for run {run_id}: {error:#}"
-                            );
-                        }
-                    }
                 }
                 let artifact_watch = if artifact_repository_key.is_empty() {
                     None
@@ -345,9 +320,28 @@ async fn launch_agent_inner(
                             .await,
                     )
                 };
-                let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
                 let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
-                let result = run_agent(run, sessions, live, transcript).await;
+                // The launch succeeds once the run's prompt is in the transcript.
+                let (begun_sender, mut begun_receiver) = oneshot::channel();
+                let running = run_agent(run, sessions, live, transcript, begun_sender);
+                tokio::pin!(running);
+                let result = tokio::select! {
+                    biased;
+                    Ok(()) = &mut begun_receiver => {
+                        let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone(), false)));
+                        running.await
+                    }
+                    result = &mut running => {
+                        // The run can begin and end within one poll.
+                        let begun = begun_receiver.try_recv().is_ok();
+                        let started = match &result {
+                            Err(error) if !begun => Err(format!("{error:#}")),
+                            _ => Ok((run_id.clone(), thread_id.clone(), !begun)),
+                        };
+                        let _ = start_result_sender.send(started);
+                        result
+                    }
+                };
                 if let Some(output) = &output {
                     output.finish(result.as_ref().err().map(ToString::to_string));
                 }
@@ -371,12 +365,16 @@ async fn launch_agent_inner(
         }
     });
 
-    let (run_id, thread_id) = start_result_receiver
+    let (run_id, thread_id, stopped) = start_result_receiver
         .await
         .map_err(|_| anyhow!("agent launch task stopped unexpectedly"))
         .and_then(|started| started.map_err(|error| anyhow!(error)))
         .map_err(|error| LaunchError::Internal(error.context("failed to start agent run")))?;
-    Ok(LaunchedRun { run_id, thread_id })
+    Ok(LaunchedRun {
+        run_id,
+        thread_id,
+        stopped,
+    })
 }
 
 #[cfg(test)]

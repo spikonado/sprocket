@@ -437,6 +437,7 @@ async fn submit_child(
     child_execution_secret: &str,
 ) -> Result<CreateSubagentRunResponse, ToolExecutionError> {
     fields.extend(submission_fields(submission_id, child_execution_secret));
+    fields.insert("deferPrompt".to_string(), Value::Boolean(true));
     loop {
         let result = tokio::select! {
             biased;
@@ -445,11 +446,7 @@ async fn submit_child(
                 context
                     .runtime
                     .mutation_checked(CREATE_OR_SEND, subagent_args(context, fields.clone())),
-                async {
-                    Ok(recover_submission(context, submission_id, child_execution_secret)
-                        .await?
-                        .map(|recovered| recovered.run))
-                },
+                recover_submission(context, submission_id, child_execution_secret),
             ) => result,
         };
         match result {
@@ -489,10 +486,9 @@ async fn run_subagent(
             .map_err(tool_error)
     })
     .await?;
-    let (created, prompt) = if let Some(recovered) = recovered {
-        (recovered.run, recovered.prompt)
+    let created = if let Some(created) = recovered {
+        created
     } else {
-        let prompt = args.prompt;
         let overrides = SubagentSettingsOverrides {
             model: args.model,
             reasoning: args.reasoning,
@@ -507,7 +503,7 @@ async fn run_subagent(
         if let Some(thread_id) = &thread_id {
             fields.insert("threadId".to_string(), thread_id.clone().into());
         }
-        fields.insert("prompt".to_string(), prompt.clone().into());
+        fields.insert("prompt".to_string(), args.prompt.into());
         fields.insert("model".to_string(), resolved.model.clone().into());
         fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
         fields.insert("fast".to_string(), resolved.fast.into());
@@ -518,7 +514,7 @@ async fn run_subagent(
         if let Some(timeout_ms) = args.timeout_ms {
             fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
         }
-        let created = submit_child(
+        submit_child(
             context,
             fields,
             thread_id.as_deref(),
@@ -526,8 +522,7 @@ async fn run_subagent(
             &submission_id,
             &child_execution_secret,
         )
-        .await?;
-        (created, prompt)
+        .await?
     };
 
     if created.status == "queued" {
@@ -537,7 +532,6 @@ async fn run_subagent(
             &created,
             &submission_id,
             &child_execution_secret,
-            &prompt,
         )
         .await?;
     }
@@ -561,8 +555,6 @@ async fn launch_queued_child(
     created: &CreateSubagentRunResponse,
     submission_id: &str,
     child_execution_secret: &str,
-    // start_agent_run reconciles this submission against the recorded prompt.
-    committed_prompt: &str,
 ) -> Result<(), ToolExecutionError> {
     let launched = launcher
         .launch(SubagentLaunchRequest {
@@ -570,7 +562,6 @@ async fn launch_queued_child(
             thread_id: created.thread_id.clone(),
             submission_id: submission_id.to_string(),
             execution_secret: child_execution_secret.to_string(),
-            prompt: committed_prompt.to_string(),
             workspace_path: context.workspace_root.to_string_lossy().into_owned(),
             selected_model: created.settings.model.clone(),
             completion_provider: created.settings.completion_provider,
@@ -774,7 +765,7 @@ impl ControlSubagentTool {
             })
             .await?;
             let queued = match (recovered, response.continuation) {
-                (Some(recovered), _) => Some((recovered.run, recovered.prompt)),
+                (Some(recovered), _) => Some(recovered),
                 (None, Some(continuation)) => {
                     require_launcher(&self.context)?;
                     let (settings, completion_provider) = cancelled_read(&cancellation, async {
@@ -816,18 +807,17 @@ impl ControlSubagentTool {
                         &child_execution_secret,
                     )
                     .await?;
-                    Some((queued, continuation.prompt))
+                    Some(queued)
                 }
                 _ => None,
             };
-            if let Some((queued, prompt)) = queued.filter(|(queued, _)| queued.status == "queued") {
+            if let Some(queued) = queued.filter(|queued| queued.status == "queued") {
                 launch_queued_child(
                     require_launcher(&self.context)?,
                     &self.context,
                     &queued,
                     &submission_id,
                     &child_execution_secret,
-                    &prompt,
                 )
                 .await?;
             }
@@ -1101,13 +1091,6 @@ async fn fetch_thread<T: DeserializeOwned>(
         .map_err(tool_error)
 }
 
-#[derive(Deserialize)]
-struct RecoveredSubmission {
-    #[serde(flatten)]
-    run: CreateSubagentRunResponse,
-    prompt: String,
-}
-
 fn submission_fields(submission_id: &str, child_execution_secret: &str) -> BTreeMap<String, Value> {
     BTreeMap::from([
         ("submissionId".to_string(), submission_id.to_string().into()),
@@ -1122,7 +1105,7 @@ async fn recover_submission(
     context: &AgentToolContext,
     submission_id: &str,
     child_execution_secret: &str,
-) -> anyhow::Result<Option<RecoveredSubmission>> {
+) -> anyhow::Result<Option<CreateSubagentRunResponse>> {
     timeout(
         SUBMISSION_ATTEMPT_TIMEOUT,
         context.runtime.mutation_json(

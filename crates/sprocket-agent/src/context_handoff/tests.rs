@@ -16,7 +16,7 @@ fn counts_provider_totals_without_counting_cache_or_reasoning_twice() {
 
 #[test]
 fn missing_usage_preserves_the_last_observation_until_restart() {
-    let hook = ContextHandoffHook::new(100, 120, true);
+    let hook = ContextHandoffHook::new(100, 120);
     assert_eq!(hook.record_usage(Usage::default()), None);
     assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
     hook.restart();
@@ -25,21 +25,21 @@ fn missing_usage_preserves_the_last_observation_until_restart() {
 
 #[test]
 fn partial_usage_preserves_context_without_persisting_an_incomplete_total() {
-    let hook = ContextHandoffHook::new(100, 120, true);
+    let hook = ContextHandoffHook::new(100, 120);
     assert_eq!(hook.record_usage(Usage::new().output_tokens(30)), None);
     assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
 }
 
 #[test]
 fn reported_total_updates_context_without_individual_counters() {
-    let hook = ContextHandoffHook::new(100, 120, true);
+    let hook = ContextHandoffHook::new(100, 120);
     assert_eq!(hook.record_usage(Usage::new().total_tokens(150)), Some(150));
     assert_eq!(hook.state.lock().unwrap().context_tokens, 150);
 }
 
 #[test]
 fn reported_zero_replaces_the_last_context_observation() {
-    let hook = ContextHandoffHook::new(100, 120, true);
+    let hook = ContextHandoffHook::new(100, 120);
     assert_eq!(
         hook.record_usage(Usage::new().input_tokens(0).output_tokens(0)),
         Some(0)
@@ -48,30 +48,10 @@ fn reported_zero_replaces_the_last_context_observation() {
 }
 
 #[test]
-fn defers_the_new_prompt_without_putting_it_in_the_handoff_history() {
-    let history = vec![Message::user("old work")];
-    let prompt = Message::user("new task");
-    let mut state = HandoffState {
-        context_tokens: 100,
-        first_call: true,
-        defer_prompt: true,
-        ..Default::default()
-    };
-    assert!(matches!(
-        state.prepare(
-            CompletionCallEvent {
-                history: &history,
-                prompt: &prompt,
-                turn: 1
-            },
-            100,
-        ),
-        CompletionCallAction::Stop(_)
-    ));
-    let request = state.request.unwrap();
-    assert_eq!(request.history, history);
-    assert_eq!(request.deferred_prompt, Some(prompt));
-    assert!(request.before_prompt);
+fn handoff_is_due_once_reported_context_reaches_the_limit() {
+    assert!(!ContextHandoffHook::new(100, 99).handoff_due());
+    assert!(ContextHandoffHook::new(100, 100).handoff_due());
+    assert!(!ContextHandoffHook::new(100, 0).handoff_due());
 }
 
 #[test]
@@ -90,10 +70,10 @@ fn mid_run_handoff_includes_the_pending_tool_result() {
         },
         100,
     );
-    let request = state.request.unwrap();
-    assert_eq!(request.history, vec![history[0].clone(), prompt]);
-    assert!(request.deferred_prompt.is_none());
-    assert!(!request.before_prompt);
+    assert_eq!(
+        state.handoff_history.unwrap(),
+        vec![history[0].clone(), prompt]
+    );
 }
 
 #[test]
@@ -112,7 +92,7 @@ fn does_not_estimate_tokens_from_large_messages() {
         ),
         CompletionCallAction::Continue
     ));
-    assert!(state.request.is_none());
+    assert!(state.handoff_history.is_none());
 }
 
 #[test]

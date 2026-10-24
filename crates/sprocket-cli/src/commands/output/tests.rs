@@ -22,6 +22,7 @@ fn start_keeps_the_resolved_settings_for_the_run_header() {
                 reasoning: "high".into(),
                 fast: true,
             },
+            stopped: false,
         })
         .unwrap();
     assert_eq!(
@@ -41,6 +42,7 @@ fn final_answer_comes_from_the_confirmed_result_not_transcript_commentary() {
             reasoning: "high".into(),
             fast: false,
         },
+        stopped: false,
     });
     let commentary = snapshot(serde_json::json!([{
         "number": 1, "sourceKey": "one", "kind": "completion", "runId": "run",
@@ -76,6 +78,7 @@ fn rejects_another_runs_transcript_without_advancing_cursor() {
             reasoning: "high".into(),
             fast: false,
         },
+        stopped: false,
     });
     let page = snapshot(serde_json::json!([{
         "number": 1, "sourceKey": "one", "kind": "completion", "runId": "other",

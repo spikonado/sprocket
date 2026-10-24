@@ -29,46 +29,29 @@ pub(crate) fn context_summary_text(summary: &str) -> String {
     )
 }
 
-pub(crate) struct HandoffRequest {
-    pub(crate) history: Vec<Message>,
-    pub(crate) deferred_prompt: Option<Message>,
-    pub(crate) before_prompt: bool,
-}
-
 #[derive(Default)]
 struct HandoffState {
     context_tokens: u64,
-    first_call: bool,
-    defer_prompt: bool,
-    request: Option<HandoffRequest>,
+    /// The history the handoff summarizes, set once one is due.
+    handoff_history: Option<Vec<Message>>,
     writing: bool,
     summary: Option<String>,
     calls: usize,
 }
 
 impl HandoffState {
+    fn due(&self, limit: u64) -> bool {
+        self.context_tokens >= limit && self.context_tokens > 0
+    }
+
     fn prepare(&mut self, event: CompletionCallEvent<'_>, limit: u64) -> CompletionCallAction {
-        if self.writing {
+        if self.writing || !self.due(limit) {
             return CompletionCallAction::Continue;
         }
-        if self.context_tokens >= limit && self.context_tokens > 0 {
-            let before_prompt = self.first_call && self.defer_prompt;
-            let mut history = event.history.to_vec();
-            let deferred_prompt = if before_prompt {
-                Some(event.prompt.clone())
-            } else {
-                history.push(event.prompt.clone());
-                None
-            };
-            self.request = Some(HandoffRequest {
-                history,
-                deferred_prompt,
-                before_prompt,
-            });
-            return CompletionCallAction::stop(HANDOFF_REQUESTED);
-        }
-        self.first_call = false;
-        CompletionCallAction::Continue
+        let mut history = event.history.to_vec();
+        history.push(event.prompt.clone());
+        self.handoff_history = Some(history);
+        CompletionCallAction::stop(HANDOFF_REQUESTED)
     }
 
     fn submit(&mut self, document: String) -> Result<(), ToolExecutionError> {
@@ -92,16 +75,21 @@ pub(crate) struct ContextHandoffHook {
 }
 
 impl ContextHandoffHook {
-    pub(crate) fn new(token_limit: u64, context_tokens: u64, defer_prompt: bool) -> Self {
+    pub(crate) fn new(token_limit: u64, context_tokens: u64) -> Self {
         Self {
             token_limit,
             state: Arc::new(Mutex::new(HandoffState {
                 context_tokens,
-                first_call: true,
-                defer_prompt,
                 ..Default::default()
             })),
         }
+    }
+
+    /// The last reported context already reaches the handoff limit.
+    pub(crate) fn handoff_due(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.due(self.token_limit))
     }
 
     pub(crate) fn tool(&self) -> HandoffTool {
@@ -110,8 +98,8 @@ impl ContextHandoffHook {
         }
     }
 
-    pub(crate) fn take_request(&self) -> Option<HandoffRequest> {
-        self.state.lock().ok()?.request.take()
+    pub(crate) fn take_handoff_history(&self) -> Option<Vec<Message>> {
+        self.state.lock().ok()?.handoff_history.take()
     }
 
     pub(crate) fn start_handoff(&self) {

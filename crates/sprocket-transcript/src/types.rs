@@ -166,6 +166,20 @@ pub enum TranscriptPartKind {
 pub struct TranscriptPromptBody {
     pub text: String,
     pub image_uploads: Vec<TranscriptAttachmentMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<HiddenPromptKind>,
+}
+
+/// A prompt the agent wrote for the model. The UI does not show it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HiddenPromptKind {
+    Instructions,
+    Environment,
+    Continuation,
+    /// Written by a newer version. Kept so its parts still parse.
+    #[serde(other)]
+    Other,
 }
 
 impl TranscriptPromptBody {

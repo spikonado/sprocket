@@ -8,8 +8,9 @@ use crate::reasoning::opaque_encrypted;
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
+use crate::workspace_context::HiddenPrompt;
 use sprocket_transcript::{
-    TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
 };
 
 pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
@@ -46,6 +47,39 @@ pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) ->
         .any(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Completion)
 }
 
+fn hidden_kind(part: &TranscriptPart) -> Option<&HiddenPromptKind> {
+    part.prompt.as_ref()?.hidden.as_ref()
+}
+
+fn is_user_prompt(part: &TranscriptPart) -> bool {
+    part.kind == TranscriptPartKind::Prompt && hidden_kind(part).is_none()
+}
+
+fn is_workspace_context_part(part: &TranscriptPart) -> bool {
+    matches!(
+        hidden_kind(part),
+        Some(HiddenPromptKind::Instructions | HiddenPromptKind::Environment)
+    )
+}
+
+/// Workspace context prompts in the history, oldest first.
+pub(crate) fn shown_workspace_context(
+    state: &TranscriptState,
+    parts: &[TranscriptPart],
+) -> Vec<HiddenPrompt> {
+    parts
+        .iter()
+        .filter(|part| part.number >= state.history_from_number && is_workspace_context_part(part))
+        .filter_map(|part| {
+            let prompt = part.prompt.as_ref()?;
+            Some(HiddenPrompt {
+                kind: prompt.hidden.clone()?,
+                text: prompt.text.clone(),
+            })
+        })
+        .collect()
+}
+
 /// The prompt a run should answer, kept out of its history. A continuation
 /// whose earlier runs ended without output re-answers the last user prompt
 /// instead of being told to "continue" work that never started.
@@ -59,11 +93,13 @@ pub(crate) fn pending_prompt_part<'a>(
     }
     parts
         .iter()
-        .find(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Prompt)
+        .find(|part| part.run_id == run_id && is_user_prompt(part))
         .or_else(|| {
             parts
                 .iter()
-                .filter(|part| part.number >= state.history_from_number)
+                .filter(|part| {
+                    part.number >= state.history_from_number && hidden_kind(part).is_none()
+                })
                 .max_by_key(|part| part.number)
                 .filter(|part| part.kind == TranscriptPartKind::Prompt)
         })

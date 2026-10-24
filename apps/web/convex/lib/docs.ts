@@ -6,7 +6,8 @@ import {
 	vAskQuestionOption,
 	vCompletionProvider,
 	vRunStatus,
-	vSubscriptionTier
+	vSubscriptionTier,
+	vTranscriptPromptBody
 } from '@convex/lib/validators';
 
 /** Function argument/return validators derived from the schema plus hand-shaped results. */
@@ -75,6 +76,8 @@ export const vGetContextResult = v.object({
 		restrictSubagentsToProvider: v.boolean()
 	}),
 	prompt: v.string(),
+	/** Set until the run begins; the agent sends it to the model as the run's prompt. */
+	pendingPrompt: v.optional(vTranscriptPromptBody),
 	contextTokens: v.optional(v.number()),
 	providerHandoff: v.optional(vProviderHandoff),
 	cwd: v.optional(v.string()),
