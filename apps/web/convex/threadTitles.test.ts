@@ -249,6 +249,32 @@ describe('automatic thread titles', () => {
 		await finishTitle(t);
 	});
 
+	it('leaves hidden prompts out of the title transcript', async () => {
+		const t = initConvexTest();
+		vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse('Robot project')));
+		const first = await createRun(t, 'first');
+
+		const hidden = await t.run((ctx) =>
+			appendTranscriptPart(ctx, {
+				threadId: first.threadId,
+				sourceKey: 'hiddenPrompt:test:instructions',
+				kind: 'prompt',
+				runId: first.runId,
+				prompt: { text: '# Workspace instructions', imageUploads: [], hidden: 'instructions' },
+				work: { ranges: [] }
+			})
+		);
+
+		const transcript = await t.query(internal.threadTitles.readTranscript, {
+			threadId: first.threadId,
+			throughNumber: hidden.part.number,
+			paginationOpts: { numItems: 10, cursor: null }
+		});
+
+		expect(transcript.messages).toEqual([{ role: 'user', content: 'Build a robot' }]);
+		await finishTitle(t);
+	});
+
 	it('requires ownership to regenerate a title', async () => {
 		const t = initConvexTest();
 		vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse('Robot project')));

@@ -138,7 +138,7 @@ export const readTranscript = internalQuery({
 		const messages: TitleMessage[] = [];
 
 		for (const part of page.page) {
-			if (part.kind === 'prompt' && part.prompt?.text.trim()) {
+			if (part.kind === 'prompt' && !part.prompt?.hidden && part.prompt?.text.trim()) {
 				messages.push({ role: 'user', content: part.prompt.text });
 			} else if (part.kind === 'completion' && part.completion) {
 				const text = part.completion.items
