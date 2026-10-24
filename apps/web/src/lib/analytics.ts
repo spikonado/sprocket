@@ -1,4 +1,6 @@
 import posthog from 'posthog-js';
+// Bundled because ad blockers (EasyPrivacy) block the lazily loaded `/posthog-recorder.js` on any host.
+import 'posthog-js/dist/posthog-recorder';
 import { authState } from '$lib/auth';
 import type { RuntimeConfig } from '$lib/runtime-config';
 
