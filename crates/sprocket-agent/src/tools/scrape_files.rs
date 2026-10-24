@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncWriteExt;
 
@@ -39,6 +39,26 @@ pub(super) async fn localize_scrape(
     }
     fields.remove("truncated");
     Ok(result)
+}
+
+/// Applies the scrape inline limit to any JSON tool result.
+pub(super) async fn localize_json(
+    result: Value,
+    prefix: &str,
+    cancellation: &WorkspaceCancellation,
+    saved_file: &mut Option<tempfile::NamedTempFile>,
+) -> anyhow::Result<Value> {
+    let archive = serde_json::to_string(&result)?;
+    if !exceeds_inline_limit(&archive) {
+        return Ok(result);
+    }
+    let temp = save_temp(prefix, &archive, cancellation).await?;
+    let message = format!(
+        "The result was too large to directly output. Instead, it has been saved to {} for you to view.",
+        temp.path().display()
+    );
+    *saved_file = Some(temp);
+    Ok(json!({ "message": message }))
 }
 
 /// Matches JSON.stringify(...).length in the backend, including surrogate pairs.

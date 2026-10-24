@@ -1,5 +1,6 @@
 import {
 	BookOpen,
+	BookSearch,
 	Bot,
 	Camera,
 	CircleDollarSign,
@@ -88,6 +89,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return FileText;
 		case 'web_search':
 			return Search;
+		case 'developer_search':
+			return BookSearch;
 		case 'write_stdin':
 			return SquareTerminal;
 		default:

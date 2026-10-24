@@ -120,6 +120,14 @@ export const vWebSearchPayload = v.object({
 	numResults: v.optional(v.number())
 });
 
+const developerSearchTypes = ['doc', 'issue', 'pull_request', 'readme'] as const;
+
+export const vDeveloperSearchPayload = v.object({
+	query: v.string(),
+	types: v.optional(v.array(v.union(...literals(developerSearchTypes)))),
+	repos: v.optional(v.array(v.string()))
+});
+
 export const vWriteStdinPayload = v.object({
 	sessionId: v.string(),
 	chars: v.optional(v.string()),
@@ -340,6 +348,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
+	vDeveloperSearchPayload,
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
@@ -440,6 +449,31 @@ export const vScrapeUrlTransport = v.union(
 		highlights: v.optional(v.array(v.string())),
 		scrapeUrl: v.string()
 	})
+);
+
+export const vDeveloperSearchResults = v.object({
+	results: v.array(
+		v.object({
+			url: v.string(),
+			title: v.optional(v.string()),
+			passages: v.array(v.object({ text: v.string(), citationUrl: v.optional(v.string()) }))
+		})
+	),
+	repos: v.optional(
+		v.array(
+			v.object({
+				repo: v.string(),
+				indexed: v.boolean(),
+				types: v.object({ issue: v.boolean(), pullRequest: v.boolean(), readme: v.boolean() })
+			})
+		)
+	)
+});
+
+/** Stored developer_search result. Results over the inline limit live in a local file. */
+export const vDeveloperSearchResult = v.union(
+	vDeveloperSearchResults,
+	v.object({ message: v.string() })
 );
 
 export const vWebImageResult = v.object({
@@ -760,6 +794,7 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebImageResult,
 	vWebSearchResult,
+	vDeveloperSearchResult,
 	vArtifactResult,
 	vListArtifactsResult,
 	vBrowserTaskResult,
@@ -801,6 +836,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
+	v.literal('developer_search'),
 	v.literal('control_cmd'),
 	v.literal('poll_cmd'),
 	v.literal('add_artifact'),
