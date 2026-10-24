@@ -73,7 +73,7 @@ describe('local scrape_url dispatch', () => {
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
 
-		const local = await t.mutation(internal.firecrawlRequests.scrapeJob, {
+		const local = await t.mutation(internal.webRequests.requestJob, {
 			runId,
 			claimId,
 			jobId

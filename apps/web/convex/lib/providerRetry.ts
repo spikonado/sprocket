@@ -44,3 +44,13 @@ export async function retryRateLimited<T>(options: {
 		}
 	}
 }
+
+export function retryAfterHeaderMs(value: string | null | undefined): number {
+	if (!value) return 0;
+
+	const seconds = Number(value);
+
+	const ms = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(value) - Date.now();
+
+	return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}

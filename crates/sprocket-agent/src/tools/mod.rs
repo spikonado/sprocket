@@ -3,7 +3,6 @@ mod async_tools;
 mod commands;
 mod context;
 mod cwd;
-mod firecrawl;
 mod github_url;
 mod hosted_parse;
 mod image_urls;
@@ -19,6 +18,7 @@ mod scrape_files;
 mod skills;
 mod subagents;
 mod web;
+mod web_request;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -32,9 +32,9 @@ Released runners omit `completionProvider` from `subagents:createOrSend`, so cre
 
 `threads.subtreeSummaryForThread` still returns `descendantStatusCounts`, deriving `running` from `workingDescendantCount` and `completed` from the remaining total. Remove it once released inbox clients age out.
 
-### Screenshot tool
+### Firecrawl request endpoints
 
-Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:start` call with `kind: 'screenshot'` fails with "This tool is no longer supported." Move the kind to the historical kinds once those agents age out.
+Released agents call `firecrawlRequests:start`, `getResult` and `dispose`. These forward to `webRequests`, so released scrapes run on context.dev and return `outline` in place of `summary`. `start` rejects `kind: 'screenshot'` with "This tool is no longer supported." `getResult` and `dispose` accept any string ID, so IDs from the old table report the request as ended. Remove the module once clients that call `firecrawlRequests:*` age out.
 
 ### Repository rekey continuation
 
@@ -110,12 +110,16 @@ Older `threadTranscriptStates` and `threadTranscriptParts` rows still carry `use
 
 Abandoned runs written before `runs.failureKind` only carry `lastError: LEGACY_RUN_ABANDONED_BY_AGENT`, so `isAbandonedRun` also matches that text. The hourly `migrations.runRunFailureKindBackfill` cron sets `failureKind` on them. Once the backfill completes on every deployment, remove the text match, the migration and the cron.
 
+### `firecrawlRequests` table
+
+The table and the module's `cleanup` and `removeResult` functions stay so cleanups scheduled before the rename still run. Rows live at most 8 minutes, so drop them once the table is empty.
+
 ### Stored executor job and result fields
 
 Each of these Convex variants goes once a full production scan confirms no retained row uses it:
 
 - `payload.userEmail` on mandate setup jobs written through v0.3.2.
-- `truncated` on `scrape_url` results, and results without `summary` or `images`.
+- `truncated` on `scrape_url` results, and results without `images`.
 - `truncated` on `read_skill` results. Also wait for released clients that send it to age out.
 - `hidden` on executor jobs. Sectionless jobs keep their terminal-write fallback during reconciliation until they're reconciled.
 - `imageUploadId` on prompt attachments.
@@ -179,6 +183,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
+- `summary` on `scrape_url` results, from before `outline` replaced it.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.

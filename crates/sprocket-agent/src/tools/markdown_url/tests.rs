@@ -198,12 +198,6 @@ async fn direct_markdown_is_read_with_a_single_get() {
                 .ends_with("/docs/start.md?lang=en")
         );
         assert_eq!(result["images"], json!([]));
-        assert!(
-            result["summary"]
-                .as_str()
-                .unwrap()
-                .contains("not generated")
-        );
         let requests = server.await.unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /docs/start.md?lang=en HTTP/1.1"));
@@ -213,7 +207,7 @@ async fn direct_markdown_is_read_with_a_single_get() {
 }
 
 #[tokio::test]
-async fn unusable_responses_allow_firecrawl_fallback() {
+async fn unusable_responses_allow_cloud_scrape_fallback() {
     for bytes in [
         response(404, "text/plain", b"Not found"),
         response(403, "text/plain", b"Forbidden"),
