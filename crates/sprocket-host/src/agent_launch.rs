@@ -322,19 +322,21 @@ async fn launch_agent_inner(
                 };
                 let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
                 // The launch succeeds once the run's prompt is in the transcript.
-                let (begun_sender, begun_receiver) = oneshot::channel();
+                let (begun_sender, mut begun_receiver) = oneshot::channel();
                 let running = run_agent(run, sessions, live, transcript, begun_sender);
                 tokio::pin!(running);
                 let result = tokio::select! {
                     biased;
-                    Ok(()) = begun_receiver => {
+                    Ok(()) = &mut begun_receiver => {
                         let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone(), false)));
                         running.await
                     }
                     result = &mut running => {
+                        // The run can begin and end within one poll.
+                        let begun = begun_receiver.try_recv().is_ok();
                         let started = match &result {
-                            Ok(()) => Ok((run_id.clone(), thread_id.clone(), true)),
-                            Err(error) => Err(format!("{error:#}")),
+                            Err(error) if !begun => Err(format!("{error:#}")),
+                            _ => Ok((run_id.clone(), thread_id.clone(), !begun)),
                         };
                         let _ = start_result_sender.send(started);
                         result
