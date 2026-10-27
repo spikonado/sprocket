@@ -49,7 +49,7 @@
         "@lezer/highlight": "^1.2.5",
         "@opentelemetry/api": "^1.10.0",
         "@pierre/trees": "1.0.0-beta.6",
-        "@posthog/convex": "2.1.7",
+        "@posthog/convex": "2.1.8",
         "@workos-inc/authkit-js": "^0.20.0",
         "clsx": "^2.1.1",
         "codemirror": "^6.0.2",
@@ -519,7 +519,7 @@
 
     "@posthog/cli": ["@posthog/cli@0.18.12", "", { "dependencies": { "detect-libc": "^2.1.2" }, "bin": { "posthog-cli": "run-posthog-cli.js" } }, "sha512-/eT9riWOkBb9uwsdOxQgW3fan/T3hwT8rvwZCzPl3DAgSBEhzpP59usD0fyFS++X2967E5AQe74nrBw1rywf6A=="],
 
-    "@posthog/convex": ["@posthog/convex@2.1.7", "", { "dependencies": { "@posthog/core": "^1.59.3", "posthog-node": "^5.56.4" }, "peerDependencies": { "convex": "^1.39.0" } }, "sha512-4nx9suEiRY8TdMWWrM9Ioga4rc7JnpkXfEcu88XDJpe4+CMn9f81+S1EOyfY6F6LUGTVdq2XvLqQiNAk3ztm3Q=="],
+    "@posthog/convex": ["@posthog/convex@2.1.8", "", { "dependencies": { "@posthog/core": "^1.60.1", "posthog-node": "^5.57.1" }, "peerDependencies": { "convex": "^1.39.0" } }, "sha512-K8R1SZGBRRlDQDhIY6eTrnt0u3BbggwI1KDazV/1HLJUY/93Ajjj7gSDDMMt9GQ5wSDb/A5p620Q30CtsSYZ1Q=="],
 
     "@posthog/core": ["@posthog/core@1.60.1", "", { "dependencies": { "@posthog/types": "^1.416.0" } }, "sha512-UpswaG2957O6Ywfx1aCeI8BbXcfoKduKwq1ytBml80AQuAmgK672OmhDcldA7wg4vGP49LpDTgxcNbLvZwQOqw=="],
 
