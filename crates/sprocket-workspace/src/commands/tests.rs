@@ -715,10 +715,13 @@ async fn exec_command_reports_the_shell_and_workdir_when_spawn_fails() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect::<Vec<_>>();
-    assert_eq!(records, vec![std::ffi::OsString::from(format!(
-        "{}.json",
-        next.session_id.unwrap()
-    ))]);
+    assert_eq!(
+        records,
+        vec![std::ffi::OsString::from(format!(
+            "{}.json",
+            next.session_id.unwrap()
+        ))]
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1196,7 +1199,7 @@ async fn stop_all_keeps_unreturned_output_for_later_polls() {
         .sessions
         .lock()
         .await
-        .insert(id.clone(), completed.session);
+        .insert(id.clone(), completed.session.clone());
     sessions.stop_all().await;
     assert_eq!(
         completed
