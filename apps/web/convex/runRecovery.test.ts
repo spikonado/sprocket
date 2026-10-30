@@ -3,7 +3,13 @@ import { api } from '@convex/_generated/api';
 import { LEGACY_RUN_ABANDONED_BY_AGENT, RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
-import { abandonRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import {
+	abandonRun,
+	initConvexTest,
+	insertQueuedRun,
+	seedOwnedThread,
+	tickPastLastCommit
+} from './test.setup';
 
 afterEach(() => vi.useRealTimers());
 
@@ -239,6 +245,7 @@ describe('automatic run recovery', () => {
 	it('recovers a lease-expired run once without replaying the prompt', async () => {
 		vi.useFakeTimers();
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();
+		tickPastLastCommit();
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			executionSecret: 'run-secret',

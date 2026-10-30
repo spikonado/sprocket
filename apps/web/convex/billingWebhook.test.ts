@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkId } from '@convex-dev/workpool';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
+import { initConvexTest, tickPastLastCommit, type ConvexTestInstance } from './test.setup';
 import { drainWebhookJobs } from './billingWebhook.test.setup';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
@@ -976,6 +976,7 @@ describe('durable webhook ingestion and projection', () => {
 		// First run scans the 50 fresh rows, skips them (all fresh), and advances
 		// the cursor past them without touching the aged tail row (seq 55, beyond
 		// the first batch of seq 0-49).
+		tickPastLastCommit();
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});
 		expect(await readEvent(t, oldId)).not.toBeNull();
 
