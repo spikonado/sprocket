@@ -1717,7 +1717,8 @@ async fn refresh_timeout_preserves_refresh_credentials_for_retry() {
             .to_string()
             .contains("timed out")
     );
-    let stored = stored_account(&fixture.service, "user-a", "connection-1").await;
+    let reloaded = ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+    let stored = stored_account(&reloaded, "user-a", "connection-1").await;
     assert_eq!(stored.tokens.as_ref().unwrap().refresh_token, "refresh-old");
     assert!(!stored.tokens.unwrap().refresh_in_flight);
 }
