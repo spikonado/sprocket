@@ -86,7 +86,7 @@
         "@types/react-dom": "^19.3.0",
         "@typescript/native": "npm:typescript@^7.0.0",
         "@vitejs/plugin-react": "^6.1.1",
-        "convex-test": "^0.0.62",
+        "convex-test": "^0.0.66",
         "eslint": "^10.0.0",
         "jsdom": "^30.0.1",
         "tailwindcss": "^4.2.4",
@@ -993,7 +993,7 @@
 
     "convex-helpers": ["convex-helpers@0.1.129", "", { "peerDependencies": { "@standard-schema/spec": "^1.0.0", "convex": "^1.46.0", "hono": "^4.0.5", "react": "^17.0.2 || ^18.0.0 || ^19.0.0", "typescript": "^5.5 || ^6.0.0 || ^7.0.0", "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["@standard-schema/spec", "hono", "react", "typescript", "zod"], "bin": { "convex-helpers": "bin.cjs" } }, "sha512-8QJLbym0fKsf3tYcF2ZTX37NeYt/BkOFBjBwB2LR1fXUAajeYaTLV11gi/0IVOU/jCdH2j/VseHhHid1qQcqFw=="],
 
-    "convex-test": ["convex-test@0.0.62", "", { "peerDependencies": { "convex": "^1.43.0" } }, "sha512-gvFps/A1JhOlFToZKjStSX8lWQS8oPF4oKm6U5D/ZdmOtfC7bKqw5Ce5ccAf45jvxPKPcFiyWt8JrueE+byB2g=="],
+    "convex-test": ["convex-test@0.0.66", "", { "peerDependencies": { "convex": "^1.43.0" } }, "sha512-d70YxtlUqL6w37EmcxAYSQPRZ6lWF7PQ4q/KrbUrn6bfbxPG4eafLl5386UNrjCb8U1kX7mRCanrB4Bv8uB5Cg=="],
 
     "core-js": ["core-js@3.51.0", "", {}, "sha512-7bDKx/5jm5MxzsXxc93g6Z2+4ZsuT/MddrfRmTDJNAkWsYWHU8EVNEsBiIEWnMAMCHMmRfUEjkuo3jeNBOIHRw=="],
 
