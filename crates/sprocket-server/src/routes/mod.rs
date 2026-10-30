@@ -13,5 +13,6 @@ pub mod pull_requests;
 pub(crate) mod session;
 pub mod threads;
 pub mod transcript;
+pub(crate) mod tscircuit;
 pub mod update;
 pub mod workspace;

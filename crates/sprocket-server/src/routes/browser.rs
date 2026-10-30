@@ -38,7 +38,8 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/browser/dashboard/{*path}", any(proxy))
 }
 
-async fn user(
+/// Requires the browser session's user to be the machine's signed-in user; returns it and the session token.
+pub(crate) async fn user(
     state: &AppState,
     headers: &HeaderMap,
     jar: &CookieJar,
@@ -61,11 +62,11 @@ async fn user(
     Ok((session.user.id, token))
 }
 
-fn require_same_origin(headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn require_same_origin(headers: &HeaderMap) -> Result<(), ApiError> {
     if !cookie_request_is_csrf_safe(headers) {
         return Err(ApiError::with_status(
             StatusCode::FORBIDDEN,
-            anyhow!("Browser control requires a same-origin request"),
+            anyhow!("This request must come from Sprocket"),
         ));
     }
     Ok(())

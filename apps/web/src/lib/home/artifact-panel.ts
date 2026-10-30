@@ -319,17 +319,17 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Shows the tab already editing the file, reuses an empty tab, or opens a new one. */
-	openFile(file: WorkspaceFileTarget) {
+	/** Shows the tab already showing the file in `view`, reuses an empty tab, or opens a new one. */
+	openFile(file: WorkspaceFileTarget, view: 'file' | 'tscircuit' = 'file') {
 		const existing = this.tabs.find(
 			(tab) =>
-				tab.view === 'file' &&
+				tab.view === view &&
 				tab.file?.workspacePath === file.workspacePath &&
 				tab.file.path === file.path
 		);
 
 		if (existing && this.panel.open && this.activeTab === existing) return;
-		this.#show(existing, { view: 'file', file });
+		this.#show(existing, { view, file });
 	}
 
 	/** Shows `directory` in the active files tab, the first files tab, an empty tab, or a new one. */

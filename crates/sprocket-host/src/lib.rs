@@ -22,6 +22,7 @@ mod subagent_launcher;
 mod tool_install;
 pub mod transcript_client;
 pub mod transcript_watch;
+pub mod tscircuit_dev;
 mod watch_registry;
 mod work_sync;
 pub mod workspace_search;
@@ -48,6 +49,7 @@ use crate::project_attachments::ProjectAttachmentStore;
 use crate::run_recovery::RunRecovery;
 use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchers;
+use crate::tscircuit_dev::TscircuitDevServers;
 use crate::workspace_search::WorkspaceSearchIndex;
 
 pub fn now_ms() -> u64 {
@@ -85,6 +87,7 @@ pub struct Host {
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
     pub bun: Arc<BunInstaller>,
+    pub tscircuit_dev: Arc<TscircuitDevServers>,
 }
 
 impl Host {
@@ -117,6 +120,7 @@ impl Host {
             Arc::clone(&native_auth),
         );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
+        let bun = BunInstaller::new(data_dir)?;
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
@@ -147,7 +151,8 @@ impl Host {
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
-            bun: BunInstaller::new(data_dir)?,
+            tscircuit_dev: TscircuitDevServers::new(data_dir, Arc::clone(&bun))?,
+            bun,
         })
     }
 
@@ -243,6 +248,7 @@ impl HostTasks {
         }
         host.command_sessions.stop_all().await;
         host.browsers.shutdown().await;
+        host.tscircuit_dev.shutdown().await;
         self.command_sync.abort();
         let _ = self.command_sync.await;
         if let Err(error) = tokio::time::timeout(

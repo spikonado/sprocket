@@ -19,4 +19,5 @@ Proof follows Evidence in `SKILL.md`. Report an unreachable path as a failure wi
 - [Threads](./threads.md): sending a prompt, the model reply, stopping a run, renaming and settling, the transcript after reload.
 - [Side panel](./side-panel.md): opening, the view picker, tabs, full workspace, closing and restoring.
 - [Files](./files.md): the project tree, editing and saving a file, save conflicts, the discard prompt, creating, renaming and deleting, search.
+- [tscircuit editor](./tscircuit.md): opening a circuit file in tscircuit, live reload of disk edits, the editor's writes.
 - [Settings](./settings.md): the settings pages, a preference switch, the GitHub switch.

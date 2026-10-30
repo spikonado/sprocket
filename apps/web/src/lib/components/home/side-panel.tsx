@@ -1,5 +1,6 @@
 import ArtifactMenu from '$lib/components/artifact-menu';
 import {
+	CircuitBoard,
 	Columns2,
 	FileCode,
 	Files,
@@ -23,6 +24,7 @@ import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
+import TscircuitView, { type TscircuitApi } from '$lib/components/home/tscircuit-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import {
 	layoutRects,
@@ -50,7 +52,7 @@ type Props = {
 	layout: SidePanelLayout;
 	activePaneId: string;
 	browserApi: BrowserApi | null;
-	filesApi: (FilesApi & FileEditorApi) | null;
+	filesApi: (FilesApi & FileEditorApi & TscircuitApi) | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
@@ -64,6 +66,7 @@ type Props = {
 	onSplitPane: (id: string, direction: SplitDirection) => void;
 	onResizeSplit: (id: string, ratio: number) => void;
 	onOpenFile: (file: WorkspaceFileTarget) => void;
+	onOpenTscircuit: (file: WorkspaceFileTarget) => void;
 	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
 	onFileDeleted: (workspacePath: string, path: string) => void;
 	/** Enter true browser fullscreen for a single artifact (content only). */
@@ -79,7 +82,11 @@ const TYPE_ICONS = {
 	react: FileCode
 } as const satisfies Record<ArtifactType, typeof FileCode>;
 
-const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIcon }[] = [
+const VIEWS: {
+	id: Exclude<SidePanelView, 'file' | 'tscircuit'>;
+	label: string;
+	icon: LucideIcon;
+}[] = [
 	{ id: 'artifacts', label: 'Artifacts', icon: Files },
 	{ id: 'files', label: 'Files', icon: FolderTree },
 	{ id: 'browser', label: 'Browser', icon: Globe }
@@ -111,6 +118,10 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 
 	if (tab.view === 'file' && tab.file) {
 		return { label: leafName(tab.file.path), title: tab.file.path, icon: FileCode };
+	}
+
+	if (tab.view === 'tscircuit' && tab.file) {
+		return { label: leafName(tab.file.path), title: tab.file.path, icon: CircuitBoard };
 	}
 
 	return VIEWS.find((item) => item.id === tab.view) ?? { label: 'New tab', icon: SquarePlus };
@@ -291,6 +302,7 @@ function Pane({
 	onDraftChange,
 	onFocusPane,
 	onOpenFile,
+	onOpenTscircuit,
 	onFileRenamed,
 	onFileDeleted,
 	onOpenFullscreen,
@@ -530,7 +542,10 @@ function Pane({
 							draft={tab.draft}
 							active={tab.id === activeTabId}
 							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
+							onOpenTscircuit={tab.file.path.endsWith('.circuit.tsx') ? onOpenTscircuit : undefined}
 						/>
+					) : tab.view === 'tscircuit' && tab.file ? (
+						<TscircuitView api={filesApi} file={tab.file} />
 					) : (
 						<ArtifactsView
 							artifacts={artifacts}

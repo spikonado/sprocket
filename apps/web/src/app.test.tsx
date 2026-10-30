@@ -102,6 +102,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		})),
 		startBrowser: vi.fn<LocalApi['startBrowser']>(async () => ({ state: 'ready', error: null })),
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
+		startTscircuit: unused,
 		listRunningCommands: vi.fn(async () => ({ commands: [] })),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,

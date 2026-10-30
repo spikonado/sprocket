@@ -344,6 +344,8 @@ export type LocalApi = {
 	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;
+	/** Starts the tscircuit editor for the project holding the file; resolves to the editor URL. */
+	startTscircuit: (input: WorkspaceFileTarget, signal?: AbortSignal) => Promise<string>;
 	listRunningCommands: (
 		request: TranscriptScopeRequest,
 		signal?: AbortSignal

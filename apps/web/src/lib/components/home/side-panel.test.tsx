@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useEffect, type ComponentProps } from 'react';
 import { expect, it, vi } from 'vitest';
 import SidePanel from './side-panel';
 import { useArtifactPanel } from '$lib/home/artifact-panel';
+import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
 const artifact = {
 	key: 'notes',
@@ -10,8 +12,14 @@ const artifact = {
 	content: '# Notes'
 } as const;
 
-function Harness() {
+type FilesApi = ComponentProps<typeof SidePanel>['filesApi'];
+
+function Harness({ filesApi = null, file }: { filesApi?: FilesApi; file?: WorkspaceFileTarget }) {
 	const panel = useArtifactPanel();
+
+	useEffect(() => {
+		if (file) panel.openFile(file);
+	}, [panel, file]);
 
 	return (
 		<SidePanel
@@ -19,7 +27,7 @@ function Harness() {
 			layout={panel.panel.layout}
 			activePaneId={panel.activePane.id}
 			browserApi={null}
-			filesApi={null}
+			filesApi={filesApi}
 			expanded={false}
 			onNewTab={(paneId) => panel.newTab(paneId)}
 			onActivateTab={(id) => panel.activateTab(id)}
@@ -30,6 +38,7 @@ function Harness() {
 			onSplitPane={(id, direction) => panel.splitPane(id, direction)}
 			onResizeSplit={(id, ratio) => panel.resizeSplit(id, ratio)}
 			onOpenFile={(file) => panel.openFile(file)}
+			onOpenTscircuit={(file) => panel.openFile(file, 'tscircuit')}
 			onFileRenamed={(workspacePath, from, to) => panel.renameFile(workspacePath, from, to)}
 			onFileDeleted={(workspacePath, path) => panel.closeFile(workspacePath, path)}
 			onOpenFullscreen={vi.fn()}
@@ -38,6 +47,25 @@ function Harness() {
 		/>
 	);
 }
+
+it('opens a circuit file in the tscircuit editor', async () => {
+	const url = 'https://sprocket.test/api/tscircuit/dev/ab12/#file=board.circuit.tsx';
+	const startTscircuit = vi.fn(async () => url);
+	const filesApi = {
+		startTscircuit,
+		readWorkspaceFile: () => new Promise(() => {})
+	} as unknown as FilesApi;
+	const file = { workspacePath: '/w', path: 'pcb/board.circuit.tsx' };
+	render(<Harness filesApi={filesApi} file={file} />);
+
+	fireEvent.click(await screen.findByRole('button', { name: 'Open in tscircuit' }));
+	expect((await screen.findByTitle('tscircuit editor')).getAttribute('src')).toBe(url);
+	expect(startTscircuit).toHaveBeenCalledWith(file, expect.any(AbortSignal));
+	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+		'board.circuit.tsx',
+		'board.circuit.tsx'
+	]);
+});
 
 it('keeps each tab open with its own view and switches between them', () => {
 	render(<Harness />);
