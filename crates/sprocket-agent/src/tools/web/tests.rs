@@ -166,7 +166,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
         hex::encode(<sha2::Sha256 as sha2::Digest>::digest(png())),
         url.to_string(),
     )]);
-    let items = super::super::parse_file::replay_local_tool_output(&metadata)
+    let items = super::super::convert::replay_local_tool_output(&metadata)
         .await
         .unwrap()
         .into_history_items(&stored)

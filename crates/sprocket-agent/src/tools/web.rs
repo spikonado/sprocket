@@ -11,12 +11,12 @@ use serde_json::json;
 use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{AgentToolContext, tool_error};
-use super::hosted_parse::HostedParseContext;
-use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
-use super::parse_file::{
+use super::convert::{
     MAX_PARSE_FILE_IMAGE_BYTES, convert_document, fit_image_for_model_blocking,
     persist_image_bytes, replay_tool_output,
 };
+use super::hosted_parse::HostedParseContext;
+use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
 pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;

@@ -6,7 +6,7 @@ use convex::Value;
 use rig::message::MimeType;
 use serde::Deserialize;
 
-use super::parse_file::ReplayedImage;
+use super::convert::ReplayedImage;
 use crate::convex::RuntimeClient;
 
 /// Matches the per-call cap of `imageUploads:toolImageUrlsForRun`.

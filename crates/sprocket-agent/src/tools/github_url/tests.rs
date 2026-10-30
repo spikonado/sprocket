@@ -301,7 +301,7 @@ async fn image_bytes_use_the_existing_model_and_cache_limits() {
                     .unwrap(),
                 *png.get_ref()
             );
-            super::super::parse_file::replay_tool_output(&result, None)
+            super::super::convert::replay_tool_output(&result, None)
                 .await
                 .unwrap();
         } else {

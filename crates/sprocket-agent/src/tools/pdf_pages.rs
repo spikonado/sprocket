@@ -6,8 +6,8 @@ use anyhow::anyhow;
 use lopdf::{Object, ObjectId};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
+use super::convert::{LocalConversionFailed, run_cancellable_blocking};
 use super::hosted_parse::{HostedParseContext, ParsedPage};
-use super::parse_file::{LocalConversionFailed, run_cancellable_blocking};
 
 /// Hosted OCR bills per page, so scanned pages beyond this stay unextracted.
 const MAX_OCR_PAGES: usize = 20;
