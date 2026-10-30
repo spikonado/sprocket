@@ -172,6 +172,24 @@ fn shows_workspace_context_in_transcript_order() {
 }
 
 #[test]
+fn set_cwd_outdates_earlier_environment_prompts() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let mut set_cwd = tool_part(2, "tool:cwd:finished", "cwd", "completed", None, None, None);
+    set_cwd.tool.as_mut().unwrap().name = "set_cwd".into();
+    let parts = [
+        hidden(0, "earlier", HiddenPromptKind::Instructions, "instructions"),
+        hidden(1, "earlier", HiddenPromptKind::Environment, "env root"),
+        set_cwd,
+    ];
+
+    let shown: Vec<_> = shown_workspace_context(&state, &parts)
+        .into_iter()
+        .map(|prompt| prompt.text)
+        .collect();
+    assert_eq!(shown, ["instructions"]);
+}
+
+#[test]
 fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
     let mut state = TranscriptState::new("user".into(), "thread".into());
     state.history_from_number = 0;
