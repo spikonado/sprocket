@@ -41,6 +41,7 @@
 - Run the `/cleanup` skill on your changes.
 - When possible, verify your changes live to ensure they work as intended.
 - When possible, give the user screenshots/videos of the change working. If you create PRs for the change, attach the screenshots/videos there also.
+  - Use `gh pr create`/`gh pr edit`/`gh pr comment` with `--attach <path>` (repeatable) to upload them; a body reference like `![alt](./shot.png)` to an attached path is rewritten to the uploaded URL, otherwise the attachment is appended.
 - Give the user a summary of your changes.
 
 ## Writing comments and docs for maintainers

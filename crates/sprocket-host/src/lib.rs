@@ -5,6 +5,7 @@ pub mod agent_launch;
 pub mod artifact_watch;
 pub mod browser;
 mod browser_install;
+pub mod bun_install;
 pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
@@ -18,6 +19,7 @@ pub mod profile;
 pub mod project_attachments;
 pub mod run_recovery;
 mod subagent_launcher;
+mod tool_install;
 pub mod transcript_client;
 pub mod transcript_watch;
 mod watch_registry;
@@ -33,6 +35,7 @@ use tokio::task::JoinHandle;
 
 use crate::artifact_watch::ArtifactWatchers;
 use crate::browser::BrowserManager;
+use crate::bun_install::BunInstaller;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_settings::GitHubSettingsStore;
@@ -81,6 +84,7 @@ pub struct Host {
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
+    pub bun: Arc<BunInstaller>,
 }
 
 impl Host {
@@ -143,6 +147,7 @@ impl Host {
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
+            bun: BunInstaller::new(data_dir)?,
         })
     }
 
@@ -182,6 +187,7 @@ impl Host {
     /// Starts the background work that keeps local state in sync with the cloud.
     pub fn start(&self) -> HostTasks {
         self.browsers.prepare_tools();
+        self.bun.prepare();
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
