@@ -526,16 +526,29 @@ impl CommandSessionManager {
             .collect::<Vec<_>>();
         for (id, session) in archived {
             // Retry on the next prune; until then the live session serves polls.
-            if self.save_pending_output(&id, &session).await.is_ok() {
+            if self.save_pending_output(&id, &session, false).await.is_ok() {
                 sessions.remove(&id);
             }
         }
     }
 
-    async fn save_pending_output(&self, session_id: &str, session: &CommandSession) -> Result<()> {
+    async fn save_pending_output(
+        &self,
+        session_id: &str,
+        session: &CommandSession,
+        consume: bool,
+    ) -> Result<()> {
         let path = history_path(&self.log_directory, session_id)?;
         let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
-        history.pending_output = Some(session.output.lock().await.pending_output());
+        let pending = {
+            let mut output = session.output.lock().await;
+            if consume {
+                output.take_preview().output
+            } else {
+                output.pending_output()
+            }
+        };
+        history.pending_output = Some(pending);
         history.save(&path).await
     }
 
@@ -615,7 +628,7 @@ impl CommandSessionManager {
         .await;
         let mut live = self.sessions.lock().await;
         for (id, session) in live.iter() {
-            let _ = self.save_pending_output(id, session).await;
+            let _ = self.save_pending_output(id, session, true).await;
         }
         live.clear();
     }

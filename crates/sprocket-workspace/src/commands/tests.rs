@@ -1198,6 +1198,14 @@ async fn stop_all_keeps_unreturned_output_for_later_polls() {
         .await
         .insert(id.clone(), completed.session);
     sessions.stop_all().await;
+    assert_eq!(
+        completed
+            .observe(ObservationMode::Output)
+            .await
+            .unwrap()
+            .output,
+        ""
+    );
     drop(sessions);
 
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
