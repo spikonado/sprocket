@@ -3,7 +3,7 @@ name: designing-pcbs
 description: 'Use when designing a custom PCB: its schematic, footprints, placement, routing, design checks, BOM, or fab files.'
 ---
 
-Design boards with tscircuit, running its `tsci` CLI through Bun, which Sprocket puts on `PATH`. If `bunx` isn't found yet, Sprocket is still installing Bun: wait a minute and retry.
+Design boards with tscircuit, running its `tsci` CLI through Bun.
 
 1. Set up the project, unless it already has a `tscircuit.config.json`. In a repo that holds other code, give the board its own directory:
 
