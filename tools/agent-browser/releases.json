@@ -1,38 +1,38 @@
 {
 	"skillData": {
-		"url": "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/refs/tags/v0.39.1",
-		"bytes": 2513783,
-		"sha256": "1b8ae0fd469081012c2ead4aa6e587033beb40fb0d6d005e7cec1ccd9474f567"
+		"url": "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/refs/tags/v0.39.3",
+		"bytes": 2534031,
+		"sha256": "eb132640189e6171f994ba79c3070b6fdd6523fe24c04a01209dafbd167e11c6"
 	},
 	"agentBrowser": {
-		"version": "0.39.1",
+		"version": "0.39.3",
 		"repository": "vercel-labs/agent-browser",
-		"tag": "v0.39.1",
+		"tag": "v0.39.3",
 		"platforms": {
 			"darwin-arm64": {
 				"asset": "agent-browser-darwin-arm64",
-				"bytes": 15803440,
-				"sha256": "cc18fac41d9dc9821918340a136e643286ea05544c4dd35671b796f1a874cdef"
+				"bytes": 15869616,
+				"sha256": "87bab1c94acc93d66fdceef2d0f894ffcdb31065402d677b6626a5f22db2517c"
 			},
 			"darwin-x64": {
 				"asset": "agent-browser-darwin-x64",
-				"bytes": 17441576,
-				"sha256": "339cb9aa6dfd404856cf938df34cd3b4779c61dfd57fc257be11b14fd1a885f9"
+				"bytes": 17507312,
+				"sha256": "b8dd9f70bc68959a502407c13fd7394d7647a12d6740c46710d94e94a90904a4"
 			},
 			"linux-musl-arm64": {
 				"asset": "agent-browser-linux-musl-arm64",
-				"bytes": 15642552,
-				"sha256": "c4959f3e193c5bc8f333613363f25f2eaceecafe25a0821843b271906474a20f"
+				"bytes": 15716408,
+				"sha256": "4e39fcee3cf1d1160fb1c1f63de015730905c6b799a8e6b84bfd045046233afa"
 			},
 			"linux-musl-x64": {
 				"asset": "agent-browser-linux-musl-x64",
-				"bytes": 18102976,
-				"sha256": "74507cdab98aa91bdc14346c545aff974640a225e43f8c3d6c23164f8c0f9bb9"
+				"bytes": 18181696,
+				"sha256": "f2c057b4b1b3c2be688b7ee483a9313f4cccc7dfb8adfd0f017cb57668b6465d"
 			},
 			"win32-x64": {
 				"asset": "agent-browser-win32-x64.exe",
-				"bytes": 17922560,
-				"sha256": "af1ff5f2afd5c187fb50ac3bbc1e7114baadc180d67cef63f644af9031be5049"
+				"bytes": 17993728,
+				"sha256": "b02d9566716f5936fcd6e69e84d3e8137711e99e384131e244f1bfe187d30af7"
 			}
 		}
 	}
