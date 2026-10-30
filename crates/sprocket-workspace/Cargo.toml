@@ -10,7 +10,7 @@ workspace = true
 [dependencies]
 anyhow = "1.0.102"
 fs4 = { version = "1.1.0", default-features = false }
-gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance-safe"] }
+gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
 hex = "0.4.3"
 libc = "0.2.186"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }

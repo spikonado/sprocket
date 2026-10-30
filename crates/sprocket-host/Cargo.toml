@@ -47,5 +47,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 axum = "0.8.8"
-gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance-safe"] }
+gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
 tokio = { version = "1.52.1", features = ["test-util"] }
