@@ -45,4 +45,13 @@ async fn interrupted_session_recovers_output_without_claiming_success() {
     assert!(!recovered.result.success);
     assert!(recovered.result.error.unwrap().contains("interrupted"));
     assert_eq!(recovered.result.exit_code, None);
+
+    let saved: CommandHistory = serde_json::from_slice(
+        &tokio::fs::read(&history_path(root.path(), &id).unwrap())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(!saved.result.running);
+    assert_eq!(saved.pending_output.as_deref(), Some("before restart\n"));
 }
