@@ -51,6 +51,8 @@ jobs:
               - oxlint.config.ts
               - package.json
               - turbo.json
+              # The npm package build copies these.
+              - deleted: '{LICENSE,README,THIRD_PARTY_NOTICES}.md'
 
   native_tests:
     name: Native (${{ matrix.os }})
