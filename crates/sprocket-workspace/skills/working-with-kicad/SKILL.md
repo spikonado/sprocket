@@ -1,7 +1,13 @@
 ---
 name: working-with-kicad
-description: 'Use when editing an existing KiCad project (`.kicad_pro`) or schematic (`.kicad_sch`) by hand. For a new custom PCB, use `designing-pcbs`; it exports KiCad files.'
+description: 'Use when editing a KiCad project (`.kicad_pro`), schematic (`.kicad_sch`), or board (`.kicad_pcb`) by hand, checking it with ERC/DRC, or exporting renders or fab files. For a new custom PCB, start with `designing-pcbs`.'
 ---
+
+## kicad-cli
+
+Every check and export here runs `kicad-cli` from KiCad 9 or newer. When it's missing, stop and ask the user to install KiCad 9+. On Nix, `nix shell nixpkgs#kicad-small` provides it.
+
+Each KiCad version saves its own file format, and older versions can't open newer files. KiCad 10 writes boards as `(version 20260206)`, which KiCad 9 rejects. Run `kicad-cli sch upgrade` or `pcb upgrade` on a project file, or any command that saves it, only when the human uses the installed KiCad version or newer. When editing, match the dialect the file already uses. For example, KiCad 9 boards list nets as `(net 1 "GND")` and refer to them as `(net 1)`, while KiCad 10 writes `(net "GND")` everywhere.
 
 ## Ground truth order
 
@@ -146,7 +152,6 @@ If upgrade cannot load the file, fix unit naming / indent / extends before
 adding instances and wires. Then, on the full sheet:
 
 ```bash
-kicad-cli sch upgrade board.kicad_sch   # header matches installed KiCad
 kicad-cli sch erc board.kicad_sch       # review findings
 kicad-cli sch export netlist board.kicad_sch
 ```
@@ -158,3 +163,42 @@ intersect.
 
 Omit `PWR_FLAG` unless the user asks for power flags, and ignore the
 resulting `power_pin_not_driven` ERC errors.
+
+## Editing a board
+
+Board coordinates are in mm with Y increasing downward. Give every new item a fresh `(uuid …)`.
+
+- Footprints: copy the body from the installed footprint libraries (`<Lib>.pretty/<Name>.kicad_mod`) or from a footprint already on the board. Place it with `(footprint "Lib:Name" (layer "F.Cu") (uuid …) (at x y θ) …)`. Link it to its schematic symbol with `(path "/<symbol uuid>")`, and set that symbol's `Footprint` field to the same `Lib:Name`.
+- Pads: `(at px py)` is relative to the footprint and turns with it, so a pad lands at `(x + px·cosθ + py·sinθ, y − px·sinθ + py·cosθ)`. A pad's own angle is absolute, though. When you rotate a footprint by Δ, add Δ to every pad angle, as pcbnew does.
+- Nets: every pad, track, via, and zone names its net. Use the schematic's net names, so DRC `--schematic-parity` passes.
+- Tracks and vias: `(segment (start …) (end …) (width …) (layer "F.Cu") (net …) (uuid …))` and `(via (at …) (size …) (drill …) (layers "F.Cu" "B.Cu") (net …) (uuid …))`. Put each track end exactly on a pad center, a via, or another track end.
+- Zones: write only the outline, `(zone (net …) (layer "B.Cu") (uuid …) (hatch edge 0.5) (connect_pads (clearance …)) (min_thickness …) (fill (thermal_gap …) (thermal_bridge_width …)) (polygon (pts (xy …) …)))`. KiCad computes the `filled_polygon`. Refill after every copper change, because DRC checks the stale fill and reports wrong connectivity. On KiCad 10, `kicad-cli pcb drc --refill-zones --save-board` refills. KiCad 9's CLI can't refill, so ask the human to press B in pcbnew and save.
+- Board outline: a closed loop of `gr_line`, `gr_arc`, or `gr_rect` on `Edge.Cuts`, with each end shared with the next segment.
+
+## Check, render, and export
+
+```bash
+kicad-cli sch erc board.kicad_sch -o erc.rpt --exit-code-violations
+kicad-cli pcb drc board.kicad_pcb -o drc.rpt --schematic-parity --exit-code-violations
+```
+
+Exit code 5 means violations. After every change, run both checks, then render and show the images to the user:
+
+```bash
+kicad-cli sch export svg board.kicad_sch -o render/
+kicad-cli pcb export svg board.kicad_pcb --mode-single -l F.Cu,B.Cu,F.Silkscreen,Edge.Cuts --fit-page-to-board --exclude-drawing-sheet -o render/pcb.svg
+kicad-cli pcb render board.kicad_pcb -o render/3d.png
+```
+
+`sch export pdf` and `pcb export pdf` take the same inputs when the user wants a PDF.
+
+Write fab files only after a refill and a clean DRC. Without `-l`, `export gerbers` plots every layer, including courtyards and user layers, so list the fab layers and add `In1.Cu`, `In2.Cu`, … on boards with inner layers:
+
+```bash
+kicad-cli pcb export gerbers board.kicad_pcb -l F.Cu,B.Cu,F.Paste,B.Paste,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts -o fab/
+kicad-cli pcb export drill board.kicad_pcb -o fab/
+kicad-cli pcb export pos board.kicad_pcb --format csv --units mm -o fab/pos.csv
+kicad-cli sch export bom board.kicad_sch --fields 'Reference,Value,Footprint,MPN,LCSC,${QUANTITY}' -o fab/bom.csv
+```
+
+Zip `fab/` for the fab. Done when every `bom.csv` row carries the part numbers you chose.
