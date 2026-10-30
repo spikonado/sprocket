@@ -689,7 +689,11 @@ export function PromptComposerView({
 					{isWorking ? (
 						<div className="mx-auto mb-3 flex w-full max-w-[48rem] items-center px-5" role="status">
 							<span className="sr-only">Agent is running</span>
-							<span className="tornado-spinner size-6" aria-hidden="true"></span>
+							<img
+								src="/logo.svg"
+								alt=""
+								className="motion-safe:animate-tornado-wobble size-6 origin-top"
+							/>
 						</div>
 					) : isSubmitting ? (
 						<div
