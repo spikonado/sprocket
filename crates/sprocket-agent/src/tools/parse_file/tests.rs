@@ -2,9 +2,11 @@ use super::super::convert::{
     LocalConversionFailed, MAX_MODEL_IMAGE_BYTES, MAX_PARSE_FILE_IMAGE_BYTES,
     MAX_PARSE_FILE_IMAGE_DIMENSION, MAX_PARSE_FILE_PREVIEW_CHARS, ParseFilePersistedOutput,
     decode_image_info, detect_anydoc_format, ensure_image_within_model_bounds, fit_image_for_model,
-    flatten_onto_white, replay_tool_output,
+    flatten_onto_white, replay_local_tool_output, replay_tool_output,
 };
+use super::super::image_urls::ImageUrlMap;
 use super::*;
+use crate::types::AgentHistoryToolResultItem;
 use base64::Engine;
 use rig::message::{DocumentSourceKind, ImageMediaType, ToolResultContent};
 use sprocket_workspace::WorkspaceOperationCancelled;
@@ -134,12 +136,15 @@ fn replay_metadata_accepts_convex_float_numbers() {
         "byteSize": 123.0, "width": 1.0, "height": 2.0
     }))
     .unwrap();
-    assert!(matches!(output, ParseFilePersistedOutput::Image {
-        byte_size: 123,
-        width: 1,
-        height: 2,
-        ..
-    }));
+    assert!(matches!(
+        output,
+        ParseFilePersistedOutput::Image {
+            byte_size: 123,
+            width: 1,
+            height: 2,
+            ..
+        }
+    ));
 }
 
 #[test]
