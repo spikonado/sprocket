@@ -3,7 +3,7 @@ import { api, internal } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
 import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
-import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import { initConvexTest, insertQueuedRun, seedOwnedThread, tickPastLastCommit } from './test.setup';
 
 const machine = {
 	machineId: 'machine-a',
@@ -44,6 +44,7 @@ describe('machines', () => {
 		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toEqual(original);
 		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'queued' });
 
+		tickPastLastCommit();
 		await asUser.mutation(api.machines.heartbeatProcess, {
 			machineId: machine.machineId,
 			processId: 'process-a'

@@ -4,6 +4,7 @@ import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import {
 	AUTOMATIC_RECOVERY_GRACE_MS,
@@ -13,6 +14,7 @@ import { getRunExecutionState } from '@convex/lib/runExecution';
 import {
 	abandonRun,
 	createQueuedRun,
+	finishDueScheduledFunctions,
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
@@ -202,18 +204,7 @@ describe('subagents.createOrSend', () => {
 			)
 		).toBeNull();
 
-		for (;;) {
-			const pending = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
-
-			if (
-				!pending.some(
-					(entry) => entry.state.kind === 'pending' && entry.scheduledTime <= Date.now()
-				)
-			)
-				break;
-			await vi.advanceTimersByTimeAsync(1);
-			await t.finishInProgressScheduledFunctions();
-		}
+		await finishDueScheduledFunctions(t);
 
 		expect(await prepare()).toBe(true);
 
@@ -1278,7 +1269,8 @@ describe('subagents.control', () => {
 			workingDescendantCount: 0,
 			descendantsActive: true
 		});
-		vi.setSystemTime(Date.now() + 60_000);
+		const question = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
+		vi.setSystemTime(question!.timeoutAt!);
 		await t.mutation(internal.agentQuestions.timeout, { questionId });
 		expect(await summary()).toMatchObject({
 			descendantCount: 1,
@@ -1423,7 +1415,7 @@ describe('subagents.control', () => {
 			await expect(
 				t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))
 			).rejects.toThrow(/cancelled/);
-			await vi.advanceTimersByTimeAsync(10_000);
+			await vi.advanceTimersByTimeAsync(CANCELLATION_FORCE_AFTER_MS + 1);
 			await t.finishInProgressScheduledFunctions();
 
 			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {

@@ -232,10 +232,10 @@ describe('subscription and usage backend', () => {
 	});
 
 	it('carries old first-use usage into the calendar window on the first new charge', async () => {
+		vi.setSystemTime(Date.parse('2026-02-10T00:00:00Z'));
 		const t = initConvexTest();
 		await seedTiers(t);
 		const userId = 'user_legacy_usage';
-		vi.setSystemTime(Date.parse('2026-02-10T00:00:00Z'));
 
 		await t.mutation(components.rateLimiter.lib.rateLimit, {
 			name: 'modelUsageMonthly',

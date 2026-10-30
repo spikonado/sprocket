@@ -9,10 +9,12 @@ import { getRunExecutionState, patchRunExecution } from '@convex/lib/runExecutio
 import { RUN_QUEUED_STARTUP_DEADLINE_MS } from '@convex/lib/runLease';
 import {
 	createQueuedRun,
+	finishDueScheduledFunctions,
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
 	seedThreadRecord,
+	tickPastLastCommit,
 	type ConvexTestInstance
 } from './test.setup';
 
@@ -101,21 +103,6 @@ async function expectCleanedJobs(t: ConvexTestInstance, jobs: Doc<'executorJobs'
 	}
 }
 
-async function finishImmediateCleanup(t: ConvexTestInstance) {
-	for (let iteration = 0; iteration < 1000; iteration++) {
-		const pending = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
-
-		if (
-			!pending.some((entry) => entry.state.kind === 'pending' && entry.scheduledTime <= Date.now())
-		)
-			return;
-		await vi.advanceTimersByTimeAsync(1);
-		await t.finishInProgressScheduledFunctions();
-	}
-
-	throw new Error('Immediate cleanup did not settle.');
-}
-
 async function transcriptParts(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	const parts: Doc<'threadTranscriptParts'>[] = [];
 	let afterNumber = -1;
@@ -178,7 +165,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				)
 			).toBeNull();
 
-			await finishImmediateCleanup(t);
+			await finishDueScheduledFunctions(t);
 
 			expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(true);
 
@@ -218,7 +205,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			status: 'cancelled'
 		});
 
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 
 		const next = await createQueuedRun(
 			t,
@@ -235,7 +222,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'cancelled'
 		});
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 
 		await createQueuedRun(
 			t,
@@ -246,7 +233,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			'Replacement message'
 		);
 
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 		const parts = await transcriptParts(t, threadId);
 		expect(parts.filter((part) => part.kind === 'prompt').map((part) => part.prompt?.text)).toEqual(
 			['Do the thing', 'Next message', 'Replacement message']
@@ -264,7 +251,8 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'failed'
 		});
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
+		tickPastLastCommit();
 		const next = await createQueuedRun(t, asUser, threadId, 'next-message', 'next-secret');
 		const state = await t.run((ctx) => getRunExecutionState(ctx.db, next.runId));
 		expect(
@@ -289,7 +277,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'cancelled'
 		});
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 		const runIds: Id<'runs'>[] = [];
 
 		for (let index = 0; index < 20; index++) {
@@ -314,7 +302,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		}
 
 		const next = await createQueuedRun(t, asUser, threadId, 'replacement', 'replacement-secret');
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 		const prompts = (await transcriptParts(t, threadId)).filter((part) => part.kind === 'prompt');
 		expect(prompts.map((part) => part.runId)).toEqual([runId, ...runIds, next.runId]);
 	});
@@ -354,7 +342,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
 		await expect(insertQueuedRun(t, asUser, args)).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 
 		const next = await insertQueuedRun(t, asUser, args);
 		expect(await insertQueuedRun(t, asUser, args)).toMatchObject({
@@ -380,7 +368,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'cancelled'
 		});
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 		const parts = await transcriptParts(t, threadId);
 		const prompt = parts.find((part) => part.runId === next.runId);
 		expect(prompt?.prompt).toMatchObject({
@@ -423,7 +411,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
 		await expect(insertQueuedRun(t, asUser, args)).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(true);
 
 		const next = await insertQueuedRun(t, asUser, args);
@@ -500,7 +488,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 						.unique()
 				)
 			).toBeNull();
-			await finishImmediateCleanup(t);
+			await finishDueScheduledFunctions(t);
 			expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(true);
 			const next = await asUser.action(api.agentRuntime.createGatewayRun, nextRequest);
 			expect(next).toMatchObject({ created: true });
@@ -527,7 +515,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
 		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({ status: 'failed' });
 
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(true);
 		const next = await createQueuedRun(t, asUser, threadId, 'after-expiry', 'next-secret');
@@ -705,7 +693,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'cancelled'
 		});
-		await finishImmediateCleanup(t);
+		await finishDueScheduledFunctions(t);
 		const next = await createQueuedRun(t, asUser, threadId, 'new-question', 'new-secret');
 		const [job] = await seedJobs(t, next.runId, 1, false);
 

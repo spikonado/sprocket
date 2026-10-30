@@ -6,6 +6,7 @@ import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
+	tickPastLastCommit,
 	toolTranscriptAssignment
 } from './test.setup';
 import { registerChildThread } from '@convex/lib/threadHierarchy';
@@ -239,6 +240,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			run: { runId: created.runId }
 		});
 
+		tickPastLastCommit();
 		expect(
 			await asUser.mutation(api.agentRuntime.requestCancellation, { runId: created.runId })
 		).toBe(true);

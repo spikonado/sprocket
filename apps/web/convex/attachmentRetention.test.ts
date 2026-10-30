@@ -6,6 +6,7 @@ import {
 	insertQueuedRun,
 	seedOwnedThread,
 	seedThreadRecord,
+	tickPastLastCommit,
 	type ConvexTestInstance
 } from './test.setup';
 
@@ -77,13 +78,15 @@ describe('attachment retention', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const file = await attachment(t, threadId);
+		const lastMessageAt = Date.now() + 1 - WEEK;
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, {
-				lastMessageAt: Date.now() - WEEK,
+				lastMessageAt,
 				status: 'running'
 			});
 		});
 		await asUser.mutation(api.threads.rename, { threadId, title: 'Recent rename' });
+		tickPastLastCommit();
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(0);
 		vi.setSystemTime(Date.now() + 1);
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);

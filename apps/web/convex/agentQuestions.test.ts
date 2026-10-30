@@ -7,6 +7,7 @@ import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
+	tickPastLastCommit,
 	toolTranscriptAssignment
 } from '@convex/test.setup';
 
@@ -257,6 +258,7 @@ describe('agentQuestions', () => {
 			const t = initConvexTest();
 			const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 			const { executionSecret, claimId, runId } = await startRun(t, threadId);
+			tickPastLastCommit();
 
 			const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,
@@ -290,6 +292,7 @@ describe('agentQuestions', () => {
 			const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
 			const timeoutMs = 48 * 60 * 60 * 1000;
+			tickPastLastCommit();
 
 			const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,
@@ -342,6 +345,7 @@ describe('agentQuestions', () => {
 			const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
 			const timeoutMs = 400 * 24 * 60 * 60 * 1000;
+			tickPastLastCommit();
 
 			const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,
@@ -354,7 +358,7 @@ describe('agentQuestions', () => {
 
 			expect(created.timeoutAt).toBe(Date.now() + timeoutMs);
 
-			const deadline = new Date('2026-08-01T10:00:00.000Z').getTime() + timeoutMs;
+			const deadline = Date.now() + timeoutMs;
 			let now = Date.now();
 
 			while (deadline - now > QUESTION_TIMEOUT_CHECKPOINT_MS) {
@@ -394,6 +398,7 @@ describe('agentQuestions', () => {
 			const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
 			const timeoutMs = 400 * 24 * 60 * 60 * 1000;
+			tickPastLastCommit();
 
 			const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,

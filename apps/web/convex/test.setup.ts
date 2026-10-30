@@ -7,6 +7,7 @@ import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import posthogTest from '@posthog/convex/test';
 import { convexTest, type TestConvex } from 'convex-test';
+import { vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
@@ -29,6 +30,33 @@ export const modules = import.meta.glob([
 ]);
 
 export type ConvexTestInstance = TestConvex<typeof schema>;
+
+/**
+ * convex-test starts each transaction at or after the last commit, so once two
+ * commits share a frozen fake millisecond, functions see Date.now() 1ms ahead.
+ * Call this before a transaction whose timestamps the test asserts exactly.
+ */
+export function tickPastLastCommit() {
+	vi.setSystemTime(Date.now() + 1);
+}
+
+/** Runs scheduled functions until none are due, allowing for the lead described at `tickPastLastCommit`. */
+export async function finishDueScheduledFunctions(t: ConvexTestInstance) {
+	for (let iteration = 0; iteration < 1000; iteration++) {
+		const pending = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+
+		if (
+			!pending.some(
+				(entry) => entry.state.kind === 'pending' && entry.scheduledTime <= Date.now() + 1
+			)
+		)
+			return;
+		await vi.advanceTimersByTimeAsync(1);
+		await t.finishInProgressScheduledFunctions();
+	}
+
+	throw new Error('Due scheduled functions did not settle.');
+}
 
 export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: string) {
 	return ctx.db.insert('users', {
