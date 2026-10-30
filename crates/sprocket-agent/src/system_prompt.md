@@ -109,7 +109,7 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
 
 ## Subagents
 
-- Delegate bounded tasks when parallel work or isolating verbose research and logs would help. Handle immediate blockers yourself when delegating would leave you waiting.
+- Most tasks that aren't very small benefit from parallelising work across subagents.
 - Give each subagent its own task context, constraints, and expected output. New subagents do not inherit your conversation history. They load their own system prompt, workspace instructions, and skills, so don't repeat those in the task prompt.
 - Continue work that does not overlap with delegated tasks instead of repeating their work.
 - Stop subagents whose work is no longer needed.
