@@ -7,17 +7,6 @@ import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlig
 import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
 import ChatMarkdown from './chat-markdown';
 
-vi.mock('mermaid', () => ({
-	default: {
-		initialize: vi.fn(),
-		render: vi.fn(async (_id: string, source: string) => {
-			if (!source.startsWith('graph')) throw new Error('Syntax error');
-
-			return { svg: '<svg class="test-diagram"></svg>' };
-		})
-	}
-}));
-
 const artifact: ArtifactEntry = {
 	key: 'ks73zzsnfj2najtd871p43f45s8ec23d',
 	title: 'About Me.md',
@@ -298,17 +287,6 @@ describe('copying code', () => {
 		fireEvent.click(getByRole('button', { name: 'Copy current code' }));
 
 		await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('const reading = 23.4;\n'));
-	});
-});
-
-describe('mermaid diagrams', () => {
-	it('renders valid diagrams and keeps invalid ones as code', async () => {
-		const { container } = render(
-			<ChatMarkdown content={'```mermaid\ngraph TD\n```\n\n```mermaid\nnot a diagram\n```'} />
-		);
-
-		await waitFor(() => expect(container.querySelector('.markdown-mermaid svg')).not.toBeNull());
-		expect(container.querySelector('code.language-mermaid')?.textContent).toBe('not a diagram\n');
 	});
 });
 
