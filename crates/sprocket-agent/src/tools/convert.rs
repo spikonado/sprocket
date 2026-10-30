@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
 use base64::Engine;
-use rig::message::{ImageMediaType, ToolResultContent};
+use rig::message::{ImageMediaType, MimeType, ToolResultContent};
 use rig::tool::ToolOutput;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
