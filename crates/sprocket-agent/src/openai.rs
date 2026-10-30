@@ -22,6 +22,7 @@ impl Wire for StatelessResponses {
     type Op = Completion;
     type Payload = Encoded;
     type Frame = WireFrame;
+    type Event = <Responses as Wire>::Event;
     type Decoder<'id> = <Responses as Wire>::Decoder<'id>;
     type Reassembler = <Responses as Wire>::Reassembler;
 
@@ -53,6 +54,7 @@ impl Wire for DeveloperResponses {
     type Op = Completion;
     type Payload = Encoded;
     type Frame = WireFrame;
+    type Event = <Responses as Wire>::Event;
     type Decoder<'id> = <Responses as Wire>::Decoder<'id>;
     type Reassembler = <Responses as Wire>::Reassembler;
 
@@ -61,7 +63,6 @@ impl Wire for DeveloperResponses {
     }
 
     fn encode(&self, request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
-        // Rig 0.44 has no developer role or developer instruction placement.
         let mut encoded = self
             .0
             .clone()

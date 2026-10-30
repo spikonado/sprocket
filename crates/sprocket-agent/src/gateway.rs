@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rig::http_client::{
-    self, DynHttpClient, HeaderMap, HttpMiddleware, Method, ReqwestClient, Uri, bearer_auth_header,
+    self, DynHttpClient, Exchange, HeaderMap, HeaderValue, HttpMiddleware, ReqwestClient,
 };
 use rig::operation::Completion;
 use rig::providers::openai::OpenAIConfig;
@@ -77,13 +77,14 @@ where
 {
     fn before_request_headers<'a>(
         &'a self,
-        _method: &'a Method,
-        _uri: &'a Uri,
+        _exchange: Exchange<'a>,
         headers: &'a mut HeaderMap,
     ) -> WasmBoxedFuture<'a, http_client::Result<()>> {
         Box::pin(async move {
             let token = self.resolve_credential().await?;
-            bearer_auth_header(headers, token)?;
+            let mut authorization = HeaderValue::from_str(&format!("Bearer {token}"))?;
+            authorization.set_sensitive(true);
+            headers.insert(http::header::AUTHORIZATION, authorization);
             Ok(())
         })
     }
