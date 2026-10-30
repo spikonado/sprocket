@@ -318,13 +318,13 @@ body::after {
 	background: linear-gradient(
 			90deg,
 			#6aa9dc 0%,
-			#8cc0e7 18%,
+			#8cc0e7 22%,
 			#eef7fd 25%,
-			#8cc0e7 32%,
+			#8cc0e7 28%,
 			#6aa9dc 50%,
-			#8cc0e7 68%,
+			#8cc0e7 72%,
 			#eef7fd 75%,
-			#8cc0e7 82%,
+			#8cc0e7 78%,
 			#6aa9dc 100%
 		)
 		0 0 / 200% 100%;
