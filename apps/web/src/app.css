@@ -49,20 +49,10 @@
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 6px);
 	--animate-side-panel-in: side-panel-in 180ms ease-out;
-	--animate-tornado-sway: tornado-sway 900ms ease-in-out infinite alternate;
 
 	@keyframes side-panel-in {
 		from {
 			transform: translateX(100%);
-		}
-	}
-
-	@keyframes tornado-sway {
-		from {
-			transform: translateX(-2.5px);
-		}
-		to {
-			transform: translateX(2.5px);
 		}
 	}
 }
@@ -321,6 +311,45 @@ body::after {
 
 .transcript-fade {
 	background-image: var(--transcript-fade);
+}
+
+.tornado-spinner {
+	mask: url('/logo.svg') center / contain no-repeat;
+	background: linear-gradient(
+			90deg,
+			#6aa9dc 0%,
+			#8cc0e7 18%,
+			#eef7fd 25%,
+			#8cc0e7 32%,
+			#6aa9dc 50%,
+			#8cc0e7 68%,
+			#eef7fd 75%,
+			#8cc0e7 82%,
+			#6aa9dc 100%
+		)
+		0 0 / 200% 100%;
+	transform-origin: 50% 0;
+
+	@media (prefers-reduced-motion: no-preference) {
+		animation:
+			tornado-spin 900ms linear infinite,
+			tornado-wobble 1.8s ease-in-out infinite alternate;
+	}
+}
+
+@keyframes tornado-spin {
+	to {
+		background-position: -200% 0;
+	}
+}
+
+@keyframes tornado-wobble {
+	from {
+		transform: rotate(-5deg);
+	}
+	to {
+		transform: rotate(5deg);
+	}
 }
 
 .app-entry-shell {

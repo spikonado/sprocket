@@ -27,7 +27,6 @@ import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import ComposerNotice from '$lib/components/home/composer-notice';
 import ThreadUsageButton from '$lib/components/home/thread-usage-button';
-import { TornadoSpinner } from '$lib/components/home/tornado-spinner';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
 import ModelSelector from '$lib/components/model-selector';
@@ -690,7 +689,7 @@ export function PromptComposerView({
 					{isWorking ? (
 						<div className="mx-auto mb-3 flex w-full max-w-[48rem] items-center px-5" role="status">
 							<span className="sr-only">Agent is running</span>
-							<TornadoSpinner />
+							<span className="tornado-spinner size-6" aria-hidden="true"></span>
 						</div>
 					) : isSubmitting ? (
 						<div
