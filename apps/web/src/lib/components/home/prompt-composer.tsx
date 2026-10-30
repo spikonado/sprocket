@@ -27,6 +27,7 @@ import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import ComposerNotice from '$lib/components/home/composer-notice';
 import ThreadUsageButton from '$lib/components/home/thread-usage-button';
+import { TornadoSpinner } from '$lib/components/home/tornado-spinner';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
 import ModelSelector from '$lib/components/model-selector';
@@ -687,20 +688,13 @@ export function PromptComposerView({
 			<footer className="shrink-0 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
 				<div className="mx-auto max-w-336">
 					{isWorking ? (
-						<div
-							className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]"
-							role="status"
-						>
+						<div className="mx-auto mb-3 flex w-full max-w-[48rem] items-center px-5" role="status">
 							<span className="sr-only">Agent is running</span>
-							<span className="inline-flex items-center gap-0.75" aria-hidden="true">
-								<span className="bg-foreground/28 size-1 animate-pulse rounded-full"></span>
-								<span className="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:200ms]"></span>
-								<span className="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:400ms]"></span>
-							</span>
+							<TornadoSpinner />
 						</div>
 					) : isSubmitting ? (
 						<div
-							className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]"
+							className="text-muted-foreground mx-auto mb-3 flex w-full max-w-[48rem] items-center gap-2 px-5 text-[11px]"
 							role="status"
 							aria-live="polite"
 						>

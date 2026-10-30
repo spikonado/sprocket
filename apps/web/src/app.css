@@ -49,10 +49,20 @@
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 6px);
 	--animate-side-panel-in: side-panel-in 180ms ease-out;
+	--animate-tornado-sway: tornado-sway 900ms ease-in-out infinite alternate;
 
 	@keyframes side-panel-in {
 		from {
 			transform: translateX(100%);
+		}
+	}
+
+	@keyframes tornado-sway {
+		from {
+			transform: translateX(-2.5px);
+		}
+		to {
+			transform: translateX(2.5px);
 		}
 	}
 }
