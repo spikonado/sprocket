@@ -22,7 +22,7 @@ The frame is transparent over the thread, as wide as the message column, and gro
 - Leave `html`, `body`, and the outermost element without a background, horizontal padding, border, or title.
 - Give a box its own background only when it must stand apart, with at least 16px of padding and `var(--radius)` corners.
 - Size from content and fixed pixel heights, since a `vh` or `height: 100%` size follows the frame.
-- Color the page with these `:root` tokens, which follow the user's light or dark theme live: `--background`, `--foreground`, `--surface`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--primary`, `--primary-foreground`, `--secondary`, `--secondary-foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`, `--accent-strong`, `--accent-soft`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, `--chart-1` to `--chart-5` for data series, `--radius`, `--font-sans`, and `--font-mono`.
+- Take every color from the `:root` tokens, which follow the user's light or dark theme live. Data series use `--chart-1` to `--chart-5`. Everything else uses `--background`, `--foreground`, `--surface`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--primary`, `--primary-foreground`, `--secondary`, `--secondary-foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`, `--accent-strong`, `--accent-soft`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, and `--ring`. Shape and type come from `--radius`, `--font-sans`, and `--font-mono`.
 
 ## Pages
 
