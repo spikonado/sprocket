@@ -62,22 +62,34 @@ fn is_workspace_context_part(part: &TranscriptPart) -> bool {
     )
 }
 
-/// Workspace context prompts in the history, oldest first.
+/// Workspace context prompts in the history, oldest first. A completed set_cwd
+/// outdates earlier Environment prompts, so a run restoring a different cwd resends it.
 pub(crate) fn shown_workspace_context(
     state: &TranscriptState,
     parts: &[TranscriptPart],
 ) -> Vec<HiddenPrompt> {
-    parts
+    let mut shown: Vec<HiddenPrompt> = Vec::new();
+    for part in parts
         .iter()
-        .filter(|part| part.number >= state.history_from_number && is_workspace_context_part(part))
-        .filter_map(|part| {
-            let prompt = part.prompt.as_ref()?;
-            Some(HiddenPrompt {
-                kind: prompt.hidden.clone()?,
+        .filter(|part| part.number >= state.history_from_number)
+    {
+        if part
+            .tool
+            .as_ref()
+            .is_some_and(|tool| tool.name == "set_cwd" && tool.status == "completed")
+        {
+            shown.retain(|prompt| prompt.kind != HiddenPromptKind::Environment);
+        } else if is_workspace_context_part(part)
+            && let Some(prompt) = &part.prompt
+            && let Some(kind) = &prompt.hidden
+        {
+            shown.push(HiddenPrompt {
+                kind: kind.clone(),
                 text: prompt.text.clone(),
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    shown
 }
 
 /// The prompt a run should answer, kept out of its history. A continuation
