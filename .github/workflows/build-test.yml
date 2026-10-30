@@ -15,8 +15,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Required checks pass when skipped, so PRs skip suites their files can't affect.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            ci: &ci
+              - .github/actions/**
+              - .github/workflows/build-test.yml
+              - flake.nix
+              - flake.lock
+            rust:
+              - *ci
+              - crates/**
+              - Cargo.toml
+              - Cargo.lock
+              - tools/agent-browser/*.json
+            web:
+              - *ci
+              - apps/**
+              - npm/**
+              - packages/**
+              - scripts/**
+              - tools/**
+              - bun.lock
+              - oxlint.config.ts
+              - package.json
+              - turbo.json
+
   native_tests:
     name: Native (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +78,8 @@ jobs:
         run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -58,6 +99,8 @@ jobs:
         run: bun run test
 
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
