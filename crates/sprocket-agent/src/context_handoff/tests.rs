@@ -56,7 +56,7 @@ fn handoff_is_due_once_reported_context_reaches_the_limit() {
 
 #[test]
 fn mid_run_handoff_includes_the_pending_tool_result() {
-    let history = vec![Message::user("old work")];
+    let history = vec![Arc::new(Message::user("old work"))];
     let prompt = Message::user("tool result");
     let mut state = HandoffState {
         context_tokens: 100,
@@ -72,13 +72,13 @@ fn mid_run_handoff_includes_the_pending_tool_result() {
     );
     assert_eq!(
         state.handoff_history.unwrap(),
-        vec![history[0].clone(), prompt]
+        vec![Message::user("old work"), prompt]
     );
 }
 
 #[test]
 fn does_not_estimate_tokens_from_large_messages() {
-    let history = vec![Message::user("x".repeat(100_000))];
+    let history = vec![Arc::new(Message::user("x".repeat(100_000)))];
     let prompt = Message::user("next");
     let mut state = HandoffState::default();
     assert!(matches!(

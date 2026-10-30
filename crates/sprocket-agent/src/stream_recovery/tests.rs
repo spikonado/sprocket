@@ -16,7 +16,7 @@ fn recovery_is_bounded_across_calls_and_accepts_relayed_truncation() {
 fn only_truncation_consumes_the_saved_input() {
     let mut recovery = StreamRecovery::default();
     *recovery.input.lock().unwrap() = Some((vec![], Message::user("continue")));
-    let cancelled = PromptError::cancelled([], "cancelled");
+    let cancelled = PromptError::cancelled(Vec::new(), "cancelled");
     assert!(recovery.resume(&cancelled).is_none());
     let rejected = PromptError::Provider(ProviderError::from_provider_body(
         r#"{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}"#,

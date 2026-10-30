@@ -24,7 +24,7 @@ fn is_truncation(error: &PromptError) -> bool {
     match error {
         PromptError::Provider(ProviderError::Truncated) => true,
         PromptError::Report(report) => {
-            // Rig's effect bus replaces the typed error with its report.
+            // Rig relays a handler's failure as its report.
             let expected = ProviderError::Truncated.report();
             report.kind == expected.kind && report.retryable && report.message == expected.message
         }
@@ -100,7 +100,8 @@ impl AgentHook for StreamRecovery {
         match self.input.lock() {
             Ok(mut input) => {
                 // The next call's input includes committed tool results, not partial output.
-                *input = Some((event.history.to_vec(), event.prompt.clone()));
+                let history = event.history.iter().map(|message| (**message).clone());
+                *input = Some((history.collect(), event.prompt.clone()));
                 CompletionCallAction::Continue
             }
             Err(_) => CompletionCallAction::stop("Stream recovery state is unavailable."),

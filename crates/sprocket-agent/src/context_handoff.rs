@@ -48,8 +48,8 @@ impl HandoffState {
         if self.writing || !self.due(limit) {
             return CompletionCallAction::Continue;
         }
-        let mut history = event.history.to_vec();
-        history.push(event.prompt.clone());
+        let history = event.history.iter().map(|message| &**message);
+        let history = history.chain([event.prompt]).cloned().collect();
         self.handoff_history = Some(history);
         CompletionCallAction::stop(HANDOFF_REQUESTED)
     }

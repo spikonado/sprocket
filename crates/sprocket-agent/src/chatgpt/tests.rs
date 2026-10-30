@@ -935,16 +935,16 @@ fn completion_request(
     additional_params: serde_json::Value,
 ) -> CompletionRequest {
     let mut request = CompletionRequest::new("unused");
-    request.chat_history = chat_history;
+    request.chat_history = chat_history.into_iter().map(Arc::new).collect();
     request
-        .tools(vec![rig::completion::ToolDefinition {
-            name: ToolName::new("exec_command").unwrap(),
-            description: "Run a command".to_string(),
-            parameters: json!({
+        .tools([rig::completion::ToolDefinition::new(
+            ToolName::new("exec_command").unwrap(),
+            "Run a command",
+            json!({
                 "type": "object",
                 "properties": {"cmd": {"type": "string"}}
             }),
-        }])
+        )])
         .max_tokens(1024)
         .additional_params(additional_params)
 }
@@ -1030,7 +1030,7 @@ fn siwc_body_drops_reasoning_items_without_encrypted_state() {
             "gpt-5.3-codex",
         )),
     )]);
-    request.chat_history.push(Message::user("next"));
+    request.chat_history.push(Arc::new(Message::user("next")));
     let body = shaped_body(request);
     let input = body["input"].as_array().unwrap();
     assert!(

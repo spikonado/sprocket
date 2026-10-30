@@ -603,11 +603,13 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
                     chat_history,
                 }) => {
                     assert_eq!(reason, HANDOFF_SUBMITTED);
-                    assert!(!chat_history.iter().any(|message| matches!(
-                        message,
-                        Message::User { content, .. }
-                            if content.iter().any(|part| matches!(part, UserContent::ToolResult(_)))
-                    )));
+                    let [.., Message::Assistant(turn), closure] = chat_history.as_slice() else {
+                        panic!("cancelled history must end with the handoff turn and its closure");
+                    };
+                    assert_eq!(
+                        *closure,
+                        rig::conversation::pairing::close_pending(turn.tool_calls())
+                    );
                     stopped = true;
                 }
                 Err(error) => panic!("unexpected handoff error: {error}"),

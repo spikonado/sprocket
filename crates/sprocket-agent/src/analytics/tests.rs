@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use rig::agent::CompletionCallEvent;
 use rig::completion::{Message, Usage};
 use rig::message::{AssistantContent, ToolName};
@@ -13,8 +15,8 @@ use crate::types::CompletionProvider;
 fn input_delta_sends_new_messages_without_the_previous_output() {
     let first_prompt = Message::user("list the files");
     let earlier = vec![
-        Message::user("earlier"),
-        Message::assistant("earlier reply"),
+        Arc::new(Message::user("earlier")),
+        Arc::new(Message::assistant("earlier reply")),
     ];
     let first = CompletionCallEvent {
         prompt: &first_prompt,
@@ -25,7 +27,10 @@ fn input_delta_sends_new_messages_without_the_previous_output() {
 
     let tool_result = Message::user("README.md");
     let mut history = earlier.clone();
-    history.extend([first_prompt.clone(), Message::assistant("calling ls")]);
+    history.extend([
+        Arc::new(first_prompt.clone()),
+        Arc::new(Message::assistant("calling ls")),
+    ]);
     let second = CompletionCallEvent {
         prompt: &tool_result,
         history: &history,

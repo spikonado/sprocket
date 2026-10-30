@@ -256,6 +256,7 @@ fn input_delta(event: CompletionCallEvent<'_>, previous_len: usize) -> Value {
     };
     let messages: Vec<&Message> = added
         .iter()
+        .map(|message| &**message)
         .filter(|message| !matches!(message, Message::Assistant(_)))
         .chain([event.prompt])
         .collect();

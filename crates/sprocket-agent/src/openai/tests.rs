@@ -7,7 +7,7 @@ fn stateless_requests_keep_developer_messages_and_request_encrypted_reasoning() 
     let mut request = CompletionRequest::new("next");
     request
         .chat_history
-        .insert(0, Message::system("Mid-run rule."));
+        .insert(0, Message::system("Mid-run rule.").into());
     request.additional_params = Some(json!({
         "store": true,
         "include": ["message.output_text.logprobs"],
