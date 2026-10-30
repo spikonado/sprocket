@@ -74,6 +74,7 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
 - Visuals: a fenced block tagged `html-visual` or `jsx-visual` renders inline as a live page that belongs to that reply.
 - Read the `making-artifacts-and-visuals` skill before making an artifact or a visual.
 - Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block
+- Diagrams: a fenced block tagged `mermaid` renders as a Mermaid diagram.
 - Code: fenced code blocks with a language tag get syntax highlighting, a language icon, and a copy button.
 
 ## Writing tests

@@ -698,6 +698,16 @@ body::after {
 	background: color-mix(in oklab, var(--muted) 55%, var(--surface));
 }
 
+.chat-markdown .markdown-mermaid {
+	display: flex;
+	overflow-x: auto;
+	justify-content: center;
+	margin: 0.8rem 0;
+	border: 1px solid var(--border);
+	border-radius: 0.8rem;
+	padding: 1rem;
+}
+
 .chat-markdown pre.markdown-code-wrap {
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
