@@ -62,24 +62,34 @@ impl CommandHistory {
         };
         let mut history: Self = serde_json::from_slice(&contents)
             .with_context(|| format!("failed to read command session {session_id}"))?;
-        if history.result.running {
-            history.result.running = false;
-            history.result.success = false;
-            history.result.error = Some(
-                "command session was interrupted before its final status was saved; output may be incomplete"
-                    .into(),
-            );
-            history.result.output = CapturedOutput::read_log_preview(
-                Path::new(&history.result.complete_log_path),
-                history.max_output_chars,
-            )
-            .await?;
-        }
+        history.settle_interrupted(&path).await?;
         Ok(CommandStdinOutput {
             command: history.command,
             workdir: history.workdir,
             result: history.result,
         })
+    }
+
+    /// Persist an interrupted session so later polls consume its output once.
+    pub(crate) async fn settle_interrupted(&mut self, path: &Path) -> Result<()> {
+        if !self.result.running {
+            return Ok(());
+        }
+        self.result.running = false;
+        self.result.success = false;
+        self.result.error = Some(
+            "command session was interrupted before its final status was saved; output may be incomplete"
+                .into(),
+        );
+        self.result.output = CapturedOutput::read_log_preview(
+            Path::new(&self.result.complete_log_path),
+            self.max_output_chars,
+        )
+        .await?;
+        if self.pending_output.is_none() {
+            self.pending_output = Some(self.result.output.clone());
+        }
+        self.save(path).await
     }
 }
 

@@ -715,13 +715,10 @@ async fn exec_command_reports_the_shell_and_workdir_when_spawn_fails() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect::<Vec<_>>();
-    assert_eq!(
-        records,
-        vec![std::ffi::OsString::from(format!(
-            "{}.json",
-            next.session_id.unwrap()
-        ))]
-    );
+    assert_eq!(records, vec![std::ffi::OsString::from(format!(
+        "{}.json",
+        next.session_id.unwrap()
+    ))]);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1141,6 +1138,71 @@ async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
     sessions.prune_completed().await;
     assert!(!sessions.sessions.lock().await.contains_key(&observed_id));
     sessions.stop_all().await;
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn interrupted_session_output_is_returned_once() {
+    let root = temp_workspace();
+    let logs = root.join("logs");
+    let id = uuid::Uuid::new_v4().to_string();
+    let mut output = CapturedOutput::create(&logs, 20_000).await.unwrap();
+    output
+        .append(OutputChannel::Stdout, b"before restart\n")
+        .await
+        .unwrap();
+    let preview = output.preview_metadata();
+    super::CommandHistory {
+        user_id: String::new(),
+        thread_id: String::new(),
+        machine_id: String::new(),
+        command: "build".into(),
+        workdir: "/workspace".into(),
+        max_output_chars: 20_000,
+        result: CommandOutput {
+            exit_code: None,
+            running: true,
+            success: false,
+            timed_out: false,
+            output: String::new(),
+            complete_log_path: preview.complete_log_path,
+            events_path: preview.events_path,
+            error: None,
+        },
+        pending_output: None,
+    }
+    .save(&super::history_path(&logs, &id).unwrap())
+    .await
+    .unwrap();
+
+    let sessions = CommandSessionManager::new(root.clone(), logs);
+    let first = poll(&sessions, &id, 270_000).await;
+    assert_eq!(first.output, "before restart\n");
+    assert!(!first.running);
+    assert!(first.error.unwrap().contains("interrupted"));
+    assert_eq!(poll(&sessions, &id, 270_000).await.output, "");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn stop_all_keeps_unreturned_output_for_later_polls() {
+    let root = temp_workspace();
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let id = uuid::Uuid::new_v4().to_string();
+    let completed = stub_session(&root).await;
+    completed.append(b"unreturned").await;
+    completed.archive(&root, &id).await;
+    sessions
+        .sessions
+        .lock()
+        .await
+        .insert(id.clone(), completed.session);
+    sessions.stop_all().await;
+    drop(sessions);
+
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    assert_eq!(poll(&sessions, &id, 270_000).await.output, "unreturned");
+    assert_eq!(poll(&sessions, &id, 270_000).await.output, "");
     fs::remove_dir_all(root).unwrap();
 }
 

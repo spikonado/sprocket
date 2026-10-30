@@ -226,8 +226,7 @@ impl CommandSessionManager {
             bail!("unknown command session: {session_id}");
         };
         if history.machine_id == self.history_scope.2 && history.result.running {
-            // The supervisor may have archived this session since the initial read.
-            return CommandHistory::load(&self.log_directory, session_id).await;
+            history.settle_interrupted(&path).await?;
         }
         if consume_output && let Some(pending) = &mut history.pending_output {
             let output = std::mem::take(pending);
@@ -606,7 +605,7 @@ impl CommandSessionManager {
             let _ = session.terminate();
         }
         let _ = tokio::time::timeout(Duration::from_secs(5), async {
-            for session in sessions {
+            for session in &sessions {
                 let mut completion = session.completion.clone();
                 if completion.borrow().is_none() {
                     let _ = completion.changed().await;
@@ -614,7 +613,11 @@ impl CommandSessionManager {
             }
         })
         .await;
-        self.sessions.lock().await.clear();
+        let mut live = self.sessions.lock().await;
+        for (id, session) in live.iter() {
+            let _ = self.save_pending_output(id, session).await;
+        }
+        live.clear();
     }
 
     async fn observe_session(
