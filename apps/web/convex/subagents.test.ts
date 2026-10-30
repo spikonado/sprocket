@@ -1400,13 +1400,11 @@ describe('subagents.control', () => {
 
 			await finishTreeCancellation(t);
 
-			const requestedAts = await Promise.all(
-				[child, grandchild, greatGrandchild, otherGrandchild].map(
-					async (target) =>
-						(await t.run((ctx) => ctx.db.get('runs', target.runId)))?.cancellationRequestedAt
-				)
-			);
-			for (const requestedAt of requestedAts) expect(requestedAt).toEqual(expect.any(Number));
+			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {
+				expect(await t.run((ctx) => ctx.db.get('runs', target.runId))).toMatchObject({
+					cancellationRequestedAt: expect.any(Number)
+				});
+			}
 
 			for (const target of [caller, sibling]) {
 				expect(
@@ -1417,9 +1415,7 @@ describe('subagents.control', () => {
 			await expect(
 				t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))
 			).rejects.toThrow(/cancelled/);
-			await vi.advanceTimersByTimeAsync(
-				Math.max(...(requestedAts as number[])) + CANCELLATION_FORCE_AFTER_MS - Date.now()
-			);
+			await vi.advanceTimersByTimeAsync(CANCELLATION_FORCE_AFTER_MS + 1);
 			await t.finishInProgressScheduledFunctions();
 
 			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {

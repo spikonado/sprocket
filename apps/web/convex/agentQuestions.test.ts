@@ -358,7 +358,7 @@ describe('agentQuestions', () => {
 
 			expect(created.timeoutAt).toBe(Date.now() + timeoutMs);
 
-			const deadline = created.timeoutAt;
+			const deadline = Date.now() + timeoutMs;
 			let now = Date.now();
 
 			while (deadline - now > QUESTION_TIMEOUT_CHECKPOINT_MS) {
