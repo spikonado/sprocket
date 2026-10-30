@@ -6,7 +6,7 @@ use rig::agent::{
 };
 use rig::completion::{Message, PromptError};
 use rig::error::ErrorKind;
-use rig::{ErrorReport, ProviderError, ProviderResponseError};
+use rig::{ErrorReport, ProviderError};
 
 const MAX_STREAM_RECOVERIES: u32 = 3;
 /// Each timed-out attempt already streamed for the gateway's full duration cap.
@@ -38,24 +38,21 @@ fn is_gateway_stream_timeout(error: &PromptError) -> bool {
 
 /// The code a provider reply's error names, however rig wrapped the reply.
 pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> Option<String> {
-    provider_response(error)?.machine_code()
-}
-
-fn provider_response(error: &(dyn std::error::Error + 'static)) -> Option<&ProviderResponseError> {
-    if let Some(error) = error.downcast_ref::<PromptError>() {
-        return match error {
+    let response = if let Some(error) = error.downcast_ref::<PromptError>() {
+        match error {
             PromptError::Provider(error) => error.provider_response(),
             PromptError::Report(report) => report.provider_response.as_ref(),
             _ => None,
-        };
-    }
-    if let Some(error) = error.downcast_ref::<ProviderError>() {
-        return error.provider_response();
-    }
-    error
-        .downcast_ref::<ErrorReport>()?
-        .provider_response
-        .as_ref()
+        }
+    } else if let Some(error) = error.downcast_ref::<ProviderError>() {
+        error.provider_response()
+    } else {
+        error
+            .downcast_ref::<ErrorReport>()?
+            .provider_response
+            .as_ref()
+    };
+    response?.machine_code()
 }
 
 /// Failures another provider may not have.
