@@ -1,6 +1,16 @@
 name: Convex Preview
 
-on: pull_request
+on:
+  pull_request:
+    paths:
+      - .github/actions/**
+      - .github/workflows/convex-preview.yml
+      - apps/web/convex/**
+      - apps/web/convex.json
+      - apps/web/package.json
+      - bun.lock
+      - flake.nix
+      - flake.lock
 
 permissions:
   contents: read

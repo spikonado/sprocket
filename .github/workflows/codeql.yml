@@ -2,6 +2,14 @@ name: CodeQL
 
 on:
   pull_request:
+    # Rust analysis is skipped on pull requests.
+    paths:
+      - '.github/**'
+      - '**/*.cjs'
+      - '**/*.js'
+      - '**/*.mjs'
+      - '**/*.ts'
+      - '**/*.tsx'
   push:
     branches: [main]
   schedule:
