@@ -75,17 +75,25 @@ impl CommandHistory {
         if !self.result.running {
             return Ok(());
         }
+        let preview = CapturedOutput::read_log_preview(
+            Path::new(&self.result.complete_log_path),
+            self.max_output_chars,
+        )
+        .await?;
+        if let Ok(bytes) = tokio::fs::read(path).await
+            && let Ok(current) = serde_json::from_slice::<Self>(&bytes)
+            && !current.result.running
+        {
+            *self = current;
+            return Ok(());
+        }
         self.result.running = false;
         self.result.success = false;
         self.result.error = Some(
             "command session was interrupted before its final status was saved; output may be incomplete"
                 .into(),
         );
-        self.result.output = CapturedOutput::read_log_preview(
-            Path::new(&self.result.complete_log_path),
-            self.max_output_chars,
-        )
-        .await?;
+        self.result.output = preview;
         if self.pending_output.is_none() {
             self.pending_output = Some(self.result.output.clone());
         }
