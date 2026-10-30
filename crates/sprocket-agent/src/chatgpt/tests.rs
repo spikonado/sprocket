@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
+use rig::ProviderError;
 use rig::completion::{CompletionRequest, Message};
 use rig::message::{AssistantContent, AssistantMessage, Reasoning, ToolName};
 use rig::providers::openai::responses_api::ResponsesToolDefinition;

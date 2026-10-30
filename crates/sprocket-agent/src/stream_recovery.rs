@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rig::ProviderError;
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, StepEventKind,
 };
 use rig::completion::{Message, PromptError};
 use rig::error::ErrorKind;
+use rig::{ErrorReport, ProviderError, ProviderResponseError};
 
 const MAX_STREAM_RECOVERIES: u32 = 3;
 /// Each timed-out attempt already streamed for the gateway's full duration cap.
@@ -33,16 +33,29 @@ fn is_truncation(error: &PromptError) -> bool {
 }
 
 fn is_gateway_stream_timeout(error: &PromptError) -> bool {
-    let body = match error {
-        PromptError::Provider(error) => error.provider_response_json(),
-        PromptError::Report(report) => report.provider_response_json(),
-        _ => return false,
-    };
-    body.ok().flatten().is_some_and(|body| {
-        body.pointer("/response/error/code")
-            .and_then(serde_json::Value::as_str)
-            == Some(GATEWAY_STREAM_TIMEOUT_CODE)
-    })
+    provider_error_code(error).as_deref() == Some(GATEWAY_STREAM_TIMEOUT_CODE)
+}
+
+/// The code a provider reply's error names, however rig wrapped the reply.
+pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    provider_response(error)?.machine_code()
+}
+
+fn provider_response(error: &(dyn std::error::Error + 'static)) -> Option<&ProviderResponseError> {
+    if let Some(error) = error.downcast_ref::<PromptError>() {
+        return match error {
+            PromptError::Provider(error) => error.provider_response(),
+            PromptError::Report(report) => report.provider_response.as_ref(),
+            _ => None,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<ProviderError>() {
+        return error.provider_response();
+    }
+    error
+        .downcast_ref::<ErrorReport>()?
+        .provider_response
+        .as_ref()
 }
 
 /// Failures another provider may not have.
