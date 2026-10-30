@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 
-use rig::message::{AssistantContent, Reasoning};
+use rig::message::{Api, AssistantContent, Native, Reasoning};
 use serde_json::Value as JsonValue;
 use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 use crate::now_ms;
+
+/// Every provider Sprocket streams from speaks Responses.
+const RESPONSES_API: Api = Api::from_static("openai.responses");
 
 /// Durable OpenAI-shaped metadata already stored on transcript reasoning items.
 /// `encrypted` is gateway envelope bytes: persist and replay as-is, never decode.
@@ -34,17 +37,17 @@ pub(crate) fn opaque_encrypted(value: Option<&str>) -> Option<&str> {
     value.filter(|content| !content.is_empty())
 }
 
-fn native_reasoning(reasoning: &Reasoning) -> Option<&JsonValue> {
+fn native_reasoning(reasoning: &Reasoning) -> Option<&Native> {
     let native = reasoning.native.as_ref()?;
     (native.fingerprint == AssistantContent::Reasoning(reasoning.clone()).fingerprint())
-        .then_some(&native.item)
+        .then_some(native)
 }
 
 pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
-    opaque_encrypted(
+    Some(
         native_reasoning(reasoning)?
-            .get("encrypted_content")?
-            .as_str(),
+            .reasoning_blob(&RESPONSES_API)?
+            .value,
     )
 }
 
@@ -52,6 +55,7 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
 /// is where Opus thinking arrives.
 pub(crate) fn completed_reasoning_text(reasoning: &Reasoning) -> String {
     let summary = native_reasoning(reasoning)
+        .map(|native| &native.item)
         .filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"))
         .and_then(|item| item.get("summary"))
         .and_then(JsonValue::as_array)
@@ -80,9 +84,9 @@ pub(crate) fn apply_completed_reasoning(
     let id = format!("{stream_id}:{correlator}");
     let key = format!("reasoning:{id}");
     let text = completed_reasoning_text(reasoning);
-    let native = native_reasoning(reasoning);
-    let openai =
-        native.filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"));
+    let openai = native_reasoning(reasoning)
+        .map(|native| &native.item)
+        .filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"));
     let mut metadata = openai_reasoning_metadata(
         openai
             .and_then(|item| item.get("id"))

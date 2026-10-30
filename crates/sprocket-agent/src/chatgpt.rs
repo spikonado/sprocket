@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use bytes::Bytes;
 use futures::StreamExt;
-use rig::ProviderError;
 use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
 use rig::operation::Completion;
 use rig::providers::openai;
@@ -11,7 +10,8 @@ use rig::wasm_compat::WasmCompatSend;
 use rig::{DynModel, Model};
 
 use crate::now_ms;
-use crate::openai::StatelessResponses;
+use crate::openai::{StatelessResponses, transport_auth_config};
+use crate::stream_recovery::provider_error_code;
 use crate::types::ChatGptCredentials;
 
 const CONNECTION_CHANGED: &str =
@@ -22,6 +22,7 @@ const SIWC_TOOL_NAMESPACE: &str = "sprocket";
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const SUBSCRIPTION_USAGE_LIMIT_CODE: &str = "subscription_sharing_usage_limit_exceeded";
 
 #[derive(Debug, thiserror::Error)]
 #[error(
@@ -32,33 +33,10 @@ struct SubscriptionUsageLimit {
     source: anyhow::Error,
 }
 
-fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
-    let error = body
-        .get("error")
-        .or_else(|| body.get("response")?.get("error"));
-    error
-        .and_then(|error| error.get("code"))
-        .and_then(serde_json::Value::as_str)
-        == Some("subscription_sharing_usage_limit_exceeded")
-}
-
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    let usage_limit = error.chain().any(|cause| {
-        cause
-            .downcast_ref::<rig::completion::PromptError>()
-            .and_then(|error| error.provider_response_json().ok().flatten())
-            .or_else(|| {
-                cause
-                    .downcast_ref::<ProviderError>()
-                    .and_then(|error| error.provider_response_json().ok().flatten())
-            })
-            .or_else(|| {
-                cause
-                    .downcast_ref::<rig::ErrorReport>()
-                    .and_then(|report| report.provider_response_json().ok().flatten())
-            })
-            .is_some_and(|body| is_subscription_usage_limit(&body))
-    });
+    let usage_limit = error
+        .chain()
+        .any(|cause| provider_error_code(cause).as_deref() == Some(SUBSCRIPTION_USAGE_LIMIT_CODE));
     if usage_limit {
         SubscriptionUsageLimit { source: error }.into()
     } else {
@@ -365,7 +343,7 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
     let mut usage_limit = false;
     match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
         Ok(Ok(body)) => {
-            usage_limit = is_subscription_usage_limit(&body);
+            usage_limit = body["error"]["code"].as_str() == Some(SUBSCRIPTION_USAGE_LIMIT_CODE);
             let recognized = [
                 ("error.message", body["error"]["message"].as_str()),
                 ("error.code", body["error"]["code"].as_str()),
@@ -396,7 +374,7 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
         // Rig must retain a structured code when it wraps this HTTP failure.
         message = serde_json::json!({
             "error": {
-                "code": "subscription_sharing_usage_limit_exceeded",
+                "code": SUBSCRIPTION_USAGE_LIMIT_CODE,
                 "message": message,
             }
         })
@@ -577,7 +555,7 @@ impl ChatGptClient {
         session_id: &str,
     ) -> DynModel<Completion> {
         let wire = openai::responses_api::wire::Responses::new(
-            openai::OpenAIConfig::new("siwc-managed-by-transport").with_instructions(instructions),
+            transport_auth_config().with_instructions(instructions),
             model,
         );
         Model::new(
