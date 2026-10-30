@@ -999,7 +999,7 @@ impl ChatGptService {
                     "ChatGPT refresh could not be completed safely. Reconnect locally in Settings."
                 }))
             }
-            Err(error) if error.is_connect() => {
+            Err(error) if error.is_connect() || error.is_timeout() => {
                 let (accounts, active) = active_account(&mut state, user)?;
                 let account = accounts
                     .accounts
@@ -1008,9 +1008,11 @@ impl ChatGptService {
                     .unwrap();
                 account.tokens = Some(tokens);
                 self.persist(&state).await?;
-                bail!(
+                bail!(if error.is_timeout() {
+                    "ChatGPT refresh timed out. Retry when connectivity returns."
+                } else {
                     "Could not connect to ChatGPT to refresh credentials. Retry when connectivity returns."
-                );
+                });
             }
             Err(_) => Err(anyhow::anyhow!(
                 "ChatGPT refresh was interrupted. Reconnect locally in Settings."

@@ -1679,6 +1679,50 @@ async fn connection_failure_preserves_refresh_credentials_for_retry() {
 }
 
 #[tokio::test]
+async fn refresh_timeout_preserves_refresh_credentials_for_retry() {
+    let mut fixture = fixture().await;
+    Arc::get_mut(&mut fixture.service).unwrap().client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_millis(200))
+        .build()
+        .unwrap();
+    insert(
+        &fixture.service,
+        "user-a",
+        account(
+            "connection-1",
+            "client-1",
+            "subject-1",
+            Some(tokens(
+                &fixture,
+                "client-1",
+                "subject-1",
+                "access-old",
+                "refresh-old",
+                now() - 10,
+            )),
+        ),
+    )
+    .await;
+    fixture.provider.hold_token(true);
+    assert!(
+        fixture
+            .service
+            .access("user-a")
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("timed out")
+    );
+    let stored = stored_account(&fixture.service, "user-a", "connection-1").await;
+    assert_eq!(stored.tokens.as_ref().unwrap().refresh_token, "refresh-old");
+    assert!(!stored.tokens.unwrap().refresh_in_flight);
+}
+
+#[tokio::test]
 async fn rotated_credentials_retry_persistence_before_use() {
     let fixture = fixture().await;
     insert(
