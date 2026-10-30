@@ -33,7 +33,7 @@
 		"@lezer/highlight": "^1.2.5",
 		"@opentelemetry/api": "^1.10.0",
 		"@pierre/trees": "1.0.0-beta.6",
-		"@posthog/convex": "2.1.7",
+		"@posthog/convex": "2.1.8",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"clsx": "^2.1.1",
 		"codemirror": "^6.0.2",
