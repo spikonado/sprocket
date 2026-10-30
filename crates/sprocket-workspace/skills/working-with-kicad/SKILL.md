@@ -1,6 +1,6 @@
 ---
 name: working-with-kicad
-description: 'Use when creating or editing KiCad projects (`.kicad_pro`) or schematics (`.kicad_sch`) by hand.'
+description: 'Use when editing an existing KiCad project (`.kicad_pro`) or schematic (`.kicad_sch`) by hand. For a new custom PCB, use `designing-pcbs`; it exports KiCad files.'
 ---
 
 ## Ground truth order

@@ -1,6 +1,6 @@
 ---
 name: designing-electrical-schematic
-description: 'Use when drawing the schematic for the electronics of a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `working-with-kicad`.'
+description: 'Use when drawing the wiring schematic for a hardware project built from modules and dev boards, without a custom PCB. For a custom PCB, use `designing-pcbs`.'
 ---
 
 Write the schematic as a React artifact (`$making-artifacts-and-visuals`): a component `App` that returns one `<svg>`. Start from the sample below and adapt the circuit to the project's parts.
