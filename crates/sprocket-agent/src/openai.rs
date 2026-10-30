@@ -3,8 +3,14 @@ use rig::error::EncodeError;
 use rig::operation::Completion;
 use rig::providers::openai::OpenAIConfig;
 use rig::providers::openai::responses_api::{SystemInstructionsPlacement, wire::Responses};
+use rig::providers::openai::wire::Auth;
 use rig::wire::{Body, Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
+
+/// For transports that set `Authorization` themselves.
+pub(crate) fn transport_auth_config() -> OpenAIConfig {
+    OpenAIConfig::new("").with_auth(Auth::OptionalBearer)
+}
 
 pub(crate) fn stateless_responses_model(
     provider: OpenAIConfig,

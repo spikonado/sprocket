@@ -300,8 +300,7 @@ async fn siwc_recovers_a_truncated_turn_without_repeating_committed_tools() {
     let (credentials, client) = stub_client("connection-1");
     let model = Model::new(
         StatelessResponses(openai::responses_api::wire::Responses::new(
-            openai::OpenAIConfig::new("siwc-managed-by-transport")
-                .with_base_url(endpoint.trim_end_matches("/responses")),
+            transport_auth_config().with_base_url(endpoint.trim_end_matches("/responses")),
             "gpt-6.1-sol",
         )),
         SiwcHttpClient {
@@ -404,7 +403,7 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
     let (credentials, client) = stub_client("connection-1");
     let model = Model::new(
         StatelessResponses(openai::responses_api::wire::Responses::new(
-            openai::OpenAIConfig::new("siwc-managed-by-transport")
+            transport_auth_config()
                 .with_base_url(endpoint.trim_end_matches("/responses"))
                 .with_instructions("Base instructions."),
             "gpt-5.3-codex",

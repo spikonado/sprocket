@@ -10,7 +10,7 @@ use rig::wasm_compat::WasmCompatSend;
 use rig::{DynModel, Model};
 
 use crate::now_ms;
-use crate::openai::StatelessResponses;
+use crate::openai::{StatelessResponses, transport_auth_config};
 use crate::stream_recovery::provider_error_code;
 use crate::types::ChatGptCredentials;
 
@@ -555,7 +555,7 @@ impl ChatGptClient {
         session_id: &str,
     ) -> DynModel<Completion> {
         let wire = openai::responses_api::wire::Responses::new(
-            openai::OpenAIConfig::new("siwc-managed-by-transport").with_instructions(instructions),
+            transport_auth_config().with_instructions(instructions),
             model,
         );
         Model::new(

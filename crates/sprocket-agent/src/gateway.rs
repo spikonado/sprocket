@@ -6,18 +6,16 @@ use rig::http_client::{
     self, DynHttpClient, Exchange, HeaderMap, HeaderValue, HttpMiddleware, ReqwestClient,
 };
 use rig::operation::Completion;
-use rig::providers::openai::OpenAIConfig;
 use rig::wasm_compat::WasmBoxedFuture;
 use rig::{DynModel, Model};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::now_ms;
-use crate::openai::DeveloperResponses;
+use crate::openai::{DeveloperResponses, transport_auth_config};
 use crate::types::GatewayCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
-const GATEWAY_MANAGED_KEY: &str = "gateway-managed-by-transport";
 
 struct CachedCredential {
     token: String,
@@ -113,7 +111,7 @@ impl GatewayClient {
         model: impl Into<String>,
         instructions: &str,
     ) -> DynModel<Completion> {
-        let model = OpenAIConfig::new(GATEWAY_MANAGED_KEY)
+        let model = transport_auth_config()
             .with_base_url(&self.base_url)
             .with_instructions(instructions)
             .connect(self.http.clone())
