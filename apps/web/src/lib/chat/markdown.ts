@@ -37,7 +37,8 @@ export function renderMarkdown(value: string) {
 export type MarkdownBlock =
 	| { type: 'html'; html: string }
 	| { type: 'artifact'; artifactId: string }
-	| { type: 'visual'; kind: VisualKind; source: string };
+	| { type: 'visual'; kind: VisualKind; source: string }
+	| { type: 'mermaid'; source: string; codeHtml: string };
 
 const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
 
@@ -59,12 +60,18 @@ function specialBlock(
 	availableArtifactIds: ReadonlySet<string>
 ): MarkdownBlock | undefined {
 	if (token.type === 'code') {
-		const kind = VISUAL_LANGUAGES.get(token.lang?.split(/\s/, 1)[0].toLowerCase() ?? '');
+		const language = token.lang?.split(/\s/, 1)[0].toLowerCase() ?? '';
+		const kind = VISUAL_LANGUAGES.get(language);
+		const isDiagram = language === 'mermaid';
 
-		// A visual still streaming in stays a code block until its fence closes.
-		if (!kind || !fenceIsClosed(token.raw)) return;
+		// A diagram or visual still streaming in stays a code block until its fence closes.
+		if (!(kind || isDiagram) || !fenceIsClosed(token.raw)) return;
 
-		return { type: 'visual', kind, source: token.text };
+		if (kind) return { type: 'visual', kind, source: token.text };
+
+		const codeHtml = sanitizeMarkdown(marked.parser([token]));
+
+		return { type: 'mermaid', source: token.text, codeHtml };
 	}
 
 	const artifactId =
