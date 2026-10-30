@@ -23,18 +23,22 @@ export default function TscircuitView({ api, file }: Props) {
 		if (!api) return;
 		const controller = new AbortController();
 		setStatus({ kind: 'starting' });
-		api.startTscircuit({ workspacePath, path }, controller.signal).then(
-			(url) => {
+
+		async function start(api: TscircuitApi) {
+			try {
+				const url = await api.startTscircuit({ workspacePath, path }, controller.signal);
+
 				if (!controller.signal.aborted) setStatus({ kind: 'ready', url });
-			},
-			(error: unknown) => {
+			} catch (error) {
 				if (controller.signal.aborted) return;
 				setStatus({
 					kind: 'error',
 					message: error instanceof Error ? error.message : 'Couldn’t start tscircuit.'
 				});
 			}
-		);
+		}
+
+		void start(api);
 
 		return () => controller.abort();
 	}, [api, workspacePath, path, attempt]);

@@ -3,7 +3,7 @@ import { useEffect, type ComponentProps } from 'react';
 import { expect, it, vi } from 'vitest';
 import SidePanel from './side-panel';
 import { useArtifactPanel } from '$lib/home/artifact-panel';
-import type { WorkspaceFileTarget } from '$lib/types/sprocket';
+import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 const artifact = {
 	key: 'notes',
@@ -50,12 +50,21 @@ function Harness({ filesApi = null, file }: { filesApi?: FilesApi; file?: Worksp
 
 it('opens a circuit file in the tscircuit editor', async () => {
 	const url = 'https://sprocket.test/api/tscircuit/dev/ab12/#file=board.circuit.tsx';
-	const startTscircuit = vi.fn(async () => url);
-	const filesApi = {
-		startTscircuit,
-		readWorkspaceFile: () => new Promise(() => {})
-	} as unknown as FilesApi;
+	const startTscircuit = vi.fn<LocalApi['startTscircuit']>(async () => url);
+	const pending = () => new Promise<never>(() => {});
+
+	const filesApi: FilesApi = {
+		listWorkspaceFiles: pending,
+		createWorkspaceFile: pending,
+		renameWorkspaceFile: pending,
+		deleteWorkspaceFile: pending,
+		readWorkspaceFile: pending,
+		writeWorkspaceFile: pending,
+		startTscircuit
+	};
+
 	const file = { workspacePath: '/w', path: 'pcb/board.circuit.tsx' };
+
 	render(<Harness filesApi={filesApi} file={file} />);
 
 	fireEvent.click(await screen.findByRole('button', { name: 'Open in tscircuit' }));

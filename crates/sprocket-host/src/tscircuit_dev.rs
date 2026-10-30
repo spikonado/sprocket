@@ -202,9 +202,8 @@ fn tscircuit_cli(project: &Path) -> anyhow::Result<PathBuf> {
         )
     })?;
     let manifest: Value = serde_json::from_str(&manifest)?;
-    let bin = manifest["bin"]
+    let bin = manifest["bin"]["tsci"]
         .as_str()
-        .or_else(|| manifest["bin"]["tsci"].as_str())
         .context("The tscircuit package has no tsci command")?;
     Ok(package.join(bin))
 }

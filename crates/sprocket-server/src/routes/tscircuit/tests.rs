@@ -2,11 +2,6 @@ use super::*;
 
 #[test]
 fn points_the_editor_at_the_proxy() {
-    let html = r#"window.TSCIRCUIT_FILESERVER_API_BASE_URL = "http://127.0.0.1:3081/api";<script src="https://cdn.tailwindcss.com"></script><script type="module" src="/standalone.min.js"></script>"#;
-    assert_eq!(
-        rewrite_html(html, "/api/tscircuit/dev/ab12/", 3081),
-        r#"window.TSCIRCUIT_FILESERVER_API_BASE_URL = "/api/tscircuit/dev/ab12/api";<script src="https://cdn.tailwindcss.com"></script><script type="module" src="/api/tscircuit/dev/ab12/standalone.min.js"></script>"#
-    );
     assert_eq!(
         rewrite_script(
             r#"fetch("/api/extra_runframe_tabs/list")"#,

@@ -260,7 +260,6 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
-  posthog: import("@posthog/convex/_generated/component.js").ComponentApi<"posthog">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;
@@ -269,4 +268,5 @@ export declare const components: {
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;
   billingWebhookWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"billingWebhookWorkpool">;
   billingReconciliationWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"billingReconciliationWorkpool">;
+  posthog: import("@posthog/convex/_generated/component.js").ComponentApi<"posthog">;
 };

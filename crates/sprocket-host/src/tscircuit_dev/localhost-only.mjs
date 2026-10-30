@@ -12,8 +12,10 @@ function onlyLoopbackRequests(server) {
 		if (!loopbackHost.test(request.headers.host ?? '')) {
 			response.writeHead(403);
 			response.end();
+
 			return;
 		}
+
 		for (const handler of handlers) handler.call(server, request, response);
 	});
 }
@@ -22,9 +24,11 @@ for (const Server of [net.Server, http.Server]) {
 	const listen = Server.prototype.listen;
 	Server.prototype.listen = function (...args) {
 		if (this instanceof http.Server) onlyLoopbackRequests(this);
-		if (typeof args[0] === 'number' && (args.length === 1 || typeof args[1] === 'function')) {
+
+		if (Number.isInteger(args[0]) && (args.length === 1 || args[1] instanceof Function)) {
 			args.splice(1, 0, '127.0.0.1');
 		}
+
 		return listen.apply(this, args);
 	};
 }
