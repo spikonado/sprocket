@@ -55,7 +55,7 @@ jobs:
           done < <(git status --porcelain | cut -c4-)
 
           version="$(jq -r .agentBrowser.version tools/agent-browser/releases.json)"
-          title="chore(browser): Update agent-browser to $version"
+          title="chore(tools): Update agent-browser to $version"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

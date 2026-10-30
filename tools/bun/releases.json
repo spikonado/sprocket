@@ -1,0 +1,37 @@
+{
+	"bun": {
+		"version": "1.4.4",
+		"platforms": {
+			"darwin-arm64": {
+				"url": "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.4.4.tgz",
+				"bytes": 41545333,
+				"sha256": "be5f17d636d699b2eaa2c1a8ac802c87f0815ccb5fe26cbe63d2395354ae5d0d"
+			},
+			"darwin-x64": {
+				"url": "https://registry.npmjs.org/@oven/bun-darwin-x64-baseline/-/bun-darwin-x64-baseline-1.4.4.tgz",
+				"bytes": 43895192,
+				"sha256": "1f4b4d1fa9e3b1dcb7890e4594703c7d5fac54c950964d89a2770760bc2cacbd"
+			},
+			"linux-arm64": {
+				"url": "https://registry.npmjs.org/@oven/bun-linux-aarch64/-/bun-linux-aarch64-1.4.4.tgz",
+				"bytes": 53132992,
+				"sha256": "ab95e7e692a53d25a1baa98ee395a17f5f264aedfb3cb15811432d54142f70eb"
+			},
+			"linux-x64": {
+				"url": "https://registry.npmjs.org/@oven/bun-linux-x64-baseline/-/bun-linux-x64-baseline-1.4.4.tgz",
+				"bytes": 52418564,
+				"sha256": "2ce69fadd00b741513c52adb8aad3fbee93170d0abaa3b6d04df47ca8659bd40"
+			},
+			"win32-arm64": {
+				"url": "https://registry.npmjs.org/@oven/bun-windows-aarch64/-/bun-windows-aarch64-1.4.4.tgz",
+				"bytes": 50843293,
+				"sha256": "8cb207c5a3ed94289f46edcb36e640ed174d2117d14855dd9c4f45a4c4475677"
+			},
+			"win32-x64": {
+				"url": "https://registry.npmjs.org/@oven/bun-windows-x64-baseline/-/bun-windows-x64-baseline-1.4.4.tgz",
+				"bytes": 55606170,
+				"sha256": "ad1576a7c9a524b1dc377608c0bc16529c3f121f59c21aba981c019a528ff4fc"
+			}
+		}
+	}
+}
