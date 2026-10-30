@@ -37,7 +37,7 @@ jobs:
           fi
 
           version="$(jq -r .bun.version tools/bun/releases.json)"
-          title="chore(bun): Update Bun to $version"
+          title="chore(tools): Update Bun to $version"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
