@@ -126,6 +126,21 @@ describe('renderMarkdownBlocks', () => {
 		]);
 	});
 
+	it('renders a Mermaid diagram once its fence closes', () => {
+		const diagram = '```mermaid\ngraph TD\n  A --> B\n';
+
+		expect(renderMarkdownBlocks(`${diagram}\`\`\``, new Set())).toEqual([
+			{
+				type: 'mermaid',
+				source: 'graph TD\n  A --> B',
+				codeHtml: expect.stringContaining('language-mermaid')
+			}
+		]);
+		expect(renderMarkdownBlocks(diagram, new Set())).toEqual([
+			{ type: 'html', html: expect.stringContaining('language-mermaid') }
+		]);
+	});
+
 	it('renders math on both sides of an artifact reference', () => {
 		const blocks = renderMarkdownBlocks('$x^2$\n\nartifact:known\n\n\\[y_1\\]', new Set(['known']));
 
