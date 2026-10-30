@@ -77,8 +77,8 @@ impl BunInstaller {
         let mut ready = self.ready.lock().await;
         let bin = self.bin_directory();
         // `bunx` is written last, so its presence means the install finished.
-        let installed = || executable_file(&bin.join(BUNX));
-        if *ready && installed().await {
+        let bunx = bin.join(BUNX);
+        if *ready && executable_file(&bunx).await {
             return Ok(());
         }
         let asset = self
@@ -88,7 +88,7 @@ impl BunInstaller {
             .context("missing pinned Bun release")?;
         tokio::fs::create_dir_all(&bin).await?;
         let _lock = acquire_lock(self.version_dir().join(INSTALL_LOCK)).await?;
-        if !installed().await {
+        if !executable_file(&bunx).await {
             let archive = self.version_dir().join("bun.tgz");
             download_atomic(&self.client, &asset.url, &asset.checksum, &archive).await?;
             let (archive_path, bin_path) = (archive.clone(), bin.clone());
