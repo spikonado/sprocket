@@ -65,6 +65,9 @@ impl TscircuitDevServers {
     pub async fn start(&self, root: &Path, path: &str) -> anyhow::Result<DevSession> {
         let (project, file) = find_project(root, path)?;
         let id = project_id(&project);
+        if self.port(&id).await.is_ok() {
+            return Ok(DevSession { id, file });
+        }
         let _starting = self.starting.lock().await;
         if self.port(&id).await.is_ok() {
             return Ok(DevSession { id, file });
@@ -193,14 +196,21 @@ fn find_project(root: &Path, path: &str) -> anyhow::Result<(PathBuf, String)> {
     Ok((project.to_path_buf(), relative))
 }
 
+/// Resolves `tscircuit` from `project` the way Node does, so workspace-hoisted installs count.
 fn tscircuit_cli(project: &Path) -> anyhow::Result<PathBuf> {
-    let package = project.join("node_modules/tscircuit");
-    let manifest = std::fs::read_to_string(package.join("package.json")).with_context(|| {
-        format!(
-            "tscircuit isn't installed in {}. Run `bun install` there.",
-            project.display()
-        )
-    })?;
+    let (package, manifest) = project
+        .ancestors()
+        .map(|directory| directory.join("node_modules/tscircuit"))
+        .find_map(|package| {
+            let manifest = std::fs::read_to_string(package.join("package.json")).ok()?;
+            Some((package, manifest))
+        })
+        .with_context(|| {
+            format!(
+                "tscircuit isn't installed in {}. Run `bun install` there.",
+                project.display()
+            )
+        })?;
     let manifest: Value = serde_json::from_str(&manifest)?;
     let bin = manifest["bin"]["tsci"]
         .as_str()

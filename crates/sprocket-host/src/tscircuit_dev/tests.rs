@@ -28,10 +28,12 @@ fn stays_inside_the_workspace() {
 
 #[test]
 fn runs_the_projects_own_tsci() {
-    let project = tempfile::tempdir().unwrap();
-    let package = project.path().join("node_modules/tscircuit");
+    let workspace = tempfile::tempdir().unwrap();
+    let project = workspace.path().join("boards/main");
+    std::fs::create_dir_all(&project).unwrap();
+    let package = workspace.path().join("node_modules/tscircuit");
     assert!(
-        tscircuit_cli(project.path())
+        tscircuit_cli(&project)
             .unwrap_err()
             .to_string()
             .contains("bun install")
@@ -42,8 +44,5 @@ fn runs_the_projects_own_tsci() {
         r#"{"bin":{"tsci":"cli.mjs","tscircuit":"cli.mjs"}}"#,
     )
     .unwrap();
-    assert_eq!(
-        tscircuit_cli(project.path()).unwrap(),
-        package.join("cli.mjs")
-    );
+    assert_eq!(tscircuit_cli(&project).unwrap(), package.join("cli.mjs"));
 }

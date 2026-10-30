@@ -5,6 +5,26 @@ import net from 'node:net';
 
 const loopbackHost = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
 
+const isString = (value) => String(value) === value;
+
+/** Rewrites any TCP `listen` call to bind loopback; Unix sockets and handles pass through. */
+function loopbackListenArgs(args) {
+	const [first, ...rest] = args;
+
+	if (first instanceof Object && !(first instanceof Function)) {
+		const socketOrHandle = 'path' in first || 'fd' in first || '_handle' in first;
+
+		return socketOrHandle ? args : [{ ...first, host: '127.0.0.1' }, ...rest];
+	}
+
+	if (isString(first) && !/^\d+$/.test(first)) return args;
+	const afterPort = first instanceof Function ? args : rest;
+
+	if (isString(afterPort[0])) afterPort.shift();
+
+	return [first instanceof Function || first === undefined ? 0 : first, '127.0.0.1', ...afterPort];
+}
+
 function onlyLoopbackRequests(server) {
 	const handlers = server.listeners('request');
 	server.removeAllListeners('request');
@@ -25,10 +45,6 @@ for (const Server of [net.Server, http.Server]) {
 	Server.prototype.listen = function (...args) {
 		if (this instanceof http.Server) onlyLoopbackRequests(this);
 
-		if (Number.isInteger(args[0]) && (args.length === 1 || args[1] instanceof Function)) {
-			args.splice(1, 0, '127.0.0.1');
-		}
-
-		return listen.apply(this, args);
+		return listen.apply(this, loopbackListenArgs(args));
 	};
 }
