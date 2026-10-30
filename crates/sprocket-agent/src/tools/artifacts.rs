@@ -213,7 +213,7 @@ impl rig::tool::Tool for AddArtifactTool {
 
     fn description(&self) -> String {
         format!(
-            "Register an existing local file as a project artifact. Write the file first with normal file tools. HTML and JSX render as previews; other UTF-8 files render as Markdown. File changes sync automatically. Maximum file size: {MAX_ARTIFACT_BYTES} bytes."
+            "Register an existing UTF-8 file, at most {MAX_ARTIFACT_BYTES} bytes, as an artifact of the current project and bind it so later edits sync."
         )
     }
 
@@ -248,7 +248,7 @@ impl rig::tool::Tool for EditArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Point an artifact from the current project at a different existing file. To edit its content, edit the registered file normally instead.".to_string()
+        "Bind an artifact to a different existing file, such as after moving it. The file's content replaces the artifact's, and its filename becomes the title.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -282,7 +282,7 @@ impl rig::tool::Tool for SaveArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Save an artifact from this project to a file path, and bind the file so future edits sync. Existing files with different contents are never overwritten.".into()
+        "Write an artifact's content to a file and bind it so later edits sync. An existing file there must already have the same content.".into()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -329,7 +329,7 @@ impl rig::tool::Tool for ListArtifactsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List artifact IDs and metadata for the current project. Use save_artifact to obtain a local file for an artifact that is not saved on this machine.".to_string()
+        "List the current project's artifacts with their IDs and metadata, including ones with no file on this machine.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -381,7 +381,7 @@ impl rig::tool::Tool for DeleteArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        String::new()
+        "Delete an artifact from the current project, along with its bound local files.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
