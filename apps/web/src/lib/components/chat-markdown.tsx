@@ -4,6 +4,7 @@ import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { renderMarkdownBlocks } from '$lib/chat/markdown';
 import ArtifactReference from '$lib/components/artifact-reference';
 import MarkdownHtml from '$lib/components/markdown-html';
+import TranscriptVisual from '$lib/components/transcript-visual';
 import type { MarkdownImageScope } from '$lib/chat/markdown-images';
 
 const NO_ARTIFACTS = new Set<string>();
@@ -55,6 +56,16 @@ export default function ChatMarkdown({
 					}
 
 					return null;
+				}
+
+				if (block.type === 'visual') {
+					return (
+						<TranscriptVisual
+							key={`${block.type}-${index}`}
+							kind={block.kind}
+							source={block.source}
+						/>
+					);
 				}
 
 				return (
