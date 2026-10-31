@@ -13,7 +13,7 @@ import {
 } from '$lib/chat/assistant-timeline';
 import { WorkDetails } from '$lib/project/work-details';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
-import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure';
+import ReasoningDisclosure, { ReasoningText } from '$lib/components/home/reasoning-disclosure';
 import WorkTools from '$lib/components/home/work-tools';
 
 type Props = {
@@ -24,6 +24,7 @@ type Props = {
 		signal: AbortSignal
 	) => Promise<TranscriptDisplayDetails>;
 	inProgress: boolean;
+	reasoningOnly: boolean;
 	commands: ReadonlyMap<string, string>;
 	viewport: HTMLDivElement | null;
 	beforeChange: () => () => void;
@@ -37,6 +38,7 @@ export default function WorkSectionDetails({
 	row,
 	load,
 	inProgress,
+	reasoningOnly,
 	commands: knownCommands,
 	viewport,
 	beforeChange
@@ -229,7 +231,11 @@ export default function WorkSectionDetails({
 				{settled.map(({ block, renderKey }) => (
 					<div key={renderKey} data-work-detail>
 						{block.type === 'reasoning' ? (
-							<ReasoningDisclosure text={block.text} inProgress={false} />
+							reasoningOnly ? (
+								<ReasoningText text={block.text} />
+							) : (
+								<ReasoningDisclosure text={block.text} inProgress={false} />
+							)
 						) : (
 							<WorkTools tools={block.tools} inProgress={inProgress} commands={commands} />
 						)}

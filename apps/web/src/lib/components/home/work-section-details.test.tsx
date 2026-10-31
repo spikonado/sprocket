@@ -77,6 +77,7 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 		},
 		load,
 		inProgress,
+		reasoningOnly: false,
 		commands: new Map(),
 		viewport,
 		beforeChange: vi.fn(() => restore)

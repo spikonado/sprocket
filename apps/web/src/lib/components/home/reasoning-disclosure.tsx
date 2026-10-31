@@ -8,7 +8,6 @@ type Props = {
 
 export default function ReasoningDisclosure({ text, inProgress }: Props) {
 	const disclosure = useInProgressDisclosure(inProgress);
-	const label = inProgress ? 'Reasoning' : 'Reasoned';
 
 	return (
 		<div className="text-muted-foreground text-sm">
@@ -18,18 +17,34 @@ export default function ReasoningDisclosure({ text, inProgress }: Props) {
 				onClick={disclosure.toggle}
 				aria-expanded={disclosure.expanded}
 			>
-				<Brain className="size-3.5 shrink-0" aria-hidden="true" />
-				<span>{label}</span>
+				<ReasoningLabel inProgress={inProgress} />
 				<ChevronRight
 					className={`size-3.5 shrink-0 transition-transform ${disclosure.expanded ? 'rotate-90' : ''}`}
 					aria-hidden="true"
 				/>
 			</button>
 			{disclosure.expanded ? (
-				<div className="text-muted-foreground mt-1.5 text-[13px] leading-6 [overflow-wrap:anywhere] whitespace-pre-wrap">
-					{text}
+				<div className="mt-1.5">
+					<ReasoningText text={text} />
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+export function ReasoningLabel({ inProgress }: { inProgress: boolean }) {
+	return (
+		<>
+			<Brain className="size-3.5 shrink-0" aria-hidden="true" />
+			<span>{inProgress ? 'Reasoning' : 'Reasoned'}</span>
+		</>
+	);
+}
+
+export function ReasoningText({ text }: { text: string }) {
+	return (
+		<div className="text-muted-foreground text-[13px] leading-6 [overflow-wrap:anywhere] whitespace-pre-wrap">
+			{text}
 		</div>
 	);
 }
