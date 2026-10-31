@@ -33,3 +33,17 @@ copyright Vercel, Inc., and licensed under
 
 The agent-desktop version, archive sizes, and SHA256 checksums are recorded in
 `tools/agent-desktop/releases.json`.
+
+## uv and Python
+
+Sprocket downloads unmodified releases of [uv](https://github.com/astral-sh/uv)
+on demand. uv is licensed under
+[MIT](https://github.com/astral-sh/uv/blob/main/LICENSE-MIT) or
+[Apache-2.0](https://github.com/astral-sh/uv/blob/main/LICENSE-APACHE). The uv
+version, archive sizes, and SHA256 checksums are recorded in
+`tools/uv/releases.json`.
+
+uv then installs a [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+build of CPython, which is licensed under the
+[PSF License](https://docs.python.org/3/license.html) and bundles libraries
+under their own licenses.

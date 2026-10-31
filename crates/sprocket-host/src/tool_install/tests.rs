@@ -166,3 +166,25 @@ fn ignores_symlinked_versions() {
     assert!(directory.path().join("0.37.0").exists());
     assert!(outside.path().join("keep").exists());
 }
+
+#[test]
+fn appends_after_the_users_path_and_moves_windows_store_aliases_last() {
+    let (store, user, tools) = (
+        PathBuf::from("Microsoft/WindowsApps"),
+        PathBuf::from("user"),
+        PathBuf::from("tools"),
+    );
+    let path = std::env::join_paths([&store, &user]).unwrap();
+
+    let environment = append_path(vec![("PATH".into(), path)], [tools.clone()]);
+
+    let expected = if cfg!(windows) {
+        [user, tools, store]
+    } else {
+        [store, user, tools]
+    };
+    assert_eq!(
+        std::env::split_paths(&environment[0].1).collect::<Vec<_>>(),
+        expected
+    );
+}

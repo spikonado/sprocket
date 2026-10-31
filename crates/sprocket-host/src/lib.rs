@@ -18,6 +18,7 @@ pub mod native_auth;
 pub mod package_update;
 pub mod profile;
 pub mod project_attachments;
+mod python_install;
 pub mod run_recovery;
 mod subagent_launcher;
 mod tool_install;
@@ -46,8 +47,9 @@ use crate::machines::MachineManager;
 use crate::native_auth::{BrowserSessions, NativeAuthManager};
 use crate::package_update::PackageUpdateManager;
 use crate::project_attachments::ProjectAttachmentStore;
+use crate::python_install::PythonTools;
 use crate::run_recovery::RunRecovery;
-use crate::tool_install::{PinnedTool, prepend_path};
+use crate::tool_install::{PinnedTool, append_path, prepend_path};
 use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchers;
 use crate::workspace_search::WorkspaceSearchIndex;
@@ -88,6 +90,7 @@ pub struct Host {
     pub browsers: Arc<BrowserManager>,
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
+    python: Arc<PythonTools>,
 }
 
 impl Host {
@@ -152,6 +155,7 @@ impl Host {
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
+            python: Arc::new(PythonTools::new(data_dir)?),
         })
     }
 
@@ -160,13 +164,17 @@ impl Host {
         self.browsers.prepare_tools();
         self.bun.prepare();
         self.desktop.prepare();
+        self.python.prepare();
     }
 
     /// The environment that puts agents' pinned tools on their `PATH`.
     pub fn tool_environment(&self) -> Vec<(OsString, OsString)> {
-        prepend_path(
-            self.browsers.environment(),
-            [self.bun.bin_dir(), self.desktop.bin_dir()],
+        append_path(
+            prepend_path(
+                self.browsers.environment(),
+                [self.bun.bin_dir(), self.desktop.bin_dir()],
+            ),
+            self.python.bin_dirs(),
         )
     }
 

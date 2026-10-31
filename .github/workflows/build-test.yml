@@ -42,6 +42,7 @@ jobs:
               - tools/agent-browser/*.json
               - tools/agent-desktop/*.json
               - tools/bun/*.json
+              - tools/uv/*.json
             web:
               - *ci
               - apps/**
@@ -80,6 +81,8 @@ jobs:
         run: cargo test --locked -p sprocket-workspace command_shell
       - name: Test failed command launch cleanup
         run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
+      - name: Test pinned tool installs
+        run: cargo test --locked -p sprocket-host -- tool_install::tests python_install::tests
 
   web:
     needs: changes

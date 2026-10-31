@@ -23,6 +23,8 @@ jobs:
             note: ' Check the dashboard adapters in `crates/sprocket-server/src/routes/browser.rs` against the new release before merging: dashboard loading, dynamic chunks, session creation, and live input.'
           - tool: agent-desktop
             label: agent-desktop
+          - tool: uv
+            label: uv
     concurrency:
       group: update-${{ matrix.tool }}
       cancel-in-progress: false
