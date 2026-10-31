@@ -178,10 +178,11 @@ impl Host {
         append_path(
             prepend_path(
                 self.browsers.environment(),
-                self.kicad
-                    .bin_dir()
-                    .into_iter()
-                    .chain([self.bun.bin_dir(), self.desktop.bin_dir()]),
+                [
+                    self.kicad.bin_dir(),
+                    self.bun.bin_dir(),
+                    self.desktop.bin_dir(),
+                ],
             ),
             self.python.bin_dirs(),
         )

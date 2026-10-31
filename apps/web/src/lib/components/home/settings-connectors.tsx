@@ -112,7 +112,7 @@ function ConnectorCard({
 	const [requestError, setRequestError] = useState<string | null>(null);
 	const installing = connector.state === 'installing';
 	const busy = pending || installing;
-	const error = requestError ?? (connector.state === 'failed' ? connector.error : null);
+	const error = requestError ?? connector.error;
 
 	async function run(action: () => Promise<ConnectorStatus>) {
 		setPending(true);

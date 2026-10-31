@@ -1,5 +1,6 @@
 //! The KiCad connector: a pinned KiCad build plus kipy, installed on request under
-//! `<data-dir>/connectors/kicad/<version>/`, whose `bin` launchers agents get on their `PATH`.
+//! `<data-dir>/connectors/kicad/<version>/`. Its launchers are copied into
+//! `<data-dir>/connectors/kicad/bin`, which stays on agents' `PATH` across installs.
 
 mod unpack;
 
@@ -26,6 +27,8 @@ const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
 const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt");
 const NAME: &str = "KiCad";
 const STAGING_PREFIX: &str = ".staging-";
+const LAUNCHER_DIR: &str = "bin";
+const VERSION_FILE: &str = "kicad-version";
 const REQUIRED_FREE_BYTES: u64 = 10 << 30;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -84,29 +87,35 @@ impl KiCadConnector {
         })
     }
 
-    /// Deletes what an install interrupted by a restart left behind.
+    /// Deletes what an install interrupted by a restart left behind and resyncs the launchers.
     pub(crate) fn prepare(&self) {
-        let root = self.root.clone();
+        let (root, pinned) = (self.root.clone(), self.release.version.clone());
         tokio::task::spawn_blocking(move || {
-            if let Err(error) = remove_leftovers_unless_installing(&root) {
+            if let Err(error) = repair_unless_installing(&root, &pinned) {
                 tracing::warn!("KiCad cleanup failed: {error}");
             }
         });
     }
 
     pub async fn status(&self) -> ConnectorStatus {
-        let installed = self.installed();
+        let installed = installed_version(&self.root, &self.release.version);
+        let idle_state = if installed.is_some() {
+            ConnectorState::Installed
+        } else {
+            ConnectorState::NotInstalled
+        };
         let (state, error) = match &*self.activity() {
             Activity::Installing => (ConnectorState::Installing, None),
+            // A failed update keeps the older version installed.
+            Activity::Failed(error) if installed.is_some() => (idle_state, Some(error.clone())),
             Activity::Failed(error) => (ConnectorState::Failed, Some(error.clone())),
-            Activity::Idle if installed.is_some() => (ConnectorState::Installed, None),
-            Activity::Idle => (ConnectorState::NotInstalled, None),
+            Activity::Idle => (idle_state, None),
         };
         ConnectorStatus {
             id: "kicad",
             name: NAME,
             update_available: state == ConnectorState::Installed
-                && installed.is_some_and(|installed| installed.version != self.release.version),
+                && installed.is_some_and(|installed| installed != self.release.version),
             state,
             error,
         }
@@ -151,27 +160,22 @@ impl KiCadConnector {
     }
 
     pub fn installed(&self) -> Option<InstalledConnector> {
-        self.installed_version().map(|version| InstalledConnector {
+        let dir = installed_version(&self.root, &self.release.version)?;
+        let version = fs::read_to_string(self.root.join(&dir).join(VERSION_FILE))
+            .map(|version| version.trim().to_owned())
+            .unwrap_or(dir);
+        Some(InstalledConnector {
             name: NAME,
             version,
         })
     }
 
-    pub(crate) fn bin_dir(&self) -> Option<PathBuf> {
-        self.installed_version()
-            .map(|version| self.root.join(version).join("bin"))
+    pub(crate) fn bin_dir(&self) -> PathBuf {
+        self.root.join(LAUNCHER_DIR)
     }
 
     fn activity(&self) -> MutexGuard<'_, Activity> {
         self.activity.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The pinned version, or an older one an update hasn't replaced yet.
-    fn installed_version(&self) -> Option<String> {
-        if self.version_dir().is_dir() {
-            return Some(self.release.version.clone());
-        }
-        installed_versions(&self.root).into_iter().next()
     }
 
     fn version_dir(&self) -> PathBuf {
@@ -199,7 +203,12 @@ impl KiCadConnector {
             published?;
         }
         let (root, current) = (self.root.clone(), self.release.version.clone());
-        tokio::task::spawn_blocking(move || prune_versions(&root, &current)).await?;
+        tokio::task::spawn_blocking(move || -> io::Result<()> {
+            sync_launchers(&root, Some(&current))?;
+            prune_versions(&root, &current);
+            Ok(())
+        })
+        .await??;
         Ok(())
     }
 
@@ -220,9 +229,10 @@ impl KiCadConnector {
             }
         };
         let version = cli_version(&cli).await?;
+        tokio::fs::write(staging.join(VERSION_FILE), &version).await?;
         self.create_venv(staging).await?;
         write_launchers(
-            &staging.join("bin"),
+            &staging.join(LAUNCHER_DIR),
             launchers(&published_cli, &venv_python(version_dir)),
         )
         .await?;
@@ -309,6 +319,14 @@ impl KiCadConnector {
     }
 }
 
+/// The pinned version, or an older one an update hasn't replaced yet.
+fn installed_version(root: &Path, pinned: &str) -> Option<String> {
+    if root.join(pinned).is_dir() {
+        return Some(pinned.to_owned());
+    }
+    installed_versions(root).into_iter().next()
+}
+
 fn installed_versions(root: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
@@ -333,16 +351,39 @@ fn remove_installs(root: &Path) -> anyhow::Result<()> {
             }
         })?;
     }
+    Ok(sync_launchers(root, None)?)
+}
+
+/// Points the stable launcher directory at `version`'s launchers, or removes it for `None`.
+/// Each launcher is replaced by a rename, so a command starting meanwhile sees a whole file.
+fn sync_launchers(root: &Path, version: Option<&str>) -> io::Result<()> {
+    let target = root.join(LAUNCHER_DIR);
+    let Some(version) = version else {
+        return match fs::remove_dir_all(&target) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        };
+    };
+    fs::create_dir_all(&target)?;
+    for entry in fs::read_dir(root.join(version).join(LAUNCHER_DIR))? {
+        let entry = entry?;
+        let temporary = target.join(format!(".{}.tmp", entry.file_name().to_string_lossy()));
+        fs::copy(entry.path(), &temporary)?;
+        fs::rename(&temporary, target.join(entry.file_name()))?;
+    }
     Ok(())
 }
 
-fn remove_leftovers_unless_installing(root: &Path) -> io::Result<()> {
+fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     if !root.is_dir() {
         return Ok(());
     }
     let lock = open_lock_file(&root.join(INSTALL_LOCK))?;
     match lock.try_lock() {
-        Ok(()) => remove_leftovers(root),
+        Ok(()) => {
+            remove_leftovers(root)?;
+            sync_launchers(root, installed_version(root, pinned).as_deref())
+        }
         Err(fs::TryLockError::WouldBlock) => Ok(()),
         Err(fs::TryLockError::Error(error)) => Err(error),
     }
@@ -546,6 +587,11 @@ async fn write_launchers(bin: &Path, launchers: Vec<(&'static str, String)>) -> 
 }
 
 fn kicad_config_dir((major, minor): (u32, u32)) -> anyhow::Result<PathBuf> {
+    let version = format!("{major}.{minor}");
+    if let Some(config_home) = std::env::var_os("KICAD_CONFIG_HOME").filter(|path| !path.is_empty())
+    {
+        return Ok(PathBuf::from(config_home).join(version));
+    }
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
@@ -561,7 +607,7 @@ fn kicad_config_dir((major, minor): (u32, u32)) -> anyhow::Result<PathBuf> {
                 .unwrap_or_else(|| home.join(".config"))
         }
     };
-    Ok(base.join("kicad").join(format!("{major}.{minor}")))
+    Ok(base.join("kicad").join(version))
 }
 
 /// Library table templates of the KiCad that `cli` belongs to, also following a symlinked `cli`.

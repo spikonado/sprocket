@@ -99,13 +99,12 @@ async function newestCompleteBuild() {
 				{
 					fileVersion,
 					commit,
-					number: Number(number),
 					version: `${base}-${number}-g${commit}`,
 					dmg: [...macos].find((candidate) => dmg.test(candidate))
 				}
 			];
 		})
-		.sort((a, b) => b.number - a.number);
+		.sort((a, b) => b.fileVersion.localeCompare(a.fileVersion, 'en', { numeric: true }));
 
 	return builds.find(
 		({ fileVersion, dmg }) =>

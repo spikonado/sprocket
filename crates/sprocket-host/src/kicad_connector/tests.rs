@@ -5,24 +5,36 @@ fn connector(data_dir: &Path) -> KiCadConnector {
 }
 
 #[tokio::test]
-async fn reports_an_older_install_as_updatable_until_uninstalled() {
+async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     let data_dir = tempfile::tempdir().unwrap();
     let connector = connector(data_dir.path());
     let old = connector.root.join("10.99.0-1-gabcdef");
     fs::create_dir_all(old.join("bin")).unwrap();
+    fs::write(old.join("bin/kicad-cli"), "old launcher").unwrap();
+    fs::write(old.join(VERSION_FILE), "11.0.1\n").unwrap();
     fs::create_dir_all(connector.root.join(".staging-interrupted")).unwrap();
 
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);
     assert!(status.update_available);
-    assert_eq!(connector.bin_dir(), Some(old.join("bin")));
+    assert_eq!(connector.installed().unwrap().version, "11.0.1");
 
-    remove_leftovers_unless_installing(&connector.root).unwrap();
+    repair_unless_installing(&connector.root, &connector.release.version).unwrap();
     assert!(!connector.root.join(".staging-interrupted").exists());
+    assert_eq!(
+        fs::read_to_string(connector.bin_dir().join("kicad-cli")).unwrap(),
+        "old launcher"
+    );
+
+    *connector.activity() = Activity::Failed("Download failed".into());
+    let status = connector.status().await;
+    assert_eq!(status.state, ConnectorState::Installed);
+    assert_eq!(status.error.as_deref(), Some("Download failed"));
+    assert!(status.update_available);
 
     connector.uninstall().await.unwrap();
     assert_eq!(connector.status().await.state, ConnectorState::NotInstalled);
-    assert!(connector.bin_dir().is_none());
+    assert!(!connector.bin_dir().exists());
 }
 
 #[test]
