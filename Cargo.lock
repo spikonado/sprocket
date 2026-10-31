@@ -9209,6 +9209,7 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "workos",
+ "zip",
 ]
 
 [[package]]

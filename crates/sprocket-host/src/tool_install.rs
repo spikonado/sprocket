@@ -162,19 +162,54 @@ fn download_client() -> anyhow::Result<reqwest::Client> {
 
 /// Puts `directories` ahead of the `PATH` in `environment`, or of the server's own `PATH`.
 pub(crate) fn prepend_path(
-    mut environment: Vec<(OsString, OsString)>,
+    environment: Vec<(OsString, OsString)>,
     directories: impl IntoIterator<Item = PathBuf>,
+) -> Vec<(OsString, OsString)> {
+    rewrite_path(environment, |inherited| {
+        directories.into_iter().chain(inherited).collect()
+    })
+}
+
+/// Puts `directories` after the `PATH` so the user's own tools win, but ahead of Windows'
+/// Microsoft Store aliases, whose `python` only opens the Store.
+pub(crate) fn append_path(
+    environment: Vec<(OsString, OsString)>,
+    directories: impl IntoIterator<Item = PathBuf>,
+) -> Vec<(OsString, OsString)> {
+    rewrite_path(environment, |mut paths| {
+        let at = paths
+            .iter()
+            .position(|path| is_store_aliases(path))
+            .unwrap_or(paths.len());
+        paths.splice(at..at, directories);
+        paths
+    })
+}
+
+fn is_store_aliases(path: &Path) -> bool {
+    cfg!(windows)
+        && path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .trim_end_matches(['\\', '/'])
+            .ends_with(r"microsoft\windowsapps")
+}
+
+/// Rewrites the `PATH` in `environment`, or the server's own `PATH`.
+fn rewrite_path(
+    mut environment: Vec<(OsString, OsString)>,
+    rewrite: impl FnOnce(Vec<PathBuf>) -> Vec<PathBuf>,
 ) -> Vec<(OsString, OsString)> {
     let inherited = environment
         .iter()
         .position(|(key, _)| key == "PATH")
         .map(|index| environment.remove(index).1)
         .or_else(|| std::env::var_os("PATH"));
-    let mut paths: Vec<_> = directories.into_iter().collect();
-    if let Some(path) = &inherited {
-        paths.extend(std::env::split_paths(path));
-    }
-    match std::env::join_paths(paths) {
+    let paths = inherited
+        .as_deref()
+        .map(|path| std::env::split_paths(path).collect())
+        .unwrap_or_default();
+    match std::env::join_paths(rewrite(paths)) {
         Ok(path) => environment.push(("PATH".into(), path)),
         Err(error) => {
             tracing::warn!("Couldn't extend PATH: {error}");
