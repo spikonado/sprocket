@@ -3,10 +3,13 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::stream::{self, BoxStream};
+use futures::{StreamExt, future};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, watch};
+use tokio::time::MissedTickBehavior;
 
 const SUCCESS_CHECK_TTL: Duration = Duration::from_secs(60 * 60);
 const FAILED_CHECK_TTL: Duration = Duration::from_secs(5 * 60);
@@ -114,6 +117,7 @@ pub struct PackageUpdateManager {
     check_timeout: Duration,
     install_timeout: Duration,
     inner: Mutex<Inner>,
+    changes: watch::Sender<PackageUpdateSnapshot>,
 }
 
 impl PackageUpdateManager {
@@ -159,6 +163,7 @@ impl PackageUpdateManager {
         } else {
             PackageUpdateSnapshot::unavailable()
         };
+        let (changes, _) = watch::channel(snapshot.clone());
         Self {
             command,
             restart_file: None,
@@ -174,6 +179,7 @@ impl PackageUpdateManager {
                 pending_install: false,
                 running: None,
             }),
+            changes,
         }
     }
 
@@ -201,6 +207,34 @@ impl PackageUpdateManager {
         wait_for_snapshot(&mut wait.clone()).await
     }
 
+    /// Yields the current snapshot, then every change. While the stream is
+    /// held, it re-runs the freshness check that `status` performs.
+    pub fn watch(self: &Arc<Self>) -> BoxStream<'static, PackageUpdateSnapshot> {
+        let snapshots = stream::unfold(
+            (self.changes.subscribe(), true),
+            |(mut changes, first)| async move {
+                if !first && changes.changed().await.is_err() {
+                    return None;
+                }
+                let snapshot = changes.borrow_and_update().clone();
+                Some((Some(snapshot), (changes, false)))
+            },
+        );
+        let mut interval = tokio::time::interval(self.failure_ttl);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let checks = stream::unfold(
+            (Arc::clone(self), interval),
+            |(manager, mut interval)| async move {
+                interval.tick().await;
+                manager.status().await;
+                Some((None, (manager, interval)))
+            },
+        );
+        stream::select(snapshots, checks)
+            .filter_map(future::ready)
+            .boxed()
+    }
+
     pub async fn install(self: &Arc<Self>) -> PackageUpdateSnapshot {
         let mut inner = self.inner.lock().await;
         if self.command.is_none() {
@@ -215,6 +249,7 @@ impl PackageUpdateManager {
             }
             inner.pending_install = true;
             mark_installing(&mut inner.snapshot);
+            self.publish(&inner.snapshot);
             return inner.snapshot.clone();
         }
         self.start_locked(&mut inner, HelperAction::Install);
@@ -253,6 +288,7 @@ impl PackageUpdateManager {
             action,
             wait: rx.clone(),
         });
+        self.publish(&inner.snapshot);
         let manager = Arc::clone(self);
         tokio::spawn(async move {
             let snapshot = manager.run_helper(action).await;
@@ -267,11 +303,22 @@ impl PackageUpdateManager {
             if follow_with_install {
                 manager.start_locked(&mut inner, HelperAction::Install);
             }
+            manager.publish(&inner.snapshot);
             let completed = inner.snapshot.clone();
             drop(inner);
             let _ = tx.send(Some(completed));
         });
         rx
+    }
+
+    fn publish(&self, snapshot: &PackageUpdateSnapshot) {
+        self.changes.send_if_modified(|current| {
+            if *current == *snapshot {
+                return false;
+            }
+            *current = snapshot.clone();
+            true
+        });
     }
 
     async fn run_helper(&self, action: HelperAction) -> PackageUpdateSnapshot {

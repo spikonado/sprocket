@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::AppState;
-use crate::auth::{cookie_request_is_csrf_safe, require_bootstrap_session};
+use crate::auth::{cookie_request_is_csrf_safe, require_bootstrap_session, require_session};
 use crate::routes::api_error::ApiError;
 use crate::routes::session::UserScoped;
 use crate::routes::{agent, artifacts, auth, browser, transcript};
@@ -47,6 +47,7 @@ pub(crate) enum Topic {
     Commands(agent::CommandsRequest),
     AuthChanges,
     BrowserStatus,
+    PackageUpdate,
 }
 
 #[derive(Serialize)]
@@ -206,6 +207,12 @@ pub(crate) async fn open(
         Topic::BrowserStatus => {
             browser::user(state, headers, &jar).await?;
             json(state.host.browsers.status_events())
+        }
+        Topic::PackageUpdate => {
+            require_session(&state.auth, headers, &jar)
+                .await
+                .map_err(|_| ApiError::authentication_required())?;
+            json(state.host.package_updates.watch())
         }
     })
 }

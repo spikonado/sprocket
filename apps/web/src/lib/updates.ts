@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
+import { localSocket } from '$lib/local/socket';
 
 export const updateStateSchema = z.object({
 	method: z.enum(['desktop', 'package']),
@@ -49,9 +50,9 @@ export function updateLabel(state: UpdateState): string | null {
 	}
 }
 
-async function updateApiRequest(baseUrl: string, path: string, method: 'GET' | 'POST') {
+async function updateApiRequest(baseUrl: string, path: string) {
 	const response = await fetch(`${baseUrl}/api/update${path}`, {
-		method,
+		method: 'POST',
 		credentials: 'include',
 		headers: { 'content-type': 'application/json' },
 		signal: AbortSignal.timeout(30_000)
@@ -70,18 +71,30 @@ async function updateApiRequest(baseUrl: string, path: string, method: 'GET' | '
 	return response;
 }
 
-export async function requestPackageUpdate(install: boolean): Promise<UpdateState | null> {
+export async function installPackageUpdate(): Promise<UpdateState | null> {
 	const baseUrl = resolveLocalApiBaseUrl();
 
 	if (!baseUrl) return null;
 
-	const response = await updateApiRequest(
-		baseUrl,
-		install ? '/install' : '',
-		install ? 'POST' : 'GET'
-	);
+	const response = await updateApiRequest(baseUrl, '/install');
 
 	return updateStateSchema.parse(await response.json());
+}
+
+export async function watchPackageUpdate(handlers: {
+	onEvent: (state: UpdateState) => void;
+	signal: AbortSignal;
+}): Promise<void> {
+	const baseUrl = resolveLocalApiBaseUrl();
+
+	if (!baseUrl) return;
+
+	await localSocket(baseUrl).subscribe(
+		{ kind: 'packageUpdate' },
+		updateStateSchema,
+		handlers.signal,
+		handlers.onEvent
+	);
 }
 
 export async function restartPackageUpdate(version: string): Promise<void> {
@@ -89,7 +102,7 @@ export async function restartPackageUpdate(version: string): Promise<void> {
 
 	if (!baseUrl) throw new Error('The Sprocket server is unavailable.');
 
-	await updateApiRequest(baseUrl, '/restart', 'POST');
+	await updateApiRequest(baseUrl, '/restart');
 
 	const deadline = Date.now() + 90_000;
 	const healthSchema = z.object({ version: z.string() });

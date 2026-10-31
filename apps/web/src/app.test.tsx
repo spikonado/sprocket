@@ -9,7 +9,7 @@ import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
-import type { UpdateState } from '$lib/updates';
+import { stubWebSocket } from '$lib/local/socket-test-support';
 import type {
 	LocalApi,
 	ProjectAttachment,
@@ -256,22 +256,12 @@ beforeEach(() => {
 	localStorage.clear();
 	vi.stubGlobal(
 		'fetch',
-		vi.fn<typeof fetch>(async (input, options) => {
+		vi.fn<typeof fetch>(async (input) => {
 			const url = input instanceof Request ? input.url : String(input);
-
-			if (url !== 'https://sprocket.test/api/update' || options?.method !== 'GET') {
-				throw new Error(`Unexpected network request: ${url}`);
-			}
-
-			return Response.json({
-				method: 'package',
-				status: 'unavailable',
-				currentVersion: 'test',
-				version: null,
-				error: null
-			} satisfies UpdateState);
+			throw new Error(`Unexpected network request: ${url}`);
 		})
 	);
+	stubWebSocket();
 	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
 	authState.set({
 		isLoading: false,

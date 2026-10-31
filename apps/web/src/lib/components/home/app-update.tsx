@@ -3,9 +3,10 @@ import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import {
-	requestPackageUpdate,
+	installPackageUpdate,
 	restartPackageUpdate,
 	updateLabel,
+	watchPackageUpdate,
 	type UpdateState
 } from '$lib/updates';
 import ConfirmDialog from './confirm-dialog';
@@ -24,8 +25,7 @@ export default function AppUpdate() {
 	const [updateState, setUpdateState] = useState<UpdateState | null>(null);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null);
-	const [busy, setBusyState] = useState(false);
-	const busyRef = useRef(false);
+	const [busy, setBusy] = useState(false);
 	const revisionRef = useRef(0);
 	const restartWhenReadyRef = useRef(false);
 	const label = updateState ? updateLabel(updateState) : null;
@@ -41,50 +41,44 @@ export default function AppUpdate() {
 	const continuesAgents =
 		preferences.status === 'success' && preferences.data?.automaticAgentContinuation !== false;
 
-	const setBusy = (next: boolean) => {
-		busyRef.current = next;
-		setBusyState(next);
-	};
-
 	useEffect(() => {
-		let disposed = false;
-		let polling = false;
-		let unsupported = false;
-		const bridge = window.sprocketDesktopBridge;
-		const updates = bridge?.updates;
+		const watch = new AbortController();
+		const updates = window.sprocketDesktopBridge?.updates;
 
-		const unsubscribe = updates?.onState((next) => {
+		const onState = (next: UpdateState) => {
 			revisionRef.current += 1;
 			setUpdateState(next);
-		});
+		};
 
-		async function refresh() {
-			if (polling || disposed || busyRef.current || unsupported) return;
-			polling = true;
+		if (updates) {
+			const unsubscribe = updates.onState(onState);
 			const startedRevision = revisionRef.current;
 
-			try {
-				const next = updates ? await updates.getState() : await requestPackageUpdate(false);
+			void updates.getState().then(
+				(next) => {
+					if (!watch.signal.aborted && revisionRef.current === startedRevision) {
+						setUpdateState(next);
+					}
+				},
+				() => undefined
+			);
 
-				if (!disposed && revisionRef.current === startedRevision) {
-					setUpdateState(next);
-					unsupported = next === null || next.status === 'unavailable';
-				}
-			} catch {
-				// Background checks must not interrupt work when the server or registry is offline.
-			} finally {
-				polling = false;
-			}
+			return () => {
+				watch.abort();
+				unsubscribe();
+			};
 		}
 
-		void refresh();
-		const timer = setInterval(() => void refresh(), 5_000);
+		void (async () => {
+			while (!watch.signal.aborted) {
+				// Background checks must not interrupt work when the server or registry is offline.
+				await watchPackageUpdate({ signal: watch.signal, onEvent: onState }).catch(() => undefined);
 
-		return () => {
-			disposed = true;
-			clearInterval(timer);
-			unsubscribe?.();
-		};
+				if (!watch.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
+			}
+		})();
+
+		return () => watch.abort();
 	}, []);
 
 	useEffect(() => {
@@ -122,7 +116,9 @@ export default function AppUpdate() {
 				if (updateState.status === 'installed' && updateState.version) {
 					await restartPackageUpdate(updateState.version);
 				} else {
-					setUpdateState(await requestPackageUpdate(true));
+					const next = await installPackageUpdate();
+
+					if (revisionRef.current === startedRevision) setUpdateState(next);
 				}
 			}
 		} catch (error) {

@@ -56,6 +56,19 @@ async fn subscriptions_require_the_session_user() {
         statuses.next().await,
         Some(serde_json::json!({ "state": "installing", "error": null }))
     );
+    let package_update =
+        || serde_json::from_value::<Topic>(serde_json::json!({ "kind": "packageUpdate" })).unwrap();
+    let Ok(mut updates) = open(&state, &headers, package_update()).await else {
+        panic!("the session may watch package updates");
+    };
+    assert_eq!(updates.next().await.unwrap()["status"], "unavailable");
+    let mut anonymous = headers.clone();
+    anonymous.remove(axum::http::header::COOKIE);
+    let rejected = open(&state, &anonymous, package_update())
+        .await
+        .err()
+        .expect("package updates need a session");
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[test]

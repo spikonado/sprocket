@@ -94,20 +94,6 @@ fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
     request
 }
 
-fn status_request(session_token: Option<&str>, origin: Option<&str>) -> Request<Body> {
-    let mut request = Request::builder()
-        .method("GET")
-        .uri("/api/update")
-        .header(header::HOST, "127.0.0.1:7731");
-    if let Some(origin) = origin {
-        request = request.header(header::ORIGIN, origin);
-    }
-    if let Some(session_token) = session_token {
-        request = request.header(header::COOKIE, session_cookie(session_token));
-    }
-    request.body(Body::empty()).unwrap()
-}
-
 fn install_request(
     session_token: Option<&str>,
     origin: Option<&str>,
@@ -125,37 +111,6 @@ fn install_request(
         request = request.header(header::COOKIE, session_cookie(session_token));
     }
     request.body(Body::from(body)).unwrap()
-}
-
-#[tokio::test]
-async fn bearer_status_skips_origin_and_does_not_install() {
-    let helper_dir = TempDir::new();
-    let manager = write_helper(
-        &helper_dir.0,
-        r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
-echo '{"status":"available","currentVersion":"1.0.0","version":"1.1.0","error":null,"method":"package"}'"#,
-    );
-    let (state, session_token, _dir) = test_state(manager).await;
-    let app = router(state);
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/update")
-                .header(header::HOST, "127.0.0.1:7731")
-                .header(header::AUTHORIZATION, format!("Bearer {session_token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let payload = read_json(response).await;
-    assert_eq!(payload["status"], "available");
-    assert_eq!(
-        fs::read_to_string(helper_dir.0.join("calls")).unwrap(),
-        "check\n"
-    );
 }
 
 #[tokio::test]
@@ -243,21 +198,16 @@ async fn authenticated_remote_clients_install_package_updates() {
             );
         }
         let response = app
-            .clone()
             .oneshot(with_peer(request, peer.parse().unwrap()))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{host}");
         assert_eq!(read_json(response).await["status"], "installing");
         finish_install(&manager, &helper_dir.0).await;
-
-        let mut request = status_request(Some(&session_token), origin);
-        request
-            .headers_mut()
-            .insert(header::HOST, host.parse().unwrap());
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(read_json(response).await["status"], "installed");
+        assert_eq!(
+            manager.status().await.status,
+            sprocket_host::package_update::UpdateStatus::Installed
+        );
         assert_eq!(
             fs::read_to_string(helper_dir.0.join("calls")).unwrap(),
             "install\n"
@@ -273,7 +223,6 @@ async fn install_starts_without_using_request_body_and_returns_installing() {
     let app = router(state);
 
     let ok = app
-        .clone()
         .oneshot(with_peer(
             install_request(
                 Some(&session_token),
@@ -287,14 +236,10 @@ async fn install_starts_without_using_request_body_and_returns_installing() {
     assert_eq!(ok.status(), StatusCode::OK);
     let payload = read_json(ok).await;
     assert_eq!(payload["status"], "installing");
-
-    let status = app
-        .oneshot(status_request(Some(&session_token), None))
-        .await
-        .unwrap();
-    assert_eq!(status.status(), StatusCode::OK);
-    let payload = read_json(status).await;
-    assert_eq!(payload["status"], "installing");
+    assert_eq!(
+        manager.status().await.status,
+        sprocket_host::package_update::UpdateStatus::Installing
+    );
     finish_install(&manager, &helper_dir.0).await;
     assert_eq!(
         fs::read_to_string(helper_dir.0.join("calls")).unwrap(),
