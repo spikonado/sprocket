@@ -59,6 +59,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		resolveWorkspacePath: unusedDesktopCall,
 		listProjectAttachments: unusedDesktopCall,
 		attachProject: unusedDesktopCall,
+		removeProject: unusedDesktopCall,
 		runAgent,
 		fetchTranscriptDisplay: unusedDesktopCall,
 		fetchTranscriptDisplayDetails: unusedDesktopCall,
@@ -321,13 +322,15 @@ describe('local project attachments', () => {
 		expect(
 			findCanonicalProjectAttachment(attachments, {
 				workspacePath: '/worktrees/changed',
-				repositoryKey: 'github.com/acme/replacement'
+				repositoryKey: 'github.com/acme/replacement',
+				attachmentKey: canonical.attachmentKey
 			})
 		).toBe(canonical);
 		expect(
 			findCanonicalProjectAttachment(attachments, {
 				workspacePath: '/worktrees/changed',
-				repositoryKey: 'github.com/acme/original'
+				repositoryKey: 'github.com/acme/original',
+				attachmentKey: 'remote:github.com/acme/original'
 			})
 		).toBeUndefined();
 	});
@@ -344,5 +347,24 @@ describe('local project attachments', () => {
 			'/projects/other': current['/projects/other'],
 			'/worktrees/feature': feature
 		});
+	});
+
+	it('matches canonical directory identity rather than another drive with the same repository key', () => {
+		const otherDrive = projectAttachment('E:\\', 'workspace', 1, 'available', 'directory:E:\\');
+		const attachments = { 'E:\\': otherDrive };
+		expect(
+			findCanonicalProjectAttachment(attachments, {
+				workspacePath: 'D:\\',
+				repositoryKey: 'workspace',
+				attachmentKey: 'directory:D:\\'
+			})
+		).toBeUndefined();
+		expect(
+			findCanonicalProjectAttachment(attachments, {
+				workspacePath: 'E:\\',
+				repositoryKey: 'workspace',
+				attachmentKey: 'directory:E:\\'
+			})
+		).toBe(otherDrive);
 	});
 });

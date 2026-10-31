@@ -82,6 +82,21 @@ impl ProjectAttachmentStore {
         Ok(listed)
     }
 
+    pub async fn remove(&self, workspace_path: &str) -> Result<()> {
+        self.ensure_loaded().await?;
+        let _update_guard = self.update_lock.lock().await;
+        if self
+            .attachments
+            .write()
+            .await
+            .remove(workspace_path)
+            .is_none()
+        {
+            return Ok(());
+        }
+        self.save_to_disk().await
+    }
+
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
         let mut validated = resolve_attachment(request.workspace_path).await?;

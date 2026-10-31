@@ -59,6 +59,7 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		resolveWorkspacePath: unused,
 		listProjectAttachments: unused,
 		attachProject: unused,
+		removeProject: unused,
 		runAgent: unused,
 		fetchTranscriptDisplay: unused,
 		fetchTranscriptDisplayDetails: unused,

@@ -165,6 +165,15 @@ it('settles an idle thread without offering snooze actions', async () => {
 	expect(document.querySelector('.inbox-notice')).toBeNull();
 });
 
+it('removes a project from the project filter without filtering by it', async () => {
+	const input = { ...props([thread()]), onRemoveProject: vi.fn() };
+	const view = renderView(<Harness {...input} />);
+	fireEvent.click(view.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(view.getByRole('button', { name: 'Remove Repository from project list' }));
+	expect(input.onRemoveProject).toHaveBeenCalledWith(input.projects[0]);
+	expect(input.onFilter).not.toHaveBeenCalled();
+});
+
 it('renders simple navigation and a collapsible settled section', async () => {
 	const input = await render([thread(), thread(true)]);
 

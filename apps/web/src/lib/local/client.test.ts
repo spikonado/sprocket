@@ -141,6 +141,17 @@ it('preserves local project send times when listing and attaching projects', asy
 	);
 });
 
+it('removes a project through the server', async () => {
+	const fetch = vi.fn(async () => Response.json(null));
+	vi.stubGlobal('fetch', fetch);
+	const workspacePath = 'D:\\robots';
+	await createLocalClient('http://127.0.0.1:7731').removeProject({ workspacePath });
+	expect(fetch).toHaveBeenCalledWith(
+		'http://127.0.0.1:7731/api/workspace/projects',
+		expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ workspacePath }) })
+	);
+});
+
 describe('display transcript pages', () => {
 	it('cancels an in-flight page request when its thread is left', async () => {
 		const fetch = vi.fn(

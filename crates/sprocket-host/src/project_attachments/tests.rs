@@ -53,6 +53,37 @@ async fn attach_and_list_project_attachment() {
 }
 
 #[tokio::test]
+async fn removed_project_stays_removed_until_a_run_uses_its_folder() {
+    let data_dir = tempfile::tempdir().expect("data dir");
+    let project = tempfile::tempdir().expect("project dir");
+    let store = ProjectAttachmentStore::new(data_dir.path().to_path_buf());
+    let attached = store
+        .attach(AttachProjectRequest {
+            workspace_path: project.path().to_string_lossy().into_owned(),
+            replace_workspace_path: None,
+        })
+        .await
+        .expect("attach");
+
+    store
+        .remove(&attached.workspace_path)
+        .await
+        .expect("remove");
+
+    let reloaded = ProjectAttachmentStore::new(data_dir.path().to_path_buf());
+    assert!(reloaded.list().await.expect("list").is_empty());
+    assert!(project.path().exists());
+
+    reloaded
+        .resolve_run_workspace(attached.workspace_path.clone())
+        .await
+        .expect("resolve run workspace");
+    let listed = reloaded.list().await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].workspace_path, attached.workspace_path);
+}
+
+#[tokio::test]
 async fn message_recency_survives_reload_validation_and_reconnect() {
     let temp_root = tempfile::tempdir().expect("temp dir");
     let alpha = temp_root.path().join("alpha");
