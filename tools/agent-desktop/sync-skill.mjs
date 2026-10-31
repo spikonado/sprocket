@@ -1,8 +1,14 @@
 // Copies the upstream agent-desktop skill at the version pinned in releases.json. It is the
-// same guide that `agent-desktop skills get desktop` prints.
+// same guide that `agent-desktop skills get desktop` prints. Only the frontmatter is replaced.
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const FRONTMATTER = `---
+name: agent-desktop
+description: Operate desktop applications on macOS, Windows and Linux through native accessibility trees, using the agent-desktop CLI. Use when an AI agent must see or act on a desktop GUI.
+---
+`;
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -20,5 +26,5 @@ if (!response.ok) {
 
 await writeFile(
 	join(root, 'crates/sprocket-workspace/skills/agent-desktop/SKILL.md'),
-	await response.text()
+	FRONTMATTER + (await response.text()).replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
 );
