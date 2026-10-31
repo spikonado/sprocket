@@ -45,6 +45,22 @@ sprocket run "Fix the failing tests"
 
 Update your CLI installation with `sprocket update`. Run `sprocket --help` for more options.
 
+### Skills
+
+Sprocket loads skills from `.sprocket/skills/<name>/SKILL.md` in your project, then `~/.sprocket/skills/` and `~/.agents/skills/`, then its built-in skills. Type `/name` or `$name` in the composer to use one.
+
+When a skill loads, each `` !`command` `` in its body runs in the thread's working directory, and the command's output (stdout and stderr) replaces it. The agent sees the output, not the command:
+
+```markdown
+Current branch: !`git branch --show-current`
+```
+
+- The `!` must start a line or follow whitespace, and the command must end on the same line. `` KEY=!`cmd` `` stays as text.
+- Placeholders inside fenced code blocks or other code spans don't run. To show the syntax as an example, wrap it in a double-backtick code span, as this README does.
+- Commands run one at a time in your default shell (`$SHELL`, or PowerShell on Windows). Each gets 30 seconds, and one skill load gets 60 seconds in total; placeholders left after that are skipped. Output over 20,000 bytes is truncated.
+- A non-zero exit, a timeout, or a shell that fails to start replaces the placeholder with a `[skill command failed: ...]` line.
+- Commands run without a prompt for every skill source, including a cloned repository's `.sprocket/skills`. Review skills in repositories you don't trust.
+
 ## Troubleshooting
 
 - If `17731` is already occupied, set `SPROCKET_PORT` before launching.

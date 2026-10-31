@@ -269,6 +269,10 @@ impl CommandSessionManager {
         self
     }
 
+    pub fn environment(&self) -> &[(OsString, OsString)] {
+        &self.environment
+    }
+
     pub async fn exec_command(
         &self,
         cancellation: WorkspaceCancellation,
@@ -994,7 +998,10 @@ async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Res
     }
 }
 
-async fn terminate_child(child: &mut Child, process_id: Option<u32>) -> Result<ExitStatus> {
+pub(crate) async fn terminate_child(
+    child: &mut Child,
+    process_id: Option<u32>,
+) -> Result<ExitStatus> {
     let tree_result = stop_remaining_processes(process_id);
     let _ = child.start_kill();
     let wait_result = child.wait().await;
@@ -1017,7 +1024,7 @@ fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
+pub(crate) fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
     stop_remaining_processes(process_id)
 }
 
@@ -1036,21 +1043,21 @@ fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
+pub(crate) fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
     // Match Unix: after the shell exits, kill any leftover process tree so
     // background children from PowerShell do not outlive the session.
     stop_remaining_processes(process_id)
 }
 
 #[cfg(not(windows))]
-fn build_shell_command(command: &str, shell: &str) -> Command {
+pub(crate) fn build_shell_command(command: &str, shell: &str) -> Command {
     let mut process = Command::new(shell);
     process.arg("-c").arg(command);
     process
 }
 
 #[cfg(windows)]
-fn build_shell_command(command: &str, shell: &str) -> Command {
+pub(crate) fn build_shell_command(command: &str, shell: &str) -> Command {
     let mut process = Command::new(shell);
     if crate::command_shell::is_powershell(shell) {
         process.args(["-NoLogo", "-NoProfile", "-Command"]);

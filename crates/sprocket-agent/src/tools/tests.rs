@@ -133,8 +133,8 @@ fn prepare_ask_question_normalizes_and_enforces_limits() {
     assert!(reserved.to_string().contains("reserved"));
 }
 
-#[test]
-fn read_skill_returns_complete_large_builtin_body() {
+#[tokio::test]
+async fn read_skill_returns_complete_large_builtin_body() {
     let body = format!("{}\nFinal instruction.\n", "λ".repeat(40 * 1024));
     let contents = Box::leak(
         format!("---\nname: demo\ndescription: Demo skill\n---\n{body}").into_boxed_str(),
@@ -146,15 +146,18 @@ fn read_skill_returns_complete_large_builtin_body() {
         source: SkillSource::BuiltIn { contents },
     }];
 
-    let value = resolve_read_skill(&skills, "demo").expect("should resolve");
+    let cwd = std::env::temp_dir();
+    let value = resolve_read_skill(&skills, "demo", &cwd, &[], &Default::default())
+        .await
+        .expect("should resolve");
     assert_eq!(value["name"], "demo");
     assert_eq!(value["description"], "Demo skill");
     assert_eq!(value["content"], body);
     assert!(value.get("dir").is_none());
 }
 
-#[test]
-fn read_skill_unknown_name_lists_available() {
+#[tokio::test]
+async fn read_skill_unknown_name_lists_available() {
     let skills = [
         WorkspaceSkill {
             name: "alpha".to_string(),
@@ -170,7 +173,10 @@ fn read_skill_unknown_name_lists_available() {
         },
     ];
 
-    let error = resolve_read_skill(&skills, "missing").expect_err("should fail");
+    let cwd = std::env::temp_dir();
+    let error = resolve_read_skill(&skills, "missing", &cwd, &[], &Default::default())
+        .await
+        .expect_err("should fail");
     let message = error.to_string();
     assert!(message.contains("Unknown skill 'missing'"));
     assert!(message.contains("alpha, bravo"));

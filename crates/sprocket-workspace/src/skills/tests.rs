@@ -269,8 +269,8 @@ fn rejects_missing_or_empty_descriptions() {
     }
 }
 
-#[test]
-fn discovers_large_frontmatter_and_returns_complete_file_content() {
+#[tokio::test]
+async fn discovers_large_frontmatter_and_returns_complete_file_content() {
     let root = temp_workspace();
     let skills = root.join(".sprocket/skills");
     let skill_dir = skills.join("huge");
@@ -289,26 +289,38 @@ fn discovers_large_frontmatter_and_returns_complete_file_content() {
     assert_eq!(loaded.skills[0].name, "huge");
     assert_eq!(loaded.skills[0].description, description);
 
-    let content = read_skill_content(&loaded.skills[0]).expect("read");
+    let content = read_skill_content(&loaded.skills[0], &root, &[], &Default::default())
+        .await
+        .expect("read");
     assert_eq!(content.description, description);
     assert_eq!(content.content, body);
 
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn read_skill_content_strips_frontmatter_and_returns_dir() {
+#[tokio::test]
+async fn read_skill_content_strips_frontmatter_and_runs_placeholders() {
     let root = temp_workspace();
     let skills = root.join(".sprocket/skills");
     gix::init(&root).expect("git repository");
-    write_skill(&skills, "demo", "A demo skill", "# Instructions\n\nGo.");
+    write_skill(
+        &skills,
+        "demo",
+        "A demo skill",
+        "# Instructions\n\nGreeting: !`echo hello`\n\nGo.",
+    );
 
     let loaded = load_workspace_skills(&root, &[], &[]);
     let skill = loaded.skills.iter().find(|s| s.name == "demo").unwrap();
-    let content = read_skill_content(skill).expect("read");
+    let content = read_skill_content(skill, &root, &[], &Default::default())
+        .await
+        .expect("read");
     assert_eq!(content.name, "demo");
     assert_eq!(content.description, "A demo skill");
-    assert_eq!(content.content, "# Instructions\n\nGo.\n");
+    assert_eq!(
+        content.content,
+        "# Instructions\n\nGreeting: hello\n\nGo.\n"
+    );
     assert_eq!(
         content.dir.as_deref(),
         Some(skills.join("demo").to_string_lossy().as_ref())
