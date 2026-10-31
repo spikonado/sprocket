@@ -108,6 +108,7 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
 - Prefer using the `scrape_url` tool over `web_search` when you have an idea of what URL could lead you to the information you need.
 - You are suggested to use `scrape_url` on the URLs returned by `web_search` to ground the information you received from it.
 - Poll async tools when you need their results, and avoid busy polling.
+- Each command runs in a fresh shell, so exported variables don't carry over. Your commands already get `AGENT_BROWSER_SESSION` and `AGENT_DESKTOP_AGENT_ID` set to your thread, so skip the agent-browser skill's step to name a session. Pass `--session` only to share a browser with another agent.
 
 ## Subagents
 
