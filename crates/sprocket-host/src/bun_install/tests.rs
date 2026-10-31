@@ -21,7 +21,6 @@ fn extracts_bun_and_links_bunx() {
     }
     builder.into_inner().unwrap().finish().unwrap();
     let bin = directory.path().join("bin");
-    std::fs::create_dir(&bin).unwrap();
 
     extract(&archive, &bin).unwrap();
 

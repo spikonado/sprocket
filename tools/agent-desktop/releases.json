@@ -1,0 +1,37 @@
+{
+	"agentDesktop": {
+		"version": "1.0.2",
+		"platforms": {
+			"darwin-arm64": {
+				"url": "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-aarch64-apple-darwin.tar.gz",
+				"bytes": 2181954,
+				"sha256": "7bee385196d7b478de80cf05ca4304aaa38f0eba593b3406ad3c247c1773be19"
+			},
+			"darwin-x64": {
+				"url": "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-x86_64-apple-darwin.tar.gz",
+				"bytes": 2304657,
+				"sha256": "8edda6df17eafc042395502a823dbb8415bc8ac14835a6731e4d8becc9cb4121"
+			},
+			"linux-arm64": {
+				"url": "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-aarch64-unknown-linux-gnu.tar.gz",
+				"bytes": 3245284,
+				"sha256": "864cb782e0afc8bf0df19622016b24bdbd1a83fc7749f784ee82aa49a7f845eb"
+			},
+			"linux-x64": {
+				"url": "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-x86_64-unknown-linux-gnu.tar.gz",
+				"bytes": 3359127,
+				"sha256": "ad661b7a3fd8f990a769243f4889a240ca0e2c8dab3ef5bddd6019086c71e0b4"
+			},
+			"win32-arm64": {
+				"url": "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-aarch64-pc-windows-msvc.tar.gz",
+				"bytes": 1534656,
+				"sha256": "a0ecd6e17e60a0bcfbb45533a72f2d3a7a73508769588273ef08b0477d2b9687"
+			},
+			"win32-x64": {
+				"url": "https://github.com/vercel-labs/agent-desktop/releases/download/v1.0.2/agent-desktop-v1.0.2-x86_64-pc-windows-msvc.tar.gz",
+				"bytes": 1578236,
+				"sha256": "2186c76e7df197c0e67365e45d36d869f74714c56bb8a73817e2a66f3e18e222"
+			}
+		}
+	}
+}

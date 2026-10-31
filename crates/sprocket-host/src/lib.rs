@@ -3,12 +3,14 @@
 
 pub mod agent_launch;
 pub mod artifact_watch;
+pub mod bin_tool;
 pub mod browser;
 mod browser_install;
 pub mod bun_install;
 pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
+pub mod desktop_install;
 pub mod github_settings;
 pub mod lifetime;
 pub mod machine_identity;
@@ -34,8 +36,8 @@ use sprocket_transcript::{LiveCompletionHub, TranscriptStore};
 use tokio::task::JoinHandle;
 
 use crate::artifact_watch::ArtifactWatchers;
+use crate::bin_tool::BinTool;
 use crate::browser::BrowserManager;
-use crate::bun_install::BunInstaller;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_settings::GitHubSettingsStore;
@@ -84,7 +86,8 @@ pub struct Host {
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
-    pub bun: Arc<BunInstaller>,
+    pub bun: Arc<BinTool>,
+    pub desktop: Arc<BinTool>,
 }
 
 impl Host {
@@ -147,7 +150,8 @@ impl Host {
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
-            bun: BunInstaller::new(data_dir)?,
+            bun: bun_install::installer(data_dir)?,
+            desktop: desktop_install::installer(data_dir)?,
         })
     }
 
@@ -188,6 +192,7 @@ impl Host {
     pub fn start(&self) -> HostTasks {
         self.browsers.prepare_tools();
         self.bun.prepare();
+        self.desktop.prepare();
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));

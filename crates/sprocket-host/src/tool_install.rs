@@ -1,5 +1,6 @@
 //! Pinned, versioned tool installs under `<data-dir>/tools/<tool>/<version>/`.
 
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -28,6 +29,30 @@ pub(crate) fn download_client() -> anyhow::Result<reqwest::Client> {
         .connect_timeout(Duration::from_secs(30))
         .timeout(DOWNLOAD_TIMEOUT)
         .build()?)
+}
+
+/// Puts `directory` ahead of the `PATH` in `environment`, or of the server's own `PATH`.
+pub(crate) fn prepend_path(
+    mut environment: Vec<(OsString, OsString)>,
+    directory: PathBuf,
+) -> Vec<(OsString, OsString)> {
+    let inherited = environment
+        .iter()
+        .position(|(key, _)| key == "PATH")
+        .map(|index| environment.remove(index).1)
+        .or_else(|| std::env::var_os("PATH"));
+    let mut paths = vec![directory];
+    if let Some(path) = &inherited {
+        paths.extend(std::env::split_paths(path));
+    }
+    match std::env::join_paths(paths) {
+        Ok(path) => environment.push(("PATH".into(), path)),
+        Err(error) => {
+            tracing::warn!("Couldn't extend PATH: {error}");
+            environment.extend(inherited.map(|path| ("PATH".into(), path)));
+        }
+    }
+    environment
 }
 
 pub(crate) fn open_lock_file(path: &Path) -> std::io::Result<File> {

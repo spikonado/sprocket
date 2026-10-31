@@ -160,6 +160,7 @@ async fn launch_agent_inner(
     let attachment_key = attachment.attachment_key.clone();
     host.browsers.prepare_tools();
     host.bun.prepare();
+    host.desktop.prepare();
     let browser_environment = match host.browsers.environment() {
         Ok(environment) => environment,
         Err(error) => {
@@ -167,7 +168,9 @@ async fn launch_agent_inner(
             Vec::new()
         }
     };
-    let tool_environment = host.bun.environment(browser_environment);
+    let tool_environment = host
+        .desktop
+        .environment(host.bun.environment(browser_environment));
     let records_message = !payload.prompt.trim().is_empty()
         || !payload.storage_ids.is_empty()
         || payload.continuation_of_run_id.is_some();

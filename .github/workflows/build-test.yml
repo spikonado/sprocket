@@ -40,6 +40,7 @@ jobs:
               - Cargo.toml
               - Cargo.lock
               - tools/agent-browser/*.json
+              - tools/agent-desktop/*.json
               - tools/bun/*.json
             web:
               - *ci
