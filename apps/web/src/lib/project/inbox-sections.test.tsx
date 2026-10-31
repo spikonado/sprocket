@@ -16,7 +16,6 @@ function threadRecord(): Doc<'threadRecords'> {
 		_creationTime: 1,
 		userId: 'user-a',
 		repositoryKey: 'alpha',
-		submissionId: 'submission-1',
 		selectedModel: 'model',
 		reasoningEffort: 'high' as const,
 		fastMode: false,

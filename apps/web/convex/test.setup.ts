@@ -160,7 +160,6 @@ export async function seedThreadRecord(
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
-			startedAt: Date.now(),
 			completedAt: Date.now()
 		});
 

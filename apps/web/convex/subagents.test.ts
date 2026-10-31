@@ -581,7 +581,6 @@ describe('subagents.createOrSend', () => {
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
 					fastMode: false,
-					startedAt: Date.now(),
 					machineId: machine.machineId
 				});
 
@@ -1092,7 +1091,6 @@ describe('subagents.control', () => {
 						selectedModel: thread.selectedModel,
 						reasoningEffort: thread.reasoningEffort,
 						fastMode: thread.fastMode,
-						startedAt: Date.now(),
 						completedAt: Date.now()
 					});
 

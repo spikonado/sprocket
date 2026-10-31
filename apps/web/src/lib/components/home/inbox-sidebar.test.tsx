@@ -67,7 +67,6 @@ function thread(settled = false, status: ThreadStatus = 'completed') {
 		_creationTime: 1,
 		userId: 'alice',
 		repositoryKey: 'repo',
-		submissionId: 'submission',
 		selectedModel: 'model',
 		reasoningEffort: 'high' as const,
 		fastMode: false,

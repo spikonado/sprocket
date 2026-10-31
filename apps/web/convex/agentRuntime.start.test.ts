@@ -75,22 +75,11 @@ describe('agentRuntime.start', () => {
 	it('does not let an older run finalization overwrite the latest run status', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await t.run(async (ctx) => {
-			for (const run of await ctx.db
-				.query('runs')
-				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-				.collect()) {
-				await ctx.db.patch('runs', run._id, { startedAt: 0 });
-			}
-		});
 		const older = await createQueuedRun(t, asUser, threadId, 'sub-older', 'older-secret');
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'older-claim',
 			runId: older.runId,
 			executionSecret: 'older-secret'
-		});
-		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', older.runId, { startedAt: 1 });
 		});
 
 		const newerRunId = await t.run(async (ctx) => {
@@ -102,8 +91,7 @@ describe('agentRuntime.start', () => {
 				executionSecretHash: 'newer-fixture',
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				fastMode: false,
-				startedAt: 2
+				fastMode: false
 			});
 
 			await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });

@@ -35,16 +35,12 @@ import {
 	vTranscriptToolBody
 } from '@convex/lib/validators';
 
-// Cleared by `migrations.removeCreatedAt`; `_creationTime` replaces it.
-const legacyCreatedAt = v.optional(v.number());
-
 export default defineSchema({
 	users: defineTable({
 		// WorkOS JWT subject; every owned table stores this value as `userId`.
 		subject: v.string(),
 		tokenIdentifier: v.string(),
 		email: v.string(),
-		createdAt: legacyCreatedAt,
 		dodoCustomerId: v.optional(v.string())
 	})
 		.index('by_subject', ['subject'])
@@ -58,11 +54,9 @@ export default defineSchema({
 		architecture: v.string(),
 		hostname: v.string(),
 		appVersion: v.string(),
-		processId: v.optional(v.string()),
-		credentialHash: v.optional(v.string()),
+		processId: v.string(),
 		lastSeenAt: v.optional(v.number()),
 		runIds: v.array(v.id('runs')),
-		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
 	// Operator-managed subscription tiers (edited directly in prod data).
@@ -298,12 +292,6 @@ export default defineSchema({
 		.index('by_environment_and_webhookId', ['environment', 'webhookId'])
 		.index('by_outcome_and_nextAttemptAt', ['outcome', 'nextAttemptAt'])
 		.index('by_receivedAt', ['receivedAt']),
-	// Singleton bookkeeping for bounded ledger retention: the cleanup cursor
-	// prevents rescanning the newest rows and starving the older remainder.
-	dodoWebhookCleanup: defineTable({
-		key: v.string(),
-		cursor: v.number()
-	}).index('by_key', ['key']),
 	uiPreferences: defineTable({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark')),
@@ -322,11 +310,7 @@ export default defineSchema({
 	}).index('by_name', ['name']),
 	threadRecords: defineTable({
 		userId: v.string(),
-		// Cleared by `migrations.removeThreadRecordLegacyFields`.
-		submissionId: v.optional(v.string()),
 		parentThreadId: v.optional(v.id('threadRecords')),
-		// Cleared by `migrations.removeThreadRecordLegacyFields`.
-		treeCancellation: v.optional(v.object({ generation: v.string(), pendingBatches: v.number() })),
 		status: vRunStatus,
 		repositoryKey: v.string(),
 		title: v.optional(v.string()),
@@ -420,15 +404,12 @@ export default defineSchema({
 		fastMode: v.boolean(),
 		// Set until the run begins, which writes it as the run's prompt part.
 		pendingPrompt: v.optional(vTranscriptPromptBody),
-		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
-		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		failureKind: v.optional(v.literal('abandoned')),
 		taskDeadlineAt: v.optional(v.number()),
-		cancellationRequestedAt: v.optional(v.number()),
-		cancellationDeadlineAt: v.optional(v.number())
+		cancellationRequestedAt: v.optional(v.number())
 	})
 		.index('by_threadId', ['threadId'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
@@ -459,12 +440,10 @@ export default defineSchema({
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
-		userId: v.optional(v.string()),
 		totalParts: v.number()
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
-		userId: v.optional(v.string()),
 		number: v.number(),
 		sourceKey: v.string(),
 		kind: vTranscriptPartKind,
@@ -571,24 +550,6 @@ export default defineSchema({
 		error: v.optional(v.string()),
 		expiresAt: v.number()
 	}).index('by_runId', ['runId']),
-	// Replaced by webRequests. Keep until its last rows expire; see BACKWARDS_COMPATIBILITY.md.
-	firecrawlRequests: defineTable({
-		runId: v.id('runs'),
-		claimId: v.string(),
-		jobId: v.optional(v.id('executorJobs')),
-		kind: v.union(v.literal('scrape'), v.literal('screenshot')),
-		rawDocument: v.optional(v.boolean()),
-		status: v.union(
-			v.literal('queued'),
-			v.literal('running'),
-			v.literal('completed'),
-			v.literal('failed')
-		),
-		workId: v.optional(v.string()),
-		resultStorageId: v.optional(v.id('_storage')),
-		error: v.optional(v.string()),
-		expiresAt: v.number()
-	}).index('by_runId', ['runId']),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
@@ -632,7 +593,6 @@ export default defineSchema({
 				claimId: v.string()
 			})
 		),
-		createdAt: legacyCreatedAt,
 		timeoutAt: v.optional(v.number()),
 		answeredAt: v.optional(v.number()),
 		sequence: v.number()
@@ -654,7 +614,6 @@ export default defineSchema({
 		type: vArtifactType,
 		title: v.string(),
 		revision: v.number(),
-		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	})
 		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
@@ -679,7 +638,6 @@ export default defineSchema({
 		validUntil: v.optional(v.string()),
 		renewsAt: v.optional(v.string()),
 		remaining: v.optional(v.number()),
-		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	}).index('by_user', ['userId']),
 	mandateCharges: defineTable({
@@ -703,7 +661,6 @@ export default defineSchema({
 		// not be reclaimed for another provider request.
 		providerRequestedAt: v.optional(v.number()),
 		reportRetrierRunId: v.optional(v.string()),
-		createdAt: legacyCreatedAt,
 		updatedAt: v.number()
 	})
 		.index('by_mandate_reference', ['mandateId', 'reference'])

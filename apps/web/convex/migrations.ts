@@ -1,34 +1,14 @@
 import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation, type MutationCtx } from '@convex/_generated/server';
+import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
-import { LEGACY_RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
-});
-
-export const backfillSubscriptionExpiry = migrations.define({
-	table: 'subscriptions',
-	migrateOne: async (ctx, subscription) => {
-		if (!subscription.dodoSubscriptionId) return;
-
-		await scheduleSubscriptionExpiry(ctx, subscription);
-	}
-});
-
-export const runSubscriptionExpiryBackfill = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		await migrations.runOne(ctx, internal.migrations.backfillSubscriptionExpiry);
-
-		return null;
-	}
 });
 
 /**
@@ -106,141 +86,6 @@ export const runSubscriptionAccessBackfill = internalMutation({
 		await migrations.runOne(ctx, internal.migrations.backfillSubscriptionAccess, {
 			dryRun: dryRun ?? false
 		});
-
-		return null;
-	}
-});
-
-function clearCreatedAt(_ctx: MutationCtx, doc: { createdAt?: number }) {
-	return doc.createdAt === undefined ? undefined : { createdAt: undefined };
-}
-
-export const removeUsersCreatedAt = migrations.define({
-	table: 'users',
-	migrateOne: clearCreatedAt
-});
-
-export const removeMachinesCreatedAt = migrations.define({
-	table: 'machines',
-	migrateOne: clearCreatedAt
-});
-
-export const removeAgentQuestionsCreatedAt = migrations.define({
-	table: 'agentQuestions',
-	migrateOne: clearCreatedAt
-});
-
-export const removeArtifactsCreatedAt = migrations.define({
-	table: 'artifacts',
-	migrateOne: clearCreatedAt
-});
-
-export const removeMandatesCreatedAt = migrations.define({
-	table: 'mandates',
-	migrateOne: clearCreatedAt
-});
-
-export const removeMandateChargesCreatedAt = migrations.define({
-	table: 'mandateCharges',
-	migrateOne: clearCreatedAt
-});
-
-export const removeCreatedAt = migrations.runner([
-	internal.migrations.removeUsersCreatedAt,
-	internal.migrations.removeMachinesCreatedAt,
-	internal.migrations.removeAgentQuestionsCreatedAt,
-	internal.migrations.removeArtifactsCreatedAt,
-	internal.migrations.removeMandatesCreatedAt,
-	internal.migrations.removeMandateChargesCreatedAt
-]);
-
-export const removeThreadRecordLegacyFields = migrations.define({
-	table: 'threadRecords',
-	migrateOne: (_ctx, thread) =>
-		thread.submissionId === undefined && thread.treeCancellation === undefined
-			? undefined
-			: { submissionId: undefined, treeCancellation: undefined }
-});
-
-export const runThreadRecordLegacyFieldsRemoval = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		await migrations.runOne(ctx, internal.migrations.removeThreadRecordLegacyFields);
-
-		return null;
-	}
-});
-
-function clearUserId(_ctx: MutationCtx, doc: { userId?: string }) {
-	return doc.userId === undefined ? undefined : { userId: undefined };
-}
-
-export const removeTranscriptStatesUserId = migrations.define({
-	table: 'threadTranscriptStates',
-	migrateOne: clearUserId
-});
-
-export const removeTranscriptPartsUserId = migrations.define({
-	table: 'threadTranscriptParts',
-	migrateOne: clearUserId
-});
-
-export const removeTranscriptUserId = migrations.runner([
-	internal.migrations.removeTranscriptStatesUserId,
-	internal.migrations.removeTranscriptPartsUserId
-]);
-
-export const moveMachineCredentialHashes = migrations.define({
-	table: 'machines',
-	migrateOne: (_ctx, machine) => {
-		if (machine.credentialHash === undefined) return;
-
-		return { processId: machine.processId ?? machine.credentialHash, credentialHash: undefined };
-	}
-});
-
-export const runMachineProcessIdBackfill = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		await migrations.runOne(ctx, internal.migrations.moveMachineCredentialHashes);
-
-		return null;
-	}
-});
-
-export const unsetRetiredRunFields = migrations.define({
-	table: 'runs',
-	migrateOne: (_ctx, run) =>
-		run.startedAt === undefined &&
-		run.gatewayProtocolVersion === undefined &&
-		run.cancellationDeadlineAt === undefined
-			? undefined
-			: {
-					startedAt: undefined,
-					gatewayProtocolVersion: undefined,
-					cancellationDeadlineAt: undefined
-				}
-});
-
-export const removeRetiredRunFields = migrations.runner(internal.migrations.unsetRetiredRunFields);
-
-export const backfillRunFailureKind = migrations.define({
-	table: 'runs',
-	migrateOne: (_ctx, run) =>
-		run.failureKind === undefined &&
-		run.status === 'failed' &&
-		run.lastError === LEGACY_RUN_ABANDONED_BY_AGENT
-			? { failureKind: 'abandoned' as const }
-			: undefined
-});
-
-export const runRunFailureKindBackfill = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		await migrations.runOne(ctx, internal.migrations.backfillRunFailureKind);
 
 		return null;
 	}

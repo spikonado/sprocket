@@ -4,55 +4,6 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
-	'backfill subscription expiry checks',
-	{ hours: 1 },
-	internal.migrations.runSubscriptionExpiryBackfill,
-	{}
-);
-
-crons.interval(
-	'remove legacy createdAt fields',
-	{ hours: 1 },
-	internal.migrations.removeCreatedAt,
-	{}
-);
-
-crons.interval(
-	'remove legacy thread record fields',
-	{ hours: 1 },
-	internal.migrations.runThreadRecordLegacyFieldsRemoval,
-	{}
-);
-
-crons.interval(
-	'remove transcript userId fields',
-	{ hours: 1 },
-	internal.migrations.removeTranscriptUserId,
-	{}
-);
-
-crons.interval(
-	'move machine credential hashes to process IDs',
-	{ hours: 1 },
-	internal.migrations.runMachineProcessIdBackfill,
-	{}
-);
-
-crons.interval(
-	'remove retired run fields',
-	{ hours: 1 },
-	internal.migrations.removeRetiredRunFields,
-	{}
-);
-
-crons.interval(
-	'backfill run failure kinds',
-	{ hours: 1 },
-	internal.migrations.runRunFailureKindBackfill,
-	{}
-);
-
-crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

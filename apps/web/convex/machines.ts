@@ -8,7 +8,6 @@ import {
 	isMachineActive,
 	MACHINE_ONLINE_THRESHOLD_MS,
 	MAX_ACTIVE_MACHINE_RUNS,
-	machineProcessId,
 	requireMachineProcess
 } from '@convex/lib/machineRuns';
 import { abandonRunRecord } from '@convex/lib/runFinalize';
@@ -117,7 +116,7 @@ async function registerMachine(
 	};
 
 	if (existing) {
-		const sameProcess = machineProcessId(existing) === args.processId;
+		const sameProcess = existing.processId === args.processId;
 
 		if (!sameProcess && existing.lastSeenAt !== undefined && isMachineActive(existing, now)) {
 			return {
@@ -130,7 +129,7 @@ async function registerMachine(
 			await failMachineRuns(ctx, existing);
 		}
 
-		await ctx.db.patch('machines', existing._id, { ...metadata, credentialHash: undefined });
+		await ctx.db.patch('machines', existing._id, metadata);
 	} else {
 		await ctx.db.insert('machines', {
 			userId,

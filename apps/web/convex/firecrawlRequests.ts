@@ -1,5 +1,5 @@
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, mutation, query } from '@convex/_generated/server';
+import { mutation, query } from '@convex/_generated/server';
 import { RUN_NO_LONGER_ACTIVE, TOOL_NO_LONGER_SUPPORTED } from '@convex/lib/agentErrors';
 import {
 	REQUEST_ENDED,
@@ -51,32 +51,6 @@ export const dispose = mutation({
 		const requestId = ctx.db.normalizeId('webRequests', id);
 
 		if (requestId) await disposeRequest(ctx, { ...args, id: requestId });
-
-		return null;
-	}
-});
-
-/** Runs cleanup jobs scheduled before the webRequests rename. */
-export const cleanup = internalMutation({
-	args: { id: v.id('firecrawlRequests') },
-	returns: v.null(),
-	handler: async (ctx, { id }) => {
-		const request = await ctx.db.get('firecrawlRequests', id);
-
-		if (!request) return null;
-
-		if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);
-		await ctx.db.delete('firecrawlRequests', id);
-
-		return null;
-	}
-});
-
-export const removeResult = internalMutation({
-	args: { storageId: v.id('_storage') },
-	returns: v.null(),
-	handler: async (ctx, { storageId }) => {
-		await ctx.storage.delete(storageId);
 
 		return null;
 	}

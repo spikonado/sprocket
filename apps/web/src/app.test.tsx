@@ -66,7 +66,6 @@ function threadRecord(id: string, repositoryKey: string, title: string): Doc<'th
 		_id: id as Id<'threadRecords'>,
 		_creationTime: 1,
 		userId: 'user-a',
-		submissionId: 'submission-1',
 		status: 'completed',
 		repositoryKey,
 		title,

@@ -980,26 +980,10 @@ describe('durable webhook ingestion and projection', () => {
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});
 		expect(await readEvent(t, oldId)).not.toBeNull();
 
-		let cursor = await t.run((ctx) =>
-			ctx.db
-				.query('dodoWebhookCleanup')
-				.withIndex('by_key', (query) => query.eq('key', 'cleanup'))
-				.unique()
-		);
-
-		expect(cursor?.cursor).toBe(49);
-
 		await vi.advanceTimersByTimeAsync(1_000);
 		await t.finishInProgressScheduledFunctions();
 		expect(await readEvent(t, oldId)).toBeNull();
 
-		cursor = await t.run((ctx) =>
-			ctx.db
-				.query('dodoWebhookCleanup')
-				.withIndex('by_key', (query) => query.eq('key', 'cleanup'))
-				.unique()
-		);
-		expect(cursor?.cursor).toBe(55);
 		vi.setSystemTime(now + 15 * DAY);
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});
 		await vi.advanceTimersByTimeAsync(1_000);
