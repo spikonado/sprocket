@@ -20,6 +20,8 @@ const browserStatusSchema = z.object({
 	error: z.string().nullable()
 });
 
+const tscircuitDevSchema = z.object({ url: z.string(), file: z.string() });
+
 const pullRequestStatesSchema = z.array(
 	z.object({
 		repository: z.string(),
@@ -431,6 +433,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 		startBrowser: (signal) =>
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
+		startTscircuit: async (input, signal) => {
+			const { url, file } = await request('/api/tscircuit/dev', tscircuitDevSchema, {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			return `${baseUrl}${url}#${new URLSearchParams({ file })}`;
+		},
 		browseFilesystem: (input) => {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }

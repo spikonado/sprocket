@@ -1,51 +1,7 @@
 use super::*;
-use axum::http::Request;
+use crate::test_support::{cookie_request as request, signed_in_state as state};
 use std::sync::Arc;
 use tower::ServiceExt;
-
-async fn state() -> (AppState, String, tempfile::TempDir) {
-    let directory = tempfile::tempdir().unwrap();
-    let auth = crate::auth::AuthState::load(directory.path()).unwrap();
-    let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
-    auth.bind_session_user(&token, "browser-user")
-        .await
-        .unwrap();
-    let native = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
-        sprocket_host::native_auth::NativeAuthConfig {
-            workos_client_id: "client_test".into(),
-        },
-        crate::auth::desktop_login_callback_url(7731),
-    );
-    native.authenticate_for_test("browser-user").await;
-    (
-        AppState::for_test(
-            auth,
-            native,
-            directory.path().into(),
-            true,
-            sprocket_host::package_update::PackageUpdateManager::disabled(),
-        ),
-        token,
-        directory,
-    )
-}
-
-fn request(path: &str, token: Option<&str>, origin: Option<&str>, method: Method) -> Request<Body> {
-    let mut request = Request::builder()
-        .uri(path)
-        .method(method)
-        .header(header::HOST, "127.0.0.1:7731");
-    if let Some(token) = token {
-        request = request.header(
-            header::COOKIE,
-            format!("{}={token}", crate::SESSION_COOKIE_NAME),
-        );
-    }
-    if let Some(origin) = origin {
-        request = request.header(header::ORIGIN, origin);
-    }
-    request.body(Body::empty()).unwrap()
-}
 
 #[tokio::test]
 async fn browser_endpoints_require_authentication_and_mutations_require_same_origin() {

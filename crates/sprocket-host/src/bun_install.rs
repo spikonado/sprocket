@@ -69,6 +69,11 @@ impl BunInstaller {
         self.tool_dir.join(&self.release.version)
     }
 
+    pub async fn bun(&self) -> anyhow::Result<PathBuf> {
+        self.ensure_ready().await?;
+        Ok(self.bin_directory().join(BUN))
+    }
+
     fn bin_directory(&self) -> PathBuf {
         self.version_dir().join("bin")
     }

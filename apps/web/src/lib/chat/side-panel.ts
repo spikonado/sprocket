@@ -1,7 +1,7 @@
 import type { Text } from '@codemirror/state';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
+export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file' | 'tscircuit';
 
 /** Unsaved edits to `base`, the content read at `version`. */
 export type FileDraft = { doc: Text; base: Text; version: string };
@@ -12,7 +12,7 @@ export type SidePanelTab = {
 	view: SidePanelView | null;
 	/** Selected artifact, for the artifacts view. */
 	selectedKey: string | null;
-	/** Open workspace file, for the file view. */
+	/** Open workspace file, for the file and tscircuit views. */
 	file?: WorkspaceFileTarget;
 	/** Folder to show, for the files view; `workspacePath` overrides the thread or project root. */
 	directory?: WorkspaceFileTarget;

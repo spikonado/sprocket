@@ -4,6 +4,7 @@ import { Compartment, EditorState, type Extension, type Text } from '@codemirror
 import { keymap } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
 import { basicSetup, EditorView } from 'codemirror';
+import { CircuitBoard } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
 import { leafName, type FileDraft } from '$lib/chat/side-panel';
@@ -19,6 +20,8 @@ type Props = {
 	/** Polls the file for outside edits while the tab is visible. */
 	active: boolean;
 	onDraftChange: (draft: FileDraft | undefined) => void;
+	/** Shown as an action when the file can open in the tscircuit editor. */
+	onOpenTscircuit?: (file: WorkspaceFileTarget) => void;
 };
 
 type Status =
@@ -74,7 +77,7 @@ function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
 	);
 }
 
-function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
+function TextFileEditor({ api, file, draft, active, onDraftChange, onOpenTscircuit }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [notice, setNotice] = useState<string | null>(null);
 	/** Disk version the buffer has not absorbed because it has unsaved edits. */
@@ -299,6 +302,18 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
+			{onOpenTscircuit ? (
+				<div className="border-hairline flex shrink-0 justify-end border-b px-2 py-1">
+					<button
+						type="button"
+						onClick={() => onOpenTscircuit(file)}
+						className="text-muted-foreground hover:text-foreground hover:bg-hover-fill flex items-center gap-1.5 rounded px-2 py-0.5 text-xs font-medium transition"
+					>
+						<CircuitBoard className="size-3.5" aria-hidden="true" />
+						Open in tscircuit
+					</button>
+				</div>
+			) : null}
 			{diskVersion !== null ? (
 				<div
 					role="alert"

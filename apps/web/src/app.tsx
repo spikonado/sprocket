@@ -3030,6 +3030,7 @@ export default function App({
 							onSplitPane={(id, direction) => artifactPanel.splitPane(id, direction)}
 							onResizeSplit={(id, ratio) => artifactPanel.resizeSplit(id, ratio)}
 							onOpenFile={(file) => artifactPanel.openFile(file)}
+							onOpenTscircuit={(file) => artifactPanel.openFile(file, 'tscircuit')}
 							onFileRenamed={(workspacePath, from, to) =>
 								artifactPanel.renameFile(workspacePath, from, to)
 							}

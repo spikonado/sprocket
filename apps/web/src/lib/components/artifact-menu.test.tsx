@@ -35,6 +35,7 @@ function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {
 		onSplitPane: vi.fn(),
 		onResizeSplit: vi.fn(),
 		onOpenFile: vi.fn(),
+		onOpenTscircuit: vi.fn(),
 		onFileRenamed: vi.fn(),
 		onFileDeleted: vi.fn(),
 		onOpenFullscreen: vi.fn(),
