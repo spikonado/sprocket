@@ -1,5 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -7,6 +7,7 @@ import { getUserId } from '@convex/lib/auth';
 import { vDescendantStatusCounts } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import {
+	applyPendingMergedSettleAfterRecovery,
 	listDirectChildrenPage,
 	subtreeSummary,
 	threadAncestryIds
@@ -41,7 +42,10 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 		throw new Error('Cannot settle a thread with active work.');
 	}
 
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+	await ctx.db.patch('threadRecords', threadId, {
+		archivedAt: Date.now(),
+		settleWhenIdle: undefined
+	});
 
 	return { userId, record };
 }
@@ -54,7 +58,10 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 		throw new Error('Only root threads can be settled.');
 	}
 
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
+	await ctx.db.patch('threadRecords', threadId, {
+		archivedAt: undefined,
+		settleWhenIdle: undefined
+	});
 
 	return { userId, record };
 }
@@ -155,5 +162,15 @@ export const ancestorChain = query({
 		if (thread.parentThreadId === undefined) return [];
 
 		return await threadAncestryIds(ctx.db, thread);
+	}
+});
+
+export const retryPendingMergedSettle = internalMutation({
+	args: { threadId: v.id('threadRecords') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await applyPendingMergedSettleAfterRecovery(ctx, args.threadId);
+
+		return null;
 	}
 });

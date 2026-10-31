@@ -1,10 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import {
+	AUTOMATIC_RECOVERY_GRACE_MS,
+	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX
+} from '@convex/lib/runRecovery';
+import {
+	applyPendingMergedSettleAfterRecovery,
+	registerChildThread
+} from '@convex/lib/threadHierarchy';
+import {
+	abandonRun,
 	createQueuedRun,
 	initConvexTest,
+	insertQueuedRun,
 	seedOwnedThread,
+	toolTranscriptAssignment,
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
@@ -24,6 +36,26 @@ async function startRun(t: ConvexTestInstance) {
 	await t.mutation(api.agentRuntime.start, { runId: created.runId, claimId, executionSecret });
 
 	return { asUser, threadId, caller: { runId: created.runId, claimId, executionSecret } };
+}
+
+async function registerMachine(
+	asUser: Awaited<ReturnType<typeof seedOwnedThread>>['asUser'],
+	machineId: string
+) {
+	await asUser.mutation(api.machines.registerProcess, {
+		machineId,
+		processId: 'settle-process',
+		friendlyName: 'Workstation',
+		platform: 'linux',
+		platformVersion: 'test',
+		architecture: 'x86_64',
+		hostname: 'workstation',
+		appVersion: 'test'
+	});
+}
+
+async function flushPendingMergedSettles(t: ConvexTestInstance) {
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
 }
 
 describe('linked pull requests', () => {
@@ -111,16 +143,65 @@ describe('linked pull requests', () => {
 			await asUser.mutation(api.pullRequests.updateStates, {
 				updates: [{ threadId, ...pr(2, 'merged') }]
 			});
-			expect((await archivedAt()) !== undefined).toBe(enabled);
+			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+			expect(settled?.archivedAt !== undefined).toBe(enabled);
+			expect(settled?.settleWhenIdle).toBeUndefined();
 		}
 	);
+
+	it('restores a pending settle when new work unarchives a settled merged thread', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged') }]
+		});
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+
+		await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
+
+		const continued = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(continued?.archivedAt).toBeUndefined();
+		expect(continued?.settleWhenIdle).toBe(true);
+	});
+
+	it('does not restore a pending settle after a manual unsettle', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged') }]
+		});
+		await asUser.mutation(api.threads.unsettle, { threadId });
+
+		await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
+
+		const continued = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(continued?.archivedAt).toBeUndefined();
+		expect(continued?.settleWhenIdle).toBeUndefined();
+	});
 
 	it.each([
 		['has active work', true],
 		['was unsettled after its PRs merged', false]
 	])('leaves a thread unsettled when it %s', async (_, active) => {
 		const t = initConvexTest();
-		const { asUser, threadId } = active ? await startRun(t) : await seedOwnedThread(t);
+		const started = active ? await startRun(t) : await seedOwnedThread(t);
+		const { asUser, threadId } = started;
 
 		const merge = (title?: string) =>
 			asUser.mutation(api.pullRequests.updateStates, {
@@ -140,5 +221,777 @@ describe('linked pull requests', () => {
 
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.archivedAt).toBeUndefined();
+		expect(thread?.settleWhenIdle).toBe(active || undefined);
+	});
+
+	it('settles after the run finishes when PRs merged while it was still working', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged') }]
+		});
+
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'done'
+		});
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeTypeOf('number');
+		expect(thread?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('settles after the run finishes when the agent linked already-merged PRs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...caller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'done'
+		});
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeTypeOf('number');
+		expect(thread?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('keeps a pending settle across a question continuation', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...caller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		await t.mutation(api.agentRuntime.beginToolJob, {
+			...caller,
+			...toolTranscriptAssignment(caller.runId, caller.claimId),
+			kind: 'ask_question',
+			payload: { question: 'Ship the merge?', options: [{ id: 'yes', label: 'Yes' }] }
+		});
+
+		const { questionId } = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+			...caller,
+			question: 'Ship the merge?',
+			options: [{ id: 'yes', label: 'Yes' }]
+		});
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'waiting'
+		});
+
+		const afterFinalize = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(afterFinalize?.archivedAt).toBeUndefined();
+		expect(afterFinalize?.settleWhenIdle).toBe(true);
+
+		const answered = await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId,
+			optionId: 'yes'
+		});
+
+		const continuation = answered.continuation;
+		expect(continuation?.runId).toBe(caller.runId);
+
+		if (!continuation) {
+			throw new Error('Expected a question continuation.');
+		}
+
+		const afterAnswer = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(afterAnswer?.archivedAt).toBeTypeOf('number');
+		expect(afterAnswer?.settleWhenIdle).toBeUndefined();
+
+		const continued = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'question-continuation',
+			executionSecret: 'continuation-secret',
+			prompt: continuation.prompt,
+			continuationOfRunId: continuation.runId
+		});
+
+		const afterContinue = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(afterContinue?.archivedAt).toBeUndefined();
+		expect(afterContinue?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.start, {
+			runId: continued.runId,
+			claimId: 'continuation-claim',
+			executionSecret: 'continuation-secret'
+		});
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: continued.runId,
+			expectedClaimId: 'continuation-claim',
+			executionSecret: 'continuation-secret',
+			status: 'completed',
+			text: 'done'
+		});
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('does not archive an abandoned run that is still eligible for recovery', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const machineId = 'settle-recovery-machine';
+
+		await asUser.mutation(api.machines.registerProcess, {
+			machineId,
+			processId: 'settle-process',
+			friendlyName: 'Workstation',
+			platform: 'linux',
+			platformVersion: 'test',
+			architecture: 'x86_64',
+			hostname: 'workstation',
+			appVersion: 'test'
+		});
+
+		const created = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'interrupted-pr-run',
+			executionSecret: 'pr-secret',
+			prompt: 'Open the PR',
+			machineId
+		});
+
+		const caller = { runId: created.runId, claimId: 'pr-claim', executionSecret: 'pr-secret' };
+
+		await t.mutation(api.agentRuntime.start, caller);
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...caller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		await abandonRun(t, created.runId);
+
+		const abandoned = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(abandoned?.archivedAt).toBeUndefined();
+		expect(abandoned?.settleWhenIdle).toBe(true);
+		expect(
+			await asUser.query(api.runRecovery.state, {
+				submissionId: 'interrupted-pr-run',
+				machineId
+			})
+		).toMatchObject({ state: 'recover' });
+
+		const recovered = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}next`,
+			executionSecret: 'next-secret',
+			prompt: '',
+			machineId,
+			continuationOfRunId: created.runId
+		});
+
+		expect(recovered.runId).not.toBe(created.runId);
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt
+		).toBeUndefined();
+	});
+
+	it('settles after the automatic recovery wait expires', async () => {
+		vi.useFakeTimers();
+
+		try {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const machineId = 'settle-recovery-timeout-machine';
+
+			await asUser.mutation(api.machines.registerProcess, {
+				machineId,
+				processId: 'settle-timeout-process',
+				friendlyName: 'Workstation',
+				platform: 'linux',
+				platformVersion: 'test',
+				architecture: 'x86_64',
+				hostname: 'workstation',
+				appVersion: 'test'
+			});
+
+			const created = await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'interrupted-timeout-pr-run',
+				executionSecret: 'pr-secret',
+				prompt: 'Open the PR',
+				machineId
+			});
+
+			const caller = { runId: created.runId, claimId: 'pr-claim', executionSecret: 'pr-secret' };
+
+			await t.mutation(api.agentRuntime.start, caller);
+			await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+			await t.mutation(api.pullRequests.link, {
+				...caller,
+				pullRequests: [pr(1, 'merged')]
+			});
+
+			await abandonRun(t, created.runId);
+
+			const abandoned = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+			expect(abandoned?.archivedAt).toBeUndefined();
+			expect(abandoned?.settleWhenIdle).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
+			await flushPendingMergedSettles(t);
+
+			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+			expect(settled?.archivedAt).toBeTypeOf('number');
+			expect(settled?.settleWhenIdle).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps the root open while a sibling child is still recoverable', async () => {
+		vi.useFakeTimers();
+
+		try {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const machineId = 'settle-sibling-machine';
+
+			await registerMachine(asUser, machineId);
+
+			const root = await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'sibling-root',
+				executionSecret: 'root-secret',
+				prompt: 'Open the PR',
+				machineId
+			});
+
+			const rootCaller = {
+				runId: root.runId,
+				claimId: 'root-claim',
+				executionSecret: 'root-secret'
+			};
+
+			await t.mutation(api.agentRuntime.start, rootCaller);
+			await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+			await t.mutation(api.pullRequests.link, {
+				...rootCaller,
+				pullRequests: [pr(1, 'merged')]
+			});
+
+			const childA = await seedOwnedThread(t);
+			const childB = await seedOwnedThread(t);
+
+			await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', childA.threadId, { parentThreadId: threadId });
+				await registerChildThread(ctx, (await ctx.db.get('threadRecords', childA.threadId))!);
+				await ctx.db.patch('threadRecords', childB.threadId, { parentThreadId: threadId });
+				await registerChildThread(ctx, (await ctx.db.get('threadRecords', childB.threadId))!);
+			});
+
+			const runA = await insertQueuedRun(t, asUser, {
+				threadId: childA.threadId,
+				submissionId: 'sibling-a',
+				executionSecret: 'a-secret',
+				prompt: 'Child A',
+				machineId
+			});
+
+			const runB = await insertQueuedRun(t, asUser, {
+				threadId: childB.threadId,
+				submissionId: 'sibling-b',
+				executionSecret: 'b-secret',
+				prompt: 'Child B',
+				machineId
+			});
+
+			const callerA = { runId: runA.runId, claimId: 'a-claim', executionSecret: 'a-secret' };
+			const callerB = { runId: runB.runId, claimId: 'b-claim', executionSecret: 'b-secret' };
+
+			await t.mutation(api.agentRuntime.start, callerA);
+			await t.mutation(api.agentRuntime.start, callerB);
+			await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: rootCaller.runId,
+				expectedClaimId: rootCaller.claimId,
+				executionSecret: rootCaller.executionSecret,
+				status: 'completed',
+				text: 'parent done'
+			});
+			await abandonRun(t, runA.runId);
+			await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: callerB.runId,
+				expectedClaimId: callerB.claimId,
+				executionSecret: callerB.executionSecret,
+				status: 'completed',
+				text: 'child b done'
+			});
+
+			const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+			expect(pending?.archivedAt).toBeUndefined();
+			expect(pending?.settleWhenIdle).toBe(true);
+			expect(
+				await asUser.query(api.runRecovery.state, {
+					submissionId: 'sibling-a',
+					machineId
+				})
+			).toMatchObject({ state: 'recover' });
+
+			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
+			await flushPendingMergedSettles(t);
+
+			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+			expect(settled?.archivedAt).toBeTypeOf('number');
+			expect(settled?.settleWhenIdle).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('settles when new child work replaces a recovery that is no longer eligible', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const machineId = 'settle-replace-recovery';
+
+		await registerMachine(asUser, machineId);
+
+		const root = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'replace-root',
+			executionSecret: 'root-secret',
+			prompt: 'Open the PR',
+			machineId
+		});
+
+		const rootCaller = {
+			runId: root.runId,
+			claimId: 'root-claim',
+			executionSecret: 'root-secret'
+		};
+
+		await t.mutation(api.agentRuntime.start, rootCaller);
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...rootCaller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		const child = await seedOwnedThread(t);
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', child.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', child.threadId))!);
+		});
+
+		const abandoned = await insertQueuedRun(t, asUser, {
+			threadId: child.threadId,
+			submissionId: 'replace-child',
+			executionSecret: 'child-secret',
+			prompt: 'Child work',
+			machineId
+		});
+
+		const childCaller = {
+			runId: abandoned.runId,
+			claimId: 'child-claim',
+			executionSecret: 'child-secret'
+		};
+
+		await t.mutation(api.agentRuntime.start, childCaller);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: rootCaller.runId,
+			expectedClaimId: rootCaller.claimId,
+			executionSecret: rootCaller.executionSecret,
+			status: 'completed',
+			text: 'parent done'
+		});
+		await abandonRun(t, abandoned.runId);
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+
+		const next = await insertQueuedRun(t, asUser, {
+			threadId: child.threadId,
+			submissionId: 'replace-child-next',
+			executionSecret: 'next-secret',
+			prompt: 'Continue without recovery',
+			machineId
+		});
+
+		await t.mutation(api.agentRuntime.start, {
+			runId: next.runId,
+			claimId: 'next-claim',
+			executionSecret: 'next-secret'
+		});
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: next.runId,
+			expectedClaimId: 'next-claim',
+			executionSecret: 'next-secret',
+			status: 'completed',
+			text: 'child done'
+		});
+
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('keeps a running sibling while stopped recovery retries fire', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const machineId = 'settle-stop-sibling';
+
+		await registerMachine(asUser, machineId);
+
+		const root = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'stop-root',
+			executionSecret: 'root-secret',
+			prompt: 'Open the PR',
+			machineId
+		});
+
+		const rootCaller = {
+			runId: root.runId,
+			claimId: 'root-claim',
+			executionSecret: 'root-secret'
+		};
+
+		await t.mutation(api.agentRuntime.start, rootCaller);
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...rootCaller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		const childA = await seedOwnedThread(t);
+		const childB = await seedOwnedThread(t);
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', childA.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', childA.threadId))!);
+			await ctx.db.patch('threadRecords', childB.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', childB.threadId))!);
+		});
+
+		const runA = await insertQueuedRun(t, asUser, {
+			threadId: childA.threadId,
+			submissionId: 'stop-a',
+			executionSecret: 'a-secret',
+			prompt: 'Child A',
+			machineId
+		});
+
+		const runB = await insertQueuedRun(t, asUser, {
+			threadId: childB.threadId,
+			submissionId: 'stop-b',
+			executionSecret: 'b-secret',
+			prompt: 'Child B',
+			machineId
+		});
+
+		const callerA = { runId: runA.runId, claimId: 'a-claim', executionSecret: 'a-secret' };
+		const callerB = { runId: runB.runId, claimId: 'b-claim', executionSecret: 'b-secret' };
+
+		await t.mutation(api.agentRuntime.start, callerA);
+		await t.mutation(api.agentRuntime.start, callerB);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: rootCaller.runId,
+			expectedClaimId: rootCaller.claimId,
+			executionSecret: rootCaller.executionSecret,
+			status: 'completed',
+			text: 'parent done'
+		});
+		await abandonRun(t, runA.runId);
+		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId: runA.runId })).toBe(
+			true
+		);
+
+		await t.run(async (ctx) => {
+			await applyPendingMergedSettleAfterRecovery(ctx, childA.threadId);
+			await applyPendingMergedSettleAfterRecovery(ctx, childA.threadId);
+		});
+
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: callerB.runId,
+			expectedClaimId: callerB.claimId,
+			executionSecret: callerB.executionSecret,
+			status: 'completed',
+			text: 'child b done'
+		});
+
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('finishes new work on a child abandoned before ownActive existed', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const machineId = 'settle-legacy-own-active';
+
+		await registerMachine(asUser, machineId);
+
+		const root = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'legacy-root',
+			executionSecret: 'root-secret',
+			prompt: 'Open the PR',
+			machineId
+		});
+
+		const rootCaller = {
+			runId: root.runId,
+			claimId: 'root-claim',
+			executionSecret: 'root-secret'
+		};
+
+		await t.mutation(api.agentRuntime.start, rootCaller);
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...rootCaller,
+			pullRequests: [pr(1, 'merged')]
+		});
+
+		const childA = await seedOwnedThread(t);
+		const childB = await seedOwnedThread(t);
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', childA.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', childA.threadId))!);
+			await ctx.db.patch('threadRecords', childB.threadId, { parentThreadId: threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', childB.threadId))!);
+		});
+
+		const runA = await insertQueuedRun(t, asUser, {
+			threadId: childA.threadId,
+			submissionId: 'legacy-a',
+			executionSecret: 'a-secret',
+			prompt: 'Child A',
+			machineId
+		});
+
+		const runB = await insertQueuedRun(t, asUser, {
+			threadId: childB.threadId,
+			submissionId: 'legacy-b',
+			executionSecret: 'b-secret',
+			prompt: 'Child B',
+			machineId
+		});
+
+		const callerA = { runId: runA.runId, claimId: 'a-claim', executionSecret: 'a-secret' };
+		const callerB = { runId: runB.runId, claimId: 'b-claim', executionSecret: 'b-secret' };
+
+		await t.mutation(api.agentRuntime.start, callerA);
+		await t.mutation(api.agentRuntime.start, callerB);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: rootCaller.runId,
+			expectedClaimId: rootCaller.claimId,
+			executionSecret: rootCaller.executionSecret,
+			status: 'completed',
+			text: 'parent done'
+		});
+		await abandonRun(t, runA.runId);
+
+		await t.run(async (ctx) => {
+			const childState = await ctx.db
+				.query('threadHierarchyStates')
+				.withIndex('by_threadId', (q) => q.eq('threadId', childA.threadId))
+				.unique();
+
+			const rootState = await ctx.db
+				.query('threadHierarchyStates')
+				.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+				.unique();
+
+			await ctx.db.patch('threadHierarchyStates', childState!._id, { ownActive: undefined });
+			await ctx.db.patch('threadHierarchyStates', rootState!._id, {
+				activeDescendantCount: rootState!.activeDescendantCount - 1
+			});
+		});
+
+		const next = await insertQueuedRun(t, asUser, {
+			threadId: childA.threadId,
+			submissionId: 'legacy-a-next',
+			executionSecret: 'next-secret',
+			prompt: 'Continue without stored recovery',
+			machineId
+		});
+
+		await t.mutation(api.agentRuntime.start, {
+			runId: next.runId,
+			claimId: 'next-claim',
+			executionSecret: 'next-secret'
+		});
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: next.runId,
+			expectedClaimId: 'next-claim',
+			executionSecret: 'next-secret',
+			status: 'completed',
+			text: 'child a done'
+		});
+
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: callerB.runId,
+			expectedClaimId: callerB.claimId,
+			executionSecret: callerB.executionSecret,
+			status: 'completed',
+			text: 'child b done'
+		});
+
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('settles a late merge after the recovery wait expires', async () => {
+		vi.useFakeTimers();
+
+		try {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const machineId = 'settle-late-merge-machine';
+
+			await registerMachine(asUser, machineId);
+
+			const created = await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'late-merge-pr-run',
+				executionSecret: 'pr-secret',
+				prompt: 'Open the PR',
+				machineId
+			});
+
+			const caller = { runId: created.runId, claimId: 'pr-claim', executionSecret: 'pr-secret' };
+
+			await t.mutation(api.agentRuntime.start, caller);
+			await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+			await t.mutation(api.pullRequests.link, {
+				...caller,
+				pullRequests: [pr(1, 'open')]
+			});
+			await abandonRun(t, created.runId);
+
+			await asUser.mutation(api.pullRequests.updateStates, {
+				updates: [{ threadId, ...pr(1, 'merged') }]
+			});
+
+			const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+			expect(pending?.archivedAt).toBeUndefined();
+			expect(pending?.settleWhenIdle).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(AUTOMATIC_RECOVERY_GRACE_MS);
+			await flushPendingMergedSettles(t);
+
+			const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+			expect(settled?.archivedAt).toBeTypeOf('number');
+			expect(settled?.settleWhenIdle).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps a pending settle when a new run abandons an expired claim', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.pullRequests.link, {
+			...caller,
+			pullRequests: [pr(1, 'merged')]
+		});
+		await t.run((ctx) => patchRunExecution(ctx, caller.runId, { claimExpiresAt: Date.now() - 1 }));
+
+		const continued = await createQueuedRun(t, asUser, threadId, 'follow-up', 'follow-up-secret');
+		const pending = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(pending?.archivedAt).toBeUndefined();
+		expect(pending?.settleWhenIdle).toBe(true);
+
+		await t.mutation(api.agentRuntime.start, {
+			runId: continued.runId,
+			claimId: 'follow-up-claim',
+			executionSecret: 'follow-up-secret'
+		});
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: continued.runId,
+			expectedClaimId: 'follow-up-claim',
+			executionSecret: 'follow-up-secret',
+			status: 'completed',
+			text: 'done'
+		});
+		const settled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(settled?.archivedAt).toBeTypeOf('number');
+		expect(settled?.settleWhenIdle).toBeUndefined();
+	});
+
+	it('drops a pending settle as soon as the setting is turned off', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, caller } = await startRun(t);
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { pullRequests: [pr(1, 'open')] })
+		);
+		await asUser.mutation(api.pullRequests.updateStates, {
+			updates: [{ threadId, ...pr(1, 'merged') }]
+		});
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: false });
+
+		const disabled = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(disabled?.archivedAt).toBeUndefined();
+		expect(disabled?.settleWhenIdle).toBeUndefined();
+
+		await asUser.mutation(api.uiPreferences.setSettleMergedThreads, { enabled: true });
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: caller.runId,
+			expectedClaimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			status: 'completed',
+			text: 'done'
+		});
+
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeUndefined();
+		expect(thread?.settleWhenIdle).toBeUndefined();
 	});
 });
