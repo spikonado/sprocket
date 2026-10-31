@@ -161,7 +161,12 @@ it.each([
 		repositoryKey: 'workspace',
 		attachmentKey: 'directory:D:\\'
 	},
-	{ workspacePath: '/work/robot', displayName: 'robot', repositoryKey: 'robot' }
+	{
+		workspacePath: '/work/robot',
+		displayName: 'robot',
+		repositoryKey: 'robot',
+		attachmentKey: 'directory:/work/robot'
+	}
 ])('preserves workspace resolution identity for $workspacePath', async (resolution) => {
 	vi.stubGlobal(
 		'fetch',

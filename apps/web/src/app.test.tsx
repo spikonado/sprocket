@@ -319,17 +319,17 @@ it.each(['/work/alpha', 'D:\\work\\alpha'])(
 		client.registerPaginatedQuery(api.inbox.list, []);
 		const inboxQueries = vi.spyOn(client, 'watchPaginatedQuery');
 
-		const removeProject = vi.fn<DesktopApi['removeProject']>(async ({ workspacePath: path }) => {
+		const removeProject = vi.fn<LocalApi['removeProject']>(async ({ workspacePath: path }) => {
 			attachments = attachments.filter((attachment) => attachment.workspacePath !== path);
 		});
 
-		const attachProject = vi.fn<DesktopApi['attachProject']>(async () => {
+		const attachProject = vi.fn<LocalApi['attachProject']>(async () => {
 			attachments = [alpha, beta];
 
 			return alpha;
 		});
 
-		const desktop = createDesktopApi({
+		const desktop = createLocalApi({
 			listProjectAttachments: async () => attachments,
 			removeProject,
 			attachProject,
@@ -377,16 +377,16 @@ it('finishes a pending upload before removing a project and restores the complet
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 
 	const upload =
-		Promise.withResolvers<Awaited<ReturnType<DesktopApi['uploadTranscriptAttachment']>>>();
+		Promise.withResolvers<Awaited<ReturnType<LocalApi['uploadTranscriptAttachment']>>>();
 
 	let attachments = [alpha];
 	const discardTranscriptAttachment = vi.fn(async () => true);
 
-	const removeProject = vi.fn<DesktopApi['removeProject']>(async () => {
+	const removeProject = vi.fn<LocalApi['removeProject']>(async () => {
 		attachments = [];
 	});
 
-	const desktop = createDesktopApi({
+	const desktop = createLocalApi({
 		listProjectAttachments: async () => attachments,
 		removeProject,
 		uploadTranscriptAttachment: vi.fn(() => upload.promise),
@@ -458,15 +458,15 @@ it.each(['unrelated project', 'removed file', 'cancel waiting'])(
 		const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
 
 		const upload =
-			Promise.withResolvers<Awaited<ReturnType<DesktopApi['uploadTranscriptAttachment']>>>();
+			Promise.withResolvers<Awaited<ReturnType<LocalApi['uploadTranscriptAttachment']>>>();
 
 		let attachments = [alpha, beta];
 
-		const removeProject = vi.fn<DesktopApi['removeProject']>(async ({ workspacePath }) => {
+		const removeProject = vi.fn<LocalApi['removeProject']>(async ({ workspacePath }) => {
 			attachments = attachments.filter((entry) => entry.workspacePath !== workspacePath);
 		});
 
-		const desktop = createDesktopApi({
+		const desktop = createLocalApi({
 			listProjectAttachments: async () => attachments,
 			removeProject,
 			uploadTranscriptAttachment: () => upload.promise
@@ -531,13 +531,13 @@ it('keeps an unavailable project listed when removal fails and allows retry', as
 	const alpha = projectAttachment('/missing/alpha', 'repo-alpha', 'Alpha', 'unavailable');
 
 	const removeProject = vi
-		.fn<DesktopApi['removeProject']>()
+		.fn<LocalApi['removeProject']>()
 		.mockRejectedValueOnce(new Error('Could not save project list'))
 		.mockResolvedValue(undefined);
 
 	await renderApp(
 		createConvexFixtures(),
-		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], removeProject }))
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], removeProject }))
 	);
 	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
@@ -755,7 +755,8 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	const resolveWorkspacePath = vi.fn(async () => ({
 		workspacePath: alpha.workspacePath,
 		displayName: alpha.displayName,
-		repositoryKey: alpha.repositoryKey
+		repositoryKey: alpha.repositoryKey,
+		attachmentKey: alpha.attachmentKey
 	}));
 
 	let listCalls = 0;
@@ -900,7 +901,8 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 				resolveWorkspacePath: async () => ({
 					workspacePath: changedAlpha.workspacePath,
 					repositoryKey: changedAlpha.repositoryKey,
-					displayName: changedAlpha.displayName
+					displayName: changedAlpha.displayName,
+					attachmentKey: changedAlpha.attachmentKey
 				}),
 				runAgent
 			})

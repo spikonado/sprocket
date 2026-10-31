@@ -40,7 +40,8 @@ function createLocalApi() {
 	const resolveWorkspacePath = vi.fn(async () => ({
 		workspacePath: '/home/me',
 		displayName: 'me',
-		repositoryKey: 'directory:/home/me'
+		repositoryKey: 'directory:/home/me',
+		attachmentKey: 'directory:/home/me'
 	}));
 
 	return {
@@ -118,7 +119,8 @@ function createWindowsDesktopApi() {
 		return {
 			workspacePath: path,
 			displayName,
-			repositoryKey: displayName
+			repositoryKey: displayName,
+			attachmentKey: `directory:${path}`
 		};
 	});
 
@@ -314,7 +316,7 @@ describe('ProjectPicker', () => {
 		'browses and resolves a typed Windows root %s',
 		async (query) => {
 			const desktopApi = createWindowsDesktopApi();
-			const { props } = renderPicker({ desktopApi });
+			const { props } = renderPicker({ localApi: desktopApi });
 
 			const input = document.querySelector<HTMLInputElement>(
 				'[aria-label="Project directory path"]'
@@ -350,7 +352,7 @@ describe('ProjectPicker', () => {
 		'selects E: from the Windows drive list at %s and returns to it',
 		async (query) => {
 			const desktopApi = createWindowsDesktopApi();
-			const { props } = renderPicker({ desktopApi });
+			const { props } = renderPicker({ localApi: desktopApi });
 
 			const input = document.querySelector<HTMLInputElement>(
 				'[aria-label="Project directory path"]'
@@ -390,7 +392,7 @@ describe('ProjectPicker', () => {
 		'filters the Windows drive list locally for %s before selecting it',
 		async (query) => {
 			const desktopApi = createWindowsDesktopApi();
-			renderPicker({ desktopApi });
+			renderPicker({ localApi: desktopApi });
 
 			const input = document.querySelector<HTMLInputElement>(
 				'[aria-label="Project directory path"]'
@@ -418,7 +420,7 @@ describe('ProjectPicker', () => {
 		'browses into a folder on drive %s and resolves it for selection',
 		async (drive) => {
 			const desktopApi = createWindowsDesktopApi();
-			const { props } = renderPicker({ desktopApi });
+			const { props } = renderPicker({ localApi: desktopApi });
 
 			const input = document.querySelector<HTMLInputElement>(
 				'[aria-label="Project directory path"]'

@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import Button from '$lib/components/ui/button/button';
 
+type RemovalPhase = 'idle' | 'waiting' | 'removing';
+
 export default function RemoveProjectDialog({
 	project,
 	onClose,
@@ -15,13 +17,16 @@ export default function RemoveProjectDialog({
 	const titleId = useId();
 	const descriptionId = useId();
 	const dialogRef = useRef<HTMLDivElement>(null);
-	const submittingRef = useRef(false);
-	const removingRef = useRef(false);
+	const phaseRef = useRef<RemovalPhase>('idle');
 	const preparationRef = useRef<AbortController | null>(null);
 	const onCloseRef = useRef(onClose);
-	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [isRemoving, setIsRemoving] = useState(false);
+	const [phase, setPhaseState] = useState<RemovalPhase>('idle');
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+	function setPhase(next: RemovalPhase) {
+		phaseRef.current = next;
+		setPhaseState(next);
+	}
 
 	useEffect(() => {
 		onCloseRef.current = onClose;
@@ -38,7 +43,7 @@ export default function RemoveProjectDialog({
 				event.preventDefault();
 				event.stopPropagation();
 
-				if (!removingRef.current) {
+				if (phaseRef.current !== 'removing') {
 					preparationRef.current?.abort();
 					onCloseRef.current();
 				}
@@ -84,16 +89,15 @@ export default function RemoveProjectDialog({
 	}, []);
 
 	function close() {
-		if (removingRef.current) return;
+		if (phaseRef.current === 'removing') return;
 		preparationRef.current?.abort();
 		onClose();
 	}
 
 	async function removeProject() {
-		if (submittingRef.current) return;
+		if (phaseRef.current !== 'idle') return;
 
-		submittingRef.current = true;
-		setIsSubmitting(true);
+		setPhase('waiting');
 		setErrorMessage(null);
 		dialogRef.current?.focus();
 		const preparation = new AbortController();
@@ -103,8 +107,7 @@ export default function RemoveProjectDialog({
 			if (onPrepareRemove) await onPrepareRemove(project.workspacePath, preparation.signal);
 
 			if (preparation.signal.aborted) return;
-			removingRef.current = true;
-			setIsRemoving(true);
+			setPhase('removing');
 			await onRemove(project.workspacePath);
 		} catch (error) {
 			if (preparation.signal.aborted) return;
@@ -113,10 +116,7 @@ export default function RemoveProjectDialog({
 					? error.message
 					: 'Failed to remove project. Please try again.'
 			);
-			submittingRef.current = false;
-			removingRef.current = false;
-			setIsSubmitting(false);
-			setIsRemoving(false);
+			setPhase('idle');
 
 			return;
 		}
@@ -139,7 +139,7 @@ export default function RemoveProjectDialog({
 				aria-modal="true"
 				aria-labelledby={titleId}
 				aria-describedby={descriptionId}
-				aria-busy={isSubmitting}
+				aria-busy={phase !== 'idle'}
 				tabIndex={-1}
 			>
 				<h2 id={titleId} className="text-lg font-semibold">
@@ -169,11 +169,15 @@ export default function RemoveProjectDialog({
 					</p>
 				)}
 				<div className="mt-6 flex flex-wrap justify-end gap-3">
-					<Button variant="outline" disabled={isRemoving} onclick={close}>
+					<Button variant="outline" disabled={phase === 'removing'} onclick={close}>
 						Cancel
 					</Button>
-					<Button disabled={isSubmitting} onclick={() => void removeProject()}>
-						{isRemoving ? 'Removing…' : isSubmitting ? 'Waiting for uploads…' : 'Remove project'}
+					<Button disabled={phase !== 'idle'} onclick={() => void removeProject()}>
+						{phase === 'removing'
+							? 'Removing…'
+							: phase === 'waiting'
+								? 'Waiting for uploads…'
+								: 'Remove project'}
 					</Button>
 				</div>
 			</div>

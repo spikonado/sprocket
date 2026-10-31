@@ -454,7 +454,7 @@ export type WorkspacePathResolution = {
 	workspacePath: string;
 	displayName: string;
 	repositoryKey: string;
-	attachmentKey?: string;
+	attachmentKey: string;
 };
 
 export type ProjectAttachmentRequest = {

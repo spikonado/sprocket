@@ -322,13 +322,15 @@ describe('local project attachments', () => {
 		expect(
 			findCanonicalProjectAttachment(attachments, {
 				workspacePath: '/worktrees/changed',
-				repositoryKey: 'github.com/acme/replacement'
+				repositoryKey: 'github.com/acme/replacement',
+				attachmentKey: canonical.attachmentKey
 			})
 		).toBe(canonical);
 		expect(
 			findCanonicalProjectAttachment(attachments, {
 				workspacePath: '/worktrees/changed',
-				repositoryKey: 'github.com/acme/original'
+				repositoryKey: 'github.com/acme/original',
+				attachmentKey: 'remote:github.com/acme/original'
 			})
 		).toBeUndefined();
 	});
@@ -355,12 +357,6 @@ describe('local project attachments', () => {
 				workspacePath: 'D:\\',
 				repositoryKey: 'workspace',
 				attachmentKey: 'directory:D:\\'
-			})
-		).toBeUndefined();
-		expect(
-			findCanonicalProjectAttachment(attachments, {
-				workspacePath: 'D:\\',
-				repositoryKey: 'workspace'
 			})
 		).toBeUndefined();
 		expect(

@@ -1344,8 +1344,6 @@ export default function App({
 		);
 
 		publishDesktopProjectAttachments(remaining);
-		const attachedKeys = new Set(Object.values(remaining).map((project) => project.repositoryKey));
-		setProjectFilter((keys) => keys.filter((key) => attachedKeys.has(key)));
 
 		if (currentWorkspacePathRef.current === workspacePath) {
 			const scope = getComposerScope(currentThreadIdRef.current, workspacePath);

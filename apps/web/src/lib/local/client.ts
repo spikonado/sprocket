@@ -82,7 +82,7 @@ const workspacePathResolutionSchema = z.object({
 	workspacePath: z.string(),
 	displayName: z.string(),
 	repositoryKey: z.string(),
-	attachmentKey: z.string().optional()
+	attachmentKey: z.string()
 });
 
 const projectAttachmentSchema = z.object({

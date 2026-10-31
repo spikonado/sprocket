@@ -13,7 +13,7 @@ it('drops a thread cwd only while the machine reports it missing', async () => {
 			throw new LocalResponseError('workspace does not exist', 400);
 		}
 
-		return { workspacePath, displayName: 'repo', repositoryKey: 'repo' };
+		return { workspacePath, displayName: 'repo', repositoryKey: 'repo', attachmentKey: 'repo' };
 	});
 
 	const api = { resolveWorkspacePath };
