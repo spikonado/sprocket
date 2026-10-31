@@ -41,9 +41,9 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
-		fetchBrowserStatus: unused,
 		startBrowser: unused,
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
+		watchBrowserStatus: unused,
 		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,

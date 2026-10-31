@@ -4,7 +4,7 @@ import type { BrowserStatus, LocalApi } from '$lib/types/sprocket';
 
 export type BrowserApi = Pick<
 	LocalApi,
-	'fetchBrowserStatus' | 'startBrowser' | 'browserDashboardUrl'
+	'startBrowser' | 'watchBrowserStatus' | 'browserDashboardUrl'
 >;
 
 type Props = {
@@ -20,31 +20,40 @@ export default function BrowserView({ browserApi }: Props) {
 
 		const api = browserApi;
 		const controller = new AbortController();
+		const { signal } = controller;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		setStatus({ state: 'installing', error: null });
 
-		async function refresh(start: boolean) {
+		// Starting is a no-op while the dashboard runs, and relaunches it after a server restart.
+		async function run() {
+			let started: BrowserStatus;
+
 			try {
-				const next = await (start
-					? api.startBrowser(controller.signal)
-					: api.fetchBrowserStatus(controller.signal));
-
-				if (controller.signal.aborted) return;
-				setStatus(next);
-
-				if (next.state !== 'error') {
-					timer = setTimeout(() => void refresh(false), next.state === 'installing' ? 1000 : 5000);
-				}
+				started = await api.startBrowser(signal);
 			} catch (error) {
-				if (controller.signal.aborted) return;
+				if (signal.aborted) return;
 				setStatus({
 					state: 'error',
 					error: error instanceof Error ? error.message : 'Couldn’t set up the browser.'
 				});
+
+				return;
 			}
+
+			if (signal.aborted) return;
+
+			if (started.state === 'error') {
+				setStatus(started);
+
+				return;
+			}
+
+			await api.watchBrowserStatus({ signal, onEvent: setStatus }).catch(() => undefined);
+
+			if (!signal.aborted) timer = setTimeout(() => void run(), 1000);
 		}
 
-		void refresh(true);
+		void run();
 
 		return () => {
 			controller.abort();

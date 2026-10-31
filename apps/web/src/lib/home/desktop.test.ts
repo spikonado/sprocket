@@ -41,9 +41,9 @@ const recoveredSubmission = {
 
 function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 	return {
-		fetchBrowserStatus: unusedDesktopCall,
 		startBrowser: unusedDesktopCall,
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
+		watchBrowserStatus: unusedDesktopCall,
 		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unusedDesktopCall,

@@ -4,14 +4,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use serde::Serialize;
 use sprocket_workspace::WorkspaceCancellation;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
+use tokio::task::JoinHandle;
 
 use crate::browser_install::{AGENT_BROWSER_USE_SYSTEM_CA, BrowserInstaller};
 use crate::tool_install::prepend_path;
+
+const DASHBOARD_STOPPED: &str = "The browser dashboard stopped. Retry setup to restart it.";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,27 +33,22 @@ struct Dashboard {
 enum DashboardState {
     Stopped,
     Installing,
-    Ready(Dashboard),
+    Ready { port: u16 },
     Error(String),
 }
 
-impl DashboardState {
-    fn status(&mut self) -> BrowserStatus {
-        if let Self::Ready(dashboard) = self
-            && !matches!(dashboard.child.try_wait(), Ok(None))
-        {
-            *self = Self::Error("The browser dashboard stopped. Retry setup to restart it.".into());
-        }
-        match self {
-            Self::Stopped | Self::Installing => BrowserStatus {
+impl From<&DashboardState> for BrowserStatus {
+    fn from(state: &DashboardState) -> Self {
+        match state {
+            DashboardState::Stopped | DashboardState::Installing => Self {
                 state: "installing",
                 error: None,
             },
-            Self::Ready(_) => BrowserStatus {
+            DashboardState::Ready { .. } => Self {
                 state: "ready",
                 error: None,
             },
-            Self::Error(error) => BrowserStatus {
+            DashboardState::Error(error) => Self {
                 state: "error",
                 error: Some(error.clone()),
             },
@@ -58,7 +58,9 @@ impl DashboardState {
 
 pub struct BrowserManager {
     installer: BrowserInstaller,
-    dashboard: Mutex<DashboardState>,
+    state: watch::Sender<DashboardState>,
+    /// The task that owns the running dashboard child.
+    supervisor: std::sync::Mutex<Option<JoinHandle<()>>>,
     dashboard_client: reqwest::Client,
     shutdown: WorkspaceCancellation,
 }
@@ -67,7 +69,8 @@ impl BrowserManager {
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(&data_dir)?,
-            dashboard: Mutex::new(DashboardState::Stopped),
+            state: watch::Sender::new(DashboardState::Stopped),
+            supervisor: std::sync::Mutex::new(None),
             dashboard_client: reqwest::Client::builder()
                 .no_proxy()
                 .retry(reqwest::retry::never())
@@ -96,39 +99,89 @@ impl BrowserManager {
         });
     }
 
-    pub async fn status(&self) -> BrowserStatus {
-        self.dashboard.lock().await.status()
+    /// The current status, then each change.
+    pub fn status_events(&self) -> BoxStream<'static, BrowserStatus> {
+        let mut receiver = self.state.subscribe();
+        receiver.mark_changed();
+        futures::stream::unfold(receiver, |mut receiver| async move {
+            receiver.changed().await.ok()?;
+            let status = BrowserStatus::from(&*receiver.borrow_and_update());
+            Some((status, receiver))
+        })
+        .boxed()
     }
 
-    pub async fn start(self: &Arc<Self>) -> BrowserStatus {
+    pub fn start(self: &Arc<Self>) -> BrowserStatus {
         if self.shutdown.is_cancelled() {
             return BrowserStatus {
                 state: "error",
                 error: Some("Sprocket is shutting down".into()),
             };
         }
-        let mut dashboard = self.dashboard.lock().await;
-        let status = dashboard.status();
-        if !matches!(
-            *dashboard,
-            DashboardState::Stopped | DashboardState::Error(_)
-        ) {
-            return status;
-        }
-        *dashboard = DashboardState::Installing;
-        drop(dashboard);
-        let manager = Arc::clone(self);
-        tokio::spawn(async move {
-            let result = tokio::select! {
-                result = manager.launch_dashboard() => result,
-                _ = manager.shutdown.cancelled() => return,
-            };
-            *manager.dashboard.lock().await = match result {
-                Ok(dashboard) => DashboardState::Ready(dashboard),
-                Err(error) => DashboardState::Error(format!("{error:#}")),
-            };
+        let launch = self.state.send_if_modified(|state| {
+            let idle = matches!(state, DashboardState::Stopped | DashboardState::Error(_));
+            if idle {
+                *state = DashboardState::Installing;
+            }
+            idle
         });
-        DashboardState::Installing.status()
+        if launch {
+            let manager = Arc::clone(self);
+            tokio::spawn(async move {
+                let result = tokio::select! {
+                    result = manager.launch_dashboard() => result,
+                    _ = manager.shutdown.cancelled() => return,
+                };
+                match result {
+                    Ok(dashboard) => manager.supervise(dashboard),
+                    Err(error) => manager.replace_state(
+                        |state| matches!(state, DashboardState::Installing),
+                        DashboardState::Error(format!("{error:#}")),
+                    ),
+                }
+            });
+        }
+        BrowserStatus::from(&*self.state.borrow())
+    }
+
+    /// `shutdown` resets the state to `Stopped`, so a late update from a task it outlived is dropped.
+    fn replace_state(&self, expected: impl FnOnce(&DashboardState) -> bool, next: DashboardState) {
+        self.state.send_if_modified(|state| {
+            let replace = expected(state);
+            if replace {
+                *state = next;
+            }
+            replace
+        });
+    }
+
+    /// Marks the dashboard ready and flips it to an error as soon as its process exits.
+    fn supervise(self: &Arc<Self>, dashboard: Dashboard) {
+        let Dashboard { mut child, port } = dashboard;
+        let mut supervisor = self.supervisor.lock().expect("browser supervisor lock");
+        // Holding the lock orders this against `shutdown`, which cancels before taking it.
+        if self.shutdown.is_cancelled() {
+            return;
+        }
+        self.state.send_replace(DashboardState::Ready { port });
+        let manager = Arc::clone(self);
+        let task = tokio::spawn(async move {
+            let exited = tokio::select! {
+                _ = child.wait() => true,
+                _ = manager.shutdown.cancelled() => false,
+            };
+            if exited {
+                manager.replace_state(
+                    |state| matches!(state, DashboardState::Ready { port: current } if *current == port),
+                    DashboardState::Error(DASHBOARD_STOPPED.into()),
+                );
+            } else {
+                let _ = child.kill().await;
+            }
+        });
+        if let Some(previous) = supervisor.replace(task) {
+            previous.abort();
+        }
     }
 
     async fn launch_dashboard(&self) -> anyhow::Result<Dashboard> {
@@ -189,11 +242,9 @@ impl BrowserManager {
         );
     }
 
-    pub async fn port(&self) -> anyhow::Result<u16> {
-        let mut dashboard = self.dashboard.lock().await;
-        dashboard.status();
-        if let DashboardState::Ready(dashboard) = &*dashboard {
-            return Ok(dashboard.port);
+    pub fn port(&self) -> anyhow::Result<u16> {
+        if let DashboardState::Ready { port } = *self.state.borrow() {
+            return Ok(port);
         }
         bail!("Browser dashboard is not ready. Retry setup.")
     }
@@ -213,20 +264,25 @@ impl BrowserManager {
 
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let state = std::mem::replace(&mut *self.dashboard.lock().await, DashboardState::Stopped);
-        if let DashboardState::Ready(mut dashboard) = state {
-            let _ = dashboard.child.kill().await;
+        let supervisor = self
+            .supervisor
+            .lock()
+            .expect("browser supervisor lock")
+            .take();
+        self.state.send_replace(DashboardState::Stopped);
+        if let Some(supervisor) = supervisor {
+            let _ = supervisor.await;
         }
     }
 
     #[cfg(all(any(test, feature = "test-support"), unix))]
-    pub async fn use_test_dashboard(&self, port: u16) {
+    pub fn use_test_dashboard(self: &Arc<Self>, port: u16) {
         let child = Command::new("sh")
             .args(["-c", "sleep 60"])
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        *self.dashboard.lock().await = DashboardState::Ready(Dashboard { child, port });
+        self.supervise(Dashboard { child, port });
     }
 }
 

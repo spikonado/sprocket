@@ -350,9 +350,12 @@ export type BrowserStatus = {
 };
 
 export type LocalApi = {
-	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;
+	watchBrowserStatus: (handlers: {
+		onEvent: (event: BrowserStatus) => void;
+		signal: AbortSignal;
+	}) => Promise<void>;
 	watchRunningCommands: (
 		request: TranscriptScopeRequest,
 		handlers: {

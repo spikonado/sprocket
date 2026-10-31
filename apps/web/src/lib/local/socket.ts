@@ -7,7 +7,8 @@ export type LocalTopic =
 	| { kind: 'liveCompletion'; params: TranscriptScopeRequest }
 	| { kind: 'artifacts'; params: ArtifactsWatchRequest }
 	| { kind: 'commands'; params: TranscriptScopeRequest }
-	| { kind: 'authChanges' };
+	| { kind: 'authChanges' }
+	| { kind: 'browserStatus' };
 
 const serverMessageSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('event'), id: z.number(), data: z.json() }),

@@ -95,12 +95,13 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
-		fetchBrowserStatus: vi.fn<LocalApi['fetchBrowserStatus']>(async () => ({
-			state: 'ready',
-			error: null
-		})),
 		startBrowser: vi.fn<LocalApi['startBrowser']>(async () => ({ state: 'ready', error: null })),
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
+		watchBrowserStatus: ({ onEvent }) => {
+			onEvent({ state: 'ready', error: null });
+
+			return new Promise<void>(() => {});
+		},
 		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,

@@ -437,11 +437,17 @@ export function createLocalClient(baseUrl: string): LocalApi {
 	const socket = localSocket(baseUrl);
 
 	return {
-		fetchBrowserStatus: (signal) =>
-			request('/api/browser/status', browserStatusSchema, { method: 'GET', signal }),
 		startBrowser: (signal) =>
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
+		watchBrowserStatus: async (handlers) => {
+			await socket.subscribe(
+				{ kind: 'browserStatus' },
+				browserStatusSchema,
+				handlers.signal,
+				handlers.onEvent
+			);
+		},
 		browseFilesystem: (input) => {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }

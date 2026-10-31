@@ -22,7 +22,7 @@ use crate::AppState;
 use crate::auth::{cookie_request_is_csrf_safe, require_bootstrap_session};
 use crate::routes::api_error::ApiError;
 use crate::routes::session::UserScoped;
-use crate::routes::{agent, artifacts, auth, transcript};
+use crate::routes::{agent, artifacts, auth, browser, transcript};
 
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const OUTGOING_CAPACITY: usize = 64;
@@ -46,6 +46,7 @@ pub(crate) enum Topic {
     Artifacts(artifacts::ArtifactWatchRequest),
     Commands(agent::CommandsRequest),
     AuthChanges,
+    BrowserStatus,
 }
 
 #[derive(Serialize)]
@@ -202,6 +203,10 @@ pub(crate) async fn open(
             json(agent::command_events(state, request))
         }
         Topic::AuthChanges => json(auth::session_change_events(state, headers, &jar).await?),
+        Topic::BrowserStatus => {
+            browser::user(state, headers, &jar).await?;
+            json(state.host.browsers.status_events())
+        }
     })
 }
 

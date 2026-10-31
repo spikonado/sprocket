@@ -46,6 +46,16 @@ async fn subscriptions_require_the_session_user() {
         .expect("another user's transcript is rejected");
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
     assert!(open(&state, &headers, transcript("user")).await.is_ok());
+
+    let browser_status =
+        serde_json::from_value::<Topic>(serde_json::json!({ "kind": "browserStatus" })).unwrap();
+    let Ok(mut statuses) = open(&state, &headers, browser_status).await else {
+        panic!("the session user can watch the browser status");
+    };
+    assert_eq!(
+        statuses.next().await,
+        Some(serde_json::json!({ "state": "installing", "error": null }))
+    );
 }
 
 #[test]
