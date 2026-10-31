@@ -134,6 +134,11 @@ async fn launch_agent_inner(
         .map_err(LaunchError::Unauthorized)?;
 
     let attachment = match workspace_access {
+        WorkspaceAccess::Attached if recovery.is_some() => {
+            host.project_attachments
+                .recovered_run_workspace(&payload.workspace_path)
+                .await
+        }
         WorkspaceAccess::Attached => {
             host.project_attachments
                 .require_available_workspace(&payload.workspace_path)

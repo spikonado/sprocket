@@ -1338,16 +1338,17 @@ export default function App({
 
 		if (currentWorkspacePathRef.current === workspacePath) {
 			const scope = getComposerScope(currentThreadIdRef.current, workspacePath);
+			const latestPrompt = promptRef.current;
 
 			// Clearing discards unfinished uploads once they complete.
 			const finishedAttachments = composerAttachments
 				.snapshot()
 				.filter((attachment) => attachment.status !== 'uploading');
 
-			if (scope && (prompt || finishedAttachments.length > 0)) {
+			if (scope && (latestPrompt || finishedAttachments.length > 0)) {
 				storeComposerRecovery(userId, scope, {
 					message: '',
-					prompt,
+					prompt: latestPrompt,
 					attachments: finishedAttachments,
 					continuationOfRunId: composerContinuationOfRunIdRef.current ?? undefined,
 					autoSubmit: false
@@ -2159,6 +2160,7 @@ export default function App({
 	const runStateRef = useRef(runState);
 	const pendingAgentLaunchesRef = useRef(pendingAgentLaunches);
 	const composerContinuationOfRunIdRef = useRef(composerContinuationOfRunId);
+	const promptRef = useRef(prompt);
 
 	// Async callbacks observe committed selections, never an abandoned render.
 	useLayoutEffect(() => {
@@ -2173,6 +2175,7 @@ export default function App({
 		runStateRef.current = runState;
 		pendingAgentLaunchesRef.current = pendingAgentLaunches;
 		composerContinuationOfRunIdRef.current = composerContinuationOfRunId;
+		promptRef.current = prompt;
 	}, [
 		config,
 		signedInUserId,
@@ -2184,7 +2187,8 @@ export default function App({
 		pendingAgentQuestion,
 		runState,
 		pendingAgentLaunches,
-		composerContinuationOfRunId
+		composerContinuationOfRunId,
+		prompt
 	]);
 
 	async function cancelRun() {

@@ -85,16 +85,17 @@ impl ProjectAttachmentStore {
     pub async fn remove(&self, workspace_path: &str) -> Result<()> {
         self.ensure_loaded().await?;
         let _update_guard = self.update_lock.lock().await;
-        if self
-            .attachments
-            .write()
-            .await
-            .remove(workspace_path)
-            .is_none()
-        {
+        let Some(removed) = self.attachments.write().await.remove(workspace_path) else {
             return Ok(());
+        };
+        let saved = self.save_to_disk().await;
+        if saved.is_err() {
+            self.attachments
+                .write()
+                .await
+                .insert(workspace_path.to_owned(), removed);
         }
-        self.save_to_disk().await
+        saved
     }
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
@@ -243,6 +244,18 @@ impl ProjectAttachmentStore {
             anyhow::bail!("repositoryKey does not match the attached workspace");
         }
         Ok(attachment)
+    }
+
+    /// Interrupted runs may resume in a folder the user removed, without listing it again.
+    pub async fn recovered_run_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<ProjectAttachmentRecord> {
+        self.ensure_loaded().await?;
+        if self.attachments.read().await.contains_key(workspace_path) {
+            return self.require_available_workspace(workspace_path).await;
+        }
+        resolve_attachment(workspace_path.to_owned()).await
     }
 
     async fn get_or_error(&self, workspace_path: &str) -> Result<ProjectAttachmentRecord> {

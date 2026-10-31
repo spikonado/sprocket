@@ -73,6 +73,18 @@ async fn removed_project_stays_removed_until_a_run_uses_its_folder() {
     let reloaded = ProjectAttachmentStore::new(data_dir.path().to_path_buf());
     assert!(reloaded.list().await.expect("list").is_empty());
     assert!(project.path().exists());
+    assert!(
+        reloaded
+            .require_available_workspace(&attached.workspace_path)
+            .await
+            .is_err()
+    );
+    let recovered = reloaded
+        .recovered_run_workspace(&attached.workspace_path)
+        .await
+        .expect("recovered run workspace");
+    assert_eq!(recovered.workspace_path, attached.workspace_path);
+    assert!(reloaded.list().await.expect("list").is_empty());
 
     reloaded
         .resolve_run_workspace(attached.workspace_path.clone())
