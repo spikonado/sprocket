@@ -109,17 +109,7 @@ impl MachineManager {
         if self.reuse_live(&user_id).await {
             return Ok(());
         }
-        let manager = Arc::clone(self);
-        let heartbeat_user_id = user_id.clone();
-        let heartbeat = tokio::spawn(async move {
-            loop {
-                sleep(HEARTBEAT_INTERVAL).await;
-                if manager.heartbeat(&heartbeat_user_id).await.is_err() {
-                    tracing::warn!("machine heartbeat failed");
-                    break;
-                }
-            }
-        });
+        let heartbeat = self.spawn_heartbeat(user_id.clone());
         let previous = self
             .accounts
             .lock()
@@ -129,6 +119,24 @@ impl MachineManager {
             previous.heartbeat.abort();
         }
         Ok(())
+    }
+
+    fn spawn_heartbeat(self: &Arc<Self>, user_id: String) -> JoinHandle<()> {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                sleep(HEARTBEAT_INTERVAL).await;
+                if !manager.reuse_live(&user_id).await {
+                    break;
+                }
+                if let Err(error) = manager.heartbeat(&user_id).await {
+                    tracing::warn!("machine heartbeat failed: {error:#}");
+                    if is_terminal_heartbeat_error(&error) || !manager.reuse_live(&user_id).await {
+                        break;
+                    }
+                }
+            }
+        })
     }
 
     pub async fn end(&self, user_id: &str) -> anyhow::Result<()> {
@@ -211,8 +219,8 @@ impl MachineManager {
             Ok(Err(error)) => error,
             Err(_) => anyhow::anyhow!("machine heartbeat timed out"),
         };
-        if let Some(presence) = self.accounts.lock().await.remove(user_id) {
-            presence.heartbeat.abort();
+        if is_terminal_heartbeat_error(&error) {
+            self.accounts.lock().await.remove(user_id);
         }
         Err(error)
     }
@@ -292,6 +300,12 @@ impl MachineManager {
             ("processId".into(), self.identity.process_id.clone().into()),
         ])
     }
+}
+
+fn is_terminal_heartbeat_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<sprocket_convex::AuthSignedOut>())
 }
 
 #[cfg(test)]
