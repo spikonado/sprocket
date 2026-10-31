@@ -87,7 +87,7 @@ export default function ArtifactDisplay({
 						className={`block w-full bg-white ${frameClass}`}
 					></iframe>
 				) : hasPreview ? (
-					<div className={`overflow-auto px-3 ${frameClass}`}>
+					<div className={`overflow-auto pr-10 pl-3 ${frameClass}`}>
 						<LazyJsonRender source={content} fallback={source} />
 					</div>
 				) : (

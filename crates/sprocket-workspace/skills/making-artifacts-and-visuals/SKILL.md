@@ -7,7 +7,7 @@ description: Use before making or changing an artifact or an `html-visual`, `jsx
 
 ## Artifacts
 
-1. Write the file as `.md`, `.html`, `.jsx` for React, or `.render.json` for json-render. Other text files render as Markdown.
+1. Write the file as `.md`, `.html`, `.jsx` for React, or `.render.json` for json-render. Other text files render as Markdown. Artifact tools report a `.render.json` file's content type as `markdown`, and the UI still renders it as json-render.
 2. Register it with `add_artifact`.
 3. Revise it by editing the file.
 
