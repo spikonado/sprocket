@@ -90,7 +90,14 @@ async function usedInWindow(
 		return { used: Math.max(0, METER_CAPACITY - stored.value), window, migrated: true };
 	}
 
-	if (quotaGenerationOf(subscription) !== undefined) return { used: 0, window, migrated: true };
+	const generation = quotaGenerationOf(subscription);
+
+	// Generation 0 is the default window-key suffix (`resetAt ?? 0`). The
+	// access backfill writes that sentinel when a row has no quotaResetAt, so
+	// it must still read the legacy `userId` key instead of reporting 0 used.
+	if (generation !== undefined && generation !== 0) {
+		return { used: 0, window, migrated: true };
+	}
 
 	const oldConfig: RateLimitConfig = {
 		kind: 'fixed window',
