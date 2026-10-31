@@ -34,6 +34,7 @@ Precondition: the new-thread screen is open and the panel is closed.
 - A picker button and the tab it creates share a name, such as `button "Artifacts"` and `tab "Artifacts"`. Grep the role too.
 - `New tab` selects the existing empty tab instead of adding a second one. Pick a view first.
 - Each pane has its own `button "New tab"`, `button "Split right"` and `button "Split down"`, so take refs from the pane you mean.
-- Panes stay at least 240px wide and 160px tall, so `button "Split right"` is disabled at the default 320px width. Widen the panel first: focus `separator "Resize side panel"` and press `End`.
+- Panes stay at least 240px wide and 160px tall, so `button "Split right"` is disabled at the default 320px width. Widen the panel first: focus `separator "Resize side panel"` and press `End`. That width is stored in `localStorage` key `sprocket.side-panel.width`, so a later run may already have Split right enabled; skip `End` when the button is not disabled.
 - Opening an artifact or file from a thread uses the pane last clicked or focused.
 - The panel isn't rendered while Settings is open.
+- Below 768px the same panel is forced full-screen: no resize separator, no `Expand to full workspace`, and Escape does not close it. `Close panel` still returns to the thread. The inbox sidebar overlays the thread on that viewport; click a header `button "Close sidebar"` (the first `Close sidebar` ref is often covered) so `Open side panel` is reachable. Restore `1440 900` afterwards; `wait --text "New thread"` fails while the sidebar stays closed.

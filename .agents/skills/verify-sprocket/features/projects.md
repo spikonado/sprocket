@@ -38,3 +38,4 @@ Preconditions:
 - Adding a second directory with the same git remote as an attached project fails with "Repository is already attached to <path>" in the error banner, and the picker still closes. Scratch repos have no remote, so each becomes its own project.
 - `Enter` in the path box opens the highlighted directory. Only `Control+Enter` adds.
 - A path that doesn't exist yet turns the button into `Create & add Ctrl Enter`.
+- After filtering to a project whose name is a substring of another visible label (`sprocket` vs `verify-sprocket-scratch`), `find text` needs `--exact` or it clicks the heading.
