@@ -51,6 +51,13 @@ repos:
         pass_filenames: false
         files: ^(tools/agent-browser/|crates/sprocket-workspace/skills/agent-browser/)
 
+      - id: agent-desktop-skill
+        name: agent-desktop-skill
+        language: system
+        entry: node tools/agent-desktop/sync-skill.mjs
+        pass_filenames: false
+        files: ^(tools/agent-desktop/|crates/sprocket-workspace/skills/agent-desktop/)
+
       - id: cargo-fmt
         name: cargo-fmt
         language: system
