@@ -1,160 +1,196 @@
 ---
 name: working-with-kicad
-description: 'Use when creating or editing KiCad projects (`.kicad_pro`) or schematics (`.kicad_sch`) by hand.'
+description: 'Use when creating or editing KiCad schematics or PCBs, or exporting from KiCad (Gerbers, renders, BOMs, ERC/DRC).'
 ---
 
-## Ground truth order
+Edit KiCad files through KiCad's Python API (kipy) against a headless
+`kicad-cli api-server`, and use `kicad-cli` for checks and exports, so every
+file is written in the installed version's format.
 
-1. The installed KiCad symbol libraries (`share/kicad/symbols/*.kicad_sym`)
-   for symbol bodies, pins, and footprints. Copy symbol bodies from them.
-2. `kicad-cli sch upgrade` on a stub, to learn the live `(version …)` and the
-   instance dialect this KiCad emits.
-3. The shipped demos (`share/kicad/demos/**`) for sheet-level structure:
-   `sheet_instances`, `title_block`, `.kicad_pro` `sheets`. Their cached symbol
-   bodies can lag the live libraries.
+## 1. Check the connector
 
-Match what eeschema writes.
+Call `list_connectors`. If KiCad isn't listed, ask the user to install it in
+Settings → Connectors and stop KiCad work until they confirm. When it is
+listed, these commands are on PATH:
 
-Circuit facts (pin names/numbers, strapping-pin behavior, regulator
-capacitor values, USB CC resistor values, reset timing, …) change and are
-vendor data. Check the current datasheet / hardware-design guidelines for the
-specific part with `scrape_url` / `web_search`, and prefer values from the
-vendor's own reference design when one exists.
+- `kicad-python`: Python with kipy. Run every API script with it.
+- `kicad-cli`: ERC, DRC, exports, renders, file upgrades.
+- `kicad`: the GUI. Run it only when the user asks to open a project.
 
-## Writing a schematic
+## 2. Before editing
 
-### 1. Learn the live version before writing
+- The user may have the same files open in the KiCad GUI; tell them to
+  reload after you save.
+- Before the first save of an existing project, compare the file header's
+  `(generator_version "…")` with the installed KiCad version. If the file is
+  older, ask the user once: saving upgrades the format irreversibly, and only
+  git can undo it.
+- Circuit facts (pinouts, strapping pins, regulator capacitors, USB CC
+  resistors, reset timing) come from the part's current datasheet and the
+  vendor reference design.
 
-Demo `(version …)` / `(generator_version …)` often predate the installed
-KiCad; copying them makes eeschema warn and rewrite on save. Write a stub
-(see §Validate), `chmod u+w` it (Nix-store copies stay `0444`), run
-`kicad-cli sch upgrade`, and read the header it produces. Use that version.
+## 3. Script shape
 
-### 2. Embed `lib_symbols` from the installed libraries
-
-- Only the top-level symbol gets the `Lib:Name` id. Unit drawings keep
-  the short name. `(symbol "Device:R" … (symbol "R_0_1" …))` is right, and
-  `Device:R_0_1` fails with `Failed to load schematic`.
-- Library files indent top-level symbols with one tab; under `(lib_symbols`
-  they need **two**. Extract the symbol **including its leading tab**, then
-  add one tab to every line.
-- Flatten `(extends …)` before embedding: walk to the root that owns
-  graphics/pins, copy that body, rename the top-level symbol and its `_0_1` /
-  `_1_1` units to the **leaf** name, overlay the leaf's property values, drop
-  `(extends …)`, and prefix the top-level name only. Many regulators and
-  connectors are aliases with no pins of their own.
-
-### 3. Place instances; compute pin positions from the library
-
-Schematic coordinates: **Y increases downward**. Symbol library coordinates:
-**Y increases upward**. For an instance at `(at_x, at_y)` rotated `rot`:
+One headless server per script. Units are nanometers; build points with
+`Vector2.from_xy_mm` and lengths with `from_mm`. Y increases downward in both
+editors.
 
 ```python
-import math
+from kipy import KiCad
+from kipy.proto.common.types import DocumentType
 
-def pin_abs(at_x, at_y, at_rot_deg, pin_x, pin_y):
-    a = math.radians(at_rot_deg)
-    rx = pin_x * math.cos(a) - pin_y * math.sin(a)
-    ry = pin_x * math.sin(a) + pin_y * math.cos(a)
-    return at_x + rx, at_y - ry
+with KiCad(headless=True, timeout_ms=60000) as kicad:
+    kicad.open_document("/abs/proj/board.kicad_sch", DocumentType.DOCTYPE_SCHEMATIC)
+    kicad.load_all_libraries()
+    kicad.wait_for_libraries(timeout_s=300)
+    sch = kicad.get_schematic()      # kicad.get_board() for the PCB
+    ...
+    sch.save()
 ```
 
-Wire endpoints, labels, and power stubs must use these absolute pin ends, not
-the symbol origin. Verify the Y sign on an asymmetric part (transistor C/E,
-MCU VDD/GND); a resistor alone is a mirror and proves nothing.
+- `open_document` loads an existing file. `create_document` starts an empty
+  one (plus the `.kicad_pro`) and replaces an existing file on save, so use
+  it only for new files. A server holds one schematic and one board.
+- `load_all_libraries` loads the library tables in the background; anything
+  that reads libraries fails until `wait_for_libraries` returns. Calls block
+  during the load, and kipy's default 2 s timeout fails them, hence
+  `timeout_ms`.
+- Edits use `create_items`, `get_items`, `update_items`, `remove_items` on the
+  schematic or board. Mutate the objects these return, then `update_items`.
+- Look up library IDs before using them: `kicad.get_library_symbols(["Device"])`
+  and `kicad.get_library_footprints(["Resistor_SMD"])` return items whose
+  `str()` is the ID, such as `Device:R`.
 
-Keep the fields eeschema emits on instances: `body_style`, `in_pos_files`,
-property `show_name` / `do_not_autoplace`, quoted uuids, `(hide yes)`
-placement after `(at …)`.
+## 4. Schematic first
 
-#### Instance reference/value visibility
+```python
+from kipy.geometry import Vector2
+from kipy.schematic_types import (
+    LocalLabel, SchematicLine, SchematicLineType,
+    SchematicLabelSpinStyle, SchematicSymbolOrientation,
+)
 
-- Hide every `#PWR…` Reference of a power symbol with `(hide yes)`, as
-  eeschema does. Their `Value` (the net name) stays visible.
-- `Footprint`, `Datasheet`, `Description`, `ki_*` on every symbol are hidden.
-- Component `Reference` / `Value` stay visible; place them deliberately
-  (for vertical passives: ~+5.08 mm in X, ref above center, value below)
-  instead of relying on `fields_autoplaced`.
-- Write passive values with units and no space: `10kΩ`, not `10k` or `10 kΩ`.
+r1 = sch.place_symbol_from_library(
+    "Device:R", Vector2.from_xy_mm(100.33, 80.01),
+    orientation=SchematicSymbolOrientation.SSO_90, reference="R1")
+gnd = sch.place_symbol_from_library(
+    "power:GND", Vector2.from_xy_mm(110.49, 90.17), reference="#PWR01")
+# ...place every symbol, then edit fields in one update
+r1.value = "10kΩ"
+r1.footprint_field.text.value = "Resistor_SMD:R_0603_1608Metric"
+sch.update_items([r1])
 
-### 4. Wire with short stubs; connect blocks with labels
+def pin_end(sym, number):
+    p = next(p for p in sym.definition.pins if p.number == number).position
+    x, y = {
+        SchematicSymbolOrientation.SSO_0: (p.x, p.y),
+        SchematicSymbolOrientation.SSO_90: (p.y, -p.x),
+        SchematicSymbolOrientation.SSO_180: (-p.x, -p.y),
+        SchematicSymbolOrientation.SSO_270: (-p.y, p.x),
+    }[sym.transform.orientation]
+    return Vector2.from_xy(sym.position.x + x, sym.position.y + y)
 
-Keep wire segments to short stubs only (about one grid to a few mm):
-pin to pin inside a tight cluster, pin to power symbol, or the stub under a
-local label. Cross-block nets use paired local labels (same name on both
-ends). Power nets use power symbols. Give each net one name; a second label
-on an already-labeled net raises `multiple_net_names`.
+wire = SchematicLine()
+wire.type = SchematicLineType.SLT_WIRE
+wire.start = pin_end(r1, "1")
+wire.end = wire.start + Vector2.from_xy_mm(2.54, 0)
+label = LocalLabel()
+label.text.value = "SDA"
+label.position = wire.end
+label.spin_style = SchematicLabelSpinStyle.SLSS_RIGHT
+sch.create_items([wire, label])
+```
 
-#### Local labels on pins
+- Place every symbol before the first `update_items`. Placing a symbol after
+  updating another instance of it forks its library link (`R_1`, ERC
+  `lib_symbol_issues`).
+- Pass `reference=` to every placement, power symbols included (`#PWR01`,
+  `#FLG01`); unset references can come back duplicated.
+- Put symbol origins and wire ends on the 1.27 mm grid, or ERC reports
+  `endpoint_off_grid`.
+- Give every symbol a footprint before the board step. Power nets use
+  `power:` symbols (`power:GND`, `power:VCC`) with `value` set to the net
+  name. Put a `power:PWR_FLAG` on each power net fed from a connector or
+  off-board, or ERC reports `power_pin_not_driven`.
+- A pin connects where its end touches a wire. `pin_end` maps the local,
+  Y-down pin positions in `definition.pins` through rotation but not
+  mirroring, so leave symbols unmirrored.
+- Style: short wire stubs, local labels between blocks, global labels only
+  across sheets, one name per net, a clear gutter around each functional
+  block, passive values with units and no space (`10kΩ`, `100nF`). Leave
+  about 10 mm between neighbouring power symbols so their names don't
+  overlap.
+- `sch.get_netlist()` lists net names only. Check pin-level connections in
+  the exported `.net` file's `(node (ref …) (pin …))` entries.
 
-Label `(at x y rot)` sits on the pin connection point. Draw a short
-horizontal stub under the text, from the pin outward in the direction the
-text faces. Leave the stub tip open (ERC `unconnected_wire_endpoint` there
-is expected for this style).
+## 5. Board from the netlist
 
-| Pin opens…                       | Label `(at … rot)` | `justify`      | Stub             |
-| -------------------------------- | ------------------ | -------------- | ---------------- |
-| to the **right** (pin `rot 180`) | pin xy, `rot 0`    | `left bottom`  | pin → pin+(L, 0) |
-| to the **left** (pin `rot 0`)    | pin xy, `rot 180`  | `right bottom` | pin-(L, 0) → pin |
+```python
+from kipy.board_types import BoardLayer, BoardSegment, Track, Via, Zone
+from kipy.geometry import Angle, PolygonWithHoles, PolyLine, PolyLineNode
+from kipy.proto.board.board_commands_pb2 import NetlistMatchMode
+from kipy.util import from_mm
 
-Stub length `L ≈ len(name) × 1.27` (font size). Mid-cluster labels on a
-junction can stay `rot 0` / `left bottom` with no stub.
+sch.save()   # exporting a never-saved schematic crashes the server
+sch.export_netlist("/abs/proj/board.net")
+kicad.create_document("/abs/proj/board.kicad_pcb", DocumentType.DOCTYPE_PCB)
+board = kicad.get_board()
+for ref, lib_id, x, y, deg in [("R1", "Resistor_SMD:R_0603_1608Metric", 111, 106, 90), ...]:
+    fp = board.place_footprint_from_library(
+        lib_id, Vector2.from_xy_mm(x, y), orientation=Angle.from_degrees(deg))
+    fp.reference_field.text.value = ref
+    board.update_items([fp])
+result = board.import_netlist("/abs/proj/board.net", match_mode=NetlistMatchMode.NMM_REFERENCE)
+print(result.report)   # check result.error_count
+fps = {f.reference_field.text.value: f for f in board.get_footprints()}
+pad = {f"{ref}.{p.number}": p for ref, f in fps.items() for p in f.definition.pads}
 
-#### Global labels on pins (different from locals)
+corners = [Vector2.from_xy_mm(x, y) for x, y in [(100, 102), (118, 102), (118, 113), (100, 113)]]
+edges = []
+for a, b in zip(corners, corners[1:] + corners[:1]):
+    edge = BoardSegment()
+    edge.start, edge.end, edge.layer = a, b, BoardLayer.BL_Edge_Cuts
+    edges.append(edge)
+t = Track()
+t.start, t.end = pad["J1.1"].position, pad["R1.1"].position
+t.width, t.layer, t.net = from_mm(0.25), BoardLayer.BL_F_Cu, pad["J1.1"].net
+via = Via()
+via.position, via.net = Vector2.from_xy_mm(108, 109.5), pad["J1.2"].net
+via.diameter, via.drill_diameter = from_mm(0.6), from_mm(0.3)
+outline = PolyLine()
+for corner in corners:
+    outline.append(PolyLineNode.from_point(corner))
+zone = Zone()
+zone.layers, zone.net = [BoardLayer.BL_B_Cu], pad["J1.2"].net
+zone.outline = PolygonWithHoles()
+zone.outline.outline = outline
+board.create_items(edges + [t, via, zone])
+board.refill_zones()
+board.save()
+```
 
-Global labels are for signals crossing sheets (locals are sheet-scoped).
-Draw a stub of exactly one grid step (1.27 mm) from the pin outward and put
-the `global_label` at the stub tip, not on the pin. Use `justify left` (pin
-opens right, `rot 0`) or `justify right` (pin opens left, `rot 180`), with no
-`bottom`. Set `(shape …)` to the role (`bidirectional` for GPIO-style nets).
-Globals carry a hidden `Intersheetrefs` property sharing the label's `(at)`.
+- Place footprints yourself before the import; `NMM_REFERENCE` links them by
+  reference and assigns nets. Footprints the import adds land near the
+  origin. Rotating an existing footprint through `update_items` leaves
+  rounding drift that DRC reports as `lib_footprint_mismatch`, so set
+  orientation at placement. Pass `layer=BoardLayer.BL_B_Cu` for the back.
+- Pad positions are absolute; re-read footprints after moving them.
+- Route every net yourself; there is no autorouter. Change layers with a
+  `Via`; it has zero size until you set `diameter` and `drill_diameter`.
 
-### 5. Power symbols
+## 6. Check, show, export
 
-For power inputs/outputs, place power-library symbols and set `Value` to the
-net name (a named tap like `+VOUT` reuses `power:+5V`). Offset each power
-symbol one grid step (1.27 mm) from the pin end along the lead and connect
-it with a short stub. Keep `Value` on the open side (`+5V` above, `GND`
-below).
-
-### 6. Layout: zone the sheet
-
-Give each functional block its own empty area, with a gutter of at least
-~2.54 mm between bodies and more around large modules. Put pull-ups,
-buttons, LEDs, and decoupling caps in clear space away from large symbol
-outlines, and connect them back with local labels or rail power symbols.
-
-### 7. Match the project and sheet UUIDs
-
-These must be identical: the root schematic `(uuid "…")`, the `.kicad_pro`
-`sheets: [[ "<uuid>", "Root" ], …]` entry, and every symbol instance
-`(path "/<uuid>" (reference "U1") …)`. A mismatch doesn't always fail the
-load, but annotation and ERC get confused.
-
-## Validate
-
-Before a full board, embed one symbol (e.g. `Device:R`) into a stub sheet and
-run:
+Run checks after each save and fix every finding before moving on:
 
 ```bash
-chmod u+w stub.kicad_sch
-kicad-cli sch upgrade stub.kicad_sch
-kicad-cli sch erc stub.kicad_sch
+kicad-cli sch erc --severity-all --format json -o erc.json proj/board.kicad_sch
+kicad-cli pcb drc --schematic-parity --severity-all --format json -o drc.json proj/board.kicad_pcb
+kicad-cli sch export png -e -o out/ proj/board.kicad_sch
+kicad-cli pcb render --side top -o out/top.png proj/board.kicad_pcb
 ```
 
-If upgrade cannot load the file, fix unit naming / indent / extends before
-adding instances and wires. Then, on the full sheet:
-
-```bash
-kicad-cli sch upgrade board.kicad_sch   # header matches installed KiCad
-kicad-cli sch erc board.kicad_sch       # review findings
-kicad-cli sch export netlist board.kicad_sch
-```
-
-After ERC, read the netlist and confirm every intended net (each module pin,
-each header pin, each rail) carries the nodes you meant. Then check geometry:
-no two non-power symbols share an origin, and no two body bounding boxes
-intersect.
-
-Omit `PWR_FLAG` unless the user asks for power flags, and ignore the
-resulting `power_pin_not_driven` ERC errors.
+Look at the PNGs yourself, and show them in the thread after each meaningful
+change. For fabrication, `kicad-cli pcb export gerbers -l
+F.Cu,B.Cu,F.Mask,B.Mask,F.Paste,B.Paste,F.Silkscreen,B.Silkscreen,Edge.Cuts`
+(without `-l` it plots every user layer too), then `pcb export
+drill|pos|step` and `sch export bom`.

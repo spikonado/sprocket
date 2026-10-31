@@ -28,6 +28,7 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	save_artifact: { verb: 'saved', noun: 'artifact' },
 	delete_artifact: { verb: 'deleted', noun: 'artifact' },
 	list_artifacts: { verb: 'listed', noun: 'artifact group' },
+	list_connectors: { verb: 'listed', noun: 'connector group' },
 	mandate_setup: { verb: 'set up', noun: 'mandate' },
 	mandate_list: { verb: 'listed', noun: 'mandate group' },
 	mandate_status: { verb: 'checked', noun: 'mandate' },

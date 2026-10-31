@@ -86,7 +86,17 @@ pub struct RunAgentRequest {
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     /// Transcript store backing local monitor reads for descendant threads.
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
+    pub installed_connectors: InstalledConnectors,
 }
+
+#[derive(Clone, Serialize)]
+pub struct InstalledConnector {
+    pub name: &'static str,
+    pub version: String,
+}
+
+/// Reads the connectors installed on the run's machine each time it is called.
+pub type InstalledConnectors = Arc<dyn Fn() -> Vec<InstalledConnector> + Send + Sync>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

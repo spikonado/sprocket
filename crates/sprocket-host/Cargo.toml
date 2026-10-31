@@ -17,6 +17,7 @@ clap = { version = "4.5.60", features = ["derive"] }
 convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
 fff-search = "0.11.0"
 flate2 = "1.1.10"
+fs4 = { version = "1.1.0", default-features = false }
 futures = "0.3.32"
 git2 = { version = "0.21.0", default-features = false }
 hex = "0.4.3"
@@ -43,7 +44,12 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.186"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+dwarfs = { version = "0.2.1", default-features = false, features = ["zstd"] }
+
 [target.'cfg(windows)'.dependencies]
+memmap2 = "0.9.12"
+nsis = "=0.6.0"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
 
 [dev-dependencies]

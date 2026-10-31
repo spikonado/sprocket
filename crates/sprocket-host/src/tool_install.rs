@@ -15,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 pub(crate) const INSTALL_LOCK: &str = "install.lock";
 const LEASE_LOCK: &str = "in-use.lock";
@@ -115,7 +116,7 @@ impl PinnedTool {
 }
 
 /// The platform keys of every `releases.json`.
-fn platform() -> anyhow::Result<&'static str> {
+pub(crate) fn platform() -> anyhow::Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("darwin-arm64"),
         ("macos", "x86_64") => Ok("darwin-x64"),
@@ -127,7 +128,7 @@ fn platform() -> anyhow::Result<&'static str> {
     }
 }
 
-async fn is_dir(path: &Path) -> bool {
+pub(crate) async fn is_dir(path: &Path) -> bool {
     tokio::fs::metadata(path)
         .await
         .is_ok_and(|metadata| metadata.is_dir())
@@ -153,11 +154,18 @@ pub(crate) struct Checksum {
 }
 
 fn download_client() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    Ok(client_builder().timeout(DOWNLOAD_TIMEOUT).build()?)
+}
+
+/// For downloads too large for a total timeout; a stalled transfer still fails.
+pub(crate) fn large_download_client() -> anyhow::Result<reqwest::Client> {
+    Ok(client_builder().read_timeout(READ_TIMEOUT).build()?)
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
         .user_agent(concat!("sprocket/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(30))
-        .timeout(DOWNLOAD_TIMEOUT)
-        .build()?)
 }
 
 /// Puts `directories` ahead of the `PATH` in `environment`, or of the server's own `PATH`.
@@ -230,7 +238,7 @@ pub(crate) fn set_executable(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn open_lock_file(path: &Path) -> std::io::Result<File> {
+pub(crate) fn open_lock_file(path: &Path) -> std::io::Result<File> {
     OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -281,7 +289,7 @@ async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Path) {
 
 /// Removes other versions along with tombstones left by earlier failed removals.
 /// A version is skipped while an installer or a lease holds one of its locks.
-fn prune_versions(tool_dir: &Path, current: &str) {
+pub(crate) fn prune_versions(tool_dir: &Path, current: &str) {
     let entries = match std::fs::read_dir(tool_dir) {
         Ok(entries) => entries,
         Err(error) => {
@@ -310,7 +318,7 @@ fn prune_versions(tool_dir: &Path, current: &str) {
     }
 }
 
-fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::io::Result<()> {
+pub(crate) fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::io::Result<()> {
     let mut locks = Vec::new();
     for lock in [INSTALL_LOCK, LEASE_LOCK] {
         let file = open_lock_file(&path.join(lock))?;
@@ -335,7 +343,7 @@ fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::io::Result<(
     std::fs::remove_dir_all(tombstone)
 }
 
-fn is_version(name: &str) -> bool {
+pub(crate) fn is_version(name: &str) -> bool {
     name.starts_with(|character: char| character.is_ascii_digit())
         && name.contains('.')
         && name.chars().all(|character| {

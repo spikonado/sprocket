@@ -47,3 +47,22 @@ uv then installs a [python-build-standalone](https://github.com/astral-sh/python
 build of CPython, which is licensed under the
 [PSF License](https://docs.python.org/3/license.html) and bundles libraries
 under their own licenses.
+
+## KiCad
+
+The KiCad connector downloads [KiCad](https://www.kicad.org) nightly builds
+when the user installs it. KiCad is licensed under
+[GPL-3.0-or-later](https://gitlab.com/kicad/code/kicad/-/blob/master/LICENSE.GPLv3),
+and its bundled symbol, footprint, and 3D model libraries are licensed under
+[CC-BY-SA-4.0 with an exception](https://www.kicad.org/libraries/license/) for
+designs made with them. The builds are unmodified upstream files mirrored to a
+`kicad-<version>` release of this repository, whose notes link the exact KiCad
+source commit.
+
+The same release holds a wheel of
+[kicad-python](https://gitlab.com/kicad/code/kicad-python), licensed under
+[MIT](https://gitlab.com/kicad/code/kicad-python/-/blob/main/LICENSE), built
+with `tools/kicad/kipy-cli-env.patch`. Its Python dependencies keep their own
+licenses. The KiCad version, file sizes, and SHA256 checksums are recorded in
+`tools/kicad/releases.json`, and the dependencies' hashes in
+`tools/kicad/requirements.txt`.

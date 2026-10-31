@@ -53,6 +53,7 @@ import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsCredentials from '$lib/components/home/settings-credentials';
 import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsVersionControl from '$lib/components/home/settings-version-control';
+import SettingsConnectors from '$lib/components/home/settings-connectors';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
@@ -2915,6 +2916,8 @@ export default function App({
 							<SettingsPayments />
 						) : settingsPage === 'versionControl' && signedInUserId ? (
 							<SettingsVersionControl userId={signedInUserId} localApi={localApi} />
+						) : settingsPage === 'connectors' && signedInUserId ? (
+							<SettingsConnectors userId={signedInUserId} localApi={localApi} />
 						) : (
 							<SettingsAccount
 								user={auth.user}

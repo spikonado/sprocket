@@ -1065,6 +1065,7 @@ pub async fn run_agent(
                     gateway_url: gateway_url.clone(),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
+                    installed_connectors: request.installed_connectors.clone(),
                     share_conversation_content: context.share_conversation_content,
                 },
             )

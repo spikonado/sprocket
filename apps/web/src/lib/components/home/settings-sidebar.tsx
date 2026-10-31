@@ -5,6 +5,7 @@ import {
 	GitBranch,
 	KeyRound,
 	ListOrdered,
+	Plug,
 	Settings,
 	UserRound
 } from 'lucide-react';
@@ -12,7 +13,14 @@ import SidebarTopActions from '$lib/components/home/sidebar-top-actions';
 import type { SprocketTheme } from '$lib/theme';
 
 export type SettingsPage =
-	'general' | 'account' | 'aiUsage' | 'providers' | 'credentials' | 'versionControl' | 'payments';
+	| 'general'
+	| 'account'
+	| 'aiUsage'
+	| 'providers'
+	| 'credentials'
+	| 'versionControl'
+	| 'connectors'
+	| 'payments';
 
 const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
 	{ id: 'general', label: 'General', icon: Settings },
@@ -21,6 +29,7 @@ const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof Us
 	{ id: 'providers', label: 'Providers', icon: ListOrdered },
 	{ id: 'credentials', label: 'BYOK/BYOS', icon: KeyRound },
 	{ id: 'versionControl', label: 'Version Control', icon: GitBranch },
+	{ id: 'connectors', label: 'Connectors', icon: Plug },
 	{ id: 'payments', label: 'Payments', icon: CreditCard }
 ];
 

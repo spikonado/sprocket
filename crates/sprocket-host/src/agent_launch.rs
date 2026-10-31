@@ -4,7 +4,8 @@ use std::time::Duration;
 use anyhow::anyhow;
 use serde::Deserialize;
 use sprocket_agent::{
-    CompletionProvider, RunAgentRequest, finalize_failed_start, run_agent, start_agent_run,
+    CompletionProvider, InstalledConnectors, RunAgentRequest, finalize_failed_start, run_agent,
+    start_agent_run,
 };
 use tokio::sync::oneshot;
 use tokio::time::timeout;
@@ -118,6 +119,11 @@ pub async fn launch_recovery(
     .map_err(|error| anyhow!("failed to restart interrupted run: {error}"))
 }
 
+fn installed_connectors(host: &Host) -> InstalledConnectors {
+    let kicad = Arc::clone(&host.kicad);
+    Arc::new(move || kicad.installed().into_iter().collect())
+}
+
 async fn launch_agent_inner(
     host: Host,
     payload: AgentLaunchRequest,
@@ -214,6 +220,7 @@ async fn launch_agent_inner(
         continuation_of_run_id: payload.continuation_of_run_id,
         subagent_launcher: Some(crate::subagent_launcher::launcher(&host)),
         transcript_store: Some(Arc::clone(&host.transcript)),
+        installed_connectors: installed_connectors(&host),
     };
 
     let cleanup_request = request.clone();

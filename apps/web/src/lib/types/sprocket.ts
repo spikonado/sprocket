@@ -290,6 +290,15 @@ export type GitHubSettingsUpdate = {
 	host?: { host: string; enabled: boolean };
 };
 
+/** A connector on this machine. Install also updates and retries. */
+export type ConnectorStatus = {
+	id: 'kicad';
+	name: string;
+	state: 'notInstalled' | 'installing' | 'failed' | 'installed';
+	error: string | null;
+	updateAvailable: boolean;
+};
+
 export type ChatGptBrowserLoginResult = {
 	status: 'pending' | 'complete' | 'error';
 	error?: string;
@@ -448,6 +457,9 @@ export type LocalApi = {
 	) => Promise<string | null>;
 	fetchGitHubStatus: (userId: string) => Promise<GitHubStatus>;
 	updateGitHubSettings: (userId: string, update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
+	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
+	installConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
+	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 };
 
 export type WorkspacePathResolution = {
