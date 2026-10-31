@@ -40,9 +40,7 @@ jobs:
       - name: Pin the latest release
         run: |
           bun "tools/$TOOL/update-release.mjs"
-          if [[ -f "tools/$TOOL/sync-skill.mjs" ]]; then
-            bun "tools/$TOOL/sync-skill.mjs"
-          fi
+          bun tools/sync-skills.mjs
 
       - name: Create or update pull request
         env:
