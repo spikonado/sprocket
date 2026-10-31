@@ -78,10 +78,12 @@ try {
 
 		const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' })
 			.split('\n')
-			.map((entry) => entry.replace(/^\.\//, ''));
+			.map((entry) => entry.replace(/^\.\//, ''))
+			.filter((entry) => entry && !entry.endsWith('/'));
 
-		if (!entries.includes(cli)) {
-			throw new Error(`${name} has no ${cli} at its root`);
+		// The host installs only top-level files.
+		if (!entries.includes(cli) || entries.some((entry) => entry.includes('/'))) {
+			throw new Error(`${name} must hold ${cli} and only top-level files`);
 		}
 
 		platforms[platform] = { url, bytes: bytes.length, sha256 };
