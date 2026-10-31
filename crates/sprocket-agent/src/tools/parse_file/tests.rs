@@ -1,5 +1,16 @@
+use super::super::convert::{
+    LocalConversionFailed, MAX_MODEL_IMAGE_BYTES, MAX_PARSE_FILE_IMAGE_BYTES,
+    MAX_PARSE_FILE_IMAGE_DIMENSION, MAX_PARSE_FILE_PREVIEW_CHARS, ParseFilePersistedOutput,
+    decode_image_info, detect_anydoc_format, ensure_image_within_model_bounds, fit_image_for_model,
+    flatten_onto_white, replay_local_tool_output, replay_tool_output,
+};
+use super::super::image_urls::ImageUrlMap;
 use super::*;
-use rig::message::DocumentSourceKind;
+use crate::types::AgentHistoryToolResultItem;
+use base64::Engine;
+use rig::message::{DocumentSourceKind, ImageMediaType, ToolResultContent};
+use sprocket_workspace::WorkspaceOperationCancelled;
+use std::io::Cursor;
 
 const SAMPLE_RTF: &str = "{\\rtf1\\ansi\\ansicpg1252\\deff0\n{\\fonttbl{\\f0\\fcharset0 Arial;}}\n{\\stylesheet{\\s0 Normal;}}\n\\pard\\plain\\s0 Body before.\\par\n\\pard\\plain\\s0 Hello from RTF.\\par\n}\n"; // codespell:ignore pard
 const SAMPLE_CSV: &str = "name,qty\nwidget,2\ngadget,9\n";

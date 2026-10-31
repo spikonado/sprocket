@@ -5,10 +5,10 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
-use super::hosted_parse::HostedParseContext;
-use super::parse_file::{
+use super::convert::{
     IMAGE_SNIFF_BYTES, MAX_PARSE_FILE_IMAGE_BYTES, convert_document, sniff_supported_image_format,
 };
+use super::hosted_parse::HostedParseContext;
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
 pub(super) fn github_raw_url(url: &Url) -> Option<Url> {

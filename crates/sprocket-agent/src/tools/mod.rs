@@ -2,6 +2,7 @@ mod artifacts;
 mod async_tools;
 mod commands;
 mod context;
+mod convert;
 mod cwd;
 mod github_url;
 mod hosted_parse;
@@ -126,7 +127,7 @@ pub(crate) async fn hydrate_tool_history(
             replays.push((
                 items,
                 output,
-                parse_file::replay_local_tool_output(output).await,
+                convert::replay_local_tool_output(output).await,
             ));
         }
     }
