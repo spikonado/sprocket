@@ -55,7 +55,9 @@ function LineGraph({ props }: ChartProps) {
 	const range = Math.max(...values) - min || 1;
 	const step = data.length > 1 ? (LINE_WIDTH - LINE_PADDING * 2) / (data.length - 1) : 0;
 
-	const points = data.map((point, index) => ({
+	const plotted = data.length === 1 ? [data[0], data[0]] : data;
+
+	const points = plotted.map((point, index) => ({
 		x: LINE_PADDING + index * step,
 		y: LINE_PADDING + (1 - (point.value - min) / range) * (CHART_HEIGHT - LINE_PADDING * 2)
 	}));
@@ -75,6 +77,8 @@ function LineGraph({ props }: ChartProps) {
 					fill="none"
 					stroke="var(--chart-1)"
 					strokeWidth={2}
+					strokeLinecap="round"
+					strokeLinejoin="round"
 					vectorEffect="non-scaling-stroke"
 				/>
 			</svg>
@@ -93,12 +97,18 @@ export const { registry: jsonRenderRegistry } = defineRegistry(jsonRenderCatalog
 	components: {
 		...shadcnComponents,
 		// The shadcn link navigates the app itself, so it opens a new tab instead.
-		Link: ({ props }) => (
+		Link: ({ props, on }) => (
 			<a
 				href={props.href}
 				target="_blank"
 				rel="noopener noreferrer"
 				className="text-primary text-sm font-medium underline-offset-4 hover:underline"
+				onClick={(event) => {
+					const press = on('press');
+
+					if (press.shouldPreventDefault) event.preventDefault();
+					press.emit();
+				}}
 			>
 				{props.label}
 			</a>

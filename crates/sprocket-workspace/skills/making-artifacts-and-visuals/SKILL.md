@@ -105,7 +105,7 @@ Components:
 - ToggleGroup: { items: Array<{ label: string, value: string }>, type?: "single" | "multiple", value?: string } - Group of toggle buttons. Type 'single' (default) or 'multiple'. Use { $bindState } on value. [events: change]
 - ButtonGroup: { buttons: Array<{ label: string, value: string }>, selected?: string } - Segmented button group. Use { $bindState } on selected for selected value. [events: change]
 - Pagination: { totalPages: number, page?: number } - Page navigation. Use { $bindState } on page for current page number. [events: change]
-- BarGraph: { title?: string, data: Array<{ label: string, value: number }> } - Vertical bar chart
+- BarGraph: { title?: string, data: Array<{ label: string, value: number }> } - Vertical bar chart. Values must be zero or above
 - LineGraph: { title?: string, data: Array<{ label: string, value: number }> } - Line chart through the data points in order
 
 <!-- json-render-components:end -->

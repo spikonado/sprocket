@@ -13,7 +13,7 @@ export const jsonRenderCatalog = defineCatalog(schema, {
 		...shadcnComponentDefinitions,
 		BarGraph: {
 			props: chartProps,
-			description: 'Vertical bar chart',
+			description: 'Vertical bar chart. Values must be zero or above',
 			example: { title: 'Builds per day', data: [{ label: 'Mon', value: 12 }] }
 		},
 		LineGraph: {
