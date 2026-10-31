@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { escapeFlowchartEdgeDashes } from '$lib/chat/mermaid-flowchart';
 import MarkdownHtml from '$lib/components/markdown-html';
 
 let nextDiagramId = 0;
@@ -25,19 +26,29 @@ async function renderDiagram(source: string, theme: 'dark' | 'default') {
 		fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-sans')
 	});
 
-	return (await mermaid.render(`mermaid-diagram-${nextDiagramId++}`, source)).svg;
+	try {
+		return (await mermaid.render(`mermaid-diagram-${nextDiagramId++}`, source)).svg;
+	} catch (error) {
+		if (!mermaid.detectType(source).startsWith('flowchart')) throw error;
+
+		const escaped = escapeFlowchartEdgeDashes(source);
+
+		if (escaped === source) throw error;
+
+		return (await mermaid.render(`mermaid-diagram-${nextDiagramId++}`, escaped)).svg;
+	}
 }
 
 export default function MermaidDiagram({ source, codeHtml }: { source: string; codeHtml: string }) {
 	const theme = useSyncExternalStore(subscribeToTheme, readTheme);
-	const [svg, setSvg] = useState<string | null>(null);
+	const [result, setResult] = useState<{ source: string; svg: string | null }>();
 
 	useEffect(() => {
 		let current = true;
 
 		renderDiagram(source, theme).then(
-			(rendered) => current && setSvg(rendered),
-			() => current && setSvg(null)
+			(svg) => current && setResult({ source, svg }),
+			() => current && setResult({ source, svg: null })
 		);
 
 		return () => {
@@ -45,8 +56,16 @@ export default function MermaidDiagram({ source, codeHtml }: { source: string; c
 		};
 	}, [source, theme]);
 
-	// The source stays readable while Mermaid loads and when the diagram has a syntax error.
-	if (!svg) return <MarkdownHtml html={codeHtml} />;
+	const latest = result?.source === source ? result : undefined;
 
-	return <div className="markdown-mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
+	if (!latest?.svg) {
+		return (
+			<>
+				{latest && <p className="text-muted-foreground text-sm">Could not render diagram.</p>}
+				<MarkdownHtml html={codeHtml} />
+			</>
+		);
+	}
+
+	return <div className="markdown-mermaid" dangerouslySetInnerHTML={{ __html: latest.svg }} />;
 }
