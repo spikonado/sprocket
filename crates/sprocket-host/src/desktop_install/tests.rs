@@ -1,27 +1,21 @@
 use super::*;
+use crate::tool_install::test_support::write_tar_gz;
 
 #[test]
 fn publishes_the_cli_and_its_helper_as_executables() {
     let directory = tempfile::tempdir().unwrap();
     let archive = directory.path().join("agent-desktop.tar.gz");
-    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
-        File::create(&archive).unwrap(),
-        flate2::Compression::fast(),
-    ));
-    for (path, contents) in [
-        (CLI, b"cli".as_slice()),
-        ("./agent-desktop-helper", b"helper".as_slice()),
-    ] {
-        let mut header = tar::Header::new_gnu();
-        header.set_size(contents.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        builder.append_data(&mut header, path, contents).unwrap();
-    }
-    builder.into_inner().unwrap().finish().unwrap();
+    write_tar_gz(
+        &archive,
+        &[
+            (CLI, b"cli".as_slice()),
+            ("./agent-desktop-helper", b"helper".as_slice()),
+        ],
+    );
     let bin = directory.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
 
-    extract(&archive, &bin).unwrap();
+    unpack(&archive, &bin).unwrap();
 
     assert_eq!(std::fs::read(bin.join(CLI)).unwrap(), b"cli");
     assert_eq!(
@@ -37,5 +31,4 @@ fn publishes_the_cli_and_its_helper_as_executables() {
             .mode();
         assert_eq!(mode & 0o111, 0o111);
     }
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
 }

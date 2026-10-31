@@ -14,7 +14,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const { version } = JSON.parse(
 	await readFile(join(root, 'tools/agent-desktop/releases.json'), 'utf8')
-).agentDesktop;
+);
 
 const url = `https://raw.githubusercontent.com/vercel-labs/agent-desktop/v${version}/skills/agent-desktop/SKILL.md`;
 

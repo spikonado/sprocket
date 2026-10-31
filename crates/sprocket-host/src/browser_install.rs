@@ -1,110 +1,88 @@
-use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use crate::tool_install::{
-    Checksum, INSTALL_LOCK, acquire_lock, download_atomic, download_client, executable_file,
-    lease_version, prune_versions, verified_file,
+    Asset, INSTALL_LOCK, PinnedTool, acquire_lock, download_atomic, set_executable,
 };
 
 const RELEASES: &str = include_str!("../../../tools/agent-browser/releases.json");
+const CLI: &str = if cfg!(windows) {
+    "agent-browser.exe"
+} else {
+    "agent-browser"
+};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub(crate) const AGENT_BROWSER_USE_SYSTEM_CA: &str = "AGENT_BROWSER_USE_SYSTEM_CA";
 
 pub(crate) struct BrowserInstaller {
-    tool_dir: PathBuf,
-    releases: Releases,
-    client: reqwest::Client,
-    ready_cli: Mutex<Option<PathBuf>>,
-    lease: Mutex<Option<File>>,
+    tool: PinnedTool,
+    skill_data: Asset,
+    chromium_lock: PathBuf,
+    ready: Mutex<bool>,
 }
 
 impl BrowserInstaller {
     pub fn new(data_dir: &Path) -> anyhow::Result<Self> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Releases {
+            skill_data: Asset,
+        }
+        let tool = PinnedTool::new(data_dir, "agent-browser", RELEASES, unpack)?;
         Ok(Self {
-            tool_dir: data_dir.join("tools/agent-browser"),
-            releases: serde_json::from_str(RELEASES)?,
-            client: download_client()?,
-            ready_cli: Mutex::new(None),
-            lease: Mutex::new(None),
+            skill_data: serde_json::from_str::<Releases>(RELEASES)?.skill_data,
+            chromium_lock: data_dir.join("tools/agent-browser/chromium-install.lock"),
+            tool,
+            ready: Mutex::new(false),
         })
     }
 
+    /// Returns the CLI once it, its skills, and a Chromium it can launch are installed.
     pub async fn ensure_ready(&self) -> anyhow::Result<PathBuf> {
-        let mut ready_cli = self.ready_cli.lock().await;
-        if let Some(cli) = ready_cli.as_ref()
-            && executable_file(cli).await
-        {
-            return Ok(cli.clone());
+        let mut ready = self.ready.lock().await;
+        self.tool.ensure_installed().await?;
+        let cli = self.tool.bin_dir().join(CLI);
+        if !*ready {
+            self.ensure_skills().await?;
+            self.ensure_chromium(&cli).await?;
+            *ready = true;
         }
-        let cli = self.install().await?;
-        self.ensure_chromium(&cli).await?;
-        *ready_cli = Some(cli.clone());
         Ok(cli)
     }
 
-    fn version_dir(&self) -> PathBuf {
-        self.tool_dir.join(&self.releases.agent_browser.version)
-    }
-
-    pub fn cli_directory(&self) -> anyhow::Result<PathBuf> {
-        Ok(self.version_dir().join(platform()?))
+    pub fn bin_dir(&self) -> PathBuf {
+        self.tool.bin_dir()
     }
 
     pub fn skills_directory(&self) -> PathBuf {
-        self.version_dir().join("skill-data")
-    }
-
-    async fn install(&self) -> anyhow::Result<PathBuf> {
-        let release = &self.releases.agent_browser;
-        let asset = release
-            .platforms
-            .get(platform()?)
-            .context("missing pinned release")?;
-        let directory = self.cli_directory()?;
-        tokio::fs::create_dir_all(&directory).await?;
-        let _lock = acquire_lock(self.version_dir().join(INSTALL_LOCK)).await?;
-        let cli = directory.join(if cfg!(windows) {
-            "agent-browser.exe"
-        } else {
-            "agent-browser"
-        });
-        if !verified_file(&cli, &asset.checksum).await? {
-            let url = format!(
-                "https://github.com/{}/releases/download/{}/{}",
-                release.repository, release.tag, asset.asset
-            );
-            download_atomic(&self.client, &url, &asset.checksum, &cli).await?;
-        }
-        self.ensure_skills().await?;
-        lease_version(&self.lease, &self.version_dir()).await;
-        let tool_dir = self.tool_dir.clone();
-        let current = release.version.clone();
-        if let Err(error) =
-            tokio::task::spawn_blocking(move || prune_versions(&tool_dir, &current)).await
-        {
-            tracing::warn!("Old agent-browser cleanup failed: {error}");
-        }
-        Ok(cli)
+        self.tool.version_dir().join("skill-data")
     }
 
     /// The native CLI doesn't embed its skills, so `agent-browser skills get <name>` reads them
     /// from the release's source tree.
     async fn ensure_skills(&self) -> anyhow::Result<()> {
         let destination = self.skills_directory();
+        let version_dir = self.tool.version_dir();
+        let _lock = acquire_lock(version_dir.join(INSTALL_LOCK)).await?;
         if destination.join("core/SKILL.md").is_file() {
             return Ok(());
         }
-        let archive_path = self.version_dir().join("source.tar.gz");
-        let release = &self.releases.skill_data;
-        download_atomic(&self.client, &release.url, &release.checksum, &archive_path).await?;
+        let archive_path = version_dir.join("source.tar.gz");
+        let asset = &self.skill_data;
+        download_atomic(
+            self.tool.client(),
+            &asset.url,
+            &asset.checksum,
+            &archive_path,
+        )
+        .await?;
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let temporary =
                 tempfile::tempdir_in(destination.parent().context("skills directory")?)?;
@@ -154,7 +132,7 @@ impl BrowserInstaller {
         {
             return Ok(());
         }
-        let _lock = acquire_lock(self.tool_dir.join("chromium-install.lock")).await?;
+        let _lock = acquire_lock(self.chromium_lock.clone()).await?;
         if chromium_installed(cli).await? {
             return Ok(());
         }
@@ -204,44 +182,12 @@ async fn run(command: &mut Command) -> anyhow::Result<Output> {
     Ok(output)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Releases {
-    agent_browser: Release,
-    skill_data: SkillRelease,
-}
-
-#[derive(Deserialize)]
-struct SkillRelease {
-    url: String,
-    #[serde(flatten)]
-    checksum: Checksum,
-}
-
-#[derive(Deserialize)]
-struct Release {
-    version: String,
-    repository: String,
-    tag: String,
-    platforms: BTreeMap<String, ReleaseAsset>,
-}
-
-#[derive(Deserialize)]
-struct ReleaseAsset {
-    asset: String,
-    #[serde(flatten)]
-    checksum: Checksum,
-}
-
-fn platform() -> anyhow::Result<&'static str> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => Ok("darwin-arm64"),
-        ("macos", "x86_64") => Ok("darwin-x64"),
-        ("linux", "aarch64") => Ok("linux-musl-arm64"),
-        ("linux", "x86_64") => Ok("linux-musl-x64"),
-        ("windows", "x86_64" | "aarch64") => Ok("win32-x64"),
-        (os, arch) => bail!("No pinned agent-browser release for {os}/{arch}"),
-    }
+/// Each release asset is the bare CLI.
+fn unpack(download: &Path, bin: &Path) -> anyhow::Result<()> {
+    let cli = bin.join(CLI);
+    std::fs::copy(download, &cli)?;
+    set_executable(&cli)?;
+    Ok(())
 }
 
 #[cfg(test)]

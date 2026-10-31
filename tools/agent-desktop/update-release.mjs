@@ -2,8 +2,7 @@
 // in releases.json. Each archive must match GitHub's size and digest and hold the CLI at its root.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,50 +50,39 @@ if (release.prerelease || release.draft) {
 
 const version = release.tag_name.replace(/^v/, '');
 
-const scratch = await mkdtemp(join(tmpdir(), 'agent-desktop-'));
-
 const platforms = {};
 
-try {
-	for (const [platform, target] of Object.entries(TARGETS)) {
-		const name = `agent-desktop-${release.tag_name}-${target}.tar.gz`;
-		const published = release.assets.find((asset) => asset.name === name);
+for (const [platform, target] of Object.entries(TARGETS)) {
+	const name = `agent-desktop-${release.tag_name}-${target}.tar.gz`;
+	const published = release.assets.find((asset) => asset.name === name);
 
-		if (!published) {
-			throw new Error(`agent-desktop ${release.tag_name} has no ${name} asset`);
-		}
-
-		const url = `https://github.com/${REPOSITORY}/releases/download/${release.tag_name}/${name}`;
-		const bytes = Buffer.from(await (await fetchOk(url)).arrayBuffer());
-		const sha256 = createHash('sha256').update(bytes).digest('hex');
-
-		if (bytes.length !== published.size || published.digest !== `sha256:${sha256}`) {
-			throw new Error(`Downloaded ${name} does not match the published size or digest`);
-		}
-
-		const archive = join(scratch, name);
-		await writeFile(archive, bytes);
-		const cli = platform.startsWith('win32') ? 'agent-desktop.exe' : 'agent-desktop';
-
-		const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' })
-			.split('\n')
-			.map((entry) => entry.replace(/^\.\//, ''))
-			.filter((entry) => entry && !entry.endsWith('/'));
-
-		// The host installs only top-level files.
-		if (!entries.includes(cli) || entries.some((entry) => entry.includes('/'))) {
-			throw new Error(`${name} must hold ${cli} and only top-level files`);
-		}
-
-		platforms[platform] = { url, bytes: bytes.length, sha256 };
+	if (!published) {
+		throw new Error(`agent-desktop ${release.tag_name} has no ${name} asset`);
 	}
-} finally {
-	await rm(scratch, { recursive: true, force: true });
+
+	const url = `https://github.com/${REPOSITORY}/releases/download/${release.tag_name}/${name}`;
+	const bytes = Buffer.from(await (await fetchOk(url)).arrayBuffer());
+	const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+	if (bytes.length !== published.size || published.digest !== `sha256:${sha256}`) {
+		throw new Error(`Downloaded ${name} does not match the published size or digest`);
+	}
+
+	const cli = platform.startsWith('win32') ? 'agent-desktop.exe' : 'agent-desktop';
+
+	const entries = execFileSync('tar', ['-tzf', '-'], { input: bytes, encoding: 'utf8' })
+		.split('\n')
+		.map((entry) => entry.replace(/^\.\//, ''))
+		.filter((entry) => entry && !entry.endsWith('/'));
+
+	// The host installs only top-level files.
+	if (!entries.includes(cli) || entries.some((entry) => entry.includes('/'))) {
+		throw new Error(`${name} must hold ${cli} and only top-level files`);
+	}
+
+	platforms[platform] = { url, bytes: bytes.length, sha256 };
 }
 
-await writeFile(
-	releasesPath,
-	`${JSON.stringify({ agentDesktop: { version, platforms } }, null, '\t')}\n`
-);
+await writeFile(releasesPath, `${JSON.stringify({ version, platforms }, null, '\t')}\n`);
 
 console.log(`Pinned agent-desktop ${version}.`);

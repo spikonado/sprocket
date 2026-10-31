@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const FRONTMATTER = `---
@@ -14,34 +14,11 @@ description: Browser automation CLI. Use for website interaction, Electron app a
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-const releases = JSON.parse(
-	await readFile(join(root, 'tools/agent-browser/releases.json'), 'utf8')
-);
-
-const release = releases.agentBrowser;
+const release = JSON.parse(await readFile(join(root, 'tools/agent-browser/releases.json'), 'utf8'));
 
 const cache = join(root, 'node_modules/.cache/sprocket-agent-browser', release.version);
 
 const skillPath = join(root, 'crates/sprocket-workspace/skills/agent-browser/SKILL.md');
-
-function platformKey() {
-	const keys = {
-		'darwin-arm64': 'darwin-arm64',
-		'darwin-x64': 'darwin-x64',
-		'linux-arm64': 'linux-musl-arm64',
-		'linux-x64': 'linux-musl-x64',
-		'win32-x64': 'win32-x64',
-		'win32-arm64': 'win32-x64'
-	};
-
-	const key = keys[`${process.platform}-${process.arch}`];
-
-	if (!key) {
-		throw new Error(`No pinned agent-browser release for ${process.platform}/${process.arch}`);
-	}
-
-	return key;
-}
 
 function matches(bytes, asset) {
 	const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -61,7 +38,7 @@ async function readIfExists(path) {
 	}
 }
 
-async function cached(name, url, asset) {
+async function cached(name, asset) {
 	const path = join(cache, name);
 	const existing = await readIfExists(path);
 
@@ -69,16 +46,16 @@ async function cached(name, url, asset) {
 		return path;
 	}
 
-	const response = await fetch(url);
+	const response = await fetch(asset.url);
 
 	if (!response.ok) {
-		throw new Error(`Download failed for ${url}: ${response.status}`);
+		throw new Error(`Download failed for ${asset.url}: ${response.status}`);
 	}
 
 	const bytes = Buffer.from(await response.arrayBuffer());
 
 	if (!matches(bytes, asset)) {
-		throw new Error(`Pinned release size or SHA256 mismatch for ${url}`);
+		throw new Error(`Pinned release size or SHA256 mismatch for ${asset.url}`);
 	}
 
 	await mkdir(cache, { recursive: true });
@@ -89,15 +66,15 @@ async function cached(name, url, asset) {
 	return path;
 }
 
-const asset = release.platforms[platformKey()];
+const asset = release.platforms[`${process.platform}-${process.arch}`];
 
-const cli = await cached(
-	asset.asset,
-	`https://github.com/${release.repository}/releases/download/${release.tag}/${asset.asset}`,
-	asset
-);
+if (!asset) {
+	throw new Error(`No pinned agent-browser release for ${process.platform}/${process.arch}`);
+}
 
-const archive = await cached('source.tar.gz', releases.skillData.url, releases.skillData);
+const cli = await cached(basename(asset.url), asset);
+
+const archive = await cached('source.tar.gz', release.skillData);
 
 const source = await mkdtemp(join(cache, 'source-'));
 
