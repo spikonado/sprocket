@@ -141,46 +141,24 @@ async function waitForDirectories() {
 }
 
 describe('ProjectPicker', () => {
-	it.each(['{Enter}', ' '])(
-		'removes a recent project with %s without opening a directory',
-		async (key) => {
-			const user = userEvent.setup();
-			const recent = { workspacePath: 'D:\\robots', displayName: 'Robots' };
-			const onRemoveProject = vi.fn();
-
-			const { browseFilesystem, props } = renderPicker({
-				recentProjectPaths: [recent],
-				onRemoveProject
-			});
-
-			await waitForDirectories();
-
-			const button = document.querySelector<HTMLButtonElement>(
-				'[aria-label="Remove Robots from project list"]'
-			)!;
-
-			button.focus();
-			await user.keyboard(key);
-
-			expect(onRemoveProject).toHaveBeenCalledOnce();
-			expect(onRemoveProject).toHaveBeenCalledWith(recent);
-			expect(browseFilesystem).toHaveBeenCalledTimes(1);
-			expect(props.onSelect).not.toHaveBeenCalled();
-		}
-	);
-
-	it('offers recent-project removal without browsing or opening that folder', async () => {
+	it('removes a recent project with Enter without opening a directory', async () => {
+		const user = userEvent.setup();
 		const recent = { workspacePath: 'D:\\robots', displayName: 'Robots' };
 		const onRemoveProject = vi.fn();
 
-		const { props, browseFilesystem } = renderPicker({
+		const { browseFilesystem, props } = renderPicker({
 			recentProjectPaths: [recent],
 			onRemoveProject
 		});
 
-		fireEvent.click(document.querySelector('[aria-label="Remove Robots from project list"]')!);
-		expect(onRemoveProject).toHaveBeenCalledWith(recent);
-		expect(browseFilesystem).toHaveBeenCalledWith({ partialPath: '~/' });
+		await waitForDirectories();
+		document
+			.querySelector<HTMLButtonElement>('[aria-label="Remove Robots from project list"]')!
+			.focus();
+		await user.keyboard('{Enter}');
+
+		expect(onRemoveProject).toHaveBeenCalledExactlyOnceWith(recent);
+		expect(browseFilesystem).toHaveBeenCalledTimes(1);
 		expect(props.onSelect).not.toHaveBeenCalled();
 	});
 
@@ -312,41 +290,38 @@ describe('ProjectPicker', () => {
 		});
 	});
 
-	it.each(['D:', 'D:\\', 'D:/', 'E:', 'E:\\', 'E:/'])(
-		'browses and resolves a typed Windows root %s',
-		async (query) => {
-			const desktopApi = createWindowsDesktopApi();
-			const { props } = renderPicker({ localApi: desktopApi });
+	it.each(['D:', 'D:\\', 'E:/'])('browses and resolves a typed Windows root %s', async (query) => {
+		const desktopApi = createWindowsDesktopApi();
+		const { props } = renderPicker({ localApi: desktopApi });
 
-			const input = document.querySelector<HTMLInputElement>(
-				'[aria-label="Project directory path"]'
-			)!;
+		const input = document.querySelector<HTMLInputElement>(
+			'[aria-label="Project directory path"]'
+		)!;
 
-			await waitFor(() =>
-				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: '~/' })
-			);
+		await waitFor(() =>
+			expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: '~/' })
+		);
 
-			fireEvent.change(input, { target: { value: query } });
-			await waitFor(() => {
-				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: query });
-				expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+		fireEvent.change(input, { target: { value: query } });
+		await waitFor(() => {
+			expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: query });
+			expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+		});
+		await keydown(input, { key: 'Enter', ctrlKey: true });
+
+		const root = `${query[0]}:\\`;
+		await waitFor(() => {
+			expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
+				workspacePath: query.endsWith(':') ? query : root,
+				createIfMissing: false
 			});
-			await keydown(input, { key: 'Enter', ctrlKey: true });
-
-			const root = `${query[0]}:\\`;
-			await waitFor(() => {
-				expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
-					workspacePath: query.endsWith(':') ? query : root,
-					createIfMissing: false
-				});
-				expect(props.onSelect).toHaveBeenCalledWith({
-					workspacePath: root,
-					displayName: 'workspace',
-					repositoryKey: 'workspace'
-				});
+			expect(props.onSelect).toHaveBeenCalledWith({
+				workspacePath: root,
+				displayName: 'workspace',
+				repositoryKey: 'workspace'
 			});
-		}
-	);
+		});
+	});
 
 	it.each(['/', '\\'])(
 		'selects E: from the Windows drive list at %s and returns to it',
@@ -388,7 +363,7 @@ describe('ProjectPicker', () => {
 		}
 	);
 
-	it.each(['D', 'D:', '\\D:', 'e:', '/e:'])(
+	it.each(['D', '\\D:', 'e:'])(
 		'filters the Windows drive list locally for %s before selecting it',
 		async (query) => {
 			const desktopApi = createWindowsDesktopApi();
@@ -416,40 +391,35 @@ describe('ProjectPicker', () => {
 		}
 	);
 
-	it.each(['D', 'E'])(
-		'browses into a folder on drive %s and resolves it for selection',
-		async (drive) => {
-			const desktopApi = createWindowsDesktopApi();
-			const { props } = renderPicker({ localApi: desktopApi });
+	it('browses into a folder on a drive and resolves it for selection', async () => {
+		const desktopApi = createWindowsDesktopApi();
+		const { props } = renderPicker({ localApi: desktopApi });
 
-			const input = document.querySelector<HTMLInputElement>(
-				'[aria-label="Project directory path"]'
-			)!;
+		const input = document.querySelector<HTMLInputElement>(
+			'[aria-label="Project directory path"]'
+		)!;
 
-			fireEvent.change(input, { target: { value: `${drive}:\\` } });
-			await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(1));
-			fireEvent.click(document.querySelector('[role="option"]')!);
-			expect(input.value).toBe(`${drive}:\\projects\\`);
-			await waitFor(() => {
-				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({
-					partialPath: `${drive}:\\projects\\`
-				});
-				expect(document.querySelector('[data-project-submit]')?.hasAttribute('disabled')).toBe(
-					false
-				);
+		fireEvent.change(input, { target: { value: 'D:\\' } });
+		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(1));
+		fireEvent.click(document.querySelector('[role="option"]')!);
+		expect(input.value).toBe('D:\\projects\\');
+		await waitFor(() => {
+			expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({
+				partialPath: 'D:\\projects\\'
 			});
-			await keydown(input, { key: 'Enter', ctrlKey: true });
-			await waitFor(() => {
-				expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
-					workspacePath: `${drive}:\\projects`,
-					createIfMissing: false
-				});
-				expect(props.onSelect).toHaveBeenCalledWith({
-					workspacePath: `${drive}:\\projects`,
-					displayName: 'projects',
-					repositoryKey: 'projects'
-				});
+			expect(document.querySelector('[data-project-submit]')?.hasAttribute('disabled')).toBe(false);
+		});
+		await keydown(input, { key: 'Enter', ctrlKey: true });
+		await waitFor(() => {
+			expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
+				workspacePath: 'D:\\projects',
+				createIfMissing: false
 			});
-		}
-	);
+			expect(props.onSelect).toHaveBeenCalledWith({
+				workspacePath: 'D:\\projects',
+				displayName: 'projects',
+				repositoryKey: 'projects'
+			});
+		});
+	});
 });

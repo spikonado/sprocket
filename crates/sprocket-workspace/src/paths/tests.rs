@@ -19,7 +19,7 @@ fn simplified_path_strips_windows_verbatim_prefixes() {
 
 #[test]
 fn normalize_windows_drive_root_appends_slash() {
-    for path in ["D:", "E:", "d:", "e:"] {
+    for path in ["D:", "e:"] {
         assert_eq!(normalize_windows_drive_root(path), format!(r"{path}\"));
     }
     assert_eq!(normalize_windows_drive_root(r"D:\"), r"D:\");

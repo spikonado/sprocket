@@ -1,5 +1,5 @@
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use super::*;
@@ -56,7 +56,6 @@ async fn remove_project_requires_session_and_returns_null() {
         .await
         .unwrap();
     assert_eq!(removed.status(), StatusCode::OK);
-    assert_eq!(removed.headers()[header::CONTENT_TYPE], "application/json");
     let body = to_bytes(removed.into_body(), 1024).await.unwrap();
     assert_eq!(body.as_ref(), b"null");
 

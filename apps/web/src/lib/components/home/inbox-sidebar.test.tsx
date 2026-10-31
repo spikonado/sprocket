@@ -7,7 +7,6 @@ import { INBOX_STATES } from '@convex/lib/inboxState';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { LinkedPullRequest } from '@convex/lib/validators';
 import InboxSidebar, { type SidebarChildrenResolver } from './inbox-sidebar';
-import RemoveProjectDialog from './remove-project-dialog';
 import type {
 	ThreadTreeSummary,
 	ThreadTreeSummaryRead,
@@ -166,31 +165,13 @@ it('settles an idle thread without offering snooze actions', async () => {
 	expect(document.querySelector('.inbox-notice')).toBeNull();
 });
 
-it('offers removal from the project filter without selecting or settling threads', async () => {
+it('removes a project from the project filter without filtering by it', async () => {
 	const input = { ...props([thread()]), onRemoveProject: vi.fn() };
 	const view = renderView(<Harness {...input} />);
 	fireEvent.click(view.getByText('All projects', { selector: 'summary span' }));
 	fireEvent.click(view.getByRole('button', { name: 'Remove Repository from project list' }));
 	expect(input.onRemoveProject).toHaveBeenCalledWith(input.projects[0]);
 	expect(input.onFilter).not.toHaveBeenCalled();
-	expect(input.onChange).not.toHaveBeenCalled();
-});
-
-it('does not run inbox shortcuts while project removal is open', async () => {
-	const input = props([thread()]);
-	const user = userEvent.setup();
-	renderView(
-		<>
-			<Harness {...input} />
-			<RemoveProjectDialog project={input.projects[0]} onClose={vi.fn()} onRemove={vi.fn()} />
-		</>
-	);
-
-	await user.keyboard('{Alt>}n{/Alt}');
-	await user.keyboard('{Alt>}{ArrowDown}{/Alt}');
-	expect(input.onNew).not.toHaveBeenCalled();
-	expect(input.onSelect).not.toHaveBeenCalled();
-	expect(document.activeElement?.textContent).toBe('Cancel');
 });
 
 it('renders simple navigation and a collapsible settled section', async () => {

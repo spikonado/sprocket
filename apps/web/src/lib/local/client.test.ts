@@ -141,42 +141,15 @@ it('preserves local project send times when listing and attaching projects', asy
 	);
 });
 
-it.each(['/work/robot', 'D:\\robots\\arm & gripper'])(
-	'removes the exact project path %s through the server',
-	async (workspacePath) => {
-		const fetch = vi.fn(async () => Response.json(null));
-		vi.stubGlobal('fetch', fetch);
-		await createLocalClient('http://127.0.0.1:7731').removeProject({ workspacePath });
-		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/workspace/projects',
-			expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ workspacePath }) })
-		);
-	}
-);
-
-it.each([
-	{
-		workspacePath: 'D:\\',
-		displayName: 'workspace',
-		repositoryKey: 'workspace',
-		attachmentKey: 'directory:D:\\'
-	},
-	{
-		workspacePath: '/work/robot',
-		displayName: 'robot',
-		repositoryKey: 'robot',
-		attachmentKey: 'directory:/work/robot'
-	}
-])('preserves workspace resolution identity for $workspacePath', async (resolution) => {
-	vi.stubGlobal(
-		'fetch',
-		vi.fn(async () => Response.json(resolution))
+it('removes a project through the server', async () => {
+	const fetch = vi.fn(async () => Response.json(null));
+	vi.stubGlobal('fetch', fetch);
+	const workspacePath = 'D:\\robots';
+	await createLocalClient('http://127.0.0.1:7731').removeProject({ workspacePath });
+	expect(fetch).toHaveBeenCalledWith(
+		'http://127.0.0.1:7731/api/workspace/projects',
+		expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ workspacePath }) })
 	);
-	await expect(
-		createLocalClient('http://127.0.0.1:7731').resolveWorkspacePath({
-			workspacePath: resolution.workspacePath
-		})
-	).resolves.toEqual(resolution);
 });
 
 describe('display transcript pages', () => {

@@ -425,12 +425,6 @@ export default function InboxSidebar({
 		(event: KeyboardEvent) => {
 			if (event.defaultPrevented) return;
 
-			if (
-				event.target instanceof Element &&
-				event.target.closest('dialog, [role="dialog"][aria-modal="true"]')
-			)
-				return;
-
 			if (event.key === 'Escape') {
 				if (menu) closeMenu();
 
