@@ -9,6 +9,7 @@ import type {
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
+import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
@@ -304,7 +305,7 @@ function parseLiveCompletionOverlay(
 		runStatus: live.runStatus,
 		streamId: live.streamId,
 		text: live.text,
-		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
+		// SAFETY: overlay parts match AssistantPart; the local event payload is produced by the hub.
 		parts: live.parts as AssistantPart[]
 	};
 }
@@ -433,6 +434,7 @@ async function establishLocalSession(baseUrl: string) {
 export function createLocalClient(baseUrl: string): LocalApi {
 	const transport = createLocalTransport(baseUrl);
 	const { request } = transport;
+	const socket = localSocket(baseUrl);
 
 	return {
 		fetchBrowserStatus: (signal) =>
@@ -574,27 +576,24 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
 		watchTranscript: async (requestBody, handlers) => {
-			await transport.postEventStream(
-				'/api/transcript/watch',
-				requestBody,
+			await socket.subscribe(
+				{ kind: 'transcript', params: requestBody },
+				transcriptWatchEventSchema.nullable().catch(null),
 				handlers.signal,
-				(data) => {
-					const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
-
-					if (parsed.success) {
-						handlers.onEvent(parsed.data);
-					}
+				(event) => {
+					if (event) handlers.onEvent(event);
 				}
 			);
 		},
 		watchLiveCompletion: async (requestBody, handlers) => {
-			await transport.postEventStream('/api/agent/live', requestBody, handlers.signal, (data) => {
-				const parsed = liveCompletionWatchEventSchema.safeParse(JSON.parse(data));
-
-				if (parsed.success) {
-					handlers.onEvent(parseLiveCompletionWatchEvent(parsed.data));
+			await socket.subscribe(
+				{ kind: 'liveCompletion', params: requestBody },
+				liveCompletionWatchEventSchema.nullable().catch(null),
+				handlers.signal,
+				(event) => {
+					if (event) handlers.onEvent(parseLiveCompletionWatchEvent(event));
 				}
-			});
+			);
 		},
 		clearTranscriptReplica: async (requestBody) => {
 			await transport.response('/api/transcript/clear', {
@@ -665,13 +664,12 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchArtifacts: async (requestBody, handlers) => {
-			await transport.postEventStream(
-				'/api/artifacts/watch',
-				requestBody,
+			await socket.subscribe(
+				{ kind: 'artifacts', params: requestBody },
+				artifactsWatchEventSchema,
 				handlers.signal,
-				(data) => {
-					const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
-					handlers.onEvent(parseArtifactsWatchEvent(parsed));
+				(event) => {
+					handlers.onEvent(parseArtifactsWatchEvent(event));
 				}
 			);
 		},

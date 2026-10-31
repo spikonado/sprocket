@@ -267,22 +267,22 @@ async fn unbound_remote_session_cannot_open_the_auth_event_stream() {
         .bootstrap_browser_session(false)
         .await
         .expect("remote session");
-    let app = router(state);
+    let mut headers = HeaderMap::new();
+    headers.insert(header::HOST, "machine.tailnet.ts.net".parse().unwrap());
+    headers.insert(
+        header::ORIGIN,
+        "https://machine.tailnet.ts.net".parse().unwrap(),
+    );
+    headers.insert(
+        header::COOKIE,
+        session_cookie(&remote_session).parse().unwrap(),
+    );
 
-    let response = app
-        .oneshot(with_peer(
-            Request::builder()
-                .uri("/api/auth/changes")
-                .header(header::HOST, "machine.tailnet.ts.net")
-                .header(header::ORIGIN, "https://machine.tailnet.ts.net")
-                .header(header::COOKIE, session_cookie(&remote_session))
-                .body(Body::empty())
-                .unwrap(),
-            loopback_peer(),
-        ))
+    let rejected = session_change_events(&state, &headers, &CookieJar::from_headers(&headers))
         .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        .err()
+        .expect("unbound remote session is rejected");
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

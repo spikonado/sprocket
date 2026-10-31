@@ -1,13 +1,11 @@
-use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use futures::StreamExt;
-use futures::stream::{self, unfold};
+use futures::stream::{self, BoxStream, unfold};
 use serde::Deserialize;
 use sprocket_host::Host;
 use sprocket_host::agent_launch::{AgentLaunchRequest, LaunchError, WorkspaceAccess, launch_agent};
@@ -28,7 +26,6 @@ impl UserScoped for AgentLaunchRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/agent/run", post(run_agent_handler))
-        .route("/agent/live", post(live_handler))
         .route("/agent/commands", post(commands_handler))
         .route("/agent/commands/terminate", post(terminate_command_handler))
 }
@@ -144,7 +141,7 @@ pub(crate) async fn launch_run(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LiveCompletionWatchRequest {
+pub(crate) struct LiveCompletionWatchRequest {
     user_id: String,
     thread_id: String,
 }
@@ -155,64 +152,50 @@ impl UserScoped for LiveCompletionWatchRequest {
     }
 }
 
-struct LiveSseStream {
+struct LiveStream {
     receiver: broadcast::Receiver<LiveCompletionWatchEvent>,
     hub: Arc<LiveCompletionHub>,
     thread_id: String,
 }
 
-async fn live_handler(
-    State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<LiveCompletionWatchRequest>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+/// Callers must authorize `payload.user_id` first.
+pub(crate) fn live_events(
+    state: &AppState,
+    payload: LiveCompletionWatchRequest,
+) -> BoxStream<'static, LiveCompletionWatchEvent> {
     let hub = Arc::clone(&state.host.live_completions);
     let subscription = hub.subscribe(&payload.thread_id);
-    let snapshot = encode_live_event(match subscription.snapshot {
-        Some(live) => LiveCompletionWatchEvent::Updated { live },
-        None => LiveCompletionWatchEvent::Cleared,
-    });
+    let snapshot = snapshot_event(subscription.snapshot);
     let rest = unfold(
-        LiveSseStream {
+        LiveStream {
             receiver: subscription.receiver,
             hub,
             thread_id: payload.thread_id,
         },
-        |state| async move { next_live_event(state).await },
+        next_live_event,
     );
-    let stream = stream::iter(snapshot).chain(rest);
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    stream::iter([snapshot]).chain(rest).boxed()
 }
 
-async fn next_live_event(
-    mut state: LiveSseStream,
-) -> Option<(Result<Event, Infallible>, LiveSseStream)> {
-    loop {
-        match state.receiver.recv().await {
-            Ok(event) => {
-                if let Some(encoded) = encode_live_event(event) {
-                    return Some((encoded, state));
-                }
-            }
-            Err(broadcast::error::RecvError::Lagged(_)) => {
-                // Resubscribe so buffered events older than the snapshot
-                // (including a prior Cleared) are not replayed after catch-up.
-                let subscription = state.hub.subscribe(&state.thread_id);
-                state.receiver = subscription.receiver;
-                let event = match subscription.snapshot {
-                    Some(live) => LiveCompletionWatchEvent::Updated { live },
-                    None => LiveCompletionWatchEvent::Cleared,
-                };
-                if let Some(encoded) = encode_live_event(event) {
-                    return Some((encoded, state));
-                }
-            }
-            Err(broadcast::error::RecvError::Closed) => return None,
+async fn next_live_event(mut state: LiveStream) -> Option<(LiveCompletionWatchEvent, LiveStream)> {
+    match state.receiver.recv().await {
+        Ok(event) => Some((event, state)),
+        Err(broadcast::error::RecvError::Lagged(_)) => {
+            // Resubscribe so buffered events older than the snapshot
+            // (including a prior Cleared) are not replayed after catch-up.
+            let subscription = state.hub.subscribe(&state.thread_id);
+            state.receiver = subscription.receiver;
+            Some((snapshot_event(subscription.snapshot), state))
         }
+        Err(broadcast::error::RecvError::Closed) => None,
     }
 }
 
-fn encode_live_event(event: LiveCompletionWatchEvent) -> Option<Result<Event, Infallible>> {
-    Event::default().json_data(event).ok().map(Ok)
+fn snapshot_event(snapshot: Option<LiveCompletionOverlay>) -> LiveCompletionWatchEvent {
+    match snapshot {
+        Some(live) => LiveCompletionWatchEvent::Updated { live },
+        None => LiveCompletionWatchEvent::Cleared,
+    }
 }
 
 #[cfg(test)]

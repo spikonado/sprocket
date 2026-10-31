@@ -1,14 +1,12 @@
-use std::convert::Infallible;
-
 use anyhow::anyhow;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use futures::stream::unfold;
+use futures::StreamExt;
+use futures::stream::{BoxStream, unfold};
 use serde::Deserialize;
 use sprocket_transcript::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
 use tokio::sync::broadcast;
@@ -21,7 +19,7 @@ use sprocket_host::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TranscriptScope {
+pub(crate) struct TranscriptScope {
     user_id: String,
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
@@ -87,7 +85,6 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/transcript/display", post(display_handler))
         .route("/transcript/display-details", post(display_details_handler))
-        .route("/transcript/watch", post(watch_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
         .route(
@@ -242,38 +239,31 @@ async fn display_details_handler(
         .map_err(ApiError::internal)
 }
 
-async fn watch_handler(
-    State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<TranscriptScope>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+/// Callers must authorize `payload.user_id` first.
+pub(crate) async fn watch_events(
+    state: &AppState,
+    payload: TranscriptScope,
+) -> BoxStream<'static, TranscriptWatchEvent> {
     let session = state
         .host
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
         .await;
-    let stream = unfold(session, |mut session| async move {
-        loop {
-            match session.receiver().recv().await {
-                Ok(event) => {
-                    return encode_watch_event(event).map(|event| (event, session));
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let event = TranscriptWatchEvent {
-                        event_type: "updated",
-                        total_parts: None,
-                        stale: false,
-                    };
-                    return encode_watch_event(event).map(|event| (event, session));
-                }
-                Err(broadcast::error::RecvError::Closed) => return None,
+    unfold(session, |mut session| async move {
+        match session.receiver().recv().await {
+            Ok(event) => Some((event, session)),
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                let event = TranscriptWatchEvent {
+                    event_type: "updated",
+                    total_parts: None,
+                    stale: false,
+                };
+                Some((event, session))
             }
+            Err(broadcast::error::RecvError::Closed) => None,
         }
-    });
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
-}
-
-fn encode_watch_event(event: TranscriptWatchEvent) -> Option<Result<Event, Infallible>> {
-    Event::default().json_data(event).ok().map(Ok)
+    })
+    .boxed()
 }
 
 async fn clear_handler(

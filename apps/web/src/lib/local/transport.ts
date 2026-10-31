@@ -1,7 +1,4 @@
-import type { ArtifactsWatchRequest, TranscriptScopeRequest } from '$lib/types/sprocket';
 import { z } from 'zod';
-
-type LocalWatchRequest = TranscriptScopeRequest | ArtifactsWatchRequest;
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 
@@ -84,64 +81,6 @@ async function requireSuccessfulResponse(response: Response, baseUrl: string): P
 	return response;
 }
 
-function eventData(block: string): string | null {
-	const data = block
-		.split('\n')
-		.map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line))
-		.filter((line) => line === 'data' || line.startsWith('data:'))
-		.map((line) => (line === 'data' ? '' : line.slice(5).replace(/^ /, '')));
-
-	return data.length > 0 ? data.join('\n') : null;
-}
-
-export async function readEventStream(
-	response: Response,
-	signal: AbortSignal,
-	onData: (data: string) => void
-): Promise<void> {
-	if (!response.body) {
-		return;
-	}
-
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = '';
-	const cancel = () => void reader.cancel(signal.reason).catch(() => undefined);
-	signal.addEventListener('abort', cancel, { once: true });
-
-	try {
-		while (!signal.aborted) {
-			const { done, value } = await reader.read();
-			buffer += decoder.decode(value, { stream: !done });
-
-			let match = /\r?\n\r?\n/.exec(buffer);
-
-			while (match) {
-				const data = eventData(buffer.slice(0, match.index));
-				buffer = buffer.slice(match.index + match[0].length);
-
-				if (data !== null && !signal.aborted) {
-					onData(data);
-				}
-
-				match = /\r?\n\r?\n/.exec(buffer);
-			}
-
-			if (done) {
-				break;
-			}
-		}
-	} catch (error) {
-		if (!signal.aborted) {
-			throw error;
-		}
-	} finally {
-		signal.removeEventListener('abort', cancel);
-		await reader.cancel().catch(() => undefined);
-		reader.releaseLock();
-	}
-}
-
 export function createLocalTransport(baseUrl: string) {
 	async function fetchLocal(pathname: string, init?: RequestInit): Promise<Response> {
 		return await fetch(`${baseUrl}${pathname}`, {
@@ -167,24 +106,6 @@ export function createLocalTransport(baseUrl: string) {
 
 		async response(pathname: string, init?: RequestInit): Promise<Response> {
 			return await requireSuccessfulResponse(await fetchLocal(pathname, init), baseUrl);
-		},
-
-		async postEventStream(
-			pathname: string,
-			requestBody: LocalWatchRequest,
-			signal: AbortSignal,
-			onData: (data: string) => void
-		): Promise<void> {
-			const response = await requireSuccessfulResponse(
-				await fetchLocal(pathname, {
-					method: 'POST',
-					body: JSON.stringify(requestBody),
-					signal
-				}),
-				baseUrl
-			);
-
-			await readEventStream(response, signal, onData);
 		}
 	};
 }

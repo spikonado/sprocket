@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { api } from '@convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { ensureLocalSession, resolveLocalApiBaseUrl } from '$lib/local/client';
+import { localSocket } from '$lib/local/socket';
+import { LocalResponseError } from '$lib/local/transport';
 import { createStore, selectStore } from './store';
 
 export type AuthUser = Pick<User, 'id' | 'email' | 'firstName' | 'lastName' | 'profilePictureUrl'>;
@@ -86,12 +88,16 @@ export type AuthRuntime = {
 	createAuthKitClient: (...args: Parameters<typeof createClient>) => Promise<AuthClient>;
 	resolveLocalApiBaseUrl: () => string | null;
 	ensureLocalSession: (baseUrl: string) => Promise<void>;
+	/** Calls `onChange` on subscribe and after each sign-in or sign-out on the machine. */
+	watchAuthChanges: (baseUrl: string, signal: AbortSignal, onChange: () => void) => Promise<void>;
 };
 
 const productionAuthRuntime: AuthRuntime = {
 	createAuthKitClient: createClient,
 	resolveLocalApiBaseUrl,
-	ensureLocalSession
+	ensureLocalSession,
+	watchAuthChanges: (baseUrl, signal, onChange) =>
+		localSocket(baseUrl).subscribe({ kind: 'authChanges' }, z.number(), signal, onChange)
 };
 
 let authRuntime: AuthRuntime = productionAuthRuntime;
@@ -120,7 +126,7 @@ let desktopLoginStartQueue: Promise<void> = Promise.resolve();
 
 let authGeneration = 0;
 
-let nativeAuthEvents: EventSource | null = null;
+let nativeAuthWatch: AbortController | null = null;
 
 let nativeTokenInflight: {
 	generation: number;
@@ -129,8 +135,8 @@ let nativeTokenInflight: {
 } | null = null;
 
 export function resetAuthRuntime() {
-	nativeAuthEvents?.close();
-	nativeAuthEvents = null;
+	nativeAuthWatch?.abort();
+	nativeAuthWatch = null;
 	clearConvexRecovery();
 	desktopSignInAttempt?.abort.abort();
 	desktopSignInAttempt = null;
@@ -420,15 +426,35 @@ export async function initializeAuth(
 }
 
 function watchNativeAuthentication() {
-	if (nativeAuthEvents || !globalThis.EventSource) return;
-	const events = new EventSource('/api/auth/changes');
-	nativeAuthEvents = events;
-	events.onmessage = () => {
-		if (nativeAuthEvents !== events || isSigningOut) return;
+	const baseUrl = authRuntime.resolveLocalApiBaseUrl();
+
+	if (nativeAuthWatch || !baseUrl) return;
+	const watch = new AbortController();
+	nativeAuthWatch = watch;
+
+	const onChange = () => {
+		if (nativeAuthWatch !== watch || isSigningOut) return;
 		invalidateAuthGeneration();
 		const generation = authGeneration;
 		void initializeInstalledAuth(generation);
 	};
+
+	void (async () => {
+		while (!watch.signal.aborted) {
+			try {
+				await authRuntime.watchAuthChanges(baseUrl, watch.signal, onChange);
+			} catch (error) {
+				// The server rejected this session; the next auth initialization subscribes again.
+				if (error instanceof LocalResponseError) {
+					if (nativeAuthWatch === watch) nativeAuthWatch = null;
+
+					return;
+				}
+			}
+
+			if (!watch.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+	})();
 }
 
 async function initializeHostedAuth() {

@@ -56,7 +56,6 @@ struct NativeSessionTokenRequest {
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/auth/changes", get(session_changes))
         .route(
             "/auth/session",
             get(session).delete(browser_session_sign_out),
@@ -75,17 +74,14 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/native-session/token", post(native_session_token))
 }
 
-async fn session_changes(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-) -> Result<
-    axum::response::Sse<
-        impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-    >,
-    ApiError,
-> {
-    let session_token = require_bootstrap_session(&state.auth, &headers, &jar)
+/// Emits the current auth generation, then each change. Holding the stream keeps
+/// an idle CLI-started server running while a browser is open.
+pub(crate) async fn session_change_events(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> Result<futures::stream::BoxStream<'static, u64>, ApiError> {
+    let session_token = require_bootstrap_session(&state.auth, headers, jar)
         .await
         .map_err(ApiError::unauthorized)?;
     if !state.auth.session_is_local_browser(&session_token).await
@@ -94,29 +90,22 @@ async fn session_changes(
         return Err(ApiError::authentication_required());
     }
     let receiver = state.host.native_auth.subscribe_changes();
-    let shutdown = state.host.lifetime.shutdown.clone();
     let guard = state
         .host
         .lifetime
         .run_guard()
         .map_err(ApiError::bad_request)?;
     let stream = futures::stream::unfold(
-        (receiver, true, shutdown, guard),
-        |(mut receiver, initial, shutdown, guard)| async move {
-            if !initial {
-                tokio::select! {
-                    _ = shutdown.cancelled() => return None,
-                    changed = receiver.changed() => if changed.is_err() { return None; },
-                }
+        (receiver, true, guard),
+        |(mut receiver, initial, guard)| async move {
+            if !initial && receiver.changed().await.is_err() {
+                return None;
             }
             let generation = *receiver.borrow_and_update();
-            Some((
-                Ok(axum::response::sse::Event::default().data(generation.to_string())),
-                (receiver, false, shutdown, guard),
-            ))
+            Some((generation, (receiver, false, guard)))
         },
     );
-    Ok(axum::response::Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
+    Ok(futures::StreamExt::boxed(stream))
 }
 
 async fn session(

@@ -224,7 +224,7 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
-/** Local file-backed artifact snapshot from POST /api/artifacts/watch. */
+/** Local file-backed artifact snapshot from the `artifacts` live-update topic. */
 export type LocalArtifact = {
 	_id: string;
 	userId: string;
