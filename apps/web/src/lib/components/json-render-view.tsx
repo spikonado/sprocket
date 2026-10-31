@@ -36,13 +36,9 @@ export default function JsonRenderView({
 
 	return (
 		<div className="text-foreground my-3 text-sm leading-normal">
+			{/* Keyed on source because JSONUIProvider only seeds state on mount. */}
 			<RenderErrorBoundary key={source} fallback={fallback}>
-				{/* State only seeds on mount, so a streamed state patch remounts the provider. */}
-				<JSONUIProvider
-					key={JSON.stringify(spec.state ?? null)}
-					registry={jsonRenderRegistry}
-					initialState={spec.state}
-				>
+				<JSONUIProvider registry={jsonRenderRegistry} initialState={spec.state}>
 					<Renderer spec={spec} registry={jsonRenderRegistry} fallback={UnknownComponent} />
 				</JSONUIProvider>
 			</RenderErrorBoundary>
