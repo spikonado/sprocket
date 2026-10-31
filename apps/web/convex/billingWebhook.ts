@@ -581,11 +581,6 @@ export const cleanupEvents = internalMutation({
 	handler: async (ctx, args) => {
 		const now = Date.now();
 
-		const state = await ctx.db
-			.query('dodoWebhookCleanup')
-			.withIndex('by_key', (query) => query.eq('key', 'cleanup'))
-			.unique();
-
 		const throughSeq =
 			args.throughSeq ??
 			(await ctx.db.query('dodoWebhookEvents').withIndex('by_seq').order('desc').first())?.seq;
@@ -612,12 +607,6 @@ export const cleanupEvents = internalMutation({
 		}
 
 		const lastSeq = batch.at(-1)?.seq ?? cursor;
-
-		if (state) {
-			await ctx.db.patch('dodoWebhookCleanup', state._id, { cursor: lastSeq });
-		} else {
-			await ctx.db.insert('dodoWebhookCleanup', { key: 'cleanup', cursor: lastSeq });
-		}
 
 		if (batch.length === CLEANUP_BATCH_SIZE && lastSeq < throughSeq) {
 			await ctx.scheduler.runAfter(1_000, internal.billingWebhook.cleanupEvents, {

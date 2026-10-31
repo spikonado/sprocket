@@ -112,24 +112,6 @@ describe('automatic run recovery', () => {
 		expect(continuation?.cancellationRequestedAt).toBeDefined();
 	});
 
-	it('recognizes abandonment by its kind or by the legacy error text', async () => {
-		const { t, asUser, threadId, runId, queryArgs, abandon } = await setup();
-		await abandon();
-
-		for (const marker of [
-			{ failureKind: 'abandoned' as const, lastError: undefined },
-			{ failureKind: undefined, lastError: LEGACY_RUN_ABANDONED_BY_AGENT }
-		]) {
-			await t.run((ctx) => ctx.db.patch('runs', runId, marker));
-			expect(await asUser.query(api.runRecovery.state, queryArgs)).toMatchObject({
-				state: 'recover'
-			});
-			expect(
-				(await asUser.query(api.chat.selectedThreadLifecycle, { threadId })).run
-			).toMatchObject({ failureKind: 'abandoned' });
-		}
-	});
-
 	it('discards automatic recovery when disabled but allows manual continuation', async () => {
 		const { t, asUser, runId, queryArgs, recoveryArgs, abandon } = await setup();
 		await abandon();

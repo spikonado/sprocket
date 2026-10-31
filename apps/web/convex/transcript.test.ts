@@ -15,67 +15,6 @@ import {
 } from './test.setup';
 
 describe('numbered transcript parts', () => {
-	it.each([false, true])(
-		'validates legacy tool retries before hydrating inputs, conflicting output: %s',
-		async (conflictingOutput) => {
-			const t = initConvexTest();
-			const { asUser, threadId } = await seedOwnedThread(t);
-
-			const { runId } = await createQueuedRun(
-				t,
-				asUser,
-				threadId,
-				'legacy-command',
-				'legacy-command-secret',
-				'Monitor the command'
-			);
-
-			await t.run(async (ctx) => {
-				const args = {
-					threadId,
-					runId,
-					sourceKey: 'tool:legacy:finished',
-					kind: 'tool' as const,
-					tool: {
-						callId: 'poll',
-						name: 'poll_cmd',
-						status: 'completed' as const,
-						output: { command: 'sleep 10' }
-					},
-					work: { ranges: [] }
-				};
-
-				const initial = await appendTranscriptPart(ctx, args);
-
-				const retryArgs = {
-					...args,
-					tool: {
-						...args.tool,
-						input: { sessionId: 'sleep-session' },
-						output: { command: conflictingOutput ? 'different command' : 'sleep 10' }
-					}
-				};
-
-				if (conflictingOutput) {
-					await expect(appendTranscriptPart(ctx, retryArgs)).rejects.toThrow(
-						'Conflicting transcript part retry.'
-					);
-
-					const stored = await ctx.db.get('threadTranscriptParts', initial.part._id);
-					expect(stored).toEqual(initial.part);
-				} else {
-					const retry = await appendTranscriptPart(ctx, retryArgs);
-					expect(retry).toEqual({
-						part: { ...initial.part, tool: retryArgs.tool },
-						inserted: false
-					});
-					expect(await ctx.db.get('threadTranscriptParts', initial.part._id)).toEqual(retry.part);
-					expect(await appendTranscriptPart(ctx, retryArgs)).toEqual(retry);
-				}
-			});
-		}
-	);
-
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -1255,24 +1194,6 @@ describe('transcript attachment identity', () => {
 			executionSecret
 		});
 
-		await t.run(async (ctx) => {
-			const part = await ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId).eq('number', 0))
-				.unique();
-
-			if (!part?.prompt) throw new Error('Missing fixture prompt.');
-			await ctx.db.patch('threadTranscriptParts', part._id, {
-				prompt: {
-					...part.prompt,
-					imageUploads: part.prompt.imageUploads.map((upload) => ({
-						...upload,
-						imageUploadId: file.imageUploadId
-					}))
-				}
-			});
-		});
-
 		return { ...owned, file, runId: created.runId, executionSecret };
 	}
 
@@ -1292,7 +1213,6 @@ describe('transcript attachment identity', () => {
 			storageId: file.storageId,
 			url: expect.any(String)
 		});
-		expect(parts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 
 		const runParts = await t.query(api.transcript.getPartsForRun, {
 			runId,
@@ -1300,7 +1220,6 @@ describe('transcript attachment identity', () => {
 			numbers: [0]
 		});
 
-		expect(runParts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		expect(runParts).toEqual(parts);
 
 		const page = await asUser.query(api.transcript.getPartsPage, { threadId, start: 0, end: 1 });
@@ -1344,7 +1263,12 @@ describe('transcript attachment identity', () => {
 				runId: first.runId,
 				sourceKey: 'tool:without-attachments',
 				kind: 'tool',
-				tool: { callId: 'call', name: 'exec_cmd', status: 'completed' },
+				tool: {
+					toolInvocationId: 'invocation',
+					callId: 'call',
+					name: 'exec_cmd',
+					status: 'completed'
+				},
 				work: { ranges: [] }
 			});
 		});

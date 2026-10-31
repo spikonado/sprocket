@@ -164,7 +164,6 @@ describe('checkout local purchase delegation', () => {
 				dodoSubscriptionId: 'sub_1',
 				billingPeriodStart: now - 2 * 86_400_000,
 				billingPeriodEnd: now - 86_400_000,
-				billingPeriodEnded: true,
 				accessPhase: 'none',
 				accessEndsAt: now - 86_400_000
 			});

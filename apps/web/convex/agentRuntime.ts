@@ -57,11 +57,7 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { enabledProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
-import {
-	getPromptPart,
-	hydratePromptUrls,
-	stripLegacyAttachmentImageUploadIds
-} from '@convex/lib/transcriptParts';
+import { getPromptPart, hydratePromptUrls } from '@convex/lib/transcriptParts';
 import { runStartedAt } from '@convex/lib/runs';
 import {
 	canRegisterCompletionAttempt,
@@ -219,10 +215,6 @@ export const createGatewayRun = action({
 
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
-
-		if (created.promptPart) {
-			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
-		}
 
 		return {
 			...created,

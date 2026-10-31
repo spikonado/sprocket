@@ -69,13 +69,6 @@ export function completionSourceKey(runId: Id<'runs'>, streamId: string): string
 
 export type ToolTranscriptPhase = 'started' | 'finished';
 
-export function toolInvocationIdForJob(job: {
-	_id: Id<'executorJobs'>;
-	toolInvocationId?: string;
-}): string {
-	return job.toolInvocationId ?? job._id;
-}
-
 export function toolSourceKey(toolInvocationId: string, phase: ToolTranscriptPhase): string {
 	return `tool:${toolInvocationId}:${phase}`;
 }
@@ -180,20 +173,6 @@ export function sameValue(left: Value | undefined, right: Value | undefined): bo
 	);
 }
 
-function promptWithoutLegacyUploadIds(prompt: TranscriptPromptBody | undefined) {
-	if (!prompt) return undefined;
-
-	return {
-		...prompt,
-		imageUploads: prompt.imageUploads.map((upload) => {
-			const current = { ...upload };
-			delete current.imageUploadId;
-
-			return current;
-		})
-	};
-}
-
 export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
@@ -208,18 +187,10 @@ export async function appendTranscriptPart(
 		.unique();
 
 	if (existing) {
-		const tool =
-			existing.kind === 'tool' &&
-			existing.tool &&
-			existing.tool.input === undefined &&
-			args.tool?.input !== undefined
-				? { ...existing.tool, input: args.tool.input }
-				: existing.tool;
-
 		const expected = {
 			kind: args.kind,
 			runId: args.runId,
-			prompt: promptWithoutLegacyUploadIds(args.prompt),
+			prompt: args.prompt,
 			completion,
 			tool: args.tool,
 			work: args.work
@@ -228,20 +199,14 @@ export async function appendTranscriptPart(
 		const persisted = {
 			kind: existing.kind,
 			runId: existing.runId,
-			prompt: promptWithoutLegacyUploadIds(existing.prompt),
+			prompt: existing.prompt,
 			completion: existing.completion,
-			tool,
+			tool: existing.tool,
 			work: existing.work
 		};
 
 		if (!sameValue(persisted, expected)) {
 			throw new Error('Conflicting transcript part retry.');
-		}
-
-		if (tool !== existing.tool) {
-			await ctx.db.patch('threadTranscriptParts', existing._id, { tool });
-
-			return { part: { ...existing, tool }, inserted: false };
 		}
 
 		return { part: existing, inserted: false };
@@ -381,7 +346,7 @@ export async function hydratePromptUrls(
 	return { ...prompt, imageUploads };
 }
 
-export async function hydrateTranscriptPartUrls(
+export async function transcriptPartsForClient(
 	ctx: MutationCtx | QueryCtx,
 	parts: Doc<'threadTranscriptParts'>[]
 ): Promise<Doc<'threadTranscriptParts'>[]> {
@@ -390,34 +355,4 @@ export async function hydrateTranscriptPartUrls(
 			part.prompt ? { ...part, prompt: await hydratePromptUrls(ctx, part.prompt) } : part
 		)
 	);
-}
-
-export function stripLegacyAttachmentImageUploadIds(
-	parts: Doc<'threadTranscriptParts'>[]
-): Doc<'threadTranscriptParts'>[] {
-	return parts.map((part) => {
-		if (!part.prompt || part.prompt.imageUploads.length === 0) {
-			return part;
-		}
-
-		return {
-			...part,
-			prompt: {
-				...part.prompt,
-				imageUploads: part.prompt.imageUploads.map((upload) => {
-					const attachment = { ...upload };
-					delete attachment.imageUploadId;
-
-					return attachment;
-				})
-			}
-		};
-	});
-}
-
-export async function transcriptPartsForClient(
-	ctx: MutationCtx | QueryCtx,
-	parts: Doc<'threadTranscriptParts'>[]
-): Promise<Doc<'threadTranscriptParts'>[]> {
-	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, parts));
 }

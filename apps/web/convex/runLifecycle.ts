@@ -131,10 +131,7 @@ export async function requestThreadTreeCancellation(
 
 const vTreeCancellationBatch = v.object({
 	parentThreadId: v.id('threadRecords'),
-	cursor: v.union(v.string(), v.null()),
-	// Ignored; carried by batches queued before the stateless sweep.
-	rootThreadId: v.optional(v.id('threadRecords')),
-	generation: v.optional(v.string())
+	cursor: v.union(v.string(), v.null())
 });
 
 // A thread's children are listed only after its own run is told to cancel, and

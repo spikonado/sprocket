@@ -165,7 +165,8 @@ describe('subagents.createOrSend', () => {
 					kind: 'exec_command',
 					payload: { cmd: 'true' },
 					status: 'claimed',
-					enqueuedAt: Date.now()
+					enqueuedAt: Date.now(),
+					toolInvocationId: `invocation-${sequence}`
 				});
 			}
 		});
@@ -581,7 +582,6 @@ describe('subagents.createOrSend', () => {
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
 					fastMode: false,
-					startedAt: Date.now(),
 					machineId: machine.machineId
 				});
 
@@ -811,21 +811,12 @@ describe('subagents transcript pages', () => {
 		}
 	);
 
-	it('strips legacy attachment IDs without hydrating page URLs and keeps number reads hydrated', async () => {
+	it('hydrates attachment URLs for number reads but not page reads', async () => {
 		const t = initConvexTest();
 		const { args } = await seedChildParts(t, 1);
 
 		const storageId = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
-
-			const imageUploadId = await ctx.db.insert('imageUploads', {
-				userId: 'user_alice',
-				storageId,
-				name: 'file.txt',
-				mediaType: 'text/plain',
-				size: 4,
-				attached: true
-			});
 
 			const part = await ctx.db
 				.query('threadTranscriptParts')
@@ -836,9 +827,7 @@ describe('subagents transcript pages', () => {
 			await ctx.db.patch('threadTranscriptParts', part._id, {
 				prompt: {
 					...part.prompt,
-					imageUploads: [
-						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
-					]
+					imageUploads: [{ storageId, name: 'file.txt', mediaType: 'text/plain', size: 4 }]
 				}
 			});
 
@@ -1092,7 +1081,6 @@ describe('subagents.control', () => {
 						selectedModel: thread.selectedModel,
 						reasoningEffort: thread.reasoningEffort,
 						fastMode: thread.fastMode,
-						startedAt: Date.now(),
 						completedAt: Date.now()
 					});
 

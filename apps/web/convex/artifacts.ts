@@ -1,11 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import {
-	internalMutation,
-	mutation,
-	query,
-	type MutationCtx,
-	type QueryCtx
-} from '@convex/_generated/server';
+import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
@@ -217,12 +211,6 @@ async function writeArtifactFields(
 		updatedAt: now
 	};
 }
-
-export const continueRekey = internalMutation({
-	args: { userId: v.string(), from: v.string(), to: v.string() },
-	returns: v.null(),
-	handler: () => null
-});
 
 export const addArtifact = mutation({
 	args: {

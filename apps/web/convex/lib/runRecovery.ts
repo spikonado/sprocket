@@ -1,6 +1,5 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
-import { LEGACY_RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 export const AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
@@ -16,32 +15,15 @@ export async function automaticAgentContinuationEnabled(
 }
 
 export function isAutomaticallyRecoverableRun(
-	run: Pick<
-		Doc<'runs'>,
-		| 'status'
-		| 'failureKind'
-		| 'lastError'
-		| 'cancellationRequestedAt'
-		| 'machineId'
-		| 'pendingPrompt'
-	>,
+	run: Pick<Doc<'runs'>, 'failureKind' | 'cancellationRequestedAt' | 'machineId' | 'pendingPrompt'>,
 	machineId: string
 ): boolean {
 	// A run that never began has no prompt part for a continuation to answer.
 	return (
-		isAbandonedRun(run) &&
+		run.failureKind === 'abandoned' &&
 		run.cancellationRequestedAt === undefined &&
 		run.pendingPrompt === undefined &&
 		run.machineId === machineId
-	);
-}
-
-export function isAbandonedRun(
-	run: Pick<Doc<'runs'>, 'status' | 'failureKind' | 'lastError'>
-): boolean {
-	return (
-		run.status === 'failed' &&
-		(run.failureKind === 'abandoned' || run.lastError === LEGACY_RUN_ABANDONED_BY_AGENT)
 	);
 }
 

@@ -316,8 +316,7 @@ describe('Dodo subscription webhooks', () => {
 		await drainWebhookJobs(t);
 		expect(await readSubscription(t)).toMatchObject({
 			tier: 'team',
-			quotaResetAt: deadline,
-			billingPeriodEnded: false
+			quotaResetAt: deadline
 		});
 		expect(await usage()).toBe(0);
 	});

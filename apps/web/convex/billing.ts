@@ -96,7 +96,6 @@ type SubscriptionActivityRow = Pick<
 	| 'tier'
 	| 'status'
 	| 'dodoSubscriptionId'
-	| 'billingPeriodEnded'
 	| 'billingPeriodEnd'
 	| 'accessPhase'
 	| 'accessEndsAt'
@@ -1642,7 +1641,6 @@ export async function applyDodoSubscriptionProjection(
 		billingInterval: payload.billingInterval,
 		billingPeriodStart: payload.billingPeriodStart,
 		billingPeriodEnd: payload.billingPeriodEnd,
-		billingPeriodEnded: false,
 		billingPeriodCheckId: existing?.billingPeriodCheckId,
 		cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
 		quotaGeneration: resets.generation ?? existing?.quotaGeneration,

@@ -36,17 +36,9 @@ Released runners omit `completionProvider` from `subagents:createOrSend`, so cre
 
 Released agents call `firecrawlRequests:start`, `getResult` and `dispose`. These forward to `webRequests`, so released scrapes run on context.dev and return `outline` in place of `summary`. `start` rejects `kind: 'screenshot'` with "This tool is no longer supported." `getResult` and `dispose` accept any string ID, so IDs from the old table report the request as ended. Remove the module once clients that call `firecrawlRequests:*` age out.
 
-### Repository rekey continuation
-
-`artifacts.continueRekey` is a no-op for already-queued jobs. Remove it after a scheduler scan finds no queued continuation jobs.
-
 ### Artifact `createdAt`
 
 Released servers require an integer `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from the floored `_creationTime`. Remove that field once those servers age out.
-
-### Tree cancellation batch arguments
-
-`runLifecycle.cancelDescendants` accepts and ignores `rootThreadId` and `generation` from batches queued before the stateless sweep. Remove them after a scheduler scan finds no queued batch carrying them.
 
 ### Machine credentials
 
@@ -66,10 +58,6 @@ Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` 
 
 ## Convex data shims
 
-### Billing subscription projection
-
-Subscription rows written before the durable-billing projection may omit `projectionRevision`, `payloadEventAt`, `termEventAt`, `accessPhase` and `accessEndsAt`. Readers derive access from the legacy `billingPeriodEnded` flag and watermarks from `eventAt`. `backfillSubscriptionAccess` and `backfillSubscriptionExpiry` fill them idempotently. Once production scans confirm every subscription has the fields and rescheduled expiry checks, remove the fallbacks in `lib/tiers.ts` and `subscriptionExpiry.ts` and make the fields required.
-
 ### Usage-generation key
 
 Usage buckets key off `quotaResetAt` while released gateway readers still use it, so old and new servers charge the same bucket. New writes keep `quotaResetAt` as the transition timestamp, advanced by 1ms when transitions share a timestamp, and `quotaGeneration` counts transitions. After those readers age out, migrate outstanding usage into generation-keyed buckets before switching the key. Keep `quotaResetAt` until that migration completes.
@@ -80,65 +68,20 @@ Legacy ambiguous creates without a frozen request require provider reconciliatio
 
 The checkout tables keep `by_userId` because released readers use it. Remove it once those readers age out and all current-session lookups use the compound indexes. Keep a creation-order history index while history iteration needs it.
 
-### Webhook cleanup cursor
-
-The legacy `dodoWebhookCleanup` table stays for diagnostics. Remove it after released cleanup callers age out and its rows are migrated or deleted.
-
-### Machine process IDs
-
-Machine rows written before `processId` keep it in `credentialHash`, and `machineProcessId` reads either. Registration moves it, and the hourly `migrations:runMachineProcessIdBackfill` cron moves the rest. Once that migration completes on every deployment, make `processId` required, drop `credentialHash`, and remove the cron.
-
 ### Calendar usage windows
 
-`backfillSubscriptionExpiry` and its hourly cron schedule updates at existing Dodo deadlines. Remove them after the backfill completes on every deployment.
-
-The quota reader carries usage from old seven-day or thirty-day rate-limiter rows into the current calendar window only when the old window began inside it. Remove that read path once every deployment has run calendar windows for 30 days. `billingPeriodEnded` and `billingPeriodCheckId` stay optional while operator grants or older subscription rows without billing dates exist.
+The quota reader carries usage from old seven-day or thirty-day rate-limiter rows into the current calendar window only when the old window began inside it. Remove that read path once every deployment has run calendar windows for 30 days.
 
 ### Migration records
 
-`migrationSchedules` keeps completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment.
-
-### Legacy `createdAt` fields
-
-`users`, `machines`, `agentQuestions`, `artifacts`, `mandates` and `mandateCharges` rows written before `_creationTime` replaced `createdAt` still carry it, so the schema keeps it as `legacyCreatedAt`. The hourly `migrations.removeCreatedAt` cron clears it. Once that migration completes on every deployment, remove `legacyCreatedAt`, the migrations and the cron.
-
-### Legacy thread record fields
-
-Older `threadRecords` rows still carry `submissionId` and `treeCancellation`, so the schema keeps both optional. The hourly `migrations.runThreadRecordLegacyFieldsRemoval` cron clears them. Once that migration completes on every deployment, remove both fields, the migration and the cron.
-
-### Transcript user IDs
-
-Older `threadTranscriptStates` and `threadTranscriptParts` rows still carry `userId`, so the schema keeps it optional. The hourly `migrations.removeTranscriptUserId` cron clears it. Once both migrations complete on every deployment, remove the field, the migrations and the cron.
-
-### Run abandonment kind
-
-Abandoned runs written before `runs.failureKind` only carry `lastError: LEGACY_RUN_ABANDONED_BY_AGENT`, so `isAbandonedRun` also matches that text. The hourly `migrations.runRunFailureKindBackfill` cron sets `failureKind` on them. Once the backfill completes on every deployment, remove the text match, the migration and the cron.
-
-### `firecrawlRequests` table
-
-The table and the module's `cleanup` and `removeResult` functions stay so cleanups scheduled before the rename still run. Rows live at most 8 minutes, so drop them once the table is empty.
+`migrationSchedules` and the unmounted `migrations` component keep completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment, and delete the component's data with them.
 
 ### Stored executor job and result fields
 
 Each of these Convex variants goes once a full production scan confirms no retained row uses it:
 
-- `payload.userEmail` on mandate setup jobs written through v0.3.2.
-- `truncated` on `scrape_url` results, and results without `images`.
 - `truncated` on `read_skill` results. Also wait for released clients that send it to age out.
 - `hidden` on executor jobs. Sectionless jobs keep their terminal-write fallback during reconciliation until they're reconciled.
-- `imageUploadId` on prompt attachments.
-
-### Retired run fields
-
-Older `runs` rows carry `startedAt`, `gatewayProtocolVersion` and `cancellationDeadlineAt`, which nothing reads anymore. The hourly `migrations.removeRetiredRunFields` cron unsets them. Once that migration completes on every deployment, remove the three fields, the migration and the cron.
-
-### Tool invocation IDs
-
-Older tool parts use `jobId` and `tool:<jobId>` source keys. Readers pair by `jobId` when `toolInvocationId` is absent, and `executorJobs.toolInvocationId` stays optional. Remove the Convex fallbacks after a full scan confirms every job and tool part has an invocation ID and no tool part carries `jobId`.
-
-### Command tool inputs
-
-Command transcript retries hydrate an existing part's absent input through the existing append lookup, after strict retry comparison. Remove this hydration once production has no recoverable command parts with absent input and all writers preserve command inputs.
 
 ## Local data directory shims
 

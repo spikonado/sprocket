@@ -24,11 +24,6 @@ export async function getOwnedMachine(
 		.unique();
 }
 
-// Rows written before processId keep their process's ID in credentialHash.
-export function machineProcessId(machine: Doc<'machines'>): string | undefined {
-	return machine.processId ?? machine.credentialHash;
-}
-
 export async function requireMachineProcess(
 	ctx: QueryCtx | MutationCtx,
 	userId: string,
@@ -37,7 +32,7 @@ export async function requireMachineProcess(
 ): Promise<Doc<'machines'>> {
 	const machine = await getOwnedMachine(ctx, userId, machineId);
 
-	if (!machine || machine.lastSeenAt === undefined || machineProcessId(machine) !== processId) {
+	if (!machine || machine.lastSeenAt === undefined || machine.processId !== processId) {
 		throw new Error('Machine is not active.');
 	}
 

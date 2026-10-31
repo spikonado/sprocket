@@ -28,8 +28,7 @@ async function historicalRun(
 			completionProvider,
 			selectedModel: 'old-model',
 			reasoningEffort: 'high',
-			fastMode: true,
-			startedAt: Date.now()
+			fastMode: true
 		});
 
 		await ctx.db.insert('runExecutionStates', {

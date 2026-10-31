@@ -240,8 +240,6 @@ export const vMandateChargeStatus = v.union(
 export const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
 
 export const vMandateSetupPayload = v.object({
-	// Stored executorJobs payloads from older agents may still carry it.
-	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
@@ -414,14 +412,14 @@ export const vPageOutline = v.object({
 	headings: v.array(v.object({ level: v.number(), text: v.string() }))
 });
 
-/** Stored scrape_url job result. Historical rows may include `truncated` or `summary`. */
+/** Stored scrape_url job result. Historical rows may include `summary`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
-	truncated: v.optional(v.boolean()),
 	summary: v.optional(v.string()),
 	outline: v.optional(vPageOutline),
 	highlights: v.optional(v.array(v.string())),
+	// Agents omit it when they download an oversized scrape.
 	images: v.optional(v.array(v.string()))
 });
 
@@ -940,8 +938,6 @@ export const vTranscriptPartKind = v.union(
 );
 
 export const vTranscriptAttachmentMeta = v.object({
-	// Historical rows. New writes omit it; readers strip it from responses.
-	imageUploadId: v.optional(v.id('imageUploads')),
 	name: v.string(),
 	mediaType: v.string(),
 	size: v.number(),
@@ -985,11 +981,7 @@ export const vTranscriptToolStatus = v.union(
 );
 
 export const vTranscriptToolBody = v.object({
-	// Legacy: written on pre-progress-event tool parts. New events omit it and
-	// pair by toolInvocationId. Keep reading until the removal gate in
-	// BACKWARDS_COMPATIBILITY.md.
-	jobId: v.optional(v.id('executorJobs')),
-	toolInvocationId: v.optional(v.string()),
+	toolInvocationId: v.string(),
 	callId: v.string(),
 	name: v.string(),
 	input: v.optional(vJsonValue),

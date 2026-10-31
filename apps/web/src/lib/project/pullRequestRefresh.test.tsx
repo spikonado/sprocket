@@ -27,7 +27,6 @@ function thread(id: string, pullRequests: LinkedPullRequest[]): Doc<'threadRecor
 		_creationTime: 1,
 		userId: 'user-a',
 		repositoryKey: 'github.com/acme/widgets',
-		submissionId: `submission-${id}`,
 		selectedModel: 'model',
 		reasoningEffort: 'high' as const,
 		fastMode: false,

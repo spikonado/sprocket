@@ -2,7 +2,6 @@
 
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
-import migrationsTest from '@convex-dev/migrations/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import posthogTest from '@posthog/convex/test';
@@ -100,7 +99,6 @@ export function initConvexTest(): ConvexTestInstance {
 	const backend = t as never;
 	rateLimiterTest.register(backend);
 	exaTest.register(backend);
-	migrationsTest.register(backend);
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'contextDevWorkpool');
@@ -160,7 +158,6 @@ export async function seedThreadRecord(
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
-			startedAt: Date.now(),
 			completedAt: Date.now()
 		});
 

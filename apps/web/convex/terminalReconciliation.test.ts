@@ -32,10 +32,11 @@ describe('terminal job reconciliation', () => {
 					kind: 'scrape_url',
 					payload: { url: 'https://example.com' },
 					status: 'completed',
-					result: { url: 'https://example.com', markdown: 'Page', truncated: false },
+					result: { url: 'https://example.com', markdown: 'Page', images: [] },
 					enqueuedAt: Date.now(),
 					completedAt: Date.now(),
-					sequence: 0
+					sequence: 0,
+					toolInvocationId: 'scrape-invocation'
 				});
 
 				await recordToolTranscript(ctx, {
@@ -46,7 +47,7 @@ describe('terminal job reconciliation', () => {
 				await ctx.db.patch('executorJobs', jobId, {
 					result: {
 						url: 'https://example.com',
-						markdown: 'Page',
+						markdown: 'Updated page',
 						summary: 'Page summary',
 						images: []
 					}
@@ -57,7 +58,7 @@ describe('terminal job reconciliation', () => {
 
 			await reconcileTerminalJobs(t);
 			expect(await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId))).toMatchObject({
-				tool: { status: 'completed', output: { markdown: 'Page', truncated: false } }
+				tool: { status: 'completed', output: { markdown: 'Page' } }
 			});
 			expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
 				result: { summary: 'Page summary', images: [] }
@@ -84,7 +85,8 @@ describe('terminal job reconciliation', () => {
 				result: 'Skill',
 				enqueuedAt: Date.now(),
 				completedAt: Date.now(),
-				sequence: 0
+				sequence: 0,
+				toolInvocationId: 'skill-invocation'
 			});
 
 			await recordToolTranscript(ctx, {
@@ -126,7 +128,8 @@ describe('terminal job reconciliation', () => {
 				payload: { cmd: 'true' },
 				status: 'claimed',
 				enqueuedAt: Date.now(),
-				sequence: 0
+				sequence: 0,
+				toolInvocationId: 'command-invocation'
 			})
 		);
 

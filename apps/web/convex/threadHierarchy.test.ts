@@ -76,8 +76,7 @@ describe('thread hierarchy', () => {
 				executionSecretHash: 'test-secret',
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'high',
-				fastMode: false,
-				startedAt: Date.now()
+				fastMode: false
 			});
 			await updateThreadHierarchyAfterChange(ctx, activityBefore);
 		});
@@ -177,8 +176,7 @@ describe('thread hierarchy', () => {
 						executionSecretHash: 'fixture',
 						selectedModel: record.selectedModel,
 						reasoningEffort: record.reasoningEffort,
-						fastMode: record.fastMode,
-						startedAt: Date.now() - 1
+						fastMode: record.fastMode
 					};
 
 					const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
@@ -186,8 +184,7 @@ describe('thread hierarchy', () => {
 					await ctx.db.insert('runs', {
 						...run,
 						submissionId: 'newer-run',
-						status: 'completed',
-						startedAt: Date.now()
+						status: 'completed'
 					});
 
 					const jobId = await ctx.db.insert('executorJobs', {
@@ -197,7 +194,8 @@ describe('thread hierarchy', () => {
 						payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] },
 						status: 'completed',
 						enqueuedAt: Date.now(),
-						sequence: 0
+						sequence: 0,
+						toolInvocationId: 'question-invocation'
 					});
 
 					await ctx.db.insert('agentQuestions', {
@@ -353,8 +351,7 @@ describe('thread hierarchy', () => {
 						executionSecretHash: 'fixture',
 						selectedModel: thread.selectedModel,
 						reasoningEffort: thread.reasoningEffort,
-						fastMode: thread.fastMode,
-						startedAt: Date.now()
+						fastMode: thread.fastMode
 					})
 				);
 				await updateThreadHierarchyAfterChange(ctx, activityBefore);
