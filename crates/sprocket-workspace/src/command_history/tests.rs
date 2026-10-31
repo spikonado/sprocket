@@ -45,4 +45,117 @@ async fn interrupted_session_recovers_output_without_claiming_success() {
     assert!(!recovered.result.success);
     assert!(recovered.result.error.unwrap().contains("interrupted"));
     assert_eq!(recovered.result.exit_code, None);
+
+    let saved: CommandHistory = serde_json::from_slice(
+        &tokio::fs::read(&history_path(root.path(), &id).unwrap())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(!saved.result.running);
+    assert_eq!(saved.pending_output.as_deref(), Some("before restart\n"));
+}
+
+#[tokio::test]
+async fn settle_interrupted_keeps_a_completed_result() {
+    let root = tempfile::tempdir().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let path = history_path(root.path(), &id).unwrap();
+    let mut output = CapturedOutput::create(root.path(), 20_000).await.unwrap();
+    output
+        .append(OutputChannel::Stdout, b"done\n")
+        .await
+        .unwrap();
+    let preview = output.preview_metadata();
+    let mut running = CommandHistory {
+        user_id: String::new(),
+        thread_id: String::new(),
+        machine_id: String::new(),
+        command: "build".into(),
+        workdir: "/workspace".into(),
+        max_output_chars: 20_000,
+        result: CommandOutput {
+            exit_code: None,
+            running: true,
+            success: false,
+            timed_out: false,
+            output: String::new(),
+            complete_log_path: preview.complete_log_path.clone(),
+            events_path: preview.events_path.clone(),
+            error: None,
+        },
+        pending_output: None,
+    };
+    running.save(&path).await.unwrap();
+
+    let mut completed = running.clone();
+    completed.result.running = false;
+    completed.result.success = true;
+    completed.result.exit_code = Some(0);
+    completed.result.output = "done\n".into();
+    completed.save(&path).await.unwrap();
+
+    running.settle_interrupted(&path).await.unwrap();
+    assert!(running.result.success);
+    assert_eq!(running.result.exit_code, Some(0));
+
+    let saved: CommandHistory =
+        serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+    assert!(saved.result.success);
+    assert_eq!(saved.result.exit_code, Some(0));
+    assert!(!saved.result.running);
+}
+
+#[tokio::test]
+async fn settle_interrupted_loses_to_a_concurrent_completed_save() {
+    let root = tempfile::tempdir().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let path = history_path(root.path(), &id).unwrap();
+    let mut output = CapturedOutput::create(root.path(), 20_000).await.unwrap();
+    output
+        .append(OutputChannel::Stdout, b"done\n")
+        .await
+        .unwrap();
+    let preview = output.preview_metadata();
+    let mut running = CommandHistory {
+        user_id: String::new(),
+        thread_id: String::new(),
+        machine_id: String::new(),
+        command: "build".into(),
+        workdir: "/workspace".into(),
+        max_output_chars: 20_000,
+        result: CommandOutput {
+            exit_code: None,
+            running: true,
+            success: false,
+            timed_out: false,
+            output: String::new(),
+            complete_log_path: preview.complete_log_path.clone(),
+            events_path: preview.events_path.clone(),
+            error: None,
+        },
+        pending_output: None,
+    };
+    running.save(&path).await.unwrap();
+
+    let mut completed = running.clone();
+    completed.result.running = false;
+    completed.result.success = true;
+    completed.result.exit_code = Some(0);
+    completed.result.output = "done\n".into();
+
+    let settle_path = path.clone();
+    let save_path = path.clone();
+    let (settle, save) = tokio::join!(
+        running.settle_interrupted(&settle_path),
+        completed.save(&save_path)
+    );
+    settle.unwrap();
+    save.unwrap();
+
+    let on_disk: CommandHistory =
+        serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+    assert!(on_disk.result.success);
+    assert_eq!(on_disk.result.exit_code, Some(0));
+    assert!(!on_disk.result.running);
 }
