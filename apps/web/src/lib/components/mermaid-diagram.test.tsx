@@ -1,5 +1,5 @@
 import { render, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { escapeFlowchartEdgeDashes } from '$lib/chat/mermaid-flowchart';
 import MermaidDiagram from './mermaid-diagram';
 
@@ -19,6 +19,37 @@ describe('Mermaid diagrams', () => {
 		await expect(mermaid.parse(escapeFlowchartEdgeDashes(source))).resolves.toMatchObject({
 			diagramType: 'flowchart-v2'
 		});
+	});
+
+	it('retries a flowchart with an unquoted command flag and displays the diagram', async () => {
+		const { default: mermaid } = await import('mermaid');
+
+		const renderDiagram = vi.spyOn(mermaid, 'render').mockImplementation(async (_id, source) => {
+			await mermaid.parse(source);
+
+			return {
+				diagramType: 'flowchart-v2',
+				svg: '<svg><text>optional: backplane --render</text></svg>'
+			};
+		});
+
+		try {
+			const { container, queryByText } = render(
+				<MermaidDiagram
+					source={'flowchart LR\n A -- optional: backplane --render --> B'}
+					codeHtml="<pre><code>source</code></pre>"
+				/>
+			);
+
+			await waitFor(() =>
+				expect(container.querySelector('svg')?.textContent).toContain('--render')
+			);
+			expect(container.querySelector('code')).toBeNull();
+			expect(queryByText('Could not render diagram.')).toBeNull();
+			expect(renderDiagram).toHaveBeenCalledTimes(2);
+		} finally {
+			renderDiagram.mockRestore();
+		}
 	});
 
 	it('shows the source and an error when a diagram cannot render', async () => {
