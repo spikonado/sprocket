@@ -5,6 +5,8 @@
 @import 'katex/dist/katex.min.css';
 @import 'tailwindcss';
 
+@source '../node_modules/@json-render/shadcn/dist/index.mjs';
+
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 @custom-variant touch (@media (hover: none));
 @custom-variant coarse (@media (pointer: coarse));
@@ -355,12 +357,12 @@ body::after {
 	display: contents;
 }
 
-.chat-markdown .katex {
+.chat-markdown-html .katex {
 	overflow-wrap: normal;
 	word-break: normal;
 }
 
-.chat-markdown .katex-display {
+.chat-markdown-html .katex-display {
 	overflow-x: auto;
 	overflow-y: hidden;
 	padding: 0.25rem 0;
@@ -376,100 +378,100 @@ body::after {
 	margin-bottom: 0;
 }
 
-.chat-markdown p,
-.chat-markdown ul,
-.chat-markdown ol,
-.chat-markdown blockquote,
-.chat-markdown pre,
-.chat-markdown table,
-.chat-markdown h1,
-.chat-markdown h2,
-.chat-markdown h3,
-.chat-markdown h4,
-.chat-markdown h5,
-.chat-markdown h6 {
+.chat-markdown-html p,
+.chat-markdown-html ul,
+.chat-markdown-html ol,
+.chat-markdown-html blockquote,
+.chat-markdown-html pre,
+.chat-markdown-html table,
+.chat-markdown-html h1,
+.chat-markdown-html h2,
+.chat-markdown-html h3,
+.chat-markdown-html h4,
+.chat-markdown-html h5,
+.chat-markdown-html h6 {
 	margin: 0.8rem 0;
 }
 
-.chat-markdown h1,
-.chat-markdown h2,
-.chat-markdown h3,
-.chat-markdown h4,
-.chat-markdown h5,
-.chat-markdown h6 {
+.chat-markdown-html h1,
+.chat-markdown-html h2,
+.chat-markdown-html h3,
+.chat-markdown-html h4,
+.chat-markdown-html h5,
+.chat-markdown-html h6 {
 	line-height: 1.35;
 	font-weight: 600;
 	letter-spacing: -0.02em;
 	color: var(--foreground);
 }
 
-.chat-markdown h1 {
+.chat-markdown-html h1 {
 	font-size: 1.5rem;
 }
 
-.chat-markdown h2 {
+.chat-markdown-html h2 {
 	font-size: 1.25rem;
 }
 
-.chat-markdown h3 {
+.chat-markdown-html h3 {
 	font-size: 1.1rem;
 }
 
-.chat-markdown h4,
-.chat-markdown h5,
-.chat-markdown h6 {
+.chat-markdown-html h4,
+.chat-markdown-html h5,
+.chat-markdown-html h6 {
 	font-size: 1em;
 }
 
-.chat-markdown ul,
-.chat-markdown ol {
+.chat-markdown-html ul,
+.chat-markdown-html ol {
 	padding-left: 1.4rem;
 }
 
-.chat-markdown ul {
+.chat-markdown-html ul {
 	list-style: disc;
 }
 
-.chat-markdown ol {
+.chat-markdown-html ol {
 	list-style: decimal;
 }
 
-.chat-markdown li > ul,
-.chat-markdown li > ol {
+.chat-markdown-html li > ul,
+.chat-markdown-html li > ol {
 	margin: 0.2rem 0;
 }
 
-.chat-markdown ul ul {
+.chat-markdown-html ul ul {
 	list-style: circle;
 }
 
-.chat-markdown ul ul ul {
+.chat-markdown-html ul ul ul {
 	list-style: square;
 }
 
-.chat-markdown li:has(> input[type='checkbox']),
-.chat-markdown li:has(> p > input[type='checkbox']) {
+.chat-markdown-html li:has(> input[type='checkbox']),
+.chat-markdown-html li:has(> p > input[type='checkbox']) {
 	list-style: none;
 }
 
-.chat-markdown input[type='checkbox'] {
+.chat-markdown-html input[type='checkbox'] {
 	margin-left: -1.2rem;
 	margin-right: 0.35rem;
 	accent-color: var(--accent-strong);
 }
 
-.chat-markdown li + li {
+.chat-markdown-html li + li {
 	margin-top: 0.2rem;
 }
 
-.chat-markdown a {
+.chat-markdown-html a {
 	color: var(--accent-strong);
 	text-decoration: underline;
 	text-decoration-color: color-mix(in oklab, var(--accent-strong) 45%, transparent);
 	text-underline-offset: 0.16rem;
 }
 
-.chat-markdown a:hover {
+.chat-markdown-html a:hover {
 	opacity: 0.85;
 }
 
@@ -559,13 +561,13 @@ body::after {
 	color: var(--tok-invalid);
 }
 
-.chat-markdown blockquote {
+.chat-markdown-html blockquote {
 	border-left: 2px solid var(--border);
 	padding-left: 0.9rem;
 	color: var(--muted-foreground);
 }
 
-.chat-markdown img {
+.chat-markdown-html img {
 	display: inline-block;
 	max-width: min(100%, 24rem);
 	max-height: 20rem;
@@ -576,23 +578,23 @@ body::after {
 	vertical-align: middle;
 }
 
-.chat-markdown img[role='button'] {
+.chat-markdown-html img[role='button'] {
 	cursor: zoom-in;
 }
 
-.chat-markdown img:focus-visible {
+.chat-markdown-html img:focus-visible {
 	outline: 2px solid var(--ring);
 	outline-offset: 3px;
 }
 
-.chat-markdown .markdown-image-error,
-.chat-markdown img:not([src]) {
+.chat-markdown-html .markdown-image-error,
+.chat-markdown-html img:not([src]) {
 	border: 1px solid var(--border);
 	padding: 0.5rem 0.75rem;
 	color: var(--muted-foreground);
 }
 
-.chat-markdown :not(pre) > code {
+.chat-markdown-html :not(pre) > code {
 	border: 1px solid var(--hairline);
 	border-radius: 0.5rem;
 	background: var(--muted);
@@ -603,7 +605,7 @@ body::after {
 	box-decoration-break: clone;
 }
 
-.chat-markdown pre {
+.chat-markdown-html pre {
 	overflow-x: auto;
 	white-space: pre;
 	overflow-wrap: normal;
@@ -617,7 +619,7 @@ body::after {
 	line-height: 1.7;
 }
 
-.chat-markdown .markdown-code-block {
+.chat-markdown-html .markdown-code-block {
 	min-width: 0;
 	overflow: hidden;
 	margin: 0.8rem 0;
@@ -626,7 +628,7 @@ body::after {
 	background: var(--panel-elevated);
 }
 
-.chat-markdown .markdown-code-block pre {
+.chat-markdown-html .markdown-code-block pre {
 	margin: 0;
 	border: 0;
 	border-radius: 0;
@@ -704,7 +706,7 @@ body::after {
 	outline-offset: 2px;
 }
 
-[data-theme='light'] .chat-markdown .markdown-code-block {
+[data-theme='light'] .chat-markdown-html .markdown-code-block {
 	background: color-mix(in oklab, var(--muted) 55%, var(--surface));
 }
 
@@ -718,12 +720,12 @@ body::after {
 	padding: 1rem;
 }
 
-.chat-markdown pre.markdown-code-wrap {
+.chat-markdown-html pre.markdown-code-wrap {
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
 
-.chat-markdown pre code {
+.chat-markdown-html pre code {
 	background: transparent;
 	padding: 0;
 	font-family: var(--font-mono);
@@ -739,13 +741,13 @@ body::after {
 	color: var(--shiki-dark);
 }
 
-.chat-markdown hr {
+.chat-markdown-html hr {
 	border: 0;
 	border-top: 1px solid var(--border);
 	margin: 1rem 0;
 }
 
-.chat-markdown table {
+.chat-markdown-html table {
 	display: block;
 	width: max-content;
 	max-width: 100%;
@@ -757,20 +759,20 @@ body::after {
 	word-break: normal;
 }
 
-.chat-markdown th,
-.chat-markdown td {
+.chat-markdown-html th,
+.chat-markdown-html td {
 	max-width: min(24rem, 80vw);
 	border: 1px solid var(--border);
 	padding: 0.5rem 0.65rem;
 	overflow-wrap: break-word;
 }
 
-.chat-markdown th:not([align]),
-.chat-markdown td:not([align]) {
+.chat-markdown-html th:not([align]),
+.chat-markdown-html td:not([align]) {
 	text-align: left;
 }
 
-.chat-markdown th {
+.chat-markdown-html th {
 	background: color-mix(in oklab, var(--muted) 88%, var(--background));
 	font-weight: 600;
 }

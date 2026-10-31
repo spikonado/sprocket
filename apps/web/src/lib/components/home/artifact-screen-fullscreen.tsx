@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
+import LazyJsonRender from '$lib/components/lazy-json-render';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 
@@ -125,6 +126,13 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 					sandbox="allow-scripts"
 					className="block h-full w-full flex-1 bg-white"
 				></iframe>
+			) : artifact.artifactType === 'json-render' ? (
+				<div className="min-h-0 flex-1 overflow-auto px-6">
+					<LazyJsonRender
+						source={artifact.content}
+						fallback={<pre className="text-[13px] leading-6">{artifact.content}</pre>}
+					/>
+				</div>
 			) : (
 				<div className="min-h-0 flex-1 overflow-auto p-6">
 					<ChatMarkdown

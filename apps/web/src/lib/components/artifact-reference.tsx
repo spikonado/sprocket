@@ -1,11 +1,13 @@
-import { FileCode, FileText, Globe } from 'lucide-react';
+import { FileCode, FileText, Globe, LayoutDashboard, type LucideIcon } from 'lucide-react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
+import type { ArtifactPreviewType } from '$lib/chat/artifact-preview';
 
-const TYPE_ICONS = {
+export const ARTIFACT_TYPE_ICONS: Record<ArtifactPreviewType, LucideIcon> = {
 	markdown: FileText,
 	html: Globe,
-	react: FileCode
-} as const;
+	react: FileCode,
+	'json-render': LayoutDashboard
+};
 
 export default function ArtifactReference({
 	artifact,
@@ -14,7 +16,7 @@ export default function ArtifactReference({
 	artifact: ArtifactEntry;
 	onOpen: () => void;
 }) {
-	const TypeIcon = TYPE_ICONS[artifact.artifactType];
+	const TypeIcon = ARTIFACT_TYPE_ICONS[artifact.artifactType];
 
 	return (
 		<div

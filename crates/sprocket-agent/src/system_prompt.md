@@ -71,8 +71,8 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
 - Images: embed local images with `![alt](path/to/image.png)`.
 - File links: link files and folders with `[name](path/to/file.rs)`.
 - Paths: use paths relative to your current working directory. Use absolute paths only for files outside it, such as `/tmp/screenshot.png`.
-- Artifacts: an artifact is a Markdown, HTML, or React file that's linked to the project you are working in and is viewable by the user. Edits to the file sync to it. Use one for work the user will revisit or edit. Put `artifact:<artifactId>` in its own paragraph to embed its card.
-- Visuals: a fenced block tagged `html-visual` or `jsx-visual` renders inline as a live page that belongs to that reply.
+- Artifacts: an artifact is a Markdown, HTML, React, or json-render file that's linked to the project you are working in and is viewable by the user. Edits to the file sync to it. Use one for work the user will revisit or edit. Put `artifact:<artifactId>` in its own paragraph to embed its card.
+- Visuals: a fenced block tagged `html-visual` or `jsx-visual` renders inline as a live page that belongs to that reply. A `json-render` block renders a json-render spec with the app's own components.
 - Read the `making-artifacts-and-visuals` skill before making an artifact or a visual.
 - Math: `$...$` or `\(...\)` inline and `$$...$$` or `\[...\]` as a block
 - Diagrams: a fenced block tagged `mermaid` renders as a Mermaid diagram. Quote flowchart edge labels, as in `A -->|"run --flag"| B`.

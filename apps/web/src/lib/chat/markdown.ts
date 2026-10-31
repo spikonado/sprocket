@@ -38,7 +38,8 @@ export type MarkdownBlock =
 	| { type: 'html'; html: string }
 	| { type: 'artifact'; artifactId: string }
 	| { type: 'visual'; kind: VisualKind; source: string }
-	| { type: 'mermaid'; source: string; codeHtml: string };
+	| { type: 'mermaid'; source: string; codeHtml: string }
+	| { type: 'json-render'; source: string; codeHtml: string };
 
 const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
 
@@ -63,15 +64,19 @@ function specialBlock(
 		const language = token.lang?.split(/\s/, 1)[0].toLowerCase() ?? '';
 		const kind = VISUAL_LANGUAGES.get(language);
 		const isDiagram = language === 'mermaid';
+		const codeHtml = () => sanitizeMarkdown(marked.parser([token]));
+
+		// JSONL patches render as they stream in.
+		if (language === 'json-render') {
+			return { type: 'json-render', source: token.text, codeHtml: codeHtml() };
+		}
 
 		// A diagram or visual still streaming in stays a code block until its fence closes.
 		if (!(kind || isDiagram) || !fenceIsClosed(token.raw)) return;
 
 		if (kind) return { type: 'visual', kind, source: token.text };
 
-		const codeHtml = sanitizeMarkdown(marked.parser([token]));
-
-		return { type: 'mermaid', source: token.text, codeHtml };
+		return { type: 'mermaid', source: token.text, codeHtml: codeHtml() };
 	}
 
 	const artifactId =

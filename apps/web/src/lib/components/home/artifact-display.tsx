@@ -2,12 +2,12 @@ import ArtifactMenu from '$lib/components/artifact-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
-import type { ArtifactType } from '@convex/lib/validators';
-import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
+import LazyJsonRender from '$lib/components/lazy-json-render';
+import { buildArtifactPreviewDocument, type ArtifactPreviewType } from '$lib/chat/artifact-preview';
 
 type Props = {
 	title: string;
-	artifactType: ArtifactType;
+	artifactType: ArtifactPreviewType;
 	content: string;
 	localPath?: string;
 	workspacePath?: string;
@@ -35,6 +35,8 @@ export default function ArtifactDisplay({
 		() => buildArtifactPreviewDocument(artifactType, content),
 		[artifactType, content]
 	);
+
+	const hasPreview = previewDocument !== null || artifactType === 'json-render';
 
 	const [showSource, setShowSource] = useState(false);
 	const [copied, setCopied] = useState(false);
@@ -67,19 +69,27 @@ export default function ArtifactDisplay({
 	}, []);
 
 	function renderBody(frameClass: string) {
+		const source = (
+			<pre className="h-full overflow-auto p-3 pr-10 text-[13px] leading-6">
+				<code>{content}</code>
+			</pre>
+		);
+
 		return (
 			<div className="relative min-h-0 flex-1 border-t">
-				{previewDocument && !showSource ? (
+				{hasPreview && showSource ? (
+					source
+				) : previewDocument ? (
 					<iframe
 						title={`${title} preview`}
 						srcDoc={previewDocument}
 						sandbox="allow-scripts"
 						className={`block w-full bg-white ${frameClass}`}
 					></iframe>
-				) : previewDocument ? (
-					<pre className="h-full overflow-auto p-3 pr-10 text-[13px] leading-6">
-						<code>{content}</code>
-					</pre>
+				) : hasPreview ? (
+					<div className={`overflow-auto px-3 ${frameClass}`}>
+						<LazyJsonRender source={content} fallback={source} />
+					</div>
 				) : (
 					<div className="h-full overflow-auto p-3 pr-10">
 						<ChatMarkdown
@@ -133,7 +143,7 @@ export default function ArtifactDisplay({
 						<span className="text-muted-foreground min-w-0 truncate text-[11px]">{localPath}</span>
 					) : null}
 				</div>
-				{previewDocument ? (
+				{hasPreview ? (
 					<button
 						type="button"
 						className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition"

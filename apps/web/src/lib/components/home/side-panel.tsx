@@ -1,9 +1,9 @@
 import ArtifactMenu from '$lib/components/artifact-menu';
+import { ARTIFACT_TYPE_ICONS } from '$lib/components/artifact-reference';
 import {
 	Columns2,
 	FileCode,
 	Files,
-	FileText,
 	FolderTree,
 	Fullscreen,
 	Globe,
@@ -38,7 +38,6 @@ import {
 	type SplitDirection
 } from '$lib/chat/side-panel';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
-import type { ArtifactType } from '@convex/lib/validators';
 
 type TabPatch = Partial<Omit<SidePanelTab, 'id'>>;
 
@@ -73,12 +72,6 @@ type Props = {
 	onClose: () => void;
 };
 
-const TYPE_ICONS = {
-	markdown: FileText,
-	html: Globe,
-	react: FileCode
-} as const satisfies Record<ArtifactType, typeof FileCode>;
-
 const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIcon }[] = [
 	{ id: 'artifacts', label: 'Artifacts', icon: Files },
 	{ id: 'files', label: 'Files', icon: FolderTree },
@@ -107,7 +100,7 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 	const artifact =
 		tab.view === 'artifacts' ? artifacts.find((item) => item.key === tab.selectedKey) : undefined;
 
-	if (artifact) return { label: artifact.title, icon: TYPE_ICONS[artifact.artifactType] };
+	if (artifact) return { label: artifact.title, icon: ARTIFACT_TYPE_ICONS[artifact.artifactType] };
 
 	if (tab.view === 'file' && tab.file) {
 		return { label: leafName(tab.file.path), title: tab.file.path, icon: FileCode };
@@ -610,7 +603,7 @@ function ArtifactsView({
 						<p className="text-muted-foreground p-3 text-sm">No artifacts yet.</p>
 					) : (
 						artifacts.map((artifact) => {
-							const TypeIcon = TYPE_ICONS[artifact.artifactType];
+							const TypeIcon = ARTIFACT_TYPE_ICONS[artifact.artifactType];
 
 							return (
 								<div

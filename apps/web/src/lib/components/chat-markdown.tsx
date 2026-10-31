@@ -3,6 +3,7 @@ import { cn } from '$lib/utils';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { renderMarkdownBlocks } from '$lib/chat/markdown';
 import ArtifactReference from '$lib/components/artifact-reference';
+import LazyJsonRender from '$lib/components/lazy-json-render';
 import MarkdownHtml from '$lib/components/markdown-html';
 import MermaidDiagram from '$lib/components/mermaid-diagram';
 import TranscriptVisual from '$lib/components/transcript-visual';
@@ -75,6 +76,16 @@ export default function ChatMarkdown({
 							key={`${block.type}-${index}`}
 							source={block.source}
 							codeHtml={block.codeHtml}
+						/>
+					);
+				}
+
+				if (block.type === 'json-render') {
+					return (
+						<LazyJsonRender
+							key={`${block.type}-${index}`}
+							source={block.source}
+							fallback={<MarkdownHtml html={block.codeHtml} />}
 						/>
 					);
 				}
