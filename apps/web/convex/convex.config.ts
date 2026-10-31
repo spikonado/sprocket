@@ -2,7 +2,6 @@ import { defineApp } from 'convex/server';
 import { v } from 'convex/values';
 import rateLimiter from '@convex-dev/rate-limiter/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
-import migrations from '@convex-dev/migrations/convex.config';
 import actionRetrier from '@convex-dev/action-retrier/convex.config';
 import workpool from '@convex-dev/workpool/convex.config';
 import posthog from '@posthog/convex/convex.config';
@@ -42,8 +41,6 @@ app.use(posthog, {
 });
 
 app.use(rateLimiter);
-
-app.use(migrations);
 
 app.use(actionRetrier);
 

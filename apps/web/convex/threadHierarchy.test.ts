@@ -194,7 +194,8 @@ describe('thread hierarchy', () => {
 						payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] },
 						status: 'completed',
 						enqueuedAt: Date.now(),
-						sequence: 0
+						sequence: 0,
+						toolInvocationId: 'question-invocation'
 					});
 
 					await ctx.db.insert('agentQuestions', {

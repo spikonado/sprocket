@@ -11,7 +11,6 @@ type ExpiryFields = Pick<
 	| 'dodoSubscriptionId'
 	| 'billingPeriodStart'
 	| 'billingPeriodEnd'
-	| 'billingPeriodEnded'
 	| 'billingPeriodCheckId'
 	| 'accessPhase'
 	| 'accessEndsAt'
@@ -47,10 +46,7 @@ export async function scheduleSubscriptionExpiry(
 
 	const target = accessTarget(subscription, now);
 
-	const currentPhase =
-		subscription.accessPhase ?? (subscription.billingPeriodEnded ? 'none' : 'paid');
-
-	const phaseCurrent = currentPhase === target.accessPhase;
+	const phaseCurrent = subscription.accessPhase === target.accessPhase;
 
 	const endsAtCurrent =
 		(subscription.accessEndsAt ?? undefined) === (target.accessEndsAt ?? undefined);
@@ -80,8 +76,7 @@ export async function scheduleSubscriptionExpiry(
 		if (!phaseCurrent || !endsAtCurrent) {
 			await ctx.db.patch('subscriptions', subscription._id, {
 				accessPhase: target.accessPhase,
-				accessEndsAt: target.accessEndsAt,
-				billingPeriodEnded: target.accessPhase !== 'paid'
+				accessEndsAt: target.accessEndsAt
 			});
 		}
 
@@ -107,7 +102,6 @@ export async function scheduleSubscriptionExpiry(
 	await ctx.db.patch('subscriptions', subscription._id, {
 		accessPhase: target.accessPhase,
 		accessEndsAt: target.accessEndsAt,
-		billingPeriodEnded: target.accessPhase !== 'paid',
 		billingPeriodCheckId: checkId
 	});
 }
@@ -157,7 +151,6 @@ export const checkSubscriptionExpiry = internalMutation({
 		await ctx.db.patch('subscriptions', subscription._id, {
 			accessPhase: target.accessPhase,
 			accessEndsAt: target.accessEndsAt,
-			billingPeriodEnded: target.accessPhase !== 'paid',
 			billingPeriodCheckId: undefined
 		});
 
@@ -247,7 +240,7 @@ export const getSubscriptionAccess = internalQuery({
 			userId: match.userId,
 			tier: match.tier,
 			status: match.status,
-			accessPhase: match.accessPhase ?? (match.billingPeriodEnded ? 'none' : 'paid'),
+			accessPhase: match.accessPhase ?? 'none',
 			accessEndsAt: match.accessEndsAt,
 			terminalConfirmed: match.terminalConfirmed === true,
 			projectionRevision: match.projectionRevision ?? 0

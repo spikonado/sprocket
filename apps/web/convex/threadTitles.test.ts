@@ -98,7 +98,13 @@ describe('automatic thread titles', () => {
 					runId: first.runId,
 					sourceKey: `tool-${index}`,
 					kind: 'tool',
-					tool: { callId: 'call', name: 'exec_cmd', output: 'Tool output', status: 'completed' },
+					tool: {
+						toolInvocationId: `invocation-${index}`,
+						callId: 'call',
+						name: 'exec_cmd',
+						output: 'Tool output',
+						status: 'completed'
+					},
 					work: { ranges: [] }
 				});
 			}

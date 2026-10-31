@@ -154,12 +154,7 @@ export async function getSubscriptionDocExclusive(
 /** Rows without a Dodo ID are operator grants and skip the billing-period clock check. */
 type SubscriptionActivity = Pick<
 	Doc<'subscriptions'>,
-	| 'status'
-	| 'dodoSubscriptionId'
-	| 'billingPeriodEnded'
-	| 'billingPeriodEnd'
-	| 'accessPhase'
-	| 'accessEndsAt'
+	'status' | 'dodoSubscriptionId' | 'billingPeriodEnd' | 'accessPhase' | 'accessEndsAt'
 >;
 
 /**
@@ -199,7 +194,7 @@ export function subscriptionTier(
 export function subscriptionMaterializedPhase(
 	subscription: Pick<
 		Doc<'subscriptions'>,
-		'status' | 'dodoSubscriptionId' | 'billingPeriodEnd' | 'billingPeriodEnded' | 'accessPhase'
+		'status' | 'dodoSubscriptionId' | 'billingPeriodEnd' | 'accessPhase'
 	> | null
 ): AccessPhase {
 	if (!subscription || subscription.status !== 'active') return 'none';
@@ -208,10 +203,7 @@ export function subscriptionMaterializedPhase(
 
 	if (subscription.billingPeriodEnd === undefined) return 'none';
 
-	if (subscription.accessPhase !== undefined) return subscription.accessPhase;
-
-	// Rows predating the materialized fields; the backfill rewrites them.
-	return subscription.billingPeriodEnded === true ? 'none' : 'paid';
+	return subscription.accessPhase ?? 'none';
 }
 
 /**
@@ -243,7 +235,6 @@ type AccessFields = Pick<
 	| 'dodoSubscriptionId'
 	| 'billingPeriodStart'
 	| 'billingPeriodEnd'
-	| 'billingPeriodEnded'
 	| 'accessPhase'
 	| 'accessEndsAt'
 	| 'cancelAtNextBillingDate'
@@ -280,14 +271,7 @@ export function subscriptionAccessPhase(
 
 	if (subscription.accessPhase === 'none' && !hasPendingTermStart(subscription)) return 'none';
 
-	if (now < termEnd) {
-		// Legacy rows closed early by billingPeriodEnded stay closed.
-		if (subscription.accessPhase === undefined && subscription.billingPeriodEnded === true) {
-			return 'none';
-		}
-
-		return 'paid';
-	}
+	if (now < termEnd) return 'paid';
 
 	// Past the confirmed term end: only the bounded renewal-processing grace
 	// remains, and never after a scheduled cancellation deadline.

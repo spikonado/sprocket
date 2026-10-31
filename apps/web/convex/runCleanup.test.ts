@@ -4,7 +4,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { actionablePendingQuestionsForThread } from '@convex/lib/agentQuestions';
 import { registerChildThread, subtreeSummary } from '@convex/lib/threadHierarchy';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
-import { toolInvocationIdForJob, toolSourceKey } from '@convex/lib/transcriptParts';
+import { toolSourceKey } from '@convex/lib/transcriptParts';
 import { getRunExecutionState, patchRunExecution } from '@convex/lib/runExecution';
 import { RUN_QUEUED_STARTUP_DEADLINE_MS } from '@convex/lib/runLease';
 import {
@@ -56,7 +56,7 @@ async function seedJobs(
 							}
 						: undefined,
 					sequence: index * 3,
-					toolInvocationId: index % 2 === 0 ? `${runId}:${index}` : undefined,
+					toolInvocationId: `${runId}:${index}`,
 					sectionKey: `section:${runId}:${index}`,
 					sectionOrdinal: index
 				});
@@ -91,12 +91,12 @@ async function expectCleanedJobs(t: ConvexTestInstance, jobs: Doc<'executorJobs'
 				.withIndex('by_threadId_and_sourceKey', (q) =>
 					q
 						.eq('threadId', job.threadId)
-						.eq('sourceKey', toolSourceKey(toolInvocationIdForJob(job), 'finished'))
+						.eq('sourceKey', toolSourceKey(job.toolInvocationId, 'finished'))
 				)
 				.unique();
 
 			expect(part?.tool).toMatchObject({
-				toolInvocationId: toolInvocationIdForJob(job),
+				toolInvocationId: job.toolInvocationId,
 				status: persisted?.status
 			});
 		});
@@ -185,7 +185,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 			for (const job of jobs) {
 				const outcome = parts.find(
-					(part) => part.sourceKey === toolSourceKey(toolInvocationIdForJob(job), 'finished')
+					(part) => part.sourceKey === toolSourceKey(job.toolInvocationId, 'finished')
 				);
 
 				expect(outcome?.number).toBeLessThan(prompt!.number);

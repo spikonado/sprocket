@@ -194,8 +194,8 @@ export default defineSchema({
 		checkoutAttemptId: v.optional(v.string()),
 		// Paid-access phase and the wall-clock deadline it ends at. The expiry
 		// scheduler advances it; enforcement re-checks `accessEndsAt` so a
-		// delayed scheduler cannot extend access. Undefined rows predate the
-		// field and behave like 'paid'/'none' per subscriptionIsActive.
+		// delayed scheduler cannot extend access. Only rows never projected
+		// from Dodo leave it undefined.
 		accessPhase: v.optional(
 			v.union(v.literal('paid'), v.literal('renewal_processing'), v.literal('none'))
 		),
@@ -219,7 +219,6 @@ export default defineSchema({
 		billingInterval: v.optional(vBillingInterval),
 		billingPeriodStart: v.optional(v.number()),
 		billingPeriodEnd: v.optional(v.number()),
-		billingPeriodEnded: v.optional(v.boolean()),
 		billingPeriodCheckId: v.optional(v.id('_scheduled_functions')),
 		cancelAtNextBillingDate: v.optional(v.boolean()),
 		// Retained as the bucket key until released timestamp-keyed gateways
@@ -555,9 +554,7 @@ export default defineSchema({
 		runId: v.id('runs'),
 		kind: vStoredExecutorJobKind,
 		callId: v.optional(v.string()),
-		// Set on jobs created after tool progress events. Older rows omit it;
-		// transcript writes fall back to the job document id.
-		toolInvocationId: v.optional(v.string()),
+		toolInvocationId: v.string(),
 		sectionKey: v.optional(v.string()),
 		sectionOrdinal: v.optional(v.number()),
 		attemptSeq: v.optional(v.number()),

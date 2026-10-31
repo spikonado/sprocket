@@ -340,26 +340,6 @@ describe('executor', () => {
 				})
 			]
 		);
-
-		await t.run(async (ctx) => {
-			const finished = parts.parts.find((part) => part.tool?.status === 'completed');
-
-			if (!finished?.tool) throw new Error('Missing terminal transcript part.');
-			const legacyTool = { ...finished.tool };
-			delete legacyTool.input;
-			await ctx.db.patch('threadTranscriptParts', finished._id, { tool: legacyTool });
-		});
-		await expect(
-			asUser.mutation(api.executor.complete, {
-				runId,
-				claimId,
-				executionSecret,
-				jobId,
-				result
-			})
-		).resolves.toBe(true);
-		const retried = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
-		expect(retried.parts[0].tool?.input).toEqual(displayInput);
 	});
 
 	it.each([

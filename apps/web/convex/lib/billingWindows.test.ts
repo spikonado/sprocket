@@ -56,8 +56,7 @@ describe('UTC usage windows', () => {
 
 	it('keeps operator grants on calendar windows even with billing dates present', () => {
 		const grant = paidSubscription('annual', '2026-01-31T18:45:11Z', '2027-01-31T18:45:11Z', {
-			dodoSubscriptionId: undefined,
-			billingPeriodEnded: true
+			dodoSubscriptionId: undefined
 		});
 
 		expect(billingWindow(grant, timestamp('2026-02-28T18:45:10Z'))).toEqual({

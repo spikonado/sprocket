@@ -34,7 +34,6 @@ import {
 	getPromptPart,
 	loadTranscriptPartsByNumbers,
 	loadTranscriptPartsPage,
-	stripLegacyAttachmentImageUploadIds,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 import {
@@ -483,8 +482,12 @@ export const transcriptPartsPage = mutation({
 		try {
 			const thread = await requireDescendantThread(ctx, args);
 
-			const parts = stripLegacyAttachmentImageUploadIds(
-				await loadTranscriptPartsPage(ctx, thread._id, args.start, args.end, args.order)
+			const parts = await loadTranscriptPartsPage(
+				ctx,
+				thread._id,
+				args.start,
+				args.end,
+				args.order
 			);
 
 			return { threadId: thread._id, parts };

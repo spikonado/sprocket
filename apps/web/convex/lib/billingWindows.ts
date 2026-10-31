@@ -10,7 +10,6 @@ export type BillingWindowSubscription = Pick<
 	| 'billingInterval'
 	| 'billingPeriodStart'
 	| 'billingPeriodEnd'
-	| 'billingPeriodEnded'
 	| 'accessPhase'
 	| 'accessEndsAt'
 	| 'cancelAtNextBillingDate'

@@ -14,7 +14,6 @@ import {
 	getTranscriptState,
 	loadTranscriptPartsByNumbers,
 	loadTranscriptPartsPage,
-	stripLegacyAttachmentImageUploadIds,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
@@ -75,8 +74,12 @@ export const getPartsPage = query({
 	handler: async (ctx, args) => {
 		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
 
-		const parts = stripLegacyAttachmentImageUploadIds(
-			await loadTranscriptPartsPage(ctx, args.threadId, args.start, args.end, args.order)
+		const parts = await loadTranscriptPartsPage(
+			ctx,
+			args.threadId,
+			args.start,
+			args.end,
+			args.order
 		);
 
 		return { threadId: args.threadId, parts };
@@ -128,8 +131,12 @@ export const getPartsPageForRun = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 
-		const parts = stripLegacyAttachmentImageUploadIds(
-			await loadTranscriptPartsPage(ctx, run.threadId, args.start, args.end, args.order)
+		const parts = await loadTranscriptPartsPage(
+			ctx,
+			run.threadId,
+			args.start,
+			args.end,
+			args.order
 		);
 
 		return { threadId: run.threadId, parts };

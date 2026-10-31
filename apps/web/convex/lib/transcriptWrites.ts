@@ -5,7 +5,6 @@ import {
 	completionSourceKey,
 	hiddenPromptSourceKey,
 	promptSourceKey,
-	toolInvocationIdForJob,
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
@@ -159,7 +158,7 @@ export async function recordStartedToolTranscript(
 		job: TranscriptToolJob;
 	}
 ): Promise<void> {
-	const toolInvocationId = toolInvocationIdForJob(args.job);
+	const { toolInvocationId } = args.job;
 
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
@@ -194,7 +193,7 @@ export async function recordToolTranscript(
 		return;
 	}
 
-	const toolInvocationId = toolInvocationIdForJob(args.job);
+	const { toolInvocationId } = args.job;
 	const sourceKey = toolSourceKey(toolInvocationId, 'finished');
 	const tool = settledToolBody(args.job);
 
@@ -280,7 +279,7 @@ function progressToolBody(
 	args: { status: TranscriptToolBody['status']; output?: TranscriptToolBody['output'] }
 ): TranscriptToolBody {
 	const body: TranscriptToolBody = {
-		toolInvocationId: toolInvocationIdForJob(job),
+		toolInvocationId: job.toolInvocationId,
 		callId: job.callId ?? `executor-job:${job._id}`,
 		name: job.kind,
 		status: args.status

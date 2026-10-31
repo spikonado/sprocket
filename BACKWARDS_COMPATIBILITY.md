@@ -58,10 +58,6 @@ Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` 
 
 ## Convex data shims
 
-### Billing subscription projection
-
-Subscription rows written before the durable-billing projection may omit `projectionRevision`, `payloadEventAt`, `termEventAt`, `accessPhase` and `accessEndsAt`. Readers derive access from the legacy `billingPeriodEnded` flag and watermarks from `eventAt`. `backfillSubscriptionAccess` fills them idempotently. Once production scans confirm every subscription has the fields, remove the fallbacks in `lib/tiers.ts` and `subscriptionExpiry.ts` and make the fields required.
-
 ### Usage-generation key
 
 Usage buckets key off `quotaResetAt` while released gateway readers still use it, so old and new servers charge the same bucket. New writes keep `quotaResetAt` as the transition timestamp, advanced by 1ms when transitions share a timestamp, and `quotaGeneration` counts transitions. After those readers age out, migrate outstanding usage into generation-keyed buckets before switching the key. Keep `quotaResetAt` until that migration completes.
@@ -74,29 +70,18 @@ The checkout tables keep `by_userId` because released readers use it. Remove it 
 
 ### Calendar usage windows
 
-The quota reader carries usage from old seven-day or thirty-day rate-limiter rows into the current calendar window only when the old window began inside it. Remove that read path once every deployment has run calendar windows for 30 days. `billingPeriodEnded` and `billingPeriodCheckId` stay optional while operator grants or older subscription rows without billing dates exist.
+The quota reader carries usage from old seven-day or thirty-day rate-limiter rows into the current calendar window only when the old window began inside it. Remove that read path once every deployment has run calendar windows for 30 days.
 
 ### Migration records
 
-`migrationSchedules` keeps completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment.
+`migrationSchedules` and the unmounted `migrations` component keep completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment, and delete the component's data with them.
 
 ### Stored executor job and result fields
 
 Each of these Convex variants goes once a full production scan confirms no retained row uses it:
 
-- `payload.userEmail` on mandate setup jobs written through v0.3.2.
-- `truncated` on `scrape_url` results, and results without `images`.
 - `truncated` on `read_skill` results. Also wait for released clients that send it to age out.
 - `hidden` on executor jobs. Sectionless jobs keep their terminal-write fallback during reconciliation until they're reconciled.
-- `imageUploadId` on prompt attachments.
-
-### Tool invocation IDs
-
-Older tool parts use `jobId` and `tool:<jobId>` source keys. Readers pair by `jobId` when `toolInvocationId` is absent, and `executorJobs.toolInvocationId` stays optional. Remove the Convex fallbacks after a full scan confirms every job and tool part has an invocation ID and no tool part carries `jobId`.
-
-### Command tool inputs
-
-Command transcript retries hydrate an existing part's absent input through the existing append lookup, after strict retry comparison. Remove this hydration once production has no recoverable command parts with absent input and all writers preserve command inputs.
 
 ## Local data directory shims
 
