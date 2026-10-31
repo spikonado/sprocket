@@ -277,7 +277,15 @@ async fn launch_agent_inner(
                             .join("command-logs"),
                     )
                     .await
-                    .with_environment(tool_environment)
+                    // Each command runs in a fresh shell, so exported sessions don't persist.
+                    // Defaulting to the thread keeps parallel agents out of each other's browser
+                    // and gives each its own agent-desktop cursor. `--session` and `--agent-id` win.
+                    .with_environment(
+                        tool_environment.into_iter().chain(
+                            ["AGENT_BROWSER_SESSION", "AGENT_DESKTOP_AGENT_ID"]
+                                .map(|name| (name.into(), thread_id.as_str().into())),
+                        ),
+                    )
                     .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
                     .with_history_resolver({
                         let user_id = user_id.clone();
