@@ -17,7 +17,7 @@ use crate::routes::api_error::ApiError;
 use crate::routes::session::{AuthorizedJson, UserScoped};
 use sprocket_host::transcript_watch::TranscriptWatchEvent;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TranscriptScope {
     user_id: String,

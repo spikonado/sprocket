@@ -127,10 +127,24 @@ class LocalSocket {
 
 			const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (this.#failures - 1));
 			this.#retryAt = this.#failures ? Date.now() + delay * (0.5 + Math.random() / 2) : 0;
-			const lost = new Error('Lost the live connection to the Sprocket server.');
-
-			for (const id of this.#subscriptions.keys()) this.#end(id, false, lost);
+			this.#endAll();
 		};
+	}
+
+	#endAll() {
+		const lost = new Error('Lost the live connection to the Sprocket server.');
+
+		for (const id of this.#subscriptions.keys()) this.#end(id, false, lost);
+	}
+
+	/** The socket keeps the cookie from its upgrade, so a new session needs a new socket. */
+	#reconnectWithFreshCookie() {
+		const socket = this.#socket;
+
+		if (!socket) return;
+		this.#socket = null;
+		socket.close();
+		this.#endAll();
 	}
 
 	#flush() {
@@ -156,6 +170,8 @@ class LocalSocket {
 
 		if (message.type === 'error') {
 			this.#end(message.id, false, new LocalResponseError(message.message, message.status));
+
+			if (message.status === 401) this.#reconnectWithFreshCookie();
 		} else if (message.type === 'end') {
 			this.#end(message.id, false);
 		} else {

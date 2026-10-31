@@ -19,7 +19,7 @@ use sprocket_host::artifact_watch::{ArtifactWatchEvent, is_native_account_revoke
 
 const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ArtifactWatchRequest {
     user_id: String,

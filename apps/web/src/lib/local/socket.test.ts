@@ -56,20 +56,22 @@ describe('local socket', () => {
 		]);
 	});
 
-	it('rejects server errors with their status', async () => {
+	it('rejects server errors with their status and reconnects after a 401', async () => {
 		const sockets = stubWebSocket();
-
-		const watching = localSocket('http://127.0.0.1:7002').subscribe(
-			{ kind: 'authChanges' },
-			z.number(),
-			new AbortController().signal,
-			vi.fn()
-		);
+		const socket = localSocket('http://127.0.0.1:7002');
+		const signal = new AbortController().signal;
+		const watching = socket.subscribe({ kind: 'authChanges' }, z.number(), signal, vi.fn());
+		const other = socket.subscribe({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
 
 		sockets[0].open();
 		sockets[0].receive({ type: 'error', id: 1, status: 401, message: 'authentication required' });
 
 		await expect(watching).rejects.toEqual(new LocalResponseError('authentication required', 401));
+		await expect(other).rejects.toThrow('Lost the live connection');
+		expect(sockets[0].readyState).toBe(WebSocket.CLOSED);
+
+		void socket.subscribe({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
+		expect(sockets).toHaveLength(2);
 	});
 
 	it('ends subscriptions when the socket drops and reconnects after a backoff', async () => {

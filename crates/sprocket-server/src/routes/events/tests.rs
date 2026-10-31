@@ -1,7 +1,8 @@
 use super::*;
+use tokio_tungstenite::tungstenite::Message as ClientFrame;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-#[tokio::test]
-async fn subscriptions_require_the_session_user() {
+async fn state() -> (AppState, String, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let auth = crate::auth::AuthState::load(root.path()).unwrap();
     let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
@@ -20,6 +21,12 @@ async fn subscriptions_require_the_session_user() {
         true,
         sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
+    (state, token, root)
+}
+
+#[tokio::test]
+async fn subscriptions_require_the_session_user() {
+    let (state, token, _root) = state().await;
     let mut headers = HeaderMap::new();
     headers.insert(axum::http::header::HOST, "127.0.0.1:7731".parse().unwrap());
     headers.insert(
@@ -69,6 +76,98 @@ async fn subscriptions_require_the_session_user() {
         .err()
         .expect("package updates need a session");
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn next_message<S>(socket: &mut S) -> serde_json::Value
+where
+    S: futures::Stream<Item = Result<ClientFrame, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let ClientFrame::Text(text) = frame {
+            return serde_json::from_str(text.as_str()).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn serves_subscriptions_over_a_same_origin_socket_until_the_session_ends() {
+    let (state, token, _root) = state().await;
+    let auth = std::sync::Arc::clone(&state.auth);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = crate::build_router(state, None);
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let request = |origin: String| {
+        let mut request = format!("ws://{address}/api/events")
+            .into_client_request()
+            .unwrap();
+        let headers = request.headers_mut();
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("{}={token}", crate::SESSION_COOKIE_NAME)
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(axum::http::header::ORIGIN, origin.parse().unwrap());
+        request
+    };
+
+    assert!(matches!(
+        tokio_tungstenite::connect_async(request("http://evil.example".into())).await,
+        Err(tokio_tungstenite::tungstenite::Error::Http(response))
+            if response.status() == StatusCode::FORBIDDEN
+    ));
+
+    let (mut socket, _) = tokio_tungstenite::connect_async(request(format!("http://{address}")))
+        .await
+        .unwrap();
+    for (id, kind) in [(1, "packageUpdate"), (2, "browserStatus")] {
+        let subscribe =
+            serde_json::json!({ "type": "subscribe", "id": id, "topic": { "kind": kind } });
+        socket
+            .send(ClientFrame::Text(subscribe.to_string().into()))
+            .await
+            .unwrap();
+    }
+    let mut snapshots = HashMap::new();
+    while snapshots.len() < 2 {
+        let message = next_message(&mut socket).await;
+        assert_eq!(message["type"], "event");
+        snapshots
+            .entry(message["id"].as_u64().unwrap())
+            .or_insert(message["data"].clone());
+    }
+    assert_eq!(snapshots[&1]["status"], "unavailable");
+    assert_eq!(
+        snapshots[&2],
+        serde_json::json!({ "state": "installing", "error": null })
+    );
+
+    auth.end_session(&token).await.unwrap();
+    let mut revoked = Vec::new();
+    while revoked.len() < 2 {
+        let message = next_message(&mut socket).await;
+        if message["type"] == "event" {
+            continue;
+        }
+        assert_eq!(message["status"], 401);
+        revoked.push(message["id"].as_u64().unwrap());
+    }
+    revoked.sort();
+    assert_eq!(revoked, [1, 2]);
+    server.abort();
 }
 
 #[test]

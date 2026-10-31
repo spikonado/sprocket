@@ -74,13 +74,11 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/native-session/token", post(native_session_token))
 }
 
-/// Emits the current auth generation, then each change. Holding the stream keeps
-/// an idle CLI-started server running while a browser is open.
-pub(crate) async fn session_change_events(
+pub(crate) async fn authorize_session_changes(
     state: &AppState,
     headers: &HeaderMap,
     jar: &CookieJar,
-) -> Result<futures::stream::BoxStream<'static, u64>, ApiError> {
+) -> Result<(), ApiError> {
     let session_token = require_bootstrap_session(&state.auth, headers, jar)
         .await
         .map_err(ApiError::unauthorized)?;
@@ -89,6 +87,15 @@ pub(crate) async fn session_change_events(
     {
         return Err(ApiError::authentication_required());
     }
+    Ok(())
+}
+
+/// Emits the current auth generation, then each change. Holding the stream keeps
+/// an idle CLI-started server running while a browser is open. Callers must run
+/// `authorize_session_changes` first.
+pub(crate) fn session_change_events(
+    state: &AppState,
+) -> Result<futures::stream::BoxStream<'static, u64>, ApiError> {
     let receiver = state.host.native_auth.subscribe_changes();
     let guard = state
         .host

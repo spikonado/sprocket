@@ -30,7 +30,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/agent/commands/terminate", post(terminate_command_handler))
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CommandsRequest {
     user_id: String,
@@ -154,7 +154,7 @@ pub(crate) async fn launch_run(
     })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LiveCompletionWatchRequest {
     user_id: String,
