@@ -116,6 +116,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		resolveWorkspacePath: unused,
 		listProjectAttachments: async () => [],
 		attachProject: unused,
+		removeProject: unused,
 		runAgent: unused,
 		fetchTranscriptDisplay: async () => emptyDisplayPage('replica-1'),
 		fetchTranscriptDisplayDetails: unused,
@@ -305,6 +306,134 @@ it('populates projects from the desktop client resolved during boot', async () =
 
 	expect(await projectTrigger('Alpha')).toBeTruthy();
 	expect(listProjectAttachments).toHaveBeenCalled();
+});
+
+it('removes the current project from project lists and inbox queries', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	alpha.lastUsedAt = 2;
+	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+	let attachments = [alpha, beta];
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, []);
+	const inboxQueries = vi.spyOn(client, 'watchPaginatedQuery');
+
+	const removeProject = vi.fn<LocalApi['removeProject']>(async ({ workspacePath }) => {
+		attachments = attachments.filter((attachment) => attachment.workspacePath !== workspacePath);
+	});
+
+	await renderApp(
+		client,
+		createRuntime(
+			createLocalApi({ listProjectAttachments: async () => attachments, removeProject })
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+	await waitFor(() =>
+		expect(removeProject).toHaveBeenCalledWith({ workspacePath: alpha.workspacePath })
+	);
+	expect(await projectTrigger('Choose a project')).toBeTruthy();
+	expect(screen.queryByRole('button', { name: 'Remove Alpha from project list' })).toBeNull();
+	expect(inboxQueries.mock.calls.at(-1)?.[1]).toEqual({
+		state: 'unsettled',
+		repositoryKeys: ['repo-beta']
+	});
+});
+
+it('removes a project without waiting for uploads and restores the draft text when re-added', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+
+	const upload =
+		Promise.withResolvers<Awaited<ReturnType<LocalApi['uploadTranscriptAttachment']>>>();
+
+	let attachments = [alpha];
+	const discardTranscriptAttachment = vi.fn(async () => true);
+
+	const removeProject = vi.fn<LocalApi['removeProject']>(async () => {
+		attachments = [];
+	});
+
+	const desktop = createLocalApi({
+		listProjectAttachments: async () => attachments,
+		removeProject,
+		uploadTranscriptAttachment: vi.fn(() => upload.promise),
+		discardTranscriptAttachment,
+		attachProject: async () => {
+			attachments = [alpha];
+
+			return alpha;
+		},
+		browseFilesystem: async () => ({ parentPath: '/home/me', entries: [] }),
+		resolveWorkspacePath: async () => alpha
+	});
+
+	await renderApp(createConvexFixtures(), createRuntime(desktop));
+	await projectTrigger('Alpha');
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Inspect these notes' } });
+	fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+		target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] }
+	});
+	await screen.findByLabelText('Uploading notes.txt');
+	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+	await waitFor(() =>
+		expect(removeProject).toHaveBeenCalledWith({ workspacePath: alpha.workspacePath })
+	);
+
+	await act(async () => {
+		upload.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			storageId: 'late-upload' as Id<'_storage'>,
+			name: 'notes.txt',
+			mediaType: 'text/plain',
+			size: 5,
+			url: 'https://sprocket.test/notes'
+		});
+	});
+	expect(discardTranscriptAttachment).toHaveBeenCalledWith(
+		expect.objectContaining({ storageId: 'late-upload' })
+	);
+
+	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
+	const picker = screen.getByRole('dialog', { name: 'Add project' });
+	fireEvent.change(within(picker).getByRole('combobox'), {
+		target: { value: alpha.workspacePath }
+	});
+	const add = within(picker).getByRole('button', { name: /^(Add|Create & add)/ });
+	await waitFor(() => expect(add.hasAttribute('disabled')).toBe(false));
+	fireEvent.click(add);
+	await projectTrigger('Alpha');
+	await waitFor(() =>
+		expect(screen.getByRole('combobox')).toHaveProperty('value', 'Inspect these notes')
+	);
+	expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull();
+});
+
+it('keeps an unavailable project listed when removal fails and allows retry', async () => {
+	const alpha = projectAttachment('/missing/alpha', 'repo-alpha', 'Alpha', 'unavailable');
+
+	const removeProject = vi
+		.fn<LocalApi['removeProject']>()
+		.mockRejectedValueOnce(new Error('Could not save project list'))
+		.mockResolvedValue(undefined);
+
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], removeProject }))
+	);
+
+	const remove = () => {
+		fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+	};
+
+	remove();
+	await screen.findByText('Could not save project list');
+	remove();
+	await waitFor(() =>
+		expect(screen.queryByRole('button', { name: 'Remove Alpha from project list' })).toBeNull()
+	);
 });
 
 it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
@@ -512,7 +641,8 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	const resolveWorkspacePath = vi.fn(async () => ({
 		workspacePath: alpha.workspacePath,
 		displayName: alpha.displayName,
-		repositoryKey: alpha.repositoryKey
+		repositoryKey: alpha.repositoryKey,
+		attachmentKey: alpha.attachmentKey
 	}));
 
 	let listCalls = 0;
@@ -657,7 +787,8 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 				resolveWorkspacePath: async () => ({
 					workspacePath: changedAlpha.workspacePath,
 					repositoryKey: changedAlpha.repositoryKey,
-					displayName: changedAlpha.displayName
+					displayName: changedAlpha.displayName,
+					attachmentKey: changedAlpha.attachmentKey
 				}),
 				runAgent
 			})

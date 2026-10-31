@@ -1306,6 +1306,69 @@ export default function App({
 		return attachment;
 	}
 
+	async function removeProject({ workspacePath }: { workspacePath: string }) {
+		const client = localApiRef.current;
+		const userId = signedInUserIdRef.current;
+
+		if (!client || !userId) {
+			setCurrentError(localServerRequiredMessage);
+
+			return;
+		}
+
+		try {
+			await client.removeProject({ workspacePath });
+		} catch (error) {
+			setCurrentError(error instanceof Error ? error.message : 'Failed to remove project.');
+
+			return;
+		}
+
+		if (client !== localApiRef.current || userId !== signedInUserIdRef.current) return;
+
+		desktopProjectAttachmentsGeneration.current += 1;
+
+		const remaining = Object.fromEntries(
+			Object.entries(desktopProjectAttachmentsRef.current).filter(
+				([path]) => path !== workspacePath
+			)
+		);
+
+		publishDesktopProjectAttachments(remaining);
+
+		if (currentWorkspacePathRef.current === workspacePath) {
+			const scope = getComposerScope(currentThreadIdRef.current, workspacePath);
+			const latestPrompt = promptRef.current;
+
+			// Clearing discards unfinished uploads once they complete.
+			const finishedAttachments = composerAttachments
+				.snapshot()
+				.filter((attachment) => attachment.status !== 'uploading');
+
+			if (scope && (latestPrompt || finishedAttachments.length > 0)) {
+				storeComposerRecovery(userId, scope, {
+					message: '',
+					prompt: latestPrompt,
+					attachments: finishedAttachments,
+					continuationOfRunId: composerContinuationOfRunIdRef.current ?? undefined,
+					autoSubmit: false
+				});
+			}
+
+			setPrompt('');
+			composerAttachments.clear({ discard: false });
+			bumpProjectSelectionGeneration();
+			setCurrentWorkspacePath(null);
+			setCurrentRepositoryKey(null);
+			setCurrentThreadId(null);
+			setDraftWorkspacePath(null);
+			setPendingCreatedThreadId(null);
+			setComposerContinuationOfRunId(null);
+			setAutoSubmitComposerContinuation(false);
+			setSelectedQuestionOptionId(null);
+		}
+	}
+
 	function openProject(
 		workspacePath: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
@@ -1393,10 +1456,10 @@ export default function App({
 		expectedUserId: string,
 		client?: LocalApi
 	) {
-		await attachLocalProject(selection.workspacePath, undefined, client);
+		const attachment = await attachLocalProject(selection.workspacePath, undefined, client);
 
 		if (signedInUserIdRef.current !== expectedUserId) return;
-		setProjectSelection(selection.workspacePath, null, true, false, selection.repositoryKey);
+		setProjectSelection(attachment.workspacePath, null, true, false, attachment.repositoryKey);
 		setCurrentError(null);
 	}
 
@@ -1407,7 +1470,8 @@ export default function App({
 		client?: LocalApi
 	) {
 		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
-		await attachLocalProject(
+
+		const attachment = await attachLocalProject(
 			selection.workspacePath,
 			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath,
 			client
@@ -1416,11 +1480,17 @@ export default function App({
 		if (signedInUserIdRef.current !== expectedUserId) return;
 
 		const keepThread =
-			previousProject?.repositoryKey === selection.repositoryKey
+			previousProject?.repositoryKey === attachment.repositoryKey
 				? currentThreadIdRef.current
 				: null;
 
-		setProjectSelection(selection.workspacePath, keepThread, false, false, selection.repositoryKey);
+		setProjectSelection(
+			attachment.workspacePath,
+			keepThread,
+			false,
+			false,
+			attachment.repositoryKey
+		);
 		setCurrentError(null);
 	}
 
@@ -2090,6 +2160,7 @@ export default function App({
 	const runStateRef = useRef(runState);
 	const pendingAgentLaunchesRef = useRef(pendingAgentLaunches);
 	const composerContinuationOfRunIdRef = useRef(composerContinuationOfRunId);
+	const promptRef = useRef(prompt);
 
 	// Async callbacks observe committed selections, never an abandoned render.
 	useLayoutEffect(() => {
@@ -2104,6 +2175,7 @@ export default function App({
 		runStateRef.current = runState;
 		pendingAgentLaunchesRef.current = pendingAgentLaunches;
 		composerContinuationOfRunIdRef.current = composerContinuationOfRunId;
+		promptRef.current = prompt;
 	}, [
 		config,
 		signedInUserId,
@@ -2115,7 +2187,8 @@ export default function App({
 		pendingAgentQuestion,
 		runState,
 		pendingAgentLaunches,
-		composerContinuationOfRunId
+		composerContinuationOfRunId,
+		prompt
 	]);
 
 	async function cancelRun() {
@@ -2770,6 +2843,7 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
+							onRemoveProject={localApi ? removeProject : undefined}
 							onSettings={() => openSettings()}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
@@ -3069,6 +3143,7 @@ export default function App({
 					mode={projectPickerMode}
 					expectedDisplayName={projectPickerExpectedDisplayName}
 					recentProjectPaths={recentProjectDirectories}
+					onRemoveProject={removeProject}
 					onClose={() => {
 						setProjectPickerOpen(false);
 						setProjectPickerReconnectWorkspacePath(null);
