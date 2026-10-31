@@ -129,7 +129,7 @@ fn unpack_zip(archive: &Path, bin: &Path) -> anyhow::Result<()> {
         if !file.is_file() {
             continue;
         }
-        let name = uv_executable(Path::new(file.name())).map(ToOwned::to_owned);
+        let name = uv_executable(Path::new(&*file.name()?)).map(ToOwned::to_owned);
         if let Some(name) = name {
             std::io::copy(&mut file, &mut File::create(bin.join(name))?)?;
         }
