@@ -81,13 +81,20 @@ export async function installPackageUpdate(): Promise<UpdateState | null> {
 	return updateStateSchema.parse(await response.json());
 }
 
+/** Without a local server there is nothing to watch, so it waits for `signal` instead of returning for a retry. */
 export async function watchPackageUpdate(handlers: {
 	onEvent: (state: UpdateState) => void;
 	signal: AbortSignal;
 }): Promise<void> {
 	const baseUrl = resolveLocalApiBaseUrl();
 
-	if (!baseUrl) return;
+	if (!baseUrl) {
+		await new Promise((resolve) =>
+			handlers.signal.addEventListener('abort', resolve, { once: true })
+		);
+
+		return;
+	}
 
 	await localSocket(baseUrl).subscribe(
 		{ kind: 'packageUpdate' },
