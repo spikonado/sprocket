@@ -11,6 +11,15 @@ const chartProps = z.object({
 export const jsonRenderCatalog = defineCatalog(schema, {
 	components: {
 		...shadcnComponentDefinitions,
+		Metric: {
+			props: z.object({
+				label: z.string(),
+				value: z.string(),
+				detail: z.string().nullable()
+			}),
+			description: 'One headline number with its label. Put several in a Grid for a dashboard',
+			example: { label: 'Pass rate', value: '96.5%', detail: '+1.2% this week' }
+		},
 		BarGraph: {
 			props: chartProps,
 			description: 'Vertical bar chart. Values must be zero or above',

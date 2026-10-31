@@ -1,6 +1,7 @@
 import { JSONUIProvider, Renderer, type ComponentRenderProps } from '@json-render/react';
 import { useMemo, type ReactNode } from 'react';
 import { parseJsonRenderSpec } from '$lib/json-render/spec';
+import { FlatRootCard } from '$lib/json-render/components';
 import { jsonRenderRegistry } from '$lib/json-render/registry';
 
 function UnknownComponent({ element }: ComponentRenderProps) {
@@ -21,9 +22,11 @@ export default function JsonRenderView({
 
 	return (
 		<div className="text-foreground my-3 text-sm leading-normal">
-			<JSONUIProvider registry={jsonRenderRegistry} initialState={spec.state}>
-				<Renderer spec={spec} registry={jsonRenderRegistry} fallback={UnknownComponent} />
-			</JSONUIProvider>
+			<FlatRootCard.Provider value={spec.elements[spec.root].type === 'Card'}>
+				<JSONUIProvider registry={jsonRenderRegistry} initialState={spec.state}>
+					<Renderer spec={spec} registry={jsonRenderRegistry} fallback={UnknownComponent} />
+				</JSONUIProvider>
+			</FlatRootCard.Provider>
 		</div>
 	);
 }
