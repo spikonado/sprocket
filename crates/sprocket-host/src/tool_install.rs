@@ -170,18 +170,17 @@ pub(crate) fn prepend_path(
     })
 }
 
-/// Puts `directories` after the `PATH` so the user's own tools win, but ahead of Windows'
-/// Microsoft Store aliases, whose `python` only opens the Store.
+/// Puts `directories` after the `PATH` so the user's own tools win, but moves Windows'
+/// Microsoft Store aliases last, since their `python` only opens the Store.
 pub(crate) fn append_path(
     environment: Vec<(OsString, OsString)>,
     directories: impl IntoIterator<Item = PathBuf>,
 ) -> Vec<(OsString, OsString)> {
-    rewrite_path(environment, |mut paths| {
-        let at = paths
-            .iter()
-            .position(|path| is_store_aliases(path))
-            .unwrap_or(paths.len());
-        paths.splice(at..at, directories);
+    rewrite_path(environment, |paths| {
+        let (store_aliases, mut paths): (Vec<_>, Vec<_>) =
+            paths.into_iter().partition(|path| is_store_aliases(path));
+        paths.extend(directories);
+        paths.extend(store_aliases);
         paths
     })
 }
@@ -190,8 +189,9 @@ fn is_store_aliases(path: &Path) -> bool {
     cfg!(windows)
         && path
             .to_string_lossy()
+            .replace('/', "\\")
             .to_ascii_lowercase()
-            .trim_end_matches(['\\', '/'])
+            .trim_end_matches('\\')
             .ends_with(r"microsoft\windowsapps")
 }
 
