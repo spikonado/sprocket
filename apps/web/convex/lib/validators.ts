@@ -419,7 +419,8 @@ export const vScrapeUrlResult = v.object({
 	summary: v.optional(v.string()),
 	outline: v.optional(vPageOutline),
 	highlights: v.optional(v.array(v.string())),
-	images: v.array(v.string())
+	// Agents omit it when they download an oversized scrape.
+	images: v.optional(v.array(v.string()))
 });
 
 /** webRequests scrape transport. Oversized pages return a temporary JSON download URL. */
