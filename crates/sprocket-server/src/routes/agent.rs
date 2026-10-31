@@ -6,10 +6,11 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, unfold};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sprocket_host::Host;
 use sprocket_host::agent_launch::{AgentLaunchRequest, LaunchError, WorkspaceAccess, launch_agent};
-use sprocket_transcript::{LiveCompletionHub, LiveCompletionWatchEvent};
+use sprocket_transcript::{LiveCompletionHub, LiveCompletionOverlay, LiveCompletionWatchEvent};
+use sprocket_workspace::RunningCommand;
 use tokio::sync::broadcast;
 
 use crate::AppState;
@@ -26,13 +27,12 @@ impl UserScoped for AgentLaunchRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/agent/run", post(run_agent_handler))
-        .route("/agent/commands", post(commands_handler))
         .route("/agent/commands/terminate", post(terminate_command_handler))
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CommandsRequest {
+pub(crate) struct CommandsRequest {
     user_id: String,
     thread_id: String,
 }
@@ -57,22 +57,37 @@ impl UserScoped for TerminateCommandRequest {
     }
 }
 
-async fn commands_handler(
-    State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<CommandsRequest>,
-) -> Result<axum::response::Response, ApiError> {
-    let commands = match state
-        .host
-        .command_sessions
-        .get(&payload.user_id, &payload.thread_id)
-        .await
-    {
-        Some(sessions) => sessions.running_commands().await,
-        None => Vec::new(),
-    };
-    Ok(super::api_error::no_store(Json(
-        serde_json::json!({ "commands": commands }),
-    )))
+#[derive(Serialize)]
+pub(crate) struct CommandsSnapshot {
+    commands: Vec<RunningCommand>,
+}
+
+/// Callers must authorize `payload.user_id` first.
+pub(crate) fn command_events(
+    state: &AppState,
+    payload: CommandsRequest,
+) -> BoxStream<'static, CommandsSnapshot> {
+    let sessions = Arc::clone(&state.host.command_sessions);
+    let changes = sessions.subscribe_changes();
+    unfold(
+        (sessions, changes, payload, None),
+        |(sessions, mut changes, payload, last)| async move {
+            loop {
+                changes.borrow_and_update();
+                let commands = sessions
+                    .running_commands(&payload.user_id, &payload.thread_id)
+                    .await;
+                if last.as_ref() != Some(&commands) {
+                    let snapshot = CommandsSnapshot {
+                        commands: commands.clone(),
+                    };
+                    return Some((snapshot, (sessions, changes, payload, Some(commands))));
+                }
+                changes.changed().await.ok()?;
+            }
+        },
+    )
+    .boxed()
 }
 
 async fn terminate_command_handler(

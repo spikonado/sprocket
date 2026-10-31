@@ -44,7 +44,7 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchBrowserStatus: unused,
 		startBrowser: unused,
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
-		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,
 		listWorkspaceSkills: unused,

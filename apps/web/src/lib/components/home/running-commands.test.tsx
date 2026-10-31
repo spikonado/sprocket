@@ -16,6 +16,34 @@ function scope(thread: string): TranscriptScopeRequest {
 	return { userId: 'user', threadId: thread as TranscriptScopeRequest['threadId'] };
 }
 
+type Watch = {
+	signal: AbortSignal;
+	emit: (commands: RunningCommand[]) => void;
+	fail: (error: Error) => void;
+};
+
+/** Each watch emits `initial` once it starts; tests drive later updates through `watches`. */
+function commandApi(
+	initial: RunningCommand[] | null,
+	terminateCommand: CommandApi['terminateCommand'] = vi.fn()
+) {
+	const watches: Watch[] = [];
+
+	const watchRunningCommands = vi.fn<CommandApi['watchRunningCommands']>(
+		(_request, { signal, onEvent }) =>
+			new Promise<void>((resolve, reject) => {
+				signal.addEventListener('abort', () => resolve(), { once: true });
+				watches.push({ signal, emit: onEvent, fail: reject });
+
+				if (initial) onEvent(initial);
+			})
+	);
+
+	const api: CommandApi = { watchRunningCommands, terminateCommand };
+
+	return { api, watches, watchRunningCommands };
+}
+
 async function flush(ms = 0) {
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(ms);
@@ -28,12 +56,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('running commands dashboard', () => {
 	it('starts collapsed and toggles command controls', async () => {
-		const api: CommandApi = {
-			listRunningCommands: vi.fn(async () => ({ commands: [command] })),
-			terminateCommand: vi.fn()
-		};
-
-		render(<RunningCommands api={api} scope={scope('thread')} />);
+		render(<RunningCommands api={commandApi([command]).api} scope={scope('thread')} />);
 		await flush();
 		const toggle = screen.getByRole('button', { name: 'Running commands' });
 		expect(toggle.getAttribute('aria-expanded')).toBe('false');
@@ -46,36 +69,30 @@ describe('running commands dashboard', () => {
 		expect(toggle.getAttribute('aria-expanded')).toBe('false');
 	});
 
-	it('tracks commands after a run and disappears when the last process exits', async () => {
-		const api: CommandApi = {
-			listRunningCommands: vi
-				.fn()
-				.mockResolvedValueOnce({ commands: [command] })
-				.mockResolvedValue({ commands: [] }),
-			terminateCommand: vi.fn()
-		};
+	it('tracks pushed commands and disappears when the last process exits', async () => {
+		const { api, watches } = commandApi([command]);
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
 		expect(screen.getByRole('region', { name: 'Running commands' })).toBeTruthy();
 		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(screen.getByText('/workspace/sprocket')).toBeTruthy();
-		await flush(1_000);
+		act(() => watches[0].emit([]));
 		expect(screen.queryByRole('region', { name: 'Running commands' })).toBeNull();
 	});
 
 	it('stops only the selected command and keeps it visible until the server confirms exit', async () => {
 		let finish!: (value: { terminated: boolean }) => void;
 
-		const api: CommandApi = {
-			listRunningCommands: vi.fn(async () => ({ commands: [command] })),
-			terminateCommand: vi.fn(
+		const { api } = commandApi(
+			[command],
+			vi.fn(
 				() =>
 					new Promise<{ terminated: boolean }>((resolve) => {
 						finish = resolve;
 					})
 			)
-		};
+		);
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
@@ -93,46 +110,28 @@ describe('running commands dashboard', () => {
 	});
 
 	it.each(['thread', 'api'] as const)(
-		'does not overlap requests and ignores previous responses after a %s change',
+		'ignores the previous watch after a %s change',
 		async (change) => {
-			let finish!: (value: { commands: RunningCommand[] }) => void;
-
-			const list = vi
-				.fn<CommandApi['listRunningCommands']>()
-				.mockImplementationOnce(
-					() =>
-						new Promise((resolve) => {
-							finish = resolve;
-						})
-				)
-				.mockResolvedValue({ commands: [] });
-
-			const api: CommandApi = { listRunningCommands: list, terminateCommand: vi.fn() };
+			const { api, watches, watchRunningCommands } = commandApi(null);
 			const view = render(<RunningCommands api={api} scope={scope('old')} />);
-			await flush(5_000);
-			expect(list).toHaveBeenCalledTimes(1);
+			await flush();
 			view.rerender(
 				<RunningCommands
 					api={change === 'api' ? { ...api } : api}
 					scope={scope(change === 'thread' ? 'new' : 'old')}
 				/>
 			);
-			expect(list.mock.calls[0][1]?.aborted).toBe(true);
-			await act(async () => {
-				finish({ commands: [command] });
-			});
+			expect(watches[0].signal.aborted).toBe(true);
+			act(() => watches[0].emit([command]));
 			expect(screen.queryByText('bun run dev')).toBeNull();
+			expect(watchRunningCommands).toHaveBeenCalledTimes(2);
 			view.unmount();
-			await flush(5_000);
-			expect(list).toHaveBeenCalledTimes(2);
+			expect(watches[1].signal.aborted).toBe(true);
 		}
 	);
 
 	it('reports termination failures and enables retry', async () => {
-		const api: CommandApi = {
-			listRunningCommands: vi.fn(async () => ({ commands: [command] })),
-			terminateCommand: vi.fn().mockRejectedValue(new Error('Server offline'))
-		};
+		const { api } = commandApi([command], vi.fn().mockRejectedValue(new Error('Server offline')));
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
@@ -145,8 +144,6 @@ describe('running commands dashboard', () => {
 		expect(
 			screen.getByRole('button', { name: 'Stop command: bun run dev' }).hasAttribute('disabled')
 		).toBe(false);
-		await flush(1_000);
-		expect(screen.getByRole('alert').textContent).toBe('Server offline');
 	});
 
 	it.each(['thread', 'api'] as const)(
@@ -154,15 +151,15 @@ describe('running commands dashboard', () => {
 		async (change) => {
 			let fail!: (error: Error) => void;
 
-			const api: CommandApi = {
-				listRunningCommands: vi.fn(async () => ({ commands: [command] })),
-				terminateCommand: vi.fn(
+			const { api } = commandApi(
+				[command],
+				vi.fn(
 					() =>
 						new Promise<{ terminated: boolean }>((_, reject) => {
 							fail = reject;
 						})
 				)
-			};
+			);
 
 			const view = render(<RunningCommands api={api} scope={scope('old')} />);
 			await flush();
@@ -199,18 +196,12 @@ describe('running commands dashboard', () => {
 		}
 	);
 
-	it('shows polling failures while collapsed and recovers without losing known commands', async () => {
-		const api: CommandApi = {
-			listRunningCommands: vi
-				.fn()
-				.mockResolvedValueOnce({ commands: [command] })
-				.mockRejectedValueOnce(new Error('Server offline'))
-				.mockResolvedValue({ commands: [command] }),
-			terminateCommand: vi.fn()
-		};
+	it('shows a lost watch while collapsed and recovers without losing known commands', async () => {
+		const { api, watches } = commandApi([command]);
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
-		await flush(1_000);
+		await flush();
+		await act(async () => watches[0].fail(new Error('Server offline')));
 		expect(screen.getByRole('region', { name: 'Running commands' })).toBeTruthy();
 		expect(
 			screen.getByRole('button', { name: 'Running commands' }).getAttribute('aria-expanded')
@@ -218,8 +209,8 @@ describe('running commands dashboard', () => {
 		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
 		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(screen.getByText('bun run dev')).toBeTruthy();
-		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
 		await flush(1_000);
+		expect(watches).toHaveLength(2);
 		expect(screen.getByText('bun run dev')).toBeTruthy();
 		expect(screen.queryByRole('alert')).toBeNull();
 	});

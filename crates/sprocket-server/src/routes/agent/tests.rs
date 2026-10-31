@@ -65,20 +65,19 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         }
         builder.body(Body::from(body.to_string())).unwrap()
     };
-    for path in ["/api/agent/commands", "/api/agent/commands/terminate"] {
-        let response = router
-            .clone()
-            .oneshot(make_request(path, "user", "thread", false))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let response = router
-            .clone()
-            .oneshot(make_request(path, "other-user", "thread", true))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
+    let path = "/api/agent/commands/terminate";
+    let response = router
+        .clone()
+        .oneshot(make_request(path, "user", "thread", false))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = router
+        .clone()
+        .oneshot(make_request(path, "other-user", "thread", true))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let other_thread = router
         .clone()
         .oneshot(make_request(
@@ -97,18 +96,13 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
         serde_json::json!({ "terminated": false })
     );
-    let listed = router
-        .clone()
-        .oneshot(make_request("/api/agent/commands", "user", "thread", true))
-        .await
-        .unwrap();
-    assert_eq!(listed.status(), StatusCode::OK);
-    assert_eq!(listed.headers()[header::CACHE_CONTROL], "no-store");
-    let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(body["commands"][0]["sessionId"], session_id);
+    let mut commands = command_events(
+        &state,
+        serde_json::from_value(serde_json::json!({ "userId": "user", "threadId": "thread" }))
+            .unwrap(),
+    );
+    let listed = serde_json::to_value(commands.next().await.unwrap()).unwrap();
+    assert_eq!(listed["commands"][0]["sessionId"], session_id);
     let terminated = router
         .oneshot(make_request(
             "/api/agent/commands/terminate",
@@ -126,6 +120,11 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
         serde_json::json!({ "terminated": true })
     );
+    let listed = tokio::time::timeout(std::time::Duration::from_secs(5), commands.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(listed.commands.is_empty());
     state.host.command_sessions.stop_all().await;
     std::fs::remove_dir_all(root).unwrap();
 }

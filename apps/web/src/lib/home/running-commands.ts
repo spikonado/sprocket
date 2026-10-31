@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { LocalApi, RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
 
-export type CommandApi = Pick<LocalApi, 'listRunningCommands' | 'terminateCommand'>;
+export type CommandApi = Pick<LocalApi, 'watchRunningCommands' | 'terminateCommand'>;
 
 type CommandLifetime = {
 	api: CommandApi;
@@ -25,37 +25,41 @@ export function useRunningCommands(api: CommandApi, { userId, threadId }: Transc
 		const active = { api, controller, stopping: new Set<string>() };
 		let timer: ReturnType<typeof setTimeout>;
 
-		async function refresh() {
-			try {
-				const { commands } = await api.listRunningCommands({ userId, threadId }, controller.signal);
+		function onCommands(commands: RunningCommand[]) {
+			if (controller.signal.aborted) return;
 
-				if (!controller.signal.aborted) {
-					setState((previous) => ({
-						lifetime: active,
-						commands,
-						refreshError: null,
-						stopError:
-							previous?.lifetime === active &&
-							commands.some((command) => command.sessionId === previous.stopError?.sessionId)
-								? previous.stopError
-								: null,
-						stopping: [...active.stopping]
-					}));
-				}
-			} catch {
-				if (!controller.signal.aborted) {
-					setState((previous) =>
-						previous?.lifetime === active
-							? { ...previous, refreshError: 'Unable to refresh running commands. Reconnecting…' }
-							: null
-					);
-				}
-			} finally {
-				if (!controller.signal.aborted) timer = setTimeout(refresh, 1_000);
-			}
+			setState((previous) => ({
+				lifetime: active,
+				commands,
+				refreshError: null,
+				stopError:
+					previous?.lifetime === active &&
+					commands.some((command) => command.sessionId === previous.stopError?.sessionId)
+						? previous.stopError
+						: null,
+				stopping: [...active.stopping]
+			}));
 		}
 
-		void refresh();
+		async function watch() {
+			await api
+				.watchRunningCommands(
+					{ userId, threadId },
+					{ signal: controller.signal, onEvent: onCommands }
+				)
+				.catch(() => undefined);
+
+			if (controller.signal.aborted) return;
+
+			setState((previous) =>
+				previous?.lifetime === active
+					? { ...previous, refreshError: 'Unable to refresh running commands. Reconnecting…' }
+					: null
+			);
+			timer = setTimeout(watch, 1_000);
+		}
+
+		void watch();
 
 		return () => {
 			controller.abort();

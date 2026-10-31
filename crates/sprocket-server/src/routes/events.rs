@@ -44,6 +44,7 @@ pub(crate) enum Topic {
     Transcript(transcript::TranscriptScope),
     LiveCompletion(agent::LiveCompletionWatchRequest),
     Artifacts(artifacts::ArtifactWatchRequest),
+    Commands(agent::CommandsRequest),
     AuthChanges,
 }
 
@@ -193,6 +194,12 @@ pub(crate) async fn open(
                 .require_session_user(headers, &jar, request.user_id())
                 .await?;
             json(artifacts::watch_events(state, request).await?)
+        }
+        Topic::Commands(request) => {
+            state
+                .require_session_user(headers, &jar, request.user_id())
+                .await?;
+            json(agent::command_events(state, request))
         }
         Topic::AuthChanges => json(auth::session_change_events(state, headers, &jar).await?),
     })

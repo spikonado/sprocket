@@ -796,33 +796,32 @@ describe('chatgpt local sign-in', () => {
 });
 
 describe('running command controls', () => {
-	it('sends scoped list and termination requests and forwards the list abort signal', async () => {
+	it('watches the thread scope and sends scoped termination requests', async () => {
 		const commands = [{ sessionId: '7', command: 'bun run dev', workdir: '/work', startedAt: 100 }];
-
-		const fetch = vi
-			.fn()
-			.mockResolvedValueOnce(Response.json({ commands }))
-			.mockResolvedValueOnce(Response.json({ terminated: true }));
-
+		const sockets = stubWebSocket();
+		const fetch = vi.fn().mockResolvedValueOnce(Response.json({ terminated: true }));
 		vi.stubGlobal('fetch', fetch);
 		const api = createLocalClient('http://localhost:17731');
 		const scope = { userId: 'user', threadId: threadRecordId('thread') };
-		const controller = new AbortController();
-		await expect(api.listRunningCommands(scope, controller.signal)).resolves.toEqual({ commands });
+		const onEvent = vi.fn();
+
+		const watching = api.watchRunningCommands(scope, {
+			signal: new AbortController().signal,
+			onEvent
+		});
+
+		sockets[0].open();
+		expect(sockets[0].sent).toEqual([
+			{ type: 'subscribe', id: 1, topic: { kind: 'commands', params: scope } }
+		]);
+		sockets[0].receive({ type: 'event', id: 1, data: { commands } });
+		sockets[0].receive({ type: 'end', id: 1 });
+		await watching;
+		expect(onEvent).toHaveBeenCalledWith(commands);
 		await expect(api.terminateCommand({ ...scope, sessionId: '7' })).resolves.toEqual({
 			terminated: true
 		});
-		expect(fetch).toHaveBeenNthCalledWith(
-			1,
-			'http://localhost:17731/api/agent/commands',
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify(scope),
-				signal: controller.signal
-			})
-		);
-		expect(fetch).toHaveBeenNthCalledWith(
-			2,
+		expect(fetch).toHaveBeenCalledWith(
 			'http://localhost:17731/api/agent/commands/terminate',
 			expect.objectContaining({
 				method: 'POST',

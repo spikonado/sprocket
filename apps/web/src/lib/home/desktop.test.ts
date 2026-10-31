@@ -44,7 +44,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		fetchBrowserStatus: unusedDesktopCall,
 		startBrowser: unusedDesktopCall,
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
-		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unusedDesktopCall,
 		listWorkspaceSkills: unusedDesktopCall,

@@ -353,10 +353,13 @@ export type LocalApi = {
 	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;
-	listRunningCommands: (
+	watchRunningCommands: (
 		request: TranscriptScopeRequest,
-		signal?: AbortSignal
-	) => Promise<{ commands: RunningCommand[] }>;
+		handlers: {
+			onEvent: (commands: RunningCommand[]) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
 	terminateCommand: (
 		request: TranscriptScopeRequest & { sessionId: string }
 	) => Promise<{ terminated: boolean }>;

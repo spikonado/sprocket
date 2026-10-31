@@ -536,12 +536,16 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(input)
 			});
 		},
-		listRunningCommands: (input, signal) =>
-			request('/api/agent/commands', runningCommandsSchema, {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			}),
+		watchRunningCommands: async (requestBody, handlers) => {
+			await socket.subscribe(
+				{ kind: 'commands', params: requestBody },
+				runningCommandsSchema,
+				handlers.signal,
+				({ commands }) => {
+					handlers.onEvent(commands);
+				}
+			);
+		},
 		terminateCommand: (input) =>
 			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {
 				method: 'POST',
