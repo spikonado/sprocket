@@ -2,8 +2,14 @@
 	"$schema": "https://turborepo.dev/schema.json",
 	"globalDependencies": [".env"],
 	"tasks": {
-		"check": {},
-		"lint": {},
-		"test": {}
+		"check": {
+			"dependsOn": ["^check"]
+		},
+		"lint": {
+			"dependsOn": ["^lint"]
+		},
+		"test": {
+			"dependsOn": ["^test"]
+		}
 	}
 }
