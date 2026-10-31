@@ -11,7 +11,7 @@ use tokio::sync::{Mutex, watch};
 pub struct ThreadCommandSessions {
     threads: Mutex<HashMap<(String, String), CommandSessionManager>>,
     stopped: AtomicBool,
-    changes: watch::Sender<u64>,
+    changes: watch::Sender<()>,
 }
 
 impl ThreadCommandSessions {
@@ -54,7 +54,7 @@ impl ThreadCommandSessions {
     }
 
     /// Changes whenever any thread's running commands may have changed.
-    pub fn subscribe_changes(&self) -> watch::Receiver<u64> {
+    pub fn subscribe_changes(&self) -> watch::Receiver<()> {
         self.changes.subscribe()
     }
 

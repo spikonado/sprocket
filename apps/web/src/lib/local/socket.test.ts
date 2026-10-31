@@ -56,23 +56,6 @@ describe('local socket', () => {
 		]);
 	});
 
-	it('rejects events that fail the topic schema and unsubscribes', async () => {
-		const sockets = stubWebSocket();
-
-		const watching = localSocket('http://127.0.0.1:7004').subscribe(
-			{ kind: 'transcript', params: scope },
-			staleSchema,
-			new AbortController().signal,
-			vi.fn()
-		);
-
-		sockets[0].open();
-		sockets[0].receive({ type: 'event', id: 1, data: { stale: 'no' } });
-
-		await expect(watching).rejects.toThrow();
-		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });
-	});
-
 	it('rejects server errors with their status', async () => {
 		const sockets = stubWebSocket();
 

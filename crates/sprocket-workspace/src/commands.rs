@@ -122,7 +122,7 @@ pub struct CommandSessionManager {
     history_scope: (String, String, String),
     history_resolver: Option<HistoryResolver>,
     history_fetch_lock: Arc<Mutex<()>>,
-    changes: Option<watch::Sender<u64>>,
+    changes: Option<watch::Sender<()>>,
 }
 
 impl CommandSessionManager {
@@ -148,7 +148,7 @@ impl CommandSessionManager {
     }
 
     /// Bumps `changes` whenever `running_commands` may return a different list.
-    pub fn with_change_signal(mut self, changes: watch::Sender<u64>) -> Self {
+    pub fn with_change_signal(mut self, changes: watch::Sender<()>) -> Self {
         self.changes = Some(changes);
         self
     }
@@ -834,7 +834,7 @@ async fn supervise_command(
     timeout: Option<Duration>,
     lifetime_guard: Option<CommandLifetimeGuard>,
     history: (PathBuf, CommandHistory),
-    changes: Option<watch::Sender<u64>>,
+    changes: Option<watch::Sender<()>>,
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
@@ -917,9 +917,9 @@ async fn supervise_command(
     signal_change(&changes);
 }
 
-fn signal_change(changes: &Option<watch::Sender<u64>>) {
+fn signal_change(changes: &Option<watch::Sender<()>>) {
     if let Some(changes) = changes {
-        changes.send_modify(|generation| *generation = generation.wrapping_add(1));
+        changes.send_replace(());
     }
 }
 

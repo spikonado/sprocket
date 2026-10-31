@@ -440,14 +440,13 @@ export function createLocalClient(baseUrl: string): LocalApi {
 		startBrowser: (signal) =>
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
-		watchBrowserStatus: async (handlers) => {
-			await socket.subscribe(
+		watchBrowserStatus: (handlers) =>
+			socket.subscribe(
 				{ kind: 'browserStatus' },
 				browserStatusSchema,
 				handlers.signal,
 				handlers.onEvent
-			);
-		},
+			),
 		browseFilesystem: (input) => {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }
@@ -542,16 +541,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(input)
 			});
 		},
-		watchRunningCommands: async (requestBody, handlers) => {
-			await socket.subscribe(
+		watchRunningCommands: (requestBody, handlers) =>
+			socket.subscribe(
 				{ kind: 'commands', params: requestBody },
 				runningCommandsSchema,
 				handlers.signal,
 				({ commands }) => {
 					handlers.onEvent(commands);
 				}
-			);
-		},
+			),
 		terminateCommand: (input) =>
 			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {
 				method: 'POST',
@@ -585,26 +583,24 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
-		watchTranscript: async (requestBody, handlers) => {
-			await socket.subscribe(
+		watchTranscript: (requestBody, handlers) =>
+			socket.subscribe(
 				{ kind: 'transcript', params: requestBody },
 				transcriptWatchEventSchema.nullable().catch(null),
 				handlers.signal,
 				(event) => {
 					if (event) handlers.onEvent(event);
 				}
-			);
-		},
-		watchLiveCompletion: async (requestBody, handlers) => {
-			await socket.subscribe(
+			),
+		watchLiveCompletion: (requestBody, handlers) =>
+			socket.subscribe(
 				{ kind: 'liveCompletion', params: requestBody },
 				liveCompletionWatchEventSchema.nullable().catch(null),
 				handlers.signal,
 				(event) => {
 					if (event) handlers.onEvent(parseLiveCompletionWatchEvent(event));
 				}
-			);
-		},
+			),
 		clearTranscriptReplica: async (requestBody) => {
 			await transport.response('/api/transcript/clear', {
 				method: 'POST',
@@ -673,16 +669,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(requestBody)
 			});
 		},
-		watchArtifacts: async (requestBody, handlers) => {
-			await socket.subscribe(
+		watchArtifacts: (requestBody, handlers) =>
+			socket.subscribe(
 				{ kind: 'artifacts', params: requestBody },
 				artifactsWatchEventSchema,
 				handlers.signal,
 				(event) => {
 					handlers.onEvent(parseArtifactsWatchEvent(event));
 				}
-			);
-		},
+			),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',

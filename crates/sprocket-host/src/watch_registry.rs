@@ -75,8 +75,8 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
             return (session, slot.state.clone());
         }
         // Keep the channel's initial receiver so a first publish during spawn
-        // is not dropped. Transcript SSE has no snapshot fallback; artifact
-        // SSE skips a queued copy of the snapshot it already emitted.
+        // is not dropped. Transcript watches have no snapshot fallback; artifact
+        // watches skip a queued copy of the snapshot they already emitted.
         let (events, rx) = broadcast::channel(capacity);
         let state = make_state();
         let task = spawn(events.clone(), state.clone());
