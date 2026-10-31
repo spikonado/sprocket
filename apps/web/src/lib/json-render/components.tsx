@@ -257,10 +257,11 @@ export function LineGraph({ props }: ChartProps) {
 	const values = data.map((point) => point.value);
 	const min = Math.min(...values);
 	const range = Math.max(...values) - min || 1;
-	const step = data.length > 1 ? (LINE_WIDTH - LINE_PADDING * 2) / (data.length - 1) : 0;
+	const columnWidth = LINE_WIDTH / Math.max(1, data.length);
 
+	// Each point sits at its column's center, so the label grid below lines up with it.
 	const points = data.map((point, index) => ({
-		x: data.length === 1 ? LINE_WIDTH / 2 : LINE_PADDING + index * step,
+		x: (index + 0.5) * columnWidth,
 		y: LINE_PADDING + (1 - (point.value - min) / range) * (CHART_HEIGHT - LINE_PADDING * 2)
 	}));
 
@@ -293,9 +294,12 @@ export function LineGraph({ props }: ChartProps) {
 					/>
 				))}
 			</div>
-			<div className="text-muted-foreground flex justify-between gap-2 text-xs">
+			<div
+				className="text-muted-foreground grid text-center text-xs"
+				style={{ gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))` }}
+			>
 				{data.map((point, index) => (
-					<span key={index} className="truncate">
+					<span key={index} className="truncate px-1">
 						{point.label}
 					</span>
 				))}
