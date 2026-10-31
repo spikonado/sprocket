@@ -14,4 +14,12 @@ agent-desktop skills get platform   # permissions and limits on this OS
 
 The desktop is the user's own, and they may be using it while you work. Stay headless unless the user allows `--headed`, which moves their pointer and takes focus.
 
+Other agents may drive the desktop at the same time, so start your own session before your first action and end it when you finish. Each command runs in a fresh shell, so `export AGENT_DESKTOP_SESSION=...` from the guides does not carry over. Pass `--session <id>` on every command instead:
+
+```bash
+agent-desktop session start --name "<task>"     # read data.session_id
+agent-desktop --session <id> snapshot --app "<app>" -i --compact
+agent-desktop session end <id>
+```
+
 When `agent-desktop status` reports a missing permission or no accessibility bus, tell the user what the platform guide asks them to grant or install instead of working around it.
