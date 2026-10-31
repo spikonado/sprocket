@@ -11,6 +11,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use crate::browser_install::{AGENT_BROWSER_USE_SYSTEM_CA, BrowserInstaller};
+use crate::tool_install::prepend_path;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +138,7 @@ impl BrowserManager {
         drop(listener);
         let mut command = Command::new(cli);
         command
-            .envs(self.environment()?)
+            .envs(self.environment())
             .env("AGENT_BROWSER_DASHBOARD", "1")
             .env("AGENT_BROWSER_DASHBOARD_PORT", port.to_string())
             .env_remove("AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS")
@@ -197,19 +198,17 @@ impl BrowserManager {
         bail!("Browser dashboard is not ready. Retry setup.")
     }
 
-    pub fn environment(&self) -> anyhow::Result<Vec<(OsString, OsString)>> {
-        let mut paths = vec![self.installer.cli_directory()?];
-        if let Some(path) = std::env::var_os("PATH") {
-            paths.extend(std::env::split_paths(&path));
-        }
-        Ok(vec![
-            ("PATH".into(), std::env::join_paths(paths)?),
-            (
-                "AGENT_BROWSER_SKILLS_DIR".into(),
-                self.installer.skills_directory().into_os_string(),
-            ),
-            (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
-        ])
+    pub fn environment(&self) -> Vec<(OsString, OsString)> {
+        prepend_path(
+            vec![
+                (
+                    "AGENT_BROWSER_SKILLS_DIR".into(),
+                    self.installer.skills_directory().into_os_string(),
+                ),
+                (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
+            ],
+            [self.installer.bin_dir()],
+        )
     }
 
     pub async fn shutdown(&self) {

@@ -5,10 +5,11 @@ pub mod agent_launch;
 pub mod artifact_watch;
 pub mod browser;
 mod browser_install;
-pub mod bun_install;
+mod bun_install;
 pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
+mod desktop_install;
 pub mod github_settings;
 pub mod lifetime;
 pub mod machine_identity;
@@ -26,6 +27,7 @@ mod watch_registry;
 mod work_sync;
 pub mod workspace_search;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +37,6 @@ use tokio::task::JoinHandle;
 
 use crate::artifact_watch::ArtifactWatchers;
 use crate::browser::BrowserManager;
-use crate::bun_install::BunInstaller;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_settings::GitHubSettingsStore;
@@ -46,6 +47,7 @@ use crate::native_auth::{BrowserSessions, NativeAuthManager};
 use crate::package_update::PackageUpdateManager;
 use crate::project_attachments::ProjectAttachmentStore;
 use crate::run_recovery::RunRecovery;
+use crate::tool_install::{PinnedTool, prepend_path};
 use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchers;
 use crate::workspace_search::WorkspaceSearchIndex;
@@ -84,7 +86,8 @@ pub struct Host {
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
-    pub bun: Arc<BunInstaller>,
+    bun: Arc<PinnedTool>,
+    desktop: Arc<PinnedTool>,
 }
 
 impl Host {
@@ -147,8 +150,24 @@ impl Host {
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
-            bun: BunInstaller::new(data_dir)?,
+            bun: Arc::new(bun_install::installer(data_dir)?),
+            desktop: Arc::new(desktop_install::installer(data_dir)?),
         })
+    }
+
+    /// Installs agents' pinned tools in the background.
+    pub fn prepare_tools(&self) {
+        self.browsers.prepare_tools();
+        self.bun.prepare();
+        self.desktop.prepare();
+    }
+
+    /// The environment that puts agents' pinned tools on their `PATH`.
+    pub fn tool_environment(&self) -> Vec<(OsString, OsString)> {
+        prepend_path(
+            self.browsers.environment(),
+            [self.bun.bin_dir(), self.desktop.bin_dir()],
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -186,8 +205,7 @@ impl Host {
 
     /// Starts the background work that keeps local state in sync with the cloud.
     pub fn start(&self) -> HostTasks {
-        self.browsers.prepare_tools();
-        self.bun.prepare();
+        self.prepare_tools();
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));

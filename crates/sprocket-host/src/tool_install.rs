@@ -1,20 +1,150 @@
-//! Pinned, versioned tool installs under `<data-dir>/tools/<tool>/<version>/`.
+//! Pinned tools installed under `<data-dir>/tools/<tool>/<version>/bin`, which agents get on
+//! their `PATH`.
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 pub(crate) const INSTALL_LOCK: &str = "install.lock";
-pub(crate) const LEASE_LOCK: &str = "in-use.lock";
+const LEASE_LOCK: &str = "in-use.lock";
 const TOMBSTONE_SUFFIX: &str = ".removing";
+
+/// Unpacks the verified download at the first path into the empty directory at the second.
+pub(crate) type Unpack = fn(&Path, &Path) -> anyhow::Result<()>;
+
+pub(crate) struct PinnedTool {
+    name: &'static str,
+    unpack: Unpack,
+    tool_dir: PathBuf,
+    release: Release,
+    client: reqwest::Client,
+    ready: Mutex<bool>,
+    lease: Mutex<Option<File>>,
+}
+
+impl PinnedTool {
+    pub(crate) fn new(
+        data_dir: &Path,
+        name: &'static str,
+        releases_json: &str,
+        unpack: Unpack,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            name,
+            unpack,
+            tool_dir: data_dir.join("tools").join(name),
+            release: serde_json::from_str(releases_json)?,
+            client: download_client()?,
+            ready: Mutex::new(false),
+            lease: Mutex::new(None),
+        })
+    }
+
+    pub fn prepare(self: &Arc<Self>) {
+        let tool = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(error) = tool.ensure_installed().await {
+                tracing::warn!("{} setup failed: {error:#}", tool.name);
+            }
+        });
+    }
+
+    pub(crate) fn version_dir(&self) -> PathBuf {
+        self.tool_dir.join(&self.release.version)
+    }
+
+    pub fn bin_dir(&self) -> PathBuf {
+        self.version_dir().join("bin")
+    }
+
+    pub(crate) fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    pub(crate) async fn ensure_installed(&self) -> anyhow::Result<()> {
+        let mut ready = self.ready.lock().await;
+        let bin = self.bin_dir();
+        if *ready && is_dir(&bin).await {
+            return Ok(());
+        }
+        let name = self.name;
+        let asset = self
+            .release
+            .platforms
+            .get(platform()?)
+            .with_context(|| format!("missing pinned {name} release"))?;
+        let version_dir = self.version_dir();
+        tokio::fs::create_dir_all(&version_dir).await?;
+        let _lock = acquire_lock(version_dir.join(INSTALL_LOCK)).await?;
+        if !is_dir(&bin).await {
+            let download = version_dir.join("download");
+            download_atomic(&self.client, &asset.url, &asset.checksum, &download).await?;
+            let (staging_parent, unpack) = (version_dir.clone(), self.unpack);
+            tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let staging = tempfile::tempdir_in(staging_parent)?;
+                unpack(&download, staging.path())?;
+                // Publishing `bin` by a rename means it exists only once fully unpacked.
+                std::fs::rename(staging.path(), &bin)?;
+                std::fs::remove_file(&download)?;
+                Ok(())
+            })
+            .await??;
+        }
+        lease_version(&self.lease, &version_dir).await;
+        let tool_dir = self.tool_dir.clone();
+        let current = self.release.version.clone();
+        if let Err(error) =
+            tokio::task::spawn_blocking(move || prune_versions(&tool_dir, &current)).await
+        {
+            tracing::warn!("Old {name} cleanup failed: {error}");
+        }
+        *ready = true;
+        Ok(())
+    }
+}
+
+/// The platform keys of every `releases.json`.
+fn platform() -> anyhow::Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Ok("darwin-arm64"),
+        ("macos", "x86_64") => Ok("darwin-x64"),
+        ("linux", "aarch64") => Ok("linux-arm64"),
+        ("linux", "x86_64") => Ok("linux-x64"),
+        ("windows", "aarch64") => Ok("win32-arm64"),
+        ("windows", "x86_64") => Ok("win32-x64"),
+        (os, arch) => bail!("No pinned release for {os}/{arch}"),
+    }
+}
+
+async fn is_dir(path: &Path) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .is_ok_and(|metadata| metadata.is_dir())
+}
+
+#[derive(Deserialize)]
+struct Release {
+    version: String,
+    platforms: BTreeMap<String, Asset>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Asset {
+    pub url: String,
+    #[serde(flatten)]
+    pub checksum: Checksum,
+}
 
 #[derive(Deserialize)]
 pub(crate) struct Checksum {
@@ -22,7 +152,7 @@ pub(crate) struct Checksum {
     pub sha256: String,
 }
 
-pub(crate) fn download_client() -> anyhow::Result<reqwest::Client> {
+fn download_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .user_agent(concat!("sprocket/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(30))
@@ -30,7 +160,42 @@ pub(crate) fn download_client() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
-pub(crate) fn open_lock_file(path: &Path) -> std::io::Result<File> {
+/// Puts `directories` ahead of the `PATH` in `environment`, or of the server's own `PATH`.
+pub(crate) fn prepend_path(
+    mut environment: Vec<(OsString, OsString)>,
+    directories: impl IntoIterator<Item = PathBuf>,
+) -> Vec<(OsString, OsString)> {
+    let inherited = environment
+        .iter()
+        .position(|(key, _)| key == "PATH")
+        .map(|index| environment.remove(index).1)
+        .or_else(|| std::env::var_os("PATH"));
+    let mut paths: Vec<_> = directories.into_iter().collect();
+    if let Some(path) = &inherited {
+        paths.extend(std::env::split_paths(path));
+    }
+    match std::env::join_paths(paths) {
+        Ok(path) => environment.push(("PATH".into(), path)),
+        Err(error) => {
+            tracing::warn!("Couldn't extend PATH: {error}");
+            environment.extend(inherited.map(|path| ("PATH".into(), path)));
+        }
+    }
+    environment
+}
+
+pub(crate) fn set_executable(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+fn open_lock_file(path: &Path) -> std::io::Result<File> {
     OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -59,7 +224,7 @@ pub(crate) async fn acquire_lock(path: PathBuf) -> anyhow::Result<File> {
 
 /// Holds a shared lock on `version_dir` for the server's lifetime so that other
 /// Sprocket versions sharing this data directory don't prune it.
-pub(crate) async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Path) {
+async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Path) {
     let mut lease = lease.lock().await;
     if lease.is_some() {
         return;
@@ -81,7 +246,7 @@ pub(crate) async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Pat
 
 /// Removes other versions along with tombstones left by earlier failed removals.
 /// A version is skipped while an installer or a lease holds one of its locks.
-pub(crate) fn prune_versions(tool_dir: &Path, current: &str) {
+fn prune_versions(tool_dir: &Path, current: &str) {
     let entries = match std::fs::read_dir(tool_dir) {
         Ok(entries) => entries,
         Err(error) => {
@@ -143,28 +308,7 @@ fn is_version(name: &str) -> bool {
         })
 }
 
-pub(crate) async fn verified_file(path: &Path, checksum: &Checksum) -> anyhow::Result<bool> {
-    let mut file = match tokio::fs::File::open(path).await {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    if file.metadata().await?.len() != checksum.bytes || !executable_file(path).await {
-        return Ok(false);
-    }
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&buffer[..read]);
-    }
-    Ok(hex::encode(hash.finalize()) == checksum.sha256)
-}
-
-/// Publishes `url` at `destination` as an executable only once its size and SHA256 match.
+/// Publishes `url` at `destination` only once its size and SHA256 match.
 pub(crate) async fn download_atomic(
     client: &reqwest::Client,
     url: &str,
@@ -207,13 +351,6 @@ pub(crate) async fn download_atomic(
     drop(file);
     let destination = destination.to_owned();
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            temporary
-                .as_file()
-                .set_permissions(std::fs::Permissions::from_mode(0o755))?;
-        }
         temporary.as_file().sync_all()?;
         temporary
             .persist(&destination)
@@ -226,22 +363,7 @@ pub(crate) async fn download_atomic(
     Ok(())
 }
 
-pub(crate) async fn executable_file(path: &Path) -> bool {
-    let Ok(metadata) = tokio::fs::metadata(path).await else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return false;
-        }
-    }
-    true
-}
-
+#[cfg(test)]
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;

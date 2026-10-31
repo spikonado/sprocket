@@ -44,12 +44,12 @@ repos:
 
   - repo: local
     hooks:
-      - id: agent-browser-skill
-        name: agent-browser-skill
+      - id: sync-skills
+        name: sync-skills
         language: system
-        entry: node tools/agent-browser/sync-skill.mjs
+        entry: node tools/sync-skills.mjs
         pass_filenames: false
-        files: ^(tools/agent-browser/|crates/sprocket-workspace/skills/agent-browser/)
+        files: ^(tools/(sync-skills\.mjs|agent-(browser|desktop)/releases\.json)|crates/sprocket-workspace/skills/agent-(browser|desktop)/)
 
       - id: cargo-fmt
         name: cargo-fmt

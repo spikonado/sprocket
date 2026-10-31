@@ -12,6 +12,48 @@ async fn fixture_server(payload: &'static [u8]) -> (String, tokio::task::JoinHan
 }
 
 #[tokio::test]
+async fn installs_the_pinned_version_into_bin_and_prunes_others() {
+    let payload = b"tool executable";
+    let (url, server) = fixture_server(payload).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let old_version = data_dir.path().join("tools/tool/0.9.0");
+    std::fs::create_dir_all(&old_version).unwrap();
+    let releases = serde_json::json!({
+        "version": "1.0.0",
+        "platforms": {
+            platform().unwrap(): {
+                "url": url,
+                "bytes": payload.len(),
+                "sha256": hex::encode(Sha256::digest(payload)),
+            },
+        },
+    });
+    let mut tool = PinnedTool::new(
+        data_dir.path(),
+        "tool",
+        &releases.to_string(),
+        |download, bin| {
+            std::fs::copy(download, bin.join("tool"))?;
+            Ok(())
+        },
+    )
+    .unwrap();
+    tool.client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    tool.ensure_installed().await.unwrap();
+
+    assert_eq!(std::fs::read(tool.bin_dir().join("tool")).unwrap(), payload);
+    let mut entries: Vec<_> = std::fs::read_dir(tool.version_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, ["bin", LEASE_LOCK, INSTALL_LOCK]);
+    assert!(!old_version.exists());
+    server.abort();
+}
+
+#[tokio::test]
 async fn publishes_verified_download_and_preserves_it_on_failed_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("agent-browser");
@@ -25,7 +67,6 @@ async fn publishes_verified_download_and_preserves_it_on_failed_replacement() {
     download_atomic(&client, &url, &checksum, &path)
         .await
         .unwrap();
-    assert!(verified_file(&path, &checksum).await.unwrap());
     assert_eq!(tokio::fs::read(&path).await.unwrap(), payload);
     server.abort();
     let (url, server) = fixture_server(b"corrupt browser executable!").await;
@@ -34,7 +75,7 @@ async fn publishes_verified_download_and_preserves_it_on_failed_replacement() {
             .await
             .is_err()
     );
-    assert!(verified_file(&path, &checksum).await.unwrap());
+    assert_eq!(tokio::fs::read(&path).await.unwrap(), payload);
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     server.abort();
 }

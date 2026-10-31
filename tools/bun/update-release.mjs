@@ -54,6 +54,6 @@ for (const [platform, name] of Object.entries(PACKAGES)) {
 	};
 }
 
-await writeFile(releasesPath, `${JSON.stringify({ bun: { version, platforms } }, null, '\t')}\n`);
+await writeFile(releasesPath, `${JSON.stringify({ version, platforms }, null, '\t')}\n`);
 
 console.log(`Pinned Bun ${version}.`);

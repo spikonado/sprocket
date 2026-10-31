@@ -4,7 +4,7 @@ use super::*;
 fn environment_trusts_the_os_certificate_store() {
     let directory = tempfile::tempdir().unwrap();
     let manager = BrowserManager::new(directory.path().into()).unwrap();
-    let environment = manager.environment().unwrap();
+    let environment = manager.environment();
     assert!(
         environment
             .iter()

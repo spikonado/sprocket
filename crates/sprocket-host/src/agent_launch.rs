@@ -158,16 +158,8 @@ async fn launch_agent_inner(
         .to_string();
     let project_attachments = Arc::clone(&host.project_attachments);
     let attachment_key = attachment.attachment_key.clone();
-    host.browsers.prepare_tools();
-    host.bun.prepare();
-    let browser_environment = match host.browsers.environment() {
-        Ok(environment) => environment,
-        Err(error) => {
-            tracing::warn!("agent-browser setup unavailable: {error:#}");
-            Vec::new()
-        }
-    };
-    let tool_environment = host.bun.environment(browser_environment);
+    host.prepare_tools();
+    let tool_environment = host.tool_environment();
     let records_message = !payload.prompt.trim().is_empty()
         || !payload.storage_ids.is_empty()
         || payload.continuation_of_run_id.is_some();
