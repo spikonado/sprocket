@@ -80,7 +80,8 @@ export function mergeWorkToolCounts(
 	return counts;
 }
 
-export function workSummary(counts: Record<string, number>): string {
+/** Returns undefined when the work made no tool calls, so it holds only reasoning. */
+export function workSummary(counts: Record<string, number>): string | undefined {
 	const remaining = new Map<string, number>();
 	let hasPolls = false;
 
@@ -114,5 +115,5 @@ export function workSummary(counts: Record<string, number>): string {
 
 	const summary = phrases.map((phrase) => phrase[0].toUpperCase() + phrase.slice(1)).join('; ');
 
-	return summary ? summary : hasPolls ? 'Polled tool calls' : 'Reasoned';
+	return summary ? summary : hasPolls ? 'Polled tool calls' : undefined;
 }

@@ -44,8 +44,8 @@ describe('work summaries', () => {
 		);
 	});
 
-	it('uses the poll fallback ahead of reasoning', () => {
-		expect(workSummary({})).toBe('Reasoned');
+	it('falls back to polls, or no summary without tool calls', () => {
+		expect(workSummary({})).toBeUndefined();
 		expect(workSummary({ poll_subagent: 2, poll_question: 1 })).toBe('Polled tool calls');
 	});
 

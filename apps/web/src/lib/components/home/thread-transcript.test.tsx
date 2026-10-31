@@ -1038,13 +1038,10 @@ describe('transcript viewport paging', () => {
 		const buttons = workButtons(viewport);
 
 		expect(buttons).toHaveLength(1);
-		expect(buttons[0].textContent).toBe('Reasoned');
+		expect(buttons[0].textContent).toBe('Reasoning');
 		expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
-
-		expect(viewport.textContent).toContain('Reasoned');
-		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(3);
-		click(within(viewport).getAllByRole('button', { name: 'Reasoned' })[1]);
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
 		expect(viewport.textContent).toContain('Saved reasoning');
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
@@ -1083,7 +1080,7 @@ describe('transcript viewport paging', () => {
 		await settle();
 
 		const buttons = workButtons(viewport);
-		expect(buttons.map((button) => button.textContent)).toEqual(['Reasoned', 'Reasoned']);
+		expect(buttons.map((button) => button.textContent)).toEqual(['Reasoned', 'Reasoning']);
 		expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
 			'false',
 			'true'
@@ -1392,8 +1389,8 @@ describe('transcript viewport paging', () => {
 		});
 		click(workButtons(viewport)[0]);
 		await settle();
-		expect(viewport.querySelector('[data-work-detail] button[aria-expanded]')?.textContent).toBe(
-			'Reasoned'
+		expect(viewport.querySelector('[data-work-detail]')?.textContent).toBe(
+			'Completed work details'
 		);
 		setProps({ messages: [...props.messages, message(6)] });
 		await settle();

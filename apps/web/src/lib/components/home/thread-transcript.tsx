@@ -22,7 +22,7 @@ import ChatMarkdown from '$lib/components/chat-markdown';
 import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer';
 import TranscriptPromptMessage from '$lib/components/home/transcript-prompt-message';
 import MandateApprovalForm from '$lib/components/home/mandate-approval-form';
-import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure';
+import ReasoningDisclosure, { ReasoningText } from '$lib/components/home/reasoning-disclosure';
 import WorkTools from '$lib/components/home/work-tools';
 import WorkDisclosure from '$lib/components/home/work-disclosure';
 import WorkSectionDetails from '$lib/components/home/work-section-details';
@@ -485,7 +485,7 @@ export default function ThreadTranscript({
 		setViewport(node);
 	}, []);
 
-	function renderWorkBlocks(work: LiveWorkState, state: LiveRenderState) {
+	function renderWorkBlocks(work: LiveWorkState, state: LiveRenderState, reasoningOnly: boolean) {
 		return (
 			<>
 				{work.settledBlocks.map((block, blockIndex) => {
@@ -496,6 +496,8 @@ export default function ThreadTranscript({
 					}-${blockIndex}`;
 
 					if (block.type === 'reasoning') {
+						if (reasoningOnly) return <ReasoningText key={renderKey} text={block.text} />;
+
 						const reasoningInProgress =
 							work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
 
@@ -557,6 +559,8 @@ export default function ThreadTranscript({
 					? false
 					: row.runId === activeRunId && !row.closed;
 
+			const summary = workSummary(mergeWorkToolCounts(row.toolCounts, continuation?.toolCounts));
+
 			return (
 				<div
 					key={message.id}
@@ -564,21 +568,21 @@ export default function ThreadTranscript({
 					data-transcript-anchor={message.id}
 					data-message-kind="work"
 				>
-					<WorkDisclosure
-						inProgress={inProgress}
-						summary={workSummary(mergeWorkToolCounts(row.toolCounts, continuation?.toolCounts))}
-					>
+					<WorkDisclosure inProgress={inProgress} summary={summary}>
 						{loadWorkDetails ? (
 							<WorkSectionDetails
 								row={row}
 								load={loadWorkDetails}
 								commands={commands}
 								inProgress={!row.closed && row.runId === activeRunId}
+								reasoningOnly={summary === undefined}
 								viewport={viewport}
 								beforeChange={beforeDetailChange}
 							/>
 						) : null}
-						{continuation && followingLive ? renderWorkBlocks(continuation, followingLive) : null}
+						{continuation && followingLive
+							? renderWorkBlocks(continuation, followingLive, summary === undefined)
+							: null}
 					</WorkDisclosure>
 				</div>
 			);
@@ -676,6 +680,8 @@ export default function ThreadTranscript({
 							return null;
 						}
 
+						const summary = workSummary(work.toolCounts);
+
 						return (
 							<div
 								key={section.renderKey}
@@ -683,11 +689,8 @@ export default function ThreadTranscript({
 								data-transcript-anchor={`${message.id}:${section.renderKey}`}
 							>
 								{!(continuesPreviousWork && sectionIndex === 0) ? (
-									<WorkDisclosure
-										inProgress={work.workInProgress}
-										summary={workSummary(work.toolCounts)}
-									>
-										{renderWorkBlocks(work, live)}
+									<WorkDisclosure inProgress={work.workInProgress} summary={summary}>
+										{renderWorkBlocks(work, live, summary === undefined)}
 									</WorkDisclosure>
 								) : null}
 								{work.approvals.map((approval) => (
