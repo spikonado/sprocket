@@ -1,11 +1,15 @@
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 
 use crate::command_output::CapturedOutput;
 use crate::commands::{CommandOutput, CommandStdinOutput};
+
+static HISTORY_WRITE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct CommandHistory {
@@ -38,6 +42,11 @@ impl CommandHistory {
     }
 
     pub async fn save(&self, path: &Path) -> Result<()> {
+        let _write = HISTORY_WRITE.lock().await;
+        self.persist(path).await
+    }
+
+    async fn persist(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("command history has no directory")?;
         tokio::fs::create_dir_all(parent).await?;
         let temporary = tempfile::NamedTempFile::new_in(parent)?;
@@ -62,24 +71,43 @@ impl CommandHistory {
         };
         let mut history: Self = serde_json::from_slice(&contents)
             .with_context(|| format!("failed to read command session {session_id}"))?;
-        if history.result.running {
-            history.result.running = false;
-            history.result.success = false;
-            history.result.error = Some(
-                "command session was interrupted before its final status was saved; output may be incomplete"
-                    .into(),
-            );
-            history.result.output = CapturedOutput::read_log_preview(
-                Path::new(&history.result.complete_log_path),
-                history.max_output_chars,
-            )
-            .await?;
-        }
+        history.settle_interrupted(&path).await?;
         Ok(CommandStdinOutput {
             command: history.command,
             workdir: history.workdir,
             result: history.result,
         })
+    }
+
+    /// Persist an interrupted session so later polls consume its output once.
+    pub(crate) async fn settle_interrupted(&mut self, path: &Path) -> Result<()> {
+        if !self.result.running {
+            return Ok(());
+        }
+        let preview = CapturedOutput::read_log_preview(
+            Path::new(&self.result.complete_log_path),
+            self.max_output_chars,
+        )
+        .await?;
+        let _write = HISTORY_WRITE.lock().await;
+        if let Ok(bytes) = tokio::fs::read(path).await
+            && let Ok(current) = serde_json::from_slice::<Self>(&bytes)
+            && !current.result.running
+        {
+            *self = current;
+            return Ok(());
+        }
+        self.result.running = false;
+        self.result.success = false;
+        self.result.error = Some(
+            "command session was interrupted before its final status was saved; output may be incomplete"
+                .into(),
+        );
+        self.result.output = preview;
+        if self.pending_output.is_none() {
+            self.pending_output = Some(self.result.output.clone());
+        }
+        self.persist(path).await
     }
 }
 
