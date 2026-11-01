@@ -29,7 +29,6 @@ coverage
 
 # Turbo
 .turbo
-turbo-cache-key.json
 
 # Misc
 

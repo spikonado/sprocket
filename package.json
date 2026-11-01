@@ -3,8 +3,6 @@
 	"private": true,
 	"license": "FSL-1.1-ALv2",
 	"scripts": {
-		"build": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build",
-		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
 		"dev": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --data-dir=.sprocket-dev",
 		"dev:prod": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod",
 		"dev:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --desktop --data-dir=.sprocket-dev",

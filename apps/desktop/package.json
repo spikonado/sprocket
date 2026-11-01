@@ -15,8 +15,6 @@
 	},
 	"scripts": {
 		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
-		"build": "cargo build -p sprocket-cli",
-		"build:release": "cargo build --release -p sprocket-cli && electron-builder --publish never",
 		"test": "node --test test/*.test.mjs"
 	},
 	"build": {

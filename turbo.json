@@ -1,25 +1,9 @@
 {
 	"$schema": "https://turborepo.dev/schema.json",
-	"ui": "tui",
-	"globalDependencies": [".env", "turbo-cache-key.json"],
-	"globalPassThroughEnv": ["RUSTC_WRAPPER"],
+	"globalDependencies": [".env"],
 	"tasks": {
-		"build": {
-			"dependsOn": ["^build"],
-			"inputs": ["$TURBO_DEFAULT$", "turbo-cache-key.json"],
-			"outputs": ["dist/**", "target/**"]
-		},
-		"build:release": {
-			"dependsOn": ["^build:release"],
-			"inputs": ["$TURBO_DEFAULT$", "turbo-cache-key.json"],
-			"outputs": ["dist/**", "target/**"]
-		},
 		"check": {
 			"dependsOn": ["^check"]
-		},
-		"dev": {
-			"cache": false,
-			"persistent": true
 		},
 		"lint": {
 			"dependsOn": ["^lint"]
