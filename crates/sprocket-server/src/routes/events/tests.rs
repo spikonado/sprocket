@@ -155,18 +155,29 @@ async fn serves_subscriptions_over_a_same_origin_socket_until_the_session_ends()
         serde_json::json!({ "state": "installing", "error": null })
     );
 
+    socket
+        .send(ClientFrame::Text(
+            serde_json::json!({ "type": "unsubscribe", "id": 1 })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
     auth.end_session(&token).await.unwrap();
-    let mut revoked = Vec::new();
-    while revoked.len() < 2 {
+    let revoked = loop {
         let message = next_message(&mut socket).await;
-        if message["type"] == "event" {
-            continue;
+        if message["type"] != "event" {
+            break message;
         }
-        assert_eq!(message["status"], 401);
-        revoked.push(message["id"].as_u64().unwrap());
-    }
-    revoked.sort();
-    assert_eq!(revoked, [1, 2]);
+    };
+    assert_eq!(revoked["status"], 401);
+    assert_eq!(revoked["id"], 2);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1500), socket.next())
+            .await
+            .is_err()
+    );
     server.abort();
 }
 

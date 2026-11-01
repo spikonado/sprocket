@@ -24,6 +24,7 @@ import {
 import { createPortal } from 'react-dom';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import { leafName, trimSlash } from '$lib/chat/side-panel';
+import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFilesResult, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FilesApi = Pick<
@@ -123,6 +124,7 @@ export default function FilesView({
 	/** A placeholder row for a new file or folder that is waiting for its name. */
 	const pendingCreate = useRef<{ path: string; editing: boolean } | null>(null);
 	const searchInput = useRef<HTMLInputElement>(null);
+	const visible = usePageVisible();
 
 	const handlers = useRef<{
 		rename: (event: FileTreeRenameEvent) => void;
@@ -357,7 +359,7 @@ export default function FilesView({
 	);
 
 	useEffect(() => {
-		if (!api || !rootPath || !active) return;
+		if (!api || !rootPath || !active || !visible) return;
 		const workspacePath = rootPath;
 		const controller = new AbortController();
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -400,7 +402,7 @@ export default function FilesView({
 			clearTimeout(timer);
 			unapplied.current = null;
 		};
-	}, [api, rootPath, active, refreshKey, model]);
+	}, [api, rootPath, active, visible, refreshKey, model]);
 
 	const blockingStatus = !api
 		? 'Files are available when Sprocket is connected to this machine.'

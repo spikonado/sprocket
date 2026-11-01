@@ -373,6 +373,11 @@ describe('installed and hosted auth', () => {
 			error: null
 		});
 		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual(['POST']);
+		expect(watchAuthChanges).toHaveBeenCalledWith(
+			'http://localhost:17731',
+			expect.any(AbortSignal),
+			expect.any(Function)
+		);
 	});
 
 	it('revokes only the browser session and can sign in again remotely', async () => {

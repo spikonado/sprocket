@@ -7,6 +7,7 @@ import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
 import { leafName, type FileDraft } from '$lib/chat/side-panel';
+import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FileEditorApi = Pick<LocalApi, 'watchWorkspaceFile' | 'writeWorkspaceFile'>;
@@ -85,6 +86,10 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const version = useRef<string | null>(null);
 	/** The newest disk state, kept so Reload can apply it. */
 	const disk = useRef<WorkspaceFileContent | null>(null);
+	const saves = useRef(0);
+	/** Starts a fresh watch, whose first snapshot is read after anything that already finished. */
+	const rewatch = useRef(() => {});
+	const visible = usePageVisible();
 	const language = useRef(new Compartment());
 	const latest = useRef({ api, file, onDraftChange });
 	latest.current = { api, file, onDraftChange };
@@ -210,6 +215,9 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 		const doc = view.state.doc;
 
+		// Snapshots read before the write lands would undo the save.
+		saves.current++;
+
 		try {
 			const result = await api.writeWorkspaceFile({
 				...file,
@@ -230,6 +238,9 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 			reportDraft();
 		} catch (error) {
 			setNotice(error instanceof Error ? error.message : 'Could not save the file.');
+		} finally {
+			saves.current--;
+			rewatch.current();
 		}
 	}
 
@@ -267,40 +278,56 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	}, [file.workspacePath, file.path]);
 
 	useEffect(() => {
-		if (!api || !active) return;
+		if (!api || !active || !visible) return;
 		const target = { workspacePath: file.workspacePath, path: file.path };
-		const controller = new AbortController();
+		let controller = new AbortController();
+		let stopped = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		async function watch() {
+			const current = new AbortController();
+			controller = current;
+
 			try {
 				await api!.watchWorkspaceFile(target, {
-					signal: controller.signal,
+					signal: current.signal,
 					onEvent: (event) => {
+						if (saves.current > 0) return;
+
 						if (event.kind === 'error') return actions.current.readFailed(event.message);
 						disk.current = event;
 						actions.current.absorb(event, false);
 					}
 				});
 			} catch (error) {
-				if (!controller.signal.aborted) {
+				if (!current.signal.aborted) {
 					actions.current.readFailed(
 						error instanceof Error ? error.message : 'Could not read the file.'
 					);
 				}
 			}
 
-			if (!controller.signal.aborted) timer = setTimeout(watch, RECONNECT_MS);
+			if (!current.signal.aborted) timer = setTimeout(watch, RECONNECT_MS);
 		}
+
+		rewatch.current = () => {
+			if (stopped || saves.current > 0) return;
+			controller.abort();
+			clearTimeout(timer);
+			void watch();
+		};
 
 		void watch();
 
 		return () => {
+			stopped = true;
+			rewatch.current = () => {};
+
 			controller.abort();
 			clearTimeout(timer);
 			disk.current = null;
 		};
-	}, [api, active, file.workspacePath, file.path]);
+	}, [api, active, visible, file.workspacePath, file.path]);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">

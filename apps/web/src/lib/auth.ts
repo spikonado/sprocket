@@ -951,6 +951,8 @@ async function completeInstalledSignIn(
 	}
 
 	applyNativeLoginOutcome(outcome, toAuthUser(nativeUser));
+	// The watch stops when the server rejects the old session, so start it again.
+	watchNativeAuthentication();
 }
 
 function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: AuthUser) {
