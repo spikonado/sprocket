@@ -75,10 +75,10 @@ repos:
         entry: bun run check
         pass_filenames: false
 
-      - id: prettier
-        name: prettier
+      - id: bun-fmt
+        name: bun-fmt
         language: system
-        entry: bun prettier --write .
+        entry: bun fmt .
         pass_filenames: false
 
       - id: mermaid

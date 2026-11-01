@@ -20,12 +20,10 @@
 		"@oxlint/plugins": "1.90.0",
 		"concurrently": "^10.0.0",
 		"oxlint": "1.90.0",
-		"prettier": "^3.8.3",
-		"prettier-plugin-tailwindcss": "^0.8.0",
 		"turbo": "^2.9.8"
 	},
 	"engines": {
-		"bun": "^1.4.2",
+		"bun": "^1.4.4",
 		"node": "^24.14.0"
 	},
 	"packageManager": "bun@1.4.4",

@@ -4,6 +4,9 @@ _generated/
 # Package Managers
 bun.lock
 
+# Cargo and Renovate write TOML in their own style
+*.toml
+
 # Nix
 flake*
 
