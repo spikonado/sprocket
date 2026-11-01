@@ -41,6 +41,10 @@ impl ApiError {
         Self::with_status(StatusCode::BAD_REQUEST, error)
     }
 
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
     pub(crate) fn internal(error: anyhow::Error) -> Self {
         Self::with_status(StatusCode::INTERNAL_SERVER_ERROR, error)
     }

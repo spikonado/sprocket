@@ -8,7 +8,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{OriginalUri, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, post};
+use axum::routing::{any, post};
 use axum_extra::extract::CookieJar;
 use futures::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -32,13 +32,12 @@ static DASHBOARD_PATCHES: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/browser/status", get(status))
         .route("/browser/start", post(start))
         .route("/browser/dashboard/", any(proxy))
         .route("/browser/dashboard/{*path}", any(proxy))
 }
 
-async fn user(
+pub(crate) async fn user(
     state: &AppState,
     headers: &HeaderMap,
     jar: &CookieJar,
@@ -71,15 +70,6 @@ fn require_same_origin(headers: &HeaderMap) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn status(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-) -> Result<Response, ApiError> {
-    user(&state, &headers, &jar).await?;
-    Ok(no_store(Json(state.host.browsers.status().await)))
-}
-
 async fn start(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -87,7 +77,7 @@ async fn start(
 ) -> Result<Response, ApiError> {
     user(&state, &headers, &jar).await?;
     require_same_origin(&headers)?;
-    Ok(no_store(Json(state.host.browsers.start().await)))
+    Ok(no_store(Json(state.host.browsers.start())))
 }
 
 async fn proxy(
@@ -108,7 +98,6 @@ async fn proxy(
         .host
         .browsers
         .port()
-        .await
         .map_err(|error| ApiError::with_status(StatusCode::SERVICE_UNAVAILABLE, error))?;
     let mut path = upstream_path(
         uri.path_and_query()

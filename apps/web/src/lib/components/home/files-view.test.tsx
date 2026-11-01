@@ -1,19 +1,24 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import FilesView, { type FilesApi } from './files-view';
-import type { WorkspaceFileTarget, WorkspaceFilesResult } from '$lib/types/sprocket';
+import type { DiskEvent, WorkspaceFileTarget, WorkspaceFilesResult } from '$lib/types/sprocket';
 
 const listing: WorkspaceFilesResult = {
 	paths: ['src/', 'src/main.rs', 'README.md'],
 	gitStatus: [{ path: 'src/main.rs', status: 'modified' }],
 	scanning: false,
-	truncated: false,
-	hash: 'h1'
+	truncated: false
 };
+
+let push: (event: DiskEvent<WorkspaceFilesResult>) => void = () => {};
 
 function filesApi(): FilesApi {
 	return {
-		listWorkspaceFiles: vi.fn(async () => listing),
+		watchWorkspaceFiles: vi.fn(async (_input, { onEvent, signal }) => {
+			push = onEvent;
+			onEvent({ kind: 'snapshot', ...listing });
+			await new Promise((resolve) => signal.addEventListener('abort', resolve));
+		}),
 		createWorkspaceFile: vi.fn(async () => {}),
 		renameWorkspaceFile: vi.fn(async () => {}),
 		deleteWorkspaceFile: vi.fn(async () => {})
@@ -53,17 +58,17 @@ it('switches between the thread and project roots', async () => {
 	renderFiles(api);
 
 	await waitFor(() =>
-		expect(api.listWorkspaceFiles).toHaveBeenLastCalledWith(
-			{ workspacePath: '/repo-worktree', knownHash: undefined },
-			expect.any(AbortSignal)
+		expect(api.watchWorkspaceFiles).toHaveBeenLastCalledWith(
+			{ workspacePath: '/repo-worktree' },
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
 		)
 	);
 
 	fireEvent.click(screen.getByRole('button', { name: 'Project' }));
 	await waitFor(() =>
-		expect(api.listWorkspaceFiles).toHaveBeenLastCalledWith(
-			{ workspacePath: '/repo', knownHash: undefined },
-			expect.any(AbortSignal)
+		expect(api.watchWorkspaceFiles).toHaveBeenLastCalledWith(
+			{ workspacePath: '/repo' },
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
 		)
 	);
 });
@@ -73,15 +78,15 @@ it('lists the project without a root switch when the thread runs in it', async (
 	renderFiles(api, vi.fn(), '/repo');
 
 	await waitFor(() =>
-		expect(api.listWorkspaceFiles).toHaveBeenCalledWith(
-			{ workspacePath: '/repo', knownHash: undefined },
-			expect.any(AbortSignal)
+		expect(api.watchWorkspaceFiles).toHaveBeenCalledWith(
+			{ workspacePath: '/repo' },
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
 		)
 	);
 	expect(screen.queryByRole('group', { name: 'Files root' })).toBeNull();
 });
 
-it('keeps expanded folders across a refresh and opens clicked files', async () => {
+it('applies pushed changes, keeping expanded folders, and opens clicked files', async () => {
 	const api = filesApi();
 	const onOpenFile = vi.fn();
 	renderFiles(api, onOpenFile);
@@ -90,12 +95,7 @@ it('keeps expanded folders across a refresh and opens clicked files', async () =
 	fireEvent.click(row('src/')!);
 	await waitFor(() => expect(row('src/main.rs')).toBeTruthy());
 
-	vi.mocked(api.listWorkspaceFiles).mockResolvedValue({
-		...listing,
-		paths: [...listing.paths, 'src/lib.rs'],
-		hash: 'h2'
-	});
-	fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+	act(() => push({ kind: 'snapshot', ...listing, paths: [...listing.paths, 'src/lib.rs'] }));
 	await waitFor(() => expect(row('src/lib.rs')).toBeTruthy());
 	expect(row('src/')?.getAttribute('aria-expanded')).toBe('true');
 
@@ -125,9 +125,9 @@ it('browses a linked folder outside the workspace until asked to go back', async
 	);
 
 	await waitFor(() =>
-		expect(api.listWorkspaceFiles).toHaveBeenLastCalledWith(
-			{ workspacePath: '/tmp/build', knownHash: undefined },
-			expect.any(AbortSignal)
+		expect(api.watchWorkspaceFiles).toHaveBeenLastCalledWith(
+			{ workspacePath: '/tmp/build' },
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
 		)
 	);
 	expect(screen.getByRole('button', { name: 'Thread' }).getAttribute('aria-pressed')).toBe('false');

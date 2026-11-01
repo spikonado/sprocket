@@ -158,9 +158,10 @@ describe('PromptComposer running commands', () => {
 		const { props, composer, rerender } = renderComposer({
 			runningCommands: {
 				api: {
-					listRunningCommands: vi.fn(async () => ({
-						commands: [{ sessionId: '1', command: 'bun run dev', workdir: '/work', startedAt: 1 }]
-					})),
+					watchRunningCommands: vi.fn(async (_request, { onEvent }) => {
+						onEvent([{ sessionId: '1', command: 'bun run dev', workdir: '/work', startedAt: 1 }]);
+						await new Promise(() => {});
+					}),
 					terminateCommand: vi.fn()
 				},
 				// SAFETY: fixture strings are only compared as opaque Convex document ids.

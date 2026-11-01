@@ -1,5 +1,6 @@
 use super::*;
 use axum::http::Request;
+use axum::routing::get;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -52,7 +53,6 @@ async fn browser_endpoints_require_authentication_and_mutations_require_same_ori
     let (state, token, _directory) = state().await;
     let app = crate::build_router(state, None);
     for path in [
-        "/api/browser/status",
         "/api/browser/dashboard/",
         "/api/browser/dashboard/api/sessions",
     ] {
@@ -75,7 +75,6 @@ async fn browser_endpoints_require_authentication_and_mutations_require_same_ori
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let response = app
-        .clone()
         .oneshot(request(
             "/api/browser/dashboard/api/exec",
             Some(&token),
@@ -85,17 +84,6 @@ async fn browser_endpoints_require_authentication_and_mutations_require_same_ori
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let response = app
-        .oneshot(request(
-            "/api/browser/status",
-            Some(&token),
-            None,
-            Method::GET,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
 }
 
 #[tokio::test]
@@ -121,7 +109,7 @@ async fn forwards_only_dashboard_traffic_and_rewrites_assets_without_forwarding_
         }),
     );
     let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
-    state.host.browsers.use_test_dashboard(port).await;
+    state.host.browsers.use_test_dashboard(port);
     let browsers = Arc::clone(&state.host.browsers);
     let response = crate::build_router(state, None)
         .oneshot(request(
@@ -167,7 +155,7 @@ async fn streams_live_frames_and_browser_input_through_authenticated_websocket()
     );
     let upstream_task =
         tokio::spawn(async move { axum::serve(upstream_listener, upstream).await.unwrap() });
-    state.host.browsers.use_test_dashboard(upstream_port).await;
+    state.host.browsers.use_test_dashboard(upstream_port);
     let browsers = Arc::clone(&state.host.browsers);
     let auth = Arc::clone(&state.auth);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -240,7 +228,7 @@ async fn translates_session_creation_and_preserves_upstream_result() {
         }),
     );
     let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
-    state.host.browsers.use_test_dashboard(port).await;
+    state.host.browsers.use_test_dashboard(port);
     let browsers = Arc::clone(&state.host.browsers);
     let mut request = request(
         "/api/browser/dashboard/api/sessions",

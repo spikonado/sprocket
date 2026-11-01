@@ -41,17 +41,17 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
-		fetchBrowserStatus: unused,
 		startBrowser: unused,
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
-		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		watchBrowserStatus: unused,
+		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,
 		listWorkspaceSkills: unused,
 		searchWorkspace: unused,
-		listWorkspaceFiles: unused,
+		watchWorkspaceFiles: unused,
 		workspaceEntryKind: unused,
-		readWorkspaceFile: unused,
+		watchWorkspaceFile: unused,
 		writeWorkspaceFile: unused,
 		createWorkspaceFile: unused,
 		renameWorkspaceFile: unused,

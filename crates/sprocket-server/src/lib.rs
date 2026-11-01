@@ -111,6 +111,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::update::routes())
         .merge(routes::browser::routes())
         .merge(routes::artifacts::routes())
+        .merge(routes::events::routes())
         .fallback(api_not_found)
         .with_state(state);
 

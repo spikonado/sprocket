@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::time::Duration;
 
 use anyhow::anyhow;
 use axum::Json;
 use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use convex::Value;
-use futures::stream::unfold;
+use futures::StreamExt;
+use futures::stream::{BoxStream, unfold};
 use serde::Deserialize;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
@@ -16,13 +15,13 @@ use tokio::time::timeout;
 use crate::AppState;
 use crate::routes::api_error::ApiError;
 use crate::routes::session::{AuthorizedJson, UserScoped};
-use sprocket_host::artifact_watch::is_native_account_revoked;
+use sprocket_host::artifact_watch::{ArtifactWatchEvent, is_native_account_revoked};
 
 const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ArtifactWatchRequest {
+pub(crate) struct ArtifactWatchRequest {
     user_id: String,
     repository_key: String,
     workspace_path: String,
@@ -50,9 +49,7 @@ impl UserScoped for ArtifactDeleteRequest {
 }
 
 pub fn routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/artifacts/watch", post(watch_handler))
-        .route("/artifacts/delete", post(delete_handler))
+    axum::Router::new().route("/artifacts/delete", post(delete_handler))
 }
 
 async fn delete_handler(
@@ -108,10 +105,11 @@ async fn delete_handler(
     }
 }
 
-async fn watch_handler(
-    State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<ArtifactWatchRequest>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+/// Callers must authorize `payload.user_id` first.
+pub(crate) async fn watch_events(
+    state: &AppState,
+    payload: ArtifactWatchRequest,
+) -> Result<BoxStream<'static, ArtifactWatchEvent>, ApiError> {
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     if repository_key.is_empty() || workspace_path.is_empty() {
@@ -125,7 +123,7 @@ async fn watch_handler(
         .require_matching_workspace(workspace_path, repository_key)
         .await
         .map_err(ApiError::bad_request)?;
-    authorize_watch_project(&state, &payload.user_id, repository_key).await?;
+    authorize_watch_project(state, &payload.user_id, repository_key).await?;
     let session = state
         .host
         .artifact_watchers
@@ -136,23 +134,21 @@ async fn watch_handler(
         |(first, last, mut session)| async move {
             if first {
                 if let Some(event) = last.clone() {
-                    return encode_watch_event(event).map(|event| (event, (false, last, session)));
+                    return Some((event, (false, last, session)));
                 }
             }
             loop {
                 match session.receiver().recv().await {
                     Ok(event) if last.as_ref() == Some(&event) => continue,
                     Ok(event) => {
-                        return encode_watch_event(event.clone())
-                            .map(|encoded| (encoded, (false, Some(event), session)));
+                        return Some((event.clone(), (false, Some(event), session)));
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         if let Some(event) = session.latest_event() {
                             if last.as_ref() == Some(&event) {
                                 continue;
                             }
-                            return encode_watch_event(event.clone())
-                                .map(|encoded| (encoded, (false, Some(event), session)));
+                            return Some((event.clone(), (false, Some(event), session)));
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
@@ -160,7 +156,7 @@ async fn watch_handler(
             }
         },
     );
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Ok(stream.boxed())
 }
 
 async fn authorize_watch_project(
@@ -188,12 +184,6 @@ async fn authorize_watch_project(
             "artifact authorization timed out"
         ))),
     }
-}
-
-fn encode_watch_event(
-    event: sprocket_host::artifact_watch::ArtifactWatchEvent,
-) -> Option<Result<Event, Infallible>> {
-    Event::default().json_data(event).ok().map(Ok)
 }
 
 #[cfg(test)]

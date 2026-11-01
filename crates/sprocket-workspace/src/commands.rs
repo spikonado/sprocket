@@ -95,7 +95,7 @@ impl WorkspaceCancellation {
 #[error("workspace operation was cancelled")]
 pub struct WorkspaceOperationCancelled;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunningCommand {
     pub session_id: String,
@@ -122,6 +122,7 @@ pub struct CommandSessionManager {
     history_scope: (String, String, String),
     history_resolver: Option<HistoryResolver>,
     history_fetch_lock: Arc<Mutex<()>>,
+    changes: Option<watch::Sender<()>>,
 }
 
 impl CommandSessionManager {
@@ -137,11 +138,18 @@ impl CommandSessionManager {
             history_scope: Default::default(),
             history_resolver: None,
             history_fetch_lock: Arc::new(Mutex::new(())),
+            changes: None,
         }
     }
 
     pub fn with_workspace_root(mut self, workspace_root: PathBuf) -> Self {
         self.workspace_root = workspace_root;
+        self
+    }
+
+    /// Bumps `changes` whenever `running_commands` may return a different list.
+    pub fn with_change_signal(mut self, changes: watch::Sender<()>) -> Self {
+        self.changes = Some(changes);
         self
     }
 
@@ -390,6 +398,7 @@ impl CommandSessionManager {
             timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
             lifetime_guard,
             (history_path, history),
+            self.changes.clone(),
         ));
 
         // Sessions appear in saved agent history and browser requests, so their
@@ -410,6 +419,7 @@ impl CommandSessionManager {
         });
         sessions.insert(session_id.clone(), session.clone());
         drop(sessions);
+        signal_change(&self.changes);
 
         let result = self
             .observe_session(
@@ -828,6 +838,7 @@ async fn supervise_command(
     timeout: Option<Duration>,
     lifetime_guard: Option<CommandLifetimeGuard>,
     history: (PathBuf, CommandHistory),
+    changes: Option<watch::Sender<()>>,
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
@@ -907,6 +918,13 @@ async fn supervise_command(
     let _ = stdin_task.await;
     drop(lifetime_guard);
     let _ = completion.send(Some(completed));
+    signal_change(&changes);
+}
+
+fn signal_change(changes: &Option<watch::Sender<()>>) {
+    if let Some(changes) = changes {
+        changes.send_replace(());
+    }
 }
 
 fn completion_output(

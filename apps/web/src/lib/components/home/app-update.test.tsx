@@ -3,12 +3,13 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import { stubWebSocket } from '$lib/local/socket-test-support';
 import type { UpdateState } from '$lib/updates';
 import AppUpdate from './app-update';
 
 afterEach(() => {
-	vi.useRealTimers();
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
 	vi.clearAllMocks();
 	delete window.sprocketDesktopBridge;
 });
@@ -20,6 +21,8 @@ const available: UpdateState = {
 	version: '1.1.0',
 	error: null
 };
+
+let nextPort = 7300;
 
 function mount(automaticAgentContinuation?: boolean, loading = false) {
 	const client = new ConvexTestClient();
@@ -40,35 +43,40 @@ function mount(automaticAgentContinuation?: boolean, loading = false) {
 		client.registerQuery(api.uiPreferences.getMine, preferences);
 	}
 
+	// Each server URL gets its own socket, so tests do not share one.
+	vi.stubEnv('VITE_LOCAL_API_URL', `http://127.0.0.1:${nextPort++}`);
+	const sockets = stubWebSocket();
+
 	render(
 		<ConvexTestProvider client={client}>
 			<AppUpdate />
 		</ConvexTestProvider>
 	);
+	sockets[0]?.open();
+
+	return (state: UpdateState) =>
+		act(() => {
+			sockets[0]?.onmessage?.({ data: JSON.stringify({ type: 'event', id: 1, data: state }) });
+		});
 }
 
 it('installs a package update on the first click and prevents another request while busy', async () => {
 	const installation = Promise.withResolvers<Response>();
-
-	const fetcher = vi
-		.fn()
-		.mockResolvedValueOnce(Response.json(available))
-		.mockReturnValueOnce(installation.promise);
+	const fetcher = vi.fn().mockReturnValueOnce(installation.promise);
 
 	vi.stubGlobal('fetch', fetcher);
-	mount(false);
+	mount(false)(available);
 
 	const button = await screen.findByRole('button', { name: 'Update available' });
 
 	fireEvent.click(button);
-	expect(fetcher).toHaveBeenNthCalledWith(
-		2,
+	expect(fetcher).toHaveBeenCalledWith(
 		expect.stringContaining('/api/update/install'),
 		expect.objectContaining({ method: 'POST' })
 	);
 	expect(button.hasAttribute('disabled')).toBe(true);
 	fireEvent.click(button);
-	expect(fetcher).toHaveBeenCalledTimes(2);
+	expect(fetcher).toHaveBeenCalledTimes(1);
 
 	await act(async () => installation.resolve(Response.json({ ...available, status: 'installed' })));
 	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toHaveProperty(
@@ -78,74 +86,62 @@ it('installs a package update on the first click and prevents another request wh
 });
 
 it('restarts once the update installs when automatic continuation is on', async () => {
-	vi.useFakeTimers({ shouldAdvanceTime: true });
 	const restarted = Promise.withResolvers<Response>();
 
 	const fetcher = vi
 		.fn()
-		.mockResolvedValueOnce(Response.json(available))
 		.mockResolvedValueOnce(Response.json({ ...available, status: 'installing' }))
-		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
 		.mockReturnValueOnce(restarted.promise);
 
 	vi.stubGlobal('fetch', fetcher);
-	mount(true);
-	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
-	await act(() => vi.advanceTimersByTimeAsync(5_000));
+	const publish = mount(true);
+	publish(available);
+	await act(async () =>
+		fireEvent.click(await screen.findByRole('button', { name: 'Update available' }))
+	);
+	publish({ ...available, status: 'installed' });
 	expect(fetcher).toHaveBeenNthCalledWith(
-		4,
+		2,
 		expect.stringContaining('/api/update/restart'),
 		expect.objectContaining({ method: 'POST' })
 	);
 	expect(screen.queryByRole('dialog')).toBeNull();
 	await act(async () => restarted.reject(new Error('Restart failed')));
-	expect(fetcher).toHaveBeenCalledTimes(4);
+	expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it.each([undefined, true])(
 	'restarts without confirmation when automatic continuation is %s',
 	async (enabled) => {
 		const restarted = Promise.withResolvers<Response>();
-
-		const fetcher = vi
-			.fn()
-			.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
-			.mockReturnValueOnce(restarted.promise);
+		const fetcher = vi.fn().mockReturnValueOnce(restarted.promise);
 
 		vi.stubGlobal('fetch', fetcher);
-		mount(enabled);
+		mount(enabled)({ ...available, status: 'installed' });
 		const button = await screen.findByRole('button', { name: 'Restart Sprocket' });
 		await act(async () => fireEvent.click(button));
 		expect(screen.queryByRole('dialog')).toBeNull();
-		expect(fetcher).toHaveBeenNthCalledWith(
-			2,
+		expect(fetcher).toHaveBeenCalledWith(
 			expect.stringContaining('/api/update/restart'),
 			expect.objectContaining({ method: 'POST' })
 		);
 		expect(button).toHaveProperty('disabled', true);
 		expect(button.textContent).toBe('Restarting Sprocket...');
 		fireEvent.click(button);
-		expect(fetcher).toHaveBeenCalledTimes(2);
+		expect(fetcher).toHaveBeenCalledTimes(1);
 		await act(async () => restarted.reject(new Error('Restart failed')));
 		expect(screen.getByRole('alert').textContent).toBe('Restart failed');
 	}
 );
 
-it('drops an install error once a later check shows the update installed', async () => {
-	vi.useFakeTimers({ shouldAdvanceTime: true });
-
-	const fetcher = vi
-		.fn()
-		.mockResolvedValueOnce(Response.json(available))
-		.mockRejectedValueOnce(new Error('Connection lost'))
-		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }));
-
-	vi.stubGlobal('fetch', fetcher);
-	mount(false);
+it('drops an install error once the server pushes the installed update', async () => {
+	vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('Connection lost')));
+	const publish = mount(false);
+	publish(available);
 	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
 	expect(await screen.findByText('Connection lost')).toBeTruthy();
 
-	await act(() => vi.advanceTimersByTimeAsync(5_000));
+	publish({ ...available, status: 'installed' });
 	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toBeTruthy();
 	expect(screen.queryByText('Connection lost')).toBeNull();
 });
@@ -156,28 +152,25 @@ it.each([
 ])(
 	'confirms restart while automatic continuation is %s and lets the user cancel',
 	async (_, enabled, loading) => {
-		const fetcher = vi
-			.fn()
-			.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
-			.mockRejectedValueOnce(new Error('Restart failed'));
+		const fetcher = vi.fn().mockRejectedValueOnce(new Error('Restart failed'));
 
 		vi.stubGlobal('fetch', fetcher);
-		mount(enabled, loading);
+		mount(enabled, loading)({ ...available, status: 'installed' });
 		const button = await screen.findByRole('button', { name: 'Restart Sprocket' });
 		await act(async () => fireEvent.click(button));
 		const dialog = screen.getByRole('dialog', { name: 'Restart Sprocket?' });
 		expect(dialog.textContent).toContain('Restarting interrupts active agents');
-		expect(fetcher).toHaveBeenCalledTimes(1);
+		expect(fetcher).not.toHaveBeenCalled();
 		fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 		expect(screen.queryByRole('dialog')).toBeNull();
-		expect(fetcher).toHaveBeenCalledTimes(1);
+		expect(fetcher).not.toHaveBeenCalled();
 		await act(async () => fireEvent.click(button));
 		await act(async () =>
 			fireEvent.click(
 				within(screen.getByRole('dialog')).getByRole('button', { name: 'Restart Sprocket' })
 			)
 		);
-		expect(fetcher).toHaveBeenCalledTimes(2);
+		expect(fetcher).toHaveBeenCalledTimes(1);
 	}
 );
 

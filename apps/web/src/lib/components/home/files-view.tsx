@@ -24,11 +24,12 @@ import {
 import { createPortal } from 'react-dom';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import { leafName, trimSlash } from '$lib/chat/side-panel';
-import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
+import { usePageVisible } from '$lib/page-visibility';
+import type { LocalApi, WorkspaceFilesResult, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type FilesApi = Pick<
 	LocalApi,
-	'listWorkspaceFiles' | 'createWorkspaceFile' | 'renameWorkspaceFile' | 'deleteWorkspaceFile'
+	'watchWorkspaceFiles' | 'createWorkspaceFile' | 'renameWorkspaceFile' | 'deleteWorkspaceFile'
 >;
 
 type FilesRoot = 'thread' | 'project';
@@ -40,7 +41,7 @@ type Props = {
 	/** A linked folder to reveal; a `workspacePath` outside both roots becomes the tree root. */
 	location?: WorkspaceFileTarget;
 	onLocationChange: (location: WorkspaceFileTarget | undefined) => void;
-	/** Polls for outside changes only while the tab is active. */
+	/** Follows outside changes only while the tab is active. */
 	active: boolean;
 	onOpenFile: (file: WorkspaceFileTarget) => void;
 	onRenamed: (workspacePath: string, from: string, to: string) => void;
@@ -55,16 +56,14 @@ type ListingState = {
 	error: string | null;
 };
 
-type Shown = { path: string; paths: readonly string[]; hash: string };
+type Shown = { path: string; paths: readonly string[] };
 
 const ROOTS: { id: FilesRoot; label: string }[] = [
 	{ id: 'thread', label: 'Thread' },
 	{ id: 'project', label: 'Project' }
 ];
 
-const LIST_POLL_MS = 2_500;
-
-const SCAN_POLL_MS = 500;
+const RECONNECT_MS = 1_000;
 
 const TOOL_BUTTON =
 	'touch-target relative text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
@@ -120,15 +119,19 @@ export default function FilesView({
 	const shown = useRef<Shown | null>(null);
 	const forceReset = useRef(false);
 	const mutations = useRef(0);
+	/** The newest listing, held while an optimistic tree edit is in flight. */
+	const unapplied = useRef<{ path: string; listing: WorkspaceFilesResult } | null>(null);
 	/** A placeholder row for a new file or folder that is waiting for its name. */
 	const pendingCreate = useRef<{ path: string; editing: boolean } | null>(null);
 	const searchInput = useRef<HTMLInputElement>(null);
+	const visible = usePageVisible();
 
 	const handlers = useRef<{
 		rename: (event: FileTreeRenameEvent) => void;
 		drop: (event: FileTreeDropResult) => void;
 		create: (path: string) => void;
-	}>({ rename: () => {}, drop: () => {}, create: () => {} });
+		applyListing: () => void;
+	}>({ rename: () => {}, drop: () => {}, create: () => {}, applyListing: () => {} });
 
 	const canSwitchRoot = !!threadCwd && !!projectPath && threadCwd !== projectPath;
 
@@ -176,6 +179,33 @@ export default function FilesView({
 		setRefreshKey((value) => value + 1);
 	}
 
+	handlers.current.applyListing = () => {
+		const next = unapplied.current;
+
+		// Optimistic tree edits win until their request settles.
+		if (!next || mutations.current > 0 || pendingCreate.current) return;
+		unapplied.current = null;
+		const known = shown.current?.path === next.path ? shown.current : null;
+
+		if (forceReset.current || !known || !samePaths(known.paths, next.listing.paths)) {
+			model.resetPaths({
+				preparedInput: prepareFileTreeInput(next.listing.paths, { flattenEmptyDirectories: true }),
+				initialExpandedPaths: known ? expandedDirectories(model, known.paths) : []
+			});
+		}
+
+		model.setGitStatus(next.listing.gitStatus);
+		shown.current = { path: next.path, paths: next.listing.paths };
+		forceReset.current = false;
+		setListing({
+			path: next.path,
+			count: next.listing.paths.length,
+			scanning: next.listing.scanning,
+			truncated: next.listing.truncated,
+			error: null
+		});
+	};
+
 	async function mutate(work: (api: FilesApi, workspacePath: string) => Promise<void>) {
 		if (!api || !rootPath) return;
 		mutations.current++;
@@ -188,6 +218,7 @@ export default function FilesView({
 			resync();
 		} finally {
 			mutations.current--;
+			handlers.current.applyListing();
 		}
 	}
 
@@ -253,6 +284,7 @@ export default function FilesView({
 		if (!model.startRenaming(path, { removeIfCanceled: true })) {
 			pendingCreate.current = null;
 			model.remove(path, { recursive: isFolder });
+			handlers.current.applyListing();
 		}
 	}
 
@@ -280,7 +312,7 @@ export default function FilesView({
 		model.scrollToPath(directory, { offset: 'center' });
 	});
 
-	useEffect(() => revealLocation(), [location]);
+	useEffect(() => revealLocation(), [location, listing]);
 
 	function confirmDelete(path: string) {
 		setDeleteRequest(null);
@@ -320,13 +352,14 @@ export default function FilesView({
 					pendingCreate.current = null;
 
 					if (model.getItem(pending.path)) handlers.current.create(pending.path);
+					else handlers.current.applyListing();
 				});
 			}),
 		[model]
 	);
 
 	useEffect(() => {
-		if (!api || !rootPath || !active) return;
+		if (!api || !rootPath || !active || !visible) return;
 		const workspacePath = rootPath;
 		const controller = new AbortController();
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -336,68 +369,40 @@ export default function FilesView({
 			shown.current = null;
 		}
 
-		async function poll() {
-			let scanning = false;
+		function showError(error: string) {
+			setListing({ path: workspacePath, count: 0, scanning: false, truncated: false, error });
+		}
 
-			if (document.visibilityState === 'visible' && !pendingCreate.current) {
-				const known = shown.current?.path === workspacePath ? shown.current : null;
-				const knownHash = forceReset.current ? undefined : known?.hash;
-
-				try {
-					const result = await api!.listWorkspaceFiles(
-						{ workspacePath, knownHash },
-						controller.signal
-					);
-
-					if (controller.signal.aborted) return;
-					scanning = result.scanning;
-
-					// Optimistic tree edits win until their request settles.
-					if (result.hash !== knownHash && mutations.current === 0 && !pendingCreate.current) {
-						if (forceReset.current || !known || !samePaths(known.paths, result.paths)) {
-							model.resetPaths({
-								preparedInput: prepareFileTreeInput(result.paths, {
-									flattenEmptyDirectories: true
-								}),
-								initialExpandedPaths: known ? expandedDirectories(model, known.paths) : []
-							});
+		async function watch() {
+			try {
+				await api!.watchWorkspaceFiles(
+					{ workspacePath },
+					{
+						signal: controller.signal,
+						onEvent: (event) => {
+							if (event.kind === 'error') return showError(event.message);
+							unapplied.current = { path: workspacePath, listing: event };
+							handlers.current.applyListing();
 						}
-
-						model.setGitStatus(result.gitStatus);
-						shown.current = { path: workspacePath, paths: result.paths, hash: result.hash };
-						forceReset.current = false;
 					}
-
-					revealLocation();
-					setListing({
-						path: workspacePath,
-						count: shown.current?.path === workspacePath ? shown.current.paths.length : 0,
-						scanning: result.scanning,
-						truncated: result.truncated,
-						error: null
-					});
-				} catch (error) {
-					if (controller.signal.aborted) return;
-					setListing({
-						path: workspacePath,
-						count: 0,
-						scanning: false,
-						truncated: false,
-						error: error instanceof Error ? error.message : 'Could not list files.'
-					});
+				);
+			} catch (error) {
+				if (!controller.signal.aborted) {
+					showError(error instanceof Error ? error.message : 'Could not list files.');
 				}
 			}
 
-			timer = setTimeout(poll, scanning ? SCAN_POLL_MS : LIST_POLL_MS);
+			if (!controller.signal.aborted) timer = setTimeout(watch, RECONNECT_MS);
 		}
 
-		void poll();
+		void watch();
 
 		return () => {
 			controller.abort();
 			clearTimeout(timer);
+			unapplied.current = null;
 		};
-	}, [api, rootPath, active, refreshKey, model]);
+	}, [api, rootPath, active, visible, refreshKey, model]);
 
 	const blockingStatus = !api
 		? 'Files are available when Sprocket is connected to this machine.'

@@ -21,6 +21,12 @@ const ensureLocalSession = vi.fn<AuthRuntime['ensureLocalSession']>();
 
 const resolveLocalApiBaseUrl = vi.fn<AuthRuntime['resolveLocalApiBaseUrl']>();
 
+const watchAuthChanges = vi.fn<AuthRuntime['watchAuthChanges']>();
+
+function waitForAbort(_baseUrl: string, signal: AbortSignal) {
+	return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
+}
+
 const nativeTokenRequestSchema = z.object({ forceRefreshToken: z.boolean() });
 
 type NativeSessionTokenRequest = z.infer<typeof nativeTokenRequestSchema>;
@@ -91,13 +97,16 @@ describe('installed and hosted auth', () => {
 		createAuthKitClient.mockReset();
 		ensureLocalSession.mockReset();
 		resolveLocalApiBaseUrl.mockReset();
+		watchAuthChanges.mockReset();
+		watchAuthChanges.mockImplementation(waitForAbort);
 		convexClient.query.mockClear();
 		resolveLocalApiBaseUrl.mockReturnValue('http://localhost:17731');
 		ensureLocalSession.mockResolvedValue(undefined);
 		setAuthRuntime({
 			createAuthKitClient,
 			resolveLocalApiBaseUrl,
-			ensureLocalSession
+			ensureLocalSession,
+			watchAuthChanges
 		});
 	});
 
@@ -107,35 +116,25 @@ describe('installed and hosted auth', () => {
 
 	it('observes login and logout from another local client without creating a browser session', async () => {
 		stubInstalledWindow();
-		const connections: FakeEvents[] = [];
-
-		class FakeEvents {
-			onmessage: (() => void) | null = null;
-			close = vi.fn();
-			constructor() {
-				connections.push(this);
-			}
-		}
-
-		vi.stubGlobal('EventSource', FakeEvents);
 		let signedIn = false;
 		stubFetch({
 			token: () =>
 				jsonResponse(200, signedIn ? { accessToken: 'native-token', user: nativeUser } : null)
 		});
 		await initializeAuth(convexClient);
-		const events = connections[0];
+		const [baseUrl, signal, onChange] = watchAuthChanges.mock.calls[0] ?? [];
 
-		if (!events) throw new Error('missing auth subscription');
+		if (!onChange || !signal) throw new Error('missing auth subscription');
+		expect(baseUrl).toBe('http://localhost:17731');
 		signedIn = true;
-		events.onmessage?.();
+		onChange();
 		await vi.waitFor(() => expect(get(authState).user?.id).toBe(nativeUser.id));
 		signedIn = false;
-		events.onmessage?.();
+		onChange();
 		await vi.waitFor(() => expect(get(authState).user).toBeNull());
 		expect(createAuthKitClient).not.toHaveBeenCalled();
 		resetAuthRuntime();
-		expect(events.close).toHaveBeenCalledOnce();
+		expect(signal.aborted).toBe(true);
 	});
 
 	it('resumes an installed native session without AuthKit JS', async () => {
@@ -374,6 +373,11 @@ describe('installed and hosted auth', () => {
 			error: null
 		});
 		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual(['POST']);
+		expect(watchAuthChanges).toHaveBeenCalledWith(
+			'http://localhost:17731',
+			expect.any(AbortSignal),
+			expect.any(Function)
+		);
 	});
 
 	it('revokes only the browser session and can sign in again remotely', async () => {
@@ -558,7 +562,8 @@ describe('installed and hosted auth', () => {
 		setAuthRuntime({
 			createAuthKitClient,
 			resolveLocalApiBaseUrl,
-			ensureLocalSession
+			ensureLocalSession,
+			watchAuthChanges
 		});
 		stubInstalledWindow();
 		stubFetch({

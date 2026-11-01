@@ -155,3 +155,82 @@ async fn workspace_search_requires_session_and_returns_completion_entries() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
+
+async fn next_event<T: serde::Serialize>(
+    events: &mut BoxStream<'static, DiskEvent<T>>,
+) -> serde_json::Value {
+    let event = tokio::time::timeout(Duration::from_secs(10), events.next())
+        .await
+        .expect("a disk change arrives")
+        .expect("disk streams never end");
+    serde_json::to_value(event).unwrap()
+}
+
+#[tokio::test]
+async fn file_events_send_each_disk_change_once() {
+    let workspace = tempfile::tempdir().unwrap();
+    let notes = workspace.path().join("notes.txt");
+    std::fs::write(&notes, "first").unwrap();
+    let mut events = file_events(WorkspaceEntryRequest {
+        workspace_path: workspace.path().to_string_lossy().into(),
+        path: "notes.txt".into(),
+    });
+
+    let first = next_event(&mut events).await;
+    assert_eq!(first["kind"], "snapshot");
+    assert_eq!(first["content"], "first");
+
+    std::fs::write(&notes, "second").unwrap();
+    let second = next_event(&mut events).await;
+    assert_eq!(second["content"], "second");
+    assert_ne!(second["version"], first["version"]);
+
+    std::fs::remove_file(&notes).unwrap();
+    assert_eq!(next_event(&mut events).await["kind"], "error");
+}
+
+#[tokio::test]
+async fn file_list_events_follow_new_files() {
+    let data = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("src")).unwrap();
+    std::fs::write(workspace.path().join("src/main.rs"), "fn main() {}").unwrap();
+    let state = AppState::for_test(
+        crate::auth::AuthState::load(data.path()).unwrap(),
+        sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+            sprocket_host::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            crate::auth::desktop_login_callback_url(7731),
+        ),
+        data.path().to_path_buf(),
+        true,
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
+    );
+    let mut events = file_list_events(
+        &state,
+        WorkspaceFilesWatchRequest {
+            workspace_path: workspace.path().to_string_lossy().into(),
+        },
+    );
+    let lists = |listing: &serde_json::Value, path: &str| {
+        listing["paths"]
+            .as_array()
+            .is_some_and(|paths| paths.iter().any(|entry| entry == path))
+    };
+
+    while !lists(&next_event(&mut events).await, "src/main.rs") {}
+    // fff's watcher starts after the first scan, so a file written before then is missed.
+    for attempt in 0..10 {
+        let path = format!("src/new-{attempt}.rs");
+        std::fs::write(workspace.path().join(&path), "").unwrap();
+        let listed = tokio::time::timeout(Duration::from_secs(3), async {
+            while !lists(&next_event(&mut events).await, &path) {}
+        })
+        .await;
+        if listed.is_ok() {
+            return;
+        }
+    }
+    panic!("new files never appeared in the listing");
+}

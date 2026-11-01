@@ -7,6 +7,7 @@ import {
 	readWorkspaceLaunchFromHash,
 	workspaceLaunchHash
 } from '$lib/local/client';
+import { stubWebSocket } from '$lib/local/socket-test-support';
 
 function threadRecordId(value: string): Id<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -323,43 +324,21 @@ describe('display transcript pages', () => {
 });
 
 describe('watchLiveCompletion', () => {
-	it('ignores unidentified overlays and parses updated and cleared SSE events', async () => {
-		const overlay = {
+	it('ignores unidentified overlays and parses updated and cleared events', async () => {
+		const unidentified = {
 			threadId: 'thread-1',
 			runId: 'run-1',
 			runStatus: 'running' as const,
-			streamId: 'stream-1',
 			text: 'Hello',
 			parts: [{ type: 'text' as const, id: 't', text: 'Hello', turnId: 'stream-1' }]
 		};
 
-		const encoder = new TextEncoder();
+		const overlay = { ...unidentified, streamId: 'stream-1' };
 
-		const body = new ReadableStream({
-			start(controller) {
-				for (const streamId of [undefined, '']) {
-					controller.enqueue(
-						encoder.encode(
-							`data: ${JSON.stringify({ eventType: 'updated', live: { ...overlay, streamId } })}\n\n`
-						)
-					);
-				}
-
-				controller.enqueue(
-					encoder.encode(`data: ${JSON.stringify({ eventType: 'updated', live: overlay })}\n\n`)
-				);
-				controller.enqueue(encoder.encode('data: {"eventType":"cleared"}\n\n'));
-				controller.close();
-			}
-		});
-
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(body, { status: 200 }))
-		);
-
+		const sockets = stubWebSocket();
 		const events: unknown[] = [];
-		await createLocalClient('http://127.0.0.1:7731').watchLiveCompletion(
+
+		const watching = createLocalClient('http://127.0.0.1:7101').watchLiveCompletion(
 			{ userId: 'user-1', threadId: threadRecordId('thread-1') },
 			{
 				signal: new AbortController().signal,
@@ -368,6 +347,25 @@ describe('watchLiveCompletion', () => {
 				}
 			}
 		);
+
+		sockets[0].open();
+
+		sockets[0].receive({
+			type: 'event',
+			id: 1,
+			data: { eventType: 'updated', live: unidentified }
+		});
+
+		sockets[0].receive({
+			type: 'event',
+			id: 1,
+			data: { eventType: 'updated', live: { ...overlay, streamId: '' } }
+		});
+
+		sockets[0].receive({ type: 'event', id: 1, data: { eventType: 'updated', live: overlay } });
+		sockets[0].receive({ type: 'event', id: 1, data: { eventType: 'cleared' } });
+		sockets[0].receive({ type: 'end', id: 1 });
+		await watching;
 
 		expect(events).toEqual([{ eventType: 'updated', live: overlay }, { eventType: 'cleared' }]);
 	});
@@ -405,90 +403,52 @@ describe('watchArtifacts', () => {
 		updatedAt: 20
 	};
 
-	function sseResponse(events: unknown[]) {
-		const encoder = new TextEncoder();
+	const request = { userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' };
 
-		return new ReadableStream({
-			start(controller) {
-				for (const event of events) {
-					controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-				}
+	it('subscribes with the watch scope and keeps stale snapshots and their local errors', async () => {
+		const sockets = stubWebSocket();
 
-				controller.close();
-			}
-		});
-	}
-
-	it('posts the watch request and parses full-snapshot SSE events', async () => {
-		const fetch = vi.fn(
-			async () =>
-				new Response(sseResponse([{ artifacts: [artifact], stale: false }]), { status: 200 })
-		);
-
-		vi.stubGlobal('fetch', fetch);
-
-		const events: unknown[] = [];
-
-		const request = {
-			userId: 'user-1',
-			repositoryKey: 'repo-1',
-			workspacePath: '/ws'
-		};
-
-		await createLocalClient('http://127.0.0.1:7731').watchArtifacts(request, {
-			signal: new AbortController().signal,
-			onEvent: (event) => {
-				events.push(event);
-			}
-		});
-
-		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/artifacts/watch',
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify(request)
-			})
-		);
-		expect(events).toEqual([{ artifacts: [artifact], stale: false }]);
-	});
-
-	it('rejects malformed snapshots so callers can reconnect', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(
-				async () =>
-					new Response(
-						sseResponse([{ artifacts: [{ ...artifact, revision: 'invalid' }], stale: false }])
-					)
-			)
-		);
-		const onEvent = vi.fn();
-		await expect(
-			createLocalClient('http://127.0.0.1:7731').watchArtifacts(
-				{ userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' },
-				{ signal: new AbortController().signal, onEvent }
-			)
-		).rejects.toThrow();
-		expect(onEvent).not.toHaveBeenCalled();
-	});
-
-	it('keeps stale snapshots and their local errors', async () => {
 		const snapshot = {
 			artifacts: [{ ...artifact, localError: 'File missing' }],
 			stale: true,
 			error: 'cloud lag'
 		};
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(sseResponse([snapshot]), { status: 200 }))
-		);
 		const onEvent = vi.fn();
-		await createLocalClient('http://127.0.0.1:7731').watchArtifacts(
-			{ userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' },
-			{ signal: new AbortController().signal, onEvent }
-		);
+
+		const watching = createLocalClient('http://127.0.0.1:7102').watchArtifacts(request, {
+			signal: new AbortController().signal,
+			onEvent
+		});
+
+		sockets[0].open();
+		expect(sockets[0].sent).toEqual([
+			{ type: 'subscribe', id: 1, topic: { kind: 'artifacts', params: request } }
+		]);
+		sockets[0].receive({ type: 'event', id: 1, data: snapshot });
+		sockets[0].receive({ type: 'end', id: 1 });
+		await watching;
 		expect(onEvent).toHaveBeenCalledWith(snapshot);
+	});
+
+	it('rejects malformed snapshots so callers can reconnect', async () => {
+		const sockets = stubWebSocket();
+		const onEvent = vi.fn();
+
+		const watching = createLocalClient('http://127.0.0.1:7103').watchArtifacts(request, {
+			signal: new AbortController().signal,
+			onEvent
+		});
+
+		sockets[0].open();
+		sockets[0].receive({
+			type: 'event',
+			id: 1,
+			data: { artifacts: [{ ...artifact, revision: 'invalid' }], stale: false }
+		});
+		await expect(watching).rejects.toThrow();
+		expect(onEvent).not.toHaveBeenCalled();
+		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });
 	});
 });
 
@@ -836,33 +796,32 @@ describe('chatgpt local sign-in', () => {
 });
 
 describe('running command controls', () => {
-	it('sends scoped list and termination requests and forwards the list abort signal', async () => {
+	it('watches the thread scope and sends scoped termination requests', async () => {
 		const commands = [{ sessionId: '7', command: 'bun run dev', workdir: '/work', startedAt: 100 }];
-
-		const fetch = vi
-			.fn()
-			.mockResolvedValueOnce(Response.json({ commands }))
-			.mockResolvedValueOnce(Response.json({ terminated: true }));
-
+		const sockets = stubWebSocket();
+		const fetch = vi.fn().mockResolvedValueOnce(Response.json({ terminated: true }));
 		vi.stubGlobal('fetch', fetch);
 		const api = createLocalClient('http://localhost:17731');
 		const scope = { userId: 'user', threadId: threadRecordId('thread') };
-		const controller = new AbortController();
-		await expect(api.listRunningCommands(scope, controller.signal)).resolves.toEqual({ commands });
+		const onEvent = vi.fn();
+
+		const watching = api.watchRunningCommands(scope, {
+			signal: new AbortController().signal,
+			onEvent
+		});
+
+		sockets[0].open();
+		expect(sockets[0].sent).toEqual([
+			{ type: 'subscribe', id: 1, topic: { kind: 'commands', params: scope } }
+		]);
+		sockets[0].receive({ type: 'event', id: 1, data: commands });
+		sockets[0].receive({ type: 'end', id: 1 });
+		await watching;
+		expect(onEvent).toHaveBeenCalledWith(commands);
 		await expect(api.terminateCommand({ ...scope, sessionId: '7' })).resolves.toEqual({
 			terminated: true
 		});
-		expect(fetch).toHaveBeenNthCalledWith(
-			1,
-			'http://localhost:17731/api/agent/commands',
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify(scope),
-				signal: controller.signal
-			})
-		);
-		expect(fetch).toHaveBeenNthCalledWith(
-			2,
+		expect(fetch).toHaveBeenCalledWith(
 			'http://localhost:17731/api/agent/commands/terminate',
 			expect.objectContaining({
 				method: 'POST',
