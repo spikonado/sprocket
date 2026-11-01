@@ -119,11 +119,6 @@ impl rig::tool::Tool for ReportOrderTool {
 }
 
 #[derive(Deserialize)]
-struct RecognizerList {
-    recognizers: Vec<RecognizerSpec>,
-}
-
-#[derive(Deserialize)]
 pub(super) struct RecognizerSpec {
     psp: String,
     hosts: Vec<String>,
@@ -258,7 +253,7 @@ async fn card_checkout(
     args: CardCheckoutArgs,
     cancellation: WorkspaceCancellation,
 ) -> Result<Value, ToolExecutionError> {
-    let RecognizerList { recognizers } = decode(
+    let recognizers: Vec<RecognizerSpec> = decode(
         payments_action(context, &cancellation, RECOGNIZERS, &json!({})).await?,
         RECOGNIZERS,
     )?;

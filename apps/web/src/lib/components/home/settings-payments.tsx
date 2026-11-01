@@ -10,7 +10,7 @@ import { convexClientErrorMessage } from '$lib/convex-error';
 import { formatMinorAmount } from '$lib/format';
 import { cn } from '$lib/utils';
 
-type Card = FunctionReturnType<typeof api.payments.myPayments>['cards'][number];
+type Card = FunctionReturnType<typeof api.payments.listMyCards>[number];
 
 const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
 	awaiting_approval: { label: 'Awaiting approval', dot: 'bg-amber-500' },
@@ -38,7 +38,7 @@ export default function SettingsPayments({
 }) {
 	const convexAuth = useConvexAuth();
 	const signedIn = convexAuth.isAuthenticated && !convexAuth.isLoading;
-	const myPayments = useAction(api.payments.myPayments);
+	const listMyCards = useAction(api.payments.listMyCards);
 	const [cards, setCards] = useState<Card[] | null>(null);
 	const [cardsError, setCardsError] = useState<string | null>(null);
 	const [openError, setOpenError] = useState<string | null>(null);
@@ -50,12 +50,12 @@ export default function SettingsPayments({
 
 	const loadCards = useCallback(async () => {
 		try {
-			setCards((await myPayments({})).cards);
+			setCards(await listMyCards({}));
 			setCardsError(null);
 		} catch (error) {
 			setCardsError(errorMessage(error, 'Couldn’t load your cards.'));
 		}
-	}, [myPayments]);
+	}, [listMyCards]);
 
 	// Cards are saved in the Agentcard popup, so reload when the user comes back.
 	useEffect(() => {

@@ -34,6 +34,8 @@ function isUnknownAgentcardUser<Caught>(error: Caught) {
 
 const runAuth = { runId: v.id('runs'), claimId: v.string(), executionSecret: v.string() };
 
+const DEFAULT_POLL_INTERVAL_MS = 2000;
+
 const vPurchase = v.object({
 	_id: v.id('purchases'),
 	threadId: v.id('threadRecords'),
@@ -168,14 +170,14 @@ export const attemptPurchaseId = internalQuery({
 	}
 });
 
-export const ownedPurchase = internalQuery({
+export const ownedAuthorizationId = internalQuery({
 	args: { purchaseId: v.string(), userId: v.string() },
-	returns: v.union(v.object({ authorizationId: v.string() }), v.null()),
+	returns: v.union(v.string(), v.null()),
 	handler: async (ctx, args) => {
 		const purchaseId = ctx.db.normalizeId('purchases', args.purchaseId);
 		const purchase = purchaseId ? await ctx.db.get('purchases', purchaseId) : null;
 
-		return purchase?.userId === args.userId ? { authorizationId: purchase.authorizationId } : null;
+		return purchase?.userId === args.userId ? purchase.authorizationId : null;
 	}
 });
 
@@ -322,16 +324,19 @@ async function activeActor(
 	});
 }
 
-async function ownedAuthorizationId(
+async function requireAuthorizationId(
 	ctx: ActionCtx,
 	purchaseId: string,
 	userId: string
 ): Promise<string> {
-	const purchase = await ctx.runQuery(internal.payments.ownedPurchase, { purchaseId, userId });
+	const authorizationId: string | null = await ctx.runQuery(
+		internal.payments.ownedAuthorizationId,
+		{ purchaseId, userId }
+	);
 
-	if (!purchase) throw new Error('Purchase not found.');
+	if (!authorizationId) throw new Error('Purchase not found.');
 
-	return purchase.authorizationId;
+	return authorizationId;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,16 +345,12 @@ async function ownedAuthorizationId(
 
 export const checkoutRecognizers = action({
 	args: runAuth,
-	returns: v.object({
-		recognizers: v.array(
-			v.object({ psp: v.string(), hosts: v.array(v.string()), match: v.string() })
-		)
-	}),
+	returns: v.array(v.object({ psp: v.string(), hosts: v.array(v.string()), match: v.string() })),
 	handler: async (ctx, args) =>
 		await withAgentToolErrors(async () => {
 			await activeActor(ctx, args);
 
-			return { recognizers: await listRecognizers(await agentcardToken(ctx)) };
+			return await listRecognizers(await agentcardToken(ctx));
 		})
 });
 
@@ -391,7 +392,7 @@ export const checkoutCreate = action({
 				return {
 					status: 'awaiting_approval' as const,
 					purchaseId: existingPurchaseId,
-					pollIntervalMs: 2000
+					pollIntervalMs: DEFAULT_POLL_INTERVAL_MS
 				};
 			}
 
@@ -470,7 +471,7 @@ export const checkoutCreate = action({
 			return {
 				status: 'awaiting_approval' as const,
 				purchaseId,
-				pollIntervalMs: authorization.poll_interval_ms ?? 2000
+				pollIntervalMs: authorization.poll_interval_ms ?? DEFAULT_POLL_INTERVAL_MS
 			};
 		})
 });
@@ -500,7 +501,7 @@ export const checkoutPoll = action({
 	handler: async (ctx, args) =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args);
-			const authorizationId = await ownedAuthorizationId(ctx, args.purchaseId, actor.userId);
+			const authorizationId = await requireAuthorizationId(ctx, args.purchaseId, actor.userId);
 			let authorization: AgentcardAuthorization;
 
 			try {
@@ -510,7 +511,7 @@ export const checkoutPoll = action({
 				);
 			} catch (error) {
 				if (error instanceof AgentcardError && error.code === 'slow_down') {
-					return { status: 'awaiting_approval' as const, pollIntervalMs: 2000 };
+					return { status: 'awaiting_approval' as const, pollIntervalMs: DEFAULT_POLL_INTERVAL_MS };
 				}
 
 				throw error;
@@ -523,7 +524,7 @@ export const checkoutPoll = action({
 
 			const result: Infer<typeof vCheckoutPollResult> = {
 				status: authorization.status,
-				pollIntervalMs: authorization.poll_interval_ms ?? 2000
+				pollIntervalMs: authorization.poll_interval_ms ?? DEFAULT_POLL_INTERVAL_MS
 			};
 
 			if (authorization.reason) result.reason = authorization.reason;
@@ -542,7 +543,7 @@ export const checkoutCancel = action({
 	handler: async (ctx, args) =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args, true);
-			const authorizationId = await ownedAuthorizationId(ctx, args.purchaseId, actor.userId);
+			const authorizationId = await requireAuthorizationId(ctx, args.purchaseId, actor.userId);
 
 			try {
 				await agentcardRequest(
@@ -578,7 +579,7 @@ export const reportOrder = action({
 			if (!orderNumber) throw new Error('Order number is required.');
 
 			await ctx.runMutation(internal.payments.updatePurchase, {
-				authorizationId: await ownedAuthorizationId(ctx, args.purchaseId, actor.userId),
+				authorizationId: await requireAuthorizationId(ctx, args.purchaseId, actor.userId),
 				orderNumber
 			});
 
@@ -590,19 +591,17 @@ export const reportOrder = action({
 // Settings and thread UI (signed-in user)
 // ---------------------------------------------------------------------------
 
-const vSavedCards = v.object({
-	cards: v.array(
-		v.object({
-			id: v.string(),
-			brand: v.string(),
-			last4: v.string(),
-			expiryMonth: v.number(),
-			expiryYear: v.number()
-		})
-	)
-});
+const vSavedCards = v.array(
+	v.object({
+		id: v.string(),
+		brand: v.string(),
+		last4: v.string(),
+		expiryMonth: v.number(),
+		expiryYear: v.number()
+	})
+);
 
-export const myPayments = action({
+export const listMyCards = action({
 	args: {},
 	returns: vSavedCards,
 	handler: async (ctx): Promise<Infer<typeof vSavedCards>> => {
@@ -610,7 +609,7 @@ export const myPayments = action({
 			userId: await getUserId(ctx)
 		});
 
-		if (!user) return { cards: [] };
+		if (!user) return [];
 
 		let cards: {
 			data: {
@@ -628,20 +627,18 @@ export const myPayments = action({
 				`/api/v2/vault_cards?user_id=${encodeURIComponent(user)}`
 			);
 		} catch (error) {
-			if (isUnknownAgentcardUser(error)) return { cards: [] };
+			if (isUnknownAgentcardUser(error)) return [];
 
 			throw error;
 		}
 
-		return {
-			cards: cards.data.map((card) => ({
-				id: card.id,
-				brand: card.brand,
-				last4: card.last4,
-				expiryMonth: card.expiry_month,
-				expiryYear: card.expiry_year
-			}))
-		};
+		return cards.data.map((card) => ({
+			id: card.id,
+			brand: card.brand,
+			last4: card.last4,
+			expiryMonth: card.expiry_month,
+			expiryYear: card.expiry_year
+		}));
 	}
 });
 

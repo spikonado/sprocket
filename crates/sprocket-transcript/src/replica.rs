@@ -11,7 +11,7 @@ use super::sections::{POSITION_STRIDE, WorkPosition};
 use super::{TranscriptPart, TranscriptStore};
 
 // Bump when the schema or derived row shapes change; mismatched caches are rebuilt from parts.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE parts (number INTEGER PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, run TEXT NOT NULL, body TEXT NOT NULL);
@@ -275,16 +275,6 @@ impl WorkReplica {
             );
             affected.sort();
             affected.dedup();
-            for item in ReadIndex(&tx).approvals_for_part(part.number)? {
-                if let Some((mandate_id, approval_url)) = item.approval {
-                    Self::put_row(
-                        &tx,
-                        json!({"id":format!("approval-{}-{}",item.source.part,item.source.item),"sequence":item.source.sequence()+1,
-                        "threadId":thread_id,"runId":item.run_id,"kind":"approval","mandateId":mandate_id,"approvalUrl":approval_url}),
-                        generation,
-                    )?;
-                }
-            }
             let at = WorkPosition {
                 part: part.number,
                 item: 0,

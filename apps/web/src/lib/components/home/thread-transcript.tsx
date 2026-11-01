@@ -228,27 +228,19 @@ export default function ThreadTranscript({
 	}
 
 	function followingLiveState(messageIndex: number, runId: TranscriptDisplayRow['runId']) {
-		for (const message of messages.slice(messageIndex + 1)) {
-			if (message.kind === 'approval' && message.runId === runId) continue;
+		const message = messages.at(messageIndex + 1);
 
-			return message.kind === 'live' && message.runId === runId
-				? liveRenderState(message)
-				: undefined;
-		}
-
-		return undefined;
+		return message?.kind === 'live' && message.runId === runId
+			? liveRenderState(message)
+			: undefined;
 	}
 
 	function followsOpenPersistedWork(messageIndex: number, runId: LiveTranscriptMessage['runId']) {
-		for (let index = messageIndex - 1; index >= 0; index -= 1) {
-			const message = messages[index];
+		if (messageIndex === 0) return false;
 
-			if (message.kind === 'approval' && message.runId === runId) continue;
+		const message = messages[messageIndex - 1];
 
-			return message.kind === 'work' && message.runId === runId && !message.closed;
-		}
-
-		return false;
+		return message.kind === 'work' && message.runId === runId && !message.closed;
 	}
 
 	function firstVisibleAnchor(root: HTMLDivElement) {

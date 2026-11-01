@@ -161,7 +161,7 @@ const displayRowSchema = z
 		threadId: z.string(),
 		runId: z.string(),
 		sequence: z.int().nonnegative(),
-		kind: z.enum(['prompt', 'text', 'work', 'approval']),
+		kind: z.enum(['prompt', 'text', 'work']),
 		text: z.string().optional(),
 		attachments: z.array(localTranscriptAttachmentSchema).optional(),
 		toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),

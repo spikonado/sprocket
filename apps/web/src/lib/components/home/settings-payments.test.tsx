@@ -21,9 +21,9 @@ function stubPopup() {
 }
 
 async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => {})) {
-	client.handleAction(api.payments.myPayments, async () => ({
-		cards: [{ id: 'card', brand: 'visa', last4: '4242', expiryMonth: 4, expiryYear: 2030 }]
-	}));
+	client.handleAction(api.payments.listMyCards, async () => [
+		{ id: 'card', brand: 'visa', last4: '4242', expiryMonth: 4, expiryYear: 2030 }
+	]);
 	client.registerQuery(api.payments.listMyPurchases, [
 		{
 			_id: purchaseId,
