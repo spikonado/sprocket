@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
@@ -14,17 +15,62 @@ type Props = {
 	commands: ReadonlyMap<string, string>;
 };
 
-function ToolRowDisclosure({
-	row,
+function ToolRow({
+	Icon,
+	label,
 	item,
+	status,
 	command
 }: {
-	row: ReactNode;
+	Icon: LucideIcon;
+	label: string | undefined;
 	item: string;
+	status: ReactNode;
 	command: string | undefined;
 }) {
 	const [open, setOpen] = useState(false);
-	const highlightable = open && command && item.startsWith(command);
+	const [itemElement, setItemElement] = useState<HTMLSpanElement | null>(null);
+	const [truncated, setTruncated] = useState(false);
+	const highlightedCommand = command && item.startsWith(command) ? command : undefined;
+	const expandable = open || highlightedCommand || truncated || item.includes('\n');
+
+	useLayoutEffect(() => {
+		if (!itemElement) return;
+		const measure = () => setTruncated(itemElement.scrollWidth > itemElement.clientWidth);
+		measure();
+
+		if (!globalThis.ResizeObserver) return;
+		const observer = new ResizeObserver(measure);
+		observer.observe(itemElement);
+
+		return () => observer.disconnect();
+	}, [itemElement, item]);
+
+	const row = (
+		<>
+			<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
+			{label ? (
+				<span className="shrink-0">
+					{label}
+					{item ? ':' : ''}
+				</span>
+			) : null}
+			{item ? (
+				<span ref={setItemElement} className="min-w-0 truncate">
+					{item}
+				</span>
+			) : null}
+			{status}
+		</>
+	);
+
+	if (!expandable) {
+		return (
+			<div data-tool-row data-work-detail className="flex min-w-0 items-start gap-1.5">
+				{row}
+			</div>
+		);
+	}
 
 	return (
 		<details className="group min-w-0" onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -36,10 +82,10 @@ function ToolRowDisclosure({
 				{row}
 			</summary>
 			<p className="bg-muted/50 text-foreground mt-1 ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap">
-				{highlightable ? (
+				{open && highlightedCommand ? (
 					<>
-						<HighlightedCommand command={command} />
-						{item.slice(command.length)}
+						<HighlightedCommand command={highlightedCommand} />
+						{item.slice(highlightedCommand.length)}
 					</>
 				) : (
 					item
@@ -68,38 +114,23 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 				return (
 					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
 						{summaries.map((item, index) => {
-							const row = (
-								<>
-									<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
-									{label ? (
-										<span className="shrink-0">
-											{label}
-											{item ? ':' : ''}
-										</span>
-									) : null}
-									{item ? <span className="min-w-0 truncate">{item}</span> : null}
-									{error && failure && index === summaries.length - 1 ? (
-										<span className={`shrink-0 ${errorClass}`}>
-											({failure === 'cancelled' ? 'stopped' : failure})
-										</span>
-									) : null}
-								</>
+							const status =
+								error && failure && index === summaries.length - 1 ? (
+									<span className={`shrink-0 ${errorClass}`}>
+										({failure === 'cancelled' ? 'stopped' : failure})
+									</span>
+								) : null;
+
+							return (
+								<ToolRow
+									key={index}
+									Icon={Icon}
+									label={label}
+									item={item}
+									status={status}
+									command={command}
+								/>
 							);
-
-							if (!item) {
-								return (
-									<div
-										key={index}
-										data-tool-row
-										data-work-detail
-										className="flex min-w-0 items-start gap-1.5"
-									>
-										{row}
-									</div>
-								);
-							}
-
-							return <ToolRowDisclosure key={index} row={row} item={item} command={command} />;
 						})}
 						{error && failure ? (
 							<p

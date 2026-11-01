@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
@@ -22,6 +22,25 @@ describe('tool rows', () => {
 		fireEvent.click(view.container.querySelector('[data-tool-row]')!);
 		expect(details.open).toBe(true);
 		expect(details.querySelector('p')?.textContent).toBe(command);
+	});
+
+	it('only lets non-command rows expand when their text is cut off', () => {
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'url',
+			name: 'scrape_url',
+			input: { url: 'https://react.dev' },
+			output: {}
+		};
+
+		const short = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		expect(short.container.querySelector('details')).toBeNull();
+		short.unmount();
+
+		const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(100);
+		const long = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		scrollWidth.mockRestore();
+		expect(long.container.querySelector('details')).not.toBeNull();
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
