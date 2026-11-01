@@ -1,5 +1,6 @@
 import { RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
 import { readKicadSources } from '$lib/kicad';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
@@ -7,45 +8,29 @@ export type KicadViewerApi = Pick<LocalApi, 'readWorkspaceText'>;
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 
-let kicanvas: Promise<void> | undefined;
+const frameMessageSchema = z.object({ type: z.enum(['ready', 'loaded', 'failed']) });
 
-// Vite refuses `import()` of files in `static/`, so the vendored bundle loads through a script tag.
-function loadKicanvas() {
-	kicanvas ??= new Promise<void>((resolve, reject) => {
-		const script = document.createElement('script');
-		script.type = 'module';
-		script.src = '/kicanvas/kicanvas.js';
-		script.onload = () => resolve();
-		script.onerror = () => {
-			script.remove();
-			// A failed load retries on the next open.
-			kicanvas = undefined;
-			reject(new Error('Could not load KiCanvas.'));
+function nextFrameMessage(frame: HTMLIFrameElement, signal: AbortSignal) {
+	return new Promise<z.infer<typeof frameMessageSchema>['type']>((resolve) => {
+		const onMessage = (event: MessageEvent<unknown>) => {
+			if (event.source !== frame.contentWindow) return;
+
+			const message = frameMessageSchema.safeParse(event.data);
+
+			if (!message.success) return;
+			removeEventListener('message', onMessage);
+			resolve(message.data.type);
 		};
 
-		document.head.append(script);
-	});
-
-	return kicanvas;
-}
-
-/** KiCanvas loads after it connects and reports the outcome only through these attributes. */
-function whenLoaded(embed: HTMLElement, signal: AbortSignal) {
-	return new Promise<void>((resolve, reject) => {
-		const observer = new MutationObserver(() => {
-			if (embed.hasAttribute('loading')) return;
-
-			observer.disconnect();
-
-			if (embed.hasAttribute('loaded')) resolve();
-			else reject(new Error('KiCanvas could not read this file. It may be malformed.'));
-		});
-
-		observer.observe(embed, { attributeFilter: ['loading', 'loaded'] });
-		signal.addEventListener('abort', () => observer.disconnect());
+		addEventListener('message', onMessage);
+		signal.addEventListener('abort', () => removeEventListener('message', onMessage));
 	});
 }
 
+/**
+ * KiCanvas parses and draws on its page's main thread, which takes tens of seconds for large
+ * boards. A sandboxed frame gets its own process in Chromium, so the rest of the app stays live.
+ */
 export default function KicadViewer({
 	api,
 	file
@@ -53,12 +38,14 @@ export default function KicadViewer({
 	api: KicadViewerApi | null;
 	file: WorkspaceFileTarget;
 }) {
-	const container = useRef<HTMLDivElement>(null);
+	const frameRef = useRef<HTMLIFrameElement>(null);
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [reloads, setReloads] = useState(0);
 
 	useEffect(() => {
-		if (!api) return;
+		const frame = frameRef.current;
+
+		if (!api || !frame) return;
 
 		const controller = new AbortController();
 		const { signal } = controller;
@@ -67,32 +54,23 @@ export default function KicadViewer({
 
 		void (async () => {
 			try {
-				const [sources] = await Promise.all([
+				const [sources, ready] = await Promise.all([
 					readKicadSources(file.path, (path) =>
 						api.readWorkspaceText({ workspacePath: file.workspacePath, path }, signal)
 					),
-					loadKicanvas()
+					nextFrameMessage(frame, signal)
 				]);
 
-				if (signal.aborted || !container.current) return;
+				if (ready !== 'ready') throw new Error('Could not load KiCanvas.');
 
-				const embed = document.createElement('kicanvas-embed');
-				embed.setAttribute('controls', 'full');
-				embed.style.cssText = 'width: 100%; height: 100%; max-height: none; aspect-ratio: auto;';
+				const outcome = nextFrameMessage(frame, signal);
+				frame.contentWindow?.postMessage({ type: 'sources', sources }, '*');
 
-				for (const { name, content } of sources) {
-					const source = document.createElement('kicanvas-source');
-					source.setAttribute('name', name);
-					source.textContent = content;
-					embed.append(source);
+				if ((await outcome) !== 'loaded') {
+					throw new Error('KiCanvas could not read this file. It may be malformed.');
 				}
 
-				container.current.replaceChildren(embed);
-				await whenLoaded(embed, signal);
-
-				if (signal.aborted) return;
-
-				setStatus({ kind: 'ready' });
+				if (!signal.aborted) setStatus({ kind: 'ready' });
 			} catch (error) {
 				if (signal.aborted) return;
 
@@ -108,7 +86,16 @@ export default function KicadViewer({
 
 	return (
 		<div className="relative flex min-h-0 flex-1 flex-col">
-			<div ref={container} className="min-h-0 flex-1" />
+			{/* A fresh frame per load, since KiCanvas reads its sources only once. */}
+			<iframe
+				key={`${file.workspacePath}:${file.path}:${reloads}`}
+				ref={frameRef}
+				title={`KiCanvas viewer for ${file.path}`}
+				src="/kicanvas-viewer.html"
+				sandbox="allow-scripts allow-downloads"
+				allow="fullscreen"
+				className="min-h-0 w-full flex-1 border-0"
+			/>
 			{status.kind === 'ready' ? null : (
 				<div
 					role={status.kind === 'error' ? 'alert' : 'status'}

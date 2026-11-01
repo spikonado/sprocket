@@ -360,8 +360,10 @@ it('opens a KiCad project card in the side panel', () => {
 		</MarkdownFileLinksContext>
 	);
 
-	expect(document.querySelector('[data-kicad-reference]')?.textContent).toContain('KiCad project');
-	fireEvent.click(getByRole('button', { name: 'View amp.kicad_pro' }));
+	expect(document.querySelector('[data-kicad-reference]')?.textContent).toBe(
+		'ampKiCad projectView'
+	);
+	fireEvent.click(getByRole('button', { name: 'View amp' }));
 	expect(open).toHaveBeenCalledWith({
 		workspacePath: '/repo',
 		path: 'boards/amp board/amp.kicad_pro',

@@ -1,14 +1,7 @@
 import { use } from 'react';
 import { MarkdownFileLinksContext, markdownFileTarget } from '$lib/chat/markdown-file-links';
 import type { MarkdownImageScope } from '$lib/chat/markdown-images';
-import { leafName } from '$lib/chat/side-panel';
 import { ReferenceCard } from '$lib/components/artifact-reference';
-
-function kindOf(path: string) {
-	if (path.endsWith('.kicad_pro')) return 'KiCad project';
-
-	return path.endsWith('.kicad_sch') ? 'KiCad schematic' : 'KiCad board';
-}
 
 export default function KicadReference({
 	path,
@@ -26,9 +19,13 @@ export default function KicadReference({
 		<ReferenceCard
 			data-kicad-reference={path}
 			icon={<img src="/kicad.svg" alt="" className="size-5" />}
-			title={leafName(path)}
-			kind={kindOf(path)}
+			title={projectName(path)}
+			kind="KiCad project"
 			onOpen={fileLinks && target ? () => fileLinks.open(target) : undefined}
 		/>
 	);
+}
+
+function projectName(path: string) {
+	return path.slice(path.lastIndexOf('/') + 1, -'.kicad_pro'.length);
 }

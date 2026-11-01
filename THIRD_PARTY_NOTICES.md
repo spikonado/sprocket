@@ -71,6 +71,6 @@ licenses. The KiCad version, file sizes, and SHA256 checksums are recorded in
 
 The web app ships a build of [KiCanvas](https://github.com/theacodes/kicanvas)
 in `apps/web/static/kicanvas/`, made by `tools/kicanvas/build.sh` from the
-commit it pins. KiCanvas is copyright Alethea Katherine Flowers and licensed
-under MIT; its license is next to the build. When it opens a file, it loads
-its icon and text fonts from Google Fonts.
+commit it pins, with the patches next to that script. KiCanvas is copyright
+Alethea Katherine Flowers and licensed under MIT; its license is next to the
+build. When it opens a file, it loads its icon and text fonts from Google Fonts.

@@ -35,9 +35,6 @@ export async function readKicadSources(
 
 	const load = async (names: string[], required: boolean) => {
 		const fresh = [...new Set(names)].filter((name) => !sources.has(name));
-
-		for (const name of fresh) sources.set(name, '');
-
 		const results = await Promise.allSettled(fresh.map((name) => read(directory + name)));
 
 		return fresh.filter((name, index) => {
@@ -50,7 +47,6 @@ export async function readKicadSources(
 			}
 
 			if (required) throw result.reason;
-			sources.delete(name);
 
 			return false;
 		});

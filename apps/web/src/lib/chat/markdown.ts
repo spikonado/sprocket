@@ -44,7 +44,7 @@ export type MarkdownBlock =
 
 const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
 
-const KICAD_REFERENCE = /^\s*kicad:([^\n]+?\.kicad_(?:pro|sch|pcb))\s*$/;
+const KICAD_REFERENCE = /^\s*kicad:([^\n]+?\.kicad_pro)\s*$/;
 
 const VISUAL_LANGUAGES = new Map<string, VisualKind>([
 	['html-visual', 'html'],

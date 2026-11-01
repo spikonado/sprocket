@@ -4,12 +4,16 @@
 set -euo pipefail
 
 commit=b031159eb74aaa7eef2b026fd85d35bc05ff2095
-out="$(cd "$(dirname "$0")/../.." && pwd)/apps/web/static/kicanvas"
+here="$(cd "$(dirname "$0")" && pwd)"
+out="$here/../../apps/web/static/kicanvas"
 src="$(mktemp -d)"
 trap 'rm -rf "$src"' EXIT
 
 git clone --quiet https://github.com/theacodes/kicanvas "$src"
 git -C "$src" checkout --quiet "$commit"
+# Upstream stringifies the whole parent expression into each unknown-element
+# warning, which turns an 85 MB board's parse from ~5 s into minutes.
+git -C "$src" apply "$here/parser-warnings.patch"
 (cd "$src" && npm ci --silent && node scripts/build.js)
 
 mkdir -p "$out"

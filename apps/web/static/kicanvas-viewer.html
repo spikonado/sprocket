@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<style>
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+			}
+		</style>
+		<script>
+			// The sandbox's opaque origin makes localStorage throw, and KiCanvas keeps its settings there.
+			const settings = new Map();
+			Object.defineProperty(window, 'localStorage', {
+				value: {
+					getItem: (key) => settings.get(key) ?? null,
+					setItem: (key, value) => settings.set(key, String(value)),
+					removeItem: (key) => settings.delete(key)
+				}
+			});
+		</script>
+	</head>
+	<body>
+		<!-- In the body, since the bundle appends its font stylesheet to `document.body`. -->
+		<script src="/kicanvas/kicanvas.js"></script>
+		<script>
+			const reply = (message) => parent.postMessage(message, '*');
+
+			addEventListener('message', ({ source, data }) => {
+				if (source !== parent || data?.type !== 'sources') return;
+
+				const embed = document.createElement('kicanvas-embed');
+				embed.setAttribute('controls', 'full');
+				embed.style.cssText = 'width: 100%; height: 100%;';
+
+				for (const { name, content } of data.sources) {
+					const element = document.createElement('kicanvas-source');
+					element.setAttribute('name', name);
+					element.textContent = content;
+					embed.append(element);
+				}
+
+				// KiCanvas reports how its load ended only through these attributes.
+				const observer = new MutationObserver(() => {
+					if (embed.hasAttribute('loading')) return;
+					observer.disconnect();
+					reply({ type: embed.hasAttribute('loaded') ? 'loaded' : 'failed' });
+				});
+				observer.observe(embed, { attributeFilter: ['loading', 'loaded'] });
+				document.body.append(embed);
+			});
+
+			reply({ type: customElements.get('kicanvas-embed') ? 'ready' : 'failed' });
+		</script>
+	</body>
+</html>
