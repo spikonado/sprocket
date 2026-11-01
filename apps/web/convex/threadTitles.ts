@@ -156,9 +156,7 @@ export const apply = internalMutation({
 		const title = args.title.replace(/\s+/gu, ' ').trim();
 
 		if (request && title) {
-			await ctx.db.patch('threadRecords', request.threadId, {
-				title: [...title].slice(0, 30).join('')
-			});
+			await ctx.db.patch('threadRecords', request.threadId, { title });
 		}
 
 		return null;
