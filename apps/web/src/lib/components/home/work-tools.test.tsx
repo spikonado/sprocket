@@ -45,6 +45,7 @@ describe('tool rows', () => {
 			}
 		);
 		const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get');
+
 		const resize = (width: number) => {
 			scrollWidth.mockReturnValue(width);
 			act(() => resizes.at(-1)!());
