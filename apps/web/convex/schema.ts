@@ -330,7 +330,12 @@ export default defineSchema({
 		cwd: v.optional(v.string()),
 		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
-		archivedAt: v.optional(v.number())
+		archivedAt: v.optional(v.number()),
+		// Set when every linked PR merged but the subtree is still busy or
+		// awaiting recovery. Restored when a continuation unarchives an
+		// auto-settled root. Cleared once the thread is archived, on manual
+		// settle/unsettle, when the setting is turned off, or when a PR unmerges.
+		settleWhenIdle: v.optional(v.boolean())
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		// Tree cancellation needs stable cursors while transcript timestamps change.
@@ -347,12 +352,14 @@ export default defineSchema({
 			'repositoryKey',
 			'archivedAt',
 			'lastMessageAt'
-		]),
+		])
+		.index('by_userId_settleWhenIdle', ['userId', 'settleWhenIdle']),
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
 		workingDescendantCount: v.number(),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number()
+		activeDescendantCount: v.number(),
+		ownActive: v.optional(v.boolean())
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({
