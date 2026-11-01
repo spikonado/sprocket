@@ -23,7 +23,7 @@ const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
 
 const sectionHeadingClass = 'text-foreground text-[15px] font-medium tracking-[-0.01em]';
 
-const paymentCardClass = 'aspect-[1.586] w-52 rounded-xl';
+const paymentCardClass = 'aspect-[85.6/53.98] w-52 rounded-[8px]';
 
 const purchaseDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
@@ -146,28 +146,30 @@ export default function SettingsPayments({
 									Things your agent buys show up here.
 								</p>
 							) : (
-								<ul className="border-border bg-surface divide-border mt-4 divide-y rounded-xl border">
+								<ul className="divide-hairline mt-3 max-w-md divide-y">
 									{purchases.data.map((purchase) => (
-										<li key={purchase._id} className="flex items-center gap-4 px-4 py-3.5">
+										<li key={purchase._id} className="flex items-center gap-4 py-3">
+											<p className="text-foreground w-16 shrink-0 text-[14px] font-medium tabular-nums">
+												{formatMinorAmount(purchase.amount, purchase.currency)}
+											</p>
 											<div className="min-w-0 flex-1">
-												<div className="flex items-baseline justify-between gap-3">
-													<p className="text-foreground truncate text-[14px] font-medium">
-														{purchase.merchant}
-													</p>
-													<p className="text-foreground shrink-0 text-[14px] font-medium tabular-nums">
-														{formatMinorAmount(purchase.amount, purchase.currency)}
-													</p>
-												</div>
-												<div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
-													<span className="text-foreground/80 inline-flex items-center gap-1.5">
+												<p className="text-foreground truncate text-[14px]">{purchase.merchant}</p>
+												<div className="text-muted-foreground mt-0.5 flex items-center gap-x-3 text-[12px]">
+													<span className="text-foreground/80 inline-flex shrink-0 items-center gap-1.5">
 														<span
 															className={cn('size-1.5 rounded-full', statuses[purchase.status].dot)}
 															aria-hidden="true"
 														/>
 														{statuses[purchase.status].label}
 													</span>
-													{purchase.orderNumber && <span>Order {purchase.orderNumber}</span>}
-													<span>{purchaseDate.format(purchase.createdAt)}</span>
+													<span className="shrink-0">
+														{purchaseDate.format(purchase.createdAt)}
+													</span>
+													{purchase.orderNumber && (
+														<span className="truncate" title={purchase.orderNumber}>
+															Order {purchase.orderNumber}
+														</span>
+													)}
 												</div>
 											</div>
 											<button
