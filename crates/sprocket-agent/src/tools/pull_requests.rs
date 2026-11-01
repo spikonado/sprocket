@@ -203,11 +203,11 @@ async fn poll_pr(
             seen.get_or_insert_with(|| Seen::first_look(&activity)),
             &activity,
         );
-        let now = Instant::now();
-        if !report.changes.is_empty() || now >= deadline {
+        let next_read = Instant::now() + POLL_PR_INTERVAL;
+        if !report.changes.is_empty() || next_read > deadline {
             return poll_pr_output(&activity, &report);
         }
-        sleep_until(deadline.min(now + POLL_PR_INTERVAL)).await;
+        sleep_until(next_read).await;
     }
 }
 

@@ -178,6 +178,52 @@ describe('executor', () => {
 		}
 	);
 
+	it('persists poll_pr jobs and results', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'poll-pr';
+		const claimId = 'claim-poll-pr';
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'submission-poll-pr',
+			executionSecret,
+			'Wait for CI'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			...toolTranscriptAssignment(runId, claimId),
+			executionSecret,
+			kind: 'poll_pr',
+			callId: 'call-poll-pr',
+			payload: { repository: 'github.com/acme/widgets', number: 7, cursor: 'abc' }
+		});
+
+		const result = {
+			changes: ['checksFailed' as const, 'newComments' as const],
+			cursor: 'def',
+			state: 'open' as const,
+			headSha: 'a1b2c3',
+			conflicting: null,
+			checks: { passed: 3, pending: ['rust'], failed: [{ name: 'web', url: 'https://ci/web' }] },
+			newComments: [
+				{ author: 'reviewer', path: 'src/lib.rs', body: 'P1 Fix this', url: 'https://c/1' }
+			]
+		};
+
+		await expect(
+			asUser.mutation(api.executor.complete, { runId, claimId, executionSecret, jobId, result })
+		).resolves.toBe(true);
+		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(stored?.result).toEqual(result);
+	});
+
 	it.each(['scrape_url', 'screenshot_url'] as const)(
 		'persists %s local image references without file bytes',
 		async (kind) => {
