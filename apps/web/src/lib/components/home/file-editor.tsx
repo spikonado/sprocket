@@ -77,7 +77,8 @@ function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
 
 function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
-	const [notice, setNotice] = useState<string | null>(null);
+	const [readError, setReadError] = useState<string | null>(null);
+	const [saveError, setSaveError] = useState<string | null>(null);
 	/** Disk version the buffer has not absorbed because it has unsaved edits. */
 	const [diskVersion, setDiskVersion] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -86,8 +87,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const version = useRef<string | null>(null);
 	/** The newest disk state, kept so Reload can apply it. */
 	const disk = useRef<WorkspaceFileContent | null>(null);
-	const saves = useRef(0);
-	/** Starts a fresh watch, whose first snapshot is read after anything that already finished. */
+	/** Starts a fresh watch, so a snapshot read before a save can't arrive after it. */
 	const rewatch = useRef(() => {});
 	const visible = usePageVisible();
 	const language = useRef(new Compartment());
@@ -169,7 +169,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 	function readFailed(message: string) {
 		if (version.current === null) setStatus({ kind: 'error', message });
-		else setNotice(message);
+		else setReadError(message);
 	}
 
 	function absorb(result: WorkspaceFileContent, force: boolean) {
@@ -195,7 +195,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		}
 
 		setStatus({ kind: 'text' });
-		setNotice(null);
+		setReadError(null);
 
 		if (result.version === version.current) {
 			setDiskVersion(null);
@@ -215,19 +215,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 		const doc = view.state.doc;
 
-		// Snapshots read before the write lands would undo the save.
-		saves.current++;
-
-		let landed = false;
-
 		try {
 			const result = await api.writeWorkspaceFile({
 				...file,
 				content: doc.toString(),
 				expectedVersion: overwrite ? null : version.current
 			});
-
-			landed = true;
 
 			if (result.status === 'conflict') {
 				setDiskVersion(result.version);
@@ -238,15 +231,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 			savedDoc.current = doc;
 			version.current = result.version;
 			setDiskVersion(null);
-			setNotice(null);
+			setSaveError(null);
 			reportDraft();
 		} catch (error) {
-			setNotice(error instanceof Error ? error.message : 'Could not save the file.');
+			setSaveError(error instanceof Error ? error.message : 'Could not save the file.');
 		} finally {
-			saves.current--;
-
-			// A fresh snapshot would clear the error of a failed save.
-			if (landed) rewatch.current();
+			rewatch.current();
 		}
 	}
 
@@ -297,8 +287,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 				await api!.watchWorkspaceFile(target, {
 					signal: current.signal,
 					onEvent: (event) => {
-						if (saves.current > 0) return;
-
 						if (event.kind === 'error') return actions.current.readFailed(event.message);
 						disk.current = event;
 						actions.current.absorb(event, false);
@@ -316,7 +304,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		}
 
 		rewatch.current = () => {
-			if (saves.current > 0) return;
 			controller.abort();
 			clearTimeout(timer);
 			void watch();
@@ -359,12 +346,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 					</button>
 				</div>
 			) : null}
-			{notice ? (
+			{saveError || readError ? (
 				<p
 					role="alert"
 					className="border-hairline text-destructive shrink-0 border-b px-3 py-1.5 text-xs"
 				>
-					{notice}
+					{saveError ?? readError}
 				</p>
 			) : null}
 			{status.kind !== 'text' ? (

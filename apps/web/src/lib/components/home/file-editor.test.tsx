@@ -81,8 +81,8 @@ it('follows disk changes until there are unsaved edits, then offers a reload', a
 	expect(editorView().state.doc.toString()).toBe('again');
 });
 
-it('ignores snapshots read during a save and watches again once it lands', async () => {
-	const { api, push, subscription, write } = editorApi(saved);
+it('watches again after a save so a snapshot read before it cannot undo it', async () => {
+	const { api, subscription, write } = editorApi(saved);
 	let finishWrite: (result: { status: 'saved'; version: string }) => void = () => {};
 
 	vi.mocked(api.writeWorkspaceFile).mockReturnValue(
@@ -101,8 +101,6 @@ it('ignores snapshots read during a save and watches again once it lands', async
 	});
 	expect(api.writeWorkspaceFile).toHaveBeenCalled();
 	const beforeSave = subscription();
-	push({ kind: 'snapshot', ...saved, content: 'older', version: 'v0' });
-	expect(document.querySelector('[role="alert"]')).toBeNull();
 
 	write({ ...saved, content: 'saved!', version: 'v2' });
 	await act(async () => finishWrite({ status: 'saved', version: 'v2' }));
@@ -110,4 +108,21 @@ it('ignores snapshots read during a save and watches again once it lands', async
 
 	expect(editorView().state.doc.toString()).toBe('saved!');
 	expect(api.watchWorkspaceFile).toHaveBeenCalledTimes(2);
+});
+
+it('keeps a failed save error after the file is read again', async () => {
+	const { api } = editorApi(saved);
+	vi.mocked(api.writeWorkspaceFile).mockRejectedValue(new Error('Disk full'));
+	render(<FileEditor api={api} file={file} draft={undefined} active onDraftChange={vi.fn()} />);
+
+	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
+	editorView().dispatch({ changes: { from: 5, insert: '!' } });
+	await act(async () => {
+		editorView().contentDOM.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true })
+		);
+	});
+
+	expect(api.watchWorkspaceFile).toHaveBeenCalledTimes(2);
+	expect(document.querySelector('[role="alert"]')?.textContent).toBe('Disk full');
 });
