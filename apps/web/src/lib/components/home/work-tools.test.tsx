@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, within } from '@testing-library/react';
+import { act, fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
 
@@ -24,7 +24,7 @@ describe('tool rows', () => {
 		expect(details.querySelector('p')?.textContent).toBe(command);
 	});
 
-	it('only lets non-command rows expand when their text is cut off', () => {
+	it('lets non-command rows expand only while their text is cut off', () => {
 		const tool: AssistantTimelineTool = {
 			type: 'tool',
 			callId: 'url',
@@ -33,14 +33,32 @@ describe('tool rows', () => {
 			output: {}
 		};
 
-		const short = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
-		expect(short.container.querySelector('details')).toBeNull();
-		short.unmount();
+		const resizes: Array<() => void> = [];
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(callback: () => void) {
+					resizes.push(callback);
+				}
+				observe() {}
+				disconnect() {}
+			}
+		);
+		const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get');
+		const resize = (width: number) => {
+			scrollWidth.mockReturnValue(width);
+			act(() => resizes.at(-1)!());
+		};
 
-		const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(100);
-		const long = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		expect(view.container.querySelector('details')).toBeNull();
+		resize(100);
+		expect(view.container.querySelector('details')).not.toBeNull();
+		resize(0);
+		expect(view.container.querySelector('details')).toBeNull();
+
 		scrollWidth.mockRestore();
-		expect(long.container.querySelector('details')).not.toBeNull();
+		vi.unstubAllGlobals();
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
