@@ -173,18 +173,17 @@ impl Host {
         self.kicad.prepare();
     }
 
-    /// The environment that puts agents' pinned tools on their `PATH`.
+    /// The environment that puts agents' pinned tools on their `PATH`. Runtimes go after the
+    /// user's own, so projects keep the versions they expect.
     pub fn tool_environment(&self) -> Vec<(OsString, OsString)> {
         append_path(
             prepend_path(
                 self.browsers.environment(),
-                [
-                    self.kicad.bin_dir(),
-                    self.bun.bin_dir(),
-                    self.desktop.bin_dir(),
-                ],
+                [self.kicad.bin_dir(), self.desktop.bin_dir()],
             ),
-            self.python.bin_dirs(),
+            [self.bun.bin_dir()]
+                .into_iter()
+                .chain(self.python.bin_dirs()),
         )
     }
 
