@@ -87,6 +87,8 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const version = useRef<string | null>(null);
 	/** The newest disk state, kept so Reload can apply it. */
 	const disk = useRef<WorkspaceFileContent | null>(null);
+	/** Snapshots arriving mid-save could undo it or the edits made since; `rewatch` re-reads after. */
+	const saves = useRef(0);
 	/** Starts a fresh watch, so a snapshot read before a save can't arrive after it. */
 	const rewatch = useRef(() => {});
 	const visible = usePageVisible();
@@ -214,6 +216,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		if (!api || !view || version.current === null) return;
 
 		const doc = view.state.doc;
+		saves.current++;
 
 		try {
 			const result = await api.writeWorkspaceFile({
@@ -236,6 +239,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : 'Could not save the file.');
 		} finally {
+			saves.current--;
 			rewatch.current();
 		}
 	}
@@ -287,6 +291,8 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 				await api!.watchWorkspaceFile(target, {
 					signal: current.signal,
 					onEvent: (event) => {
+						if (saves.current > 0) return;
+
 						if (event.kind === 'error') return actions.current.readFailed(event.message);
 						disk.current = event;
 						actions.current.absorb(event, false);
@@ -304,6 +310,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		}
 
 		rewatch.current = () => {
+			if (saves.current > 0) return;
 			controller.abort();
 			clearTimeout(timer);
 			void watch();

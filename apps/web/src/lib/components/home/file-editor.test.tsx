@@ -81,8 +81,8 @@ it('follows disk changes until there are unsaved edits, then offers a reload', a
 	expect(editorView().state.doc.toString()).toBe('again');
 });
 
-it('watches again after a save so a snapshot read before it cannot undo it', async () => {
-	const { api, subscription, write } = editorApi(saved);
+it('ignores snapshots during a save and watches again once it settles', async () => {
+	const { api, push, subscription, write } = editorApi(saved);
 	let finishWrite: (result: { status: 'saved'; version: string }) => void = () => {};
 
 	vi.mocked(api.writeWorkspaceFile).mockReturnValue(
@@ -101,6 +101,8 @@ it('watches again after a save so a snapshot read before it cannot undo it', asy
 	});
 	expect(api.writeWorkspaceFile).toHaveBeenCalled();
 	const beforeSave = subscription();
+	push({ kind: 'snapshot', ...saved, content: 'older', version: 'v0' });
+	expect(document.querySelector('[role="alert"]')).toBeNull();
 
 	write({ ...saved, content: 'saved!', version: 'v2' });
 	await act(async () => finishWrite({ status: 'saved', version: 'v2' }));
