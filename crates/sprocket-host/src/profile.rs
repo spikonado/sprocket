@@ -162,24 +162,40 @@ fn current_user_sid() -> anyhow::Result<String> {
 /// lets the server start and recreate them.
 #[cfg(windows)]
 fn remove_unreadable_private_files(directory: &Path) {
-    let credential_dirs = std::fs::read_dir(directory.join("credentials"))
+    const DATA_DIR_FILES: &[&str] = &[
+        "chatgpt-siwc.json",
+        "github-settings.json",
+        "pairing-credential",
+        "project-attachments.json",
+        "run-recovery.json",
+        "server-address.json",
+        "sessions.json",
+    ];
+    const CREDENTIAL_FILES: &[&str] = &["refresh-token", "store.json"];
+    let credential_files = std::fs::read_dir(directory.join("credentials"))
         .into_iter()
         .flatten()
         .flatten()
-        .map(|entry| entry.path());
-    for dir in std::iter::once(directory.to_owned()).chain(credential_dirs) {
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            let unreadable = entry.file_type().is_ok_and(|kind| kind.is_file())
-                && File::open(&path)
-                    .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied);
-            if unreadable {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => tracing::warn!("removed unreadable private file {}", path.display()),
-                    Err(error) => tracing::warn!(
+        .flat_map(|account| {
+            CREDENTIAL_FILES
+                .iter()
+                .map(move |name| account.path().join(name))
+        });
+    let files = DATA_DIR_FILES
+        .iter()
+        .map(|name| directory.join(name))
+        .chain(credential_files);
+    for path in files {
+        if File::open(&path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+        {
+            match std::fs::remove_file(&path) {
+                Ok(()) => tracing::warn!("removed unreadable private file {}", path.display()),
+                Err(error) => {
+                    tracing::warn!(
                         "failed to remove unreadable file {}: {error}",
                         path.display()
-                    ),
+                    )
                 }
             }
         }

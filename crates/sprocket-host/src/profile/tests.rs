@@ -28,5 +28,20 @@ fn private_files_stay_readable_and_unreadable_ones_are_removed_at_startup() {
     let _owner = ProfileLock::acquire(dir.path()).unwrap();
 
     assert_eq!(std::fs::read(&private).unwrap(), b"token");
+    let acl = std::process::Command::new("icacls")
+        .arg(&private)
+        .output()
+        .unwrap();
+    let user = format!(
+        "{}\\{}:(f)",
+        std::env::var("USERDOMAIN").unwrap(),
+        std::env::var("USERNAME").unwrap()
+    )
+    .to_lowercase();
+    assert!(
+        String::from_utf8_lossy(&acl.stdout)
+            .to_lowercase()
+            .contains(&user)
+    );
     assert!(!locked_out.exists());
 }

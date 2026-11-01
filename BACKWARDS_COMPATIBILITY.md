@@ -95,7 +95,7 @@ Older `bindings.json` rows carry `scope` and `thread_id`. The first locked load 
 
 ### Windows private files from elevated runs
 
-Older releases restricted private files to OWNER RIGHTS, so files an elevated run wrote are owned by Administrators and unreadable to the user's normal runs. On Windows, `ProfileLock::acquire` deletes files in the data directory and `credentials/*/` that the server can't read. Remove it once releases before the per-user ACL are outside the direct-upgrade window.
+Older releases restricted private files to OWNER RIGHTS, so files an elevated run wrote are owned by Administrators and unreadable to the user's normal runs. On Windows, `ProfileLock::acquire` deletes those private files when the server can't read them. Remove it once releases before the per-user ACL are outside the direct-upgrade window.
 
 ### Project message recency
 
