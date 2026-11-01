@@ -15,6 +15,8 @@ git -C "$src" checkout --quiet "$commit"
 # unknown-element warning, which turns an 85 MB board's parse from ~5 s into minutes.
 # sheet-instances: upstream drops the sheet path, so every instance of a reused
 # sheet shows the file's default references.
+# page-visibility: an app that finishes loading after the user switches to a page
+# in the other app shows itself anyway, so the board and schematic split the view.
 git -C "$src" apply "$here"/*.patch
 (cd "$src" && npm ci --silent && node scripts/build.js)
 

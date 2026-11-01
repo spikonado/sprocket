@@ -26,15 +26,55 @@
 		<script src="/kicanvas/kicanvas.js"></script>
 		<script>
 			const reply = (message) => parent.postMessage(message, '*');
+			let embed = null;
 
-			addEventListener('message', ({ source, data }) => {
-				if (source !== parent || data?.type !== 'sources') return;
+			const appFor = (page) =>
+				embed.shadowRoot.querySelector(page.type === 'pcb' ? 'kc-board-app' : 'kc-schematic-app');
+			const project = () =>
+				embed?.shadowRoot?.querySelector('kc-schematic-app, kc-board-app')?.project;
 
-				const embed = document.createElement('kicanvas-embed');
+			function currentView() {
+				const page = project()?.active_page;
+
+				if (!page) return null;
+
+				const { center, zoom } = appFor(page).viewer.viewport.camera;
+
+				return { page: page.project_path, x: center.x, y: center.y, zoom };
+			}
+
+			// Reopens the user's page, then restores their camera after KiCanvas fits the page.
+			async function show(view) {
+				const pages = project();
+				const page = (view && pages.page_by_path(view.page)) || pages.active_page;
+				const app = appFor(page);
+				await app.viewerReady;
+				const { viewer } = app;
+				const drawn = new Promise((resolve) => {
+					const onLoad = () => {
+						if (viewer.document !== page.document) return;
+						viewer.removeEventListener('kicanvas:load', onLoad);
+						resolve();
+					};
+					viewer.addEventListener('kicanvas:load', onLoad);
+				});
+
+				if (page !== pages.active_page) pages.set_active_page(page);
+				await drawn;
+
+				if (view?.page !== page.project_path) return;
+
+				viewer.viewport.camera.center.set(view.x, view.y);
+				viewer.viewport.camera.zoom = view.zoom;
+				viewer.draw();
+			}
+
+			function load(sources, view) {
+				embed = document.createElement('kicanvas-embed');
 				embed.setAttribute('controls', 'full');
 				embed.style.cssText = 'width: 100%; height: 100%;';
 
-				for (const { name, content } of data.sources) {
+				for (const { name, content } of sources) {
 					const element = document.createElement('kicanvas-source');
 					element.setAttribute('name', name);
 					element.textContent = content;
@@ -45,10 +85,23 @@
 				const observer = new MutationObserver(() => {
 					if (embed.hasAttribute('loading')) return;
 					observer.disconnect();
-					reply({ type: embed.hasAttribute('loaded') ? 'loaded' : 'failed' });
+
+					if (!embed.hasAttribute('loaded')) return reply({ type: 'failed' });
+					show(view).then(
+						() => reply({ type: 'loaded' }),
+						() => reply({ type: 'failed' })
+					);
 				});
 				observer.observe(embed, { attributeFilter: ['loading', 'loaded'] });
 				document.body.append(embed);
+			}
+
+			addEventListener('message', ({ source, data }) => {
+				if (source !== parent) return;
+
+				if (data?.type === 'sources') load(data.sources, data.view);
+
+				if (data?.type === 'getView') reply({ type: 'view', view: currentView() });
 			});
 
 			reply({ type: customElements.get('kicanvas-embed') ? 'ready' : 'failed' });

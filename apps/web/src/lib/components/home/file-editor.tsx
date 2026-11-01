@@ -63,7 +63,9 @@ const editorTheme = EditorView.theme({
 export default function FileEditor(props: Props) {
 	if (IMAGE_EXTENSIONS.test(props.file.path)) return <ImagePreview file={props.file} />;
 
-	if (KICAD_FILE.test(props.file.path)) return <KicadViewer api={props.api} file={props.file} />;
+	if (KICAD_FILE.test(props.file.path)) {
+		return <KicadViewer api={props.api} file={props.file} active={props.active} />;
+	}
 
 	return <TextFileEditor {...props} />;
 }

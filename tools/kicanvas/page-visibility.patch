@@ -1,0 +1,14 @@
+diff --git a/src/kicanvas/elements/common/app.ts b/src/kicanvas/elements/common/app.ts
+index eee6fa0..d6c91e6 100644
+--- a/src/kicanvas/elements/common/app.ts
++++ b/src/kicanvas/elements/common/app.ts
+@@ -131,7 +131,8 @@ export abstract class KCViewerAppElement<
+         await this.viewerReady;
+         if (this.can_load(src)) {
+             await this.#viewer_elm.load(src);
+-            this.hidden = false;
++            // Another page may have become active while this one loaded.
++            this.hidden = this.project.active_page !== src;
+         } else {
+             this.hidden = true;
+         }
