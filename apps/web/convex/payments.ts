@@ -143,6 +143,7 @@ export const insertPurchase = internalMutation({
 	args: {
 		userId: v.string(),
 		threadId: v.id('threadRecords'),
+		attemptId: v.string(),
 		authorizationId: v.string(),
 		merchant: v.string(),
 		amount: v.number(),
@@ -152,6 +153,19 @@ export const insertPurchase = internalMutation({
 	returns: v.id('purchases'),
 	handler: async (ctx, args) =>
 		await ctx.db.insert('purchases', { ...args, status: 'awaiting_approval' })
+});
+
+export const attemptPurchaseId = internalQuery({
+	args: { userId: v.string(), attemptId: v.string() },
+	returns: v.union(v.id('purchases'), v.null()),
+	handler: async (ctx, args) => {
+		const purchase = await ctx.db
+			.query('purchases')
+			.withIndex('by_attemptId', (query) => query.eq('attemptId', args.attemptId))
+			.unique();
+
+		return purchase?.userId === args.userId ? purchase._id : null;
+	}
 });
 
 export const ownedPurchase = internalQuery({
@@ -339,9 +353,19 @@ export const checkoutRecognizers = action({
 		})
 });
 
+const vCheckoutCreateResult = v.union(
+	v.object({ status: v.literal('card_required') }),
+	v.object({
+		status: v.literal('awaiting_approval'),
+		purchaseId: v.id('purchases'),
+		pollIntervalMs: v.number()
+	})
+);
+
 export const checkoutCreate = action({
 	args: {
 		...runAuth,
+		attemptId: v.string(),
 		checkoutOrigin: v.string(),
 		amount: v.string(),
 		currency: v.string(),
@@ -353,17 +377,23 @@ export const checkoutCreate = action({
 			body: v.optional(v.string())
 		})
 	},
-	returns: v.union(
-		v.object({ status: v.literal('card_required') }),
-		v.object({
-			status: v.literal('awaiting_approval'),
-			purchaseId: v.id('purchases'),
-			pollIntervalMs: v.number()
-		})
-	),
-	handler: async (ctx, args) =>
+	returns: vCheckoutCreateResult,
+	handler: async (ctx, args): Promise<Infer<typeof vCheckoutCreateResult>> =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args);
+
+			const existingPurchaseId = await ctx.runQuery(internal.payments.attemptPurchaseId, {
+				userId: actor.userId,
+				attemptId: args.attemptId
+			});
+
+			if (existingPurchaseId) {
+				return {
+					status: 'awaiting_approval' as const,
+					purchaseId: existingPurchaseId,
+					pollIntervalMs: 2000
+				};
+			}
 
 			if (!isCheckoutOrigin(args.checkoutOrigin)) {
 				throw new Error('The checkout page must be an https origin.');
@@ -429,6 +459,7 @@ export const checkoutCreate = action({
 			const purchaseId: Id<'purchases'> = await ctx.runMutation(internal.payments.insertPurchase, {
 				userId: actor.userId,
 				threadId: actor.threadId,
+				attemptId: args.attemptId,
 				authorizationId: authorization.id,
 				merchant,
 				amount: authorization.amount ?? 0,

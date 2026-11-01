@@ -625,6 +625,8 @@ export default defineSchema({
 	purchases: defineTable({
 		userId: v.string(),
 		threadId: v.id('threadRecords'),
+		// Chosen by the host per paused payment, so a create whose reply was lost resumes the same purchase.
+		attemptId: v.string(),
 		authorizationId: v.string(),
 		merchant: v.string(),
 		// Smallest currency unit, as Agentcard reports it.
@@ -637,4 +639,5 @@ export default defineSchema({
 		.index('by_userId', ['userId'])
 		.index('by_threadId_status', ['threadId', 'status'])
 		.index('by_authorizationId', ['authorizationId'])
+		.index('by_attemptId', ['attemptId'])
 });

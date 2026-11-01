@@ -80,6 +80,7 @@ async function startRun(t: ConvexTestInstance, subject: string) {
 }
 
 const checkout = {
+	attemptId: 'attempt-1',
 	checkoutOrigin: 'https://shop.example.com',
 	amount: '23.06',
 	currency: 'USD',
@@ -120,13 +121,15 @@ describe('Agentcard payments', () => {
 		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
 
 		expect(created).toMatchObject({ status: 'awaiting_approval', pollIntervalMs: 2000 });
+		expect(await t.action(api.payments.checkoutCreate, { ...auth, ...checkout })).toEqual(created);
 
-		const createCall = fetchMock.mock.calls.find(
+		const createCalls = fetchMock.mock.calls.filter(
 			([url, init]) =>
 				String(url).endsWith('/api/v2/checkout/authorizations') && init?.method === 'POST'
 		);
 
-		expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+		expect(createCalls).toHaveLength(1);
+		expect(JSON.parse(String(createCalls[0]?.[1]?.body))).toMatchObject({
 			user: 'usr_buyer',
 			merchant: 'shop.example.com',
 			checkout_origin: 'https://shop.example.com',

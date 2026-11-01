@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use sprocket_workspace::WorkspaceCancellation;
 use tokio::process::Command;
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 
 use self::cdp::{Interceptor, PausedPayment};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
@@ -28,7 +29,8 @@ const PAYMENT_REQUEST_WAIT: Duration = Duration::from_secs(60);
 const AGENT_BROWSER_TIMEOUT: Duration = Duration::from_secs(60);
 const CANCEL_TIMEOUT: Duration = Duration::from_secs(15);
 const MIN_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const MAX_POLL_FAILURES: u32 = 3;
+const CREATE_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_CONVEX_FAILURES: u32 = 3;
 
 #[derive(Clone)]
 pub(crate) struct CardCheckoutTool(pub(super) AgentToolContext);
@@ -359,6 +361,7 @@ async fn approve(
         &context.run_id,
         &context.claim_id,
         &json!({
+            "attemptId": Uuid::new_v4().to_string(),
             "checkoutOrigin": origin,
             "amount": args.amount,
             "currency": args.currency,
@@ -367,14 +370,27 @@ async fn approve(
         }),
     )?;
     // Not cancellable: once the purchase exists, its id is needed to cancel it.
-    let created: CheckoutState = decode(
-        context
+    // A failed create may still have started the purchase, so retries reuse the
+    // attempt id and Convex returns that purchase instead of starting another.
+    let mut create_failures = 0;
+    let created: CheckoutState = loop {
+        match context
             .runtime
-            .action_json::<Value>(CREATE, create_args)
+            .action_json::<Value>(CREATE, create_args.clone())
             .await
-            .map_err(tool_error)?,
-        CREATE,
-    )?;
+        {
+            Ok(value) => break decode(value, CREATE)?,
+            Err(error) => {
+                create_failures += 1;
+                if create_failures >= MAX_CONVEX_FAILURES {
+                    return Err(tool_failure(format!(
+                        "{error:#} Sprocket can't tell whether the purchase started, so don't retry the checkout. Ask the user to check the approval card in this thread and Settings → Payments."
+                    )));
+                }
+                sleep(CREATE_RETRY_DELAY).await;
+            }
+        }
+    };
     let (purchase_id, mut interval) = match (created.status.as_str(), created.purchase_id) {
         ("card_required", _) => {
             return Ok(Outcome::Stopped(json!({
@@ -417,7 +433,7 @@ async fn approve(
             Err(error) if error.kind() == ToolErrorKind::Cancelled => continue,
             Err(error) => {
                 failures += 1;
-                if failures < MAX_POLL_FAILURES {
+                if failures < MAX_CONVEX_FAILURES {
                     continue;
                 }
                 return lost(context, &purchase_id, &merchant, &error.to_string()).await;
