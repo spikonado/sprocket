@@ -437,7 +437,7 @@ export const reserveCheckoutSession = internalMutation({
 	handler: async (ctx, args) => {
 		const openRows = await ctx.db
 			.query('billingCheckoutSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', args.userId))
 			.take(MAX_OPEN_CHECKOUT_SELECTIONS + 1);
 
 		const retainedRows = await ctx.db
@@ -596,7 +596,7 @@ export const attachCheckoutSession = internalMutation({
 	handler: async (ctx, args) => {
 		const reservation = await ctx.db
 			.query('billingCheckoutSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', args.userId))
 			.unique();
 
 		if (!reservation || reservation.attemptId !== args.attemptId) {
@@ -802,7 +802,7 @@ export const completeCheckoutAttempt = internalMutation({
 	handler: async (ctx, args) => {
 		const reservation = await ctx.db
 			.query('billingCheckoutSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', args.userId))
 			.unique();
 
 		if (reservation && reservation.attemptId === args.attemptId) {

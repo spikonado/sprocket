@@ -294,7 +294,7 @@ describe('checkout selection changes', () => {
 		const annual = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'owner'))
 				.unique()
 		);
 
@@ -311,7 +311,7 @@ describe('checkout selection changes', () => {
 		const stored = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'owner'))
 				.unique()
 		);
 
@@ -391,7 +391,7 @@ describe('checkout selection changes', () => {
 		const attempt = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'owner'))
 				.unique()
 		);
 
@@ -424,7 +424,7 @@ describe('checkout selection changes', () => {
 		const ambiguous = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'owner'))
 				.unique()
 		);
 

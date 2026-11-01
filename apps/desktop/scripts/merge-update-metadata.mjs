@@ -68,7 +68,7 @@ export function parseUpdateInfoYaml(text, filePath = 'update.yml') {
 	try {
 		loaded = reviveYamlValue(loadYaml(text));
 	} catch (error) {
-		throw new Error(`${filePath} is not valid YAML: ${error.message}`);
+		throw new Error(`${filePath} is not valid YAML: ${error.message}`, { cause: error });
 	}
 
 	if (!isPlainObject(loaded) || loaded.version == null || loaded.version === '') {
@@ -264,7 +264,7 @@ async function prepareOutputDirectory(input, output) {
 		inputStat = await stat(resolvedInput);
 	} catch (error) {
 		if (error.code === 'ENOENT') {
-			throw new Error(`input does not exist: ${resolvedInput}`);
+			throw new Error(`input does not exist: ${resolvedInput}`, { cause: error });
 		}
 
 		throw error;

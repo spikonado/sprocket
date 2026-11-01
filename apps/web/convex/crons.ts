@@ -44,13 +44,6 @@ crons.interval(
 );
 
 crons.interval(
-	'backfill Dodo webhook ingestion sequences',
-	{ hours: 1 },
-	internal.billingWebhook.backfillSequences,
-	{}
-);
-
-crons.interval(
 	'prune Dodo webhook payloads and expired dedup rows',
 	{ hours: 12 },
 	internal.billingWebhook.cleanupEvents,

@@ -349,7 +349,7 @@ describe('Dodo subscription persistence', () => {
 		await t.run(async (ctx) => {
 			const reservation = await ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'user_checkout'))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'user_checkout'))
 				.unique();
 
 			if (!reservation) throw new Error('Missing checkout reservation.');
@@ -449,7 +449,7 @@ describe('Dodo subscription persistence', () => {
 		const checkoutSession = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', args.userId))
 				.unique()
 		);
 

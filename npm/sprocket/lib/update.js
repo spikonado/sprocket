@@ -799,12 +799,15 @@ export async function withUpdateLock(host, lockPath, operation) {
 	} catch (error) {
 		if (error?.code === 'EEXIST') {
 			throw new Error(
-				`Another Sprocket update is already running. If it is not, delete ${lockPath} and retry.`
+				`Another Sprocket update is already running. If it is not, delete ${lockPath} and retry.`,
+				{ cause: error }
 			);
 		}
 
 		if (error?.code === 'EACCES' || error?.code === 'EPERM') {
-			throw new Error(`Cannot write the update lock at ${lockPath}. Check permissions and retry.`);
+			throw new Error(`Cannot write the update lock at ${lockPath}. Check permissions and retry.`, {
+				cause: error
+			});
 		}
 
 		throw error;
