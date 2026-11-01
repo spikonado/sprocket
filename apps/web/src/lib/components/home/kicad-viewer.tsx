@@ -122,15 +122,33 @@ export default function KicadViewer({
 
 			try {
 				const [sources, ready] = await Promise.all([
-					readKicadSources(file.path, (path) => {
+					readKicadSources(file.path, async (path) => {
 						read.add(path);
 
-						return api.readWorkspaceText({ workspacePath: file.workspacePath, path }, signal);
+						try {
+							const text = await api.readWorkspaceText(
+								{ workspacePath: file.workspacePath, path },
+								signal
+							);
+
+							// The watch compares its first version with this, so writes during the load count.
+							if (!signal.aborted) versions.current.set(path, text.version);
+
+							return text.content;
+						} catch (error) {
+							if (!signal.aborted) versions.current.set(path, null);
+							throw error;
+						}
 					}),
 					nextFrameMessage(frame, signal)
 				]);
 
 				if (ready.type !== 'ready') throw new Error('Could not load KiCanvas.');
+
+				// KiCanvas skips blank sources without ever finishing its load.
+				if (sources.every(({ content }) => !content.trim())) {
+					throw new Error('This KiCad file is empty.');
+				}
 
 				const view = shown ? await currentView(shown, signal) : null;
 				const outcome = nextFrameMessage(frame, signal);

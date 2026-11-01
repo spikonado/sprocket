@@ -286,11 +286,12 @@ where
 async fn read_text(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceEntryRequest>,
-) -> Result<String, ApiError> {
-    in_workspace(payload.workspace_path, move |root| {
+) -> Result<([(&'static str, String); 1], String), ApiError> {
+    let text = in_workspace(payload.workspace_path, move |root| {
         read_workspace_text(root, &payload.path)
     })
-    .await
+    .await?;
+    Ok(([("x-file-version", text.version)], text.content))
 }
 
 async fn write_file(

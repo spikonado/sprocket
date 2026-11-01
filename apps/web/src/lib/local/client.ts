@@ -509,7 +509,10 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				signal
 			});
 
-			return await response.text();
+			return {
+				content: await response.text(),
+				version: response.headers.get('x-file-version') ?? ''
+			};
 		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {

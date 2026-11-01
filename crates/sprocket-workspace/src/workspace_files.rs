@@ -67,7 +67,13 @@ pub fn read_workspace_file(root: &Path, path: &str) -> Result<WorkspaceFileConte
     })
 }
 
-pub fn read_workspace_text(root: &Path, path: &str) -> Result<String> {
+pub struct WorkspaceText {
+    pub content: String,
+    /// Matches the `version` that file watches report, so a viewer can tell whether it missed a write.
+    pub version: String,
+}
+
+pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
     let file_path = resolve_entry(root, path, true)?;
     let file = File::open(&file_path).map_err(|error| entry_error(error, path, "open"))?;
     if !file.metadata()?.is_file() {
@@ -81,7 +87,13 @@ pub fn read_workspace_text(root: &Path, path: &str) -> Result<String> {
     if bytes.len() as u64 > MAX_VIEWABLE_FILE_BYTES {
         bail!("{path} exceeds the 128 MiB viewer limit");
     }
-    String::from_utf8(bytes).map_err(|_| anyhow!("{path} is not UTF-8 text"))
+    let version = if bytes.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        too_large_snapshot(&file.metadata()?).version
+    } else {
+        content_version(&bytes)
+    };
+    let content = String::from_utf8(bytes).map_err(|_| anyhow!("{path} is not UTF-8 text"))?;
+    Ok(WorkspaceText { content, version })
 }
 
 pub fn workspace_entry_kind(root: &Path, path: &str) -> Result<WorkspaceEntryKind> {
