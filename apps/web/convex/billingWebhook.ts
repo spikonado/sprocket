@@ -217,15 +217,13 @@ export const recordEvent = internalMutation({
 			return { stored: true, duplicate: true };
 		}
 
-		// Backfill safety for rows inserted before `seq` existed: the backfill
-		// stamps seq = -_creationTime, so live inserts always sort after them.
 		const newest = await ctx.db
 			.query('dodoWebhookEvents')
 			.withIndex('by_seq')
 			.order('desc')
 			.first();
 
-		const seq = Math.max(0, (newest?.seq ?? -1) + 1);
+		const seq = (newest?.seq ?? -1) + 1;
 
 		const eventId = await ctx.db.insert('dodoWebhookEvents', {
 			...args,
@@ -587,7 +585,7 @@ export const cleanupEvents = internalMutation({
 
 		if (throughSeq === undefined) return null;
 
-		const cursor = args.cursor ?? -Number.MAX_VALUE;
+		const cursor = args.cursor ?? -1;
 
 		const batch = await ctx.db
 			.query('dodoWebhookEvents')
@@ -613,27 +611,6 @@ export const cleanupEvents = internalMutation({
 				cursor: lastSeq,
 				throughSeq
 			});
-		}
-
-		return null;
-	}
-});
-
-/** Backfill `seq` for rows inserted before the ingestion sequence existed. */
-export const backfillSequences = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const missing = await ctx.db
-			.query('dodoWebhookEvents')
-			// oxlint-disable-next-line @convex-dev/no-filter-in-query -- One-off bounded backfill for legacy rows without the indexed sequence.
-			.filter((query) => query.eq(query.field('seq'), undefined))
-			.take(CLEANUP_BATCH_SIZE);
-
-		for (const event of missing) {
-			// Negative creation-time ordering keeps backfilled rows before live
-			// inserts while preserving their original arrival order.
-			await ctx.db.patch('dodoWebhookEvents', event._id, { seq: -event._creationTime });
 		}
 
 		return null;
