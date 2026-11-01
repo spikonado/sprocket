@@ -154,7 +154,7 @@ export default function SettingsPayments({
 											</p>
 											<div className="min-w-0 flex-1">
 												<p className="text-foreground truncate text-[14px]">{purchase.merchant}</p>
-												<div className="text-muted-foreground mt-0.5 flex items-center gap-x-3 text-[12px]">
+												<div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px]">
 													<span className="text-foreground/80 inline-flex shrink-0 items-center gap-1.5">
 														<span
 															className={cn('size-1.5 rounded-full', statuses[purchase.status].dot)}
@@ -166,7 +166,7 @@ export default function SettingsPayments({
 														{purchaseDate.format(purchase.createdAt)}
 													</span>
 													{purchase.orderNumber && (
-														<span className="truncate" title={purchase.orderNumber}>
+														<span className="max-w-full truncate" title={purchase.orderNumber}>
 															Order {purchase.orderNumber}
 														</span>
 													)}
