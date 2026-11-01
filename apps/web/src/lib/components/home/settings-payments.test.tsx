@@ -34,6 +34,8 @@ async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => 
 			status: 'settled',
 			approvalUrl: 'https://approve.test',
 			orderNumber: '112-7',
+			orderLink: 'https://shop.example.com/orders/112-7',
+			trackingLink: 'https://track.example.com/1Z',
 			createdAt: Date.UTC(2026, 0, 2)
 		}
 	]);
@@ -53,7 +55,12 @@ it('lists saved cards and purchases and opens a purchase thread', async () => {
 	expect(screen.getByText('visa')).toBeTruthy();
 	expect(screen.getByText('Expires 04/30')).toBeTruthy();
 	expect(screen.getByText('$23.06')).toBeTruthy();
-	expect(screen.getByText('Order 112-7')).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'Order 112-7' }).getAttribute('href')).toBe(
+		'https://shop.example.com/orders/112-7'
+	);
+	expect(screen.getByRole('link', { name: 'Track order' }).getAttribute('href')).toBe(
+		'https://track.example.com/1Z'
+	);
 	fireEvent.click(screen.getByRole('button', { name: 'View thread' }));
 	expect(onOpenThread).toHaveBeenCalledWith(threadId);
 });

@@ -55,6 +55,12 @@ pub(crate) struct ReportOrderArgs {
     purchase_id: String,
     /// Order number shown by the store.
     order_number: String,
+    /// https link to the store's page for this order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    order_link: Option<String>,
+    /// https link for tracking the shipment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tracking_link: Option<String>,
 }
 
 impl rig::tool::Tool for CardCheckoutTool {
@@ -64,8 +70,7 @@ impl rig::tool::Tool for CardCheckoutTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Pay at a store's checkout open in agent-browser with the user's saved card. Ask the user before buying. Fill the checkout first, typing the placeholder card 4242 4242 4242 4242 with any future expiry and any CVC. Then call this with the Pay button's ref instead of clicking it; Sprocket clicks it and the user approves the purchase with a passkey. Never retry after outcome_unknown; check the store page instead. After approved, confirm the order on the store page, then call report_order."
-            .to_string()
+        "Used by $paying-at-checkout.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -92,8 +97,7 @@ impl rig::tool::Tool for ReportOrderTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Record the store's order number for a card_checkout purchase once the store page confirms the order."
-            .to_string()
+        "Used by $paying-at-checkout.".to_string()
     }
 
     fn parameters(&self) -> Value {

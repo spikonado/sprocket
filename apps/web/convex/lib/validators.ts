@@ -264,7 +264,9 @@ export const vCardCheckoutPayload = v.object({
 
 export const vReportOrderPayload = v.object({
 	purchaseId: v.string(),
-	orderNumber: v.string()
+	orderNumber: v.string(),
+	orderLink: v.optional(v.string()),
+	trackingLink: v.optional(v.string())
 });
 
 export const purchaseStatuses = [
@@ -544,9 +546,7 @@ export const vCardCheckoutResult = v.object({
 	reason: v.optional(v.string())
 });
 
-export const vReportOrderResult = v.object({
-	purchaseId: v.string()
-});
+export const vReportOrderResult = v.object({ recorded: v.literal(true) });
 
 export const vBrowserTaskResult = v.object({
 	text: v.string(),

@@ -634,7 +634,9 @@ export default defineSchema({
 		currency: v.string(),
 		status: vPurchaseStatus,
 		approvalUrl: v.string(),
-		orderNumber: v.optional(v.string())
+		orderNumber: v.optional(v.string()),
+		orderLink: v.optional(v.string()),
+		trackingLink: v.optional(v.string())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_threadId_status', ['threadId', 'status'])

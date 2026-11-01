@@ -13,7 +13,7 @@ import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { vCompletionActor } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
-import { vPurchaseStatus, type PurchaseStatus } from '@convex/lib/validators';
+import { vPurchaseStatus, vReportOrderResult, type PurchaseStatus } from '@convex/lib/validators';
 import {
 	AgentcardError,
 	agentcardCredentials,
@@ -45,6 +45,8 @@ const vPurchase = v.object({
 	status: vPurchaseStatus,
 	approvalUrl: v.string(),
 	orderNumber: v.optional(v.string()),
+	orderLink: v.optional(v.string()),
+	trackingLink: v.optional(v.string()),
 	createdAt: v.number()
 });
 
@@ -58,6 +60,8 @@ function purchaseView(purchase: Doc<'purchases'>): Infer<typeof vPurchase> {
 		status: purchase.status,
 		approvalUrl: purchase.approvalUrl,
 		orderNumber: purchase.orderNumber,
+		orderLink: purchase.orderLink,
+		trackingLink: purchase.trackingLink,
 		createdAt: purchase._creationTime
 	};
 }
@@ -185,25 +189,23 @@ export const updatePurchase = internalMutation({
 	args: {
 		authorizationId: v.string(),
 		status: v.optional(vPurchaseStatus),
-		orderNumber: v.optional(v.string())
+		orderNumber: v.optional(v.string()),
+		orderLink: v.optional(v.string()),
+		trackingLink: v.optional(v.string())
 	},
 	returns: v.null(),
-	handler: async (ctx, args) => {
+	handler: async (ctx, { authorizationId, status: incoming, ...order }) => {
 		const purchase = await ctx.db
 			.query('purchases')
-			.withIndex('by_authorizationId', (query) => query.eq('authorizationId', args.authorizationId))
+			.withIndex('by_authorizationId', (query) => query.eq('authorizationId', authorizationId))
 			.unique();
 
 		if (!purchase) return null;
 
-		const status = args.status ? nextPurchaseStatus(purchase.status, args.status) : purchase.status;
+		const status = incoming ? nextPurchaseStatus(purchase.status, incoming) : purchase.status;
 
-		if (status !== purchase.status || args.orderNumber !== undefined) {
-			const patch: Partial<Doc<'purchases'>> = { status };
-
-			if (args.orderNumber !== undefined) patch.orderNumber = args.orderNumber;
-
-			await ctx.db.patch('purchases', purchase._id, patch);
+		if (status !== purchase.status || Object.keys(order).length > 0) {
+			await ctx.db.patch('purchases', purchase._id, { status, ...order });
 		}
 
 		return null;
@@ -568,9 +570,33 @@ export const checkoutCancel = action({
 		})
 });
 
+/** Links are rendered in Settings → Payments, so only https pages are kept. */
+function httpsLink(link: string | undefined, name: string): string | undefined {
+	if (link === undefined) return undefined;
+
+	const trimmed = link.trim();
+	let protocol: string | undefined;
+
+	try {
+		protocol = new URL(trimmed).protocol;
+	} catch {
+		protocol = undefined;
+	}
+
+	if (protocol !== 'https:') throw new Error(`${name} must be an https URL.`);
+
+	return trimmed;
+}
+
 export const reportOrder = action({
-	args: { ...runAuth, purchaseId: v.string(), orderNumber: v.string() },
-	returns: v.object({ purchaseId: v.string() }),
+	args: {
+		...runAuth,
+		purchaseId: v.string(),
+		orderNumber: v.string(),
+		orderLink: v.optional(v.string()),
+		trackingLink: v.optional(v.string())
+	},
+	returns: vReportOrderResult,
 	handler: async (ctx, args) =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args);
@@ -580,10 +606,12 @@ export const reportOrder = action({
 
 			await ctx.runMutation(internal.payments.updatePurchase, {
 				authorizationId: await requireAuthorizationId(ctx, args.purchaseId, actor.userId),
-				orderNumber
+				orderNumber,
+				orderLink: httpsLink(args.orderLink, 'orderLink'),
+				trackingLink: httpsLink(args.trackingLink, 'trackingLink')
 			});
 
-			return { purchaseId: args.purchaseId };
+			return { recorded: true as const };
 		})
 });
 

@@ -144,12 +144,34 @@ describe('Agentcard payments', () => {
 			});
 		}
 
+		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
+
+		await expect(
+			t.action(api.payments.reportOrder, {
+				...auth,
+				purchaseId: created.purchaseId,
+				orderNumber: '112-7',
+				orderLink: 'javascript:alert(1)'
+			})
+		).rejects.toThrow('orderLink must be an https URL.');
+
+		await t.action(api.payments.reportOrder, {
+			...auth,
+			purchaseId: created.purchaseId,
+			orderNumber: '112-7',
+			orderLink: 'https://shop.example.com/orders/112-7',
+			trackingLink: 'https://track.example.com/1Z'
+		});
+
 		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
 			expect.objectContaining({
 				merchant: 'shop.example.com',
 				amount: 2306,
 				currency: 'usd',
-				status: 'settled'
+				status: 'settled',
+				orderNumber: '112-7',
+				orderLink: 'https://shop.example.com/orders/112-7',
+				trackingLink: 'https://track.example.com/1Z'
 			})
 		]);
 	});

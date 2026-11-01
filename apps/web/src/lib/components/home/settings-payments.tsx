@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Truck } from 'lucide-react';
 import { useAction, useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
@@ -24,6 +24,9 @@ const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
 const sectionHeadingClass = 'text-foreground text-[15px] font-medium tracking-[-0.01em]';
 
 const paymentCardClass = 'aspect-[85.6/53.98] w-52 rounded-[8px]';
+
+const rowButtonClass =
+	'border-border text-foreground hover:bg-hover-fill focus-visible:ring-ring/50 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none';
 
 const purchaseDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
@@ -146,7 +149,7 @@ export default function SettingsPayments({
 									Things your agent buys show up here.
 								</p>
 							) : (
-								<ul className="divide-hairline mt-3 max-w-md divide-y">
+								<ul className="divide-hairline mt-3 max-w-xl divide-y">
 									{purchases.data.map((purchase) => (
 										<li key={purchase._id} className="flex items-center gap-4 py-3">
 											<p className="text-foreground w-16 shrink-0 text-[14px] font-medium tabular-nums">
@@ -165,16 +168,38 @@ export default function SettingsPayments({
 													<span className="shrink-0">
 														{purchaseDate.format(purchase.createdAt)}
 													</span>
-													{purchase.orderNumber && (
-														<span className="max-w-full truncate" title={purchase.orderNumber}>
-															Order {purchase.orderNumber}
-														</span>
-													)}
+													{purchase.orderNumber &&
+														(purchase.orderLink ? (
+															<a
+																href={purchase.orderLink}
+																target="_blank"
+																rel="noreferrer"
+																className="hover:text-foreground max-w-full truncate underline underline-offset-2"
+																title={purchase.orderNumber}
+															>
+																Order {purchase.orderNumber}
+															</a>
+														) : (
+															<span className="max-w-full truncate" title={purchase.orderNumber}>
+																Order {purchase.orderNumber}
+															</span>
+														))}
 												</div>
 											</div>
+											{purchase.trackingLink && (
+												<a
+													href={purchase.trackingLink}
+													target="_blank"
+													rel="noreferrer"
+													className={rowButtonClass}
+												>
+													<Truck className="size-3.5" aria-hidden="true" />
+													Track order
+												</a>
+											)}
 											<button
 												type="button"
-												className="border-border text-foreground hover:bg-hover-fill focus-visible:ring-ring/50 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none"
+												className={rowButtonClass}
 												onClick={() => void openThread(purchase.threadId)}
 											>
 												<MessageSquare className="size-3.5" aria-hidden="true" />

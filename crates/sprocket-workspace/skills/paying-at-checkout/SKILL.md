@@ -44,6 +44,6 @@ A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_un
 
 ## 4. Confirm and report
 
-Wait for the store's confirmation page, read the order number, and then call `report_order`and give the user the order number and any tracking link.
+Wait for the store's confirmation page and read the order number. Call `report_order` with the `purchaseId`, the order number, and, when the store shows them, `orderLink` (the order's page) and `trackingLink`. Both links must be https. Then give the user the order number and any tracking link.
 
 Done when: `report_order` succeeded, or you told the user the store showed no confirmation.
