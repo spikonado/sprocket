@@ -1,7 +1,9 @@
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import posthog from '@posthog/rollup-plugin';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { searchForWorkspaceRoot } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
@@ -20,6 +22,12 @@ const posthogSourceMaps =
 			]
 		: [];
 
+// Bun's global store keeps package files outside the repo, at `<store>/<entry>/node_modules/react`.
+const bunGlobalStore = path.resolve(
+	realpathSync(path.join(import.meta.dirname, 'node_modules/react')),
+	'../../..'
+);
+
 export default defineConfig({
 	publicDir: 'static',
 	worker: { format: 'es' },
@@ -36,6 +44,9 @@ export default defineConfig({
 	server: {
 		port: WEB_DEV_PORT,
 		strictPort: true,
+		fs: {
+			allow: [searchForWorkspaceRoot(process.cwd()), bunGlobalStore]
+		},
 		proxy: {
 			'/api': {
 				target: DEV_API_URL,
