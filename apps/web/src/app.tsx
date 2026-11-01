@@ -2435,7 +2435,7 @@ export default function App({
 
 		if (!recovery) return;
 
-		if (recovery.autoSubmit && prompt !== '' && prompt !== recovery.prompt) return;
+		if (prompt !== '' && prompt !== recovery.prompt) return;
 
 		composerRecoveries.delete(recoveryKey);
 		const canRestorePrompt = prompt === '';
