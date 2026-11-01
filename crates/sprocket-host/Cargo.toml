@@ -50,7 +50,7 @@ dwarfs = { version = "0.2.1", default-features = false, features = ["zstd"] }
 [target.'cfg(windows)'.dependencies]
 memmap2 = "0.9.12"
 nsis = "=0.6.0"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
 [dev-dependencies]
 axum = "0.8.8"
