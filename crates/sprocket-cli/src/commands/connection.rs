@@ -246,7 +246,11 @@ async fn discover(
     config: &ServerConfig,
 ) -> anyhow::Result<Option<CliDiscovery>> {
     let configured_address = config.listen_url();
-    if let Some(published_address) = read_server_address(&config.resolve_data_dir())?
+    // The published address is only a hint, so an unreadable file must not block
+    // starting a server, which also repairs files left unreadable by elevated runs.
+    if let Some(published_address) = read_server_address(&config.resolve_data_dir())
+        .ok()
+        .flatten()
         && published_address != configured_address
         && let Ok(Some(discovery)) = discover_at(http, config, &published_address).await
     {

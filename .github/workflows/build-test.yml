@@ -76,6 +76,8 @@ jobs:
         run: cargo check --locked -p sprocket-server
       - name: Test native credential storage
         run: cargo test --locked -p sprocket-host native_auth::credentials::tests
+      - name: Test private file permissions
+        run: cargo test --locked -p sprocket-host profile::tests
       - name: Test workspace patch replacement
         run: cargo test --locked -p sprocket-workspace patch::tests
       - name: Test workspace command shells

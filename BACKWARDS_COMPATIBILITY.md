@@ -93,6 +93,10 @@ An absent `credentials/<account>/store.json` means automatic: keyring storage wi
 
 Older `bindings.json` rows carry `scope` and `thread_id`. The first locked load drops them and keeps every ID, path and baseline. Remove legacy-field detection once supported data directories have been migrated.
 
+### Windows private files from elevated runs
+
+Older releases restricted private files to OWNER RIGHTS, so files an elevated run wrote are owned by Administrators and unreadable to the user's normal runs. On Windows, `ProfileLock::acquire` deletes those private files when the server can't read them. Remove it once releases before the per-user ACL are outside the direct-upgrade window.
+
 ### Project message recency
 
 Older `project-attachments.json` files omit `lastMessageSentAt`. The server defaults it to zero, rewrites the file, and orders those projects by `lastUsedAt`. Remove the default and rewrite once releases without the field are outside the direct-upgrade window.

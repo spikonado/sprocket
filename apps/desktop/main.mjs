@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
 import { parseDesktopBootstrap } from './desktop-bootstrap.mjs';
@@ -261,7 +263,7 @@ async function startLocalServer() {
 
 	serverProcess = spawn(serverBinary, args, {
 		env: serverEnv,
-		stdio: ['ignore', 'pipe', 'inherit']
+		stdio: ['ignore', 'pipe', 'pipe']
 	});
 	serverProcess.once('error', (error) => {
 		if (!isQuitting) {
@@ -280,24 +282,39 @@ async function startLocalServer() {
 		}
 	});
 
-	serverProcess.on('exit', (code, signal) => {
+	const serverStderr = serverProcess.stderr;
+	let serverStderrTail = '';
+	serverStderr.on('data', (chunk) => {
+		process.stderr.write(chunk);
+		serverStderrTail = (serverStderrTail + chunk.toString()).slice(-2000);
+	});
+
+	serverProcess.on('exit', async (code, signal) => {
 		if (signal) {
 			console.warn(`Sprocket local server exited via signal ${signal}`);
 		} else if (code && code !== 0) {
 			console.error(`Sprocket local server exited with code ${code}`);
 		}
 
-		if (!isQuitting) {
-			reportFatalError(
-				'Sprocket server stopped',
-				new Error(
-					signal
-						? `The local server exited via signal ${signal}.`
-						: `The local server exited with code ${code ?? 0}.`
-				)
-			);
-			app.quit();
+		if (isQuitting) return;
+
+		// 'exit' can fire before the last stderr bytes are read; a server child
+		// may also hold the pipe open, so the wait is bounded.
+		if (!serverStderr.readableEnded) {
+			await Promise.race([once(serverStderr, 'end'), delay(1_000)]);
 		}
+
+		if (isQuitting) return;
+
+		const exitReason = signal
+			? `The local server exited via signal ${signal}.`
+			: `The local server exited with code ${code ?? 0}.`;
+
+		reportFatalError(
+			'Sprocket server stopped',
+			new Error(`${exitReason}\n\n${serverStderrTail.trim()}`.trim())
+		);
+		app.quit();
 	});
 
 	await waitForServerReady(fallbackBaseUrl);
