@@ -203,11 +203,15 @@ async fn poll_pr(
             seen.get_or_insert_with(|| Seen::first_look(&activity)),
             &activity,
         );
-        let next_read = Instant::now() + POLL_PR_INTERVAL;
-        if !report.changes.is_empty() || next_read > deadline {
+        if !report.changes.is_empty() {
             return poll_pr_output(&activity, &report);
         }
-        sleep_until(next_read).await;
+        let next_read = Instant::now() + POLL_PR_INTERVAL;
+        sleep_until(next_read.min(deadline)).await;
+        // The cursor comes from this read, so news after it waits for the next poll.
+        if next_read >= deadline {
+            return poll_pr_output(&activity, &report);
+        }
     }
 }
 
