@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { escapeFlowchartEdgeDashes } from '$lib/chat/mermaid-flowchart';
+import { repairMermaidSource } from '$lib/chat/mermaid-repair';
 import MarkdownHtml from '$lib/components/markdown-html';
 
 let nextDiagramId = 0;
@@ -29,13 +29,11 @@ async function renderDiagram(source: string, theme: 'dark' | 'default') {
 	try {
 		return (await mermaid.render(`mermaid-diagram-${nextDiagramId++}`, source)).svg;
 	} catch (error) {
-		if (!mermaid.detectType(source).startsWith('flowchart')) throw error;
+		const repaired = repairMermaidSource(source, mermaid.detectType(source));
 
-		const escaped = escapeFlowchartEdgeDashes(source);
+		if (repaired === source) throw error;
 
-		if (escaped === source) throw error;
-
-		return (await mermaid.render(`mermaid-diagram-${nextDiagramId++}`, escaped)).svg;
+		return (await mermaid.render(`mermaid-diagram-${nextDiagramId++}`, repaired)).svg;
 	}
 }
 
