@@ -2,9 +2,14 @@ mod image;
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::Json;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::routing::{get, post};
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -23,6 +28,8 @@ use sprocket_workspace::{
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
 const WRITE_BODY_LIMIT: usize = MAX_EDITABLE_FILE_BYTES as usize * 6 + 64 * 1024;
+const DISK_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+const SCANNING_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,25 +77,24 @@ struct WorkspaceSearchEntry {
     kind: &'static str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkspaceFilesRequest {
+pub(crate) struct WorkspaceFilesWatchRequest {
     workspace_path: String,
-    known_hash: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct WorkspaceFilesResponse {
-    #[serde(flatten)]
-    listing: PathListing,
-    hash: String,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkspaceEntryRequest {
+pub(crate) struct WorkspaceEntryRequest {
     workspace_path: String,
     path: String,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum DiskEvent<T> {
+    Snapshot(T),
+    Error { message: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,9 +154,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/browse", post(browse_path))
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
-        .route("/workspace/files", post(list_workspace_files))
         .route("/workspace/entry", post(entry_kind))
-        .route("/workspace/file/read", post(read_file))
         .route(
             "/workspace/file/write",
             post(write_file).layer(DefaultBodyLimit::max(WRITE_BODY_LIMIT)),
@@ -185,15 +189,96 @@ async fn entry_kind(
     .map(|kind| Json(WorkspaceEntryResponse { kind }))
 }
 
-async fn read_file(
-    MachineSession: MachineSession,
-    Json(payload): Json<WorkspaceEntryRequest>,
-) -> Result<Json<WorkspaceFileContent>, ApiError> {
-    in_workspace(payload.workspace_path, move |root| {
-        read_workspace_file(root, &payload.path)
-    })
-    .await
-    .map(Json)
+pub(crate) fn file_events(
+    request: WorkspaceEntryRequest,
+) -> BoxStream<'static, DiskEvent<WorkspaceFileContent>> {
+    disk_changes(
+        move || {
+            let WorkspaceEntryRequest {
+                workspace_path,
+                path,
+            } = request.clone();
+            in_workspace(workspace_path, move |root| read_workspace_file(root, &path))
+        },
+        |content| (content.version.clone(), DISK_CHECK_INTERVAL),
+    )
+}
+
+pub(crate) fn file_list_events(
+    state: &AppState,
+    request: WorkspaceFilesWatchRequest,
+) -> BoxStream<'static, DiskEvent<PathListing>> {
+    let search = Arc::clone(&state.host.workspace_search);
+    disk_changes(
+        move || {
+            let search = Arc::clone(&search);
+            let workspace_path = request.workspace_path.clone();
+            async move {
+                let permit = Arc::clone(&search.search_slots)
+                    .acquire_owned()
+                    .await
+                    .map_err(|error| ApiError::internal(error.into()))?;
+                in_workspace(workspace_path, move |root| {
+                    let _permit = permit;
+                    search.list_paths(root)
+                })
+                .await
+            }
+        },
+        |listing| {
+            let fingerprint = format!("{}:{}", listing.content_hash(), listing.scanning);
+            let wait = if listing.scanning {
+                SCANNING_CHECK_INTERVAL
+            } else {
+                DISK_CHECK_INTERVAL
+            };
+            (fingerprint, wait)
+        },
+    )
+}
+
+/// Re-reads on a timer and sends only changes. The file list comes from fff's
+/// in-memory index, which its watcher keeps current. Its watch callbacks skip
+/// git-status-only changes and stop silently when the picker is evicted, so a
+/// cheap re-read is more reliable than subscribing to them.
+fn disk_changes<T, Read, Reading>(
+    read: Read,
+    fingerprint: fn(&T) -> (String, Duration),
+) -> BoxStream<'static, DiskEvent<T>>
+where
+    T: Send + 'static,
+    Read: Fn() -> Reading + Send + 'static,
+    Reading: std::future::Future<Output = Result<T, ApiError>> + Send,
+{
+    futures::stream::unfold(
+        (read, None::<Result<String, String>>, Duration::ZERO),
+        move |(read, last, mut wait)| async move {
+            loop {
+                tokio::time::sleep(wait).await;
+                let (event, key) = match read().await {
+                    Ok(value) => {
+                        let (key, next_wait) = fingerprint(&value);
+                        wait = next_wait;
+                        (DiskEvent::Snapshot(value), Ok(key))
+                    }
+                    Err(error) => {
+                        wait = DISK_CHECK_INTERVAL;
+                        let message = error.to_string();
+                        (
+                            DiskEvent::Error {
+                                message: message.clone(),
+                            },
+                            Err(message),
+                        )
+                    }
+                };
+                if last.as_ref() != Some(&key) {
+                    return Some((event, (read, Some(key), wait)));
+                }
+            }
+        },
+    )
+    .boxed()
 }
 
 async fn write_file(
@@ -243,28 +328,6 @@ async fn delete_entry(
     })
     .await
     .map(Json)
-}
-
-async fn list_workspace_files(
-    State(state): State<AppState>,
-    MachineSession: MachineSession,
-    Json(payload): Json<WorkspaceFilesRequest>,
-) -> Result<Json<WorkspaceFilesResponse>, ApiError> {
-    let permit = std::sync::Arc::clone(&state.host.workspace_search.search_slots)
-        .acquire_owned()
-        .await
-        .map_err(|error| ApiError::internal(error.into()))?;
-    let mut listing = in_workspace(payload.workspace_path, move |root| {
-        let _permit = permit;
-        state.host.workspace_search.list_paths(root)
-    })
-    .await?;
-    let hash = listing.content_hash();
-    if payload.known_hash.as_deref() == Some(hash.as_str()) {
-        listing.paths.clear();
-        listing.git_status.clear();
-    }
-    Ok(Json(WorkspaceFilesResponse { listing, hash }))
 }
 
 async fn search_workspace(

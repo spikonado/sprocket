@@ -2,33 +2,24 @@ use axum::Json;
 use axum::extract::{FromRequestParts, State};
 use axum::http::{HeaderMap, StatusCode, request::Parts};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::post;
 
 use crate::AppState;
 use crate::auth::cookie_request_is_csrf_safe;
 use crate::routes::api_error::{ApiError, no_store};
 use crate::routes::session::MachineSession;
-use sprocket_host::package_update::PackageUpdateSnapshot;
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/update", get(status))
         .route("/update/install", post(install))
         .route("/update/restart", post(restart))
-}
-
-async fn status(
-    State(state): State<AppState>,
-    MachineSession: MachineSession,
-) -> Result<Response, ApiError> {
-    Ok(update_response(state.host.package_updates.status().await))
 }
 
 async fn install(
     State(state): State<AppState>,
     UpdateSession: UpdateSession,
 ) -> Result<Response, ApiError> {
-    Ok(update_response(state.host.package_updates.install().await))
+    Ok(no_store(Json(state.host.package_updates.install().await)))
 }
 
 struct UpdateSession;
@@ -70,10 +61,6 @@ impl FromRequestParts<AppState> for UpdateSession {
         }
         Ok(Self)
     }
-}
-
-fn update_response(snapshot: PackageUpdateSnapshot) -> Response {
-    no_store(Json(snapshot))
 }
 
 #[cfg(test)]

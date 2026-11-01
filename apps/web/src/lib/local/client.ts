@@ -9,6 +9,7 @@ import type {
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
+import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
@@ -60,8 +61,7 @@ const workspaceFilesResultSchema = z.object({
 		})
 	),
 	scanning: z.boolean(),
-	truncated: z.boolean(),
-	hash: z.string()
+	truncated: z.boolean()
 });
 
 const workspaceFileContentSchema = z.object({
@@ -70,6 +70,18 @@ const workspaceFileContentSchema = z.object({
 	size: z.number(),
 	unsupported: z.enum(['binary', 'tooLarge']).nullable()
 });
+
+const diskErrorSchema = z.object({ kind: z.literal('error'), message: z.string() });
+
+const workspaceFilesEventSchema = z.discriminatedUnion('kind', [
+	workspaceFilesResultSchema.extend({ kind: z.literal('snapshot') }),
+	diskErrorSchema
+]);
+
+const workspaceFileEventSchema = z.discriminatedUnion('kind', [
+	workspaceFileContentSchema.extend({ kind: z.literal('snapshot') }),
+	diskErrorSchema
+]);
 
 const workspaceFileWriteResultSchema = z.object({
 	status: z.enum(['saved', 'conflict']),
@@ -97,16 +109,14 @@ const projectAttachmentSchema = z.object({
 	unavailableReason: z.string().optional()
 });
 
-const runningCommandsSchema = z.object({
-	commands: z.array(
-		z.object({
-			sessionId: z.string(),
-			command: z.string(),
-			workdir: z.string(),
-			startedAt: z.number()
-		})
-	)
-});
+const runningCommandsSchema = z.array(
+	z.object({
+		sessionId: z.string(),
+		command: z.string(),
+		workdir: z.string(),
+		startedAt: z.number()
+	})
+);
 
 const agentRunStartSchema = z.object({
 	runId: z.string(),
@@ -304,7 +314,7 @@ function parseLiveCompletionOverlay(
 		runStatus: live.runStatus,
 		streamId: live.streamId,
 		text: live.text,
-		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
+		// SAFETY: overlay parts match AssistantPart; the local event payload is produced by the hub.
 		parts: live.parts as AssistantPart[]
 	};
 }
@@ -433,13 +443,19 @@ async function establishLocalSession(baseUrl: string) {
 export function createLocalClient(baseUrl: string): LocalApi {
 	const transport = createLocalTransport(baseUrl);
 	const { request } = transport;
+	const socket = localSocket(baseUrl);
 
 	return {
-		fetchBrowserStatus: (signal) =>
-			request('/api/browser/status', browserStatusSchema, { method: 'GET', signal }),
 		startBrowser: (signal) =>
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
+		watchBrowserStatus: (handlers) =>
+			socket.subscribe(
+				{ kind: 'browserStatus' },
+				browserStatusSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		browseFilesystem: (input) => {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }
@@ -463,12 +479,13 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(input),
 				signal
 			}),
-		listWorkspaceFiles: (input, signal) =>
-			request('/api/workspace/files', workspaceFilesResultSchema, {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			}),
+		watchWorkspaceFiles: (input, handlers) =>
+			socket.subscribe(
+				{ kind: 'workspaceFiles', params: input },
+				workspaceFilesEventSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		workspaceEntryKind: async (input, signal) => {
 			const { kind } = await request('/api/workspace/entry', workspaceEntrySchema, {
 				method: 'POST',
@@ -478,12 +495,13 @@ export function createLocalClient(baseUrl: string): LocalApi {
 
 			return kind;
 		},
-		readWorkspaceFile: (input, signal) =>
-			request('/api/workspace/file/read', workspaceFileContentSchema, {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			}),
+		watchWorkspaceFile: (input, handlers) =>
+			socket.subscribe(
+				{ kind: 'workspaceFile', params: input },
+				workspaceFileEventSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
 				method: 'POST',
@@ -534,12 +552,13 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(input)
 			});
 		},
-		listRunningCommands: (input, signal) =>
-			request('/api/agent/commands', runningCommandsSchema, {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			}),
+		watchRunningCommands: (requestBody, handlers) =>
+			socket.subscribe(
+				{ kind: 'commands', params: requestBody },
+				runningCommandsSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		terminateCommand: (input) =>
 			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {
 				method: 'POST',
@@ -573,29 +592,24 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
-		watchTranscript: async (requestBody, handlers) => {
-			await transport.postEventStream(
-				'/api/transcript/watch',
-				requestBody,
+		watchTranscript: (requestBody, handlers) =>
+			socket.subscribe(
+				{ kind: 'transcript', params: requestBody },
+				transcriptWatchEventSchema.nullable().catch(null),
 				handlers.signal,
-				(data) => {
-					const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
-
-					if (parsed.success) {
-						handlers.onEvent(parsed.data);
-					}
+				(event) => {
+					if (event) handlers.onEvent(event);
 				}
-			);
-		},
-		watchLiveCompletion: async (requestBody, handlers) => {
-			await transport.postEventStream('/api/agent/live', requestBody, handlers.signal, (data) => {
-				const parsed = liveCompletionWatchEventSchema.safeParse(JSON.parse(data));
-
-				if (parsed.success) {
-					handlers.onEvent(parseLiveCompletionWatchEvent(parsed.data));
+			),
+		watchLiveCompletion: (requestBody, handlers) =>
+			socket.subscribe(
+				{ kind: 'liveCompletion', params: requestBody },
+				liveCompletionWatchEventSchema.nullable().catch(null),
+				handlers.signal,
+				(event) => {
+					if (event) handlers.onEvent(parseLiveCompletionWatchEvent(event));
 				}
-			});
-		},
+			),
 		clearTranscriptReplica: async (requestBody) => {
 			await transport.response('/api/transcript/clear', {
 				method: 'POST',
@@ -664,17 +678,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(requestBody)
 			});
 		},
-		watchArtifacts: async (requestBody, handlers) => {
-			await transport.postEventStream(
-				'/api/artifacts/watch',
-				requestBody,
+		watchArtifacts: (requestBody, handlers) =>
+			socket.subscribe(
+				{ kind: 'artifacts', params: requestBody },
+				artifactsWatchEventSchema,
 				handlers.signal,
-				(data) => {
-					const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
-					handlers.onEvent(parseArtifactsWatchEvent(parsed));
+				(event) => {
+					handlers.onEvent(parseArtifactsWatchEvent(event));
 				}
-			);
-		},
+			),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',

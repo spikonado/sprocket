@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use sprocket_workspace::CommandSessionManager;
-use tokio::sync::Mutex;
+use sprocket_workspace::{CommandSessionManager, RunningCommand};
+use tokio::sync::{Mutex, watch};
 
 /// Owns command processes independently of the run that launched them. Scopes
 /// come from authenticated run creation, never from a command tool argument.
@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 pub struct ThreadCommandSessions {
     threads: Mutex<HashMap<(String, String), CommandSessionManager>>,
     stopped: AtomicBool,
+    changes: watch::Sender<()>,
 }
 
 impl ThreadCommandSessions {
@@ -29,7 +30,10 @@ impl ThreadCommandSessions {
         }
         threads
             .entry((user_id.to_string(), thread_id.to_string()))
-            .or_insert_with(|| CommandSessionManager::new(workspace_root.clone(), log_directory))
+            .or_insert_with(|| {
+                CommandSessionManager::new(workspace_root.clone(), log_directory)
+                    .with_change_signal(self.changes.clone())
+            })
             .clone()
             .with_workspace_root(workspace_root)
     }
@@ -40,6 +44,18 @@ impl ThreadCommandSessions {
             .await
             .get(&(user_id.to_string(), thread_id.to_string()))
             .cloned()
+    }
+
+    pub async fn running_commands(&self, user_id: &str, thread_id: &str) -> Vec<RunningCommand> {
+        match self.get(user_id, thread_id).await {
+            Some(sessions) => sessions.running_commands().await,
+            None => Vec::new(),
+        }
+    }
+
+    /// Changes whenever any thread's running commands may have changed.
+    pub fn subscribe_changes(&self) -> watch::Receiver<()> {
+        self.changes.subscribe()
     }
 
     pub async fn prune(&self) {

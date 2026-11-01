@@ -224,7 +224,7 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
-/** Local file-backed artifact snapshot from POST /api/artifacts/watch. */
+/** Local file-backed artifact snapshot from the `artifacts` live-update topic. */
 export type LocalArtifact = {
 	_id: string;
 	userId: string;
@@ -317,13 +317,12 @@ export type WorkspaceSearchResult = {
 export type WorkspaceGitStatus =
 	'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'ignored';
 
-/** Directory paths end with `/`. Paths and git status are empty when `hash` matches `knownHash`. */
+/** Directory paths end with `/`. */
 export type WorkspaceFilesResult = {
 	paths: string[];
 	gitStatus: { path: string; status: WorkspaceGitStatus }[];
 	scanning: boolean;
 	truncated: boolean;
-	hash: string;
 };
 
 export type WorkspaceFileContent = {
@@ -332,6 +331,11 @@ export type WorkspaceFileContent = {
 	size: number;
 	unsupported: 'binary' | 'tooLarge' | null;
 };
+
+/** Sent when what's on disk changes; the first event is the current state. */
+export type DiskEvent<T> = ({ kind: 'snapshot' } & T) | { kind: 'error'; message: string };
+
+export type WatchHandlers<T> = { onEvent: (event: T) => void; signal: AbortSignal };
 
 export type WorkspaceFileWriteResult = { status: 'saved' | 'conflict'; version: string };
 
@@ -350,13 +354,13 @@ export type BrowserStatus = {
 };
 
 export type LocalApi = {
-	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;
-	listRunningCommands: (
+	watchBrowserStatus: (handlers: WatchHandlers<BrowserStatus>) => Promise<void>;
+	watchRunningCommands: (
 		request: TranscriptScopeRequest,
-		signal?: AbortSignal
-	) => Promise<{ commands: RunningCommand[] }>;
+		handlers: WatchHandlers<RunningCommand[]>
+	) => Promise<void>;
 	terminateCommand: (
 		request: TranscriptScopeRequest & { sessionId: string }
 	) => Promise<{ terminated: boolean }>;
@@ -369,18 +373,18 @@ export type LocalApi = {
 		input: { workspacePath: string; query: string },
 		signal?: AbortSignal
 	) => Promise<WorkspaceSearchResult>;
-	listWorkspaceFiles: (
-		input: { workspacePath: string; knownHash?: string },
-		signal?: AbortSignal
-	) => Promise<WorkspaceFilesResult>;
+	watchWorkspaceFiles: (
+		input: { workspacePath: string },
+		handlers: WatchHandlers<DiskEvent<WorkspaceFilesResult>>
+	) => Promise<void>;
 	workspaceEntryKind: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<'file' | 'directory'>;
-	readWorkspaceFile: (
+	watchWorkspaceFile: (
 		input: WorkspaceFileTarget,
-		signal?: AbortSignal
-	) => Promise<WorkspaceFileContent>;
+		handlers: WatchHandlers<DiskEvent<WorkspaceFileContent>>
+	) => Promise<void>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;
@@ -409,17 +413,11 @@ export type LocalApi = {
 	) => Promise<TranscriptDisplayDetails>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,
-		handlers: {
-			onEvent: (event: TranscriptWatchEvent) => void;
-			signal: AbortSignal;
-		}
+		handlers: WatchHandlers<TranscriptWatchEvent>
 	) => Promise<void>;
 	watchLiveCompletion: (
 		request: TranscriptScopeRequest,
-		handlers: {
-			onEvent: (event: LiveCompletionWatchEvent) => void;
-			signal: AbortSignal;
-		}
+		handlers: WatchHandlers<LiveCompletionWatchEvent>
 	) => Promise<void>;
 	clearTranscriptReplica: (request: TranscriptScopeRequest) => Promise<void>;
 	fetchTranscriptAttachment: (
@@ -430,10 +428,7 @@ export type LocalApi = {
 	deleteArtifact: (request: ArtifactsWatchRequest & { artifactId: string }) => Promise<void>;
 	watchArtifacts: (
 		request: ArtifactsWatchRequest,
-		handlers: {
-			onEvent: (event: ArtifactsWatchEvent) => void;
-			signal: AbortSignal;
-		}
+		handlers: WatchHandlers<ArtifactsWatchEvent>
 	) => Promise<void>;
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	fetchPullRequestStates: (

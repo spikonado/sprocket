@@ -1,4 +1,5 @@
 use super::*;
+use futures::StreamExt;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -132,6 +133,39 @@ echo '{"status":"idle","currentVersion":"1.0.0","version":null,"error":null,"met
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(manager.status().await.status, UpdateStatus::Idle);
     assert_eq!(fs::read_to_string(dir.path().join("calls")).unwrap(), "xx");
+}
+
+#[tokio::test]
+async fn watch_checks_on_subscribe_and_pushes_install_progress() {
+    let dir = TempDir::new("sprocket-update-watch");
+    let (node, script) = write_helper(
+        dir.path(),
+        r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
+if [ "$1" = check ]; then
+  echo '{"status":"available","currentVersion":"1.0.0","version":"1.1.0","error":null,"method":"package"}'
+else
+  echo '{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":null,"method":"package"}'
+fi"#,
+    );
+    let manager = PackageUpdateManager::with_helper(node, script);
+    let mut updates = manager.watch();
+    assert_eq!(next_status(&mut updates).await, UpdateStatus::Idle);
+    assert_eq!(next_status(&mut updates).await, UpdateStatus::Available);
+    manager.install().await;
+    assert_eq!(next_status(&mut updates).await, UpdateStatus::Installing);
+    assert_eq!(next_status(&mut updates).await, UpdateStatus::Installed);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("calls")).unwrap(),
+        "check\ninstall\n"
+    );
+}
+
+async fn next_status(updates: &mut BoxStream<'static, PackageUpdateSnapshot>) -> UpdateStatus {
+    tokio::time::timeout(Duration::from_secs(5), updates.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .status
 }
 
 #[tokio::test]

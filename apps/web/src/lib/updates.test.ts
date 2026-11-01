@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestPackageUpdate, restartPackageUpdate, type UpdateState } from './updates';
+import { installPackageUpdate, restartPackageUpdate, type UpdateState } from './updates';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -58,7 +58,7 @@ describe('package update requests', () => {
 		vi.stubGlobal('fetch', async () =>
 			Response.json({ error: 'Updates must be installed from this machine.' }, { status: 403 })
 		);
-		await expect(requestPackageUpdate(true)).rejects.toThrow(
+		await expect(installPackageUpdate()).rejects.toThrow(
 			'Updates must be installed from this machine.'
 		);
 	});
@@ -66,8 +66,7 @@ describe('package update requests', () => {
 	it('reports a missing update route as an error', async () => {
 		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
 		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
-		await expect(requestPackageUpdate(false)).rejects.toThrow('Update request failed (404)');
-		await expect(requestPackageUpdate(true)).rejects.toThrow('Update request failed (404)');
+		await expect(installPackageUpdate()).rejects.toThrow('Update request failed (404)');
 	});
 
 	it.each([
@@ -81,15 +80,8 @@ describe('package update requests', () => {
 		const fetcher = vi.fn(async () => Response.json({ ...state('installed'), method: 'package' }));
 
 		vi.stubGlobal('fetch', fetcher);
-		expect((await requestPackageUpdate(false))?.status).toBe('installed');
-		expect(fetcher).toHaveBeenNthCalledWith(
-			1,
-			`${origin}/api/update`,
-			expect.objectContaining({ method: 'GET', credentials: 'include' })
-		);
-		expect((await requestPackageUpdate(true))?.status).toBe('installed');
-		expect(fetcher).toHaveBeenNthCalledWith(
-			2,
+		expect((await installPackageUpdate())?.status).toBe('installed');
+		expect(fetcher).toHaveBeenCalledWith(
 			`${origin}/api/update/install`,
 			expect.objectContaining({
 				method: 'POST',
