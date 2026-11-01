@@ -351,6 +351,10 @@ impl Pump {
                 });
             }
             if self.arming.remove(&id) {
+                // Frames that detach while arming fail here; they can't send payments.
+                if let Some(error) = message.pointer("/error/message").and_then(Value::as_str) {
+                    eprintln!("sprocket-agent: could not intercept a checkout frame: {error}");
+                }
                 self.release_settled();
             }
             return Ok(());

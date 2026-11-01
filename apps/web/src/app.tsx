@@ -752,7 +752,8 @@ export default function App({
 		uiPreferencesQuery.error ??
 		activeThreadQuery.error ??
 		lifecycleQuery.error ??
-		pendingAgentQuestionQuery.error;
+		pendingAgentQuestionQuery.error ??
+		pendingApprovalsQuery.error;
 
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
 	useEffect(() => {

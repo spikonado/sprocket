@@ -32,7 +32,7 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	delete_artifact: { verb: 'deleted', noun: 'artifact' },
 	list_artifacts: { verb: 'listed', noun: 'artifact group' },
 	list_connectors: { verb: 'listed', noun: 'connector group' },
-	card_checkout: { verb: 'made', noun: 'payment' },
+	card_checkout: { verb: 'attempted', noun: 'checkout' },
 	report_order: { verb: 'recorded', noun: 'order' },
 	get_workspace_instructions: { verb: 'read', noun: 'instruction set' },
 	check_docs: { verb: 'checked', noun: 'document' }

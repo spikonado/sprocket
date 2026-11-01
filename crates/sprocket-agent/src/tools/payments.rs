@@ -377,7 +377,10 @@ async fn approve(
     )?;
     let (purchase_id, mut interval) = match (created.status.as_str(), created.purchase_id) {
         ("card_required", _) => {
-            return Ok(Outcome::Stopped(json!({ "status": "card_required" })));
+            return Ok(Outcome::Stopped(json!({
+                "status": "card_required",
+                "reason": "The user has no saved card. They can save one with the Save a card button below this tool call, or in Settings → Payments.",
+            })));
         }
         ("awaiting_approval", Some(purchase_id)) => {
             (purchase_id, poll_interval(created.poll_interval_ms))

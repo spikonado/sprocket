@@ -29,14 +29,14 @@ Done when: the page shows the final total and a Pay / Place order button, and no
 
 Call `card_checkout` with the page's final total, its currency, and the Pay button's ref from `snapshot -i`. The tool clicks the button and waits while the user approves.
 
-| status                | your move                                                                  |
-| --------------------- | -------------------------------------------------------------------------- |
-| `approved`            | Go to step 4                                                               |
-| `submitted_on_device` | Tell the user to finish payment in the Agentcard popup, then go to step 4  |
-| `card_required`       | Ask the user to save a card with the button shown, then call again         |
-| `declined`, `expired` | Tell the user; call again only if they ask                                 |
-| `no_payment_request`  | Check the page for errors or missing fields, fix them, then call again     |
-| `outcome_unknown`     | Stop. Tell the user to check their card and the store before anything else |
+| status                | your move                                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `approved`            | Go to step 4                                                                             |
+| `submitted_on_device` | Tell the user to finish payment in the Agentcard popup, then go to step 4                |
+| `card_required`       | Ask the user to save a card (Save a card button or Settings → Payments), then call again |
+| `declined`, `expired` | Tell the user; call again only if they ask                                               |
+| `no_payment_request`  | Check the page for errors or missing fields, fix them, then call again                   |
+| `outcome_unknown`     | Stop. Tell the user to check their card and the store before anything else               |
 
 A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_unknown` can charge the user twice.
 
