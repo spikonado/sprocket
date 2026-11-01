@@ -261,6 +261,13 @@ fn fetch_params() -> Value {
     json!({ "patterns": [{ "urlPattern": "*", "requestStage": "Request" }] })
 }
 
+/// Only the checkout tab is attached at the browser level; its frames detach
+/// inside the tab's session.
+fn is_checkout_detach(message: &Value) -> bool {
+    message.get("sessionId").is_none()
+        && message.get("method").and_then(Value::as_str) == Some("Target.detachedFromTarget")
+}
+
 /// Payment card fields load in cross-origin iframes, which are their own
 /// targets. New ones wait until they intercept requests too.
 fn auto_attach_params() -> Value {
@@ -291,7 +298,16 @@ impl Pump {
                 command = commands.recv() => Input::Command(command),
             };
             let handled = match input {
-                Input::Socket(Some(Ok(Message::Text(text)))) => self.receive(text.as_str()).await,
+                Input::Socket(Some(Ok(Message::Text(text)))) => {
+                    let Ok(message) = serde_json::from_str::<Value>(text.as_str()) else {
+                        continue;
+                    };
+                    // A closed checkout tab ends the connection, so its purchase gets cancelled.
+                    if is_checkout_detach(&message) {
+                        break;
+                    }
+                    self.receive(&message).await
+                }
                 Input::Socket(Some(Ok(Message::Close(_)) | Err(_)) | None) => break,
                 Input::Socket(Some(Ok(_))) => Ok(()),
                 Input::Command(Some(Command::Call {
@@ -335,10 +351,7 @@ impl Pump {
         Ok(id)
     }
 
-    async fn receive(&mut self, text: &str) -> Result<(), SocketError> {
-        let Ok(message) = serde_json::from_str::<Value>(text) else {
-            return Ok(());
-        };
+    async fn receive(&mut self, message: &Value) -> Result<(), SocketError> {
         if let Some(id) = message.get("id").and_then(Value::as_u64) {
             if let Some(reply) = self.replies.remove(&id) {
                 let _ = reply.send(match message.get("error") {
