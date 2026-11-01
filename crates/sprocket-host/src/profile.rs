@@ -158,9 +158,8 @@ fn current_user_sid() -> anyhow::Result<String> {
     }
 }
 
-/// Older releases restricted private files to OWNER RIGHTS, so files written by an
-/// elevated run are unreadable to the user's normal runs. Their contents are lost
-/// to this user either way; deleting them lets the server start and recreate them.
+/// The contents of these files are lost to this user either way; deleting them
+/// lets the server start and recreate them.
 #[cfg(windows)]
 fn remove_unreadable_private_files(directory: &Path) {
     let credential_dirs = std::fs::read_dir(directory.join("credentials"))
@@ -171,12 +170,10 @@ fn remove_unreadable_private_files(directory: &Path) {
     for dir in std::iter::once(directory.to_owned()).chain(credential_dirs) {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let path = entry.path();
-            if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
-                continue;
-            }
-            if File::open(&path)
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
-            {
+            let unreadable = entry.file_type().is_ok_and(|kind| kind.is_file())
+                && File::open(&path)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied);
+            if unreadable {
                 match std::fs::remove_file(&path) {
                     Ok(()) => tracing::warn!("removed unreadable private file {}", path.display()),
                     Err(error) => tracing::warn!(
