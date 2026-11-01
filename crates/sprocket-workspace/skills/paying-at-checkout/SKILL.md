@@ -1,11 +1,13 @@
 ---
 name: paying-at-checkout
-description: Buy things online with the user's saved Agentcard card through the store's own checkout in agent-browser. Use when the user asks to buy, order, or pay for something online.
+description: Use when the user asks to buy, order, or pay for something online.
 ---
 
 # Paying at checkout
 
-You shop on the store's real website with agent-browser, in this thread's browser session. The user's card never reaches you: you type a placeholder card, and Sprocket swaps in the real payment after the user approves it with their passkey.
+- You shop on the store's real website with `$agent-browser` in this thread's browser session.
+  - If you get blocked by a CAPTCHA you aren't able to get through yourself, try using a headed agent-browser instead of headless.
+- The user's card never reaches you: you type a placeholder card, and Sprocket swaps in the real payment after the user approves it with their passkey.
 
 ## 1. Agree on the order
 
@@ -42,6 +44,6 @@ A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_un
 
 ## 4. Confirm and report
 
-Wait for the store's confirmation page, read the order number from it, and call `report_order` with the `purchaseId` and that number. Give the user the order number and any tracking link.
+Wait for the store's confirmation page, read the order number, and then call `report_order`and give the user the order number and any tracking link.
 
 Done when: `report_order` succeeded, or you told the user the store showed no confirmation.
