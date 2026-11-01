@@ -5,9 +5,6 @@
 		"check": {
 			"dependsOn": ["^check"]
 		},
-		"lint": {
-			"dependsOn": ["^lint"]
-		},
 		"test": {
 			"dependsOn": ["^test"]
 		}

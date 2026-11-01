@@ -15,6 +15,7 @@
 		"lint:mermaid": "mermaid-lint --quiet"
 	},
 	"devDependencies": {
+		"@convex-dev/eslint-plugin": "5.0.1",
 		"@mermaid-lint/cli": "0.53.1",
 		"@oxlint/plugins": "1.90.0",
 		"concurrently": "^10.0.0",

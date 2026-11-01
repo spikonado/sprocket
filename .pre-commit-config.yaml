@@ -63,12 +63,6 @@ repos:
         entry: commitlint --edit
         stages: [commit-msg]
 
-      - id: eslint
-        name: eslint
-        language: system
-        entry: bun turbo run lint
-        pass_filenames: false
-
       - id: oxlint
         name: oxlint
         language: system

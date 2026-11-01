@@ -626,7 +626,7 @@ export const backfillSequences = internalMutation({
 	handler: async (ctx) => {
 		const missing = await ctx.db
 			.query('dodoWebhookEvents')
-			// eslint-disable-next-line @convex-dev/no-filter-in-query -- One-off bounded backfill for legacy rows without the indexed sequence.
+			// oxlint-disable-next-line @convex-dev/no-filter-in-query -- One-off bounded backfill for legacy rows without the indexed sequence.
 			.filter((query) => query.eq(query.field('seq'), undefined))
 			.take(CLEANUP_BATCH_SIZE);
 

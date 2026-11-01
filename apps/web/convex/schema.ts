@@ -112,7 +112,7 @@ export default defineSchema({
 		),
 		expiresAt: v.number()
 	})
-		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Released readers use this index; retain until their removal gate passes.
+		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Released readers use this index; retain until their removal gate passes.
 		.index('by_userId', ['userId'])
 		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
 		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
@@ -140,7 +140,7 @@ export default defineSchema({
 		),
 		expiresAt: v.number()
 	})
-		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.
+		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.
 		.index('by_userId', ['userId'])
 		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
 		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
@@ -334,7 +334,7 @@ export default defineSchema({
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		// Tree cancellation needs stable cursors while transcript timestamps change.
-		// eslint-disable-next-line @convex-dev/no-duplicate-indexes
+		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes
 		.index('by_userId_parentThreadId', ['userId', 'parentThreadId'])
 		.index('by_userId_and_parentThreadId_and_lastMessageAt', [
 			'userId',
