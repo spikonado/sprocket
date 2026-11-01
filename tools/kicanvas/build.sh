@@ -11,9 +11,11 @@ trap 'rm -rf "$src"' EXIT
 
 git clone --quiet https://github.com/theacodes/kicanvas "$src"
 git -C "$src" checkout --quiet "$commit"
-# Upstream stringifies the whole parent expression into each unknown-element
-# warning, which turns an 85 MB board's parse from ~5 s into minutes.
-git -C "$src" apply "$here/parser-warnings.patch"
+# parser-warnings: upstream stringifies the whole parent expression into each
+# unknown-element warning, which turns an 85 MB board's parse from ~5 s into minutes.
+# sheet-instances: upstream drops the sheet path, so every instance of a reused
+# sheet shows the file's default references.
+git -C "$src" apply "$here"/*.patch
 (cd "$src" && npm ci --silent && node scripts/build.js)
 
 mkdir -p "$out"
