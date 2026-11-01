@@ -1,12 +1,12 @@
 import type { ArtifactType } from '@convex/lib/validators';
-import { z } from 'zod';
 
-const artifactTypeSchema = z.enum(['markdown', 'html', 'react']);
+/** How the UI shows an artifact. A json-render spec is stored as a Markdown artifact. */
+export type ArtifactPreviewType = ArtifactType | 'json-render';
 
-export function parseArtifactType(value: string): ArtifactType {
-	const parsed = artifactTypeSchema.safeParse(value);
+const JSON_RENDER_FILE = /\.render\.json$/i;
 
-	return parsed.success ? parsed.data : 'markdown';
+export function artifactPreviewType(type: ArtifactType, title: string): ArtifactPreviewType {
+	return type === 'markdown' && JSON_RENDER_FILE.test(title) ? 'json-render' : type;
 }
 
 /** Escape sequences that would break out of the inline <script> holding the react source. */
@@ -101,7 +101,7 @@ export function buildHtmlPreviewDocument(source: string): string {
 
 /** Returns null for artifact types that render as text rather than a live preview. */
 export function buildArtifactPreviewDocument(
-	artifactType: ArtifactType,
+	artifactType: ArtifactPreviewType,
 	content: string
 ): string | null {
 	if (artifactType === 'react') return buildReactPreviewDocument(content);

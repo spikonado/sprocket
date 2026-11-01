@@ -60,6 +60,37 @@ describe('math', () => {
 	});
 });
 
+describe('json-render', () => {
+	const card = '{"type":"Card","props":{"title":"CI"},"children":["jobs"]}';
+	const table = '{"type":"Table","props":{"columns":["Job"],"rows":[["lint"]]},"children":[]}';
+
+	it('builds the UI from JSONL patches as the fence streams', async () => {
+		const patches = [
+			'{"op":"add","path":"/root","value":"ci"}',
+			`{"op":"add","path":"/elements/ci","value":${card}}`
+		];
+
+		const { container, findByText, rerender } = render(
+			<ChatMarkdown content={'```json-render\n' + patches.join('\n')} />
+		);
+
+		expect(await findByText('CI')).not.toBeNull();
+		expect(container.querySelector('table')).toBeNull();
+
+		patches.push(`{"op":"add","path":"/elements/jobs","value":${table}}`);
+		rerender(<ChatMarkdown content={'```json-render\n' + patches.join('\n') + '\n```'} />);
+
+		expect(await findByText('lint')).not.toBeNull();
+	});
+
+	it('renders a whole spec document', async () => {
+		const spec = `{"root":"ci","elements":{"ci":${card},"jobs":${table}}}`;
+		const { findByText } = render(<ChatMarkdown content={'```json-render\n' + spec + '\n```'} />);
+
+		expect(await findByText('lint')).not.toBeNull();
+	});
+});
+
 describe('links', () => {
 	it.each(['docs/notes.md', 'assets/board.png', 'https://example.com/board.png', '#diagram.png'])(
 		'preserves ordinary link %s',

@@ -1,4 +1,4 @@
-import type { ArtifactType } from '@convex/lib/validators';
+import { artifactPreviewType, type ArtifactPreviewType } from './artifact-preview';
 import type {
 	ArtifactsWatchEvent,
 	ArtifactsWatchRequest,
@@ -8,7 +8,7 @@ import type {
 export type ArtifactEntry = {
 	key: string;
 	title: string;
-	artifactType: ArtifactType;
+	artifactType: ArtifactPreviewType;
 	content: string;
 	localPath?: string;
 	localError?: string;
@@ -34,7 +34,7 @@ export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
 	return {
 		key: artifact._id,
 		title: artifact.title,
-		artifactType: artifact.type,
+		artifactType: artifactPreviewType(artifact.type, artifact.title),
 		content: artifact.content,
 		localPath: artifact.localPath,
 		localError: artifact.localError
