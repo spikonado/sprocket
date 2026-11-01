@@ -8,8 +8,8 @@
 		"dev": "convex dev --start 'vite dev'",
 		"build": "vite build",
 		"test": "vitest --run",
-		"check": "tsc --noEmit",
-		"check:anti-slop": "tsc -p tsconfig.anti-slop.json"
+		"check": "bun check --no-script && bun check --no-script -p convex",
+		"check:anti-slop": "bun check --no-script -p tsconfig.anti-slop.json"
 	},
 	"dependencies": {
 		"@codemirror/language": "^6.13.1",
