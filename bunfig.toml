@@ -7,3 +7,4 @@ sortTailwindcss = true
 
 [install]
 minimumReleaseAge = "7d"
+globalStore = true
