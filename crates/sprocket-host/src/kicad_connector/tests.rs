@@ -11,7 +11,7 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     let old = connector.root.join("10.99.0-1-gabcdef");
     fs::create_dir_all(old.join("bin")).unwrap();
     fs::write(old.join("bin/kicad-cli"), "old launcher").unwrap();
-    fs::write(old.join(VERSION_FILE), "11.0.1\n").unwrap();
+    fs::write(old.join(USER_KICAD_VERSION_FILE), "11.0.1\n").unwrap();
     fs::create_dir_all(connector.root.join(".staging-interrupted")).unwrap();
 
     let status = connector.status().await;

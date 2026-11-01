@@ -63,3 +63,13 @@ it('offers a retry with the install error', async () => {
 	expect(await screen.findByRole('button', { name: 'Retry' })).toBeTruthy();
 	expect(screen.getByText('Not enough disk space.')).toBeTruthy();
 });
+
+it('keeps an older install usable after a failed update', async () => {
+	mount(async () => [
+		kicad({ state: 'installed', updateAvailable: true, error: 'Download failed.' })
+	]);
+
+	expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Uninstall' })).toBeTruthy();
+	expect(screen.getByText('Download failed.')).toBeTruthy();
+});

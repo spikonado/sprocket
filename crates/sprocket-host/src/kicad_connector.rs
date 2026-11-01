@@ -28,7 +28,7 @@ const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt")
 const NAME: &str = "KiCad";
 const STAGING_PREFIX: &str = ".staging-";
 const LAUNCHER_DIR: &str = "bin";
-const VERSION_FILE: &str = "kicad-version";
+const USER_KICAD_VERSION_FILE: &str = "user-kicad-version";
 const REQUIRED_FREE_BYTES: u64 = 10 << 30;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -161,7 +161,7 @@ impl KiCadConnector {
 
     pub fn installed(&self) -> Option<InstalledConnector> {
         let dir = installed_version(&self.root, &self.release.version)?;
-        let version = fs::read_to_string(self.root.join(&dir).join(VERSION_FILE))
+        let version = fs::read_to_string(self.root.join(&dir).join(USER_KICAD_VERSION_FILE))
             .map(|version| version.trim().to_owned())
             .unwrap_or(dir);
         Some(InstalledConnector {
@@ -218,8 +218,9 @@ impl KiCadConnector {
             .ensure_installed()
             .await
             .context("Python setup failed")?;
-        let (cli, published_cli) = match find_user_kicad(&self.root).await {
-            Some(cli) => (cli.clone(), cli),
+        let user_kicad = find_user_kicad(&self.root).await;
+        let (cli, published_cli) = match &user_kicad {
+            Some(cli) => (cli.clone(), cli.clone()),
             None => {
                 self.download_kicad(staging).await?;
                 (
@@ -229,7 +230,10 @@ impl KiCadConnector {
             }
         };
         let version = cli_version(&cli).await?;
-        tokio::fs::write(staging.join(VERSION_FILE), &version).await?;
+        // `kicad-cli version` omits the build, so a downloaded pin keeps its directory name.
+        if user_kicad.is_some() {
+            tokio::fs::write(staging.join(USER_KICAD_VERSION_FILE), &version).await?;
+        }
         self.create_venv(staging).await?;
         write_launchers(
             &staging.join(LAUNCHER_DIR),
