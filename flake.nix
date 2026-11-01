@@ -13,7 +13,29 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ bunOverlay ];
+        };
+        # Uses the Bun release the host installs for agents, so one pin covers both.
+        bunOverlay = final: prev: {
+          bun =
+            let
+              release = builtins.fromJSON (builtins.readFile ./tools/bun/releases.json);
+              platform =
+                {
+                  aarch64-darwin = "darwin-arm64";
+                  aarch64-linux = "linux-arm64";
+                  x86_64-linux = "linux-x64";
+                }
+                .${system};
+            in
+            prev.bun.overrideAttrs {
+              inherit (release) version;
+              src = final.fetchurl { inherit (release.platforms.${platform}) url sha256; };
+              sourceRoot = "package/bin";
+            };
+        };
         electronRuntimeLibs = with pkgs; [
           alsa-lib
           atk
