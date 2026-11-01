@@ -40,6 +40,7 @@ import {
 import {
 	COMPLETION_STREAM_SUPERSEDED,
 	LEGACY_RUN_ABANDONED_BY_AGENT,
+	PAYMENTS_MOVED_TO_AGENTCARD,
 	RUN_ABANDONED_BY_MACHINE,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
@@ -71,6 +72,7 @@ import {
 } from '@convex/lib/runLease';
 import {
 	isRunFinalStatus,
+	retiredMandateToolKinds,
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vCompletionProvider,
@@ -90,13 +92,7 @@ type RunClaimPatch = {
 	completionAttemptSeq?: number;
 };
 
-const paymentToolJobKinds: ReadonlySet<string> = new Set([
-	'mandate_setup',
-	'mandate_status',
-	'mandate_list',
-	'mandate_charge',
-	'mandate_report'
-]);
+const paymentToolJobKinds: ReadonlySet<string> = new Set(['card_checkout', 'report_order']);
 
 function isExpectedSectionKey(
 	runId: Doc<'runs'>['_id'],
@@ -1032,6 +1028,10 @@ export const beginToolJob = mutation({
 
 			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+			}
+
+			if (retiredMandateToolKinds.has(args.kind)) {
+				throw new Error(PAYMENTS_MOVED_TO_AGENTCARD);
 			}
 
 			if (paymentToolJobKinds.has(args.kind)) {

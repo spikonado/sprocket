@@ -29,5 +29,5 @@ Precondition: the new-thread screen with the inbox sidebar visible.
 
 - Preferences belong to the user's dev account. Flip one at a time and restore it. `Settle threads when their PRs merge` can settle the user's real dev threads while on.
 - `Sign Out` on Account signs the shared browser out, and signing back in needs a new device code.
-- BYOK/BYOS needs a real ChatGPT login or OpenAI key, the server checks Version Control tokens against GitHub, and Payments needs a Prava passkey approval. Report those flows as unreachable.
+- BYOK/BYOS needs a real ChatGPT login or OpenAI key, the server checks Version Control tokens against GitHub, and saving a card on Payments needs an Agentcard passkey. Report those flows as unreachable.
 - `snapshot -i` doesn't mark the current page button. Use the heading.

@@ -2,7 +2,6 @@ import {
 	BookOpen,
 	Bot,
 	Camera,
-	CircleDollarSign,
 	CircleQuestionMark,
 	CreditCard,
 	FileCode,
@@ -15,13 +14,13 @@ import {
 	ListChecks,
 	NotebookPen,
 	Plug,
+	Receipt,
 	ScrollText,
 	Save,
 	Search,
 	SquareTerminal,
 	Terminal,
 	Trash2,
-	Wallet,
 	Wrench,
 	type LucideIcon
 } from 'lucide-react';
@@ -62,16 +61,10 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return SquareTerminal;
 		case 'get_workspace_instructions':
 			return ScrollText;
-		case 'mandate_charge':
-			return CircleDollarSign;
-		case 'mandate_list':
-			return ListChecks;
-		case 'mandate_report':
-			return Wallet;
-		case 'mandate_setup':
+		case 'card_checkout':
 			return CreditCard;
-		case 'mandate_status':
-			return ListChecks;
+		case 'report_order':
+			return Receipt;
 		case 'read_skill':
 			return NotebookPen;
 		case 'scrape_url':

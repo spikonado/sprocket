@@ -384,11 +384,8 @@ describe('partitionWorkSectionTools', () => {
 	it.each([
 		'apply_patch',
 		'get_workspace_instructions',
-		'mandate_setup',
-		'mandate_status',
-		'mandate_list',
-		'mandate_charge',
-		'mandate_report',
+		'card_checkout',
+		'report_order',
 		'read_skill',
 		'parse_file',
 		'scrape_url',

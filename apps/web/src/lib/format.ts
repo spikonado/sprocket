@@ -33,3 +33,30 @@ export function formatCountdownDuration(remainingMs: number): string {
 
 	return `${seconds}s`;
 }
+
+function currencyFormat(currency: string) {
+	try {
+		return new Intl.NumberFormat('en-US', { style: 'currency', currency });
+	} catch {
+		return undefined;
+	}
+}
+
+/** "$23.06" from a major-unit decimal string such as "23.06". */
+export function formatMajorAmount(amount: string, currency: string): string {
+	const value = Number(amount);
+	const format = currencyFormat(currency);
+
+	return format && Number.isFinite(value)
+		? format.format(value)
+		: `${amount} ${currency.toUpperCase()}`;
+}
+
+/** "$23.06" from minor units such as 2306 cents. */
+export function formatMinorAmount(amount: number, currency: string): string {
+	const format = currencyFormat(currency);
+
+	if (!format) return `${amount} ${currency.toUpperCase()}`;
+
+	return format.format(amount / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
+}

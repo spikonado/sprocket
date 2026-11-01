@@ -595,19 +595,12 @@ async fn run_with_completion_model(
     } else {
         agent
     };
-    let agent = if !request.is_child {
-        let agent = agent
-            .tool(tools.mandate_status)
-            .tool(tools.mandate_list)
-            .tool(tools.mandate_charge)
-            .tool(tools.mandate_report);
-        if request.allow_interaction {
-            agent.tool(tools.mandate_setup)
-        } else {
-            agent
-        }
-    } else {
+    let agent = if request.is_child {
         agent
+    } else if request.allow_interaction {
+        agent.tool(tools.card_checkout).tool(tools.report_order)
+    } else {
+        agent.tool(tools.report_order)
     };
     let mut agent = agent.build();
 

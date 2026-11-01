@@ -4,7 +4,10 @@ import type { AssistantTimelineWorkBlock } from './assistant-timeline';
 
 type Activity = { verb: string; noun: string; plural?: string };
 
-type SummarizedToolName = Exclude<Infer<typeof vCurrentExecutorJobKind>, `poll_${string}`>;
+type SummarizedToolName = Exclude<
+	Infer<typeof vCurrentExecutorJobKind>,
+	`poll_${string}` | `mandate_${string}`
+>;
 
 // Typed against the current tool list so a new tool fails typechecking until it has an entry here.
 const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
@@ -29,11 +32,8 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	delete_artifact: { verb: 'deleted', noun: 'artifact' },
 	list_artifacts: { verb: 'listed', noun: 'artifact group' },
 	list_connectors: { verb: 'listed', noun: 'connector group' },
-	mandate_setup: { verb: 'set up', noun: 'mandate' },
-	mandate_list: { verb: 'listed', noun: 'mandate group' },
-	mandate_status: { verb: 'checked', noun: 'mandate' },
-	mandate_charge: { verb: 'charged', noun: 'payment' },
-	mandate_report: { verb: 'reported', noun: 'payment outcome' },
+	card_checkout: { verb: 'made', noun: 'payment' },
+	report_order: { verb: 'recorded', noun: 'order' },
 	get_workspace_instructions: { verb: 'read', noun: 'instruction set' },
 	check_docs: { verb: 'checked', noun: 'document' }
 };

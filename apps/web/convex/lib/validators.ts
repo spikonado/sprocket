@@ -207,39 +207,17 @@ const vBrowserInteractPayload = v.object({
 	enforce_saving: v.optional(v.boolean())
 });
 
-const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
-
-export const vMandateFrequency = v.union(...literals(mandateFrequencies));
-
-export const vMandateScope = v.union(v.literal('listed'), v.literal('any'));
-
-const mandateStatuses = [
-	'pending',
-	'active',
-	'paused',
-	'consumed',
-	'cancelled',
-	'expired'
-] as const;
-
-export const vMandateStatus = v.union(...literals(mandateStatuses));
-
-export function isMandateStatus(
-	status: string | undefined
-): status is Infer<typeof vMandateStatus> {
-	return status !== undefined && mandateStatuses.some((allowed) => allowed === status);
-}
-
-export const vMandateChargeStatus = v.union(
-	v.literal('awaiting_result'),
-	v.literal('completed'),
-	v.literal('declined'),
-	v.literal('failed')
+// Retired Prava mandate tools. Released agents still send these kinds, which
+// beginToolJob rejects, and stored jobs keep them as history.
+const vMandateFrequency = v.union(
+	...literals(['one_time', 'weekly', 'monthly', 'yearly'] as const)
 );
 
-export const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
+const vMandateScope = v.union(v.literal('listed'), v.literal('any'));
 
-export const vMandateSetupPayload = v.object({
+const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
+
+const vMandateSetupPayload = v.object({
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
@@ -252,11 +230,11 @@ export const vMandateSetupPayload = v.object({
 	validUntil: v.optional(v.string())
 });
 
-export const vMandateIdPayload = v.object({
+const vMandateIdPayload = v.object({
 	mandateId: v.string()
 });
 
-export const vMandateChargePayload = v.object({
+const vMandateChargePayload = v.object({
 	mandateId: v.string(),
 	amount: v.string(),
 	currency: v.string(),
@@ -264,11 +242,43 @@ export const vMandateChargePayload = v.object({
 	reference: v.optional(v.string())
 });
 
-export const vMandateReportPayload = v.object({
+const vMandateReportPayload = v.object({
 	chargeId: v.string(),
 	outcome: vMandateReportOutcome,
 	amountPaid: v.optional(v.string())
 });
+
+export const retiredMandateToolKinds: ReadonlySet<string> = new Set([
+	'mandate_setup',
+	'mandate_status',
+	'mandate_list',
+	'mandate_charge',
+	'mandate_report'
+]);
+
+export const vCardCheckoutPayload = v.object({
+	amount: v.string(),
+	currency: v.string(),
+	payButton: v.string()
+});
+
+export const vReportOrderPayload = v.object({
+	purchaseId: v.string(),
+	orderNumber: v.string()
+});
+
+export const purchaseStatuses = [
+	'awaiting_approval',
+	'approved',
+	'submitted_on_device',
+	'declined',
+	'expired',
+	'settled'
+] as const;
+
+export type PurchaseStatus = (typeof purchaseStatuses)[number];
+
+export const vPurchaseStatus = v.union(...literals(purchaseStatuses));
 
 export const vAskQuestionOption = v.object({
 	id: v.string(),
@@ -348,7 +358,9 @@ export const vCurrentExecutorJobPayload = v.union(
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
-	vMandateReportPayload
+	vMandateReportPayload,
+	vCardCheckoutPayload,
+	vReportOrderPayload
 );
 
 export const vExecutorJobPayload = v.union(
@@ -462,34 +474,33 @@ export const vWebSearchResult = v.object({
 	)
 });
 
-export const vMandateSetupResult = v.object({
-	mandateId: v.id('mandates'),
+// Stored results of the retired Prava mandate tools.
+const vMandateSetupResult = v.object({
+	mandateId: v.string(),
 	approvalUrl: v.string(),
 	expiresAt: v.string()
 });
 
-export const vMandateStatusResult = v.object({
-	mandateId: v.id('mandates'),
+const vMandateStatusResult = v.object({
+	mandateId: v.string(),
 	pravaMandateId: v.optional(v.string()),
-	status: vMandateStatus,
-	// Optional for older persisted executor job results that predate the field.
+	status: v.string(),
 	description: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
-	/** Decimal string for agent/Prava wire format (e.g. "120.00"). */
 	amountCap: v.string(),
 	remaining: v.optional(v.string()),
 	currency: v.string(),
-	frequency: vMandateFrequency,
-	scope: vMandateScope,
+	frequency: v.string(),
+	scope: v.string(),
 	approvalUrl: v.optional(v.string()),
 	validUntil: v.optional(v.string()),
 	renewsAt: v.optional(v.string())
 });
 
-export const vMandateListResult = v.object({
+const vMandateListResult = v.object({
 	mandates: v.array(
 		v.object({
-			mandateId: v.optional(v.id('mandates')),
+			mandateId: v.optional(v.string()),
 			pravaMandateId: v.string(),
 			status: v.string(),
 			description: v.optional(v.string()),
@@ -503,20 +514,38 @@ export const vMandateListResult = v.object({
 	)
 });
 
-export const vMandateChargeResult = v.object({
-	chargeId: v.id('mandateCharges'),
+const vMandateChargeResult = v.object({
+	chargeId: v.string(),
 	transactionId: v.string(),
-	/** Present only on a freshly issued charge, never persisted or replayed. */
 	token: v.optional(v.string()),
 	dynamicCvv: v.optional(v.string()),
 	expiryMonth: v.optional(v.string()),
 	expiryYear: v.optional(v.string())
 });
 
-export const vMandateReportResult = v.object({
+const vMandateReportResult = v.object({
 	reported: v.boolean(),
 	alreadyReported: v.optional(v.boolean()),
 	inFlight: v.optional(v.boolean())
+});
+
+export const vCardCheckoutResult = v.object({
+	status: v.union(
+		v.literal('approved'),
+		v.literal('submitted_on_device'),
+		v.literal('declined'),
+		v.literal('expired'),
+		v.literal('card_required'),
+		v.literal('no_payment_request'),
+		v.literal('outcome_unknown')
+	),
+	purchaseId: v.optional(v.string()),
+	merchant: v.optional(v.string()),
+	reason: v.optional(v.string())
+});
+
+export const vReportOrderResult = v.object({
+	purchaseId: v.string()
 });
 
 export const vBrowserTaskResult = v.object({
@@ -773,7 +802,9 @@ export const vExecutorJobResult = v.union(
 	vMandateStatusResult,
 	vMandateListResult,
 	vMandateChargeResult,
-	vMandateReportResult
+	vMandateReportResult,
+	vCardCheckoutResult,
+	vReportOrderResult
 );
 
 export const runFinalStatus = ['cancelled', 'completed', 'failed'] as const;
@@ -797,6 +828,8 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('mandate_list'),
 	v.literal('mandate_charge'),
 	v.literal('mandate_report'),
+	v.literal('card_checkout'),
+	v.literal('report_order'),
 	v.literal('read_skill'),
 	v.literal('set_cwd'),
 	v.literal('link_prs'),

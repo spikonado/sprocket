@@ -54,7 +54,6 @@ export default defineConfig({
 					'@exalabs/convex-exa',
 					'@convex-dev/migrations',
 					'@convex-dev/aggregate',
-					'@convex-dev/action-retrier',
 					'@convex-dev/workpool',
 					'@posthog/convex'
 				]

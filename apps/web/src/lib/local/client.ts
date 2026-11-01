@@ -154,8 +154,6 @@ const displayRowSchema = z
 		kind: z.enum(['prompt', 'text', 'work', 'approval']),
 		text: z.string().optional(),
 		attachments: z.array(localTranscriptAttachmentSchema).optional(),
-		mandateId: z.string().optional(),
-		approvalUrl: z.string().optional(),
 		toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
 		unpersistedToolCallIds: z.array(z.string()).optional(),
 		closed: z.boolean().optional(),

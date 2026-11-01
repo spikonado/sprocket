@@ -15,14 +15,15 @@ import {
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
 	isAssistantResponseStreaming,
-	partitionWorkSectionTools
+	partitionWorkSectionTools,
+	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer';
 import TranscriptPromptMessage from '$lib/components/home/transcript-prompt-message';
-import MandateApprovalForm from '$lib/components/home/mandate-approval-form';
 import ReasoningDisclosure, { ReasoningText } from '$lib/components/home/reasoning-disclosure';
+import SaveCardButton from '$lib/components/home/save-card-button';
 import WorkTools from '$lib/components/home/work-tools';
 import WorkDisclosure from '$lib/components/home/work-disclosure';
 import WorkSectionDetails from '$lib/components/home/work-section-details';
@@ -32,7 +33,7 @@ import type {
 	TranscriptDetailCursor,
 	LiveTranscriptMessage
 } from '$lib/types/sprocket';
-import { mandateApprovals } from '$lib/chat/mandate';
+import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { mergeWorkToolCounts, workSummary, workToolCounts } from '$lib/chat/work-summary';
 import type {
@@ -65,6 +66,13 @@ type Props = {
 };
 
 const SCROLL_EPSILON_PX = 28;
+
+function needsSavedCard(tool: AssistantTimelineTool) {
+	return (
+		(tool.job?.kind ?? tool.name) === 'card_checkout' &&
+		jsonObjectString(tool.output, 'status') === 'card_required'
+	);
+}
 
 const HISTORY_PREFETCH_VIEWPORTS = 3;
 
@@ -212,8 +220,8 @@ export default function ThreadTranscript({
 			lastBlock: section.blocks.at(-1),
 			runningTools,
 			workInProgress,
-			approvals: settledBlocks.flatMap((block) =>
-				block.type === 'tool-group' ? mandateApprovals(block.tools) : []
+			needsSavedCard: settledBlocks.some(
+				(block) => block.type === 'tool-group' && block.tools.some(needsSavedCard)
 			),
 			toolCounts: workToolCounts(section.blocks, excludedCallIds)
 		};
@@ -588,18 +596,6 @@ export default function ThreadTranscript({
 			);
 		}
 
-		if (message.kind === 'approval') {
-			if (!message.mandateId || !message.approvalUrl) return null;
-
-			return (
-				<div key={message.id} data-transcript-anchor={message.id}>
-					<MandateApprovalForm
-						approval={{ mandateId: message.mandateId, approvalUrl: message.approvalUrl }}
-					/>
-				</div>
-			);
-		}
-
 		if (message.kind === 'text') {
 			return (
 				<div
@@ -693,9 +689,7 @@ export default function ThreadTranscript({
 										{renderWorkBlocks(work, live, summary === undefined)}
 									</WorkDisclosure>
 								) : null}
-								{work.approvals.map((approval) => (
-									<MandateApprovalForm key={approval.mandateId} approval={approval} />
-								))}
+								{work.needsSavedCard ? <SaveCardButton /> : null}
 							</div>
 						);
 					})}
