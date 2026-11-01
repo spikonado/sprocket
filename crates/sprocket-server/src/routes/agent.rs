@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, unfold};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sprocket_host::Host;
 use sprocket_host::agent_launch::{AgentLaunchRequest, LaunchError, WorkspaceAccess, launch_agent};
 use sprocket_transcript::{LiveCompletionHub, LiveCompletionOverlay, LiveCompletionWatchEvent};
@@ -57,16 +57,11 @@ impl UserScoped for TerminateCommandRequest {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct CommandsSnapshot {
-    commands: Vec<RunningCommand>,
-}
-
 /// Callers must authorize `payload.user_id` first.
 pub(crate) fn command_events(
     state: &AppState,
     payload: CommandsRequest,
-) -> BoxStream<'static, CommandsSnapshot> {
+) -> BoxStream<'static, Vec<RunningCommand>> {
     let sessions = Arc::clone(&state.host.command_sessions);
     let changes = sessions.subscribe_changes();
     unfold(
@@ -78,10 +73,10 @@ pub(crate) fn command_events(
                     .running_commands(&payload.user_id, &payload.thread_id)
                     .await;
                 if last.as_ref() != Some(&commands) {
-                    let snapshot = CommandsSnapshot {
-                        commands: commands.clone(),
-                    };
-                    return Some((snapshot, (sessions, changes, payload, Some(commands))));
+                    return Some((
+                        commands.clone(),
+                        (sessions, changes, payload, Some(commands)),
+                    ));
                 }
                 changes.changed().await.ok()?;
             }

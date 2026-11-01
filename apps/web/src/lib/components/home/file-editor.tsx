@@ -287,7 +287,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		if (!api || !active || !visible) return;
 		const target = { workspacePath: file.workspacePath, path: file.path };
 		let controller = new AbortController();
-		let stopped = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		async function watch() {
@@ -317,7 +316,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		}
 
 		rewatch.current = () => {
-			if (stopped || saves.current > 0) return;
+			if (saves.current > 0) return;
 			controller.abort();
 			clearTimeout(timer);
 			void watch();
@@ -326,7 +325,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		void watch();
 
 		return () => {
-			stopped = true;
 			rewatch.current = () => {};
 
 			controller.abort();

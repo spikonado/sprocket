@@ -814,7 +814,7 @@ describe('running command controls', () => {
 		expect(sockets[0].sent).toEqual([
 			{ type: 'subscribe', id: 1, topic: { kind: 'commands', params: scope } }
 		]);
-		sockets[0].receive({ type: 'event', id: 1, data: { commands } });
+		sockets[0].receive({ type: 'event', id: 1, data: commands });
 		sockets[0].receive({ type: 'end', id: 1 });
 		await watching;
 		expect(onEvent).toHaveBeenCalledWith(commands);

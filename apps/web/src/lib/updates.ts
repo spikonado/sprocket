@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
 import { localSocket } from '$lib/local/socket';
+import type { WatchHandlers } from '$lib/types/sprocket';
 
 export const updateStateSchema = z.object({
 	method: z.enum(['desktop', 'package']),
@@ -82,10 +83,7 @@ export async function installPackageUpdate(): Promise<UpdateState | null> {
 }
 
 /** Without a local server there is nothing to watch, so it waits for `signal` instead of returning for a retry. */
-export async function watchPackageUpdate(handlers: {
-	onEvent: (state: UpdateState) => void;
-	signal: AbortSignal;
-}): Promise<void> {
+export async function watchPackageUpdate(handlers: WatchHandlers<UpdateState>): Promise<void> {
 	const baseUrl = resolveLocalApiBaseUrl();
 
 	if (!baseUrl) {

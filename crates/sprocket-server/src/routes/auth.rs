@@ -96,22 +96,18 @@ pub(crate) async fn authorize_session_changes(
 pub(crate) fn session_change_events(
     state: &AppState,
 ) -> Result<futures::stream::BoxStream<'static, u64>, ApiError> {
-    let receiver = state.host.native_auth.subscribe_changes();
+    let mut receiver = state.host.native_auth.subscribe_changes();
+    receiver.mark_changed();
     let guard = state
         .host
         .lifetime
         .run_guard()
         .map_err(ApiError::bad_request)?;
-    let stream = futures::stream::unfold(
-        (receiver, true, guard),
-        |(mut receiver, initial, guard)| async move {
-            if !initial && receiver.changed().await.is_err() {
-                return None;
-            }
-            let generation = *receiver.borrow_and_update();
-            Some((generation, (receiver, false, guard)))
-        },
-    );
+    let stream = futures::stream::unfold((receiver, guard), |(mut receiver, guard)| async move {
+        receiver.changed().await.ok()?;
+        let generation = *receiver.borrow_and_update();
+        Some((generation, (receiver, guard)))
+    });
     Ok(futures::StreamExt::boxed(stream))
 }
 

@@ -109,16 +109,14 @@ const projectAttachmentSchema = z.object({
 	unavailableReason: z.string().optional()
 });
 
-const runningCommandsSchema = z.object({
-	commands: z.array(
-		z.object({
-			sessionId: z.string(),
-			command: z.string(),
-			workdir: z.string(),
-			startedAt: z.number()
-		})
-	)
-});
+const runningCommandsSchema = z.array(
+	z.object({
+		sessionId: z.string(),
+		command: z.string(),
+		workdir: z.string(),
+		startedAt: z.number()
+	})
+);
 
 const agentRunStartSchema = z.object({
 	runId: z.string(),
@@ -559,9 +557,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				{ kind: 'commands', params: requestBody },
 				runningCommandsSchema,
 				handlers.signal,
-				({ commands }) => {
-					handlers.onEvent(commands);
-				}
+				handlers.onEvent
 			),
 		terminateCommand: (input) =>
 			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {

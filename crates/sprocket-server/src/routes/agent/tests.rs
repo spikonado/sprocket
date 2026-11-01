@@ -101,8 +101,8 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         serde_json::from_value(serde_json::json!({ "userId": "user", "threadId": "thread" }))
             .unwrap(),
     );
-    let listed = serde_json::to_value(commands.next().await.unwrap()).unwrap();
-    assert_eq!(listed["commands"][0]["sessionId"], session_id);
+    let listed = commands.next().await.unwrap();
+    assert_eq!(listed[0].session_id, session_id);
     let terminated = router
         .oneshot(make_request(
             "/api/agent/commands/terminate",
@@ -124,7 +124,7 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         .await
         .unwrap()
         .unwrap();
-    assert!(listed.commands.is_empty());
+    assert!(listed.is_empty());
     state.host.command_sessions.stop_all().await;
     std::fs::remove_dir_all(root).unwrap();
 }

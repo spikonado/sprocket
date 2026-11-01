@@ -210,16 +210,13 @@ impl PackageUpdateManager {
     /// Yields the current snapshot, then every change. While the stream is
     /// held, it re-runs the freshness check that `status` performs.
     pub fn watch(self: &Arc<Self>) -> BoxStream<'static, PackageUpdateSnapshot> {
-        let snapshots = stream::unfold(
-            (self.changes.subscribe(), true),
-            |(mut changes, first)| async move {
-                if !first && changes.changed().await.is_err() {
-                    return None;
-                }
-                let snapshot = changes.borrow_and_update().clone();
-                Some((Some(snapshot), (changes, false)))
-            },
-        );
+        let mut changes = self.changes.subscribe();
+        changes.mark_changed();
+        let snapshots = stream::unfold(changes, |mut changes| async move {
+            changes.changed().await.ok()?;
+            let snapshot = changes.borrow_and_update().clone();
+            Some((Some(snapshot), changes))
+        });
         let mut interval = tokio::time::interval(self.failure_ttl);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let checks = stream::unfold(

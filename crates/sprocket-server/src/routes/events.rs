@@ -112,21 +112,25 @@ async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
     let shutdown = state.host.lifetime.shutdown.clone();
     let mut ping = tokio::time::interval(PING_INTERVAL);
     let mut auth_recheck = tokio::time::interval(AUTH_RECHECK_INTERVAL);
-    loop {
-        let recheck = tokio::select! {
+    'serve: loop {
+        tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = ping.tick() => {
                 if sink.send(Message::Ping(Default::default())).await.is_err() {
                     break;
                 }
-                false
             }
-            _ = auth_recheck.tick() => true,
+            _ = auth_recheck.tick() => {
+                for message in revoke_unauthorized(&state, &headers, &mut subscriptions).await {
+                    if sink.send(encode(&message)).await.is_err() {
+                        break 'serve;
+                    }
+                }
+            }
             Some(message) = queued.recv() => {
                 if sink.send(message).await.is_err() {
                     break;
                 }
-                false
             }
             message = incoming.next() => {
                 let Some(Ok(message)) = message else { break };
@@ -136,7 +140,6 @@ async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
                     _ => continue,
                 };
                 let Ok(request) = request else { break };
-                subscriptions.retain(|_, (_, task)| !task.is_finished());
                 match request {
                     ClientMessage::Subscribe { id, topic } => {
                         let task = tokio::spawn(forward(
@@ -156,19 +159,6 @@ async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
                         }
                     }
                 }
-                false
-            }
-        };
-        if recheck {
-            let mut closed = false;
-            for message in revoke_unauthorized(&state, &headers, &mut subscriptions).await {
-                if sink.send(encode(&message)).await.is_err() {
-                    closed = true;
-                    break;
-                }
-            }
-            if closed {
-                break;
             }
         }
     }
