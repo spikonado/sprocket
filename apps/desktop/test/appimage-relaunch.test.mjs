@@ -53,14 +53,6 @@ function flagValue(prefix) {
 	return arg?.slice(prefix.length) ?? null;
 }
 
-function execEnv() {
-	const env = { ...process.env };
-	delete env.NODE_TEST_CONTEXT;
-	delete env.NODE_CHANNEL_FD;
-
-	return env;
-}
-
 const role = flagValue(rolePrefix);
 
 if (role === 'original-app') {
@@ -114,10 +106,7 @@ test(
 		const { stdout, stderr } = await exec(
 			process.execPath,
 			[testFile, `${rolePrefix}original-app`],
-			{
-				timeout: 5000,
-				env: execEnv()
-			}
+			{ timeout: 5000 }
 		);
 
 		assert.ok(stdout, stderr || 'replacement produced no output');
