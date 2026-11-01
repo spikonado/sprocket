@@ -173,11 +173,51 @@ export const vLinkPrsPayload = v.object({
 	pullRequests: v.array(v.object({ repository: v.string(), number: v.number() }))
 });
 
+export const vPollPrPayload = v.object({
+	repository: v.string(),
+	number: v.number(),
+	cursor: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
 export const vPullRequestState = v.union(
 	v.literal('open'),
 	v.literal('closed'),
 	v.literal('merged')
 );
+
+export const vPollPrResult = v.object({
+	changes: v.array(
+		v.union(
+			v.literal('merged'),
+			v.literal('closed'),
+			v.literal('checksFailed'),
+			v.literal('checksFinished'),
+			v.literal('conflicting'),
+			v.literal('newComments')
+		)
+	),
+	cursor: v.string(),
+	state: vPullRequestState,
+	headSha: v.string(),
+	conflicting: v.union(v.boolean(), v.null()),
+	checks: v.object({
+		passed: v.number(),
+		pending: v.array(v.string()),
+		failed: v.array(v.object({ name: v.string(), url: v.optional(v.string()) }))
+	}),
+	newComments: v.optional(
+		v.array(
+			v.object({
+				author: v.string(),
+				path: v.optional(v.string()),
+				body: v.string(),
+				url: v.string()
+			})
+		)
+	),
+	moreNewComments: v.optional(v.number())
+});
 
 export const vLinkedPullRequest = v.object({
 	repository: v.string(),
@@ -335,6 +375,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vReadSkillPayload,
 	vSetCwdPayload,
 	vLinkPrsPayload,
+	vPollPrPayload,
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
@@ -765,6 +806,7 @@ export const vExecutorJobResult = v.union(
 	vArtifactResult,
 	vListArtifactsResult,
 	vListConnectorsResult,
+	vPollPrResult,
 	vBrowserTaskResult,
 	vBrowserScreenshotResult,
 	vCachedBrowserScreenshotResult,
@@ -800,6 +842,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('read_skill'),
 	v.literal('set_cwd'),
 	v.literal('link_prs'),
+	v.literal('poll_pr'),
 	v.literal('parse_file'),
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),

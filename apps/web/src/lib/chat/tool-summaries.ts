@@ -35,6 +35,8 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Controlled Subagents';
 		case 'poll_subagent':
 			return 'Polled Subagents';
+		case 'poll_pr':
+			return 'Polled PRs';
 		case 'list_subagents':
 			return 'Listed Subagents';
 		case 'list_subagent_models':
@@ -181,6 +183,10 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 						)
 						.join(', ')
 				: 'Pull requests';
+		case 'poll_pr':
+			return fields?.repository && fields.number
+				? `${String(fields.repository)}#${String(fields.number)}`
+				: 'Pull request';
 		case 'update_artifact':
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':

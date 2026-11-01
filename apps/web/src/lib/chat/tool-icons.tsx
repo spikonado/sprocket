@@ -81,6 +81,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'set_cwd':
 			return FolderOpen;
 		case 'link_prs':
+		case 'poll_pr':
 			return GitPullRequest;
 		case 'list_connectors':
 			return Plug;

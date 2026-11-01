@@ -29,6 +29,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "mandate_status",
     "parse_file",
     "poll_cmd",
+    "poll_pr",
     "poll_question",
     "poll_subagent",
     "read_skill",
