@@ -421,6 +421,13 @@ async fn find_user_kicad(root: &Path) -> Option<PathBuf> {
         })
         .unwrap_or_default();
     for cli in on_path.into_iter().chain(installed_kicad_clis()) {
+        // Launchers find the KiCad install from the CLI's real location. Windows installs
+        // aren't symlinked, and canonicalizing there would give `\\?\` paths.
+        let cli = if cfg!(windows) {
+            cli
+        } else {
+            fs::canonicalize(&cli).unwrap_or(cli)
+        };
         if cli.is_file() && !cli.starts_with(root) && supports_kipy(&cli).await {
             return Some(cli);
         }
@@ -614,20 +621,15 @@ fn kicad_config_dir((major, minor): (u32, u32)) -> anyhow::Result<PathBuf> {
     Ok(base.join("kicad").join(version))
 }
 
-/// Library table templates of the KiCad that `cli` belongs to, also following a symlinked `cli`.
+/// Library table templates of the KiCad that `cli` belongs to.
 fn template_dir(cli: &Path) -> Option<PathBuf> {
-    [Some(cli.to_owned()), fs::canonicalize(cli).ok()]
-        .into_iter()
-        .flatten()
-        .filter_map(|cli| {
-            let prefix = cli.parent()?.parent()?.to_owned();
-            Some(if cfg!(target_os = "macos") {
-                prefix.join("SharedSupport/template")
-            } else {
-                prefix.join("share/kicad/template")
-            })
-        })
-        .find(|dir| dir.is_dir())
+    let prefix = cli.parent()?.parent()?;
+    let dir = if cfg!(target_os = "macos") {
+        prefix.join("SharedSupport/template")
+    } else {
+        prefix.join("share/kicad/template")
+    };
+    dir.is_dir().then_some(dir)
 }
 
 /// Gives a fresh KiCad config the default library tables, so it doesn't stop at a setup

@@ -190,13 +190,26 @@ function readAt(fd, offset, length) {
 // so this checks that the signed code directory covers the whole image and its trailer.
 async function verifyDmg(dmg) {
 	const info = run('rcodesign', ['print-signature-info', dmg]);
-	const leaf = info.split('- subject: ').find((certificate) => certificate.includes(APPLE_SIGNER));
+	const [certificates, signers] = info.split('\n          signers:\n');
+	const bag = certificates.split('- subject: ').slice(1);
 
-	const signer = info.match(
-		/ {10}signers:\n\s+- issuer: CN=Developer ID Certification Authority[^\n]*\n[\s\S]*?message_digest: ([0-9a-f]+)[\s\S]*?signature_verifies: (\w+)/
+	const isKiCad = (certificate) =>
+		certificate.includes(APPLE_SIGNER) && certificate.includes('chains_to_apple_root_ca: true');
+
+	const signer = signers?.match(
+		/^\s+- issuer: [^\n]*\n[\s\S]*?message_digest: ([0-9a-f]+)[\s\S]*?signature_verifies: (\w+)/
 	);
 
-	if (!leaf?.includes('chains_to_apple_root_ca: true') || signer?.[2] !== 'true') {
+	// rcodesign verifies the signature only against certificates in the bag, so allowing just
+	// Apple CAs and KiCad's certificate there ties the signer to KiCad.
+	if (
+		!bag.some(isKiCad) ||
+		!bag.every(
+			(certificate) =>
+				isKiCad(certificate) || /is_apple_(root|intermediate)_ca: true/.test(certificate)
+		) ||
+		signer?.[2] !== 'true'
+	) {
 		throw new Error(`${basename(dmg)} is not signed by ${APPLE_SIGNER}`);
 	}
 
