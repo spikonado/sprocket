@@ -218,12 +218,16 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		// Snapshots read before the write lands would undo the save.
 		saves.current++;
 
+		let landed = false;
+
 		try {
 			const result = await api.writeWorkspaceFile({
 				...file,
 				content: doc.toString(),
 				expectedVersion: overwrite ? null : version.current
 			});
+
+			landed = true;
 
 			if (result.status === 'conflict') {
 				setDiskVersion(result.version);
@@ -240,7 +244,9 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 			setNotice(error instanceof Error ? error.message : 'Could not save the file.');
 		} finally {
 			saves.current--;
-			rewatch.current();
+
+			// A fresh snapshot would clear the error of a failed save.
+			if (landed) rewatch.current();
 		}
 	}
 
