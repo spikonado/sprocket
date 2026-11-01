@@ -21,7 +21,7 @@ Fill the store's checkout form in the browser. In the card fields, type the plac
 - Any future expiry, such as `12/34`
 - Any CVC, such as `123`
 
-Use the store's guest checkout when it has one. Hand off to the user for account logins, CAPTCHAs, and 3-D Secure screens.
+Use the store's guest checkout when it has one. Hand off to the user for account logins and 3-D Secure screens.
 
 Done when: the page shows the final total and a Pay / Place order button, and nothing else is left to fill.
 

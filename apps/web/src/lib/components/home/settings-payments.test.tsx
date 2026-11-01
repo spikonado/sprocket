@@ -49,11 +49,12 @@ async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => 
 it('lists saved cards and purchases and opens a purchase thread', async () => {
 	const onOpenThread = vi.fn(async () => {});
 	await mount(new ConvexTestClient(), onOpenThread);
-	expect(await screen.findByText('visa •••• 4242')).toBeTruthy();
-	expect(screen.getByText('Expires 04/2030')).toBeTruthy();
+	expect(await screen.findByText('•••• 4242')).toBeTruthy();
+	expect(screen.getByText('visa')).toBeTruthy();
+	expect(screen.getByText('Expires 04/30')).toBeTruthy();
 	expect(screen.getByText('$23.06')).toBeTruthy();
-	expect(screen.getByText('Order 112-7', { exact: false })).toBeTruthy();
-	fireEvent.click(screen.getByRole('button', { name: 'Open thread' }));
+	expect(screen.getByText('Order 112-7')).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'View thread' }));
 	expect(onOpenThread).toHaveBeenCalledWith(threadId);
 });
 

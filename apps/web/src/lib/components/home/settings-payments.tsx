@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { MessageSquare } from 'lucide-react';
 import { useAction, useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
@@ -7,19 +8,22 @@ import type { PurchaseStatus } from '@convex/lib/validators';
 import SaveCardButton from '$lib/components/home/save-card-button';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { formatMinorAmount } from '$lib/format';
+import { cn } from '$lib/utils';
 
 type Card = FunctionReturnType<typeof api.payments.myPayments>['cards'][number];
 
-const statusLabels: Record<PurchaseStatus, string> = {
-	awaiting_approval: 'Awaiting approval',
-	approved: 'Approved',
-	submitted_on_device: 'Submitted on device',
-	declined: 'Declined',
-	expired: 'Expired',
-	settled: 'Completed'
+const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
+	awaiting_approval: { label: 'Awaiting approval', dot: 'bg-amber-500' },
+	approved: { label: 'Approved', dot: 'bg-emerald-500' },
+	submitted_on_device: { label: 'Finishing on your device', dot: 'bg-accent-strong' },
+	declined: { label: 'Declined', dot: 'bg-destructive' },
+	expired: { label: 'Expired', dot: 'bg-muted-foreground/50' },
+	settled: { label: 'Completed', dot: 'bg-emerald-500' }
 };
 
-const sectionLabelClass = 'text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase';
+const sectionHeadingClass = 'text-foreground text-[15px] font-medium tracking-[-0.01em]';
+
+const paymentCardClass = 'aspect-[1.586] w-52 rounded-xl';
 
 const purchaseDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
@@ -80,67 +84,100 @@ export default function SettingsPayments({
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-				<div className="max-w-xl space-y-10">
+				<div className="max-w-2xl space-y-12">
 					<div>
-						<p className={sectionLabelClass}>Cards</p>
-						<p className="text-muted-foreground mt-2 text-sm leading-6">
-							You approve every purchase with your passkey through Agentcard.
-						</p>
-						{cardsError && <p className="text-destructive mt-3 text-sm">{cardsError}</p>}
-						{cards === null ? null : cards.length === 0 ? (
-							<p className="text-muted-foreground mt-3 text-sm leading-6">No cards saved yet.</p>
+						<div className="flex items-start justify-between gap-4">
+							<div>
+								<h2 className={sectionHeadingClass}>Cards</h2>
+								<p className="text-muted-foreground mt-1 text-sm leading-6">
+									Your agent pays with these. You approve every purchase with your passkey.
+								</p>
+							</div>
+							<div className="shrink-0">
+								<SaveCardButton label="Add a card" />
+							</div>
+						</div>
+						{cardsError && <p className="text-destructive mt-4 text-sm">{cardsError}</p>}
+						{cards === null ? (
+							!cardsError && (
+								<div className={cn(paymentCardClass, 'bg-hover-fill mt-5')} aria-hidden="true" />
+							)
+						) : cards.length === 0 ? (
+							<p className="border-border text-muted-foreground mt-4 rounded-xl border border-dashed px-5 py-6 text-sm leading-6">
+								No cards yet. Add one so your agent can pay at checkout.
+							</p>
 						) : (
-							<ul className="mt-3 space-y-1">
+							<ul className="mt-5 flex flex-wrap gap-4">
 								{cards.map((card) => (
-									<li key={card.id} className="flex items-baseline justify-between gap-3 py-2">
-										<p className="text-foreground text-[14px] capitalize">
-											{card.brand} •••• {card.last4}
-										</p>
-										<p className="text-muted-foreground shrink-0 text-[12px]">
-											Expires {String(card.expiryMonth).padStart(2, '0')}/{card.expiryYear}
-										</p>
+									<li
+										key={card.id}
+										className={cn(
+											paymentCardClass,
+											'flex flex-col justify-between bg-[linear-gradient(135deg,oklch(0.34_0.03_250),oklch(0.2_0.02_260))] p-4 text-white shadow-[0_14px_30px_-18px_oklch(0.18_0.02_260/0.7)] ring-1 ring-white/10'
+										)}
+									>
+										<p className="text-[13px] font-semibold capitalize">{card.brand}</p>
+										<div>
+											<p className="text-[17px] tracking-[0.08em] tabular-nums">
+												•••• {card.last4}
+											</p>
+											<p className="mt-1 text-[11px] tabular-nums opacity-70">
+												Expires {String(card.expiryMonth).padStart(2, '0')}/
+												{String(card.expiryYear).slice(-2)}
+											</p>
+										</div>
 									</li>
 								))}
 							</ul>
 						)}
-						<div className="mt-4">
-							<SaveCardButton label="Add a card" />
-						</div>
 					</div>
 
 					<div>
-						<p className={sectionLabelClass}>Purchases</p>
+						<h2 className={sectionHeadingClass}>Purchases</h2>
 						{purchases.status === 'error' && (
-							<p className="text-destructive mt-3 text-sm">
+							<p className="text-destructive mt-4 text-sm">
 								{errorMessage(purchases.error, 'Couldn’t load purchases.')}
 							</p>
 						)}
-						{openError && <p className="text-destructive mt-3 text-sm">{openError}</p>}
+						{openError && <p className="text-destructive mt-4 text-sm">{openError}</p>}
 						{purchases.status === 'success' &&
 							(purchases.data.length === 0 ? (
-								<p className="text-muted-foreground mt-3 text-sm leading-6">No purchases yet.</p>
+								<p className="text-muted-foreground mt-1 text-sm leading-6">
+									Things your agent buys show up here.
+								</p>
 							) : (
-								<ul className="mt-3 space-y-1">
+								<ul className="border-border bg-surface divide-border mt-4 divide-y rounded-xl border">
 									{purchases.data.map((purchase) => (
-										<li key={purchase._id} className="py-2">
-											<div className="flex items-baseline justify-between gap-3">
-												<p className="text-foreground truncate text-[14px]">{purchase.merchant}</p>
-												<p className="text-foreground shrink-0 text-[14px] tabular-nums">
-													{formatMinorAmount(purchase.amount, purchase.currency)}
-												</p>
+										<li key={purchase._id} className="flex items-center gap-4 px-4 py-3.5">
+											<div className="min-w-0 flex-1">
+												<div className="flex items-baseline justify-between gap-3">
+													<p className="text-foreground truncate text-[14px] font-medium">
+														{purchase.merchant}
+													</p>
+													<p className="text-foreground shrink-0 text-[14px] font-medium tabular-nums">
+														{formatMinorAmount(purchase.amount, purchase.currency)}
+													</p>
+												</div>
+												<div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
+													<span className="text-foreground/80 inline-flex items-center gap-1.5">
+														<span
+															className={cn('size-1.5 rounded-full', statuses[purchase.status].dot)}
+															aria-hidden="true"
+														/>
+														{statuses[purchase.status].label}
+													</span>
+													{purchase.orderNumber && <span>Order {purchase.orderNumber}</span>}
+													<span>{purchaseDate.format(purchase.createdAt)}</span>
+												</div>
 											</div>
-											<p className="text-muted-foreground mt-0.5 text-[12px]">
-												{statusLabels[purchase.status]}
-												{purchase.orderNumber && <> · Order {purchase.orderNumber}</>} ·{' '}
-												{purchaseDate.format(purchase.createdAt)} ·{' '}
-												<button
-													type="button"
-													className="hover:text-foreground underline-offset-2 transition hover:underline"
-													onClick={() => void openThread(purchase.threadId)}
-												>
-													Open thread
-												</button>
-											</p>
+											<button
+												type="button"
+												className="border-border text-foreground hover:bg-hover-fill focus-visible:ring-ring/50 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none"
+												onClick={() => void openThread(purchase.threadId)}
+											>
+												<MessageSquare className="size-3.5" aria-hidden="true" />
+												View thread
+											</button>
 										</li>
 									))}
 								</ul>
