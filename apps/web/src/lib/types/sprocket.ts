@@ -317,13 +317,12 @@ export type WorkspaceSearchResult = {
 export type WorkspaceGitStatus =
 	'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'ignored';
 
-/** Directory paths end with `/`. Paths and git status are empty when `hash` matches `knownHash`. */
+/** Directory paths end with `/`. */
 export type WorkspaceFilesResult = {
 	paths: string[];
 	gitStatus: { path: string; status: WorkspaceGitStatus }[];
 	scanning: boolean;
 	truncated: boolean;
-	hash: string;
 };
 
 export type WorkspaceFileContent = {
@@ -332,6 +331,11 @@ export type WorkspaceFileContent = {
 	size: number;
 	unsupported: 'binary' | 'tooLarge' | null;
 };
+
+/** Sent when what's on disk changes; the first event is the current state. */
+export type DiskEvent<T> = ({ kind: 'snapshot' } & T) | { kind: 'error'; message: string };
+
+type DiskWatchHandlers<T> = { onEvent: (event: DiskEvent<T>) => void; signal: AbortSignal };
 
 export type WorkspaceFileWriteResult = { status: 'saved' | 'conflict'; version: string };
 
@@ -375,18 +379,18 @@ export type LocalApi = {
 		input: { workspacePath: string; query: string },
 		signal?: AbortSignal
 	) => Promise<WorkspaceSearchResult>;
-	listWorkspaceFiles: (
-		input: { workspacePath: string; knownHash?: string },
-		signal?: AbortSignal
-	) => Promise<WorkspaceFilesResult>;
+	watchWorkspaceFiles: (
+		input: { workspacePath: string },
+		handlers: DiskWatchHandlers<WorkspaceFilesResult>
+	) => Promise<void>;
 	workspaceEntryKind: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<'file' | 'directory'>;
-	readWorkspaceFile: (
+	watchWorkspaceFile: (
 		input: WorkspaceFileTarget,
-		signal?: AbortSignal
-	) => Promise<WorkspaceFileContent>;
+		handlers: DiskWatchHandlers<WorkspaceFileContent>
+	) => Promise<void>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;

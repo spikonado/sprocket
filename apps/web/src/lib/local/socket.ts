@@ -1,4 +1,8 @@
-import type { ArtifactsWatchRequest, TranscriptScopeRequest } from '$lib/types/sprocket';
+import type {
+	ArtifactsWatchRequest,
+	TranscriptScopeRequest,
+	WorkspaceFileTarget
+} from '$lib/types/sprocket';
 import { z } from 'zod';
 import { LocalResponseError } from './transport';
 
@@ -9,7 +13,9 @@ export type LocalTopic =
 	| { kind: 'commands'; params: TranscriptScopeRequest }
 	| { kind: 'authChanges' }
 	| { kind: 'browserStatus' }
-	| { kind: 'packageUpdate' };
+	| { kind: 'packageUpdate' }
+	| { kind: 'workspaceFiles'; params: { workspacePath: string } }
+	| { kind: 'workspaceFile'; params: WorkspaceFileTarget };
 
 const serverMessageSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('event'), id: z.number(), data: z.json() }),

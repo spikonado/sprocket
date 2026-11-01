@@ -22,7 +22,7 @@ use crate::AppState;
 use crate::auth::{cookie_request_is_csrf_safe, require_bootstrap_session, require_session};
 use crate::routes::api_error::ApiError;
 use crate::routes::session::UserScoped;
-use crate::routes::{agent, artifacts, auth, browser, transcript};
+use crate::routes::{agent, artifacts, auth, browser, transcript, workspace};
 
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const AUTH_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
@@ -49,6 +49,8 @@ pub(crate) enum Topic {
     AuthChanges,
     BrowserStatus,
     PackageUpdate,
+    WorkspaceFiles(workspace::WorkspaceFilesWatchRequest),
+    WorkspaceFile(workspace::WorkspaceEntryRequest),
 }
 
 impl Topic {
@@ -58,7 +60,11 @@ impl Topic {
             Self::LiveCompletion(request) => Some(request.user_id()),
             Self::Artifacts(request) => Some(request.user_id()),
             Self::Commands(request) => Some(request.user_id()),
-            Self::AuthChanges | Self::BrowserStatus | Self::PackageUpdate => None,
+            Self::AuthChanges
+            | Self::BrowserStatus
+            | Self::PackageUpdate
+            | Self::WorkspaceFiles(_)
+            | Self::WorkspaceFile(_) => None,
         }
     }
 }
@@ -278,6 +284,8 @@ pub(crate) async fn open(
         Topic::AuthChanges => json(auth::session_change_events(state)?),
         Topic::BrowserStatus => json(state.host.browsers.status_events()),
         Topic::PackageUpdate => json(state.host.package_updates.watch()),
+        Topic::WorkspaceFiles(request) => json(workspace::file_list_events(state, request)),
+        Topic::WorkspaceFile(request) => json(workspace::file_events(request)),
     })
 }
 

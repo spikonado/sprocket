@@ -9,14 +9,14 @@ import { markdownImageUrl } from '$lib/chat/markdown-images';
 import { leafName, type FileDraft } from '$lib/chat/side-panel';
 import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type FileEditorApi = Pick<LocalApi, 'readWorkspaceFile' | 'writeWorkspaceFile'>;
+export type FileEditorApi = Pick<LocalApi, 'watchWorkspaceFile' | 'writeWorkspaceFile'>;
 
 type Props = {
 	api: FileEditorApi | null;
 	file: WorkspaceFileTarget;
 	/** Read on mount; changes are reported through `onDraftChange`. */
 	draft: FileDraft | undefined;
-	/** Polls the file for outside edits while the tab is visible. */
+	/** Follows outside edits while the tab is visible. */
 	active: boolean;
 	onDraftChange: (draft: FileDraft | undefined) => void;
 };
@@ -27,7 +27,7 @@ type Status =
 	| { kind: 'unsupported'; message: string }
 	| { kind: 'error'; message: string };
 
-const DISK_POLL_MS = 2_500;
+const RECONNECT_MS = 1_000;
 
 const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg)$/i;
 
@@ -83,16 +83,18 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const viewRef = useRef<EditorView | null>(null);
 	const savedDoc = useRef<Text | null>(null);
 	const version = useRef<string | null>(null);
-	const generation = useRef(0);
+	/** The newest disk state, kept so Reload can apply it. */
+	const disk = useRef<WorkspaceFileContent | null>(null);
 	const language = useRef(new Compartment());
 	const latest = useRef({ api, file, onDraftChange });
 	latest.current = { api, file, onDraftChange };
 
 	const actions = useRef<{
 		save: (overwrite: boolean) => void;
-		sync: (force: boolean) => void;
+		absorb: (result: WorkspaceFileContent, force: boolean) => void;
+		readFailed: (message: string) => void;
 		replace: typeof replaceContent;
-	}>({ save: () => {}, sync: () => {}, replace: () => {} });
+	}>({ save: () => {}, absorb: () => {}, readFailed: () => {}, replace: () => {} });
 
 	function reportDraft() {
 		const view = viewRef.current;
@@ -160,30 +162,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		}
 	}
 
-	async function sync(force: boolean) {
-		const { api, file } = latest.current;
+	function readFailed(message: string) {
+		if (version.current === null) setStatus({ kind: 'error', message });
+		else setNotice(message);
+	}
 
-		if (!api) return;
-
-		const started = ++generation.current;
-
-		let result: WorkspaceFileContent;
-
-		try {
-			result = await api.readWorkspaceFile(file);
-		} catch (error) {
-			if (started !== generation.current) return;
-
-			const message = error instanceof Error ? error.message : 'Could not read the file.';
-
-			if (version.current === null) setStatus({ kind: 'error', message });
-			else setNotice(message);
-
-			return;
-		}
-
-		if (started !== generation.current) return;
-
+	function absorb(result: WorkspaceFileContent, force: boolean) {
 		const view = viewRef.current;
 		const hasEdits = !!view && !!savedDoc.current && !view.state.doc.eq(savedDoc.current);
 
@@ -226,8 +210,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 		const doc = view.state.doc;
 
-		generation.current++;
-
 		try {
 			const result = await api.writeWorkspaceFile({
 				...file,
@@ -241,8 +223,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 				return;
 			}
 
-			// Reads that overlapped the write may carry the old content.
-			generation.current++;
 			savedDoc.current = doc;
 			version.current = result.version;
 			setDiskVersion(null);
@@ -255,7 +235,8 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 	actions.current = {
 		save: (overwrite) => void save(overwrite),
-		sync: (force) => void sync(force),
+		absorb,
+		readFailed,
 		replace: replaceContent
 	};
 
@@ -282,20 +263,44 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	}, []);
 
 	useEffect(() => {
-		actions.current.sync(false);
-
 		if (viewRef.current) void loadLanguage(viewRef.current);
 	}, [file.workspacePath, file.path]);
 
 	useEffect(() => {
-		if (!active) return;
+		if (!api || !active) return;
+		const target = { workspacePath: file.workspacePath, path: file.path };
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
 
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') actions.current.sync(false);
-		}, DISK_POLL_MS);
+		async function watch() {
+			try {
+				await api!.watchWorkspaceFile(target, {
+					signal: controller.signal,
+					onEvent: (event) => {
+						if (event.kind === 'error') return actions.current.readFailed(event.message);
+						disk.current = event;
+						actions.current.absorb(event, false);
+					}
+				});
+			} catch (error) {
+				if (!controller.signal.aborted) {
+					actions.current.readFailed(
+						error instanceof Error ? error.message : 'Could not read the file.'
+					);
+				}
+			}
 
-		return () => clearInterval(timer);
-	}, [active]);
+			if (!controller.signal.aborted) timer = setTimeout(watch, RECONNECT_MS);
+		}
+
+		void watch();
+
+		return () => {
+			controller.abort();
+			clearTimeout(timer);
+			disk.current = null;
+		};
+	}, [api, active, file.workspacePath, file.path]);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -307,7 +312,9 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 					<span className="min-w-0 flex-1">This file changed on disk while you were editing.</span>
 					<button
 						type="button"
-						onClick={() => actions.current.sync(true)}
+						onClick={() => {
+							if (disk.current) actions.current.absorb(disk.current, true);
+						}}
 						className="hover:bg-hover-fill shrink-0 rounded px-2 py-0.5 font-medium"
 					>
 						Reload

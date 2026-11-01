@@ -61,8 +61,7 @@ const workspaceFilesResultSchema = z.object({
 		})
 	),
 	scanning: z.boolean(),
-	truncated: z.boolean(),
-	hash: z.string()
+	truncated: z.boolean()
 });
 
 const workspaceFileContentSchema = z.object({
@@ -71,6 +70,18 @@ const workspaceFileContentSchema = z.object({
 	size: z.number(),
 	unsupported: z.enum(['binary', 'tooLarge']).nullable()
 });
+
+const diskErrorSchema = z.object({ kind: z.literal('error'), message: z.string() });
+
+const workspaceFilesEventSchema = z.discriminatedUnion('kind', [
+	workspaceFilesResultSchema.extend({ kind: z.literal('snapshot') }),
+	diskErrorSchema
+]);
+
+const workspaceFileEventSchema = z.discriminatedUnion('kind', [
+	workspaceFileContentSchema.extend({ kind: z.literal('snapshot') }),
+	diskErrorSchema
+]);
 
 const workspaceFileWriteResultSchema = z.object({
 	status: z.enum(['saved', 'conflict']),
@@ -470,12 +481,13 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(input),
 				signal
 			}),
-		listWorkspaceFiles: (input, signal) =>
-			request('/api/workspace/files', workspaceFilesResultSchema, {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			}),
+		watchWorkspaceFiles: (input, handlers) =>
+			socket.subscribe(
+				{ kind: 'workspaceFiles', params: input },
+				workspaceFilesEventSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		workspaceEntryKind: async (input, signal) => {
 			const { kind } = await request('/api/workspace/entry', workspaceEntrySchema, {
 				method: 'POST',
@@ -485,12 +497,13 @@ export function createLocalClient(baseUrl: string): LocalApi {
 
 			return kind;
 		},
-		readWorkspaceFile: (input, signal) =>
-			request('/api/workspace/file/read', workspaceFileContentSchema, {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			}),
+		watchWorkspaceFile: (input, handlers) =>
+			socket.subscribe(
+				{ kind: 'workspaceFile', params: input },
+				workspaceFileEventSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
 				method: 'POST',
