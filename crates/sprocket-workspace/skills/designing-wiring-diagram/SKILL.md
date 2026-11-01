@@ -1,9 +1,9 @@
 ---
-name: designing-electrical-schematic
-description: 'Use when drawing the schematic for the electronics of a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `working-with-kicad`.'
+name: designing-wiring-diagram
+description: 'Use when designing the wiring diagram for a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `working-with-kicad`.'
 ---
 
-Write the schematic as a React artifact (`$making-artifacts-and-visuals`): a component `App` that returns one `<svg>`. Start from the sample below and adapt the circuit to the project's parts.
+Write the wiring diagram as a React artifact (`$making-artifacts-and-visuals`): a component `App` that returns one `<svg>`. Start from the sample below and adapt the circuit to the project's parts.
 
 ```jsx
 function App() {
@@ -326,9 +326,9 @@ function App() {
 }
 ```
 
-## Schematic sheet conventions
+## Diagram conventions
 
-These make the sheet read like a CAD schematic instead of a block diagram.
+These make the diagram read like a CAD drawing instead of a block diagram.
 
 - **Pin names inside, net names outside.** Inside each component box, small text at the pin edge carries the component's own pin name (`GPIO12`, `PWMA`, `VIN`). The wire stub outside carries only the net name (`L_PWM`, `VBAT`).
 - **Label-based wiring.** Connect blocks with matched net labels on short stubs. Route long wires only for tight physical runs, such as driver to motor terminals. Draw power rails as labeled taps (`VBAT`, `+5V`, `3V3`). Give each ground pin its own ground symbol, all on one common ground.

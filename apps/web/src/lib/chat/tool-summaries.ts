@@ -49,6 +49,8 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Updated Artifact';
 		case 'list_artifacts':
 			return 'Listed Artifacts';
+		case 'list_connectors':
+			return 'Listed Connectors';
 		case 'save_artifact':
 			return 'Saved Artifact';
 		case 'delete_artifact':
@@ -121,6 +123,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return summarizeArtifactTool(input);
 		case 'list_artifacts':
 			return 'Artifacts';
+		case 'list_connectors':
+			return 'Connectors';
 		case 'exec_command':
 		case 'exec_cmd': {
 			const cmd = jsonString(fields?.cmd);

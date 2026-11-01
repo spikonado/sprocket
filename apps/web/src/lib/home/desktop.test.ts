@@ -82,7 +82,10 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		selectChatGptAccount: unusedDesktopCall,
 		disconnectChatGptAccount: unusedDesktopCall,
 		fetchGitHubStatus: unusedDesktopCall,
-		updateGitHubSettings: unusedDesktopCall
+		updateGitHubSettings: unusedDesktopCall,
+		fetchConnectors: unusedDesktopCall,
+		installConnector: unusedDesktopCall,
+		uninstallConnector: unusedDesktopCall
 	};
 }
 

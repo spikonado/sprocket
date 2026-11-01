@@ -1,0 +1,12 @@
+diff --git a/kipy/server.py b/kipy/server.py
+index dd11ee6..5e84b51 100644
+--- a/kipy/server.py
++++ b/kipy/server.py
+@@ -90,4 +90,7 @@ def _find_windows_kicad_cli() -> str | None:
+ def find_kicad_cli(hint: str | None = None) -> str:
+     """Find a kicad-cli executable for the current platform."""
++    if hint is None:
++        hint = os.environ.get("KICAD_CLI_PATH")
++
+     if hint is not None:
+         hinted = Path(hint).expanduser().resolve()

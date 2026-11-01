@@ -712,6 +712,10 @@ export const vListArtifactsResult = v.object({
 	)
 });
 
+const vListConnectorsResult = v.object({
+	connectors: v.array(v.object({ name: v.string(), version: v.string() }))
+});
+
 const vParsedFileSource = v.union(
 	v.object({ type: v.literal('path'), path: v.string() }),
 	v.object({ type: v.literal('url'), url: v.string() })
@@ -760,6 +764,7 @@ export const vExecutorJobResult = v.union(
 	vWebSearchResult,
 	vArtifactResult,
 	vListArtifactsResult,
+	vListConnectorsResult,
 	vBrowserTaskResult,
 	vBrowserScreenshotResult,
 	vCachedBrowserScreenshotResult,
@@ -803,6 +808,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('poll_cmd'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
+	v.literal('list_connectors'),
 	v.literal('list_subagent_models'),
 	v.literal('list_subagents'),
 	v.literal('edit_artifact'),

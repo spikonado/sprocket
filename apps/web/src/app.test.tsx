@@ -144,6 +144,9 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		disconnectChatGptAccount: unused,
 		fetchGitHubStatus: unused,
 		updateGitHubSettings: unused,
+		fetchConnectors: unused,
+		installConnector: unused,
+		uninstallConnector: unused,
 		...overrides
 	};
 }

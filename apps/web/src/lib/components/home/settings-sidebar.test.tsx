@@ -28,6 +28,7 @@ it('keeps settings navigation and theme controls without an inbox close button',
 		'Providers',
 		'BYOK/BYOS',
 		'Version Control',
+		'Connectors',
 		'Payments'
 	]);
 	fireEvent.click(screen.getByRole('button', { name: 'Switch to light mode' }));

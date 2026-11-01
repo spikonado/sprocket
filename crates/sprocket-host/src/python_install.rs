@@ -51,21 +51,25 @@ impl PythonTools {
         self.python_dir.join("bin")
     }
 
-    async fn ensure_installed(&self) -> anyhow::Result<()> {
+    pub(crate) fn python(&self) -> PathBuf {
+        self.python_bin_dir()
+            .join(format!("python{}", std::env::consts::EXE_SUFFIX))
+    }
+
+    pub(crate) fn uv(&self) -> PathBuf {
+        self.uv
+            .bin_dir()
+            .join(format!("uv{}", std::env::consts::EXE_SUFFIX))
+    }
+
+    pub(crate) async fn ensure_installed(&self) -> anyhow::Result<()> {
         let mut ready = self.ready.lock().await;
-        let python = self
-            .python_bin_dir()
-            .join(format!("python{}", std::env::consts::EXE_SUFFIX));
-        if *ready && tokio::fs::metadata(&python).await.is_ok() {
+        if *ready && tokio::fs::metadata(self.python()).await.is_ok() {
             return Ok(());
         }
         self.uv.ensure_installed().await?;
-        let uv = self
-            .uv
-            .bin_dir()
-            .join(format!("uv{}", std::env::consts::EXE_SUFFIX));
         // uv locks its install dir, so concurrent servers sharing the data dir are safe.
-        let install = tokio::process::Command::new(uv)
+        let install = tokio::process::Command::new(self.uv())
             .args(["python", "install", PYTHON_VERSION, "--default"])
             .args(["--no-registry", "--no-config", "--install-dir"])
             .arg(self.python_dir.join("installs"))

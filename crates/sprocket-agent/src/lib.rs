@@ -24,7 +24,7 @@ pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use sprocket_convex::AuthTokenFetcher;
 pub use types::CompletionProvider;
 pub use types::RunAgentRequest;
-pub use types::{ChatGptAccess, ChatGptCredentials};
+pub use types::{ChatGptAccess, ChatGptCredentials, InstalledConnector, InstalledConnectors};
 
 pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};

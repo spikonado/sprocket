@@ -14,6 +14,7 @@ import {
 	Hourglass,
 	ListChecks,
 	NotebookPen,
+	Plug,
 	ScrollText,
 	Save,
 	Search,
@@ -81,6 +82,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return FolderOpen;
 		case 'link_prs':
 			return GitPullRequest;
+		case 'list_connectors':
+			return Plug;
 		case 'edit_artifact':
 		case 'list_artifacts':
 		case 'update_artifact':

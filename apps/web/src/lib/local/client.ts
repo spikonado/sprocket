@@ -267,6 +267,14 @@ const gitHubStatusSchema = z.object({
 	)
 });
 
+const connectorStatusSchema = z.object({
+	id: z.literal('kicad'),
+	name: z.string(),
+	state: z.enum(['notInstalled', 'installing', 'failed', 'installed']),
+	error: z.string().nullable(),
+	updateAvailable: z.boolean()
+});
+
 const chatGptBrowserLoginResultSchema = z.object({
 	status: z.enum(['pending', 'complete', 'error']),
 	error: z.string().optional()
@@ -734,6 +742,21 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			await request('/api/github/settings', gitHubStatusSchema, {
 				method: 'POST',
 				body: JSON.stringify({ userId, ...update })
+			}),
+		fetchConnectors: async (userId) =>
+			await request(
+				`/api/connectors?${new URLSearchParams({ userId }).toString()}`,
+				z.array(connectorStatusSchema)
+			),
+		installConnector: async (userId, id) =>
+			await request(`/api/connectors/${id}/install`, connectorStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		uninstallConnector: async (userId, id) =>
+			await request(`/api/connectors/${id}/uninstall`, connectorStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
 			})
 	};
 }

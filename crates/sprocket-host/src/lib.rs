@@ -11,6 +11,7 @@ pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
 pub mod github_settings;
+pub mod kicad_connector;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
@@ -41,6 +42,7 @@ use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_settings::GitHubSettingsStore;
+use crate::kicad_connector::KiCadConnector;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
 use crate::machines::MachineManager;
@@ -88,6 +90,7 @@ pub struct Host {
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
+    pub kicad: Arc<KiCadConnector>,
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
     python: Arc<PythonTools>,
@@ -123,6 +126,7 @@ impl Host {
             Arc::clone(&native_auth),
         );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
+        let python = Arc::new(PythonTools::new(data_dir)?);
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
@@ -153,9 +157,10 @@ impl Host {
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
+            kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
-            python: Arc::new(PythonTools::new(data_dir)?),
+            python,
         })
     }
 
@@ -165,6 +170,7 @@ impl Host {
         self.bun.prepare();
         self.desktop.prepare();
         self.python.prepare();
+        self.kicad.prepare();
     }
 
     /// The environment that puts agents' pinned tools on their `PATH`.
@@ -172,7 +178,11 @@ impl Host {
         append_path(
             prepend_path(
                 self.browsers.environment(),
-                [self.bun.bin_dir(), self.desktop.bin_dir()],
+                [
+                    self.kicad.bin_dir(),
+                    self.bun.bin_dir(),
+                    self.desktop.bin_dir(),
+                ],
             ),
             self.python.bin_dirs(),
         )
