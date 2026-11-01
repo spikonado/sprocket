@@ -18,7 +18,9 @@ export default function KicadReference({
 	imageScope?: MarkdownImageScope;
 }) {
 	const fileLinks = use(MarkdownFileLinksContext);
-	const target = fileLinks ? markdownFileTarget(path, fileLinks.roots, imageScope) : null;
+	// Encoded so `#`, `?`, and `%` in filenames survive the link parsing.
+	const href = path.split('/').map(encodeURIComponent).join('/');
+	const target = fileLinks ? markdownFileTarget(href, fileLinks.roots, imageScope) : null;
 
 	return (
 		<ReferenceCard

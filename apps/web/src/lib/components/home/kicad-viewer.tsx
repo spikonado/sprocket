@@ -29,6 +29,23 @@ function loadKicanvas() {
 	return kicanvas;
 }
 
+/** KiCanvas loads after it connects and reports the outcome only through these attributes. */
+function whenLoaded(embed: HTMLElement, signal: AbortSignal) {
+	return new Promise<void>((resolve, reject) => {
+		const observer = new MutationObserver(() => {
+			if (embed.hasAttribute('loading')) return;
+
+			observer.disconnect();
+
+			if (embed.hasAttribute('loaded')) resolve();
+			else reject(new Error('KiCanvas could not read this file. It may be malformed.'));
+		});
+
+		observer.observe(embed, { attributeFilter: ['loading', 'loaded'] });
+		signal.addEventListener('abort', () => observer.disconnect());
+	});
+}
+
 export default function KicadViewer({
 	api,
 	file
@@ -59,7 +76,6 @@ export default function KicadViewer({
 
 				if (signal.aborted || !container.current) return;
 
-				// KiCanvas reads its sources once, when the element connects.
 				const embed = document.createElement('kicanvas-embed');
 				embed.setAttribute('controls', 'full');
 				embed.style.cssText = 'width: 100%; height: 100%; max-height: none; aspect-ratio: auto;';
@@ -72,6 +88,10 @@ export default function KicadViewer({
 				}
 
 				container.current.replaceChildren(embed);
+				await whenLoaded(embed, signal);
+
+				if (signal.aborted) return;
+
 				setStatus({ kind: 'ready' });
 			} catch (error) {
 				if (signal.aborted) return;
