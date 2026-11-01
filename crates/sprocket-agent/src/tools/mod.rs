@@ -42,7 +42,7 @@ use self::mandates::{
 };
 use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
-use self::pull_requests::LinkPrsTool;
+use self::pull_requests::{LinkPrsTool, PollPrTool};
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
 use self::subagents::{
@@ -77,6 +77,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) delete_artifact: DeleteArtifactTool,
     pub(crate) set_cwd: SetCwdTool,
     pub(crate) link_prs: LinkPrsTool,
+    pub(crate) poll_pr: PollPrTool,
     pub(crate) cwd: WorkingDirectory,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
@@ -230,6 +231,7 @@ pub(crate) fn agent_tools(
         delete_artifact: DeleteArtifactTool(context.clone()),
         set_cwd: SetCwdTool(context.clone()),
         link_prs: LinkPrsTool(context.clone()),
+        poll_pr: PollPrTool(context.clone()),
         cwd: context.cwd.clone(),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),

@@ -151,7 +151,8 @@ function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
 		kind === 'poll_question' ||
 		kind === 'spawn_subagent' ||
 		kind === 'control_subagent' ||
-		kind === 'poll_subagent'
+		kind === 'poll_subagent' ||
+		kind === 'poll_pr'
 	);
 }
 

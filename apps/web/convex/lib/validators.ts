@@ -800,6 +800,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('read_skill'),
 	v.literal('set_cwd'),
 	v.literal('link_prs'),
+	v.literal('poll_pr'),
 	v.literal('parse_file'),
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),
