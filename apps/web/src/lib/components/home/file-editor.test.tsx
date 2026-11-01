@@ -26,7 +26,8 @@ function editorApi(onDisk: WorkspaceFileContent | null) {
 			if (onDisk) onEvent({ kind: 'snapshot', ...onDisk });
 			await new Promise((resolve) => signal.addEventListener('abort', resolve));
 		}),
-		writeWorkspaceFile: vi.fn()
+		writeWorkspaceFile: vi.fn(),
+		readWorkspaceText: vi.fn()
 	};
 
 	return {

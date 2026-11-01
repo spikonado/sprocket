@@ -66,3 +66,11 @@ with `tools/kicad/kipy-cli-env.patch`. Its Python dependencies keep their own
 licenses. The KiCad version, file sizes, and SHA256 checksums are recorded in
 `tools/kicad/releases.json`, and the dependencies' hashes in
 `tools/kicad/requirements.txt`.
+
+## KiCanvas
+
+The web app ships a build of [KiCanvas](https://github.com/theacodes/kicanvas)
+in `apps/web/static/kicanvas/`, made by `tools/kicanvas/build.sh` from the
+commit it pins. KiCanvas is copyright Alethea Katherine Flowers and licensed
+under MIT; its license is next to the build. When it opens a file, it loads
+its icon and text fonts from Google Fonts.

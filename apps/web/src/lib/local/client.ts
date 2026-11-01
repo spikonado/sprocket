@@ -502,6 +502,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				handlers.signal,
 				handlers.onEvent
 			),
+		readWorkspaceText: async (input, signal) => {
+			const response = await transport.response('/api/workspace/file/text', {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			return await response.text();
+		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
 				method: 'POST',

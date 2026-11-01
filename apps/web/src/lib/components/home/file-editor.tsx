@@ -5,12 +5,17 @@ import { keymap } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
 import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
+import KicadViewer from '$lib/components/home/kicad-viewer';
 import { markdownImageUrl } from '$lib/chat/markdown-images';
 import { leafName, type FileDraft } from '$lib/chat/side-panel';
 import { usePageVisible } from '$lib/page-visibility';
+import { KICAD_FILE } from '$lib/kicad';
 import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type FileEditorApi = Pick<LocalApi, 'watchWorkspaceFile' | 'writeWorkspaceFile'>;
+export type FileEditorApi = Pick<
+	LocalApi,
+	'watchWorkspaceFile' | 'writeWorkspaceFile' | 'readWorkspaceText'
+>;
 
 type Props = {
 	api: FileEditorApi | null;
@@ -56,11 +61,11 @@ const editorTheme = EditorView.theme({
 });
 
 export default function FileEditor(props: Props) {
-	return IMAGE_EXTENSIONS.test(props.file.path) ? (
-		<ImagePreview file={props.file} />
-	) : (
-		<TextFileEditor {...props} />
-	);
+	if (IMAGE_EXTENSIONS.test(props.file.path)) return <ImagePreview file={props.file} />;
+
+	if (KICAD_FILE.test(props.file.path)) return <KicadViewer api={props.api} file={props.file} />;
+
+	return <TextFileEditor {...props} />;
 }
 
 function ImagePreview({ file }: { file: WorkspaceFileTarget }) {

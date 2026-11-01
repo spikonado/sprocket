@@ -351,6 +351,24 @@ describe('artifact references', () => {
 	});
 });
 
+it('opens a KiCad project card in the side panel', () => {
+	const open = vi.fn();
+
+	const { getByRole } = render(
+		<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
+			<ChatMarkdown content={'Done.\n\nkicad:boards/amp board/amp.kicad_pro'} />
+		</MarkdownFileLinksContext>
+	);
+
+	expect(document.querySelector('[data-kicad-reference]')?.textContent).toContain('KiCad project');
+	fireEvent.click(getByRole('button', { name: 'View amp.kicad_pro' }));
+	expect(open).toHaveBeenCalledWith({
+		workspacePath: '/repo',
+		path: 'boards/amp board/amp.kicad_pro',
+		directory: false
+	});
+});
+
 describe('images', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();

@@ -10,6 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::paths::{canonicalize_with_missing_tail, normalize_path};
 
 pub const MAX_EDITABLE_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// Viewers such as KiCanvas render large boards; real `.kicad_pcb` files reach ~100 MiB.
+const MAX_VIEWABLE_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +65,23 @@ pub fn read_workspace_file(root: &Path, path: &str) -> Result<WorkspaceFileConte
         size: snapshot.size,
         unsupported,
     })
+}
+
+pub fn read_workspace_text(root: &Path, path: &str) -> Result<String> {
+    let file_path = resolve_entry(root, path, true)?;
+    let file = File::open(&file_path).map_err(|error| entry_error(error, path, "open"))?;
+    if !file.metadata()?.is_file() {
+        bail!("{path} is not a file");
+    }
+    let mut bytes = Vec::new();
+    (&file)
+        .take(MAX_VIEWABLE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read {path}"))?;
+    if bytes.len() as u64 > MAX_VIEWABLE_FILE_BYTES {
+        bail!("{path} exceeds the 128 MiB viewer limit");
+    }
+    String::from_utf8(bytes).map_err(|_| anyhow!("{path} is not UTF-8 text"))
 }
 
 pub fn workspace_entry_kind(root: &Path, path: &str) -> Result<WorkspaceEntryKind> {

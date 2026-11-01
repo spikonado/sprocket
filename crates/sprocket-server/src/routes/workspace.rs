@@ -23,7 +23,7 @@ use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceEntryKind,
     WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
     default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_file,
-    rename_workspace_entry, workspace_entry_kind, write_workspace_file,
+    read_workspace_text, rename_workspace_entry, workspace_entry_kind, write_workspace_file,
 };
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
@@ -155,6 +155,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
         .route("/workspace/entry", post(entry_kind))
+        .route("/workspace/file/text", post(read_text))
         .route(
             "/workspace/file/write",
             post(write_file).layer(DefaultBodyLimit::max(WRITE_BODY_LIMIT)),
@@ -279,6 +280,17 @@ where
         },
     )
     .boxed()
+}
+
+/// Plain text, so viewers skip JSON escaping of boards that reach ~100 MiB.
+async fn read_text(
+    MachineSession: MachineSession,
+    Json(payload): Json<WorkspaceEntryRequest>,
+) -> Result<String, ApiError> {
+    in_workspace(payload.workspace_path, move |root| {
+        read_workspace_text(root, &payload.path)
+    })
+    .await
 }
 
 async fn write_file(

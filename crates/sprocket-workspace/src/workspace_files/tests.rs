@@ -58,6 +58,17 @@ fn reads_text_and_flags_binary_files() {
 }
 
 #[test]
+fn reads_text_past_the_editor_limit() {
+    let dir = workspace();
+    let root = dir.path();
+    let board = "(kicad_pcb)\n".repeat(MAX_EDITABLE_FILE_BYTES as usize / 10);
+    fs::write(root.join("board.kicad_pcb"), &board).unwrap();
+
+    assert_eq!(read_workspace_text(root, "board.kicad_pcb").unwrap(), board);
+    assert!(read_workspace_text(root, "../board.kicad_pcb").is_err());
+}
+
+#[test]
 fn reports_entry_kinds() {
     let dir = workspace();
     let root = dir.path();

@@ -37,11 +37,14 @@ export function renderMarkdown(value: string) {
 export type MarkdownBlock =
 	| { type: 'html'; html: string }
 	| { type: 'artifact'; artifactId: string }
+	| { type: 'kicad'; path: string }
 	| { type: 'visual'; kind: VisualKind; source: string }
 	| { type: 'mermaid'; source: string; codeHtml: string }
 	| { type: 'json-render'; source: string; codeHtml: string };
 
 const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
+
+const KICAD_REFERENCE = /^\s*kicad:([^\n]+?\.kicad_(?:pro|sch|pcb))\s*$/;
 
 const VISUAL_LANGUAGES = new Map<string, VisualKind>([
 	['html-visual', 'html'],
@@ -79,10 +82,15 @@ function specialBlock(
 		return { type: 'mermaid', source: token.text, codeHtml: codeHtml() };
 	}
 
-	const artifactId =
-		token.type === 'paragraph' ? ARTIFACT_REFERENCE.exec(token.raw)?.[1] : undefined;
+	if (token.type !== 'paragraph') return;
+
+	const artifactId = ARTIFACT_REFERENCE.exec(token.raw)?.[1];
 
 	if (artifactId && availableArtifactIds.has(artifactId)) return { type: 'artifact', artifactId };
+
+	const kicadPath = KICAD_REFERENCE.exec(token.raw)?.[1];
+
+	if (kicadPath) return { type: 'kicad', path: kicadPath };
 }
 
 export function renderMarkdownBlocks(
