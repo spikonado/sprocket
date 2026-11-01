@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { fireEvent, render, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
 
@@ -22,6 +22,44 @@ describe('tool rows', () => {
 		fireEvent.click(view.container.querySelector('[data-tool-row]')!);
 		expect(details.open).toBe(true);
 		expect(details.querySelector('p')?.textContent).toBe(command);
+	});
+
+	it('lets non-command rows expand only while their text is cut off', () => {
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'url',
+			name: 'scrape_url',
+			input: { url: 'https://react.dev' },
+			output: {}
+		};
+
+		const resizes: Array<() => void> = [];
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(callback: () => void) {
+					resizes.push(callback);
+				}
+				observe() {}
+				disconnect() {}
+			}
+		);
+		const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get');
+
+		const resize = (width: number) => {
+			scrollWidth.mockReturnValue(width);
+			act(() => resizes.at(-1)!());
+		};
+
+		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		expect(view.container.querySelector('details')).toBeNull();
+		resize(100);
+		expect(view.container.querySelector('details')).not.toBeNull();
+		resize(0);
+		expect(view.container.querySelector('details')).toBeNull();
+
+		scrollWidth.mockRestore();
+		vi.unstubAllGlobals();
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
