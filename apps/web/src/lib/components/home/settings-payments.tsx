@@ -186,25 +186,27 @@ export default function SettingsPayments({
 														))}
 												</div>
 											</div>
-											{purchase.trackingLink && (
-												<a
-													href={purchase.trackingLink}
-													target="_blank"
-													rel="noreferrer"
+											<div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-center">
+												{purchase.trackingLink && (
+													<a
+														href={purchase.trackingLink}
+														target="_blank"
+														rel="noreferrer"
+														className={rowButtonClass}
+													>
+														<Truck className="size-3.5" aria-hidden="true" />
+														Track order
+													</a>
+												)}
+												<button
+													type="button"
 													className={rowButtonClass}
+													onClick={() => void openThread(purchase.threadId)}
 												>
-													<Truck className="size-3.5" aria-hidden="true" />
-													Track order
-												</a>
-											)}
-											<button
-												type="button"
-												className={rowButtonClass}
-												onClick={() => void openThread(purchase.threadId)}
-											>
-												<MessageSquare className="size-3.5" aria-hidden="true" />
-												View thread
-											</button>
+													<MessageSquare className="size-3.5" aria-hidden="true" />
+													View thread
+												</button>
+											</div>
 										</li>
 									))}
 								</ul>
