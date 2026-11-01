@@ -96,7 +96,7 @@ Stop only what this run started, by PID.
 
 1. `agent-browser close`, which saves the restore state.
 2. Terminate the launch command session, then run `$V/stop.sh`, which kills the `vite dev` that terminating leaves behind.
-3. Reset the scratch repos: `git -C <dir> checkout -- . && git -C <dir> clean -fd` for `/tmp/verify-sprocket-scratch` and any other `$V/scratch-repo.sh` directory the run touched. Keep the directories. The app can't remove projects, so a deleted directory leaves a dangling project in `~/.sprocket-dev-verify`.
+3. Reset the scratch repos: `git -C <dir> checkout -- . && git -C <dir> clean -fd` for `/tmp/verify-sprocket-scratch` and any other `$V/scratch-repo.sh` directory the run touched. Keep the directories. Removing a project from the list detaches it (see [features/projects.md](features/projects.md)); deleting a directory that is still attached leaves a dangling project in `~/.sprocket-dev-verify`.
 4. Keep `~/.sprocket-dev-verify`, the `verify-sprocket` restore state, `~/.cache/sprocket-verify-target` and the evidence in `/tmp/verify-sprocket/`. Keep the 5173 serve mapping too, since the stored sign-in belongs to that origin.
 
 Run cleanup after failed attempts too, so the next launch finds free ports.
