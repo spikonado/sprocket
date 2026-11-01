@@ -44,6 +44,15 @@ function agentcardApi() {
 			});
 		}
 
+		if (url.endsWith('/api/v2/vault_sessions/vs_1')) {
+			return Response.json({
+				id: 'vs_1',
+				status: 'linked',
+				user_id: 'usr_x',
+				external_user_id: 'buyer'
+			});
+		}
+
 		throw new Error(`Unexpected Agentcard call: ${url}`);
 	});
 
@@ -103,8 +112,9 @@ describe('Agentcard payments', () => {
 		const t = initConvexTest();
 		const fetchMock = agentcardApi();
 		const { asUser, auth } = await startRun(t, 'buyer');
-		await t.mutation(internal.payments.applyWebhookEvent, {
-			update: { kind: 'linked', userId: 'buyer', agentcardUserId: 'usr_buyer' }
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
 		});
 
 		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
@@ -125,8 +135,9 @@ describe('Agentcard payments', () => {
 		});
 
 		for (const status of ['settled', 'approved'] as const) {
-			await t.mutation(internal.payments.applyWebhookEvent, {
-				update: { kind: 'authorization', authorizationId: 'cauth_1', status }
+			await t.mutation(internal.payments.updatePurchase, {
+				authorizationId: 'cauth_1',
+				status
 			});
 		}
 
@@ -154,13 +165,14 @@ describe('Agentcard payments', () => {
 		).rejects.toThrow('not a recognized payment request');
 	});
 
-	it('rejects webhooks without a valid signature', async () => {
+	it('links the Sprocket user named by a signed session_linked webhook', async () => {
 		vi.stubEnv('AGENTCARD_WEBHOOK_SECRET', 'whsec');
 		const t = initConvexTest();
+		agentcardApi();
 
 		const body = JSON.stringify({
 			type: 'vault.session_linked',
-			data: { user_id: 'usr_x', external_user_id: 'buyer' }
+			data: { vault_session_id: 'vs_1', user_id: 'usr_x' }
 		});
 
 		const now = Math.floor(Date.now() / 1000);

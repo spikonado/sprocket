@@ -61,9 +61,18 @@ http.route({
 			return new Response('Webhook verification failed.', { status: 401 });
 		}
 
-		const update = parseAgentcardWebhook(body);
+		const event = parseAgentcardWebhook(body);
 
-		if (update) await ctx.runMutation(internal.payments.applyWebhookEvent, { update });
+		if (event?.kind === 'session_linked') {
+			await ctx.runAction(internal.payments.linkVaultSession, {
+				vaultSessionId: event.vaultSessionId
+			});
+		} else if (event) {
+			await ctx.runMutation(internal.payments.updatePurchase, {
+				authorizationId: event.authorizationId,
+				status: event.status
+			});
+		}
 
 		return new Response(null, { status: 204 });
 	})

@@ -1,8 +1,7 @@
-import { v, type Infer } from 'convex/values';
 import { z } from 'zod';
 import { env } from '@convex/_generated/server';
 import { constantTimeEqual } from '@convex/lib/auth';
-import { vPurchaseStatus, type PurchaseStatus } from '@convex/lib/validators';
+import type { PurchaseStatus } from '@convex/lib/validators';
 
 const AGENTCARD_API = 'https://api.agentcard.sh';
 
@@ -113,6 +112,12 @@ export function isCheckoutOrigin(origin: string): boolean {
 	return /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(origin) && !origin.endsWith(':443');
 }
 
+export type VaultSession = {
+	status: 'pending' | 'linked' | 'expired';
+	user_id: string | null;
+	external_user_id?: string | null;
+};
+
 export type AgentcardAuthorization = {
 	id: string;
 	status: 'awaiting_approval' | 'approved' | 'submitted_on_device' | 'declined' | 'expired';
@@ -167,14 +172,9 @@ export async function verifyAgentcardSignature(
 	return constantTimeEqual(expected, signature);
 }
 
-export const vAgentcardWebhookUpdate = v.union(
-	v.object({ kind: v.literal('linked'), userId: v.string(), agentcardUserId: v.string() }),
-	v.object({
-		kind: v.literal('authorization'),
-		authorizationId: v.string(),
-		status: vPurchaseStatus
-	})
-);
+export type AgentcardWebhook =
+	| { kind: 'session_linked'; vaultSessionId: string }
+	| { kind: 'authorization'; authorizationId: string; status: PurchaseStatus };
 
 const webhookStatuses = new Map<string, PurchaseStatus>([
 	['checkout_authorization.approved', 'approved'],
@@ -190,14 +190,13 @@ const webhookEvent = z.object({
 		.object({
 			id: z.string().optional(),
 			authorization_id: z.string().optional(),
-			user_id: z.string().optional(),
-			external_user_id: z.string().optional()
+			vault_session_id: z.string().optional()
 		})
 		.default({})
 });
 
 /** The update a verified webhook body asks for, or null for events Sprocket ignores. */
-export function parseAgentcardWebhook(body: string): Infer<typeof vAgentcardWebhookUpdate> | null {
+export function parseAgentcardWebhook(body: string): AgentcardWebhook | null {
 	const event = parseJson(webhookEvent, body);
 
 	if (!event) return null;
@@ -205,8 +204,8 @@ export function parseAgentcardWebhook(body: string): Infer<typeof vAgentcardWebh
 	const { type, data } = event;
 
 	if (type === 'vault.session_linked') {
-		return data.external_user_id && data.user_id
-			? { kind: 'linked', userId: data.external_user_id, agentcardUserId: data.user_id }
+		return data.vault_session_id
+			? { kind: 'session_linked', vaultSessionId: data.vault_session_id }
 			: null;
 	}
 

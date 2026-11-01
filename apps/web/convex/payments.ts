@@ -1,11 +1,11 @@
 import { v, type Infer } from 'convex/values';
 import {
 	action,
+	internalAction,
 	internalMutation,
 	internalQuery,
 	query,
-	type ActionCtx,
-	type MutationCtx
+	type ActionCtx
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -21,10 +21,16 @@ import {
 	exchangeAgentcardToken,
 	isCheckoutOrigin,
 	recognizes,
-	vAgentcardWebhookUpdate,
 	type AgentcardAuthorization,
+	type VaultSession,
 	type Recognizer
 } from '@convex/lib/payments/agentcard';
+
+/** Agentcard answers `connection_not_found` for a user it doesn't know in this
+ * mode, which means the same as an empty vault. */
+function isUnknownAgentcardUser<Caught>(error: Caught) {
+	return error instanceof AgentcardError && error.code === 'connection_not_found';
+}
 
 const runAuth = { runId: v.id('runs'), claimId: v.string(), executionSecret: v.string() };
 
@@ -159,28 +165,6 @@ export const ownedPurchase = internalQuery({
 	}
 });
 
-async function applyPurchaseUpdate(
-	ctx: MutationCtx,
-	args: { authorizationId: string; status?: PurchaseStatus; orderNumber?: string }
-) {
-	const purchase = await ctx.db
-		.query('purchases')
-		.withIndex('by_authorizationId', (query) => query.eq('authorizationId', args.authorizationId))
-		.unique();
-
-	if (!purchase) return;
-
-	const status = args.status ? nextPurchaseStatus(purchase.status, args.status) : purchase.status;
-
-	if (status !== purchase.status || args.orderNumber !== undefined) {
-		const patch: Partial<Doc<'purchases'>> = { status };
-
-		if (args.orderNumber !== undefined) patch.orderNumber = args.orderNumber;
-
-		await ctx.db.patch('purchases', purchase._id, patch);
-	}
-}
-
 export const updatePurchase = internalMutation({
 	args: {
 		authorizationId: v.string(),
@@ -189,37 +173,61 @@ export const updatePurchase = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await applyPurchaseUpdate(ctx, args);
+		const purchase = await ctx.db
+			.query('purchases')
+			.withIndex('by_authorizationId', (query) => query.eq('authorizationId', args.authorizationId))
+			.unique();
+
+		if (!purchase) return null;
+
+		const status = args.status ? nextPurchaseStatus(purchase.status, args.status) : purchase.status;
+
+		if (status !== purchase.status || args.orderNumber !== undefined) {
+			const patch: Partial<Doc<'purchases'>> = { status };
+
+			if (args.orderNumber !== undefined) patch.orderNumber = args.orderNumber;
+
+			await ctx.db.patch('purchases', purchase._id, patch);
+		}
 
 		return null;
 	}
 });
 
-/** Applies one verified Agentcard webhook. Every write is an upsert or a
- * forward-only status move, so redeliveries need no event ledger. */
-export const applyWebhookEvent = internalMutation({
-	args: { update: vAgentcardWebhookUpdate },
+export const saveAgentcardUser = internalMutation({
+	args: { userId: v.string(), agentcardUserId: v.string() },
 	returns: v.null(),
-	handler: async (ctx, { update }) => {
-		if (update.kind === 'authorization') {
-			await applyPurchaseUpdate(ctx, update);
-
-			return null;
-		}
-
+	handler: async (ctx, args) => {
 		const existing = await ctx.db
 			.query('agentcardUsers')
-			.withIndex('by_userId', (query) => query.eq('userId', update.userId))
+			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
 
 		if (!existing) {
-			await ctx.db.insert('agentcardUsers', {
-				userId: update.userId,
-				agentcardUserId: update.agentcardUserId
-			});
-		} else if (existing.agentcardUserId !== update.agentcardUserId) {
-			await ctx.db.patch('agentcardUsers', existing._id, {
-				agentcardUserId: update.agentcardUserId
+			await ctx.db.insert('agentcardUsers', args);
+		} else if (existing.agentcardUserId !== args.agentcardUserId) {
+			await ctx.db.patch('agentcardUsers', existing._id, { agentcardUserId: args.agentcardUserId });
+		}
+
+		return null;
+	}
+});
+
+/** Reads the linked session instead of trusting the webhook body: the session
+ * is the documented source of `external_user_id`, which is the Sprocket user. */
+export const linkVaultSession = internalAction({
+	args: { vaultSessionId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const session = await agentcardRequest<VaultSession>(
+			await agentcardToken(ctx),
+			`/api/v2/vault_sessions/${encodeURIComponent(args.vaultSessionId)}`
+		);
+
+		if (session.status === 'linked' && session.user_id && session.external_user_id) {
+			await ctx.runMutation(internal.payments.saveAgentcardUser, {
+				userId: session.external_user_id,
+				agentcardUserId: session.user_id
 			});
 		}
 
@@ -404,7 +412,10 @@ export const checkoutCreate = action({
 					}
 				);
 			} catch (error) {
-				if (error instanceof AgentcardError && error.code === 'card_not_found') {
+				if (
+					(error instanceof AgentcardError && error.code === 'card_not_found') ||
+					isUnknownAgentcardUser(error)
+				) {
 					return { status: 'card_required' as const };
 				}
 
@@ -570,7 +581,7 @@ export const myPayments = action({
 
 		if (!user) return { cards: [] };
 
-		const cards = await agentcardRequest<{
+		let cards: {
 			data: {
 				id: string;
 				brand: string;
@@ -578,7 +589,18 @@ export const myPayments = action({
 				expiry_month: number;
 				expiry_year: number;
 			}[];
-		}>(await agentcardToken(ctx), `/api/v2/vault_cards?user_id=${encodeURIComponent(user)}`);
+		};
+
+		try {
+			cards = await agentcardRequest(
+				await agentcardToken(ctx),
+				`/api/v2/vault_cards?user_id=${encodeURIComponent(user)}`
+			);
+		} catch (error) {
+			if (isUnknownAgentcardUser(error)) return { cards: [] };
+
+			throw error;
+		}
 
 		return {
 			cards: cards.data.map((card) => ({
