@@ -85,3 +85,64 @@ fn turns_reviews_and_comments_into_remarks() {
         )
     );
 }
+
+fn fingerprint_pr(threads: serde_json::Value, rollup: serde_json::Value) -> Fingerprint {
+    Fingerprint::of(
+        serde_json::from_value(json!({
+            "state": "OPEN",
+            "mergeable": "MERGEABLE",
+            "headRefOid": "a1",
+            "comments": { "totalCount": 0, "nodes": [] },
+            "reviews": { "totalCount": 1, "nodes": [{ "lastEditedAt": null }] },
+            "reviewThreads": threads,
+            "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] }
+        }))
+        .unwrap(),
+    )
+}
+
+fn completed_checks(conclusion: &str, rollup_state: &str) -> serde_json::Value {
+    json!({
+        "state": rollup_state,
+        "contexts": {
+            "checkRunCountsByState": [{ "state": "COMPLETED", "count": 1 }],
+            "statusContextCountsByState": [],
+            "nodes": [{
+                "__typename": "CheckRun",
+                "name": "rust",
+                "status": "COMPLETED",
+                "conclusion": conclusion
+            }]
+        }
+    })
+}
+
+fn one_thread(comments: u64, created_at: &str) -> serde_json::Value {
+    json!({
+        "totalCount": 1,
+        "nodes": [{
+            "comments": {
+                "totalCount": comments,
+                "nodes": [{ "createdAt": created_at, "lastEditedAt": null }]
+            }
+        }]
+    })
+}
+
+#[test]
+fn fingerprint_remarks_change_when_a_thread_gets_a_reply() {
+    let idle = completed_checks("SUCCESS", "SUCCESS");
+    let before = fingerprint_pr(one_thread(1, "2026-01-01T00:00:00Z"), idle.clone());
+    let after = fingerprint_pr(one_thread(2, "2026-01-01T00:01:00Z"), idle);
+    assert_ne!(before.remarks, after.remarks);
+    assert_eq!(before.status, after.status);
+}
+
+#[test]
+fn fingerprint_status_changes_when_a_completed_check_fails() {
+    let threads = one_thread(1, "2026-01-01T00:00:00Z");
+    let before = fingerprint_pr(threads.clone(), completed_checks("SUCCESS", "SUCCESS"));
+    let after = fingerprint_pr(threads, completed_checks("FAILURE", "FAILURE"));
+    assert_ne!(before.status, after.status);
+    assert_eq!(before.remarks, after.remarks);
+}

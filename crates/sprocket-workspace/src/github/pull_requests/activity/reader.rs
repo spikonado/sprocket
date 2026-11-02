@@ -22,10 +22,52 @@ struct LastRead {
     activity: Activity,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 struct Fingerprint {
     status: String,
     remarks: String,
+}
+
+impl Fingerprint {
+    fn of(pr: FingerprintPullRequest) -> Self {
+        let rollup = pr
+            .commits
+            .nodes
+            .last()
+            .and_then(|node| node.commit.status_check_rollup.as_ref());
+        let reviews = pr.reviews.as_ref();
+        Self {
+            status: [
+                pr.state,
+                pr.mergeable,
+                pr.head_ref_oid,
+                rollup.map(|rollup| rollup.state.clone()).unwrap_or_default(),
+                state_counts(
+                    rollup.and_then(|rollup| rollup.contexts.check_run_counts_by_state.as_deref()),
+                ),
+                state_counts(
+                    rollup.and_then(|rollup| {
+                        rollup.contexts.status_context_counts_by_state.as_deref()
+                    }),
+                ),
+                check_outcomes(
+                    rollup
+                        .map(|rollup| rollup.contexts.nodes.as_slice())
+                        .unwrap_or(&[]),
+                ),
+            ]
+            .join(" "),
+            remarks: [
+                pr.comments.total_count.to_string(),
+                newest_edit(Some(&pr.comments)),
+                reviews.map_or(0, |reviews| reviews.total_count).to_string(),
+                newest_edit(reviews),
+                pr.review_threads.total_count.to_string(),
+                thread_comment_signal(&pr.review_threads),
+            ]
+            .join(" "),
+        }
+    }
 }
 
 impl ActivityReader {
@@ -102,34 +144,7 @@ impl ActivityReader {
 
     async fn fingerprint(&self) -> Result<Fingerprint, GitHubError> {
         let data: FingerprintData = self.query("PullRequestFingerprint", json!({})).await?;
-        let pr = self.pull_request(data.repository)?;
-        let counts = pr
-            .commits
-            .nodes
-            .last()
-            .and_then(|node| node.commit.status_check_rollup.as_ref())
-            .map(|rollup| &rollup.contexts);
-        let reviews = pr.reviews.as_ref();
-        Ok(Fingerprint {
-            status: [
-                pr.state,
-                pr.mergeable,
-                pr.head_ref_oid,
-                state_counts(counts.and_then(|counts| counts.check_run_counts_by_state.as_deref())),
-                state_counts(
-                    counts.and_then(|counts| counts.status_context_counts_by_state.as_deref()),
-                ),
-            ]
-            .join(" "),
-            remarks: [
-                pr.comments.total_count.to_string(),
-                newest_edit(Some(&pr.comments)),
-                reviews.map_or(0, |reviews| reviews.total_count).to_string(),
-                newest_edit(reviews),
-                pr.review_threads.total_count.to_string(),
-            ]
-            .join(" "),
-        })
+        Ok(Fingerprint::of(self.pull_request(data.repository)?))
     }
 
     /// The viewer's login and everything but the remarks.
@@ -268,6 +283,47 @@ fn newest_edit(connection: Option<&Edited>) -> String {
         .to_string()
 }
 
+fn check_outcomes(nodes: &[FingerprintContext]) -> String {
+    let mut lines: Vec<String> = nodes
+        .iter()
+        .map(|node| match node {
+            FingerprintContext::CheckRun(run) => format!(
+                "{}:{}:{}",
+                run.name,
+                run.status,
+                run.conclusion.as_deref().unwrap_or("")
+            ),
+            FingerprintContext::StatusContext(status) => {
+                format!("{}:{}", status.context, status.state)
+            }
+        })
+        .collect();
+    lines.sort();
+    lines.join(",")
+}
+
+fn thread_comment_signal(threads: &ThreadCounts) -> String {
+    let comments: u64 = threads
+        .nodes
+        .iter()
+        .map(|thread| thread.comments.total_count)
+        .sum();
+    let newest = threads
+        .nodes
+        .iter()
+        .flat_map(|thread| &thread.comments.nodes)
+        .flat_map(|comment| {
+            [
+                Some(comment.created_at.as_str()),
+                comment.last_edited_at.as_deref(),
+            ]
+        })
+        .flatten()
+        .max()
+        .unwrap_or_default();
+    format!("{comments} {newest}")
+}
+
 fn author_login(author: &Option<Login>) -> String {
     author
         .as_ref()
@@ -323,8 +379,36 @@ struct FingerprintPullRequest {
     head_ref_oid: String,
     comments: Edited,
     reviews: Option<Edited>,
-    review_threads: Count,
+    review_threads: ThreadCounts,
     commits: Nodes<FingerprintCommitNode>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadCounts {
+    total_count: u64,
+    #[serde(default)]
+    nodes: Vec<ThreadFingerprint>,
+}
+
+#[derive(Deserialize)]
+struct ThreadFingerprint {
+    comments: CountedComments,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CountedComments {
+    total_count: u64,
+    #[serde(default)]
+    nodes: Vec<CommentStamp>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommentStamp {
+    created_at: String,
+    last_edited_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -341,12 +425,6 @@ struct LastEdited {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Count {
-    total_count: u64,
-}
-
-#[derive(Deserialize)]
 struct FingerprintCommitNode {
     commit: FingerprintCommit,
 }
@@ -359,6 +437,8 @@ struct FingerprintCommit {
 
 #[derive(Deserialize)]
 struct CountsRollup {
+    #[serde(default)]
+    state: String,
     contexts: StateCounts,
 }
 
@@ -367,6 +447,28 @@ struct CountsRollup {
 struct StateCounts {
     check_run_counts_by_state: Option<Vec<StateCount>>,
     status_context_counts_by_state: Option<Vec<StateCount>>,
+    #[serde(default)]
+    nodes: Vec<FingerprintContext>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum FingerprintContext {
+    CheckRun(FingerprintCheckRun),
+    StatusContext(FingerprintStatusContext),
+}
+
+#[derive(Deserialize)]
+struct FingerprintCheckRun {
+    name: String,
+    status: String,
+    conclusion: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FingerprintStatusContext {
+    context: String,
+    state: String,
 }
 
 #[derive(Deserialize)]

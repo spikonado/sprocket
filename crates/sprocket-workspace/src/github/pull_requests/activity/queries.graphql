@@ -28,14 +28,24 @@ query PullRequestFingerprint($owner: String!, $name: String!, $number: Int!) {
 					lastEditedAt
 				}
 			}
-			reviewThreads {
+			reviewThreads(first: 100) {
 				totalCount
+				nodes {
+					comments(last: 1) {
+						totalCount
+						nodes {
+							createdAt
+							lastEditedAt
+						}
+					}
+				}
 			}
 			commits(last: 1) {
 				nodes {
 					commit {
 						statusCheckRollup {
-							contexts {
+							state
+							contexts(first: 100) {
 								checkRunCountsByState {
 									state
 									count
@@ -43,6 +53,18 @@ query PullRequestFingerprint($owner: String!, $name: String!, $number: Int!) {
 								statusContextCountsByState {
 									state
 									count
+								}
+								nodes {
+									__typename
+									... on CheckRun {
+										name
+										status
+										conclusion
+									}
+									... on StatusContext {
+										context
+										state
+									}
 								}
 							}
 						}
