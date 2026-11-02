@@ -89,6 +89,25 @@ describe('json-render', () => {
 
 		expect(await findByText('lint')).not.toBeNull();
 	});
+
+	it('does not turn javascript hrefs into links', async () => {
+		const spec = JSON.stringify({
+			root: 'link',
+			elements: {
+				link: {
+					type: 'Link',
+					props: { label: 'Open', href: 'javascript:alert(1)' },
+					children: []
+				}
+			}
+		});
+		const { findByText, queryByRole } = render(
+			<ChatMarkdown content={'```json-render\n' + spec + '\n```'} />
+		);
+
+		expect(await findByText('Open')).not.toBeNull();
+		expect(queryByRole('link')).toBeNull();
+	});
 });
 
 describe('links', () => {
