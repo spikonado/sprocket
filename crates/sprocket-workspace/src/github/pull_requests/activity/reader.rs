@@ -85,6 +85,11 @@ impl Fingerprint {
             incomplete: more_threads || more_checks,
         }
     }
+
+    /// Sampled remarks can match even when an unsampled thread got a reply.
+    fn can_reuse_remarks(&self, previous: &Self) -> bool {
+        !self.incomplete && self.remarks == previous.remarks
+    }
 }
 
 impl ActivityReader {
@@ -121,7 +126,9 @@ impl ActivityReader {
         }
         let (viewer, mut activity) = self.status().await?;
         activity.remarks = match self.last.take() {
-            Some(last) if last.fingerprint.remarks == fingerprint.remarks => last.activity.remarks,
+            Some(last) if fingerprint.can_reuse_remarks(&last.fingerprint) => {
+                last.activity.remarks
+            }
             _ => self.remarks(&viewer).await?,
         };
         self.last = Some(LastRead {

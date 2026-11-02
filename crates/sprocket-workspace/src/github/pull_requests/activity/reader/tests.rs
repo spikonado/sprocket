@@ -193,3 +193,16 @@ fn fingerprint_is_incomplete_when_threads_or_checks_are_paged() {
     let more_checks = fingerprint_pr(one_thread(1, "2026-01-01T00:00:00Z"), checks);
     assert!(more_checks.incomplete);
 }
+
+#[test]
+fn paged_threads_do_not_reuse_remarks() {
+    let sampled = one_thread(1, "2026-01-01T00:00:00Z");
+    let mut paged = sampled.clone();
+    paged["pageInfo"] = json!({ "hasNextPage": true });
+    let idle = completed_checks("SUCCESS", "SUCCESS");
+    let first = fingerprint_pr(sampled, idle.clone());
+    let second = fingerprint_pr(paged, idle);
+    assert_eq!(first.remarks, second.remarks);
+    assert!(first.can_reuse_remarks(&first));
+    assert!(!second.can_reuse_remarks(&first));
+}
