@@ -40,14 +40,11 @@ impl ActivityReader {
             )
         })?;
         let api = GitHubApi::connect(user_id, repository.host).await?;
-        // Older Enterprise servers may lack `isRequired`.
-        let required = api.host() == "github.com";
         Ok(Self {
             variables: json!({
                 "owner": repository.owner,
                 "name": repository.name,
                 "number": pull_request.number,
-                "required": required,
             }),
             label: format!("{}#{}", pull_request.repository, pull_request.number),
             api,
@@ -453,8 +450,7 @@ struct CheckRunNode {
     status: String,
     conclusion: Option<String>,
     details_url: Option<String>,
-    /// Absent when not asked for.
-    is_required: Option<bool>,
+    is_required: bool,
 }
 
 #[derive(Deserialize)]
@@ -463,7 +459,7 @@ struct StatusContextNode {
     context: String,
     state: String,
     target_url: Option<String>,
-    is_required: Option<bool>,
+    is_required: bool,
 }
 
 impl Context {
@@ -477,7 +473,7 @@ impl Context {
                     _ => CheckOutcome::Pending,
                 },
                 url: run.details_url.clone(),
-                required: run.is_required.unwrap_or(false),
+                required: run.is_required,
             },
             Self::StatusContext(status) => Check {
                 name: status.context.clone(),
@@ -487,7 +483,7 @@ impl Context {
                     _ => CheckOutcome::Pending,
                 },
                 url: status.target_url.clone(),
-                required: status.is_required.unwrap_or(false),
+                required: status.is_required,
             },
         }
     }

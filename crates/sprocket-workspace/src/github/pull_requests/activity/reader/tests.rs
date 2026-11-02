@@ -12,7 +12,7 @@ fn reads_check_outcomes_and_required_flags() {
                 "nodes": [
                     { "__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "TIMED_OUT", "detailsUrl": "https://ci/rust", "isRequired": true },
                     { "__typename": "CheckRun", "name": "docs", "status": "COMPLETED", "conclusion": "SKIPPED", "detailsUrl": null, "isRequired": false },
-                    { "__typename": "StatusContext", "context": "deploy", "state": "PENDING", "targetUrl": null }
+                    { "__typename": "StatusContext", "context": "deploy", "state": "PENDING", "targetUrl": null, "isRequired": false }
                 ],
                 "pageInfo": { "hasNextPage": true, "endCursor": "c1" }
             } } } }] }

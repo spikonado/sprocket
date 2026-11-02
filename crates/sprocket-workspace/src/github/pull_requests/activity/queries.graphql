@@ -1,19 +1,18 @@
-# A check context of the head commit. `isRequired` is asked for on github.com only (`$required`):
-# an older Enterprise server may not know it, and an unknown field fails the whole read.
+# A check context of the head commit.
 fragment CheckContext on StatusCheckRollupContext {
 	__typename
 	... on StatusContext {
 		context
 		state
 		targetUrl
-		isRequired(pullRequestNumber: $number) @include(if: $required)
+		isRequired(pullRequestNumber: $number)
 	}
 	... on CheckRun {
 		name
 		status
 		conclusion
 		detailsUrl
-		isRequired(pullRequestNumber: $number) @include(if: $required)
+		isRequired(pullRequestNumber: $number)
 	}
 }
 
@@ -72,7 +71,7 @@ query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!
 	}
 }
 
-query PullRequestCore($owner: String!, $name: String!, $number: Int!, $required: Boolean!) {
+query PullRequestCore($owner: String!, $name: String!, $number: Int!) {
 	viewer {
 		login
 	}
@@ -103,13 +102,7 @@ query PullRequestCore($owner: String!, $name: String!, $number: Int!, $required:
 }
 
 # Every check context of the head commit, a page at a time, for a rollup past one page.
-query PullRequestCheckContexts(
-	$owner: String!
-	$name: String!
-	$number: Int!
-	$required: Boolean!
-	$after: String
-) {
+query PullRequestCheckContexts($owner: String!, $name: String!, $number: Int!, $after: String) {
 	repository(owner: $owner, name: $name) {
 		pullRequest(number: $number) {
 			headRefOid

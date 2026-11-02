@@ -157,10 +157,6 @@ impl GitHubApi {
         .await
     }
 
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
     async fn send<T: DeserializeOwned>(
         &self,
         request: serde_json::Value,
