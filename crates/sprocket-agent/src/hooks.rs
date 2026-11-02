@@ -24,6 +24,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "list_subagent_models",
     "list_subagents",
     "parse_file",
+    "poll_checkout",
     "poll_cmd",
     "poll_question",
     "poll_subagent",

@@ -598,9 +598,12 @@ async fn run_with_completion_model(
     let agent = if request.is_child {
         agent
     } else if request.allow_interaction {
-        agent.tool(tools.card_checkout).tool(tools.report_order)
+        agent
+            .tool(tools.card_checkout)
+            .tool(tools.poll_checkout)
+            .tool(tools.report_order)
     } else {
-        agent.tool(tools.report_order)
+        agent.tool(tools.poll_checkout).tool(tools.report_order)
     };
     let mut agent = agent.build();
 

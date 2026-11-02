@@ -34,6 +34,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return CircleQuestionMark;
 		case 'await_question':
 		case 'poll_question':
+		case 'poll_checkout':
 			return Hourglass;
 		case 'spawn_subagent':
 		case 'control_subagent':

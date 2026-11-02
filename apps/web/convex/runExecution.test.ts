@@ -76,6 +76,7 @@ describe('run execution state', () => {
 
 			const paymentCalls = [
 				{ kind: 'card_checkout', payload: { amount: '1.00', currency: 'usd', payButton: '@e1' } },
+				{ kind: 'poll_checkout', payload: { purchaseId: 'purchase' } },
 				{ kind: 'report_order', payload: { purchaseId: 'purchase', orderNumber: '1' } }
 			] as const;
 

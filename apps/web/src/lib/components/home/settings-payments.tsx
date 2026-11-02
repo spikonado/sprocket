@@ -18,6 +18,7 @@ const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
 	submitted_on_device: { label: 'Finishing on your device', dot: 'bg-accent-strong' },
 	declined: { label: 'Declined', dot: 'bg-destructive' },
 	expired: { label: 'Expired', dot: 'bg-muted-foreground/50' },
+	cancelled: { label: 'Cancelled', dot: 'bg-muted-foreground/50' },
 	settled: { label: 'Completed', dot: 'bg-emerald-500' }
 };
 

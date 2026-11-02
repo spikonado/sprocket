@@ -53,6 +53,10 @@ function agentcardApi() {
 			});
 		}
 
+		if (url.endsWith('/api/v2/checkout/authorizations/cauth_1/cancel')) {
+			return Response.json({ id: 'cauth_1', status: 'declined' });
+		}
+
 		throw new Error(`Unexpected Agentcard call: ${url}`);
 	});
 
@@ -173,6 +177,35 @@ describe('Agentcard payments', () => {
 				orderLink: 'https://shop.example.com/orders/112-7',
 				trackingLink: 'https://track.example.com/1Z'
 			})
+		]);
+	});
+
+	it('cancels a purchase once and keeps it cancelled', async () => {
+		const t = initConvexTest();
+		const fetchMock = agentcardApi();
+		const { asUser, auth } = await startRun(t, 'buyer');
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
+		});
+
+		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
+
+		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
+
+		const cancel = { ...auth, purchaseId: created.purchaseId };
+		const cancelled = { status: 'cancelled', merchant: 'shop.example.com' };
+
+		expect(await t.action(api.payments.checkoutCancel, cancel)).toEqual(cancelled);
+		await t.mutation(internal.payments.updatePurchase, {
+			authorizationId: 'cauth_1',
+			status: 'declined'
+		});
+		expect(await t.action(api.payments.checkoutCancel, cancel)).toEqual(cancelled);
+
+		expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1);
+		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
+			expect.objectContaining({ status: 'cancelled' })
 		]);
 	});
 

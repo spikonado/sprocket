@@ -39,7 +39,7 @@ pub(crate) use self::image_urls::ConvexImageUrls;
 use self::image_urls::ImageUrlMap;
 use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
-use self::payments::{CardCheckoutTool, ReportOrderTool};
+use self::payments::{CardCheckoutTool, PollCheckoutTool, ReportOrderTool};
 use self::pull_requests::LinkPrsTool;
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
@@ -77,6 +77,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) link_prs: LinkPrsTool,
     pub(crate) cwd: WorkingDirectory,
     pub(crate) card_checkout: CardCheckoutTool,
+    pub(crate) poll_checkout: PollCheckoutTool,
     pub(crate) report_order: ReportOrderTool,
 }
 
@@ -184,6 +185,7 @@ pub(crate) fn agent_tools(
         command_sessions,
         max_yield_ms,
         question_polls: questions::QuestionPolls::default(),
+        checkouts: payments::Checkouts::default(),
         subagent_polls: subagents::SubagentPolls::default(),
         subagent_launcher,
     };
@@ -227,6 +229,7 @@ pub(crate) fn agent_tools(
         link_prs: LinkPrsTool(context.clone()),
         cwd: context.cwd.clone(),
         card_checkout: CardCheckoutTool(context.clone()),
+        poll_checkout: PollCheckoutTool(context.clone()),
         report_order: ReportOrderTool(context),
     }
 }

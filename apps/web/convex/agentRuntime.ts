@@ -92,7 +92,11 @@ type RunClaimPatch = {
 	completionAttemptSeq?: number;
 };
 
-const paymentToolJobKinds: ReadonlySet<string> = new Set(['card_checkout', 'report_order']);
+const paymentToolJobKinds: ReadonlySet<string> = new Set([
+	'card_checkout',
+	'poll_checkout',
+	'report_order'
+]);
 
 function isExpectedSectionKey(
 	runId: Doc<'runs'>['_id'],

@@ -60,6 +60,8 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Read Instructions';
 		case 'card_checkout':
 			return 'Card Checkout';
+		case 'poll_checkout':
+			return 'Checkout Approval';
 		case 'report_order':
 			return 'Recorded Order';
 		case 'parse_file':
@@ -157,6 +159,9 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 
 			return orderNumber ? `Recorded order ${orderNumber}` : 'Order';
 		}
+
+		case 'poll_checkout':
+			return 'Waiting for approval';
 
 		case 'read_skill': {
 			const name = jsonString(fields?.name);

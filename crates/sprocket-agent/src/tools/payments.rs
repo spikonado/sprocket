@@ -1,10 +1,12 @@
 mod cdp;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fancy_regex::Regex;
+use futures::StreamExt;
 use rig::tool::{ToolErrorKind, ToolExecutionError};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -12,12 +14,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sprocket_workspace::WorkspaceCancellation;
 use tokio::process::Command;
-use tokio::time::{sleep, timeout};
+use tokio::sync::watch;
+use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use self::cdp::{Interceptor, PausedPayment};
+use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::{action_args_from_payload, execute_tool_job, run_convex_tool_action};
+use crate::convex::RuntimeClient;
 
 const RECOGNIZERS: &str = "payments:checkoutRecognizers";
 const CREATE: &str = "payments:checkoutCreate";
@@ -35,6 +40,8 @@ const MAX_CONVEX_FAILURES: u32 = 3;
 #[derive(Clone)]
 pub(crate) struct CardCheckoutTool(pub(super) AgentToolContext);
 #[derive(Clone)]
+pub(crate) struct PollCheckoutTool(pub(super) AgentToolContext);
+#[derive(Clone)]
 pub(crate) struct ReportOrderTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -46,6 +53,25 @@ pub(crate) struct CardCheckoutArgs {
     currency: String,
     /// agent-browser ref of the store's Pay or Place order button, e.g. "@e12".
     pay_button: String,
+    #[serde(
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
+    )]
+    #[schemars(default = "default_yield_ms")]
+    yield_time_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PollCheckoutArgs {
+    /// purchaseId returned by card_checkout.
+    purchase_id: String,
+    #[serde(
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
+    )]
+    #[schemars(default = "default_yield_ms")]
+    yield_time_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -74,7 +100,13 @@ impl rig::tool::Tool for CardCheckoutTool {
     }
 
     fn parameters(&self) -> Value {
-        json!(schemars::schema_for!(CardCheckoutArgs))
+        let mut schema = json!(schemars::schema_for!(CardCheckoutArgs));
+        schema["properties"]["yieldTimeMs"] = yield_time_schema(
+            YieldMode::Action,
+            self.0.max_yield_ms,
+            "Maximum time to wait for the user's approval before returning the tool call.",
+        );
+        schema
     }
 
     async fn call(
@@ -83,8 +115,51 @@ impl rig::tool::Tool for CardCheckoutTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
+        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms);
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
-            card_checkout(&self.0, args, cancellation)
+            let progress = start_checkout(self.0.clone(), args);
+            async move {
+                cancellable(&cancellation, wait_for_checkout(progress, yield_time_ms)).await
+            }
+        })
+        .await
+    }
+}
+
+impl rig::tool::Tool for PollCheckoutTool {
+    const NAME: &'static str = "poll_checkout";
+    type Error = ToolExecutionError;
+    type Args = PollCheckoutArgs;
+    type Output = Value;
+
+    fn description(&self) -> String {
+        "Used by $paying-at-checkout.".to_string()
+    }
+
+    fn parameters(&self) -> Value {
+        let mut schema = json!(schemars::schema_for!(PollCheckoutArgs));
+        schema["properties"]["yieldTimeMs"] = yield_time_schema(
+            YieldMode::Poll,
+            self.0.max_yield_ms,
+            "Maximum time to wait for the user's approval before returning the tool call. Zero returns an immediate status snapshot.",
+        );
+        schema
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
+        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms);
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
+            match self.0.checkouts.get(&args.purchase_id) {
+                Some(progress) => {
+                    cancellable(&cancellation, wait_for_checkout(progress, yield_time_ms)).await
+                }
+                None => end_orphaned_checkout(&self.0, &cancellation, &args.purchase_id).await,
+            }
         })
         .await
     }
@@ -252,9 +327,136 @@ enum Outcome {
     Stopped(Value),
 }
 
+#[derive(Clone)]
+enum CheckoutProgress {
+    Starting,
+    AwaitingApproval {
+        purchase_id: String,
+        merchant: String,
+    },
+    Finished(Result<Value, String>),
+}
+
+/// The run's checkouts by purchase id, so `poll_checkout` can wait on them.
+#[derive(Clone, Default)]
+pub(super) struct Checkouts(Arc<Mutex<HashMap<String, watch::Receiver<CheckoutProgress>>>>);
+
+impl Checkouts {
+    fn insert(&self, purchase_id: String, progress: watch::Receiver<CheckoutProgress>) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(purchase_id, progress);
+    }
+
+    fn get(&self, purchase_id: &str) -> Option<watch::Receiver<CheckoutProgress>> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(purchase_id)
+            .cloned()
+    }
+}
+
+/// Runs the checkout outside the tool call, so approval can outlast one call.
+/// The paused request lives in this process, so the checkout ends with its run.
+fn start_checkout(
+    context: AgentToolContext,
+    args: CardCheckoutArgs,
+) -> watch::Receiver<CheckoutProgress> {
+    let (progress, receiver) = watch::channel(CheckoutProgress::Starting);
+    tokio::spawn(async move {
+        let cancellation = WorkspaceCancellation::new();
+        let run_end = tokio::spawn(cancel_when_run_ends(context.clone(), cancellation.clone()));
+        let result = card_checkout(&context, args, &progress, cancellation).await;
+        run_end.abort();
+        progress.send_replace(CheckoutProgress::Finished(
+            result.map_err(|error| error.to_string()),
+        ));
+    });
+    receiver
+}
+
+/// Losing the run's status counts as the run ending, since no tool call could
+/// observe the checkout anymore.
+async fn cancel_when_run_ends(context: AgentToolContext, cancellation: WorkspaceCancellation) {
+    if let Ok(mut updates) = context
+        .runtime
+        .run_finished_subscription(&context.run_id)
+        .await
+    {
+        while let Some(update) = updates.next().await {
+            if !matches!(RuntimeClient::decode_run_finished_update(update), Ok(false)) {
+                break;
+            }
+        }
+    }
+    cancellation.cancel();
+}
+
+async fn wait_for_checkout(
+    mut progress: watch::Receiver<CheckoutProgress>,
+    yield_time_ms: u64,
+) -> Result<Value, ToolExecutionError> {
+    let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+    loop {
+        let state = progress.borrow_and_update().clone();
+        let changed = match state {
+            CheckoutProgress::Finished(result) => return result.map_err(tool_failure),
+            // Bounded by the payment request wait and the purchase create.
+            CheckoutProgress::Starting => progress.changed().await,
+            CheckoutProgress::AwaitingApproval {
+                purchase_id,
+                merchant,
+            } => tokio::select! {
+                changed = progress.changed() => changed,
+                _ = sleep_until(deadline) => {
+                    return Ok(finished("awaiting_approval", &purchase_id, &merchant, None));
+                }
+            },
+        };
+        if changed.is_err() {
+            return Err(tool_failure("The checkout stopped unexpectedly."));
+        }
+    }
+}
+
+/// A purchase this run isn't running belongs to an ended run or a restarted
+/// host, so nothing can complete it anymore.
+async fn end_orphaned_checkout(
+    context: &AgentToolContext,
+    cancellation: &WorkspaceCancellation,
+    purchase_id: &str,
+) -> Result<Value, ToolExecutionError> {
+    #[derive(Deserialize)]
+    struct Ended {
+        status: String,
+        merchant: String,
+    }
+    let ended: Ended = decode(
+        payments_action(
+            context,
+            cancellation,
+            CANCEL,
+            &json!({ "purchaseId": purchase_id }),
+        )
+        .await?,
+        CANCEL,
+    )?;
+    let reason = (ended.status == "cancelled")
+        .then(|| "The checkout ended with the run that started it.".to_string());
+    Ok(finished(
+        &ended.status,
+        purchase_id,
+        &ended.merchant,
+        reason,
+    ))
+}
+
 async fn card_checkout(
     context: &AgentToolContext,
     args: CardCheckoutArgs,
+    progress: &watch::Sender<CheckoutProgress>,
     cancellation: WorkspaceCancellation,
 ) -> Result<Value, ToolExecutionError> {
     let recognizers: Vec<RecognizerSpec> = decode(
@@ -278,7 +480,7 @@ async fn card_checkout(
             .map_err(tool_error)
     })
     .await?;
-    let result = checkout(context, &mut interceptor, &args, &cancellation).await;
+    let result = checkout(context, &mut interceptor, &args, progress, &cancellation).await;
     interceptor.close().await;
     result
 }
@@ -287,6 +489,7 @@ async fn checkout(
     context: &AgentToolContext,
     interceptor: &mut Interceptor,
     args: &CardCheckoutArgs,
+    progress: &watch::Sender<CheckoutProgress>,
     cancellation: &WorkspaceCancellation,
 ) -> Result<Value, ToolExecutionError> {
     let Some(payment) =
@@ -294,7 +497,7 @@ async fn checkout(
     else {
         return Ok(json!({ "status": "no_payment_request" }));
     };
-    match approve(context, interceptor, args, &payment, cancellation).await {
+    match approve(context, interceptor, args, &payment, progress, cancellation).await {
         Ok(Outcome::Approved {
             purchase_id,
             merchant,
@@ -350,6 +553,7 @@ async fn approve(
     interceptor: &Interceptor,
     args: &CardCheckoutArgs,
     payment: &PausedPayment,
+    progress: &watch::Sender<CheckoutProgress>,
     cancellation: &WorkspaceCancellation,
 ) -> Result<Outcome, ToolExecutionError> {
     let page_url = interceptor.page_url().await.map_err(tool_error)?;
@@ -406,13 +610,19 @@ async fn approve(
             )));
         }
     };
+    context
+        .checkouts
+        .insert(purchase_id.clone(), progress.subscribe());
+    progress.send_replace(CheckoutProgress::AwaitingApproval {
+        purchase_id: purchase_id.clone(),
+        merchant: merchant.clone(),
+    });
     let mut failures = 0;
     loop {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                cancel_purchase(context, &purchase_id).await;
-                return Err(cancelled_error());
+                return lost(context, &purchase_id, &merchant, "The run ended before the purchase was approved.").await;
             }
             _ = interceptor.closed() => {
                 return lost(context, &purchase_id, &merchant, "The browser closed during checkout.").await;
@@ -471,8 +681,11 @@ async fn lost(
     reason: &str,
 ) -> Result<Outcome, ToolExecutionError> {
     match cancel_purchase(context, purchase_id).await.as_deref() {
-        Some("declined") => Err(tool_failure(format!(
-            "{reason} Sprocket cancelled the purchase before it was paid."
+        Some(status @ ("cancelled" | "declined" | "expired")) => Ok(Outcome::Stopped(finished(
+            status,
+            purchase_id,
+            merchant,
+            Some(format!("{reason} The purchase was not paid.")),
         ))),
         _ => Ok(Outcome::Stopped(finished(
             "outcome_unknown",

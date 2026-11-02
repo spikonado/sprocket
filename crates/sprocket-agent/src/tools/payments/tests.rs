@@ -79,3 +79,28 @@ fn fulfilled_headers_allow_the_requesting_origin() {
         .map(|(name, value)| (name.to_string(), value.to_string()))
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn checkout_waits_pass_approval_until_the_checkout_finishes() {
+    let (progress, receiver) = watch::channel(CheckoutProgress::Starting);
+    let waiting = tokio::spawn(wait_for_checkout(receiver.clone(), 0));
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    progress.send_replace(CheckoutProgress::AwaitingApproval {
+        purchase_id: "purchase".into(),
+        merchant: "shop.example.com".into(),
+    });
+    assert_eq!(
+        waiting.await.unwrap().unwrap(),
+        json!({ "status": "awaiting_approval", "purchaseId": "purchase", "merchant": "shop.example.com" })
+    );
+
+    progress.send_replace(CheckoutProgress::Finished(Ok(
+        json!({ "status": "approved" }),
+    )));
+    assert_eq!(
+        wait_for_checkout(receiver, 10_000).await.unwrap(),
+        json!({ "status": "approved" })
+    );
+}

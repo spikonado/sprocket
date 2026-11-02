@@ -363,6 +363,8 @@ describe('partitionWorkSectionTools', () => {
 		'ask_question',
 		'poll_question',
 		'await_question',
+		'card_checkout',
+		'poll_checkout',
 		'spawn_subagent',
 		'control_subagent',
 		'poll_subagent'
@@ -384,7 +386,6 @@ describe('partitionWorkSectionTools', () => {
 	it.each([
 		'apply_patch',
 		'get_workspace_instructions',
-		'card_checkout',
 		'report_order',
 		'read_skill',
 		'parse_file',

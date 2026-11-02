@@ -259,7 +259,13 @@ export const retiredMandateToolKinds: ReadonlySet<string> = new Set([
 export const vCardCheckoutPayload = v.object({
 	amount: v.string(),
 	currency: v.string(),
-	payButton: v.string()
+	payButton: v.string(),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vPollCheckoutPayload = v.object({
+	purchaseId: v.string(),
+	yieldTimeMs: v.optional(v.number())
 });
 
 export const vReportOrderPayload = v.object({
@@ -275,6 +281,7 @@ export const purchaseStatuses = [
 	'submitted_on_device',
 	'declined',
 	'expired',
+	'cancelled',
 	'settled'
 ] as const;
 
@@ -362,6 +369,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vMandateChargePayload,
 	vMandateReportPayload,
 	vCardCheckoutPayload,
+	vPollCheckoutPayload,
 	vReportOrderPayload
 );
 
@@ -533,10 +541,12 @@ const vMandateReportResult = v.object({
 
 export const vCardCheckoutResult = v.object({
 	status: v.union(
+		v.literal('awaiting_approval'),
 		v.literal('approved'),
 		v.literal('submitted_on_device'),
 		v.literal('declined'),
 		v.literal('expired'),
+		v.literal('cancelled'),
 		v.literal('card_required'),
 		v.literal('no_payment_request'),
 		v.literal('outcome_unknown')
@@ -829,6 +839,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('mandate_charge'),
 	v.literal('mandate_report'),
 	v.literal('card_checkout'),
+	v.literal('poll_checkout'),
 	v.literal('report_order'),
 	v.literal('read_skill'),
 	v.literal('set_cwd'),

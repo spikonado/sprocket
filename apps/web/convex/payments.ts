@@ -69,7 +69,9 @@ function purchaseView(purchase: Doc<'purchases'>): Infer<typeof vPurchase> {
 /** Statuses only move forward: a late or replayed update never reopens an
  * approval or undoes a settlement. */
 function nextPurchaseStatus(current: PurchaseStatus, incoming: PurchaseStatus): PurchaseStatus {
-	if (current === 'settled' || incoming === 'awaiting_approval') return current;
+	if (current === 'settled' || current === 'cancelled' || incoming === 'awaiting_approval') {
+		return current;
+	}
 
 	return incoming;
 }
@@ -174,14 +176,26 @@ export const attemptPurchaseId = internalQuery({
 	}
 });
 
-export const ownedAuthorizationId = internalQuery({
+const vOwnedPurchase = v.object({
+	authorizationId: v.string(),
+	status: vPurchaseStatus,
+	merchant: v.string()
+});
+
+export const ownedPurchase = internalQuery({
 	args: { purchaseId: v.string(), userId: v.string() },
-	returns: v.union(v.string(), v.null()),
+	returns: v.union(vOwnedPurchase, v.null()),
 	handler: async (ctx, args) => {
 		const purchaseId = ctx.db.normalizeId('purchases', args.purchaseId);
 		const purchase = purchaseId ? await ctx.db.get('purchases', purchaseId) : null;
 
-		return purchase?.userId === args.userId ? purchase.authorizationId : null;
+		if (purchase?.userId !== args.userId) return null;
+
+		return {
+			authorizationId: purchase.authorizationId,
+			status: purchase.status,
+			merchant: purchase.merchant
+		};
 	}
 });
 
@@ -326,23 +340,23 @@ async function activeActor(
 	});
 }
 
-async function requireAuthorizationId(
+async function requirePurchase(
 	ctx: ActionCtx,
 	purchaseId: string,
 	userId: string
-): Promise<string> {
-	const authorizationId: string | null = await ctx.runQuery(
-		internal.payments.ownedAuthorizationId,
+): Promise<Infer<typeof vOwnedPurchase>> {
+	const purchase: Infer<typeof vOwnedPurchase> | null = await ctx.runQuery(
+		internal.payments.ownedPurchase,
 		{ purchaseId, userId }
 	);
 
-	if (!authorizationId) throw new Error('Purchase not found.');
+	if (!purchase) throw new Error('Purchase not found.');
 
-	return authorizationId;
+	return purchase;
 }
 
 // ---------------------------------------------------------------------------
-// Agent tools (card_checkout and report_order)
+// Agent tools (card_checkout, poll_checkout and report_order)
 // ---------------------------------------------------------------------------
 
 export const checkoutRecognizers = action({
@@ -503,7 +517,7 @@ export const checkoutPoll = action({
 	handler: async (ctx, args) =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args);
-			const authorizationId = await requireAuthorizationId(ctx, args.purchaseId, actor.userId);
+			const { authorizationId } = await requirePurchase(ctx, args.purchaseId, actor.userId);
 			let authorization: AgentcardAuthorization;
 
 			try {
@@ -539,34 +553,58 @@ export const checkoutPoll = action({
 		})
 });
 
+const vCheckoutCancelResult = v.object({
+	status: v.union(
+		v.literal('approved'),
+		v.literal('submitted_on_device'),
+		v.literal('declined'),
+		v.literal('expired'),
+		v.literal('cancelled'),
+		v.literal('outcome_unknown')
+	),
+	merchant: v.string()
+});
+
+/** Idempotent: a purchase that already left approval keeps its status, so a
+ * later run can still learn how it ended. */
 export const checkoutCancel = action({
 	args: { ...runAuth, purchaseId: v.string() },
-	returns: v.object({ status: v.string() }),
-	handler: async (ctx, args) =>
+	returns: vCheckoutCancelResult,
+	handler: async (ctx, args): Promise<Infer<typeof vCheckoutCancelResult>> =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args, true);
-			const authorizationId = await requireAuthorizationId(ctx, args.purchaseId, actor.userId);
+			const purchase = await requirePurchase(ctx, args.purchaseId, actor.userId);
+			const { merchant } = purchase;
+
+			switch (purchase.status) {
+				case 'awaiting_approval':
+					break;
+				case 'settled':
+					return { status: 'approved' as const, merchant };
+				default:
+					return { status: purchase.status, merchant };
+			}
 
 			try {
 				await agentcardRequest(
 					await agentcardToken(ctx),
-					`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}/cancel`,
+					`/api/v2/checkout/authorizations/${encodeURIComponent(purchase.authorizationId)}/cancel`,
 					{ method: 'POST', body: {} }
 				);
 			} catch (error) {
 				if (error instanceof AgentcardError && error.code === 'outcome_unknown') {
-					return { status: 'outcome_unknown' };
+					return { status: 'outcome_unknown' as const, merchant };
 				}
 
 				throw error;
 			}
 
 			await ctx.runMutation(internal.payments.updatePurchase, {
-				authorizationId,
-				status: 'declined'
+				authorizationId: purchase.authorizationId,
+				status: 'cancelled'
 			});
 
-			return { status: 'declined' };
+			return { status: 'cancelled' as const, merchant };
 		})
 });
 
@@ -605,7 +643,8 @@ export const reportOrder = action({
 			if (!orderNumber) throw new Error('Order number is required.');
 
 			await ctx.runMutation(internal.payments.updatePurchase, {
-				authorizationId: await requireAuthorizationId(ctx, args.purchaseId, actor.userId),
+				authorizationId: (await requirePurchase(ctx, args.purchaseId, actor.userId))
+					.authorizationId,
 				orderNumber,
 				orderLink: httpsLink(args.orderLink, 'orderLink'),
 				trackingLink: httpsLink(args.trackingLink, 'trackingLink')
