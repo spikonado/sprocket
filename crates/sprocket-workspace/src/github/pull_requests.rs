@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitHubApi, GitHubError, is_valid_host};
 
+pub mod activity;
+
 /// t3code's batch size: one GraphQL request answers this many aliased lookups.
 const PULL_REQUESTS_PER_REQUEST: usize = 25;
 
