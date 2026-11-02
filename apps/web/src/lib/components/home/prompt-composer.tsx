@@ -777,8 +777,10 @@ export function PromptComposerView({
 								</div>
 								{pendingQuestion ? (
 									<AgentQuestion
+										key={pendingQuestion.questionId}
 										question={pendingQuestion.question}
 										options={pendingQuestion.options}
+										agentWorking={isWorking}
 										selectedOptionId={selectedQuestionOptionId}
 										onToggleOption={toggleQuestionOption}
 									/>
