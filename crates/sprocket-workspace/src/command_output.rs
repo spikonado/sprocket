@@ -163,14 +163,15 @@ impl CapturedOutput {
         log.write_all(bytes)
             .await
             .context("failed to spool command output")?;
+        // Tokio file writes may return before the blocking write finishes.
+        // Polls read events, so an event is written only once its bytes are logged.
+        log.flush()
+            .await
+            .context("failed to flush command output")?;
         events
             .write_all(&encoded)
             .await
             .context("failed to spool command output event")?;
-        // Tokio file writes may return before the blocking write finishes.
-        log.flush()
-            .await
-            .context("failed to flush command output")?;
         events
             .flush()
             .await
