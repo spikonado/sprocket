@@ -951,7 +951,8 @@ export const vAgentQuestionStatus = v.union(
 	v.literal('pending'),
 	v.literal('answered'),
 	v.literal('timedOut'),
-	v.literal('cancelled')
+	v.literal('cancelled'),
+	v.literal('skipped')
 );
 
 export const vExecutorJobStatus = v.union(

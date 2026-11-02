@@ -239,15 +239,7 @@ export async function answerPendingQuestion(
 		};
 	}
 
-	if (!(await isPendingQuestionActionable(ctx.db, question))) {
-		throw new Error('Question is no longer awaiting an answer.');
-	}
-
-	const head = await headActionablePendingQuestion(ctx.db, args.threadId);
-
-	if (!head || head._id !== question._id) {
-		throw new Error('Answer the earliest pending question first.');
-	}
+	await assertHeadPendingQuestion(ctx, question);
 
 	const answer = normalizeQuestionAnswer({
 		options: question.options,
@@ -277,6 +269,50 @@ export async function answerPendingQuestion(
 		continuation: await questionContinuation(ctx, question, run)
 	};
 }
+
+async function assertHeadPendingQuestion(ctx: MutationCtx, question: Doc<'agentQuestions'>) {
+	if (!(await isPendingQuestionActionable(ctx.db, question))) {
+		throw new Error('Question is no longer awaiting an answer.');
+	}
+
+	const head = await headActionablePendingQuestion(ctx.db, question.threadId);
+
+	if (!head || head._id !== question._id) {
+		throw new Error('Answer the earliest pending question first.');
+	}
+}
+
+export const skip = mutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		questionId: v.id('agentQuestions')
+	},
+	returns: v.object({
+		continuation: v.optional(v.object({ runId: v.id('runs'), prompt: v.string() }))
+	}),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const question = await ctx.db.get('agentQuestions', args.questionId);
+
+		if (!question || question.threadId !== args.threadId) {
+			throw new Error('Question not found.');
+		}
+
+		if (question.status === 'skipped') return {};
+
+		await assertHeadPendingQuestion(ctx, question);
+		const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
+
+		await ctx.db.patch('agentQuestions', question._id, {
+			status: 'skipped',
+			answeredAt: Date.now()
+		});
+		await updateThreadHierarchyAfterChange(ctx, before);
+
+		return { continuation: await questionContinuation(ctx, question) };
+	}
+});
 
 export async function questionContinuation(
 	ctx: QueryCtx | MutationCtx,
@@ -311,15 +347,16 @@ export async function questionContinuation(
 		.order('asc')
 		.collect();
 
-	const prompt = formatQuestionContinuationPrompt(
-		runQuestions.flatMap((entry) =>
-			entry.requiresContinuation && entry.answer
-				? [{ question: entry.question, answer: entry.answer }]
-				: []
-		)
+	const answered = runQuestions.flatMap((entry) =>
+		entry.requiresContinuation && entry.answer
+			? [{ question: entry.question, answer: entry.answer }]
+			: []
 	);
 
-	return { runId: continuationOfRunId, prompt };
+	// Skipping every question of a finished run leaves nothing to continue with.
+	if (answered.length === 0) return undefined;
+
+	return { runId: continuationOfRunId, prompt: formatQuestionContinuationPrompt(answered) };
 }
 
 export const timeout = internalMutation({

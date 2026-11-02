@@ -93,11 +93,14 @@ fn ask_args_accept_absent_null_and_historical_numeric_timeouts() {
 
 #[test]
 fn question_results_return_status_and_answer_with_ids_only_on_creation() {
-    for status in ["pending", "answered", "timedOut"] {
+    for status in ["pending", "answered", "timedOut", "skipped"] {
         let observed = snapshot("q1", status);
         let result = question_result_from_snapshot(&observed).unwrap();
-        let mut expected =
-            json!({"pending": status == "pending", "timedOut": status == "timedOut"});
+        let mut expected = json!({
+            "pending": status == "pending",
+            "timedOut": status == "timedOut",
+            "skipped": status == "skipped",
+        });
         if status == "answered" {
             expected["answer"] = json!({"optionId": "safe", "optionLabel": "Use the safe default"});
         }

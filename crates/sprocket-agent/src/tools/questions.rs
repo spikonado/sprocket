@@ -42,7 +42,7 @@ fn ask_question_parameters(max_yield_ms: u64) -> serde_json::Value {
     schema["properties"]["timeoutMs"] = json!({
         "type": ["integer", "null"],
         "minimum": 0,
-        "description": "Maximum question lifetime. Without a limit, the question stays open until it is answered or cancelled."
+        "description": "Maximum question lifetime. Without a limit, the question stays open until it is answered, skipped, or cancelled."
     });
     schema
 }
@@ -384,9 +384,10 @@ fn question_result_from_snapshot(
     let mut result = json!({
         "pending": snapshot.status == "pending",
         "timedOut": snapshot.status == "timedOut",
+        "skipped": snapshot.status == "skipped",
     });
     match snapshot.status.as_str() {
-        "pending" | "timedOut" => Ok(result),
+        "pending" | "timedOut" | "skipped" => Ok(result),
         "answered" => {
             result["answer"] = json!(snapshot.answer);
             Ok(result)

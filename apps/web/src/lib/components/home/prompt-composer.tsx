@@ -80,6 +80,7 @@ export type PromptComposerProps = {
 	projectPaths?: ComposerPathSource | null;
 	onSubmit: () => void;
 	onCancel: () => void;
+	onSkipQuestion?: () => void;
 };
 
 export type ComposerUsage = Pick<
@@ -141,6 +142,7 @@ export function PromptComposerView({
 	projectPaths = null,
 	onSubmit,
 	onCancel,
+	onSkipQuestion,
 	usage,
 	usageFailed
 }: PromptComposerViewProps) {
@@ -906,7 +908,17 @@ export function PromptComposerView({
 										{usageThreadId ? (
 											<ThreadUsageButton threadId={usageThreadId} modelCatalog={modelCatalog} />
 										) : null}
-										{isRunning ? (
+										{answeringQuestion ? (
+											<button
+												type="button"
+												className="text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill h-11 rounded-full border border-[var(--hairline)] px-4 text-[13px] font-medium transition enabled:cursor-pointer disabled:opacity-40 sm:h-10"
+												data-ph-capture-attribute-action="skip_question"
+												disabled={isSubmitting}
+												onClick={onSkipQuestion}
+											>
+												Skip question
+											</button>
+										) : isRunning ? (
 											<button
 												type="button"
 												className="flex size-11 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100 sm:size-10"
@@ -918,7 +930,17 @@ export function PromptComposerView({
 												<Square className="size-3.5 fill-current" />
 											</button>
 										) : null}
-										{answeringQuestion || !isRunning ? (
+										{answeringQuestion && canAnswerQuestion ? (
+											<button
+												type="button"
+												className="bg-primary/90 text-primary-foreground hover:bg-primary h-11 rounded-full px-4 text-[13px] font-medium transition enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 sm:h-10"
+												onClick={onSubmit}
+												disabled={!canSend || isSubmitting}
+												data-ph-capture-attribute-action="submit_answer"
+											>
+												Send answer
+											</button>
+										) : answeringQuestion || !isRunning ? (
 											<button
 												type="button"
 												className="bg-primary/90 text-primary-foreground hover:bg-primary flex size-11 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:size-10"
@@ -931,7 +953,7 @@ export function PromptComposerView({
 													!canSubmitContent ||
 													(!answeringQuestion && attachmentsPending)
 												}
-												aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
+												aria-label={answeringQuestion ? 'Send answer' : 'Send message'}
 												data-ph-capture-attribute-action={
 													answeringQuestion ? 'submit_answer' : 'send_message'
 												}
