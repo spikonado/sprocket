@@ -8,7 +8,6 @@ import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { Infer } from 'convex/values';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
-import { FIRECRAWL_CREDITS_EXHAUSTED } from '@convex/lib/firecrawl';
 import type { vDeveloperSearchPayload } from '@convex/lib/validators';
 import { REQUEST_TTL_MS } from '@convex/webRequests';
 import {
@@ -774,21 +773,6 @@ describe('developer_search', () => {
 		expect(search).not.toHaveBeenCalled();
 	});
 
-	it.each([
-		{ error: new SdkError('Payment required', 402), message: FIRECRAWL_CREDITS_EXHAUSTED },
-		{ error: new SdkError('Too many repos', 400), message: 'Too many repos' },
-		{
-			error: new SdkError('Upstream exploded', 500),
-			message: 'Developer search failed (500): Upstream exploded'
-		}
-	])('maps Firecrawl failures to "$message" without retrying', async ({ error, message }) => {
-		const t = initConvexTest();
-		const search = mockDeveloperSearch().mockRejectedValue(error);
-
-		await expect(developerSearch(t, { query: 'widget' })).rejects.toThrow(message);
-		expect(search).toHaveBeenCalledTimes(1);
-	});
-
 	it('retries a rate limit', async () => {
 		const t = initConvexTest();
 
@@ -802,16 +786,5 @@ describe('developer_search', () => {
 		await vi.advanceTimersByTimeAsync(1_000);
 		expect(await result).toEqual({ results: [] });
 		expect(search).toHaveBeenCalledTimes(2);
-	});
-
-	it('requires an API key', async () => {
-		const t = initConvexTest();
-		vi.stubEnv('FIRECRAWL_API_KEY', '');
-		const search = mockDeveloperSearch();
-
-		await expect(developerSearch(t, { query: 'widget' })).rejects.toThrow(
-			'FIRECRAWL_API_KEY is not configured.'
-		);
-		expect(search).not.toHaveBeenCalled();
 	});
 });

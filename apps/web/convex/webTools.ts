@@ -433,12 +433,10 @@ async function runDeveloperSearch(
 
 	const options: DeveloperSearchOptions = {
 		k: DEVELOPER_SEARCH_RESULTS,
-		passages: DEVELOPER_SEARCH_PASSAGES
+		passages: DEVELOPER_SEARCH_PASSAGES,
+		types: args.types?.length ? args.types : undefined,
+		repos: args.repos?.length ? args.repos : undefined
 	};
-
-	if (args.types?.length) options.types = args.types;
-
-	if (args.repos?.length) options.repos = args.repos;
 
 	const response = await retryRateLimited({
 		deadline,
@@ -449,32 +447,18 @@ async function runDeveloperSearch(
 		shouldContinue
 	});
 
-	const results: DeveloperSearchResults = {
-		results: response.results.map((result) => {
-			const item: DeveloperSearchResults['results'][number] = {
-				url: result.url,
-				passages: result.passages.map((passage) =>
-					passage.citation_url
-						? { text: passage.text, citationUrl: passage.citation_url }
-						: { text: passage.text }
-				)
-			};
-
-			if (result.title) item.title = result.title;
-
-			return item;
-		})
-	};
-
-	if (response.repos) {
-		results.repos = response.repos.map(({ repo, indexed, types }) => ({
+	return {
+		results: response.results.map(({ url, title, passages }) => ({
+			url,
+			title,
+			passages: passages.map(({ text, citation_url }) => ({ text, citationUrl: citation_url }))
+		})),
+		repos: response.repos?.map(({ repo, indexed, types: { issue, pullRequest, readme } }) => ({
 			repo,
 			indexed,
-			types: { issue: types.issue, pullRequest: types.pullRequest, readme: types.readme }
-		}));
-	}
-
-	return results;
+			types: { issue, pullRequest, readme }
+		}))
+	};
 }
 
 async function runSearch(
