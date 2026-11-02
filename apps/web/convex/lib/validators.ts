@@ -670,6 +670,7 @@ export const vAskQuestionAnswer = v.object({
 export const vPollQuestionResult = v.object({
 	pending: v.boolean(),
 	timedOut: v.boolean(),
+	skipped: v.optional(v.boolean()),
 	answer: v.optional(vAskQuestionAnswer)
 });
 
