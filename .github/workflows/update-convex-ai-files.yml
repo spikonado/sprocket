@@ -31,7 +31,7 @@ jobs:
         working-directory: apps/web
         run: |
           bunx convex ai-files update
-          bunx prettier --write AGENTS.md CLAUDE.md skills-lock.json .agents/skills
+          bun fmt AGENTS.md CLAUDE.md skills-lock.json .agents/skills
 
       - name: Create pull request and enable auto-merge
         env:

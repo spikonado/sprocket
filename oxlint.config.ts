@@ -15,13 +15,17 @@ const config = {
 		'.worktrees/**',
 		'ref-repos/**',
 		'target/**',
-		'tools/oxlint/anti-slop/**'
+		'tools/oxlint/anti-slop/**',
+		'apps/web/convex/_generated/**'
 	],
+	plugins: ['typescript', 'unicorn', 'oxc', 'react'],
+	categories: { correctness: 'error' },
 	jsPlugins: [
 		{
 			name: 'anti-slop',
 			specifier: './tools/oxlint/anti-slop/index.ts'
-		}
+		},
+		'@convex-dev/eslint-plugin'
 	],
 	rules: {
 		'typescript/no-confusing-non-null-assertion': 'error',
@@ -49,8 +53,48 @@ const config = {
 			{
 				checkConditionalExpressions: true
 			}
-		]
-	}
+		],
+		'no-case-declarations': 'error',
+		'no-empty': 'error',
+		'no-fallthrough': 'error',
+		'no-prototype-builtins': 'error',
+		'no-regex-spaces': 'error',
+		'no-useless-assignment': 'error',
+		'preserve-caught-error': 'error',
+		'no-var': 'error',
+		'prefer-const': 'error',
+		'prefer-rest-params': 'error',
+		'prefer-spread': 'error',
+		'no-array-constructor': 'error',
+		// Empty options drop oxlint's default `^_` ignore patterns, matching ESLint.
+		'no-unused-vars': ['error', {}],
+		'typescript/ban-ts-comment': 'error',
+		'typescript/no-empty-object-type': 'error',
+		'typescript/no-explicit-any': 'error',
+		'typescript/no-namespace': 'error',
+		'typescript/no-require-imports': 'error',
+		'typescript/no-unnecessary-type-constraint': 'error',
+		'typescript/no-unsafe-function-type': 'error',
+		'react/rules-of-hooks': 'error',
+		'react/refs': 'off',
+		'react/set-state-in-effect': 'off'
+	},
+	overrides: [
+		{ files: ['**/*.cjs'], rules: { 'typescript/no-require-imports': 'off' } },
+		{
+			files: ['apps/web/convex/**/*.ts'],
+			rules: {
+				'@convex-dev/no-old-registered-function-syntax': 'error',
+				'@convex-dev/require-args-validator': 'error',
+				'@convex-dev/explicit-table-ids': 'error',
+				'@convex-dev/no-filter-in-query': 'warn',
+				'@convex-dev/no-top-of-hour-crons': 'warn',
+				'@convex-dev/no-schema-import-cycle': 'error',
+				'@convex-dev/no-duplicate-indexes': 'error',
+				'@convex-dev/no-process-env': 'error'
+			}
+		}
+	]
 };
 
 export default config;

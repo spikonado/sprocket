@@ -10,6 +10,11 @@
 	"prHourlyLimit": 10,
 	"packageRules": [
 		{
+			"description": "Matches bunfig.toml's minimumReleaseAge, which fails installs of younger versions",
+			"matchDatasources": ["npm"],
+			"minimumReleaseAge": "7 days"
+		},
+		{
 			"matchUpdateTypes": ["lockFileMaintenance"],
 			"prPriority": 100
 		},

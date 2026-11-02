@@ -32,11 +32,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # The CLI writes unformatted files, so prettier keeps no-op runs from producing a diff.
+      # The CLI writes unformatted files, so formatting keeps no-op runs from producing a diff.
       - name: Update skills in skills-lock.json
         run: |
           npx -y skills update -p -y
-          bunx prettier --write skills-lock.json .agents/skills
+          bun fmt skills-lock.json .agents/skills
 
       - name: Create or update pull request
         env:

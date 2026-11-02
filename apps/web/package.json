@@ -8,9 +8,8 @@
 		"dev": "convex dev --start 'vite dev'",
 		"build": "vite build",
 		"test": "vitest --run",
-		"check": "tsc --noEmit",
-		"check:anti-slop": "tsc -p tsconfig.anti-slop.json",
-		"lint": "eslint . && convex typecheck"
+		"check": "bun check --no-script && bun check --no-script -p convex",
+		"check:anti-slop": "bun check --no-script -p tsconfig.anti-slop.json"
 	},
 	"dependencies": {
 		"@codemirror/language": "^6.13.1",
@@ -57,11 +56,9 @@
 		"zod": "^4.1.8"
 	},
 	"devDependencies": {
-		"@convex-dev/eslint-plugin": "5.0.0",
 		"@edge-runtime/vm": "^5.0.0",
 		"@posthog/cli": "^0.18.12",
 		"@posthog/rollup-plugin": "^1.6.2",
-		"@sprocket/eslint-config": "workspace:*",
 		"@sprocket/typescript-config": "workspace:*",
 		"@tailwindcss/vite": "^4.2.4",
 		"@testing-library/react": "^16.3.3",
@@ -69,14 +66,12 @@
 		"@types/node": "^26.0.0",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
-		"@typescript/native": "npm:typescript@^7.0.0",
 		"@vitejs/plugin-react": "^6.1.1",
 		"convex-test": "^0.0.66",
-		"eslint": "^10.0.0",
 		"jsdom": "^30.0.1",
 		"tailwindcss": "^4.2.4",
 		"tslib": "^2.8.1",
-		"typescript": "npm:@typescript/typescript6@^6.0.2",
+		"typescript": "^7.0.2",
 		"vite": "^8.0.10",
 		"vitest": "^5.0.0"
 	}

@@ -79,10 +79,6 @@ if (!hasSingleInstanceLock) {
 	app.quit();
 }
 
-function isPlainObject(value) {
-	return value !== null && !Array.isArray(value) && value === Object(value);
-}
-
 function parseNonEmptyString(value) {
 	// Accepts only primitive non-empty strings (no boxed strings/arrays/objects).
 	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {

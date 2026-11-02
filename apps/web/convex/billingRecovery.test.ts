@@ -241,7 +241,7 @@ describe('checkout attempt recovery', () => {
 		const attempt = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'owner'))
 				.unique()
 		);
 

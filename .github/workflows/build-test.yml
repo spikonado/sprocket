@@ -52,6 +52,7 @@ jobs:
               - scripts/**
               - tools/**
               - bun.lock
+              - bunfig.toml
               - oxlint.config.ts
               - package.json
               - turbo.json

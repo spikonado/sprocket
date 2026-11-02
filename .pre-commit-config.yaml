@@ -35,7 +35,7 @@ repos:
         exclude_types: [svg]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.38.2
+    rev: 0.39.0
     hooks:
       - id: check-github-actions
         args: ['--verbose']
@@ -63,12 +63,6 @@ repos:
         entry: commitlint --edit
         stages: [commit-msg]
 
-      - id: eslint
-        name: eslint
-        language: system
-        entry: bun turbo run lint
-        pass_filenames: false
-
       - id: oxlint
         name: oxlint
         language: system
@@ -81,10 +75,10 @@ repos:
         entry: bun run check
         pass_filenames: false
 
-      - id: prettier
-        name: prettier
+      - id: bun-fmt
+        name: bun-fmt
         language: system
-        entry: bun prettier --write .
+        entry: bun fmt .
         pass_filenames: false
 
       - id: mermaid

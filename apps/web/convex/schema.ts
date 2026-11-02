@@ -106,8 +106,6 @@ export default defineSchema({
 		),
 		expiresAt: v.number()
 	})
-		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Released readers use this index; retain until their removal gate passes.
-		.index('by_userId', ['userId'])
 		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
 		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
 	// Older checkout attempts kept after a selection change so their provider
@@ -134,7 +132,7 @@ export default defineSchema({
 		),
 		expiresAt: v.number()
 	})
-		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.
+		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.
 		.index('by_userId', ['userId'])
 		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
 		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
@@ -247,7 +245,7 @@ export default defineSchema({
 	dodoWebhookEvents: defineTable({
 		// Monotonic ingestion sequence, separate from receivedAt so cleanup
 		// cursors never starve behind same-receiptAt inserts.
-		seq: v.optional(v.number()),
+		seq: v.number(),
 		environment: v.string(),
 		webhookId: v.string(),
 		eventType: v.string(),
@@ -327,8 +325,7 @@ export default defineSchema({
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
-		// Tree cancellation needs stable cursors while transcript timestamps change.
-		// eslint-disable-next-line @convex-dev/no-duplicate-indexes
+		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Tree cancellation needs stable cursors while lastMessageAt changes.
 		.index('by_userId_parentThreadId', ['userId', 'parentThreadId'])
 		.index('by_userId_and_parentThreadId_and_lastMessageAt', [
 			'userId',
