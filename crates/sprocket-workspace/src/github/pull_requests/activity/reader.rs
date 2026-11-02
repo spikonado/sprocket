@@ -125,11 +125,12 @@ impl ActivityReader {
             return Ok(last.activity.clone());
         }
         let (viewer, mut activity) = self.status().await?;
-        activity.remarks = match self.last.take() {
-            Some(last) if fingerprint.can_reuse_remarks(&last.fingerprint) => {
-                last.activity.remarks
-            }
-            _ => self.remarks(&viewer).await?,
+        activity.remarks = if let Some(last) = self.last.take()
+            && fingerprint.can_reuse_remarks(&last.fingerprint)
+        {
+            last.activity.remarks
+        } else {
+            self.remarks(&viewer).await?
         };
         self.last = Some(LastRead {
             fingerprint,
