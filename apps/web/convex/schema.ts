@@ -6,13 +6,6 @@ import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
-	vMandateChargeStatus,
-	vMandateFrequency,
-	vMandateReportOutcome,
-	vMandateScope,
-	vMandateStatus
-} from '@convex/lib/validators';
-import {
 	vAgentQuestionStatus,
 	vArtifactType,
 	vAskQuestionAnswer,
@@ -24,6 +17,7 @@ import {
 	vExecutorJobStatus,
 	vLinkedPullRequest,
 	vModelCallUsage,
+	vPurchaseStatus,
 	vReasoningEffort,
 	vRunStatus,
 	vTokenUsageTotals,
@@ -612,51 +606,37 @@ export default defineSchema({
 	})
 		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
 		.index('by_userId_and_repositoryKey_and_scope', ['userId', 'repositoryKey', 'scope']),
-	mandates: defineTable({
+	// Retired Prava rows, kept only until payments:deleteRetiredMandates empties them.
+	mandates: defineTable(v.any()),
+	mandateCharges: defineTable(v.any()),
+	agentcardUsers: defineTable({
 		userId: v.string(),
-		// Present only after the owner approves in Prava.
-		pravaMandateId: v.optional(v.string()),
-		pravaSessionId: v.string(),
-		// Omitted for any-merchant mandates.
-		merchantName: v.optional(v.string()),
-		merchantUrl: v.optional(v.string()),
-		countryCode: v.optional(v.string()),
-		// Integer minor units (cents). Prava decimal strings convert at the boundary.
-		amountCap: v.number(),
-		currency: v.string(),
-		frequency: vMandateFrequency,
-		scope: vMandateScope,
-		status: vMandateStatus,
-		description: v.string(),
-		approvalUrl: v.string(),
-		validUntil: v.optional(v.string()),
-		renewsAt: v.optional(v.string()),
-		remaining: v.optional(v.number()),
-		updatedAt: v.number()
-	}).index('by_user', ['userId']),
-	mandateCharges: defineTable({
-		mandateId: v.id('mandates'),
-		runId: v.id('runs'),
+		agentcardUserId: v.string()
+	}).index('by_userId', ['userId']),
+	// One cached platform token; Agentcard rate-limits token exchanges per IP.
+	agentcardTokens: defineTable({
+		clientId: v.string(),
+		accessToken: v.string(),
+		expiresAt: v.number()
+	}),
+	purchases: defineTable({
 		userId: v.string(),
-		pravaTransactionId: v.optional(v.string()),
-		// Integer minor units (cents).
+		threadId: v.id('threadRecords'),
+		// Chosen by the host per paused payment, so a create whose reply was lost resumes the same purchase.
+		attemptId: v.string(),
+		authorizationId: v.string(),
+		merchant: v.string(),
+		// Smallest currency unit, as Agentcard reports it.
 		amount: v.number(),
 		currency: v.string(),
-		description: v.string(),
-		// When set, (mandateId, reference) is an idempotency key for mandateCharge.
-		reference: v.optional(v.string()),
-		status: vMandateChargeStatus,
-		reportOutcome: v.optional(vMandateReportOutcome),
-		reportedAt: v.optional(v.number()),
-		reportingStartedAt: v.optional(v.number()),
-		chargingStartedAt: v.optional(v.number()),
-		// Set immediately before POST /charge. After a transport error the remote
-		// may have committed, so a row with this set and no transaction id must
-		// not be reclaimed for another provider request.
-		providerRequestedAt: v.optional(v.number()),
-		reportRetrierRunId: v.optional(v.string()),
-		updatedAt: v.number()
+		status: vPurchaseStatus,
+		approvalUrl: v.string(),
+		orderNumber: v.optional(v.string()),
+		orderLink: v.optional(v.string()),
+		trackingLink: v.optional(v.string())
 	})
-		.index('by_mandate_reference', ['mandateId', 'reference'])
-		.index('by_reportRetrierRunId', ['reportRetrierRunId'])
+		.index('by_userId', ['userId'])
+		.index('by_threadId_status', ['threadId', 'status'])
+		.index('by_authorizationId', ['authorizationId'])
+		.index('by_attemptId', ['attemptId'])
 });

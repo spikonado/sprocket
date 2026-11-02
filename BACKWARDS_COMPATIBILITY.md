@@ -56,6 +56,10 @@ Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `sub
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
 
+### Retired Prava mandate tools
+
+Released v0.4.x agents still start `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report` jobs. `beginToolJob` accepts their payloads and fails them with "Payments moved to Agentcard. Update Sprocket to buy things." Remove the retired payload validators from the job-start path and `PAYMENTS_MOVED_TO_AGENTCARD` once those agents age out. Stored jobs stay readable, see the permanent list.
+
 ## Convex data shims
 
 ### Usage-generation key
@@ -75,6 +79,10 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 ### Migration records
 
 `migrationSchedules` and the unmounted `migrations` component keep completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment, and delete the component's data with them.
+
+### Retired Prava mandate rows
+
+`mandates` and `mandateCharges` are untyped tables kept only so the schema accepts their old rows. Remove both tables after `bunx convex run payments:deleteRetiredMandates` has emptied them on each deployment, and remove that mutation with them. Delete the unmounted `actionRetrier` component's data on each deployment at the same time.
 
 ### Stored executor job and result fields
 
@@ -130,7 +138,8 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - The optional `workdir` on `vExecCommandPayload`, shown as `(cwd …)` in the UI and ignored on replay.
 - Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, and `screenshot_url`.
 - Scope and thread metadata on artifact tool payloads and results.
-- `parse_file` URL sources, legacy command results and `mandate_status` results without `description`.
+- `parse_file` URL sources and legacy command results.
+- Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.

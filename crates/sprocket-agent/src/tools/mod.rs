@@ -9,10 +9,10 @@ mod github_url;
 mod hosted_parse;
 mod image_urls;
 mod job;
-mod mandates;
 mod markdown_url;
 mod parse_file;
 mod patch;
+mod payments;
 mod pdf_pages;
 mod pull_requests;
 mod questions;
@@ -37,11 +37,9 @@ use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
 pub(crate) use self::image_urls::ConvexImageUrls;
 use self::image_urls::ImageUrlMap;
-use self::mandates::{
-    MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
-};
 use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
+use self::payments::{CardCheckoutTool, PollCheckoutTool, ReportOrderTool};
 use self::pull_requests::LinkPrsTool;
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
@@ -78,11 +76,9 @@ pub(crate) struct AgentToolSet {
     pub(crate) set_cwd: SetCwdTool,
     pub(crate) link_prs: LinkPrsTool,
     pub(crate) cwd: WorkingDirectory,
-    pub(crate) mandate_setup: MandateSetupTool,
-    pub(crate) mandate_status: MandateStatusTool,
-    pub(crate) mandate_list: MandateListTool,
-    pub(crate) mandate_charge: MandateChargeTool,
-    pub(crate) mandate_report: MandateReportTool,
+    pub(crate) card_checkout: CardCheckoutTool,
+    pub(crate) poll_checkout: PollCheckoutTool,
+    pub(crate) report_order: ReportOrderTool,
 }
 
 pub(crate) async fn hydrate_tool_history(
@@ -189,6 +185,7 @@ pub(crate) fn agent_tools(
         command_sessions,
         max_yield_ms,
         question_polls: questions::QuestionPolls::default(),
+        checkouts: payments::Checkouts::default(),
         subagent_polls: subagents::SubagentPolls::default(),
         subagent_launcher,
     };
@@ -231,11 +228,9 @@ pub(crate) fn agent_tools(
         set_cwd: SetCwdTool(context.clone()),
         link_prs: LinkPrsTool(context.clone()),
         cwd: context.cwd.clone(),
-        mandate_setup: MandateSetupTool(context.clone()),
-        mandate_status: MandateStatusTool(context.clone()),
-        mandate_list: MandateListTool(context.clone()),
-        mandate_charge: MandateChargeTool(context.clone()),
-        mandate_report: MandateReportTool(context),
+        card_checkout: CardCheckoutTool(context.clone()),
+        poll_checkout: PollCheckoutTool(context.clone()),
+        report_order: ReportOrderTool(context),
     }
 }
 

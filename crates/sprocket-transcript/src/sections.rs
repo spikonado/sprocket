@@ -47,7 +47,6 @@ pub struct WorkItem {
     pub tool_invocation_id: Option<String>,
     pub result_part: Option<u32>,
     pub canonical: bool,
-    pub approval: Option<(String, String)>,
 }
 
 impl WorkItem {
@@ -72,18 +71,12 @@ impl WorkItem {
             tool_invocation_id: tool.tool_invocation_id.clone(),
             result_part: terminal.then_some(part.number),
             canonical: false,
-            approval: tool
-                .output
-                .as_ref()
-                .filter(|_| tool.name == "mandate_setup")
-                .and_then(|output| string(output, "mandateId").zip(string(output, "approvalUrl"))),
         })
     }
 
     pub(super) fn merge_event(&mut self, event: Self) {
         if self.result_part.is_none() && event.result_part.is_some() {
             self.result_part = event.result_part;
-            self.approval = event.approval;
         }
     }
 }

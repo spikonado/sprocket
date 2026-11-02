@@ -1,165 +1,88 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
-import type { FunctionReturnType } from 'convex/server';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import SettingsPayments from './settings-payments';
 
-// SAFETY: this opaque id is used only by the in-memory action client.
-const mandateId = 'mandate-test' as Id<'mandates'>;
+// SAFETY: this opaque id is used only by the in-memory client.
+const threadId = 'thread-test' as Id<'threadRecords'>;
 
-const approval = {
-	mandateId,
-	approvalUrl: 'https://approval.test/mandate',
-	expiresAt: '2099-01-01'
-};
+// SAFETY: this opaque id is used only by the in-memory client.
+const purchaseId = 'purchase-test' as Id<'purchases'>;
 
-async function mount(client: ConvexTestClient) {
-	let view!: ReturnType<typeof render>;
+afterEach(() => vi.restoreAllMocks());
+
+function stubPopup() {
+	const popup = { location: { href: '' }, close: vi.fn() };
+	const open = vi.spyOn(window, 'open').mockReturnValue(Object.assign(Object.create(null), popup));
+
+	return { popup, open };
+}
+
+async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => {})) {
+	client.handleAction(api.payments.listMyCards, async () => [
+		{ id: 'card', brand: 'visa', last4: '4242', expiryMonth: 4, expiryYear: 2030 }
+	]);
+	client.registerQuery(api.payments.listMyPurchases, [
+		{
+			_id: purchaseId,
+			threadId,
+			merchant: 'shop.example.com',
+			amount: 2306,
+			currency: 'usd',
+			status: 'settled',
+			approvalUrl: 'https://approve.test',
+			orderNumber: '112-7',
+			orderLink: 'https://shop.example.com/orders/112-7',
+			trackingLink: 'https://track.example.com/1Z',
+			createdAt: Date.UTC(2026, 0, 2)
+		}
+	]);
 	await act(async () => {
-		view = render(
+		render(
 			<ConvexTestProvider client={client}>
-				<SettingsPayments />
+				<SettingsPayments onOpenThread={onOpenThread} />
 			</ConvexTestProvider>
 		);
 	});
-
-	return view;
 }
 
-function fillSetup() {
-	fireEvent.change(screen.getByLabelText('Merchant name'), { target: { value: 'Parts shop' } });
-	fireEvent.change(screen.getByLabelText('Amount cap'), { target: { value: '50.00' } });
-	fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Robot parts' } });
-}
-
-it('submits any-merchant mandates as one-time and presents the passkey approval link', async () => {
-	const client = new ConvexTestClient();
-	client.handleAction(api.payments.listMyMandates, async () => ({ mandates: [] }));
-	const setup = vi.fn(async () => approval);
-	client.handleAction(api.payments.setupMyMandate, setup);
-	await mount(client);
-	fillSetup();
-	fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'any' } });
-	fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
-	expect((await screen.findByRole('link', { name: 'Approve mandate' })).getAttribute('href')).toBe(
-		approval.approvalUrl
+it('lists saved cards and purchases and opens a purchase thread', async () => {
+	const onOpenThread = vi.fn(async () => {});
+	await mount(new ConvexTestClient(), onOpenThread);
+	expect(await screen.findByText('•••• 4242')).toBeTruthy();
+	expect(screen.getByText('visa')).toBeTruthy();
+	expect(screen.getByText('Expires 04/30')).toBeTruthy();
+	expect(screen.getByText('$23.06')).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'Order 112-7' }).getAttribute('href')).toBe(
+		'https://shop.example.com/orders/112-7'
 	);
-	expect(setup).toHaveBeenCalledWith({
-		merchantName: undefined,
-		merchantUrl: undefined,
-		countryCode: undefined,
-		amountCap: '50.00',
-		currency: 'USD',
-		frequency: 'one_time',
-		scope: 'any',
-		description: 'Robot parts'
-	});
+	expect(screen.getByRole('link', { name: 'Track order' }).getAttribute('href')).toBe(
+		'https://track.example.com/1Z'
+	);
+	fireEvent.click(screen.getByRole('button', { name: 'View thread' }));
+	expect(onOpenThread).toHaveBeenCalledWith(threadId);
 });
 
-it('keeps a failed setup editable and retries with the entered values', async () => {
+it('opens the card popup on click and points it at the Agentcard link', async () => {
+	const { popup, open } = stubPopup();
 	const client = new ConvexTestClient();
-	client.handleAction(api.payments.listMyMandates, async () => ({ mandates: [] }));
-
-	const setup = vi
-		.fn(async () => approval)
-		.mockRejectedValueOnce(new Error('Approval service unavailable'));
-
-	client.handleAction(api.payments.setupMyMandate, setup);
+	client.handleAction(api.payments.createCardLink, async () => ({ url: 'https://vault.test' }));
 	await mount(client);
-	fillSetup();
-	fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
-	expect(await screen.findByText('Approval service unavailable')).toBeTruthy();
-	expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Robot parts');
-	fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
-	expect(await screen.findByRole('link', { name: 'Approve mandate' })).toBeTruthy();
-	expect(setup).toHaveBeenLastCalledWith(
-		expect.objectContaining({ merchantName: 'Parts shop', frequency: 'monthly', scope: 'listed' })
-	);
+	fireEvent.click(screen.getByRole('button', { name: 'Add a card' }));
+	expect(open).toHaveBeenCalledWith('', 'agentcard', 'popup,width=480,height=760');
+	await waitFor(() => expect(popup.location.href).toBe('https://vault.test'));
 });
 
-it('refreshes approved mandates on focus and removes the listener on unmount', async () => {
+it('closes the card popup when the link cannot be created', async () => {
+	const { popup } = stubPopup();
 	const client = new ConvexTestClient();
-	let approved = false;
-
-	const list = vi.fn(async () => ({
-		mandates: approved
-			? [
-					{
-						mandateId,
-						pravaMandateId: 'prava-test',
-						status: 'active',
-						description: 'Robot parts',
-						approvedAmount: '50.00',
-						currency: 'USD'
-					}
-				]
-			: []
-	}));
-
-	client.handleAction(api.payments.listMyMandates, list);
-	client.handleAction(api.payments.setupMyMandate, async () => approval);
-	const view = await mount(client);
-	fillSetup();
-	await act(async () => {
-		fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
+	client.handleAction(api.payments.createCardLink, async () => {
+		throw new Error('Agentcard is down.');
 	});
-	expect(screen.getByRole('link', { name: 'Approve mandate' })).toBeTruthy();
-	approved = true;
-	await act(async () => {
-		fireEvent.focus(window);
-	});
-	expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
-	view.unmount();
-	const calls = list.mock.calls.length;
-	await act(async () => {
-		fireEvent.focus(window);
-	});
-	expect(list).toHaveBeenCalledTimes(calls);
-});
-
-it('pauses, resumes, and cancels the selected mandate and refreshes its status', async () => {
-	const client = new ConvexTestClient();
-	let status: FunctionReturnType<typeof api.payments.setMyMandateLifecycle>['status'] = 'active';
-	client.handleAction(api.payments.listMyMandates, async () => ({
-		mandates: [
-			{
-				mandateId,
-				pravaMandateId: 'prava-test',
-				status,
-				description: 'Robot parts',
-				approvedAmount: '50.00',
-				currency: 'USD'
-			}
-		]
-	}));
-
-	const lifecycle = vi.fn(
-		async ({ action }: { action: 'pause' | 'resume' | 'cancel'; mandateId: Id<'mandates'> }) => {
-			status = action === 'pause' ? 'paused' : action === 'resume' ? 'active' : 'cancelled';
-
-			return {
-				mandateId,
-				status,
-				amountCap: '50.00',
-				currency: 'USD',
-				frequency: 'monthly',
-				scope: 'listed'
-			} satisfies FunctionReturnType<typeof api.payments.setMyMandateLifecycle>;
-		}
-	);
-
-	client.handleAction(api.payments.setMyMandateLifecycle, lifecycle);
 	await mount(client);
-	fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
-	fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));
-	await screen.findByRole('button', { name: 'Pause' });
-	fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-	await waitFor(() => expect(screen.getByText('cancelled', { exact: false })).toBeTruthy());
-	expect(lifecycle.mock.calls.map(([request]) => request)).toEqual([
-		{ mandateId, action: 'pause' },
-		{ mandateId, action: 'resume' },
-		{ mandateId, action: 'cancel' }
-	]);
+	fireEvent.click(screen.getByRole('button', { name: 'Add a card' }));
+	expect(await screen.findByText('Agentcard is down.')).toBeTruthy();
+	expect(popup.close).toHaveBeenCalled();
 });
