@@ -1,19 +1,5 @@
 import { expect, it } from 'vitest';
-import { providersForModel, reorderShownProviders, usableProviders } from './providers';
-
-it('orders usable providers by preference and skips disabled or unconfigured ones', () => {
-	const providers = usableProviders(
-		[
-			{ provider: 'chatgpt', enabled: true },
-			{ provider: 'openai', enabled: false },
-			{ provider: 'spikonado', enabled: true }
-		],
-		['spikonado', 'openai', 'chatgpt']
-	);
-
-	expect(providers).toEqual(['chatgpt', 'spikonado']);
-	expect(usableProviders(undefined, ['spikonado', 'chatgpt'])).toEqual(['spikonado', 'chatgpt']);
-});
+import { providersForModel, reorderShownProviders } from './providers';
 
 it('keeps only providers that serve the model vendor', () => {
 	const providers = ['chatgpt', 'spikonado', 'openai'] as const;

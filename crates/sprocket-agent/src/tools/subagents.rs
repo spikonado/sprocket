@@ -20,11 +20,10 @@ use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure
 use super::job::execute_tool_job_with_id;
 use crate::catalog::ProviderCatalog;
 use crate::convex::{MutationFailure, RuntimeClient};
+use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
-    CreateSubagentRunResponse, ResolvedSubagentSettings, SharedSubagentLauncher,
-    SubagentControlResponse, SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo,
-    SubagentSettingsOverrides, SubagentThreadSnapshot, resolve_settings_for_target,
-    resolve_subagent_settings,
+    CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
+    SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo, SubagentThreadSnapshot,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::CompletionProvider;
@@ -490,12 +489,12 @@ async fn run_subagent(
     let created = if let Some(created) = recovered {
         created
     } else {
-        let overrides = SubagentSettingsOverrides {
+        let overrides = SettingsOverrides {
             model: args.model,
             reasoning: args.reasoning,
             fast: args.fast,
         };
-        let (resolved, completion_provider) = cancelled_read(&cancellation, async {
+        let resolved = cancelled_read(&cancellation, async {
             resolve_child_settings(context, thread_id.as_deref(), &overrides).await
         })
         .await?;
@@ -510,7 +509,7 @@ async fn run_subagent(
         fields.insert("fast".to_string(), resolved.fast.into());
         fields.insert(
             "completionProvider".to_string(),
-            completion_provider.as_str().into(),
+            resolved.provider.as_str().into(),
         );
         if let Some(timeout_ms) = args.timeout_ms {
             fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
@@ -769,11 +768,11 @@ impl ControlSubagentTool {
                 (Some(recovered), _) => Some(recovered),
                 (None, Some(continuation)) => {
                     require_launcher(&self.context)?;
-                    let (settings, completion_provider) = cancelled_read(&cancellation, async {
+                    let settings = cancelled_read(&cancellation, async {
                         resolve_child_settings(
                             &self.context,
                             Some(&args.thread_id),
-                            &SubagentSettingsOverrides::default(),
+                            &SettingsOverrides::default(),
                         )
                         .await
                     })
@@ -786,7 +785,7 @@ impl ControlSubagentTool {
                         ("fast".to_string(), settings.fast.into()),
                         (
                             "completionProvider".to_string(),
-                            completion_provider.as_str().into(),
+                            settings.provider.as_str().into(),
                         ),
                         (
                             "continuationOfRunId".to_string(),
@@ -1015,47 +1014,40 @@ fn require_launcher(
 async fn child_providers(
     context: &AgentToolContext,
 ) -> Result<Vec<CompletionProvider>, ToolExecutionError> {
-    let launcher = require_launcher(context)?;
-    let (run_context, mut providers) = tokio::try_join!(
-        context.runtime.run_context(&context.run_id),
-        launcher.usable_providers(context.user_id.clone()),
-    )
-    .map_err(tool_error)?;
-    if run_context
-        .provider_preferences
-        .restrict_subagents_to_provider
-    {
-        providers.retain(|provider| *provider == run_context.run.completion_provider);
-    }
-    Ok(providers)
+    let run_context: crate::types::RunContextResponse = context
+        .runtime
+        .run_context(&context.run_id)
+        .await
+        .map_err(tool_error)?;
+    let preferences = run_context.provider_preferences;
+    Ok(if preferences.restrict_subagents_to_provider {
+        vec![run_context.run.completion_provider]
+    } else {
+        preferences.enabled_providers
+    })
 }
 
-/// The child's settings and the first of `child_providers` that serves its model.
 async fn resolve_child_settings(
     context: &AgentToolContext,
     thread_id: Option<&str>,
-    overrides: &SubagentSettingsOverrides,
-) -> Result<(ResolvedSubagentSettings, CompletionProvider), ToolExecutionError> {
+    overrides: &SettingsOverrides,
+) -> Result<ResolvedSettings, ToolExecutionError> {
     let providers = child_providers(context).await?;
     let catalog = fetch_model_catalog(context, &providers).await?;
-    let resolved = match thread_id {
+    let saved = match thread_id {
         Some(thread_id) => {
             let existing: SubagentThreadSnapshot =
                 fetch_thread(context, SNAPSHOT, thread_id).await?;
-            resolve_settings_for_target(&catalog, &existing.settings, overrides)
+            Some(ModelSettings {
+                model: existing.settings.model,
+                reasoning: existing.settings.reasoning,
+                fast: existing.settings.fast,
+            })
         }
-        None => resolve_subagent_settings(&catalog, overrides),
-    }
-    .map_err(|error| tool_failure(format!("{error:#}")))?;
-    let vendor = catalog
-        .models
-        .iter()
-        .find(|model| model.id == resolved.model)
-        .map(|model| model.vendor.as_str())
-        .unwrap_or_default();
-    let provider = CompletionProvider::first_serving(&providers, vendor)
-        .ok_or_else(|| tool_failure(format!("no enabled provider serves {}", resolved.model)))?;
-    Ok((resolved, provider))
+        None => None,
+    };
+    resolve_settings(&catalog, &providers, saved.as_ref(), overrides)
+        .map_err(|error| tool_failure(format!("{error:#}")))
 }
 
 fn subagent_args(

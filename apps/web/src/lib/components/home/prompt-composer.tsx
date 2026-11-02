@@ -52,10 +52,9 @@ export type PromptComposerProps = {
 	modelCatalog?: ModelCatalog;
 	selectedModel?: CatalogModelId;
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
-	/** Enabled, set-up providers in the user's fallback order. */
+	/** Enabled providers in the user's fallback order. */
 	availableProviders?: CompletionProvider[];
 	providersReady?: boolean;
-	onOpenProviderSettings?: () => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
 	fastMode?: boolean;
@@ -123,7 +122,6 @@ export function PromptComposerView({
 	onSelectedModelChange,
 	availableProviders = DEFAULT_AVAILABLE_PROVIDERS,
 	providersReady = true,
-	onOpenProviderSettings,
 	selectedReasoningEffort,
 	onSelectedReasoningEffortChange,
 	fastMode = false,
@@ -171,7 +169,6 @@ export function PromptComposerView({
 
 	const modelProviders = providersForModel(availableProviders, selectedCatalogModel);
 	const runsOnSpikonado = modelProviders[0] === 'spikonado';
-	const noProviderAvailable = providersReady && availableProviders.length === 0;
 
 	const canSubmitWithModel =
 		providersReady &&
@@ -758,24 +755,6 @@ export function PromptComposerView({
 									{notices?.({ usageBlocked })}
 									{composerNotice ? (
 										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
-									) : null}
-									{noProviderAvailable && !answeringQuestion ? (
-										<ComposerNotice
-											title="No provider is available"
-											action={
-												onOpenProviderSettings ? (
-													<button
-														type="button"
-														className="cursor-pointer text-[12.5px] font-medium underline underline-offset-2"
-														onClick={onOpenProviderSettings}
-													>
-														Open provider settings
-													</button>
-												) : null
-											}
-										>
-											Turn on a provider that is set up in Settings → Providers to send messages.
-										</ComposerNotice>
 									) : null}
 								</div>
 								{pendingQuestion ? (

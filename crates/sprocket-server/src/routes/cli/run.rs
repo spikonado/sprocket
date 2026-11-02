@@ -8,6 +8,7 @@ use axum::Json;
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use convex::Value;
+use sprocket_agent::CompletionProvider;
 
 use super::client_session;
 use super::models::{RunContext, ThreadSettings, available, gateway_url, resolve};
@@ -18,7 +19,6 @@ use crate::routes::agent::launch_run;
 use crate::routes::api_error::ApiError;
 use sprocket_host::agent_launch::{AgentLaunchRequest, WorkspaceAccess};
 use sprocket_host::project_attachments::repository_key_matches;
-use sprocket_host::providers::usable_providers;
 use sprocket_host::transcript_client::UserConvexClient;
 
 pub(super) async fn list_models(
@@ -44,13 +44,10 @@ pub(super) async fn list_models(
     let rpc = convex_client(&state, &user.id)
         .await
         .map_err(ApiError::internal)?;
-    let context = tokio::time::timeout(
-        Duration::from_secs(20),
-        run_context(&state, &rpc, &user.id, None),
-    )
-    .await
-    .map_err(|error| ApiError::internal(error.into()))?
-    .map_err(ApiError::internal)?;
+    let context = tokio::time::timeout(Duration::from_secs(20), run_context(&rpc, None))
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?
+        .map_err(ApiError::internal)?;
     let response = available(&context).await.map_err(ApiError::internal)?;
     Ok(Json(response))
 }
@@ -122,9 +119,7 @@ async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserCo
 }
 
 async fn run_context(
-    state: &AppState,
     rpc: &UserConvexClient,
-    user_id: &str,
     thread_id: Option<&str>,
 ) -> anyhow::Result<RunContext> {
     let thread = async {
@@ -139,8 +134,9 @@ async fn run_context(
             None => Ok(None),
         }
     };
-    let (thread, providers) =
-        tokio::try_join!(thread, usable_providers(&state.host, rpc, user_id))?;
+    let providers = rpc
+        .query::<Vec<CompletionProvider>>("uiPreferences:getMyEnabledProviders", BTreeMap::new());
+    let (thread, providers) = tokio::try_join!(thread, providers)?;
     Ok(RunContext {
         gateway_url: gateway_url()?,
         providers,
@@ -168,7 +164,7 @@ async fn prepare_run(
     let rpc = convex_client(state, &user.id).await?;
     let context = tokio::time::timeout(
         Duration::from_secs(20),
-        run_context(state, &rpc, &user.id, request.thread_id.as_deref()),
+        run_context(&rpc, request.thread_id.as_deref()),
     )
     .await??;
     let attachment = state

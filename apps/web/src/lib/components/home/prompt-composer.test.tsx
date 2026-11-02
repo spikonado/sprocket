@@ -769,25 +769,6 @@ describe('PromptComposer model selection', () => {
 		expect(onFastModeChange).toHaveBeenCalledWith(false);
 	});
 
-	it('blocks sending and links to provider settings when no provider is available', async () => {
-		const onOpenProviderSettings = vi.fn();
-
-		const { props, textarea } = renderComposer({
-			modelCatalog,
-			availableProviders: [],
-			selectedModel: 'model-one',
-			prompt: 'Hello',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null },
-			onOpenProviderSettings
-		});
-
-		expect(screen.getByText('No provider is available')).toBeTruthy();
-		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).not.toHaveBeenCalled();
-		await click(screen.getByRole('button', { name: 'Open provider settings' }));
-		expect(onOpenProviderSettings).toHaveBeenCalledOnce();
-	});
-
 	it('uses the fallback model default reasoning', async () => {
 		renderComposer({
 			modelCatalog: {

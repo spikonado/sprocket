@@ -26,20 +26,12 @@ impl CompletionProvider {
         self == Self::Spikonado || vendor == "openai"
     }
 
-    /// The provider a new run uses: the first usable provider, in the user's order, that serves `vendor`.
-    pub fn first_serving(providers: &[Self], vendor: &str) -> Option<Self> {
-        providers
-            .iter()
-            .copied()
-            .find(|provider| provider.serves_vendor(vendor))
-    }
-
     /// Only the gateway has a fast tier; other providers run fast requests at standard speed.
-    pub fn serves_fast_mode(self) -> bool {
+    pub(crate) fn serves_fast_mode(self) -> bool {
         self == Self::Spikonado
     }
 
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Spikonado => "spikonado",
             Self::Openai => "openai",

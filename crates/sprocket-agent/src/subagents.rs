@@ -5,7 +5,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sprocket_transcript::RemoteTranscriptState;
 
-use crate::catalog::ProviderCatalog;
 use crate::types::CompletionProvider;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -15,13 +14,6 @@ pub struct SubagentSettings {
     pub reasoning: String,
     pub fast: bool,
     pub completion_provider: CompletionProvider,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct SubagentSettingsOverrides {
-    pub model: Option<String>,
-    pub reasoning: Option<String>,
-    pub fast: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -120,83 +112,6 @@ pub struct SubagentMonitorInfo {
     pub transcript: RemoteTranscriptState,
 }
 
-/// Child settings resolved before any durable write.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedSubagentSettings {
-    pub model: String,
-    pub reasoning: String,
-    pub fast: bool,
-}
-
-/// Catalog defaults for omitted model/reasoning/fast; unsupported explicit
-/// choices are errors.
-pub fn resolve_subagent_settings(
-    catalog: &ProviderCatalog,
-    overrides: &SubagentSettingsOverrides,
-) -> anyhow::Result<ResolvedSubagentSettings> {
-    let model_id = overrides
-        .model
-        .as_deref()
-        .unwrap_or(&catalog.default_model_id);
-    resolve_settings(
-        catalog,
-        model_id,
-        overrides.reasoning.as_deref(),
-        overrides.fast,
-        catalog.default_fast,
-    )
-}
-
-/// Keep saved model/reasoning/fast unless overridden. A model change without
-/// reasoning uses the new model's default; retained fast turns off when
-/// unsupported. Explicit unsupported choices are errors.
-pub fn resolve_settings_for_target(
-    catalog: &ProviderCatalog,
-    saved: &SubagentSettings,
-    overrides: &SubagentSettingsOverrides,
-) -> anyhow::Result<ResolvedSubagentSettings> {
-    let model_id = overrides.model.as_deref().unwrap_or(&saved.model);
-    let model_changed = model_id != saved.model;
-    let reasoning = overrides
-        .reasoning
-        .as_deref()
-        .or_else(|| (!model_changed).then_some(saved.reasoning.as_str()));
-    resolve_settings(catalog, model_id, reasoning, overrides.fast, saved.fast)
-}
-
-fn resolve_settings(
-    catalog: &ProviderCatalog,
-    model_id: &str,
-    reasoning: Option<&str>,
-    fast: Option<bool>,
-    default_fast: bool,
-) -> anyhow::Result<ResolvedSubagentSettings> {
-    let model = catalog
-        .models
-        .iter()
-        .find(|model| model.id == model_id)
-        .ok_or_else(|| {
-            anyhow::anyhow!("model {model_id} is unavailable from the enabled providers")
-        })?;
-    let reasoning = reasoning.unwrap_or(&model.default_reasoning_effort);
-    if !model
-        .reasoning_efforts
-        .iter()
-        .any(|effort| effort == reasoning)
-    {
-        anyhow::bail!("reasoning level {reasoning} is unavailable for {model_id}");
-    }
-    let supports_fast = model.supports_fast();
-    if fast == Some(true) && !supports_fast {
-        anyhow::bail!("fast mode is unavailable for {model_id}");
-    }
-    Ok(ResolvedSubagentSettings {
-        model: model_id.to_string(),
-        reasoning: reasoning.to_string(),
-        fast: fast.unwrap_or(default_fast) && supports_fast,
-    })
-}
-
 /// Inputs to attach a native execution to a child run committed by createOrSend.
 pub struct SubagentLaunchRequest {
     pub user_id: String,
@@ -225,22 +140,13 @@ impl std::fmt::Debug for SubagentLaunchRequest {
     }
 }
 
-/// Server-owned hooks for agent tools. The agent crate does not depend
+/// Server-owned launch hook for agent tools. The agent crate does not depend
 /// on the server crate.
 pub trait SubagentLauncher: Send + Sync {
     fn launch(
         &self,
         request: SubagentLaunchRequest,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
-
-    /// The user's usable providers, in their order.
-    fn usable_providers(
-        &self,
-        user_id: String,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<CompletionProvider>>> + Send + '_>>;
 }
 
 pub type SharedSubagentLauncher = Arc<dyn SubagentLauncher>;
-
-#[cfg(test)]
-mod tests;

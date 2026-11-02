@@ -94,7 +94,7 @@ import {
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import { providersForModel, usableProviders } from '$lib/chat/providers';
+import { providersForModel } from '$lib/chat/providers';
 import { enabledProviders } from '@convex/lib/providerOrder';
 import { isLifecycleInProgress } from '@convex/lib/runCancellation';
 import {
@@ -370,7 +370,6 @@ export default function App({
 	const [chatGptStatusLoading, setChatGptStatusLoading] = useState(false);
 	const [chatGptStatusError, setChatGptStatusError] = useState<string | null>(null);
 	const [providerConfigurationLoading, setProviderConfigurationLoading] = useState(false);
-	const [providerConfigurationReady, setProviderConfigurationReady] = useState(false);
 	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(null);
 
 	const configuredProviders = useMemo<CompletionProvider[]>(
@@ -404,7 +403,6 @@ export default function App({
 	async function loadProviderConfiguration(userId: string) {
 		const generation = providerConfigurationGeneration.current;
 		setProviderConfigurationLoading(true);
-		setProviderConfigurationReady(false);
 		setProviderConfigurationError(null);
 
 		try {
@@ -416,7 +414,6 @@ export default function App({
 			)
 				return;
 			setOpenAiConfigured(configuration.openai);
-			setProviderConfigurationReady(true);
 		} catch (error) {
 			if (
 				signedInUserIdRef.current !== userId ||
@@ -693,36 +690,13 @@ export default function App({
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
 	const providerOrder = uiPreferencesQuery.data?.providerOrder;
 
-	const availableProviders = useMemo(
-		() => usableProviders(providerOrder, configuredProviders),
-		[providerOrder, configuredProviders]
-	);
-
-	const providerStatusKnown: Record<CompletionProvider, boolean> = {
-		spikonado: true,
-		openai: providerConfigurationReady || providerConfigurationError !== null,
-		chatgpt:
-			localApiResolved && (!localApi || chatGptStatus !== null || chatGptStatusError !== null)
-	};
+	const availableProviders = useMemo(() => enabledProviders(providerOrder), [providerOrder]);
 
 	const selectedCatalogModel =
 		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
 
-	const enabledProviderOrder = enabledProviders(providerOrder);
-
-	const routeProviders = selectedCatalogModel
-		? providersForModel(enabledProviderOrder, selectedCatalogModel)
-		: enabledProviderOrder;
-
-	const spikonadoIndex = routeProviders.indexOf('spikonado');
-
-	// Spikonado is always usable, so providers after it cannot change which one runs first.
 	// A failed preferences read must not fall back to the default order and re-enable providers.
-	const providersReady =
-		uiPreferencesQuery.data !== undefined &&
-		(spikonadoIndex === -1 ? routeProviders : routeProviders.slice(0, spikonadoIndex)).every(
-			(provider) => providerStatusKnown[provider]
-		);
+	const providersReady = uiPreferencesQuery.data !== undefined;
 
 	const currentProvider = providersForModel(availableProviders, selectedCatalogModel).at(0);
 
@@ -1554,7 +1528,6 @@ export default function App({
 		providerConfigurationGeneration.current += 1;
 
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
-		setProviderConfigurationReady(true);
 		setProviderConfigurationError(null);
 	}
 
@@ -2348,7 +2321,6 @@ export default function App({
 		setChatGptStatusLoading(false);
 		setChatGptStatusError(null);
 		chatGptStatusLoadedFor.current = null;
-		setProviderConfigurationReady(false);
 		setProviderConfigurationError(null);
 		lastSyncedComposerThreadId.current = null;
 		bumpProjectSelectionGeneration();
@@ -3059,7 +3031,6 @@ export default function App({
 										onSelectedModelChange={setSelectedModel}
 										availableProviders={availableProviders}
 										providersReady={providersReady}
-										onOpenProviderSettings={() => openSettings('providers')}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										fastMode={fastMode}
