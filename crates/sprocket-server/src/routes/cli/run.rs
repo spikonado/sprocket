@@ -8,8 +8,6 @@ use axum::Json;
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use convex::Value;
-use serde::Deserialize;
-use sprocket_agent::CompletionProvider;
 
 use super::client_session;
 use super::models::{RunContext, ThreadSettings, available, gateway_url, resolve};
@@ -20,6 +18,7 @@ use crate::routes::agent::launch_run;
 use crate::routes::api_error::ApiError;
 use sprocket_host::agent_launch::{AgentLaunchRequest, WorkspaceAccess};
 use sprocket_host::project_attachments::repository_key_matches;
+use sprocket_host::providers::usable_providers;
 use sprocket_host::transcript_client::UserConvexClient;
 
 pub(super) async fn list_models(
@@ -140,44 +139,13 @@ async fn run_context(
             None => Ok(None),
         }
     };
-    let (thread, providers) = tokio::try_join!(thread, usable_providers(state, rpc, user_id))?;
+    let (thread, providers) =
+        tokio::try_join!(thread, usable_providers(&state.host, rpc, user_id))?;
     Ok(RunContext {
         gateway_url: gateway_url()?,
         providers,
         thread,
     })
-}
-
-#[derive(Deserialize)]
-struct ProviderConfiguration {
-    openai: bool,
-}
-
-/// The web app's `usableProviders`: enabled providers, in the user's order, that are set up.
-async fn usable_providers(
-    state: &AppState,
-    rpc: &UserConvexClient,
-    user_id: &str,
-) -> anyhow::Result<Vec<CompletionProvider>> {
-    let enabled: Vec<CompletionProvider> = rpc
-        .query("uiPreferences:getMyEnabledProviders", BTreeMap::new())
-        .await?;
-    // Like the web app, a failed key lookup only rules out OpenAI.
-    let openai = enabled.contains(&CompletionProvider::Openai)
-        && rpc
-            .act::<ProviderConfiguration>("providerCredentials:getMyConfiguration", BTreeMap::new())
-            .await
-            .inspect_err(|error| tracing::warn!("failed to check the OpenAI API key: {error:#}"))
-            .is_ok_and(|configuration| configuration.openai);
-    let chatgpt = state.host.chatgpt_credentials.connected(user_id).await;
-    Ok(enabled
-        .into_iter()
-        .filter(|provider| match provider {
-            CompletionProvider::Spikonado => true,
-            CompletionProvider::Openai => openai,
-            CompletionProvider::Chatgpt => chatgpt,
-        })
-        .collect())
 }
 
 async fn prepare_run(

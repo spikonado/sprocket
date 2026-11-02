@@ -1015,17 +1015,19 @@ fn require_launcher(
 async fn child_providers(
     context: &AgentToolContext,
 ) -> Result<Vec<CompletionProvider>, ToolExecutionError> {
-    let run_context: crate::types::RunContextResponse = context
-        .runtime
-        .run_context(&context.run_id)
-        .await
-        .map_err(tool_error)?;
-    let preferences = run_context.provider_preferences;
-    Ok(if preferences.restrict_subagents_to_provider {
-        vec![run_context.run.completion_provider]
-    } else {
-        preferences.enabled_providers
-    })
+    let launcher = require_launcher(context)?;
+    let (run_context, mut providers) = tokio::try_join!(
+        context.runtime.run_context(&context.run_id),
+        launcher.usable_providers(context.user_id.clone()),
+    )
+    .map_err(tool_error)?;
+    if run_context
+        .provider_preferences
+        .restrict_subagents_to_provider
+    {
+        providers.retain(|provider| *provider == run_context.run.completion_provider);
+    }
+    Ok(providers)
 }
 
 /// The child's settings and the first of `child_providers` that serves its model.
@@ -1051,9 +1053,7 @@ async fn resolve_child_settings(
         .find(|model| model.id == resolved.model)
         .map(|model| model.vendor.as_str())
         .unwrap_or_default();
-    let provider = providers
-        .into_iter()
-        .find(|provider| provider.serves_vendor(vendor))
+    let provider = CompletionProvider::first_serving(&providers, vendor)
         .ok_or_else(|| tool_failure(format!("no enabled provider serves {}", resolved.model)))?;
     Ok((resolved, provider))
 }

@@ -19,6 +19,7 @@ pub mod native_auth;
 pub mod package_update;
 pub mod profile;
 pub mod project_attachments;
+pub mod providers;
 mod python_install;
 pub mod run_recovery;
 mod subagent_launcher;

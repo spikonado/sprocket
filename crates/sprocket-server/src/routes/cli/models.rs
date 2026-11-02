@@ -103,11 +103,7 @@ fn select(
                 providers.join(", ")
             )
         })?;
-    let provider = context
-        .providers
-        .iter()
-        .copied()
-        .find(|provider| provider.serves_vendor(&model.vendor))
+    let provider = CompletionProvider::first_serving(&context.providers, &model.vendor)
         .with_context(|| format!("no enabled provider serves {model_id}"))?;
     let inherited = thread.filter(|_| !model_fallback);
     let reasoning = request

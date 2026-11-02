@@ -225,13 +225,19 @@ impl std::fmt::Debug for SubagentLaunchRequest {
     }
 }
 
-/// Server-owned launch hook for agent tools. The agent crate does not depend
+/// Server-owned hooks for agent tools. The agent crate does not depend
 /// on the server crate.
 pub trait SubagentLauncher: Send + Sync {
     fn launch(
         &self,
         request: SubagentLaunchRequest,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
+
+    /// The user's usable providers, in their order.
+    fn usable_providers(
+        &self,
+        user_id: String,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<CompletionProvider>>> + Send + '_>>;
 }
 
 pub type SharedSubagentLauncher = Arc<dyn SubagentLauncher>;
