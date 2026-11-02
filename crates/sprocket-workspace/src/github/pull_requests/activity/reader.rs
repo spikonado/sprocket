@@ -7,8 +7,6 @@ use crate::github::pull_requests::{PullRequestRef, PullRequestState, parse_repos
 use crate::github::{GitHubApi, GitHubError};
 
 const QUERIES: &str = include_str!("queries.graphql");
-/// Ends a read that keeps paging, such as on a cursor that never runs out.
-const MAX_REQUESTS_PER_READ: usize = 50;
 
 /// Reads one PR's activity, skipping full reads while a cheap fingerprint
 /// says nothing changed.
@@ -59,8 +57,7 @@ impl ActivityReader {
 
     /// `None` when GitHub reports nothing new since the last read.
     pub async fn read(&mut self) -> Result<Option<Activity>, GitHubError> {
-        let mut budget = MAX_REQUESTS_PER_READ;
-        let fingerprint = self.fingerprint(&mut budget).await?;
+        let fingerprint = self.fingerprint().await?;
         if self
             .last
             .as_ref()
@@ -68,10 +65,10 @@ impl ActivityReader {
         {
             return Ok(None);
         }
-        let (viewer, mut activity) = self.status(&mut budget).await?;
+        let (viewer, mut activity) = self.status().await?;
         activity.remarks = match self.last.take() {
             Some(last) if last.fingerprint.remarks == fingerprint.remarks => last.remarks,
-            _ => self.remarks(&viewer, &mut budget).await?,
+            _ => self.remarks(&viewer).await?,
         };
         self.last = Some(LastRead {
             fingerprint,
@@ -84,14 +81,7 @@ impl ActivityReader {
         &self,
         operation: &str,
         extra: Value,
-        budget: &mut usize,
     ) -> Result<T, GitHubError> {
-        if *budget == 0 {
-            return Err(
-                anyhow::anyhow!("{} has too much activity to read at once.", self.label).into(),
-            );
-        }
-        *budget -= 1;
         let mut variables = self.variables.clone();
         if let (Value::Object(base), Value::Object(extra)) = (&mut variables, extra) {
             base.extend(extra);
@@ -116,10 +106,8 @@ impl ActivityReader {
             .ok_or_else(|| anyhow::anyhow!("{} was not found on GitHub.", self.label).into())
     }
 
-    async fn fingerprint(&self, budget: &mut usize) -> Result<Fingerprint, GitHubError> {
-        let data: FingerprintData = self
-            .query("PullRequestWatchFingerprint", json!({}), budget)
-            .await?;
+    async fn fingerprint(&self) -> Result<Fingerprint, GitHubError> {
+        let data: FingerprintData = self.query("PullRequestWatchFingerprint", json!({})).await?;
         let pr = self.pull_request(data.repository)?;
         let counts = pr
             .commits
@@ -151,18 +139,14 @@ impl ActivityReader {
     }
 
     /// The viewer's login and everything but the remarks.
-    async fn status(&self, budget: &mut usize) -> Result<(String, Activity), GitHubError> {
-        let data: CoreData = self.query("PullRequestCore", json!({}), budget).await?;
+    async fn status(&self) -> Result<(String, Activity), GitHubError> {
+        let data: CoreData = self.query("PullRequestCore", json!({})).await?;
         let pr = self.pull_request(data.repository)?;
         let mut checks = Vec::new();
         let mut after = pr.commits.read_contexts(&mut checks);
         while let Some(cursor) = after.take() {
             let next: CheckContextsData = self
-                .query(
-                    "PullRequestCheckContexts",
-                    json!({ "after": cursor }),
-                    budget,
-                )
+                .query("PullRequestCheckContexts", json!({ "after": cursor }))
                 .await?;
             let page = self.pull_request(next.repository)?;
             // Each page names the head it read, so a push mid-walk fails rather
@@ -193,7 +177,7 @@ impl ActivityReader {
     }
 
     /// Everyone's but the viewer's, oldest first.
-    async fn remarks(&self, viewer: &str, budget: &mut usize) -> Result<Vec<Remark>, GitHubError> {
+    async fn remarks(&self, viewer: &str) -> Result<Vec<Remark>, GitHubError> {
         let mut remarks = Vec::new();
 
         let (mut comments_after, mut reviews_after) = (None::<String>, None::<String>);
@@ -208,15 +192,14 @@ impl ActivityReader {
                         "withReviews": with_reviews,
                         "reviewsAfter": reviews_after,
                     }),
-                    budget,
                 )
                 .await?;
             let pr = self.pull_request(data.repository)?;
-            comments_after = pr.comments.filter(|_| with_comments).and_then(|page| {
+            comments_after = pr.comments.and_then(|page| {
                 remarks.extend(page.nodes.iter().map(|comment| comment.remark(None)));
                 page.page_info.next()
             });
-            reviews_after = pr.reviews.filter(|_| with_reviews).and_then(|page| {
+            reviews_after = pr.reviews.and_then(|page| {
                 remarks.extend(page.nodes.iter().filter_map(ReviewNode::remark));
                 page.page_info.next()
             });
@@ -227,7 +210,7 @@ impl ActivityReader {
         let mut threads_after = None;
         loop {
             let data: ThreadsData = self
-                .query("ReviewThreads", json!({ "after": threads_after }), budget)
+                .query("ReviewThreads", json!({ "after": threads_after }))
                 .await?;
             let threads = self.pull_request(data.repository)?.review_threads;
             for thread in &threads.nodes {
@@ -245,7 +228,6 @@ impl ActivityReader {
                         .query(
                             "ReviewThreadComments",
                             json!({ "threadId": thread.id, "after": cursor }),
-                            budget,
                         )
                         .await?;
                     if let Some(node) = data.node {
