@@ -123,7 +123,7 @@ async fn exec_command_accepts_conventional_bash_path() {
         )
         .await
         .unwrap();
-    assert!(output.result.success);
+    assert!(output.result.success, "{:?}", output.result);
     assert_eq!(output.result.output, "ready");
     assert_eq!(
         fs::read_to_string(directory.path().join("marker")).unwrap(),

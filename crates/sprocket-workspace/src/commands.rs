@@ -1030,8 +1030,11 @@ fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
         let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
         if result != 0 {
             let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                return Err(error.into());
+            match error.raw_os_error() {
+                Some(libc::ESRCH) => {}
+                // macOS answers EPERM when the group's only members are unreaped zombies.
+                Some(libc::EPERM) if cfg!(target_os = "macos") => {}
+                _ => return Err(error.into()),
             }
         }
     }

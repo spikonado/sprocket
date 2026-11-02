@@ -85,6 +85,8 @@ jobs:
         run: cargo test --locked -p sprocket-workspace command_shell
       - name: Test failed command launch cleanup
         run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
+      - name: Test zombie process group cleanup
+        run: cargo test --locked -p sprocket-workspace commands::tests::stopping_a_process_group_of_only_zombies
       - name: Test pinned tool installs
         run: cargo test --locked -p sprocket-host -- tool_install::tests python_install::tests
 
