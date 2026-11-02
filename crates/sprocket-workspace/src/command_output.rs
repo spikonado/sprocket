@@ -39,8 +39,7 @@ struct OutputEvent<'a> {
 }
 
 #[derive(Deserialize)]
-struct StoredOutputEvent {
-    sequence: u64,
+struct StoredEventBytes {
     bytes: Vec<u8>,
 }
 
@@ -274,7 +273,7 @@ pub(crate) async fn read_output_events(
         if sequence < carry_from {
             continue;
         }
-        let event: StoredOutputEvent =
+        let event: StoredEventBytes =
             serde_json::from_slice(&line).context("invalid command output event")?;
         if sequence < from_sequence {
             // Bytes of a character split by the cursor carry into the first unread event.
