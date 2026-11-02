@@ -558,6 +558,19 @@ export const vCardCheckoutResult = v.object({
 
 export const vReportOrderResult = v.object({ recorded: v.literal(true) });
 
+export const vPollCheckoutResult = v.object({
+	status: v.union(
+		v.literal('awaiting_approval'),
+		v.literal('approved'),
+		v.literal('submitted_on_device'),
+		v.literal('declined'),
+		v.literal('expired'),
+		v.literal('cancelled'),
+		v.literal('outcome_unknown')
+	),
+	reason: v.optional(v.string())
+});
+
 export const vBrowserTaskResult = v.object({
 	text: v.string(),
 	truncated: v.boolean()
@@ -814,6 +827,7 @@ export const vExecutorJobResult = v.union(
 	vMandateChargeResult,
 	vMandateReportResult,
 	vCardCheckoutResult,
+	vPollCheckoutResult,
 	vReportOrderResult
 );
 

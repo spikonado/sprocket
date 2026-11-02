@@ -154,16 +154,18 @@ impl rig::tool::Tool for PollCheckoutTool {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
         let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms);
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
-            let mut result = match self.0.checkouts.get(&args.purchase_id) {
+            let result = match self.0.checkouts.get(&args.purchase_id) {
                 Some(progress) => {
                     cancellable(&cancellation, wait_for_checkout(progress, yield_time_ms)).await
                 }
                 None => end_orphaned_checkout(&self.0, &cancellation, &args.purchase_id).await,
             }?;
-            if let Some(fields) = result.as_object_mut() {
-                fields.remove("purchaseId");
+            // The caller already has the purchase id and merchant from card_checkout.
+            let mut polled = json!({ "status": result["status"] });
+            if let Some(reason) = result.get("reason") {
+                polled["reason"] = reason.clone();
             }
-            Ok(result)
+            Ok(polled)
         })
         .await
     }
