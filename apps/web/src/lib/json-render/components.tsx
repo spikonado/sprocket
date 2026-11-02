@@ -175,7 +175,7 @@ export function Alert({ props }: AlertProps) {
 	);
 }
 
-type LinkProps = BaseComponentProps<{ label: string; href: string }>;
+type LinkProps = BaseComponentProps<{ label: string; href: string | null }>;
 
 // The shadcn link navigates the app itself, so this one opens a new tab instead.
 export function Link({ props, on }: LinkProps) {
