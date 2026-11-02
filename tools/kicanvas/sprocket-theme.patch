@@ -1,0 +1,542 @@
+diff --git a/src/kc-ui/activity-side-bar.ts b/src/kc-ui/activity-side-bar.ts
+index 9040b3c..e471e34 100644
+--- a/src/kc-ui/activity-side-bar.ts
++++ b/src/kc-ui/activity-side-bar.ts
+@@ -23,6 +23,7 @@ export class KCUIActivitySideBarElement extends KCUIElement {
+                 flex-direction: row;
+                 height: 100%;
+                 overflow: hidden;
++                border-left: 1px solid var(--border);
+                 min-width: calc(max(20%, 200px));
+                 max-width: calc(max(20%, 200px));
+             }
+diff --git a/src/kc-ui/element.ts b/src/kc-ui/element.ts
+index 0fb60ef..122d25b 100644
+--- a/src/kc-ui/element.ts
++++ b/src/kc-ui/element.ts
+@@ -23,7 +23,7 @@ const common_styles = css`
+
+     :host {
+         scrollbar-width: thin;
+-        scrollbar-color: #ae81ff #282634;
++        scrollbar-color: var(--scrollbar-fg) var(--scrollbar-bg);
+     }
+
+     ::-webkit-scrollbar {
+diff --git a/src/kc-ui/kc-ui.css b/src/kc-ui/kc-ui.css
+index 69d9fb0..356fc97 100644
+--- a/src/kc-ui/kc-ui.css
++++ b/src/kc-ui/kc-ui.css
+@@ -1,209 +1,109 @@
+ /*
+     Variables
++
++    Sprocket's theme tokens (--background, --card, ...) come from the host page.
+ */
+ :host {
+-    font-size: var(--font-size, 16px);
++    font-size: var(--font-size, 14px);
+
+     --transition-time-very-short: 100ms;
+     --transition-time-short: 200ms;
+     --transition-time-medium: 500ms;
+
+-    --bg: #131218;
+-    --fg: #f8f8f0;
+-
+-    --tooltip-bg: #8864cb;
+-    --tooltip-fg: #f8f8f0;
+-    --tooltip-border: 1px solid #131218;
+-
+-    --scrollbar-bg: #131218;
+-    --scrollbar-fg: #ae81ff66;
+-    --scrollbar-active-fg: #ae81ff;
+-    --scrollbar-hover-bg: #ae81ffbb;
+-
+-    --activity-bar-bg: #282634;
+-    --activity-bar-fg: #f8f8f0;
+-    --activity-bar-active-bg: #131218;
+-    --activity-bar-active-fg: #f8f8f0;
+-
+-    --resizer-bg: #ae81ff;
+-    --resizer-active-bg: #ae81ffbb;
+-
+-    --panel-bg: #131218;
+-    --panel-fg: #f8f8f0;
+-    --panel-border: 2px solid #282634;
+-    --panel-title-bg: #8077a8;
+-    --panel-title-fg: #f8f8f0;
+-    --panel-title-border: 1px solid #634e89;
+-    --panel-title-button-bg: transparent;
+-    --panel-title-button-fg: #dcc8ff;
+-    --panel-title-button-hover-bg: #ae81ff;
+-    --panel-title-button-hover-fg: inherit;
+-    --panel-title-button-disabled-bg: inherit;
+-    --panel-title-button-disabled-fg: #888;
+-    --panel-subtitle-bg: #634e89;
+-    --panel-subtitle-fg: var(--panel-fg);
+-
+-    --dropdown-bg: #464258;
+-    --dropdown-fg: #f8f8f0;
+-
+-    --button-bg: #81eeff;
+-    --button-fg: #131218;
+-    --button-hover-bg: #a3f3ff;
+-    --button-hover-fg: #131218;
+-    --button-focus-outline: 1px solid #ae81ff;
+-    --button-selected-bg: #ae81ff;
+-    --button-selected-fg: #131218;
+-    --button-disabled-bg: #131218;
+-    --button-disabled-fg: #888;
+-    --button-success-bg: #64cb96;
+-    --button-success-fg: #131218;
+-    --button-success-hover-bg: #81ffbe;
+-    --button-success-hover-fg: #131218;
+-    --button-danger-bg: #cb6488;
+-    --button-danger-fg: #131218;
+-    --button-danger-hover-bg: #ff81ad;
+-    --button-danger-hover-fg: #131218;
+-    --button-outline-bg: #282634;
+-    --button-outline-fg: #f8f8f0;
+-    --button-outline-hover-bg: #282634;
+-    --button-outline-hover-fg: #81eeff;
+-    --button-outline-disabled-bg: #131218;
+-    --button-outline-disabled-fg: #888;
+-    --button-toolbar-bg: #282634;
+-    --button-toolbar-fg: #f8f8f0;
+-    --button-toolbar-hover-bg: #282634;
+-    --button-toolbar-hover-fg: #81eeff;
+-    --button-toolbar-disabled-bg: #131218;
+-    --button-toolbar-disabled-fg: #888;
++    --bg: var(--background);
++    --fg: var(--foreground);
++
++    --scrollbar-bg: transparent;
++    --scrollbar-fg: var(--border);
++    --scrollbar-hover-fg: var(--muted-foreground);
++    --scrollbar-active-fg: var(--muted-foreground);
++    --scrollbar-hover-bg: var(--muted-foreground);
++    --scrollbar-active-bg: var(--muted-foreground);
++
++    --activity-bar-bg: var(--background);
++    --activity-bar-fg: var(--muted-foreground);
++    --activity-bar-active-bg: var(--accent-soft);
++    --activity-bar-active-fg: var(--foreground);
++
++    --resizer-bg: var(--border);
++    --resizer-active-bg: var(--ring);
++
++    --panel-bg: var(--card);
++    --panel-fg: var(--card-foreground);
++    --panel-title-bg: var(--card);
++    --panel-title-fg: var(--foreground);
++    --panel-title-border: 1px solid var(--border);
++    --panel-subtitle-bg: var(--background);
++    --panel-subtitle-fg: var(--muted-foreground);
++
++    --dropdown-bg: var(--popover);
++    --dropdown-fg: var(--popover-foreground);
++    --dropdown-hover-bg: var(--muted);
++    --dropdown-hover-fg: var(--foreground);
++    --dropdown-active-bg: var(--accent-soft);
++    --dropdown-active-fg: var(--foreground);
++
++    --button-bg: var(--primary);
++    --button-fg: var(--primary-foreground);
++    --button-hover-bg: var(--primary);
++    --button-hover-fg: var(--primary-foreground);
++    --button-focus-outline: 1px solid var(--ring);
++    --button-selected-bg: var(--accent-soft);
++    --button-selected-fg: var(--foreground);
++    --button-disabled-bg: var(--muted);
++    --button-disabled-fg: var(--muted-foreground);
++    --button-outline-bg: transparent;
++    --button-outline-fg: var(--foreground);
++    --button-outline-hover-bg: var(--muted);
++    --button-outline-hover-fg: var(--foreground);
++    --button-outline-disabled-bg: transparent;
++    --button-outline-disabled-fg: var(--muted-foreground);
++    --button-toolbar-bg: var(--popover);
++    --button-toolbar-fg: var(--popover-foreground);
++    --button-toolbar-hover-bg: var(--muted);
++    --button-toolbar-hover-fg: var(--foreground);
++    --button-toolbar-disabled-bg: var(--popover);
++    --button-toolbar-disabled-fg: var(--muted-foreground);
++    --button-toolbar-alt-bg: var(--popover);
++    --button-toolbar-alt-fg: var(--popover-foreground);
++    --button-toolbar-alt-hover-bg: var(--muted);
++    --button-toolbar-alt-hover-fg: var(--foreground);
++    --button-toolbar-alt-disabled-bg: var(--popover);
++    --button-toolbar-alt-disabled-fg: var(--muted-foreground);
+     --button-menu-bg: transparent;
+-    --button-menu-fg: #f8f8f0;
++    --button-menu-fg: var(--muted-foreground);
+     --button-menu-hover-bg: transparent;
+-    --button-menu-hover-fg: #81eeff;
++    --button-menu-hover-fg: var(--foreground);
+     --button-menu-disabled-bg: transparent;
+-    --button-menu-disabled-fg: #888;
+-
+-    --input-bg: #131218;
+-    --input-fg: #f8f8f0;
+-    --input-border: 1px solid #8077a8;
+-    --input-accent: #ae81ff;
+-    --input-hover-shadow: 1px 1px 10px 5px rgba(0, 0, 0, 0.2);
+-    --input-focus-outline: 1px solid #ae81ff;
+-    --input-placeholder: #8077a8;
+-    --input-disabled-bg: #131218;
+-    --input-disabled-fg: #888;
+-
+-    --input-range-bg: #8077a8;
+-    --input-range-fg: #f8f8f0;
+-    --input-range-hover-bg: #ae81ff;
+-    --input-range-disabled-bg: #131218;
+-    --input-range-hover-shadow: 1px 1px 10px 5px rgba(0, 0, 0, 0.2);
+-    --input-range-handle-shadow: 1px 1px 5px 5px rgba(180, 180, 180, 0.2);
++    --button-menu-disabled-fg: var(--muted-foreground);
++
++    --input-bg: var(--background);
++    --input-fg: var(--foreground);
++    --input-border: 1px solid var(--input);
++    --input-accent: var(--accent-strong);
++    --input-hover-shadow: none;
++    --input-focus-outline: 1px solid var(--ring);
++    --input-placeholder: var(--muted-foreground);
++    --input-disabled-bg: var(--muted);
++    --input-disabled-fg: var(--muted-foreground);
++
++    --input-range-bg: var(--border);
++    --input-range-fg: var(--foreground);
++    --input-range-hover-bg: var(--ring);
++    --input-range-disabled-bg: var(--muted);
++    --input-range-hover-shadow: none;
++    --input-range-handle-shadow: none;
+
+     --list-item-bg: var(--panel-bg);
+     --list-item-fg: var(--panel-fg);
+-    --list-item-active-bg: #634e89;
+-    --list-item-active-fg: var(--list-item-fg);
+-    --list-item-hover-bg: #64cb96;
+-    --list-item-hover-fg: var(--list-item-bg);
++    --list-item-active-bg: var(--accent-soft);
++    --list-item-active-fg: var(--foreground);
++    --list-item-hover-bg: var(--muted);
++    --list-item-hover-fg: var(--foreground);
+     --list-item-disabled-bg: var(--list-item-bg);
+-    --list-item-disabled-fg: #888;
+-
+-    --grid-outline: #433e56;
+-}
+-
+-/*
+-    Gradient theme
+-*/
+-:host {
+-    --gradient-purple-green-light: linear-gradient(
+-            190deg,
+-            hsl(261deg 27% 42%) 0%,
+-            hsl(243deg 27% 42%) 17%,
+-            hsl(224deg 27% 42%) 33%,
+-            hsl(205deg 27% 42%) 50%,
+-            hsl(187deg 27% 42%) 67%,
+-            hsl(168deg 27% 42%) 83%,
+-            hsl(149deg 27% 42%) 100%
+-        )
+-        0 0 fixed;
+-    --gradient-purple-blue-medium: linear-gradient(
+-            190deg,
+-            hsl(261deg 28% 30%) 0%,
+-            hsl(248deg 30% 31%) 17%,
+-            hsl(235deg 32% 32%) 33%,
+-            hsl(222deg 34% 33%) 50%,
+-            hsl(209deg 35% 34%) 67%,
+-            hsl(197deg 37% 35%) 83%,
+-            hsl(183deg 38% 36%) 100%
+-        )
+-        0 0 fixed;
+-    --gradient-purple-blue-dark: linear-gradient(10deg, #111928, #1d162a) 0 0
+-        fixed;
+-    --gradient-cyan-blue-light: linear-gradient(
+-            190deg,
+-            hsl(183deg 63% 33%) 0%,
+-            hsl(189deg 69% 30%) 17%,
+-            hsl(194deg 74% 27%) 33%,
+-            hsl(199deg 79% 24%) 50%,
+-            hsl(203deg 85% 21%) 67%,
+-            hsl(209deg 89% 18%) 83%,
+-            hsl(214deg 95% 15%) 100%
+-        )
+-        0 0 fixed;
+-    --gradient-purple-green-highlight: linear-gradient(
+-            190deg,
+-            hsl(261deg 27% 53%) 0%,
+-            hsl(243deg 27% 52%) 17%,
+-            hsl(224deg 27% 52%) 33%,
+-            hsl(205deg 27% 51%) 50%,
+-            hsl(186deg 27% 51%) 67%,
+-            hsl(168deg 27% 50%) 83%,
+-            hsl(149deg 27% 50%) 100%
+-        )
+-        0 0 fixed;
+-    --gradient-purple-red: linear-gradient(90deg, #8864cb, #cb6488) 0 0 fixed;
+-    --gradient-purple-red-highlight: linear-gradient(90deg, #b187ff, #ff80ac) 0
+-        0 fixed;
+-
+-    --scrollbar-bg: var(--gradient-purple-blue-dark);
+-    --scrollbar-fg: var(--gradient-purple-green-light);
+-    --scrollbar-hover-fg: var(--scrollbar-fg);
+-    --scrollbar-active-fg: var(--scrollbar-fg);
+-
+-    --activity-bar-bg: var(--gradient-purple-green-light);
+-
+-    --resizer-bg: var(--gradient-purple-blue-medium);
+-    --resizer-active-bg: var(--gradient-purple-green-highlight);
+-
+-    --panel-bg: var(--gradient-purple-blue-dark);
+-    --panel-title-bg: var(--gradient-purple-green-light);
+-    --panel-subtitle-bg: var(--gradient-purple-blue-medium);
+-
+-    --button-toolbar-bg: var(--gradient-purple-blue-dark);
+-    --button-toolbar-hover-bg: var(--gradient-purple-green-light);
+-    --button-toolbar-hover-fg: #f8f8f0;
+-    --button-toolbar-disabled-bg: var(--gradient-purple-blue-dark);
+-
+-    --button-toolbar-alt-bg: var(--gradient-purple-green-light);
+-    --button-toolbar-alt-hover-bg: var(--gradient-purple-green-highlight);
+-    --button-toolbar-alt-hover-fg: #f8f8f0;
+-    --button-toolbar-alt-disabled-bg: var(--gradient-purple-blue-dark);
+-
+-    --dropdown-bg: var(--gradient-purple-green-light);
+-    --dropdown-fg: #f8f8f0;
+-    --dropdown-hover-bg: var(--gradient-purple-green-highlight);
+-    --dropdown-hover-fg: #f8f8f0;
+-    --dropdown-active-bg: var(--gradient-purple-blue-dark);
+-    --dropdown-active-fg: #f8f8f0;
+-
+-    --input-range-bg: var(--gradient-purple-green-light);
+-
+-    --list-item-hover-bg: var(--gradient-purple-green-highlight);
+-    --list-item-active-bg: var(--gradient-cyan-blue-light);
++    --list-item-disabled-fg: var(--muted-foreground);
+
+-    --focus-overlay-bg: var(--gradient-purple-green-light);
+-    --focus-overlay-opacity: 0.5;
+-    --focus-overlay-fg: #f8f8f0;
++    --grid-outline: color-mix(in oklab, var(--border) 60%, transparent);
+ }
+
+ /*
+diff --git a/src/kicanvas/elements/common/preferences-panel.ts b/src/kicanvas/elements/common/preferences-panel.ts
+index b8c28d3..c916109 100644
+--- a/src/kicanvas/elements/common/preferences-panel.ts
++++ b/src/kicanvas/elements/common/preferences-panel.ts
+@@ -4,70 +4,17 @@
+     Full text available at: https://opensource.org/licenses/MIT
+ */
+
+-import { css, html, query } from "../../../base/web-components";
++import { html } from "../../../base/web-components";
+ import { KCUIElement } from "../../../kc-ui";
+ import { Preferences } from "../../preferences";
+-import themes from "../../themes";
+
+ const prefs = Preferences.INSTANCE;
+
+ export class KCPreferencesPanel extends KCUIElement {
+-    static override styles = [
+-        ...KCUIElement.styles,
+-        css`
+-            select {
+-                box-sizing: border-box;
+-                display: block;
+-                width: 100%;
+-                max-width: 100%;
+-                margin-top: 0.25em;
+-                font-family: inherit;
+-                font-size: inherit;
+-                font-weight: 300;
+-                margin-top: 0.25em;
+-                border-radius: 0.25em;
+-                text-align: left;
+-                padding: 0.25em;
+-                background: var(--input-bg);
+-                color: var(--input-fg);
+-                border: var(--input-border);
+-                transition:
+-                    color var(--transition-time-medium) ease,
+-                    box-shadow var(--transition-time-medium) ease,
+-                    outline var(--transition-time-medium) ease,
+-                    background var(--transition-time-medium) ease,
+-                    border var(--transition-time-medium) ease;
+-            }
+-
+-            select::after {
+-                display: block;
+-                content: "▾";
+-                color: var(--input-fg);
+-            }
+-
+-            select:hover {
+-                z-index: 10;
+-                box-shadow: var(--input-hover-shadow);
+-            }
+-
+-            select:focus {
+-                z-index: 10;
+-                box-shadow: none;
+-                outline: var(--input-focus-outline);
+-            }
+-        `,
+-    ];
+-
+-    @query("[name=theme]", true)
+-    private theme_control!: HTMLSelectElement;
+-
+     override initialContentCallback() {
+         this.renderRoot.addEventListener("input", (e) => {
+             const target = e.target as HTMLInputElement;
+
+-            if (target.name === "theme") {
+-                prefs.theme = themes.by_name(this.theme_control.value);
+-            }
+             if (target.name === "align-controls-kicad") {
+                 prefs.alignControlsWithKiCad = target.checked;
+             }
+@@ -76,26 +23,10 @@ export class KCPreferencesPanel extends KCUIElement {
+     }
+
+     override render() {
+-        const theme_options = themes.list().map((v) => {
+-            return html`<option
+-                value="${v.name}"
+-                selected="${prefs.theme.name == v.name}">
+-                ${v.friendly_name}
+-            </option>`;
+-        });
+-
+         return html`
+             <kc-ui-panel>
+                 <kc-ui-panel-title title="Preferences"></kc-ui-panel-title>
+                 <kc-ui-panel-body padded>
+-                    <kc-ui-control-list>
+-                        <kc-ui-control>
+-                            <label>Theme</label>
+-                            <select name="theme" value="kicad">
+-                                ${theme_options}
+-                            </select>
+-                        </kc-ui-control>
+-                    </kc-ui-control-list>
+                     <kc-ui-control>
+                         <label>
+                             <input
+diff --git a/src/kicanvas/elements/common/project-panel.ts b/src/kicanvas/elements/common/project-panel.ts
+index 4a0c543..f68ad4c 100644
+--- a/src/kicanvas/elements/common/project-panel.ts
++++ b/src/kicanvas/elements/common/project-panel.ts
+@@ -37,7 +37,7 @@ export class KCProjectPanelElement extends KCUIElement {
+                 overflow: hidden;
+                 margin-left: 1em;
+                 text-align: right;
+-                color: #aaa;
++                color: var(--muted-foreground);
+             }
+
+             .page kc-ui-button {
+diff --git a/src/kicanvas/elements/kc-board/layers-panel.ts b/src/kicanvas/elements/kc-board/layers-panel.ts
+index 0fc5121..4bf0951 100644
+--- a/src/kicanvas/elements/kc-board/layers-panel.ts
++++ b/src/kicanvas/elements/kc-board/layers-panel.ts
+@@ -30,7 +30,7 @@ export class KCBoardLayersPanelElement extends KCUIElement {
+                 all: unset;
+                 flex-shrink: 0;
+                 margin-left: 1em;
+-                color: white;
++                color: inherit;
+                 border: 0 none;
+                 background: transparent;
+                 padding: 0 0.25em 0 0.25em;
+@@ -268,7 +268,7 @@ class KCBoardLayerControlElement extends KCUIElement {
+             :host {
+                 box-sizing: border-box;
+                 padding: 0.1em 0.8em 0.1em 0.4em;
+-                color: white;
++                color: inherit;
+                 text-align: left;
+                 display: flex;
+                 flex-direction: row;
+@@ -281,7 +281,7 @@ class KCBoardLayerControlElement extends KCUIElement {
+                 cursor: pointer;
+                 flex-shrink: 0;
+                 margin-left: 1em;
+-                color: white;
++                color: inherit;
+                 border: 0 none;
+                 background: transparent;
+                 padding: 0 0.25em 0 0.25em;
+@@ -304,7 +304,7 @@ class KCBoardLayerControlElement extends KCUIElement {
+             }
+
+             .for-hidden {
+-                color: #888;
++                color: var(--muted-foreground);
+             }
+
+             :host {
+@@ -318,7 +318,7 @@ class KCBoardLayerControlElement extends KCUIElement {
+             }
+
+             :host(:hover) button {
+-                color: var(--list-item-bg);
++                color: var(--muted-foreground);
+             }
+
+             :host(:hover) button:hover {
+diff --git a/src/kicanvas/elements/kicanvas-embed.ts b/src/kicanvas/elements/kicanvas-embed.ts
+index c21bc7c..bc7b93c 100644
+--- a/src/kicanvas/elements/kicanvas-embed.ts
++++ b/src/kicanvas/elements/kicanvas-embed.ts
+@@ -44,10 +44,7 @@ class KiCanvasEmbedElement extends KCUIElement {
+                 aspect-ratio: 1.414;
+                 background-color: aqua;
+                 color: var(--fg);
+-                font-family:
+-                    "Nunito", ui-rounded, "Hiragino Maru Gothic ProN",
+-                    Quicksand, Comfortaa, Manjari, "Arial Rounded MT Bold",
+-                    Calibri, source-sans-pro, sans-serif;
++                font-family: var(--font-sans, sans-serif);
+                 contain: layout paint;
+             }
+
+@@ -329,6 +326,6 @@ window.customElements.define("kicanvas-source", KiCanvasSourceElement);
+ document.body.appendChild(
+     html`<link
+         rel="stylesheet"
+-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,0,0&family=Nunito:wght@300;400;500;600;700&display=swap"
++        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,0,0&display=swap"
+         crossorigin="anonymous" />`,
+ );
+diff --git a/src/kicanvas/themes/index.ts b/src/kicanvas/themes/index.ts
+index 7e121c5..c2bdb4c 100644
+--- a/src/kicanvas/themes/index.ts
++++ b/src/kicanvas/themes/index.ts
+@@ -5,10 +5,9 @@
+ */
+
+ import { type Theme } from "../../kicad";
+-import witch_hazel from "./witch-hazel";
+ import kicad_default from "./kicad-default";
+
+-const themes = [witch_hazel, kicad_default];
++const themes = [kicad_default];
+ const themes_by_name = new Map(
+     themes.map((v) => {
+         return [v.name, v];
+@@ -16,7 +15,7 @@ const themes_by_name = new Map(
+ );
+
+ export default {
+-    default: witch_hazel,
++    default: kicad_default,
+
+     by_name(name: string): Theme {
+         return themes_by_name.get(name) ?? this.default;

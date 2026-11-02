@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
+import { readVisualThemeCss } from '$lib/chat/artifact-preview';
 import { readKicadSources } from '$lib/kicad';
 import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
@@ -64,6 +65,10 @@ async function currentView(frame: HTMLIFrameElement, signal: AbortSignal) {
 	const message = await reply;
 
 	return message.type === 'view' ? message.view : null;
+}
+
+function postTheme(frame: HTMLIFrameElement) {
+	frame.contentWindow?.postMessage({ type: 'theme', css: readVisualThemeCss() }, '*');
 }
 
 /**
@@ -151,6 +156,7 @@ export default function KicadViewer({
 				]);
 
 				if (ready.type !== 'ready') throw new Error('Could not load KiCanvas.');
+				postTheme(frame);
 
 				// KiCanvas skips blank sources without ever finishing its load.
 				if (sources.every(({ content }) => !content.trim())) {
@@ -198,9 +204,16 @@ export default function KicadViewer({
 
 		void load();
 
+		const themeObserver = new MutationObserver(() =>
+			container.querySelectorAll('iframe').forEach(postTheme)
+		);
+
+		themeObserver.observe(document.documentElement, { attributeFilter: ['data-theme'] });
+
 		return () => {
 			closed.abort();
 			clearTimeout(timer);
+			themeObserver.disconnect();
 			shown?.remove();
 		};
 	}, [api, file.workspacePath, file.path]);
