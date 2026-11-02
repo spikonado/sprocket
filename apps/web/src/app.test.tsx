@@ -1048,7 +1048,7 @@ it('sends on Spikonado while the ChatGPT fallback check is pending', async () =>
 	);
 });
 
-it('enables run-bound Stop after the lifecycle arrives behind a pending question', async () => {
+it('replaces Stop with Skip question while a question is pending', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
 
@@ -1071,6 +1071,7 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.agentQuestions.headPendingForThread, question);
 	client.registerMutation(api.agentRuntime.requestCancellation, true);
+	client.registerMutation(api.agentQuestions.skip, {});
 
 	const mutation = vi.spyOn(client, 'mutation');
 
@@ -1081,8 +1082,7 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
 	expect(await screen.findByText(question.question)).toBeTruthy();
-	expect(screen.getByRole('button', { name: 'Submit answer' })).toHaveProperty('disabled', true);
-	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
 
 	await act(async () => {
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
@@ -1090,6 +1090,19 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 			phase: 'waiting_for_input',
 			run: { runId, startedAt: 1 }
 		});
+	});
+	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
+	fireEvent.click(screen.getByRole('button', { name: 'Skip question' }));
+	await waitFor(() =>
+		expect(mutation).toHaveBeenCalledWith(
+			api.agentQuestions.skip,
+			{ threadId: thread._id, questionId: question.questionId },
+			{}
+		)
+	);
+
+	await act(async () => {
+		client.registerQuery(api.agentQuestions.headPendingForThread, null);
 	});
 	fireEvent.click(await screen.findByRole('button', { name: 'Stop generation' }));
 	await waitFor(() =>
@@ -1355,7 +1368,7 @@ it('launches the continuation prompt after an agent question is answered', async
 	});
 	fireEvent.click(screen.getByRole('button', { name: 'Option A' }));
 	await act(async () => {
-		fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
 	});
 
 	await waitFor(() =>
@@ -1437,7 +1450,7 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
 	fireEvent.click(await screen.findByRole('button', { name: 'Option A' }));
-	fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
 	fireEvent.click(await screen.findByText('Other work'));
 	await act(async () => {
 		client.registerQuery(api.agentQuestions.headPendingForThread, null);

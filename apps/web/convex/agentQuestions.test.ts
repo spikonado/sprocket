@@ -788,6 +788,61 @@ describe('agentQuestions', () => {
 		});
 	});
 
+	it('skips questions and continues only with the answered ones', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const ask = (question: string) =>
+			t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+				runId,
+				claimId,
+				question,
+				options: [{ id: 'yes', label: 'Yes' }],
+				executionSecret
+			});
+
+		const skippedWhileRunning = await ask('Skip me while running?');
+		const answered = await ask('Answer me?');
+		const skippedAfterRun = await ask('Skip me after the run?');
+
+		await expect(
+			asUser.mutation(api.agentQuestions.skip, {
+				threadId,
+				questionId: skippedWhileRunning.questionId
+			})
+		).resolves.toEqual({});
+		await expect(
+			t.query(api.agentQuestions.getForExecutor, {
+				runId,
+				questionId: skippedWhileRunning.questionId,
+				executionSecret
+			})
+		).resolves.toMatchObject({ status: 'skipped' });
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'completed',
+			executionSecret
+		});
+		await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: answered.questionId,
+			optionId: 'yes'
+		});
+
+		await expect(
+			asUser.mutation(api.agentQuestions.skip, {
+				threadId,
+				questionId: skippedAfterRun.questionId
+			})
+		).resolves.toEqual({ continuation: { runId, prompt: 'Yes' } });
+		await expect(
+			asUser.query(api.agentQuestions.headPendingForThread, { threadId })
+		).resolves.toBeNull();
+	});
+
 	it('keeps a pending head answerable until its timeout mutation runs', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-07-26T12:00:00.000Z'));

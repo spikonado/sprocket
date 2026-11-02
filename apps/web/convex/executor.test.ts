@@ -470,7 +470,7 @@ describe('executor', () => {
 		);
 	});
 
-	it.each(['pending', 'answered', 'timedOut'] as const)(
+	it.each(['pending', 'answered', 'timedOut', 'skipped'] as const)(
 		'persists compact question results for %s questions',
 		async (status) => {
 			const t = initConvexTest();
@@ -510,7 +510,8 @@ describe('executor', () => {
 				const result: Omit<Infer<typeof vAskQuestionResult>, 'questionId'> &
 					Partial<Pick<Infer<typeof vAskQuestionResult>, 'questionId'>> = {
 					pending: status === 'pending',
-					timedOut: status === 'timedOut'
+					timedOut: status === 'timedOut',
+					skipped: status === 'skipped'
 				};
 
 				if (kind === 'ask_question') result.questionId = questionId;

@@ -1153,8 +1153,16 @@ describe('PromptComposer Fast mode', () => {
 });
 
 describe('PromptComposer agent questions', () => {
-	it('drops the answer draft and toggles question options', async () => {
+	it('drops the answer draft and shows one question action at a time', async () => {
 		const onSelectedQuestionOptionIdChange = vi.fn();
+		const onSkipQuestion = vi.fn();
+
+		const actions = () =>
+			Array.from(document.querySelectorAll('button'))
+				.map((button) => button.getAttribute('aria-label') ?? button.textContent)
+				.filter((name) =>
+					['Send answer', 'Skip question', 'Stop generation', 'Send message'].includes(name ?? '')
+				);
 
 		const { textarea } = renderComposer({
 			prompt: 'draft answer',
@@ -1166,20 +1174,21 @@ describe('PromptComposer agent questions', () => {
 					{ id: 'option-b', label: 'Option B' }
 				]
 			},
-			onSelectedQuestionOptionIdChange
+			isRunning: true,
+			onSelectedQuestionOptionIdChange,
+			onSkipQuestion
 		});
 
 		expect(textarea.value).toBe('');
 		expect(textarea.getAttribute('placeholder')).toBe('Add detail, or type a custom answer');
-		expect(
-			document.querySelector<HTMLButtonElement>('[aria-label="Submit answer"]')?.disabled
-		).toBe(true);
+		expect(actions()).toEqual(['Skip question']);
+
+		await click(findButton('Skip question'));
+		expect(onSkipQuestion).toHaveBeenCalled();
 
 		await click(findButton('Option A'));
 		expect(onSelectedQuestionOptionIdChange).toHaveBeenCalledWith('option-a');
-		expect(
-			document.querySelector<HTMLButtonElement>('[aria-label="Submit answer"]')?.disabled
-		).toBe(false);
+		expect(actions()).toEqual(['Send answer']);
 	});
 });
 

@@ -355,6 +355,7 @@ export default function App({
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
+	const skipAgentQuestion = useMutation(api.agentQuestions.skip);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 	const updatePullRequestStates = useMutation(api.pullRequests.updateStates);
@@ -1701,14 +1702,14 @@ export default function App({
 		}
 	}
 
-	async function submitAgentQuestionAnswer() {
+	async function settleAgentQuestion(action: 'answer' | 'skip') {
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
 		if (!question || !threadId || !userId || answeringAgentQuestion) return;
 
-		if (!selectedQuestionOptionId && !prompt.trim()) return;
+		if (action === 'answer' && !selectedQuestionOptionId && !prompt.trim()) return;
 
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
@@ -1732,14 +1733,15 @@ export default function App({
 		setSelectedQuestionOptionId(null);
 
 		try {
-			const answer = {
-				threadId,
-				questionId: question.questionId,
-				optionId: submittedOptionId ?? undefined,
-				text: answerText || undefined
-			};
-
-			const result = await answerAgentQuestion(answer);
+			const result =
+				action === 'answer'
+					? await answerAgentQuestion({
+							threadId,
+							questionId: question.questionId,
+							optionId: submittedOptionId ?? undefined,
+							text: answerText || undefined
+						})
+					: await skipAgentQuestion({ threadId, questionId: question.questionId });
 
 			if (result.continuation) {
 				continuationPrompt = result.continuation.prompt;
@@ -1817,7 +1819,7 @@ export default function App({
 			}
 
 			if (!options?.answeredQuestionId) {
-				await submitAgentQuestionAnswer();
+				await settleAgentQuestion('answer');
 
 				return;
 			}
@@ -3078,6 +3080,7 @@ export default function App({
 										projectPaths={composerProjectPaths}
 										onSubmit={() => void submitPrompt()}
 										onCancel={() => void cancelRun()}
+										onSkipQuestion={() => void settleAgentQuestion('skip')}
 									/>
 								</div>
 							</div>

@@ -670,6 +670,7 @@ export const vAskQuestionAnswer = v.object({
 export const vPollQuestionResult = v.object({
 	pending: v.boolean(),
 	timedOut: v.boolean(),
+	skipped: v.optional(v.boolean()),
 	answer: v.optional(vAskQuestionAnswer)
 });
 
@@ -951,7 +952,8 @@ export const vAgentQuestionStatus = v.union(
 	v.literal('pending'),
 	v.literal('answered'),
 	v.literal('timedOut'),
-	v.literal('cancelled')
+	v.literal('cancelled'),
+	v.literal('skipped')
 );
 
 export const vExecutorJobStatus = v.union(
