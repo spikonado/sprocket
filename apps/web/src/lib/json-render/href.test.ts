@@ -19,7 +19,10 @@ test.each([
 	'vbscript:msgbox(1)',
 	'//evil.example',
 	'mailto:user@example.com',
-	''
+	'',
+	null,
+	undefined,
+	1
 ])('drops %s', (href) => {
 	expect(safeExternalHref(href)).toBeUndefined();
 });

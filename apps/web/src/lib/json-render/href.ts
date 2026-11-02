@@ -1,7 +1,9 @@
 const HTTP = /^(https?):$/i;
 
 /** Links the agent can put in a visual. Other schemes stay as text. */
-export function safeExternalHref(href: string): string | undefined {
+export function safeExternalHref(href: unknown): string | undefined {
+	if (typeof href !== 'string') return undefined;
+
 	const trimmed = href.trim();
 	if (!trimmed || trimmed.startsWith('//')) return undefined;
 
