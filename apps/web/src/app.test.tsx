@@ -110,6 +110,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		watchWorkspaceFiles: unused,
 		workspaceEntryKind: unused,
 		watchWorkspaceFile: unused,
+		readWorkspaceText: unused,
 		writeWorkspaceFile: unused,
 		createWorkspaceFile: unused,
 		renameWorkspaceFile: unused,

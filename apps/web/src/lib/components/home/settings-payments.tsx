@@ -1,220 +1,83 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { useAction, useConvexAuth } from 'convex/react';
-import type { Infer } from 'convex/values';
+import { useCallback, useEffect, useState } from 'react';
+import { MessageSquare, Truck } from 'lucide-react';
+import { useAction, useConvexAuth, useQuery_experimental } from 'convex/react';
+import type { FunctionReturnType } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
-import type { vMandateFrequency, vMandateScope } from '@convex/lib/validators';
-import type { MandateApproval } from '$lib/chat/mandate';
-import MandateApprovalForm from '$lib/components/home/mandate-approval-form';
-import Button from '$lib/components/ui/button/button';
+import type { PurchaseStatus } from '@convex/lib/validators';
+import SaveCardButton from '$lib/components/home/save-card-button';
 import { convexClientErrorMessage } from '$lib/convex-error';
+import { formatMinorAmount } from '$lib/format';
+import { cn } from '$lib/utils';
 
-type MandateFrequency = Infer<typeof vMandateFrequency>;
+type Card = FunctionReturnType<typeof api.payments.listMyCards>[number];
 
-type MandateScope = Infer<typeof vMandateScope>;
-
-type LifecycleAction = 'pause' | 'resume' | 'cancel';
-
-type MandateRow = {
-	mandateId?: Id<'mandates'>;
-	pravaMandateId: string;
-	status: string;
-	description?: string;
-	merchantName?: string;
-	approvedAmount: string;
-	remaining?: string;
-	currency: string;
-	validUntil?: string;
-	renewsAt?: string;
+const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
+	awaiting_approval: { label: 'Awaiting approval', dot: 'bg-amber-500' },
+	approved: { label: 'Approved', dot: 'bg-emerald-500' },
+	submitted_on_device: { label: 'Finishing on your device', dot: 'bg-accent-strong' },
+	declined: { label: 'Declined', dot: 'bg-destructive' },
+	expired: { label: 'Expired', dot: 'bg-muted-foreground/50' },
+	cancelled: { label: 'Cancelled', dot: 'bg-muted-foreground/50' },
+	settled: { label: 'Completed', dot: 'bg-emerald-500' }
 };
 
-function friendlyError(error: Error, fallback: string): string {
-	return convexClientErrorMessage(error) || fallback;
+const sectionHeadingClass = 'text-foreground text-[15px] font-medium tracking-[-0.01em]';
+
+const paymentCardClass = 'aspect-[85.6/53.98] w-52 rounded-[8px]';
+
+const rowButtonClass =
+	'border-border text-foreground hover:bg-hover-fill focus-visible:ring-ring/50 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none';
+
+const purchaseDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+
+function errorMessage<Caught>(error: Caught, fallback: string) {
+	return (error instanceof Error && convexClientErrorMessage(error)) || fallback;
 }
 
-function catchMessage<T>(error: T, fallback: string): string {
-	return error instanceof Error ? friendlyError(error, fallback) : fallback;
-}
-
-const fieldClass =
-	'border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full rounded-lg border px-3 text-[13px] outline-none';
-
-const labelClass = 'text-muted-foreground text-[12px]';
-
-const actionLinkClass =
-	'text-muted-foreground hover:text-foreground text-[12px] transition disabled:pointer-events-none disabled:opacity-40';
-
-const lifecycleLabels = {
-	pause: { idle: 'Pause', busy: 'Pausing…' },
-	resume: { idle: 'Resume', busy: 'Resuming…' },
-	cancel: { idle: 'Cancel', busy: 'Cancelling…' }
-} as const satisfies Record<LifecycleAction, { idle: string; busy: string }>;
-
-const mandateFrequencyOptions = [
-	{ value: 'one_time', label: 'One time' },
-	{ value: 'weekly', label: 'Weekly' },
-	{ value: 'monthly', label: 'Monthly' },
-	{ value: 'yearly', label: 'Yearly' }
-] as const satisfies readonly { value: MandateFrequency; label: string }[];
-
-const mandateScopeOptions = [
-	{ value: 'listed', label: 'Listed merchant' },
-	{ value: 'any', label: 'Any merchant' }
-] as const satisfies readonly { value: MandateScope; label: string }[];
-
-function parseSelectValue<Value extends string>(
-	options: readonly { value: Value }[],
-	raw: string
-): Value | null {
-	return options.find((option) => option.value === raw)?.value ?? null;
-}
-
-export default function SettingsPayments() {
+export default function SettingsPayments({
+	onOpenThread
+}: {
+	onOpenThread: (threadId: Id<'threadRecords'>) => Promise<void>;
+}) {
 	const convexAuth = useConvexAuth();
-	const listMyMandates = useAction(api.payments.listMyMandates);
-	const setupMyMandate = useAction(api.payments.setupMyMandate);
-	const setMyMandateLifecycle = useAction(api.payments.setMyMandateLifecycle);
-	const [merchantName, setMerchantName] = useState('');
-	const [merchantUrl, setMerchantUrl] = useState('');
-	const [countryCode, setCountryCode] = useState('US');
-	const [amountCap, setAmountCap] = useState('');
-	const [currency, setCurrency] = useState('USD');
-	const [frequency, setFrequency] = useState<MandateFrequency>('monthly');
-	const [scope, setScope] = useState<MandateScope>('listed');
-	const [description, setDescription] = useState('');
-	const [setupSubmitting, setSetupSubmitting] = useState(false);
-	const [setupError, setSetupError] = useState<string | null>(null);
-	const [pendingApproval, setPendingApprovalState] = useState<MandateApproval | null>(null);
-	const [mandates, setMandates] = useState<MandateRow[]>([]);
-	const [mandatesLoading, setMandatesLoading] = useState(false);
-	const [mandatesError, setMandatesError] = useState<string | null>(null);
-	const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
-	const [lifecycleBusyAction, setLifecycleBusyAction] = useState<LifecycleAction | null>(null);
-	const pendingApprovalRef = useRef<MandateApproval | null>(null);
+	const signedIn = convexAuth.isAuthenticated && !convexAuth.isLoading;
+	const listMyCards = useAction(api.payments.listMyCards);
+	const [cards, setCards] = useState<Card[] | null>(null);
+	const [cardsError, setCardsError] = useState<string | null>(null);
+	const [openError, setOpenError] = useState<string | null>(null);
 
-	const setPendingApproval = (next: MandateApproval | null) => {
-		pendingApprovalRef.current = next;
-		setPendingApprovalState(next);
-	};
+	const purchases = useQuery_experimental({
+		query: api.payments.listMyPurchases,
+		args: signedIn ? {} : 'skip'
+	});
 
-	// Prava rejects recurring any-merchant mandates; keep the form from
-	// offering an invalid combination.
-	useEffect(() => {
-		if (scope === 'any' && frequency !== 'one_time') {
-			setFrequency('one_time');
+	const loadCards = useCallback(async () => {
+		try {
+			setCards(await listMyCards({}));
+			setCardsError(null);
+		} catch (error) {
+			setCardsError(errorMessage(error, 'Couldn’t load your cards.'));
 		}
-	}, [scope, frequency]);
+	}, [listMyCards]);
 
-	const refreshMandates = useCallback(async () => {
-		setMandatesLoading(true);
-		setMandatesError(null);
+	// Cards are saved in the Agentcard popup, so reload when the user comes back.
+	useEffect(() => {
+		if (!signedIn) return;
+		void loadCards();
+		const reload = () => void loadCards();
+		window.addEventListener('focus', reload);
+
+		return () => window.removeEventListener('focus', reload);
+	}, [signedIn, loadCards]);
+
+	async function openThread(threadId: Id<'threadRecords'>) {
+		setOpenError(null);
 
 		try {
-			const result = await listMyMandates({});
-			setMandates(result.mandates);
-			const pendingId = pendingApprovalRef.current?.mandateId;
-
-			if (
-				pendingId &&
-				result.mandates.some(
-					(mandate) =>
-						mandate.mandateId === pendingId &&
-						(mandate.status === 'active' || mandate.status === 'paused')
-				)
-			) {
-				pendingApprovalRef.current = null;
-				setPendingApprovalState(null);
-			}
+			await onOpenThread(threadId);
 		} catch (error) {
-			setMandatesError(catchMessage(error, 'Couldn’t load mandates.'));
-		} finally {
-			setMandatesLoading(false);
-		}
-	}, [listMyMandates]);
-
-	useEffect(() => {
-		if (!convexAuth.isAuthenticated || convexAuth.isLoading) {
-			return;
-		}
-
-		void refreshMandates();
-	}, [convexAuth.isAuthenticated, convexAuth.isLoading, refreshMandates]);
-
-	// After the user finishes Prava approval in another tab, refresh when they
-	// return so Pause/Cancel appear without a full page reload.
-	useEffect(() => {
-		if (!pendingApproval || !convexAuth.isAuthenticated) {
-			return;
-		}
-
-		const onReturn = () => {
-			if (document.visibilityState && document.visibilityState !== 'visible') {
-				return;
-			}
-
-			void refreshMandates();
-		};
-
-		window.addEventListener('focus', onReturn);
-		document.addEventListener('visibilitychange', onReturn);
-
-		return () => {
-			window.removeEventListener('focus', onReturn);
-			document.removeEventListener('visibilitychange', onReturn);
-		};
-	}, [pendingApproval, convexAuth.isAuthenticated, refreshMandates]);
-
-	async function submitMandateSetup(event: FormEvent) {
-		event.preventDefault();
-		setSetupSubmitting(true);
-		setSetupError(null);
-		setPendingApproval(null);
-		// Merchant fields are disabled (and ignored by Prava) for any-merchant
-		// mandates; don't submit leftover values that would mislabel the mandate.
-		const listed = scope === 'listed';
-
-		try {
-			const result = await setupMyMandate({
-				merchantName: listed ? merchantName.trim() || undefined : undefined,
-				merchantUrl: listed ? merchantUrl.trim() || undefined : undefined,
-				countryCode: listed ? countryCode.trim() || undefined : undefined,
-				amountCap: amountCap.trim(),
-				currency: currency.trim(),
-				frequency,
-				scope,
-				description: description.trim()
-			});
-
-			setPendingApproval({
-				mandateId: result.mandateId,
-				approvalUrl: result.approvalUrl,
-				label: description.trim()
-			});
-			await refreshMandates();
-		} catch (error) {
-			setSetupError(catchMessage(error, 'Couldn’t set up mandate.'));
-		} finally {
-			setSetupSubmitting(false);
-		}
-	}
-
-	async function runLifecycle(mandate: MandateRow, action: LifecycleAction) {
-		if (!mandate.mandateId || lifecycleBusyId !== null) return;
-		setLifecycleBusyId(mandate.pravaMandateId);
-		setLifecycleBusyAction(action);
-		setMandatesError(null);
-
-		try {
-			await setMyMandateLifecycle({
-				mandateId: mandate.mandateId,
-				action
-			});
-			await refreshMandates();
-		} catch (error) {
-			setMandatesError(catchMessage(error, `Couldn’t ${action} mandate.`));
-		} finally {
-			setLifecycleBusyId(null);
-			setLifecycleBusyAction(null);
+			setOpenError(errorMessage(error, 'Couldn’t open that thread.'));
 		}
 	}
 
@@ -225,202 +88,130 @@ export default function SettingsPayments() {
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-				<div className="max-w-xl space-y-10">
+				<div className="max-w-2xl space-y-12">
 					<div>
-						<p className="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
-							Set up a spending mandate
-						</p>
-						<p className="text-muted-foreground mt-2 text-sm leading-6">
-							Create a Prava mandate, then approve it in a new tab with your passkey.
-						</p>
-						<form className="mt-4 space-y-3" onSubmit={(event) => void submitMandateSetup(event)}>
-							<div className="grid gap-3 sm:grid-cols-2">
-								<label className="block space-y-1.5">
-									<span className={labelClass}>Merchant name</span>
-									<input
-										className={fieldClass}
-										value={merchantName}
-										onChange={(event) => setMerchantName(event.currentTarget.value)}
-										placeholder="Example Shop"
-										disabled={setupSubmitting || scope === 'any'}
-									/>
-								</label>
-								<label className="block space-y-1.5">
-									<span className={labelClass}>Merchant URL</span>
-									<input
-										className={fieldClass}
-										value={merchantUrl}
-										onChange={(event) => setMerchantUrl(event.currentTarget.value)}
-										placeholder="https://example.com"
-										disabled={setupSubmitting || scope === 'any'}
-									/>
-								</label>
-								<label className="block space-y-1.5">
-									<span className={labelClass}>Country code</span>
-									<input
-										className={fieldClass}
-										value={countryCode}
-										onChange={(event) => setCountryCode(event.currentTarget.value)}
-										placeholder="US"
-										disabled={setupSubmitting || scope === 'any'}
-									/>
-								</label>
-								<label className="block space-y-1.5">
-									<span className={labelClass}>Amount cap</span>
-									<input
-										className={fieldClass}
-										value={amountCap}
-										onChange={(event) => setAmountCap(event.currentTarget.value)}
-										placeholder="120.00"
-										required
-										disabled={setupSubmitting}
-									/>
-								</label>
-								<label className="block space-y-1.5">
-									<span className={labelClass}>Currency</span>
-									<input
-										className={fieldClass}
-										value={currency}
-										onChange={(event) => setCurrency(event.currentTarget.value)}
-										placeholder="USD"
-										required
-										disabled={setupSubmitting}
-									/>
-								</label>
-								<label className="block space-y-1.5">
-									<span className={labelClass}>Frequency</span>
-									<select
-										className={fieldClass}
-										value={frequency}
-										onChange={(event) => {
-											const next = parseSelectValue(
-												mandateFrequencyOptions,
-												event.currentTarget.value
-											);
-
-											if (next) setFrequency(next);
-										}}
-										disabled={setupSubmitting || scope === 'any'}
-									>
-										{mandateFrequencyOptions.map((option) => (
-											<option key={option.value} value={option.value}>
-												{option.label}
-											</option>
-										))}
-									</select>
-								</label>
-								<label className="block space-y-1.5 sm:col-span-2">
-									<span className={labelClass}>Scope</span>
-									<select
-										className={fieldClass}
-										value={scope}
-										onChange={(event) => {
-											const next = parseSelectValue(mandateScopeOptions, event.currentTarget.value);
-
-											if (next) setScope(next);
-										}}
-										disabled={setupSubmitting}
-									>
-										{mandateScopeOptions.map((option) => (
-											<option key={option.value} value={option.value}>
-												{option.label}
-											</option>
-										))}
-									</select>
-								</label>
-								<label className="block space-y-1.5 sm:col-span-2">
-									<span className={labelClass}>Description</span>
-									<input
-										className={fieldClass}
-										value={description}
-										onChange={(event) => setDescription(event.currentTarget.value)}
-										placeholder="Agent shopping budget"
-										required
-										disabled={setupSubmitting}
-									/>
-								</label>
+						<div className="flex items-start justify-between gap-4">
+							<div>
+								<h2 className={sectionHeadingClass}>Cards</h2>
+								<p className="text-muted-foreground mt-1 text-sm leading-6">
+									Your agent pays with these. You approve every purchase with your passkey.
+								</p>
 							</div>
-							{setupError && <p className="text-destructive text-sm">{setupError}</p>}
-							<Button type="submit" variant="outline" disabled={setupSubmitting}>
-								{setupSubmitting ? 'Setting up…' : 'Set up mandate'}
-							</Button>
-						</form>
-						{pendingApproval && (
-							<div className="mt-4">
-								<MandateApprovalForm approval={pendingApproval} />
+							<div className="shrink-0">
+								<SaveCardButton label="Add a card" />
 							</div>
+						</div>
+						{cardsError && <p className="text-destructive mt-4 text-sm">{cardsError}</p>}
+						{cards === null ? (
+							!cardsError && (
+								<div className={cn(paymentCardClass, 'bg-hover-fill mt-5')} aria-hidden="true" />
+							)
+						) : cards.length === 0 ? (
+							<p className="border-border text-muted-foreground mt-4 rounded-xl border border-dashed px-5 py-6 text-sm leading-6">
+								No cards yet. Add one so your agent can pay at checkout.
+							</p>
+						) : (
+							<ul className="mt-5 flex flex-wrap gap-4">
+								{cards.map((card) => (
+									<li
+										key={card.id}
+										className={cn(
+											paymentCardClass,
+											'flex flex-col justify-between bg-[linear-gradient(135deg,oklch(0.34_0.03_250),oklch(0.2_0.02_260))] p-4 text-white shadow-[0_14px_30px_-18px_oklch(0.18_0.02_260/0.7)] ring-1 ring-white/10'
+										)}
+									>
+										<p className="text-[13px] font-semibold capitalize">{card.brand}</p>
+										<div>
+											<p className="text-[17px] tracking-[0.08em] tabular-nums">
+												•••• {card.last4}
+											</p>
+											<p className="mt-1 text-[11px] tabular-nums opacity-70">
+												Expires {String(card.expiryMonth).padStart(2, '0')}/
+												{String(card.expiryYear).slice(-2)}
+											</p>
+										</div>
+									</li>
+								))}
+							</ul>
 						)}
 					</div>
 
 					<div>
-						<p className="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
-							Your mandates
-						</p>
-						{mandatesError && <p className="text-destructive mt-3 text-sm">{mandatesError}</p>}
-						{mandatesLoading && mandates.length === 0 ? (
-							<div className="mt-4 animate-pulse space-y-4" aria-hidden="true">
-								{[0, 1].map((row) => (
-									<div key={row} className="space-y-2">
-										<div className="bg-hover-fill h-3.5 w-40 rounded"></div>
-										<div className="bg-hover-fill h-3 w-56 rounded"></div>
-									</div>
-								))}
-							</div>
-						) : mandates.length === 0 ? (
-							<p className="text-muted-foreground mt-3 text-sm leading-6">No mandates yet.</p>
-						) : (
-							<ul className="mt-3 space-y-1">
-								{mandates.map((mandate) => {
-									const busy = lifecycleBusyId === mandate.pravaMandateId;
-									const busyAction = busy ? lifecycleBusyAction : null;
-									const canPause = Boolean(mandate.mandateId) && mandate.status === 'active';
-									const canResume = Boolean(mandate.mandateId) && mandate.status === 'paused';
-
-									const rowActions: readonly LifecycleAction[] = [
-										canPause ? 'pause' : 'resume',
-										'cancel'
-									];
-
-									return (
-										<li key={mandate.pravaMandateId} className="py-2">
-											<div className="flex items-baseline justify-between gap-3">
-												<p className="text-foreground truncate text-[14px]">
-													{mandate.description?.trim() ||
-														mandate.merchantName?.trim() ||
-														'Spending mandate'}
-												</p>
-												<p className="text-muted-foreground shrink-0 text-[12px] capitalize">
-													{mandate.status}
-												</p>
-											</div>
-											<p className="text-muted-foreground mt-0.5 text-[12px]">
-												{mandate.approvedAmount} {mandate.currency}
-												{mandate.remaining !== undefined && <> · {mandate.remaining} remaining</>}
-												{mandate.validUntil && <> · until {mandate.validUntil}</>}
-												{mandate.renewsAt && <> · renews {mandate.renewsAt}</>}
-											</p>
-											{(canPause || canResume) && (
-												<div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-													{rowActions.map((action) => (
-														<button
-															key={action}
-															type="button"
-															className={actionLinkClass}
-															disabled={lifecycleBusyId !== null}
-															onClick={() => void runLifecycle(mandate, action)}
-														>
-															{busyAction === action
-																? lifecycleLabels[action].busy
-																: lifecycleLabels[action].idle}
-														</button>
-													))}
-												</div>
-											)}
-										</li>
-									);
-								})}
-							</ul>
+						<h2 className={sectionHeadingClass}>Purchases</h2>
+						{purchases.status === 'error' && (
+							<p className="text-destructive mt-4 text-sm">
+								{errorMessage(purchases.error, 'Couldn’t load purchases.')}
+							</p>
 						)}
+						{openError && <p className="text-destructive mt-4 text-sm">{openError}</p>}
+						{purchases.status === 'success' &&
+							(purchases.data.length === 0 ? (
+								<p className="text-muted-foreground mt-1 text-sm leading-6">
+									Things your agent buys show up here.
+								</p>
+							) : (
+								<ul className="divide-hairline mt-3 max-w-xl divide-y">
+									{purchases.data.map((purchase) => (
+										<li key={purchase._id} className="flex items-center gap-4 py-3">
+											<p className="text-foreground w-16 shrink-0 text-[14px] font-medium tabular-nums">
+												{formatMinorAmount(purchase.amount, purchase.currency)}
+											</p>
+											<div className="min-w-0 flex-1">
+												<p className="text-foreground truncate text-[14px]">{purchase.merchant}</p>
+												<div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px]">
+													<span className="text-foreground/80 inline-flex shrink-0 items-center gap-1.5">
+														<span
+															className={cn('size-1.5 rounded-full', statuses[purchase.status].dot)}
+															aria-hidden="true"
+														/>
+														{statuses[purchase.status].label}
+													</span>
+													<span className="shrink-0">
+														{purchaseDate.format(purchase.createdAt)}
+													</span>
+													{purchase.orderNumber &&
+														(purchase.orderLink ? (
+															<a
+																href={purchase.orderLink}
+																target="_blank"
+																rel="noreferrer"
+																className="hover:text-foreground max-w-full truncate underline underline-offset-2"
+																title={purchase.orderNumber}
+															>
+																Order {purchase.orderNumber}
+															</a>
+														) : (
+															<span className="max-w-full truncate" title={purchase.orderNumber}>
+																Order {purchase.orderNumber}
+															</span>
+														))}
+												</div>
+											</div>
+											<div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-center">
+												{purchase.trackingLink && (
+													<a
+														href={purchase.trackingLink}
+														target="_blank"
+														rel="noreferrer"
+														className={rowButtonClass}
+													>
+														<Truck className="size-3.5" aria-hidden="true" />
+														Track order
+													</a>
+												)}
+												<button
+													type="button"
+													className={rowButtonClass}
+													onClick={() => void openThread(purchase.threadId)}
+												>
+													<MessageSquare className="size-3.5" aria-hidden="true" />
+													View thread
+												</button>
+											</div>
+										</li>
+									))}
+								</ul>
+							))}
 					</div>
 				</div>
 			</div>

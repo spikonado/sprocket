@@ -31,11 +31,11 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        exclude: (^(bun\.lock|Cargo\.lock)$|/_generated/)
+        exclude: (^(bun\.lock|Cargo\.lock)$|/_generated/|^apps/web/static/kicanvas/)
         exclude_types: [svg]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.38.2
+    rev: 0.39.0
     hooks:
       - id: check-github-actions
         args: ['--verbose']

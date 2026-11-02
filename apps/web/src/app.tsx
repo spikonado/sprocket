@@ -39,6 +39,7 @@ import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay';
 import CalmCentered from '$lib/components/home/calm-centered';
 import PromptComposer from '$lib/components/home/prompt-composer';
 import ConversationNotices from '$lib/components/home/conversation-notices';
+import PurchaseApprovals from '$lib/components/home/purchase-approvals';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
@@ -738,11 +739,21 @@ export default function App({
 		authenticatedThreadQueryArgs
 	);
 
+	const pendingApprovalsQuery = usePageQuery(
+		api.payments.pendingThreadApprovals,
+		authenticatedThreadQueryArgs
+	);
+
+	const pendingApprovals = (pendingApprovalsQuery.data ?? []).filter(
+		(purchase) => purchase.threadId === currentThreadId
+	);
+
 	const queryError =
 		uiPreferencesQuery.error ??
 		activeThreadQuery.error ??
 		lifecycleQuery.error ??
-		pendingAgentQuestionQuery.error;
+		pendingAgentQuestionQuery.error ??
+		pendingApprovalsQuery.error;
 
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
 	useEffect(() => {
@@ -1579,6 +1590,18 @@ export default function App({
 		startThreadDraftForProject(project.workspacePath);
 
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
+	}
+
+	async function openPurchaseThread(threadId: Id<'threadRecords'>) {
+		const thread = await convexClient.query(api.threads.getByThreadId, { threadId });
+
+		if (!findProjectByRepositoryKey(projects, thread.repositoryKey)) {
+			throw new Error('Add this thread’s project to Sprocket to open it.');
+		}
+
+		setSettingsOpen(false);
+		setSettingsPage('general');
+		selectInboxThread(thread);
 	}
 
 	async function focusCreateThreadComposer() {
@@ -2913,7 +2936,7 @@ export default function App({
 								onConfigurationChange={handleProviderConfigurationChange}
 							/>
 						) : settingsPage === 'payments' ? (
-							<SettingsPayments />
+							<SettingsPayments onOpenThread={openPurchaseThread} />
 						) : settingsPage === 'versionControl' && signedInUserId ? (
 							<SettingsVersionControl userId={signedInUserId} localApi={localApi} />
 						) : settingsPage === 'connectors' && signedInUserId ? (
@@ -2992,25 +3015,28 @@ export default function App({
 								>
 									<PromptComposer
 										notices={({ usageBlocked }) => (
-											<ConversationNotices
-												key={currentThreadId}
-												error={conversationError}
-												runError={runError}
-												usageBlocked={usageBlocked}
-												reconnecting={Boolean(
-													currentThreadId &&
-													transcript.threadId === currentThreadId &&
-													transcript.stale
-												)}
-												syncing={Boolean(
-													currentThreadId &&
-													transcript.threadId === currentThreadId &&
-													transcript.syncing
-												)}
-												catalogError={catalogError !== null}
-												catalogLoading={catalogLoading}
-												onRetryCatalog={() => void loadModelCatalog()}
-											/>
+											<>
+												<PurchaseApprovals purchases={pendingApprovals} />
+												<ConversationNotices
+													key={currentThreadId}
+													error={conversationError}
+													runError={runError}
+													usageBlocked={usageBlocked}
+													reconnecting={Boolean(
+														currentThreadId &&
+														transcript.threadId === currentThreadId &&
+														transcript.stale
+													)}
+													syncing={Boolean(
+														currentThreadId &&
+														transcript.threadId === currentThreadId &&
+														transcript.syncing
+													)}
+													catalogError={catalogError !== null}
+													catalogLoading={catalogLoading}
+													onRetryCatalog={() => void loadModelCatalog()}
+												/>
+											</>
 										)}
 										prompt={prompt}
 										onPromptChange={setPrompt}

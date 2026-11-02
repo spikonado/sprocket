@@ -12,14 +12,13 @@ pub(super) const DISPLAY_ITEM: &str = "(canonical=1 OR (NOT EXISTS (
     (c.identity=s.identity OR c.identity='call:'||s.call_id)
 ) AND sequence=(SELECT MIN(t.sequence) FROM source_refs t WHERE t.run=s.run AND t.identity=s.identity AND t.canonical=0)))";
 
-pub(super) const ITEM_COLUMNS: &str = "s.number,s.offset,s.section,s.run,s.call_id,s.identity,s.canonical,s.terminal,s.mandate_id,s.approval_url";
+pub(super) const ITEM_COLUMNS: &str =
+    "s.number,s.offset,s.section,s.run,s.call_id,s.identity,s.canonical,s.terminal";
 
 pub(super) fn read_item(row: &Row<'_>) -> rusqlite::Result<WorkItem> {
     let number: u32 = row.get(0)?;
     let identity: Option<String> = row.get(5)?;
     let terminal: bool = row.get(7)?;
-    let mandate_id: Option<String> = row.get(8)?;
-    let approval_url: Option<String> = row.get(9)?;
     Ok(WorkItem {
         run_id: row.get(3)?,
         section: row.get(2)?,
@@ -34,7 +33,6 @@ pub(super) fn read_item(row: &Row<'_>) -> rusqlite::Result<WorkItem> {
             .map(str::to_owned),
         result_part: terminal.then_some(number),
         canonical: row.get(6)?,
-        approval: mandate_id.zip(approval_url),
     })
 }
 
@@ -44,7 +42,7 @@ impl ReadIndex<'_> {
             "CREATE TABLE source_refs (
                 number INTEGER NOT NULL, offset INTEGER NOT NULL, sequence INTEGER NOT NULL,
                 section TEXT, run TEXT NOT NULL, call_id TEXT, identity TEXT, canonical INTEGER NOT NULL,
-                terminal INTEGER NOT NULL, mandate_id TEXT, approval_url TEXT,
+                terminal INTEGER NOT NULL,
                 PRIMARY KEY(number,offset)
             );
             CREATE INDEX source_refs_section_sequence ON source_refs(section,sequence);
@@ -82,7 +80,6 @@ impl ReadIndex<'_> {
                         .map(|invocation| invocation.tool_invocation_id.clone()),
                     result_part: None,
                     canonical: true,
-                    approval: None,
                 };
                 self.insert(&item)?;
             }
@@ -95,9 +92,8 @@ impl ReadIndex<'_> {
     }
 
     fn insert(&self, item: &WorkItem) -> anyhow::Result<()> {
-        let (mandate_id, approval_url) = item.approval.clone().unzip();
         self.0.execute(
-            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?)",
             params![
                 item.source.part,
                 item.source.item,
@@ -106,9 +102,7 @@ impl ReadIndex<'_> {
                 item.call_id,
                 item.identity(),
                 item.canonical,
-                item.result_part.is_some(),
-                mandate_id,
-                approval_url
+                item.result_part.is_some()
             ],
         )?;
         Ok(())
@@ -134,27 +128,6 @@ impl ReadIndex<'_> {
             )?;
         }
         Ok(())
-    }
-
-    pub fn approvals_for_part(&self, number: u32) -> anyhow::Result<Vec<WorkItem>> {
-        let items: Vec<WorkItem> = self
-            .0
-            .prepare(&format!(
-                "SELECT DISTINCT {ITEM_COLUMNS} FROM source_refs changed JOIN source_refs s
-            ON s.run=changed.run AND s.canonical=1 AND
-            (s.identity=changed.identity OR s.identity='call:'||changed.call_id)
-            WHERE changed.number=?"
-            ))?
-            .query_map([number], read_item)?
-            .collect::<Result<_, _>>()?;
-        let mut approvals = Vec::new();
-        for mut item in items {
-            self.pair(&mut item)?;
-            if item.approval.is_some() {
-                approvals.push(item);
-            }
-        }
-        Ok(approvals)
     }
 
     pub fn affected_sections(&self, number: u32) -> anyhow::Result<Vec<String>> {
