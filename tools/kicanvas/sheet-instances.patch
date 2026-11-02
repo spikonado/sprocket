@@ -1,0 +1,20 @@
+diff --git a/src/kicanvas/elements/kc-schematic/viewer.ts b/src/kicanvas/elements/kc-schematic/viewer.ts
+index 431f449..12607ef 100644
+--- a/src/kicanvas/elements/kc-schematic/viewer.ts
++++ b/src/kicanvas/elements/kc-schematic/viewer.ts
+@@ -5,9 +5,15 @@
+ */
+
+ import { SchematicViewer } from "../../../viewers/schematic/viewer";
++import type { ProjectPage } from "../../project";
+ import { KCViewerElement } from "../common/viewer";
+
+ export class KCSchematicViewerElement extends KCViewerElement<SchematicViewer> {
++    override async load(src: ProjectPage) {
++        this.loaded = false;
++        await this.viewer.load(src);
++    }
++
+     protected override update_theme(): void {
+         this.viewer.theme = this.themeObject.schematic;
+     }

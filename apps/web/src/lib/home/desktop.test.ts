@@ -52,6 +52,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		watchWorkspaceFiles: unusedDesktopCall,
 		workspaceEntryKind: unusedDesktopCall,
 		watchWorkspaceFile: unusedDesktopCall,
+		readWorkspaceText: unusedDesktopCall,
 		writeWorkspaceFile: unusedDesktopCall,
 		createWorkspaceFile: unusedDesktopCall,
 		renameWorkspaceFile: unusedDesktopCall,
