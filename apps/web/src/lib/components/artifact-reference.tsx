@@ -30,7 +30,6 @@ export default function ArtifactReference({
 	);
 }
 
-/** Without `onOpen`, the card only names what the message points at. */
 export function ReferenceCard({
 	icon,
 	title,

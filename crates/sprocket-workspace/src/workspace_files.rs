@@ -76,7 +76,8 @@ pub struct WorkspaceText {
 pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
     let file_path = resolve_entry(root, path, true)?;
     let file = File::open(&file_path).map_err(|error| entry_error(error, path, "open"))?;
-    if !file.metadata()?.is_file() {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
         bail!("{path} is not a file");
     }
     let mut bytes = Vec::new();
@@ -88,7 +89,7 @@ pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
         bail!("{path} exceeds the 128 MiB viewer limit");
     }
     let version = if bytes.len() as u64 > MAX_EDITABLE_FILE_BYTES {
-        too_large_snapshot(&file.metadata()?).version
+        too_large_snapshot(&metadata).version
     } else {
         content_version(&bytes)
     };

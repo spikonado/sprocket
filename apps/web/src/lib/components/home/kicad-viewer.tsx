@@ -4,7 +4,7 @@ import { readKicadSources } from '$lib/kicad';
 import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type KicadViewerApi = Pick<LocalApi, 'readWorkspaceText' | 'watchWorkspaceFile'>;
+type KicadViewerApi = Pick<LocalApi, 'readWorkspaceText' | 'watchWorkspaceFile'>;
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 
@@ -235,21 +235,20 @@ export default function KicadViewer({
 
 	return (
 		<div ref={containerRef} className="relative min-h-0 flex-1">
-			{showing ? (
-				status.kind !== 'ready' && (
-					<div
-						role={status.kind === 'error' ? 'alert' : 'status'}
-						className="bg-background/80 text-muted-foreground border-hairline absolute bottom-3 left-1/2 z-10 max-w-[80%] -translate-x-1/2 truncate rounded-md border px-3 py-1.5 text-xs backdrop-blur"
-					>
-						{status.kind === 'error' ? status.message : 'Updating…'}
-					</div>
-				)
-			) : (
+			{status.kind !== 'ready' && (
 				<div
 					role={status.kind === 'error' ? 'alert' : 'status'}
-					className="bg-background text-muted-foreground absolute inset-0 z-10 flex items-center justify-center p-4 text-center text-sm"
+					className={
+						showing
+							? 'bg-background/80 text-muted-foreground border-hairline absolute bottom-3 left-1/2 z-10 max-w-[80%] -translate-x-1/2 truncate rounded-md border px-3 py-1.5 text-xs backdrop-blur'
+							: 'bg-background text-muted-foreground absolute inset-0 z-10 flex items-center justify-center p-4 text-center text-sm'
+					}
 				>
-					{status.kind === 'error' ? status.message : 'Opening in KiCanvas…'}
+					{status.kind === 'error'
+						? status.message
+						: showing
+							? 'Updating…'
+							: 'Opening in KiCanvas…'}
 				</div>
 			)}
 		</div>

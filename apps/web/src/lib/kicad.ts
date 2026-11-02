@@ -1,7 +1,5 @@
 export const KICAD_FILE = /\.kicad_(?:pro|sch|pcb)$/;
 
-export type KicadSource = { name: string; content: string };
-
 const SHEET_FILE = /\(property\s+"Sheet ?file"\s+"([^"]+)"/g;
 
 function directoryOf(path: string) {
@@ -27,7 +25,7 @@ function normalize(path: string) {
 export async function readKicadSources(
 	path: string,
 	read: (path: string) => Promise<string>
-): Promise<KicadSource[]> {
+): Promise<{ name: string; content: string }[]> {
 	const directory = directoryOf(path);
 	const opened = path.slice(directory.length);
 	const stem = opened.replace(KICAD_FILE, '');
