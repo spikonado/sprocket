@@ -178,7 +178,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.source-sha }}
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/download-artifact@v8
@@ -228,7 +228,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.source-sha }}
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/download-artifact@v8
