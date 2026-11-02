@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use super::{
-    ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, apply_completed_text, classify_provider_error,
-    durable_items_json, visible_live_parts,
+use super::transcript_sink::{
+    apply_completed_text, apply_completed_tool_call, durable_items_json, visible_live_parts,
 };
-use sprocket_transcript::LiveAssistantPart;
+use super::{ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error};
+use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 #[test]
 fn generation_options_keep_gateway_fast_tier_separate() {
@@ -48,7 +48,7 @@ fn live_projection_omits_empty_reasoning_without_removing_durable_state() {
 
 #[test]
 fn consecutive_text_parts_preserve_their_own_phase_and_authoritative_text() {
-    let mut parts = super::LiveAssistantParts::default();
+    let mut parts = LiveAssistantParts::default();
     let mut metadata = HashMap::new();
     parts.apply_text_delta(
         "text",
@@ -138,9 +138,9 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
     })) else {
         unreachable!();
     };
-    let mut parts = super::LiveAssistantParts::default();
+    let mut parts = LiveAssistantParts::default();
     let mut metadata = HashMap::new();
-    super::apply_completed_tool_call(
+    apply_completed_tool_call(
         &mut parts,
         &mut metadata,
         "stream",
@@ -202,9 +202,9 @@ fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
         unreachable!()
     };
     call.function = ToolFunction::new("new_tool".try_into().unwrap(), json!({"new": true}));
-    let mut parts = super::LiveAssistantParts::default();
+    let mut parts = LiveAssistantParts::default();
     let mut metadata = HashMap::new();
-    super::apply_completed_tool_call(&mut parts, &mut metadata, "stream", None, call);
+    apply_completed_tool_call(&mut parts, &mut metadata, "stream", None, call);
     let items = durable_items_json(&parts.parts, &metadata);
     assert!(items[0]["providerMetadata"]["rigNative"].is_null());
     let part = serde_json::from_value(json!({
