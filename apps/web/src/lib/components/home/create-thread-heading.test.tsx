@@ -73,6 +73,34 @@ describe('CreateThreadHeading', () => {
 		expect(props.onAddProject).toHaveBeenCalledOnce();
 	});
 
+	it('removes a project from the keyboard and restores focus', async () => {
+		const project: Project = {
+			repositoryKey: 'first',
+			displayName: 'First',
+			workspacePath: '/first'
+		};
+
+		const props = renderHeading({
+			projects: [project],
+			workspacePath: project.workspacePath,
+			onRemoveProject: vi.fn()
+		});
+
+		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+		await click(trigger);
+
+		const remove = document.querySelector<HTMLButtonElement>(
+			'[aria-label="Remove First from project list"]'
+		)!;
+
+		await dispatchKeydown(document.activeElement!, 'ArrowRight');
+		expect(document.activeElement).toBe(remove);
+		await dispatchKeydown(remove, 'Enter');
+		expect(props.onRemoveProject).toHaveBeenCalledExactlyOnceWith(project);
+		expect(document.querySelector('[role="menu"]')).toBeNull();
+		expect(document.activeElement).toBe(trigger);
+	});
+
 	it('supports keyboard navigation and restores focus after Escape', async () => {
 		const projects: Project[] = [
 			{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' },

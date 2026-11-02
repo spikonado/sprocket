@@ -103,7 +103,12 @@
 	padding: 5px;
 }
 
-.create-thread-project-options > button,
+.create-thread-project-row {
+	display: flex;
+	align-items: center;
+}
+
+.create-thread-project-row > button,
 .create-thread-project-menu-footer > button {
 	display: flex;
 	width: 100%;
@@ -119,9 +124,9 @@
 	transition: background-color 100ms ease;
 }
 
-.create-thread-project-options > button:hover,
-.create-thread-project-options > button.active,
-.create-thread-project-options > button:focus-visible,
+.create-thread-project-row > button:hover,
+.create-thread-project-row > button.active,
+.create-thread-project-row > button:focus-visible,
 .create-thread-project-menu-footer > button:hover,
 .create-thread-project-menu-footer > button.active,
 .create-thread-project-menu-footer > button:focus-visible {
@@ -153,7 +158,7 @@
 	font-size: 12px;
 }
 
-.create-thread-project-options > button > svg {
+.create-thread-project-row > button[role='menuitemradio'] > svg {
 	width: 17px;
 	height: 17px;
 	flex: none;
@@ -161,8 +166,22 @@
 	opacity: 0;
 }
 
-.create-thread-project-options > button.selected > svg {
+.create-thread-project-row > button.selected > svg {
 	opacity: 1;
+}
+
+.create-thread-project-row > .create-thread-project-remove {
+	width: 32px;
+	height: 32px;
+	flex: none;
+	justify-content: center;
+	padding: 0;
+	color: var(--muted-foreground);
+}
+
+.create-thread-project-row > .create-thread-project-remove:hover,
+.create-thread-project-row > .create-thread-project-remove:focus-visible {
+	color: var(--foreground);
 }
 
 .create-thread-project-menu-footer {

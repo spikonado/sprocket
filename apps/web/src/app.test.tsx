@@ -303,38 +303,48 @@ it('populates projects from the desktop client resolved during boot', async () =
 	expect(listProjectAttachments).toHaveBeenCalled();
 });
 
-it('removes the current project from project lists and inbox queries', async () => {
-	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	alpha.lastUsedAt = 2;
-	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
-	let attachments = [alpha, beta];
-	const client = createConvexFixtures();
-	client.registerPaginatedQuery(api.inbox.list, []);
-	const inboxQueries = vi.spyOn(client, 'watchPaginatedQuery');
+it.each(['sidebar', 'heading'])(
+	'removes the current project from project lists and inbox queries through the %s',
+	async (picker) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		alpha.lastUsedAt = 2;
+		const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+		let attachments = [alpha, beta];
+		const client = createConvexFixtures();
+		client.registerPaginatedQuery(api.inbox.list, []);
+		const inboxQueries = vi.spyOn(client, 'watchPaginatedQuery');
 
-	const removeProject = vi.fn<LocalApi['removeProject']>(async ({ workspacePath }) => {
-		attachments = attachments.filter((attachment) => attachment.workspacePath !== workspacePath);
-	});
+		const removeProject = vi.fn<LocalApi['removeProject']>(async ({ workspacePath }) => {
+			attachments = attachments.filter((attachment) => attachment.workspacePath !== workspacePath);
+		});
 
-	await renderApp(
-		client,
-		createRuntime(
-			createLocalApi({ listProjectAttachments: async () => attachments, removeProject })
-		)
-	);
-	await projectTrigger('Alpha');
-	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
-	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
-	await waitFor(() =>
-		expect(removeProject).toHaveBeenCalledWith({ workspacePath: alpha.workspacePath })
-	);
-	expect(await projectTrigger('Choose a project')).toBeTruthy();
-	expect(screen.queryByRole('button', { name: 'Remove Alpha from project list' })).toBeNull();
-	expect(inboxQueries.mock.calls.at(-1)?.[1]).toEqual({
-		state: 'unsettled',
-		repositoryKeys: ['repo-beta']
-	});
-});
+		await renderApp(
+			client,
+			createRuntime(
+				createLocalApi({ listProjectAttachments: async () => attachments, removeProject })
+			)
+		);
+		const trigger = await projectTrigger('Alpha');
+
+		if (picker === 'heading') {
+			fireEvent.click(trigger);
+			fireEvent.click(screen.getByRole('menuitem', { name: 'Remove Alpha from project list' }));
+		} else {
+			fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+		}
+
+		await waitFor(() =>
+			expect(removeProject).toHaveBeenCalledWith({ workspacePath: alpha.workspacePath })
+		);
+		expect(await projectTrigger('Choose a project')).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Remove Alpha from project list' })).toBeNull();
+		expect(inboxQueries.mock.calls.at(-1)?.[1]).toEqual({
+			state: 'unsettled',
+			repositoryKeys: ['repo-beta']
+		});
+	}
+);
 
 it('removes a project without waiting for uploads and restores the draft text when re-added', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
