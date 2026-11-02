@@ -67,7 +67,7 @@ export default function ProjectSelectorMenu({
 							<button
 								type="button"
 								className={cn(
-									'inbox-project-option',
+									'inbox-project-option min-w-0 flex-1',
 									isSelected(project) && 'inbox-project-selected'
 								)}
 								aria-pressed={isSelected(project)}
