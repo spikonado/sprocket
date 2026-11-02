@@ -29,6 +29,7 @@ export default function CreateThreadHeading({
 	const [activeIndex, setActiveIndex] = useState(0);
 	const rootElement = useRef<HTMLDivElement | null>(null);
 	const triggerElement = useRef<HTMLButtonElement | null>(null);
+	const focusAddProject = useRef(false);
 	const menuItems = useRef<Array<HTMLButtonElement | null>>([]);
 
 	function hasDuplicateName(project: Project) {
@@ -151,6 +152,11 @@ export default function CreateThreadHeading({
 	useEffect(() => {
 		if (projects.length === 0) {
 			setIsOpen(false);
+
+			if (focusAddProject.current) {
+				triggerElement.current?.focus();
+				focusAddProject.current = false;
+			}
 		}
 	}, [projects.length]);
 
@@ -228,6 +234,7 @@ export default function CreateThreadHeading({
 														title={`Remove ${project.workspacePath} from project list`}
 														onKeyDown={(event) => handleMenuKeydown(event, index)}
 														onClick={() => {
+															focusAddProject.current = projects.length === 1;
 															closeMenu(true);
 															onRemoveProject(project);
 														}}
@@ -269,6 +276,7 @@ export default function CreateThreadHeading({
 						Add a project to start your first thread.
 					</p>
 					<button
+						ref={triggerElement}
 						type="button"
 						className="mt-5 rounded-lg border border-[var(--hairline)] px-4 py-2 text-sm"
 						onClick={onAddProject}

@@ -13,9 +13,9 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 		...overrides
 	};
 
-	render(<CreateThreadHeading {...props} />);
+	const { rerender } = render(<CreateThreadHeading {...props} />);
 
-	return props;
+	return { ...props, rerender };
 }
 
 async function click(target: HTMLElement | null) {
@@ -99,6 +99,9 @@ describe('CreateThreadHeading', () => {
 		expect(props.onRemoveProject).toHaveBeenCalledExactlyOnceWith(project);
 		expect(document.querySelector('[role="menu"]')).toBeNull();
 		expect(document.activeElement).toBe(trigger);
+
+		props.rerender(<CreateThreadHeading {...props} projects={[]} workspacePath={null} />);
+		expect(document.activeElement?.textContent).toBe('Add project');
 	});
 
 	it('supports keyboard navigation and restores focus after Escape', async () => {
