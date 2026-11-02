@@ -3056,6 +3056,7 @@ export default function App({
 										fastMode={fastMode}
 										onFastModeChange={setFastMode}
 										pendingQuestion={pendingAgentQuestion}
+										runEnded={runState?.completedAt !== undefined}
 										showContinueWorking={latestRunResumeKind != null}
 										onContinueWorking={() => void continueWorking()}
 										runningCommands={

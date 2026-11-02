@@ -1190,6 +1190,25 @@ describe('PromptComposer agent questions', () => {
 		expect(onSelectedQuestionOptionIdChange).toHaveBeenCalledWith('option-a');
 		expect(actions()).toEqual(['Send answer']);
 	});
+
+	it('collapses the question when the run ends and expands it on click', async () => {
+		const { props, rerender } = renderComposer({
+			pendingQuestion: {
+				questionId: 'question-1',
+				question: 'Which board should I target?',
+				options: [{ id: 'option-a', label: 'Option A' }]
+			}
+		});
+
+		const answerOptions = () => document.querySelector('[aria-label="Answer options"]');
+
+		expect(answerOptions()).not.toBeNull();
+		rerender({ ...props, runEnded: true });
+		expect(answerOptions()).toBeNull();
+
+		await click(findButton('Which board should I target?'));
+		expect(answerOptions()).not.toBeNull();
+	});
 });
 
 describe('PromptComposer attach tooltip', () => {

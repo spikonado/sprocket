@@ -1048,6 +1048,41 @@ it('sends on Spikonado while the ChatGPT fallback check is pending', async () =>
 	);
 });
 
+it('collapses a pending question once its run has finished', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, thread);
+	client.registerQuery(api.agentQuestions.headPendingForThread, {
+		threadId: thread._id,
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		questionId: 'question-1' as Id<'agentQuestions'>,
+		question: 'Which board should I target?',
+		options: [{ id: 'option-a', label: 'Option A' }],
+		status: 'pending',
+		sequence: 1
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'waiting_for_input',
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		run: { runId: 'run-1' as Id<'runs'>, startedAt: 1, completedAt: 2 }
+	});
+
+	await renderApp(
+		client,
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha] }))
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	const title = await screen.findByRole('button', { name: 'Which board should I target?' });
+	expect(screen.queryByRole('button', { name: 'Option A' })).toBeNull();
+
+	fireEvent.click(title);
+	expect(screen.getByRole('button', { name: 'Option A' })).toBeTruthy();
+});
+
 it('replaces Stop with Skip question while a question is pending', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
