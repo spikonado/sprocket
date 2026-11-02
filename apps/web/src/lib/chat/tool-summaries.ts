@@ -4,6 +4,7 @@ import {
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
+import { formatMajorAmount } from '$lib/format';
 import {
 	isCommandToolKind,
 	isExecCommandToolKind,
@@ -57,16 +58,12 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Deleted Artifact';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
-		case 'mandate_charge':
-			return 'Charged Card';
-		case 'mandate_list':
-			return 'Listed Mandates';
-		case 'mandate_report':
-			return 'Settled Charge';
-		case 'mandate_setup':
-			return 'Set Up Mandate';
-		case 'mandate_status':
-			return 'Checked Mandate';
+		case 'card_checkout':
+			return 'Card Checkout';
+		case 'poll_checkout':
+			return 'Checkout Approval';
+		case 'report_order':
+			return 'Recorded Order';
 		case 'parse_file':
 			return 'Parsed File';
 		case 'screenshot_url':
@@ -150,16 +147,22 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 
 		case 'get_workspace_instructions':
 			return 'Workspace instructions';
-		case 'mandate_charge':
-			return summarizeMandateCharge(fields);
-		case 'mandate_list':
-			return 'Standing mandates';
-		case 'mandate_report':
-			return fields?.outcome === 'approved' ? 'Charge approved' : 'Charge declined';
-		case 'mandate_setup':
-			return summarizeMandateSetup(fields);
-		case 'mandate_status':
-			return 'Mandate status';
+		case 'card_checkout': {
+			const amount = jsonString(fields?.amount);
+			const currency = jsonString(fields?.currency);
+
+			return amount && currency ? `Paying ${formatMajorAmount(amount, currency)}` : 'Payment';
+		}
+
+		case 'report_order': {
+			const orderNumber = jsonString(fields?.orderNumber);
+
+			return orderNumber ? `Recorded order ${orderNumber}` : 'Order';
+		}
+
+		case 'poll_checkout':
+			return 'Waiting for approval';
+
 		case 'read_skill': {
 			const name = jsonString(fields?.name);
 
@@ -188,27 +191,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		default:
 			return titleizeSnakeCase(name);
 	}
-}
-
-/** "Merchant · 120.00 USD monthly" from a mandate setup payload. */
-function summarizeMandateSetup(fields: Record<string, JsonValue> | undefined) {
-	const merchant = jsonString(fields?.merchantName) ?? 'Any merchant';
-	const cap = jsonString(fields?.amountCap);
-	const currency = jsonString(fields?.currency) ?? '';
-	const frequency = jsonString(fields?.frequency) ?? '';
-	const amount = cap ? ` · ${cap} ${currency}`.trimEnd() : '';
-	const cycle = frequency && frequency !== 'one_time' ? ` ${frequency}` : '';
-
-	return `${merchant}${amount}${cycle}`;
-}
-
-/** "Merchant charge · 40.00 USD" from a mandate charge payload. */
-function summarizeMandateCharge(fields: Record<string, JsonValue> | undefined) {
-	const description = jsonString(fields?.description) ?? 'Charge';
-	const amount = jsonString(fields?.amount);
-	const currency = jsonString(fields?.currency) ?? '';
-
-	return amount ? `${description} · ${amount} ${currency}`.trimEnd() : description;
 }
 
 const PATCH_ENVELOPE_FILE_HEADERS = [

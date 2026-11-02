@@ -277,6 +277,10 @@ impl CommandSessionManager {
         self
     }
 
+    pub fn environment(&self) -> &[(OsString, OsString)] {
+        &self.environment
+    }
+
     pub async fn exec_command(
         &self,
         cancellation: WorkspaceCancellation,

@@ -2,7 +2,6 @@ import { defineApp } from 'convex/server';
 import { v } from 'convex/values';
 import rateLimiter from '@convex-dev/rate-limiter/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
-import actionRetrier from '@convex-dev/action-retrier/convex.config';
 import workpool from '@convex-dev/workpool/convex.config';
 import posthog from '@posthog/convex/convex.config';
 
@@ -19,11 +18,10 @@ const app = defineApp({
 		FIRECRAWL_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),
 		WORKOS_API_KEY: v.optional(v.string()),
-		PRAVA_SECRET_KEY: v.optional(v.string()),
-		PRAVA_BACKEND_URL: v.union(
-			v.literal('https://sandbox.api.prava.space'),
-			v.literal('https://api.prava.space')
-		),
+		// Sandbox credentials on dev and preview deployments, live ones on production.
+		AGENTCARD_CLIENT_ID: v.optional(v.string()),
+		AGENTCARD_CLIENT_SECRET: v.optional(v.string()),
+		AGENTCARD_WEBHOOK_SECRET: v.optional(v.string()),
 		MODEL_GATEWAY_URL: v.optional(v.string()),
 		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string()),
 		// Dev and preview deployments use a dummy token; their sends fail.
@@ -41,8 +39,6 @@ app.use(posthog, {
 });
 
 app.use(rateLimiter);
-
-app.use(actionRetrier);
 
 app.use(workpool, { name: 'webSearchWorkpool' });
 

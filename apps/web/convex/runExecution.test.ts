@@ -75,28 +75,9 @@ describe('run execution state', () => {
 			const { t, asUser, auth } = await startedRun(depth);
 
 			const paymentCalls = [
-				{
-					kind: 'mandate_setup',
-					payload: {
-						amountCap: '1.00',
-						currency: 'USD',
-						frequency: 'one_time',
-						scope: 'any',
-						description: 'Test purchase'
-					}
-				},
-				{ kind: 'mandate_list', payload: {} },
-				{ kind: 'mandate_status', payload: { mandateId: 'mandate' } },
-				{
-					kind: 'mandate_charge',
-					payload: {
-						mandateId: 'mandate',
-						amount: '1.00',
-						currency: 'USD',
-						description: 'Test purchase'
-					}
-				},
-				{ kind: 'mandate_report', payload: { chargeId: 'charge', outcome: 'declined' } }
+				{ kind: 'card_checkout', payload: { amount: '1.00', currency: 'usd', payButton: '@e1' } },
+				{ kind: 'poll_checkout', payload: { purchaseId: 'purchase' } },
+				{ kind: 'report_order', payload: { purchaseId: 'purchase', orderNumber: '1' } }
 			] as const;
 
 			for (const call of paymentCalls) {
@@ -128,8 +109,8 @@ describe('run execution state', () => {
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
-			kind: 'mandate_list',
-			payload: {}
+			kind: 'report_order',
+			payload: { purchaseId: 'purchase', orderNumber: '1' }
 		});
 
 		expect(
@@ -141,6 +122,19 @@ describe('run execution state', () => {
 				})
 			)?.status
 		).toBe('claimed');
+	});
+
+	it('tells released agents that mandate tools moved to Agentcard', async () => {
+		const { asUser, auth } = await startedRun();
+
+		await expect(
+			asUser.mutation(api.agentRuntime.beginToolJob, {
+				...auth,
+				...toolTranscriptAssignment(auth.runId, auth.claimId),
+				kind: 'mandate_list',
+				payload: {}
+			})
+		).rejects.toThrow('Payments moved to Agentcard.');
 	});
 
 	it.each([

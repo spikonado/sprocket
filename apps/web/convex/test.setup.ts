@@ -2,7 +2,6 @@
 
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
-import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import posthogTest from '@posthog/convex/test';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -99,7 +98,6 @@ export function initConvexTest(): ConvexTestInstance {
 	const backend = t as never;
 	rateLimiterTest.register(backend);
 	exaTest.register(backend);
-	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'contextDevWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');

@@ -10,6 +10,9 @@ export const RUN_NO_LONGER_ACTIVE = 'Run is no longer active.';
 
 export const TOOL_NO_LONGER_SUPPORTED = 'This tool is no longer supported.';
 
+export const PAYMENTS_MOVED_TO_AGENTCARD =
+	'Payments moved to Agentcard. Update Sprocket to buy things.';
+
 export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSEDED';
 
 // This exact wire sentinel means creation committed no run or prompt.
