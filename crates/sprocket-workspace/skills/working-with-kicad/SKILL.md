@@ -190,7 +190,9 @@ kicad-cli pcb render --side top -o out/top.png proj/board.kicad_pcb
 ```
 
 Look at the PNGs yourself, and show them in the thread after each meaningful
-change. For fabrication, `kicad-cli pcb export gerbers -l
+change. When the project is ready for the user, embed it with
+`kicad:proj/board.kicad_pro` in its own paragraph so they can explore it.
+For fabrication, `kicad-cli pcb export gerbers -l
 F.Cu,B.Cu,F.Mask,B.Mask,F.Paste,B.Paste,F.Silkscreen,B.Silkscreen,Edge.Cuts`
 (without `-l` it plots every user layer too), then `pcb export
 drill|pos|step` and `sch export bom`.

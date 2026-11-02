@@ -3,6 +3,7 @@ import { cn } from '$lib/utils';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { renderMarkdownBlocks } from '$lib/chat/markdown';
 import ArtifactReference from '$lib/components/artifact-reference';
+import KicadReference from '$lib/components/kicad-reference';
 import LazyJsonRender from '$lib/components/lazy-json-render';
 import MarkdownHtml from '$lib/components/markdown-html';
 import MermaidDiagram from '$lib/components/mermaid-diagram';
@@ -58,6 +59,16 @@ export default function ChatMarkdown({
 					}
 
 					return null;
+				}
+
+				if (block.type === 'kicad') {
+					return (
+						<KicadReference
+							key={`${block.type}-${index}`}
+							path={block.path}
+							imageScope={imageScope}
+						/>
+					);
 				}
 
 				if (block.type === 'visual') {

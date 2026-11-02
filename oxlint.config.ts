@@ -16,7 +16,8 @@ const config = {
 		'ref-repos/**',
 		'target/**',
 		'tools/oxlint/anti-slop/**',
-		'apps/web/convex/_generated/**'
+		'apps/web/convex/_generated/**',
+		'apps/web/static/kicanvas/**'
 	],
 	plugins: ['typescript', 'unicorn', 'oxc', 'react'],
 	categories: { correctness: 'error' },

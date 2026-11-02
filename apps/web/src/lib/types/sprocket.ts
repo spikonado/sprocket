@@ -385,6 +385,11 @@ export type LocalApi = {
 		input: WorkspaceFileTarget,
 		handlers: WatchHandlers<DiskEvent<WorkspaceFileContent>>
 	) => Promise<void>;
+	/** Reads a whole text file, past the editor's size limit, with the version its watch reports. */
+	readWorkspaceText: (
+		input: WorkspaceFileTarget,
+		signal?: AbortSignal
+	) => Promise<{ content: string; version: string }>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;
