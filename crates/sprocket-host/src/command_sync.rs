@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
 use sprocket_transcript::TranscriptStore;
-use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
+use sprocket_workspace::{CommandHistory, CommandOutput};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::command_sessions::ThreadCommandSessions;
@@ -186,54 +186,37 @@ async fn sync_directory(
     idle: &mut IdleSessions,
 ) -> Result<bool> {
     let mut complete = true;
-    let mut users = match tokio::fs::read_dir(store.root()).await {
-        Ok(users) => users,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-        Err(error) => return Err(error.into()),
-    };
-    while let Some(user) = users.next_entry().await? {
-        if !user.file_type().await?.is_dir() {
-            continue;
-        }
-        let mut threads = tokio::fs::read_dir(user.path()).await?;
+    for user_records in session_records(store.root()).await? {
         let mut client = None;
-        while let Some(thread) = threads.next_entry().await? {
-            let directory = thread.path().join("command-logs");
-            let mut records = match tokio::fs::read_dir(directory.join("sessions")).await {
-                Ok(records) => records,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            while let Some(record) = records.next_entry().await? {
-                let path = record.path();
-                if path.extension().is_none_or(|extension| extension != "json") {
-                    continue;
-                }
-                let result = tokio::time::timeout(
-                    Duration::from_secs(15),
-                    sync_record(
-                        &path,
-                        &directory,
-                        registry,
-                        auth,
-                        deployment,
-                        machine_id,
-                        &mut client,
-                        idle,
-                    ),
-                )
-                .await
-                .context("command sync timed out")
-                .and_then(|result| result);
-                match result {
-                    Ok(synced) => complete &= synced,
-                    Err(error) => {
-                        complete = false;
-                        tracing::warn!(
-                            "command record {} sync will retry: {error:#}",
-                            path.display()
-                        );
-                    }
+        for path in user_records {
+            let directory = path
+                .parent()
+                .and_then(Path::parent)
+                .context("command record has no log directory")?;
+            let result = tokio::time::timeout(
+                Duration::from_secs(15),
+                sync_record(
+                    &path,
+                    directory,
+                    registry,
+                    auth,
+                    deployment,
+                    machine_id,
+                    &mut client,
+                    idle,
+                ),
+            )
+            .await
+            .context("command sync timed out")
+            .and_then(|result| result);
+            match result {
+                Ok(synced) => complete &= synced,
+                Err(error) => {
+                    complete = false;
+                    tracing::warn!(
+                        "command record {} sync will retry: {error:#}",
+                        path.display()
+                    );
                 }
             }
         }
@@ -425,7 +408,7 @@ pub async fn fetch(
     if remote.result.running {
         remote.result.error = Some("command belongs to another machine; this is its last synced output, not a live process observation".into());
     }
-    let history = CommandHistory {
+    Ok(Some(CommandHistory {
         user_id: user_id.into(),
         thread_id: thread_id.into(),
         machine_id: remote.machine_id,
@@ -437,10 +420,71 @@ pub async fn fetch(
             events_path: events.to_string_lossy().into_owned(),
             ..remote.result
         },
+        read_sequence: 0,
+        process: None,
         pending_output: None,
+    }))
+}
+
+pub async fn settle_interrupted(store: &TranscriptStore, machine_id: &str) {
+    let records = match session_records(store.root()).await {
+        Ok(records) => records,
+        Err(error) => {
+            tracing::warn!("failed to list command sessions to settle: {error:#}");
+            return;
+        }
     };
-    history.save(&history_path(directory, session_id)?).await?;
-    Ok(Some(history))
+    for record in records.into_iter().flatten() {
+        if let Err(error) = CommandHistory::settle_interrupted(&record, machine_id).await {
+            tracing::warn!(
+                "failed to settle interrupted command {}: {error:#}",
+                record.display()
+            );
+        }
+    }
+}
+
+/// Lists `command-logs/sessions/*.json` records, grouped by user.
+async fn session_records(root: &Path) -> Result<Vec<Vec<PathBuf>>> {
+    let mut users_records = Vec::new();
+    let mut users = match tokio::fs::read_dir(root).await {
+        Ok(users) => users,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(users_records),
+        Err(error) => return Err(error.into()),
+    };
+    while let Some(user) = users.next_entry().await? {
+        if !user.file_type().await?.is_dir() {
+            continue;
+        }
+        let mut records = Vec::new();
+        let mut threads = tokio::fs::read_dir(user.path()).await?;
+        while let Some(thread) = threads.next_entry().await? {
+            let directory = thread.path().join("command-logs").join("sessions");
+            let mut sessions = match tokio::fs::read_dir(directory).await {
+                Ok(sessions) => sessions,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            while let Some(record) = sessions.next_entry().await? {
+                let path = record.path();
+                if path
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+                {
+                    records.push(path);
+                }
+            }
+        }
+        users_records.push(records);
+    }
+    Ok(users_records)
 }
 
 #[cfg(test)]

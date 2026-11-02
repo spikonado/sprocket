@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::async_tools::ZeroPollCooldown;
@@ -11,11 +11,12 @@ use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
 use crate::command_shell::resolve_command_shell;
 use crate::paths::resolve_directory;
+use crate::process_identity::CommandProcess;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, OwnedMutexGuard, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
@@ -61,6 +62,12 @@ impl ObservationMode {
 struct CommandObservation {
     final_output: Option<CommandOutput>,
     zero_poll_cooldown: ZeroPollCooldown,
+}
+
+#[derive(Clone, Copy)]
+enum SavedRequest {
+    Poll,
+    Control { reveal_output: bool },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -109,6 +116,7 @@ type CommandLifetimeGuardFactory = Arc<dyn Fn() -> Result<CommandLifetimeGuard> 
 type HistoryFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<CommandHistory>>> + Send>>;
 type HistoryResolver = Arc<dyn Fn(String, PathBuf) -> HistoryFuture + Send + Sync>;
+type SavedHistoryLocks = Arc<std::sync::Mutex<HashMap<String, Weak<Mutex<()>>>>>;
 
 #[derive(Clone)]
 pub struct CommandSessionManager {
@@ -121,7 +129,7 @@ pub struct CommandSessionManager {
     lifetime_guard_factory: Option<CommandLifetimeGuardFactory>,
     history_scope: (String, String, String),
     history_resolver: Option<HistoryResolver>,
-    history_fetch_lock: Arc<Mutex<()>>,
+    saved_history_locks: SavedHistoryLocks,
     changes: Option<watch::Sender<()>>,
 }
 
@@ -137,7 +145,7 @@ impl CommandSessionManager {
             lifetime_guard_factory: None,
             history_scope: Default::default(),
             history_resolver: None,
-            history_fetch_lock: Arc::new(Mutex::new(())),
+            saved_history_locks: SavedHistoryLocks::default(),
             changes: None,
         }
     }
@@ -195,59 +203,93 @@ impl CommandSessionManager {
         self
     }
 
+    /// Serializes reads and writes of one released session's saved history.
+    async fn lock_saved_history(&self, session_id: &str) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self
+                .saved_history_locks
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            match locks.get(session_id).and_then(Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(Mutex::new(()));
+                    locks.insert(session_id.to_string(), Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
+    }
+
     async fn saved_result(
         &self,
         session_id: &str,
-        consume_output: bool,
+        request: SavedRequest,
     ) -> Result<CommandStdinOutput> {
         let path = history_path(&self.log_directory, session_id)?;
-        let local = match tokio::fs::read(&path).await {
-            Ok(bytes) => Some(serde_json::from_slice::<CommandHistory>(&bytes)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        if local.as_ref().is_none_or(|history| {
-            history.machine_id != self.history_scope.2 && history.result.running
-        }) {
-            if let Some(resolver) = &self.history_resolver {
-                let fetched = tokio::time::timeout(Duration::from_secs(10), async {
-                    let _fetch = self.history_fetch_lock.lock().await;
-                    resolver(session_id.to_string(), self.log_directory.clone()).await
-                })
+        let _saved = self.lock_saved_history(session_id).await;
+        let local = CommandHistory::read(&path).await?;
+        let fetched = match &self.history_resolver {
+            Some(resolver)
+                if local.as_ref().is_none_or(|history| {
+                    history.machine_id != self.history_scope.2 && history.result.running
+                }) =>
+            {
+                let fetched = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    resolver(session_id.to_string(), self.log_directory.clone()),
+                )
                 .await
                 .context("remote command history fetch timed out")
                 .and_then(|result| result);
                 match fetched {
-                    Ok(Some(history)) => {
-                        return Ok(CommandStdinOutput {
-                            command: history.command,
-                            workdir: history.workdir,
-                            result: history.result,
-                        });
-                    }
+                    Ok(fetched) => fetched,
                     Err(error) if local.is_none() => return Err(error),
-                    _ => {}
+                    Err(_) => None,
                 }
             }
-        }
-        let Some(mut history) = local else {
-            bail!("unknown command session: {session_id}");
+            _ => None,
+        };
+        let mut changed = fetched.is_some();
+        let mut history = match (fetched, local) {
+            (Some(mut remote), local) => {
+                remote.read_sequence = local.map_or(0, |local| local.read_sequence);
+                remote
+            }
+            (None, Some(local)) => local,
+            (None, None) => bail!("unknown command session: {session_id}"),
         };
         if history.machine_id == self.history_scope.2 && history.result.running {
-            // The supervisor may have archived this session since the initial read.
-            return CommandHistory::load(&self.log_directory, session_id).await;
+            // Outside the live map, this machine's sessions only stay running after a server exit.
+            history.mark_interrupted().await?;
+            changed = true;
         }
-        if consume_output && let Some(pending) = &mut history.pending_output {
-            let output = std::mem::take(pending);
-            if !output.is_empty() {
-                history.save(&path).await?;
-            }
-            history.result.output = output;
+        let running = history.result.running;
+        let reveal_output = match request {
+            SavedRequest::Poll => true,
+            SavedRequest::Control { reveal_output } => reveal_output && !running,
+        };
+        let mut result = CommandOutput {
+            output: String::new(),
+            ..history.result.clone()
+        };
+        if reveal_output {
+            let read_sequence = history.read_sequence;
+            result.output = history.take_unreturned_output(!running).await?;
+            changed |= history.read_sequence != read_sequence || !result.output.is_empty();
+        }
+        if changed {
+            history.save(&path).await?;
+        }
+        if running && matches!(request, SavedRequest::Control { .. }) {
+            bail!("command is running on another machine; control it on its originating machine");
         }
         Ok(CommandStdinOutput {
             command: history.command,
             workdir: history.workdir,
-            result: history.result,
+            result,
         })
     }
 
@@ -326,7 +368,7 @@ impl CommandSessionManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let history_path = history_path(&self.log_directory, &session_id)?;
         let preview = output.lock().await.preview_metadata();
-        let history = CommandHistory {
+        let mut history = CommandHistory {
             user_id: self.history_scope.0.clone(),
             thread_id: self.history_scope.1.clone(),
             machine_id: self.history_scope.2.clone(),
@@ -343,6 +385,8 @@ impl CommandSessionManager {
                 events_path: preview.events_path,
                 error: None,
             },
+            read_sequence: 0,
+            process: None,
             pending_output: None,
         };
         history.save(&history_path).await?;
@@ -378,6 +422,15 @@ impl CommandSessionManager {
             }
         };
         let process_id = child.id();
+        history.process = process_id.and_then(CommandProcess::of_group_leader);
+        if history.process.is_some() {
+            // Best effort: only cleanup after a server crash reads the process.
+            let _ = history.save(&history_path).await;
+        }
+        let history = Arc::new(SessionHistory {
+            path: history_path,
+            history: Mutex::new(history),
+        });
         let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
         let capture_task = tokio::spawn(capture_pipes(
@@ -397,7 +450,7 @@ impl CommandSessionManager {
             output.clone(),
             timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
             lifetime_guard,
-            (history_path, history),
+            history.clone(),
             self.changes.clone(),
         ));
 
@@ -415,6 +468,7 @@ impl CommandSessionManager {
             stdin,
             completion,
             output,
+            history,
             observation: Mutex::new(CommandObservation::default()),
         });
         sessions.insert(session_id.clone(), session.clone());
@@ -446,19 +500,13 @@ impl CommandSessionManager {
         action.validate(chars)?;
         cancellation.ensure_active()?;
         let Some(session) = self.session(session_id).await else {
-            let mut output = tokio::select! {
-                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, yield_time_ms != 0) => result?,
+            let request = SavedRequest::Control {
+                reveal_output: yield_time_ms != 0,
             };
-            if output.result.running {
-                bail!(
-                    "command is running on another machine; control it on its originating machine"
-                );
-            }
-            if yield_time_ms == 0 {
-                output.result.output.clear();
-            }
-            return Ok(output);
+            return tokio::select! {
+                _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
+                result = self.saved_result(session_id, request) => result,
+            };
         };
         let result = self
             .write_session(session.clone(), cancellation, action, chars, yield_time_ms)
@@ -480,7 +528,7 @@ impl CommandSessionManager {
         let Some(session) = self.session(session_id).await else {
             return tokio::select! {
                 _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, true) => result,
+                result = self.saved_result(session_id, SavedRequest::Poll) => result,
             };
         };
         let mode = if yield_time_ms == 0 {
@@ -523,35 +571,16 @@ impl CommandSessionManager {
     }
 
     /// Release live handles only after their completed results are saved on disk.
-    /// Output the model hasn't received yet moves into the saved history so later
-    /// polls still return only new output.
+    /// Their read cursors are already saved, so later polls read the saved history.
     pub async fn prune_completed(&self) {
-        let mut sessions = self.sessions.lock().await;
-        let archived = sessions
-            .iter()
-            .filter(|(_, session)| {
-                Arc::strong_count(session) == 1
-                    && session
-                        .completion
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|completion| completion.archived)
-            })
-            .map(|(id, session)| (id.clone(), session.clone()))
-            .collect::<Vec<_>>();
-        for (id, session) in archived {
-            // Retry on the next prune; until then the live session serves polls.
-            if self.save_pending_output(&id, &session).await.is_ok() {
-                sessions.remove(&id);
-            }
-        }
-    }
-
-    async fn save_pending_output(&self, session_id: &str, session: &CommandSession) -> Result<()> {
-        let path = history_path(&self.log_directory, session_id)?;
-        let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
-        history.pending_output = Some(session.output.lock().await.pending_output());
-        history.save(&path).await
+        self.sessions.lock().await.retain(|_, session| {
+            Arc::strong_count(session) > 1
+                || !session
+                    .completion
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|completion| completion.archived)
+        });
     }
 
     /// True when no sessions remain and no clone still holds this manager.
@@ -628,7 +657,8 @@ impl CommandSessionManager {
             }
         })
         .await;
-        self.sessions.lock().await.clear();
+        // Unfinished sessions stay live so polls never race their supervisor's final save.
+        self.prune_completed().await;
     }
 
     async fn observe_session(
@@ -678,7 +708,14 @@ struct CommandSession {
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,
+    history: Arc<SessionHistory>,
     observation: Mutex<CommandObservation>,
+}
+
+/// The saved history of a live session, shared with its supervisor.
+struct SessionHistory {
+    path: PathBuf,
+    history: Mutex<CommandHistory>,
 }
 
 impl CommandSession {
@@ -715,7 +752,8 @@ impl CommandSession {
         let mut output = match observation.final_output.clone() {
             Some(mut output) => {
                 if !matches!(mode, ObservationMode::Metadata) {
-                    output.output = self.output.lock().await.take_preview().output;
+                    let mut history = self.history.history.lock().await;
+                    output.output = self.take_unreturned_output(&mut history, true).await?;
                 }
                 output
             }
@@ -740,13 +778,30 @@ impl CommandSession {
         Ok(output)
     }
 
+    /// Saves the advanced cursor before returning output, so a crash can't repeat it.
+    async fn take_unreturned_output(
+        &self,
+        history: &mut CommandHistory,
+        final_stream: bool,
+    ) -> Result<String> {
+        let mut next = history.clone();
+        let output = next.take_unreturned_output(final_stream).await?;
+        if next.read_sequence != history.read_sequence {
+            next.save(&self.history.path).await?;
+            *history = next;
+        }
+        Ok(output)
+    }
+
     async fn snapshot_output(
         &self,
         completion: Option<CommandCompletion>,
         mode: ObservationMode,
         observation: &mut CommandObservation,
     ) -> Result<CommandOutput> {
-        let mut capture = self.output.lock().await;
+        let mut history = self.history.history.lock().await;
+        // Holding the capture lock lets an in-progress append finish first.
+        let _capture = self.output.lock().await;
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
@@ -756,10 +811,11 @@ impl CommandSession {
                 .check()
                 .map_err(|error| anyhow!(error.message("Command is still running.")))?;
         }
-        let preview = if matches!(mode, ObservationMode::Metadata) {
-            capture.preview_metadata()
+        let output = if matches!(mode, ObservationMode::Metadata) {
+            String::new()
         } else {
-            capture.take_preview()
+            self.take_unreturned_output(&mut history, completion.is_some())
+                .await?
         };
         if pending_zero_poll {
             observation.zero_poll_cooldown.record_success();
@@ -772,9 +828,9 @@ impl CommandSession {
             success: completion.success,
             running,
             timed_out: completion.timed_out,
-            output: preview.output,
-            complete_log_path: preview.complete_log_path,
-            events_path: preview.events_path,
+            output,
+            complete_log_path: history.result.complete_log_path.clone(),
+            events_path: history.result.events_path.clone(),
             error: completion.error,
         })
     }
@@ -837,7 +893,7 @@ async fn supervise_command(
     output: Arc<Mutex<CapturedOutput>>,
     timeout: Option<Duration>,
     lifetime_guard: Option<CommandLifetimeGuard>,
-    history: (PathBuf, CommandHistory),
+    history: Arc<SessionHistory>,
     changes: Option<watch::Sender<()>>,
 ) {
     let timeout = wait_for_timeout(timeout);
@@ -901,9 +957,12 @@ async fn supervise_command(
         timed_out,
         error,
     };
-    let (path, mut history) = history;
-    history.result = completion_output(&completed, output.lock().await.full_preview());
-    match history.save(&path).await {
+    let result = completion_output(&completed, output.lock().await.full_preview());
+    let mut saved = history.history.lock().await;
+    saved.result = result;
+    let archive = saved.save(&history.path).await;
+    drop(saved);
+    match archive {
         Ok(()) => completed.archived = true,
         Err(error) => {
             completed.success = false;
@@ -1025,7 +1084,7 @@ async fn terminate_child(child: &mut Child, process_id: Option<u32>) -> Result<E
 }
 
 #[cfg(unix)]
-fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
+pub(crate) fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
     if let Some(pid) = process_id {
         let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
         if result != 0 {
@@ -1047,7 +1106,7 @@ fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
+pub(crate) fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
     if let Some(pid) = process_id {
         std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])

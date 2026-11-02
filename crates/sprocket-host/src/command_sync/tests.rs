@@ -122,6 +122,8 @@ async fn running_history(directory: &Path) -> CommandHistory {
             events_path: events.to_string_lossy().into_owned(),
             error: None,
         },
+        read_sequence: 0,
+        process: None,
         pending_output: None,
     }
 }

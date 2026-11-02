@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandOutputLimits {
@@ -38,6 +38,17 @@ struct OutputEvent<'a> {
     bytes: &'a [u8],
 }
 
+#[derive(Deserialize)]
+struct StoredOutputEvent {
+    sequence: u64,
+    bytes: Vec<u8>,
+}
+
+pub(crate) struct UnreturnedOutput {
+    pub output: String,
+    pub next_sequence: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OutputPreview {
@@ -55,7 +66,6 @@ pub(crate) struct CapturedOutput {
     log_bytes: u64,
     limits: CommandOutputLimits,
     pending_utf8: Vec<u8>,
-    preview: PreviewBuffer,
     full_preview: PreviewBuffer,
 }
 
@@ -102,7 +112,6 @@ impl CapturedOutput {
             log_bytes: 0,
             limits,
             pending_utf8: Vec::new(),
-            preview: PreviewBuffer::new(max_chars),
             full_preview: PreviewBuffer::new(max_chars),
         })
     }
@@ -170,7 +179,6 @@ impl CapturedOutput {
 
     fn decode(&mut self, bytes: &[u8], final_chunk: bool) {
         decode_utf8(&mut self.pending_utf8, bytes, final_chunk, |text| {
-            self.preview.push_text(text);
             self.full_preview.push_text(text);
         });
     }
@@ -192,25 +200,11 @@ impl CapturedOutput {
         Ok(())
     }
 
-    pub(crate) fn take_preview(&mut self) -> OutputPreview {
-        let max_chars = self.preview.max_chars;
-        let preview = std::mem::replace(&mut self.preview, PreviewBuffer::new(max_chars));
-        OutputPreview {
-            output: preview.render(),
-            ..self.preview_metadata()
-        }
-    }
-
     pub(crate) fn full_preview(&self) -> OutputPreview {
         OutputPreview {
             output: self.full_preview.clone().render(),
             ..self.preview_metadata()
         }
-    }
-
-    /// Output not yet consumed by `take_preview`.
-    pub(crate) fn pending_output(&self) -> String {
-        self.preview.clone().render()
     }
 
     pub(crate) async fn read_log_preview(path: &Path, max_chars: usize) -> Result<String> {
@@ -238,6 +232,50 @@ impl CapturedOutput {
             events_path: self.events_path.clone(),
         }
     }
+}
+
+/// Renders the events from `from_sequence` on. A trailing incomplete character
+/// stays unrendered until a later read completes it or the stream is final.
+/// An incomplete trailing line is an append in progress and is left for later.
+pub(crate) async fn read_output_events(
+    events_path: &Path,
+    from_sequence: u64,
+    max_chars: usize,
+    final_stream: bool,
+) -> Result<UnreturnedOutput> {
+    let mut reader = tokio::io::BufReader::new(
+        File::open(events_path)
+            .await
+            .context("failed to open command output events")?,
+    );
+    let mut preview = PreviewBuffer::new(max_chars);
+    let mut pending = Vec::new();
+    let mut next_sequence = from_sequence;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).await? == 0 || line.last() != Some(&b'\n') {
+            break;
+        }
+        let event: StoredOutputEvent =
+            serde_json::from_slice(&line).context("invalid command output event")?;
+        if event.sequence < from_sequence {
+            // Bytes of a character split by the cursor carry into the first unread event.
+            decode_utf8(&mut pending, &event.bytes, false, |_| {});
+        } else {
+            decode_utf8(&mut pending, &event.bytes, false, |text| {
+                preview.push_text(text);
+            });
+            next_sequence = event.sequence + 1;
+        }
+    }
+    if final_stream && next_sequence > from_sequence {
+        decode_utf8(&mut pending, &[], true, |text| preview.push_text(text));
+    }
+    Ok(UnreturnedOutput {
+        output: preview.render(),
+        next_sequence,
+    })
 }
 
 fn decode_utf8(

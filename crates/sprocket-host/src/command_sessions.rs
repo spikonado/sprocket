@@ -78,8 +78,16 @@ impl ThreadCommandSessions {
 
     pub async fn stop_all(&self) {
         self.stopped.store(true, Ordering::Release);
-        let threads = std::mem::take(&mut *self.threads.lock().await);
-        futures::future::join_all(threads.values().map(CommandSessionManager::stop_all)).await;
+        let threads = self
+            .threads
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        // Stopping managers stay registered so polls and sync still reach their live sessions.
+        futures::future::join_all(threads.iter().map(CommandSessionManager::stop_all)).await;
+        self.threads.lock().await.clear();
     }
 }
 
