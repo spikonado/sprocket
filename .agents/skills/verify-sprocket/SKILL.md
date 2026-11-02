@@ -13,7 +13,7 @@ Set `V=$(git rev-parse --show-toplevel)/.agents/skills/verify-sprocket/scripts` 
 
 | Command                    | Does                                                                                                                 |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `$V/launch.sh`             | Installs bun deps, builds `sprocket-cli`, then runs `bun dev` in the foreground. Refuses when 5173 or 7731 is taken. |
+| `$V/launch.sh`             | Waits until 5173 and 7731 are free, installs bun deps, builds `sprocket-cli`, then runs `bun dev` in the foreground. |
 | `$V/doctor.sh`             | Read-only health check. Exit 0 means the instance is worth driving.                                                  |
 | `$V/app-url.sh`            | Maps the tailnet's port 5173 to Vite and prints the app URL.                                                         |
 | `$V/ref.sh '<text>'`       | Prints the `@ref` of the first `snapshot -i` line containing the text.                                               |
@@ -23,7 +23,7 @@ Set `V=$(git rev-parse --show-toplevel)/.agents/skills/verify-sprocket/scripts` 
 
 ## Machine facts
 
-- One instance per machine. The API always binds `127.0.0.1:7731`, and Vite binds `localhost:5173` with `strictPort`. When another worktree's instance holds them, ask the user before stopping it.
+- One instance per machine. The API always binds `127.0.0.1:7731`, and Vite binds `localhost:5173` with `strictPort`. When another worktree's instance holds them, another agent is verifying. Wait for it to finish; never stop it. Ask the user only when the ports stay taken for over an hour.
 - Ports `17731` and `4321` belong to the user. `17731` is the installed Sprocket app, possibly the agent you run in. Leave both ports and their tailscale serve mappings alone.
 - `bun dev` runs `convex dev`. That pushes this worktree's `apps/web/convex` to the shared dev deployment and sets the dev AuthKit homepage URL to `http://localhost:5173`.
 - The shell exports the prod `PUBLIC_CONVEX_URL`, and the committed root `.env` compiles prod in as a fallback. Every Sprocket process needs the dev URL, `VITE_CONVEX_URL` in the gitignored `apps/web/.env.local` of the main checkout. The helpers pass it, and anything run by hand must too. A mixup signs the host into prod and registers this machine there.
@@ -35,6 +35,8 @@ Set `V=$(git rev-parse --show-toplevel)/.agents/skills/verify-sprocket/scripts` 
 ## Launch
 
 Start `$V/launch.sh` as a background command session and keep its id. Read its raw output, since a `grep` or `tail` pipe buffers it.
+
+When it prints `Ports in use`, keep the session running and poll it every few minutes. It launches once the other instance stops.
 
 A cold build takes about 15 minutes on this 4-core box. Incremental builds take seconds. Wait for any other agent editing `crates/` in this worktree to finish first.
 

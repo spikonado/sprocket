@@ -2,11 +2,18 @@
 source "$(dirname "$0")/common.sh"
 load_dev_env
 
+# Held by the exec'd dev stack until it exits, so agents queued behind one instance launch one at a time.
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/sprocket-verify-launch.lock"
+if ! flock -n 9; then
+	echo "Ports in use: another verify instance is running. Waiting for it to stop. If it is this worktree's leftover, run stop.sh." >&2
+	flock 9
+fi
 busy=$(dev_port_listeners)
 if [[ -n "$busy" ]]; then
-	echo "Ports already in use: $busy. Another dev instance is running. Run doctor.sh." >&2
-	exit 1
+	echo "Ports in use: $busy. Waiting for that instance to stop. If it is this worktree's leftover, run stop.sh." >&2
+	while [[ -n "$(dev_port_listeners)" ]]; do sleep 30; done
 fi
+echo "Ports free. Launching." >&2
 
 # The shell may export the prod deployment. run-dev.mjs derives the dev one from the env file.
 unset PUBLIC_CONVEX_URL
