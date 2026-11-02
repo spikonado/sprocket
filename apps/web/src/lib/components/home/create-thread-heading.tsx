@@ -1,8 +1,8 @@
-import { Check, ChevronDown, FolderPlus, X } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
+import ProjectSelectorMenu from './project-selector-menu';
 import type { Project } from '$lib/types/sprocket';
-import { cn } from '$lib/utils';
 import '$lib/components/home/create-thread-heading.css';
 
 export default function CreateThreadHeading({
@@ -20,48 +20,10 @@ export default function CreateThreadHeading({
 }) {
 	const selectedProject = projects.find((project) => project.workspacePath === workspacePath);
 	const selectedProjectName = selectedProject?.displayName ?? 'Choose a project';
-
-	const selectedProjectIndex = projects.findIndex(
-		(project) => project.workspacePath === workspacePath
-	);
-
 	const [isOpen, setIsOpen] = useState(false);
-	const [activeIndex, setActiveIndex] = useState(0);
 	const rootElement = useRef<HTMLDivElement | null>(null);
 	const triggerElement = useRef<HTMLButtonElement | null>(null);
 	const focusAddProject = useRef(false);
-	const menuItems = useRef<Array<HTMLButtonElement | null>>([]);
-
-	function hasDuplicateName(project: Project) {
-		return projects.some(
-			(other) =>
-				other.workspacePath !== project.workspacePath && other.displayName === project.displayName
-		);
-	}
-
-	function projectOptionLabel(project: Project) {
-		return hasDuplicateName(project)
-			? `${project.displayName}, ${project.workspacePath}`
-			: project.displayName;
-	}
-
-	const focusMenuItem = useCallback(
-		(index: number) => {
-			const itemCount = projects.length + 1;
-			const nextIndex = (index + itemCount) % itemCount;
-			setActiveIndex(nextIndex);
-			queueMicrotask(() => menuItems.current[nextIndex]?.focus());
-		},
-		[projects.length]
-	);
-
-	const openMenu = useCallback(
-		(index?: number) => {
-			setIsOpen(true);
-			focusMenuItem(index ?? (selectedProjectIndex >= 0 ? selectedProjectIndex : 0));
-		},
-		[focusMenuItem, selectedProjectIndex]
-	);
 
 	const closeMenu = useCallback((restoreFocus: boolean) => {
 		setIsOpen(false);
@@ -71,76 +33,9 @@ export default function CreateThreadHeading({
 		}
 	}, []);
 
-	function selectProject(project: Project) {
-		closeMenu(true);
-
-		if (project.workspacePath !== workspacePath) {
-			onProject(project.workspacePath);
-		}
-	}
-
-	function addProject() {
-		closeMenu(false);
-		onAddProject();
-	}
-
-	function handleTriggerKeydown(event: React.KeyboardEvent<HTMLButtonElement>) {
-		if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
-			return;
-		}
-
-		event.preventDefault();
-		openMenu(event.key === 'ArrowUp' ? projects.length : undefined);
-	}
-
-	function handleMenuKeydown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
-		switch (event.key) {
-			case 'ArrowDown':
-				event.preventDefault();
-				focusMenuItem(index + 1);
-				break;
-			case 'ArrowUp':
-				event.preventDefault();
-				focusMenuItem(index - 1);
-				break;
-			case 'Home':
-				event.preventDefault();
-				focusMenuItem(0);
-				break;
-			case 'End':
-				event.preventDefault();
-				focusMenuItem(projects.length);
-				break;
-			case 'Enter':
-			case ' ':
-				event.preventDefault();
-				event.currentTarget.click();
-				break;
-			case 'ArrowRight':
-			case 'ArrowLeft': {
-				const sibling =
-					event.key === 'ArrowRight'
-						? event.currentTarget.nextElementSibling
-						: event.currentTarget.previousElementSibling;
-
-				if (sibling instanceof HTMLButtonElement) {
-					event.preventDefault();
-					sibling.focus();
-				}
-
-				break;
-			}
-
-			case 'Tab':
-				setIsOpen(false);
-				break;
-		}
-	}
-
 	useEffect(() => {
-		if (!isOpen) {
-			return;
-		}
+		if (!isOpen) return;
+		rootElement.current?.querySelector('input')?.focus();
 
 		return listenOpenMenuDismiss({
 			getRoot: () => rootElement.current,
@@ -172,99 +67,37 @@ export default function CreateThreadHeading({
 								type="button"
 								className="create-thread-project-trigger"
 								aria-label={`Select project. Current project: ${selectedProjectName}`}
-								aria-haspopup="menu"
 								data-ph-capture-attribute-action="open_project_selector"
 								aria-expanded={isOpen}
-								aria-controls={isOpen ? 'create-thread-project-menu' : undefined}
-								onClick={() => {
-									if (isOpen) {
-										closeMenu(false);
-									} else {
-										openMenu();
-									}
-								}}
-								onKeyDown={handleTriggerKeydown}
+								onClick={() => setIsOpen(!isOpen)}
 							>
 								<span>{selectedProjectName}</span>
 								<ChevronDown className={isOpen ? 'is-open' : ''} aria-hidden="true" />
 							</button>
+							{isOpen && (
+								<ProjectSelectorMenu
+									projects={projects}
+									isSelected={(project) => project.workspacePath === workspacePath}
+									onSelect={(project) => {
+										closeMenu(true);
 
-							{isOpen ? (
-								<span
-									id="create-thread-project-menu"
-									className="create-thread-project-menu"
-									role="menu"
-									aria-label="Projects"
-								>
-									<span className="create-thread-project-options">
-										{projects.map((project, index) => (
-											<span className="create-thread-project-row" key={project.workspacePath}>
-												<button
-													ref={(element) => {
-														menuItems.current[index] = element;
-													}}
-													type="button"
-													className={cn(
-														activeIndex === index && 'active',
-														project.workspacePath === workspacePath && 'selected'
-													)}
-													role="menuitemradio"
-													aria-checked={project.workspacePath === workspacePath}
-													aria-label={projectOptionLabel(project)}
-													onPointerEnter={() => {
-														setActiveIndex(index);
-													}}
-													onKeyDown={(event) => handleMenuKeydown(event, index)}
-													onClick={() => selectProject(project)}
-												>
-													<span className="create-thread-project-option-label">
-														<span>{project.displayName}</span>
-														{hasDuplicateName(project) ? (
-															<small title={project.workspacePath}>{project.workspacePath}</small>
-														) : null}
-													</span>
-													<Check aria-hidden="true" />
-												</button>
-												{onRemoveProject && (
-													<button
-														type="button"
-														className="create-thread-project-remove"
-														role="menuitem"
-														aria-label={`Remove ${projectOptionLabel(project)} from project list`}
-														title={`Remove ${project.workspacePath} from project list`}
-														onKeyDown={(event) => handleMenuKeydown(event, index)}
-														onClick={() => {
-															focusAddProject.current = projects.length === 1;
-															closeMenu(true);
-															onRemoveProject(project);
-														}}
-													>
-														<X size={14} aria-hidden="true" />
-													</button>
-												)}
-											</span>
-										))}
-									</span>
-									<span className="create-thread-project-menu-footer">
-										<button
-											ref={(element) => {
-												menuItems.current[projects.length] = element;
-											}}
-											type="button"
-											className={cn(activeIndex === projects.length && 'active')}
-											role="menuitem"
-											onPointerEnter={() => {
-												setActiveIndex(projects.length);
-											}}
-											onKeyDown={(event) => handleMenuKeydown(event, projects.length)}
-											onClick={addProject}
-										>
-											<FolderPlus aria-hidden="true" />
-											<span>Add project</span>
-										</button>
-									</span>
-								</span>
-							) : null}
+										if (project.workspacePath !== workspacePath) onProject(project.workspacePath);
+									}}
+									onAddProject={() => {
+										closeMenu(false);
+										onAddProject();
+									}}
+									onRemoveProject={
+										onRemoveProject
+											? (project) => {
+													focusAddProject.current = projects.length === 1;
+													closeMenu(true);
+													onRemoveProject(project);
+												}
+											: undefined
+									}
+								/>
+							)}
 						</span>
 						<span aria-hidden="true">?</span>
 					</span>

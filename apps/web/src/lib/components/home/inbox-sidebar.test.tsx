@@ -174,6 +174,14 @@ it('removes a project from the project filter without filtering by it', async ()
 	expect(input.onFilter).not.toHaveBeenCalled();
 });
 
+it('adds a project from the project selector footer', async () => {
+	const input = props([thread()]);
+	const view = renderView(<Harness {...input} />);
+	fireEvent.click(view.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(view.getByRole('button', { name: 'Add project' }));
+	expect(input.onAddProject).toHaveBeenCalledOnce();
+});
+
 it('renders simple navigation and a collapsible settled section', async () => {
 	const input = await render([thread(), thread(true)]);
 
@@ -447,7 +455,7 @@ it('keeps the selected project filter styled for all projects and a single proje
 	function selectedLabel() {
 		const selected = document.querySelector('.inbox-project-option.inbox-project-selected');
 		expect(selected?.getAttribute('aria-pressed')).toBe('true');
-		expect(document.querySelectorAll('.inbox-project-option')).toHaveLength(3);
+		expect(document.querySelectorAll('.inbox-project-option[aria-pressed]')).toHaveLength(3);
 		expect(document.querySelectorAll('.inbox-project-selected')).toHaveLength(1);
 
 		return selected?.textContent;

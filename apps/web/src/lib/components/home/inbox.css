@@ -67,6 +67,7 @@
 
 .inbox-project-menu {
 	position: absolute;
+	display: block;
 	top: 100%;
 	left: 0;
 	right: 0;
@@ -78,6 +79,18 @@
 	border-radius: 10px;
 	background: var(--background);
 	box-shadow: 0 8px 28px #0003;
+	font-size: 13px;
+	font-weight: 400;
+	letter-spacing: normal;
+	line-height: 1.2;
+	text-align: left;
+}
+
+.inbox-project-footer {
+	display: block;
+	margin-top: 4px;
+	border-top: 1px solid var(--hairline);
+	padding-top: 4px;
 }
 
 .inbox-project-search {

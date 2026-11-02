@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, type ComponentProps } from 'react';
-import { render } from '@testing-library/react';
+import type { ComponentProps } from 'react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Project } from '$lib/types/sprocket';
 import CreateThreadHeading from './create-thread-heading';
 
@@ -18,62 +19,50 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 	return { ...props, rerender };
 }
 
-async function click(target: HTMLElement | null) {
-	if (!target) throw new Error('Expected element to click was not rendered');
-	await act(async () => {
-		target.click();
-		await Promise.resolve();
-	});
-}
-
-async function dispatchKeydown(target: EventTarget, key: string) {
-	await act(async () => {
-		target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
-		await Promise.resolve();
-	});
-}
-
 describe('CreateThreadHeading', () => {
 	it('prompts the user to add their first project', async () => {
 		const props = renderHeading();
-		const addProjectButton = document.querySelector<HTMLButtonElement>('button');
-
-		expect(document.body.textContent).toContain('What should we work on?');
-		expect(addProjectButton).not.toBeNull();
-		await click(addProjectButton);
+		const user = userEvent.setup();
+		await user.click(screen.getByRole('button', { name: 'Add project' }));
 		expect(props.onAddProject).toHaveBeenCalledOnce();
 	});
 
-	it('selects worktrees by path and disambiguates matching project names', async () => {
+	it('searches projects, selects worktrees by path, and adds projects from the footer', async () => {
 		const props = renderHeading({
 			projects: [
 				{ repositoryKey: 'sprocket', displayName: 'Sprocket', workspacePath: '/sprocket' },
-				{ repositoryKey: 'sprocket', displayName: 'Sprocket', workspacePath: '/other' }
+				{ repositoryKey: 'sprocket', displayName: 'Sprocket', workspacePath: '/other' },
+				{ repositoryKey: 'robot', displayName: 'Robot', workspacePath: '/robot' }
 			],
 			workspacePath: '/sprocket'
 		});
 
-		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]');
+		const user = userEvent.setup();
 
-		expect(document.querySelector('select')).toBeNull();
-		expect(trigger?.textContent).toContain('Sprocket');
-		await click(trigger);
+		const trigger = screen.getByRole('button', {
+			name: 'Select project. Current project: Sprocket'
+		});
 
-		const projectOptions = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
-		expect(projectOptions).toHaveLength(2);
-		expect(projectOptions[0]?.getAttribute('aria-checked')).toBe('true');
-		expect(projectOptions[1]?.getAttribute('aria-label')).toBe('Sprocket, /other');
-		expect(projectOptions[1]?.textContent).toContain('/other');
-		await click(projectOptions[1]);
+		await user.click(trigger);
+		await user.type(screen.getByRole('textbox', { name: 'Search projects' }), 'SPRO');
+		expect(
+			Array.from(document.querySelectorAll('[aria-pressed]')).map((item) =>
+				item.getAttribute('aria-label')
+			)
+		).toEqual(['Sprocket, /sprocket', 'Sprocket, /other']);
+		expect(
+			screen.getByRole('button', { name: 'Sprocket, /sprocket' }).getAttribute('aria-pressed')
+		).toBe('true');
+		await user.click(screen.getByRole('button', { name: 'Sprocket, /other' }));
 		expect(props.onProject).toHaveBeenCalledWith('/other');
-		expect(document.querySelector('[role="menu"]')).toBeNull();
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
 
-		await click(trigger);
-		await click(document.querySelector<HTMLButtonElement>('[role="menuitem"]'));
+		await user.click(trigger);
+		await user.click(screen.getByRole('button', { name: 'Add project' }));
 		expect(props.onAddProject).toHaveBeenCalledOnce();
 	});
 
-	it('removes a project from the keyboard and restores focus', async () => {
+	it('removes a searched project with the sidebar X and restores focus', async () => {
 		const project: Project = {
 			repositoryKey: 'first',
 			displayName: 'First',
@@ -82,50 +71,39 @@ describe('CreateThreadHeading', () => {
 
 		const props = renderHeading({
 			projects: [project],
-			workspacePath: project.workspacePath,
+			workspacePath: '/first',
 			onRemoveProject: vi.fn()
 		});
 
-		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
-		await click(trigger);
-
-		const remove = document.querySelector<HTMLButtonElement>(
-			'[aria-label="Remove First from project list"]'
-		)!;
-
-		await dispatchKeydown(document.activeElement!, 'ArrowRight');
-		expect(document.activeElement).toBe(remove);
-		await dispatchKeydown(remove, 'Enter');
+		const user = userEvent.setup();
+		const trigger = screen.getByRole('button', { name: 'Select project. Current project: First' });
+		await user.click(trigger);
+		await user.type(screen.getByRole('textbox', { name: 'Search projects' }), 'first');
+		await user.tab();
+		await user.tab();
+		expect(document.activeElement).toBe(
+			screen.getByRole('button', { name: 'Remove First from project list' })
+		);
+		await user.keyboard('{Enter}');
 		expect(props.onRemoveProject).toHaveBeenCalledExactlyOnceWith(project);
-		expect(document.querySelector('[role="menu"]')).toBeNull();
 		expect(document.activeElement).toBe(trigger);
 
 		props.rerender(<CreateThreadHeading {...props} projects={[]} workspacePath={null} />);
-		expect(document.activeElement?.textContent).toBe('Add project');
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add project' }));
 	});
 
-	it('supports keyboard navigation and restores focus after Escape', async () => {
-		const projects: Project[] = [
-			{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' },
-			{ repositoryKey: 'second', displayName: 'Second', workspacePath: '/second' }
-		];
+	it('closes on Escape and restores focus to the heading picker', async () => {
+		renderHeading({
+			projects: [{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' }]
+		});
 
-		const props = renderHeading({ projects, workspacePath: '/first' });
-		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+		const trigger = screen.getByRole('button', {
+			name: 'Select project. Current project: Choose a project'
+		});
 
-		await dispatchKeydown(trigger, 'ArrowDown');
-
-		const projectOptions = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
-		expect(document.activeElement).toBe(projectOptions[0]);
-		await dispatchKeydown(projectOptions[0]!, 'ArrowDown');
-		expect(document.activeElement).toBe(projectOptions[1]);
-
-		await dispatchKeydown(projectOptions[1]!, 'Enter');
-		expect(props.onProject).toHaveBeenCalledWith('/second');
-		expect(document.activeElement).toBe(trigger);
-
-		await click(trigger);
-		await dispatchKeydown(document, 'Escape');
+		const user = userEvent.setup();
+		await user.click(trigger);
+		await user.keyboard('{Escape}');
 		expect(trigger.getAttribute('aria-expanded')).toBe('false');
 		expect(document.activeElement).toBe(trigger);
 	});

@@ -249,7 +249,11 @@ function projectTrigger(name: string) {
 
 async function openProjectFromHeading(from: string, target: string) {
 	fireEvent.click(await projectTrigger(from));
-	fireEvent.click(screen.getByRole('menuitemradio', { name: target }));
+	fireEvent.click(
+		within(document.querySelector('.create-thread-project-control')!).getByRole('button', {
+			name: target
+		})
+	);
 	await flushPendingWork();
 }
 
@@ -328,7 +332,11 @@ it.each(['sidebar', 'heading'])(
 
 		if (picker === 'heading') {
 			fireEvent.click(trigger);
-			fireEvent.click(screen.getByRole('menuitem', { name: 'Remove Alpha from project list' }));
+			fireEvent.click(
+				within(document.querySelector('.create-thread-project-control')!).getByRole('button', {
+					name: 'Remove Alpha from project list'
+				})
+			);
 		} else {
 			fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
 			fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
@@ -549,12 +557,14 @@ it('shares local message recency across the project menus and recent directories
 	);
 	fireEvent.click(await projectTrigger('Beta'));
 	expect(
-		screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+		Array.from(document.querySelectorAll('.create-thread-project-control [aria-pressed]')).map(
+			(item) => item.getAttribute('aria-label')
+		)
 	).toEqual(['Beta', 'Gamma', 'Alpha']);
 	fireEvent.click(await projectTrigger('Beta'));
 	expect(
 		Array.from(document.querySelectorAll('.inbox-project-option')).map((item) => item.textContent)
-	).toEqual(['All projects', 'Beta', 'Gamma', 'Alpha']);
+	).toEqual(['All projects', 'Beta', 'Gamma', 'Alpha', 'Add project']);
 	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
 	const dialog = await screen.findByRole('dialog');
 
@@ -595,7 +605,9 @@ it('refreshes message recency after a successful send even when another project 
 	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
 	fireEvent.click(await projectTrigger('Beta'));
 	expect(
-		screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+		Array.from(document.querySelectorAll('.create-thread-project-control [aria-pressed]')).map(
+			(item) => item.getAttribute('aria-label')
+		)
 	).toEqual(['Alpha', 'Beta']);
 	fireEvent.click(await projectTrigger('Beta'));
 	await openProjectFromHeading('Beta', 'Alpha');
@@ -612,7 +624,9 @@ it('refreshes message recency after a successful send even when another project 
 	fireEvent.click(await projectTrigger('Alpha'));
 	await waitFor(() =>
 		expect(
-			screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+			Array.from(document.querySelectorAll('.create-thread-project-control [aria-pressed]')).map(
+				(item) => item.getAttribute('aria-label')
+			)
 		).toEqual(['Beta', 'Alpha'])
 	);
 }, 15_000);

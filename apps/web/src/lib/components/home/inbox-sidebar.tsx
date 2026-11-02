@@ -6,7 +6,6 @@ import {
 	Copy,
 	FolderPlus,
 	RotateCcw,
-	Search,
 	Settings,
 	SquarePen,
 	X
@@ -34,6 +33,7 @@ import AppUpdate from './app-update';
 import InboxLoadMore from './inbox-load-more';
 import LinkedPullRequests from './linked-pull-requests';
 import SidebarTopActions from './sidebar-top-actions';
+import ProjectSelectorMenu from './project-selector-menu';
 
 const SETTLED_INBOX_OPEN_KEY = 'sprocket.inbox.settled-open';
 
@@ -135,7 +135,6 @@ export default function InboxSidebar({
 	const [busy, setBusy] = useState(false);
 	const [renameThread, setRenameThread] = useState<Thread | null>(null);
 	const [renameTitle, setRenameTitle] = useState('');
-	const [projectSearch, setProjectSearch] = useState('');
 	const busyRef = useRef(false);
 	const menuTriggerRef = useRef<HTMLElement | null>(null);
 	const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -150,10 +149,6 @@ export default function InboxSidebar({
 	}, []);
 
 	const rows = sections.flatMap((section) => section.rows);
-
-	const filteredProjects = projects.filter((project) =>
-		project.displayName.toLocaleLowerCase().includes(projectSearch.trim().toLocaleLowerCase())
-	);
 
 	const visibleSections = sections.filter(
 		(section) =>
@@ -226,8 +221,6 @@ export default function InboxSidebar({
 		if (projectMenuRef.current) {
 			projectMenuRef.current.open = false;
 		}
-
-		setProjectSearch('');
 	}
 
 	function filterProjects(keys: string[]) {
@@ -484,62 +477,24 @@ export default function InboxSidebar({
 							<span className="truncate">{projectFilterLabel}</span>
 							<ChevronDown size={14} />
 						</summary>
-						<div className="inbox-project-menu">
-							<label className="inbox-project-search">
-								<Search size={14} />
-								<input
-									value={projectSearch}
-									onChange={(event) => setProjectSearch(event.currentTarget.value)}
-									aria-label="Search projects"
-									placeholder="Search projects"
-								/>
-							</label>
-							<div className="inbox-project-list">
-								<button
-									className={cn('inbox-project-option', {
-										'inbox-project-selected': selectedProjects.length === 0
-									})}
-									type="button"
-									aria-pressed={selectedProjects.length === 0}
-									onClick={() => filterProjects([])}
-								>
-									All projects
-								</button>
-								{filteredProjects.map((project) => {
-									const selected =
-										selectedProjects.length === 1 && selectedProjects[0] === project.repositoryKey;
-
-									return (
-										<div className="flex items-center" key={project.repositoryKey}>
-											<button
-												className={cn('inbox-project-option', {
-													'inbox-project-selected': selected
-												})}
-												type="button"
-												aria-pressed={selected}
-												onClick={() => filterProjects([project.repositoryKey])}
-											>
-												{project.displayName}
-											</button>
-											{onRemoveProject && (
-												<button
-													type="button"
-													className="inbox-icon shrink-0"
-													aria-label={`Remove ${project.displayName} from project list`}
-													title={`Remove ${project.workspacePath} from project list`}
-													onClick={() => {
-														closeProjectMenu();
-														onRemoveProject(project);
-													}}
-												>
-													<X size={14} />
-												</button>
-											)}
-										</div>
-									);
-								})}
-							</div>
-						</div>
+						<ProjectSelectorMenu
+							projects={projects}
+							isSelected={(project) =>
+								selectedProjects.length === 1 && selectedProjects[0] === project.repositoryKey
+							}
+							allProjectsSelected={selectedProjects.length === 0}
+							onSelect={(project) => filterProjects([project.repositoryKey])}
+							onSelectAll={() => filterProjects([])}
+							onAddProject={addProject}
+							onRemoveProject={
+								onRemoveProject
+									? (project) => {
+											closeProjectMenu();
+											onRemoveProject(project);
+										}
+									: undefined
+							}
+						/>
 					</details>
 					<button
 						className="inbox-icon touch-target inbox-add-project-button"
