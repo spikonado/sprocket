@@ -72,6 +72,17 @@
           ];
         };
 
+        devShells.kicad = pkgs.mkShell {
+          packages = with pkgs; [
+            bun
+            dwarfs
+            minisign
+            osslsigncode
+            rcodesign
+            uv
+          ];
+        };
+
         devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
           packages =
             with pkgs;

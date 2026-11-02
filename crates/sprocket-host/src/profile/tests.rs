@@ -11,7 +11,13 @@ fn one_server_owns_a_profile_until_it_stops() {
         Some("http://127.0.0.1:17731")
     );
     drop(owner);
-    assert!(ProfileLock::acquire(dir.path()).is_ok());
+    // Other tests spawn processes in parallel; a fork briefly shares the lock
+    // file until exec closes it, so the release can take a moment.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while ProfileLock::acquire(dir.path()).is_err() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 #[cfg(windows)]

@@ -1721,6 +1721,28 @@ async fn terminate_kills_the_whole_process_tree() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn stopping_a_process_group_of_only_zombies_succeeds() {
+    use std::os::unix::process::CommandExt;
+    let mut child = std::process::Command::new("true")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut exited = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+    let waited = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id(),
+            &mut exited,
+            libc::WEXITED | libc::WNOWAIT,
+        )
+    };
+    assert_eq!(waited, 0);
+    super::stop_remaining_processes(Some(child.id())).unwrap();
+    child.wait().unwrap();
+}
+
 #[tokio::test]
 async fn unknown_session_ids_are_rejected() {
     let root = temp_workspace();

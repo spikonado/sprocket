@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Required checks pass when skipped, so PRs skip suites their files can't affect.
+  # Skipped jobs count as passing, so PRs skip suites their files can't affect.
   changes:
     runs-on: ubuntu-latest
     permissions:
@@ -85,6 +85,8 @@ jobs:
         run: cargo test --locked -p sprocket-workspace command_shell
       - name: Test failed command launch cleanup
         run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
+      - name: Test zombie process group cleanup
+        run: cargo test --locked -p sprocket-workspace commands::tests::stopping_a_process_group_of_only_zombies
       - name: Test pinned tool installs
         run: cargo test --locked -p sprocket-host -- tool_install::tests python_install::tests
 
@@ -129,3 +131,13 @@ jobs:
       - name: Cargo test
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: cargo test --locked
+
+  # The one check the ruleset requires. A skipped matrix job reports under its unexpanded name,
+  # and jobs skipped because `changes` failed would pass on their own.
+  build_test_passed:
+    if: always()
+    needs: [changes, native_tests, web, rust]
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
