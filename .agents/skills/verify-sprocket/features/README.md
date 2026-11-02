@@ -18,5 +18,5 @@ Proof follows Evidence in `SKILL.md`. Report an unreachable path as a failure wi
 - [Projects](./projects.md): adding from the empty state and the project menu, switching projects, filtering the inbox by project, removing a project from the list.
 - [Threads](./threads.md): sending a prompt, the model reply, stopping a run, renaming and settling, the transcript after reload.
 - [Side panel](./side-panel.md): opening, the view picker, tabs, full workspace, closing and restoring.
-- [Files](./files.md): the project tree, editing and saving a file, save conflicts, the discard prompt, creating, renaming and deleting, search.
+- [Files](./files.md): the project tree, editing and saving a file, KiCad in KiCanvas, save conflicts, the discard prompt, creating, renaming and deleting, search.
 - [Settings](./settings.md): the settings pages including Connectors, a preference switch, the GitHub switch.
