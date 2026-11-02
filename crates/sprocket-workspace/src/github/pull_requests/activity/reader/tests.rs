@@ -146,3 +146,50 @@ fn fingerprint_status_changes_when_a_completed_check_fails() {
     assert_ne!(before.status, after.status);
     assert_eq!(before.remarks, after.remarks);
 }
+
+fn two_completed(rust: &str, web: &str) -> serde_json::Value {
+    json!({
+        "state": "FAILURE",
+        "contexts": {
+            "checkRunCountsByState": [{ "state": "COMPLETED", "count": 2 }],
+            "statusContextCountsByState": [],
+            "nodes": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "rust",
+                    "status": "COMPLETED",
+                    "conclusion": rust
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "web",
+                    "status": "COMPLETED",
+                    "conclusion": web
+                }
+            ]
+        }
+    })
+}
+
+#[test]
+fn fingerprint_status_changes_when_another_completed_check_fails() {
+    let threads = one_thread(1, "2026-01-01T00:00:00Z");
+    let before = fingerprint_pr(threads.clone(), two_completed("FAILURE", "SUCCESS"));
+    let after = fingerprint_pr(threads, two_completed("FAILURE", "FAILURE"));
+    assert_ne!(before.status, after.status);
+    assert_eq!(before.remarks, after.remarks);
+    assert!(!before.incomplete);
+}
+
+#[test]
+fn fingerprint_is_incomplete_when_threads_or_checks_are_paged() {
+    let mut threads = one_thread(1, "2026-01-01T00:00:00Z");
+    threads["pageInfo"] = json!({ "hasNextPage": true });
+    let more_threads = fingerprint_pr(threads, completed_checks("SUCCESS", "SUCCESS"));
+    assert!(more_threads.incomplete);
+
+    let mut checks = completed_checks("SUCCESS", "SUCCESS");
+    checks["contexts"]["pageInfo"] = json!({ "hasNextPage": true });
+    let more_checks = fingerprint_pr(one_thread(1, "2026-01-01T00:00:00Z"), checks);
+    assert!(more_checks.incomplete);
+}

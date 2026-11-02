@@ -26,6 +26,8 @@ struct LastRead {
 struct Fingerprint {
     status: String,
     remarks: String,
+    /// True when the fingerprint only sampled the first page of threads or checks.
+    incomplete: bool,
 }
 
 impl Fingerprint {
@@ -36,6 +38,18 @@ impl Fingerprint {
             .last()
             .and_then(|node| node.commit.status_check_rollup.as_ref());
         let reviews = pr.reviews.as_ref();
+        let more_threads = pr
+            .review_threads
+            .page_info
+            .as_ref()
+            .is_some_and(|page| page.has_next_page);
+        let more_checks = rollup.is_some_and(|rollup| {
+            rollup
+                .contexts
+                .page_info
+                .as_ref()
+                .is_some_and(|page| page.has_next_page)
+        });
         Self {
             status: [
                 pr.state,
@@ -66,6 +80,7 @@ impl Fingerprint {
                 thread_comment_signal(&pr.review_threads),
             ]
             .join(" "),
+            incomplete: more_threads || more_checks,
         }
     }
 }
@@ -98,6 +113,7 @@ impl ActivityReader {
         let fingerprint = self.fingerprint().await?;
         if let Some(last) = &self.last
             && last.fingerprint == fingerprint
+            && !fingerprint.incomplete
         {
             return Ok(last.activity.clone());
         }
@@ -355,6 +371,13 @@ struct PageInfo {
     end_cursor: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NextPage {
+    #[serde(default)]
+    has_next_page: bool,
+}
+
 impl PageInfo {
     fn next(&self) -> Option<String> {
         self.end_cursor.clone().filter(|_| self.has_next_page)
@@ -389,6 +412,8 @@ struct ThreadCounts {
     total_count: u64,
     #[serde(default)]
     nodes: Vec<ThreadFingerprint>,
+    #[serde(default)]
+    page_info: Option<NextPage>,
 }
 
 #[derive(Deserialize)]
@@ -449,6 +474,8 @@ struct StateCounts {
     status_context_counts_by_state: Option<Vec<StateCount>>,
     #[serde(default)]
     nodes: Vec<FingerprintContext>,
+    #[serde(default)]
+    page_info: Option<NextPage>,
 }
 
 #[derive(Deserialize)]

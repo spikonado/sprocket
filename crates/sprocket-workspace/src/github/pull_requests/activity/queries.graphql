@@ -30,6 +30,9 @@ query PullRequestFingerprint($owner: String!, $name: String!, $number: Int!) {
 			}
 			reviewThreads(first: 100) {
 				totalCount
+				pageInfo {
+					hasNextPage
+				}
 				nodes {
 					comments(last: 1) {
 						totalCount
@@ -46,6 +49,9 @@ query PullRequestFingerprint($owner: String!, $name: String!, $number: Int!) {
 						statusCheckRollup {
 							state
 							contexts(first: 100) {
+								pageInfo {
+									hasNextPage
+								}
 								checkRunCountsByState {
 									state
 									count
