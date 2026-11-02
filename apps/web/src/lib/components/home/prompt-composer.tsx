@@ -61,6 +61,8 @@ export type PromptComposerProps = {
 	fastMode?: boolean;
 	onFastModeChange?: (fastMode: boolean) => void;
 	pendingQuestion?: PendingAgentQuestion | null;
+	/** The latest run finished; its pending question stays answerable. */
+	runEnded?: boolean;
 	showContinueWorking?: boolean;
 	onContinueWorking?: () => void;
 	runningCommands?: { api: CommandApi; scope: TranscriptScopeRequest } | null;
@@ -127,6 +129,7 @@ export function PromptComposerView({
 	fastMode = false,
 	onFastModeChange,
 	pendingQuestion = null,
+	runEnded = false,
 	showContinueWorking = false,
 	onContinueWorking,
 	runningCommands = null,
@@ -780,7 +783,7 @@ export function PromptComposerView({
 										key={pendingQuestion.questionId}
 										question={pendingQuestion.question}
 										options={pendingQuestion.options}
-										agentWorking={isWorking}
+										runEnded={runEnded}
 										selectedOptionId={selectedQuestionOptionId}
 										onToggleOption={toggleQuestionOption}
 									/>

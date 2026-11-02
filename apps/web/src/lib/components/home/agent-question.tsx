@@ -5,7 +5,7 @@ import { AGENT_DECIDE_OPTION_ID, type AgentQuestionOption } from '@convex/lib/ag
 type Props = {
 	question: string;
 	options: AgentQuestionOption[];
-	agentWorking: boolean;
+	runEnded: boolean;
 	selectedOptionId: string | null;
 	onToggleOption: (optionId: string) => void;
 };
@@ -13,16 +13,16 @@ type Props = {
 export default function AgentQuestion({
 	question,
 	options,
-	agentWorking,
+	runEnded,
 	selectedOptionId,
 	onToggleOption
 }: Props) {
-	const [expanded, setExpanded] = useState(agentWorking);
-	const [previousAgentWorking, setPreviousAgentWorking] = useState(agentWorking);
+	const [expanded, setExpanded] = useState(!runEnded);
+	const [previousRunEnded, setPreviousRunEnded] = useState(runEnded);
 
-	if (agentWorking !== previousAgentWorking) {
-		setPreviousAgentWorking(agentWorking);
-		setExpanded(agentWorking);
+	if (runEnded !== previousRunEnded) {
+		setPreviousRunEnded(runEnded);
+		setExpanded(!runEnded);
 	}
 
 	return (
