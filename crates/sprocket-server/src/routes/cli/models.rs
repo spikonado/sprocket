@@ -1,14 +1,13 @@
-use std::time::Duration;
-
 use anyhow::Context;
 use serde::Deserialize;
+use sprocket_agent::{CompletionProvider, ProviderCatalog, catalog_for_providers};
 
 use crate::cli_protocol::{CliModel, CliModelsResponse, CliRunRequest};
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(super) struct RunContext {
     pub gateway_url: String,
+    /// Enabled, set-up providers in the user's order.
+    pub providers: Vec<CompletionProvider>,
     pub thread: Option<ThreadSettings>,
 }
 
@@ -21,32 +20,10 @@ pub(super) struct ThreadSettings {
     pub fast_mode: bool,
 }
 
-#[derive(Deserialize)]
-struct Response {
-    sprocket: Catalog,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Catalog {
-    protocol_version: u32,
-    default_model_id: String,
-    default_reasoning_effort: String,
-    models: Vec<Model>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Model {
-    id: String,
-    label: String,
-    reasoning_efforts: Vec<String>,
-    default_reasoning_effort: String,
-    service_tiers: Vec<String>,
-}
-
+#[derive(Debug)]
 pub(super) struct Settings {
     pub model: String,
+    pub provider: CompletionProvider,
     pub reasoning: String,
     pub fast: bool,
 }
@@ -67,134 +44,107 @@ pub(super) async fn resolve(
     context: &RunContext,
     request: &CliRunRequest,
 ) -> anyhow::Result<Settings> {
-    let catalog = fetch(&context.gateway_url).await?;
-    select(catalog, context, request)
+    select(&fetch(context).await?, context, request)
 }
 
 pub(super) async fn available(context: &RunContext) -> anyhow::Result<CliModelsResponse> {
-    list_models(&fetch(&context.gateway_url).await?)
+    Ok(list_models(&fetch(context).await?))
 }
 
-async fn fetch(gateway_url: &str) -> anyhow::Result<Catalog> {
-    let response: Response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()?
-        .get(format!(
-            "{}/api/v1/models",
-            gateway_url.trim_end_matches('/')
-        ))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await
-        .context("invalid model catalog")?;
-    validate(&response.sprocket)?;
-    Ok(response.sprocket)
-}
-
-fn validate(catalog: &Catalog) -> anyhow::Result<()> {
+async fn fetch(context: &RunContext) -> anyhow::Result<ProviderCatalog> {
     anyhow::ensure!(
-        catalog.protocol_version == 1,
-        "unsupported model catalog protocol"
+        !context.providers.is_empty(),
+        "no enabled provider is set up; enable Spikonado or connect a provider in Settings > Providers"
     );
-    anyhow::ensure!(
-        catalog
+    catalog_for_providers(&context.gateway_url, &context.providers).await
+}
+
+fn list_models(catalog: &ProviderCatalog) -> CliModelsResponse {
+    CliModelsResponse {
+        default_model_id: catalog.default_model_id.clone(),
+        models: catalog
             .models
             .iter()
-            .any(|model| model.id == catalog.default_model_id),
-        "default model {} is missing from the catalog",
-        catalog.default_model_id
-    );
-    Ok(())
+            .map(|model| CliModel {
+                id: model.id.clone(),
+                label: model.label.clone(),
+                reasoning_efforts: model.reasoning_efforts.clone(),
+                default_reasoning_effort: model.default_reasoning_effort.clone(),
+            })
+            .collect(),
+    }
 }
 
-fn list_models(catalog: &Catalog) -> anyhow::Result<CliModelsResponse> {
-    validate(catalog)?;
-    let models: Vec<CliModel> = catalog
-        .models
-        .iter()
-        .map(|model| CliModel {
-            id: model.id.clone(),
-            label: model.label.clone(),
-            reasoning_efforts: model.reasoning_efforts.clone(),
-            default_reasoning_effort: model.default_reasoning_effort.clone(),
-        })
-        .collect();
-    Ok(CliModelsResponse {
-        default_model_id: catalog.default_model_id.clone(),
-        models,
-    })
-}
-
+/// Mirrors the web composer: `catalog` holds only models `context.providers` serve, a saved
+/// model they no longer serve falls back to the default, and the run uses the first provider
+/// that serves the model.
 fn select(
-    catalog: Catalog,
+    catalog: &ProviderCatalog,
     context: &RunContext,
     request: &CliRunRequest,
 ) -> anyhow::Result<Settings> {
-    validate(&catalog)?;
-    let model_overridden = request.model.is_some();
-    let mut model = request
-        .model
-        .clone()
-        .or_else(|| {
-            context
-                .thread
-                .as_ref()
-                .map(|thread| thread.selected_model.clone())
-        })
-        .unwrap_or_else(|| catalog.default_model_id.clone());
-    let model_fallback = !model_overridden && !catalog.models.iter().any(|entry| entry.id == model);
-    if model_fallback {
-        model = catalog.default_model_id.clone();
-    }
-    let fast = request
-        .fast
-        .or_else(|| {
-            context
-                .thread
-                .as_ref()
-                .filter(|_| !model_fallback)
-                .map(|thread| thread.fast_mode)
-        })
-        .unwrap_or(false);
-    let entry = catalog
+    let served = |id: &str| catalog.models.iter().any(|model| model.id == id);
+    let thread = context.thread.as_ref();
+    let model_fallback =
+        request.model.is_none() && thread.is_some_and(|thread| !served(&thread.selected_model));
+    let model_id = match (&request.model, thread) {
+        (Some(model), _) => model,
+        (None, Some(thread)) if !model_fallback => &thread.selected_model,
+        _ => &catalog.default_model_id,
+    };
+    let model = catalog
         .models
         .iter()
-        .find(|entry| entry.id == model)
-        .with_context(|| format!("unknown model {model}"))?;
+        .find(|model| &model.id == model_id)
+        .with_context(|| {
+            let providers: Vec<_> = context.providers.iter().map(|p| p.as_str()).collect();
+            format!(
+                "model {model_id} is unavailable from your enabled providers ({}); run sprocket models to list the ones they serve",
+                providers.join(", ")
+            )
+        })?;
+    let provider = context
+        .providers
+        .iter()
+        .copied()
+        .find(|provider| provider.serves_vendor(&model.vendor))
+        .with_context(|| format!("no enabled provider serves {model_id}"))?;
+    let inherited = thread.filter(|_| !model_fallback);
     let reasoning = request
         .reasoning
         .clone()
         .or_else(|| {
-            if model_overridden || model_fallback {
-                None
-            } else {
-                context
-                    .thread
-                    .as_ref()
-                    .map(|thread| thread.reasoning_effort.clone())
-            }
+            inherited
+                .filter(|_| request.model.is_none())
+                .map(|thread| thread.reasoning_effort.clone())
         })
-        .unwrap_or_else(|| {
-            if model_overridden || model_fallback {
-                entry.default_reasoning_effort.clone()
-            } else {
-                catalog.default_reasoning_effort.clone()
-            }
-        });
+        .unwrap_or_else(|| model.default_reasoning_effort.clone());
     anyhow::ensure!(
-        entry.reasoning_efforts.contains(&reasoning),
-        "reasoning level {reasoning} is unavailable for {model}"
+        model.reasoning_efforts.contains(&reasoning),
+        "reasoning level {reasoning} is unavailable for {model_id}"
     );
+    let fast = request
+        .fast
+        .or_else(|| {
+            inherited
+                .filter(|_| provider.serves_fast_mode())
+                .map(|thread| thread.fast_mode)
+        })
+        .unwrap_or(false);
     if fast {
         anyhow::ensure!(
-            entry.service_tiers.iter().any(|tier| tier == "fast"),
-            "fast mode is unavailable for {model}"
+            provider.serves_fast_mode(),
+            "fast mode needs the Spikonado provider; {model_id} runs on {}",
+            provider.as_str()
+        );
+        anyhow::ensure!(
+            model.supports_fast(),
+            "fast mode is unavailable for {model_id}"
         );
     }
     Ok(Settings {
-        model,
+        model: model.id.clone(),
+        provider,
         reasoning,
         fast,
     })

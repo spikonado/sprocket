@@ -341,6 +341,17 @@ impl ChatGptService {
         self.storage_error.is_none()
     }
 
+    /// Whether the user's active account has tokens, which is when the web app offers ChatGPT.
+    pub async fn connected(&self, user: &str) -> bool {
+        self.state
+            .lock()
+            .await
+            .users
+            .get(user)
+            .and_then(session)
+            .is_some()
+    }
+
     fn require_storage(&self) -> anyhow::Result<()> {
         if let Some(error) = &self.storage_error {
             bail!("{error}");

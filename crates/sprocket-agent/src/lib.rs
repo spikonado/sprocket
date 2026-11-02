@@ -19,6 +19,7 @@ mod types;
 mod usage;
 mod workspace_context;
 
+pub use catalog::{ProviderCatalog, catalog_for_providers};
 pub use output::{RunOutcome, RunOutput};
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use sprocket_convex::AuthTokenFetcher;

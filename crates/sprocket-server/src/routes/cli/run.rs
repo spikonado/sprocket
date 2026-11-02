@@ -8,9 +8,11 @@ use axum::Json;
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use convex::Value;
+use serde::Deserialize;
+use sprocket_agent::CompletionProvider;
 
 use super::client_session;
-use super::models::{RunContext, available, gateway_url, resolve};
+use super::models::{RunContext, ThreadSettings, available, gateway_url, resolve};
 use crate::AppState;
 use crate::cli_protocol::*;
 use crate::cli_sessions::CliSession;
@@ -43,10 +45,13 @@ pub(super) async fn list_models(
     let rpc = convex_client(&state, &user.id)
         .await
         .map_err(ApiError::internal)?;
-    let context = tokio::time::timeout(Duration::from_secs(20), run_context(&rpc, None))
-        .await
-        .map_err(|error| ApiError::internal(error.into()))?
-        .map_err(ApiError::internal)?;
+    let context = tokio::time::timeout(
+        Duration::from_secs(20),
+        run_context(&state, &rpc, &user.id, None),
+    )
+    .await
+    .map_err(|error| ApiError::internal(error.into()))?
+    .map_err(ApiError::internal)?;
     let response = available(&context).await.map_err(ApiError::internal)?;
     Ok(Json(response))
 }
@@ -118,20 +123,59 @@ async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserCo
 }
 
 async fn run_context(
+    state: &AppState,
     rpc: &UserConvexClient,
+    user_id: &str,
     thread_id: Option<&str>,
 ) -> anyhow::Result<RunContext> {
-    let thread = match thread_id {
-        Some(thread_id) => {
-            let args = BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
-            Some(rpc.query("threads:getByThreadId", args).await?)
+    let thread = async {
+        match thread_id {
+            Some(thread_id) => {
+                let args =
+                    BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
+                rpc.query::<ThreadSettings>("threads:getByThreadId", args)
+                    .await
+                    .map(Some)
+            }
+            None => Ok(None),
         }
-        None => None,
     };
+    let (thread, providers) = tokio::try_join!(thread, usable_providers(state, rpc, user_id))?;
     Ok(RunContext {
         gateway_url: gateway_url()?,
+        providers,
         thread,
     })
+}
+
+#[derive(Deserialize)]
+struct ProviderConfiguration {
+    openai: bool,
+}
+
+/// The web app's `usableProviders`: enabled providers, in the user's order, that are set up.
+async fn usable_providers(
+    state: &AppState,
+    rpc: &UserConvexClient,
+    user_id: &str,
+) -> anyhow::Result<Vec<CompletionProvider>> {
+    let enabled: Vec<CompletionProvider> = rpc
+        .query("uiPreferences:getMyEnabledProviders", BTreeMap::new())
+        .await?;
+    let openai = enabled.contains(&CompletionProvider::Openai)
+        && rpc
+            .act::<ProviderConfiguration>("providerCredentials:getMyConfiguration", BTreeMap::new())
+            .await?
+            .openai;
+    let chatgpt = state.host.chatgpt_credentials.connected(user_id).await;
+    Ok(enabled
+        .into_iter()
+        .filter(|provider| match provider {
+            CompletionProvider::Spikonado => true,
+            CompletionProvider::Openai => openai,
+            CompletionProvider::Chatgpt => chatgpt,
+        })
+        .collect())
 }
 
 async fn prepare_run(
@@ -154,7 +198,7 @@ async fn prepare_run(
     let rpc = convex_client(state, &user.id).await?;
     let context = tokio::time::timeout(
         Duration::from_secs(20),
-        run_context(&rpc, request.thread_id.as_deref()),
+        run_context(state, &rpc, &user.id, request.thread_id.as_deref()),
     )
     .await??;
     let attachment = state
@@ -180,7 +224,7 @@ async fn prepare_run(
         prompt: request.prompt.clone(),
         storage_ids: Vec::new(),
         selected_model: settings.model,
-        completion_provider: Default::default(),
+        completion_provider: settings.provider,
         reasoning_effort: settings.reasoning,
         fast_mode: settings.fast,
         workspace_path: attachment.workspace_path,
