@@ -27,6 +27,7 @@
 		<script>
 			const reply = (message) => parent.postMessage(message, '*');
 			let embed = null;
+			let firstDraw = null;
 
 			const appFor = (page) =>
 				embed.shadowRoot.querySelector(page.type === 'pcb' ? 'kc-board-app' : 'kc-schematic-app');
@@ -43,14 +44,11 @@
 				return { page: page.project_path, x: center.x, y: center.y, zoom };
 			}
 
-			// Reopens the user's page, then restores their camera after KiCanvas fits the page.
-			async function show(view) {
-				const pages = project();
-				const page = (view && pages.page_by_path(view.page)) || pages.active_page;
+			async function drawn(page, open) {
 				const app = appFor(page);
 				await app.viewerReady;
 				const { viewer } = app;
-				const drawn = new Promise((resolve) => {
+				const loaded = new Promise((resolve) => {
 					const onLoad = () => {
 						if (viewer.document !== page.document) return;
 						viewer.removeEventListener('kicanvas:load', onLoad);
@@ -59,17 +57,29 @@
 					viewer.addEventListener('kicanvas:load', onLoad);
 				});
 
-				if (page !== pages.active_page) pages.set_active_page(page);
-				await drawn;
+				open?.();
+				await loaded;
 
-				if (view?.page !== page.project_path) return;
+				return viewer;
+			}
+
+			// Reopens the user's page, then restores their camera after KiCanvas fits the page.
+			async function show(view) {
+				const pages = project();
+				const page = view && pages.page_by_path(view.page);
+				const viewer =
+					page && page !== pages.active_page
+						? await drawn(page, () => pages.set_active_page(page))
+						: await firstDraw;
+
+				if (!page) return;
 
 				viewer.viewport.camera.center.set(view.x, view.y);
 				viewer.viewport.camera.zoom = view.zoom;
 				viewer.draw();
 			}
 
-			function load(sources, view) {
+			function load(sources) {
 				embed = document.createElement('kicanvas-embed');
 				embed.setAttribute('controls', 'full');
 				embed.style.cssText = 'width: 100%; height: 100%;';
@@ -87,19 +97,29 @@
 					observer.disconnect();
 
 					if (!embed.hasAttribute('loaded')) return reply({ type: 'failed' });
-					show(view).then(
-						() => reply({ type: 'loaded' }),
-						() => reply({ type: 'failed' })
-					);
+					firstDraw = drawn(project().active_page);
+					reply({ type: 'parsed' });
 				});
 				observer.observe(embed, { attributeFilter: ['loading', 'loaded'] });
 				document.body.append(embed);
 			}
 
+			// Such as KiCanvas's renderer setup throwing when the browser has no WebGL2.
+			addEventListener('unhandledrejection', ({ reason }) =>
+				reply({ type: 'failed', error: reason instanceof Error ? reason.message : undefined })
+			);
+
 			addEventListener('message', ({ source, data }) => {
 				if (source !== parent) return;
 
-				if (data?.type === 'sources') load(data.sources, data.view);
+				if (data?.type === 'sources') load(data.sources);
+
+				if (data?.type === 'show') {
+					show(data.view).then(
+						() => reply({ type: 'loaded' }),
+						() => reply({ type: 'failed' })
+					);
+				}
 
 				if (data?.type === 'getView') reply({ type: 'view', view: currentView() });
 			});

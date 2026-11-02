@@ -14,7 +14,8 @@ const RELOAD_DELAY_MS = 1_000;
 const RECONNECT_MS = 1_000;
 
 const frameMessageSchema = z.union([
-	z.object({ type: z.enum(['ready', 'loaded', 'failed']) }),
+	z.object({ type: z.enum(['ready', 'parsed', 'loaded']) }),
+	z.object({ type: z.literal('failed'), error: z.string().optional() }),
 	z.object({
 		type: z.literal('view'),
 		view: z.object({ page: z.string(), x: z.number(), y: z.number(), zoom: z.number() }).nullable()
@@ -22,6 +23,12 @@ const frameMessageSchema = z.union([
 ]);
 
 type FrameMessage = z.infer<typeof frameMessageSchema>;
+
+const malformedFile = 'KiCanvas could not read this file. It may be malformed.';
+
+function frameFailure(message: FrameMessage, fallback: string) {
+	return new Error(message.type === 'failed' && message.error ? message.error : fallback);
+}
 
 function nextFrameMessage(frame: HTMLIFrameElement, signal: AbortSignal) {
 	return new Promise<FrameMessage>((resolve, reject) => {
@@ -150,13 +157,19 @@ export default function KicadViewer({
 					throw new Error('This KiCad file is empty.');
 				}
 
+				const parsed = nextFrameMessage(frame, signal);
+				frame.contentWindow?.postMessage({ type: 'sources', sources }, '*');
+				const parse = await parsed;
+
+				if (parse.type !== 'parsed') throw frameFailure(parse, malformedFile);
+
+				// Read after the parse, since the user may have moved around the shown frame meanwhile.
 				const view = shown ? await currentView(shown, signal) : null;
 				const outcome = nextFrameMessage(frame, signal);
-				frame.contentWindow?.postMessage({ type: 'sources', sources, view }, '*');
+				frame.contentWindow?.postMessage({ type: 'show', view }, '*');
+				const result = await outcome;
 
-				if ((await outcome).type !== 'loaded') {
-					throw new Error('KiCanvas could not read this file. It may be malformed.');
-				}
+				if (result.type !== 'loaded') throw frameFailure(result, malformedFile);
 
 				shown?.remove();
 				shown = frame;
