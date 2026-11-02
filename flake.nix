@@ -65,12 +65,21 @@
       {
         formatter = pkgs.nixfmt-tree;
 
-        packages.bun = pkgs.bun;
-
         devShells.convex = pkgs.mkShell {
           packages = with pkgs; [
             bun
             nodejs_24
+          ];
+        };
+
+        devShells.kicad = pkgs.mkShell {
+          packages = with pkgs; [
+            bun
+            dwarfs
+            minisign
+            osslsigncode
+            rcodesign
+            uv
           ];
         };
 
