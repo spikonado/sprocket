@@ -183,6 +183,24 @@ async fn utf8_split_across_reads_and_polls_is_not_replaced() {
 }
 
 #[tokio::test]
+async fn unfinished_character_is_replaced_once_when_the_stream_ends() {
+    let root = tempfile::tempdir().unwrap();
+    let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
+    output
+        .append(OutputChannel::Stdout, &[b'a', 0xe2])
+        .await
+        .unwrap();
+    let live = output.read_events(0, false).await;
+    assert_eq!((live.output.as_str(), live.next_sequence), ("a", 1));
+    output.finish().await.unwrap();
+    let last = output.read_events(live.next_sequence, true).await;
+    assert_eq!(last.output, "\u{fffd}");
+    let after = output.read_events(last.next_sequence, true).await;
+    assert_eq!(after.output, "");
+    assert_eq!(after.next_sequence, last.next_sequence);
+}
+
+#[tokio::test]
 async fn invalid_bytes_and_unfinished_utf8_are_preserved_in_logs() {
     let root = tempfile::tempdir().unwrap();
     let bytes = [b'a', 0xff, 0xe2, 0x82];

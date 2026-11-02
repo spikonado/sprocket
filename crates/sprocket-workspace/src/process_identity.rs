@@ -19,11 +19,12 @@ impl CommandProcess {
     }
 }
 
-/// POSIX doesn't reuse a process group ID while the group has members, so the
-/// group is still the command's unless another process now has the leader's ID.
+/// Only a live leader with the recorded start time proves the group is still
+/// the command's. Once the leader exits its ID may name an unrelated group, so
+/// children that outlived a dead leader are left running.
 pub(crate) fn stop_leftover_process_group(process: CommandProcess) -> Result<()> {
     match process_start(process.group_id) {
-        Ok(start) if start.is_none_or(|start| start == process.leader_start) => {
+        Ok(Some(start)) if start == process.leader_start => {
             crate::commands::stop_remaining_processes(Some(process.group_id))
         }
         _ => Ok(()),

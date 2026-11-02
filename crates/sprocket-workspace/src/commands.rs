@@ -800,8 +800,9 @@ impl CommandSession {
         observation: &mut CommandObservation,
     ) -> Result<CommandOutput> {
         let mut history = self.history.history.lock().await;
-        // Holding the capture lock lets an in-progress append finish first.
-        let _capture = self.output.lock().await;
+        // Waiting for the capture lock lets an in-progress append finish first.
+        // Later appends may land during the read, which stops at a partial line.
+        drop(self.output.lock().await);
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);

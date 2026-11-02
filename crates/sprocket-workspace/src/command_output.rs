@@ -44,6 +44,11 @@ struct StoredOutputEvent {
     bytes: Vec<u8>,
 }
 
+#[derive(Deserialize)]
+struct StoredEventSequence {
+    sequence: u64,
+}
+
 pub(crate) struct UnreturnedOutput {
     pub output: String,
     pub next_sequence: u64,
@@ -236,6 +241,8 @@ impl CapturedOutput {
 
 /// Renders the events from `from_sequence` on. A trailing incomplete character
 /// stays unrendered until a later read completes it or the stream is final.
+/// A final read also consumes a virtual end-of-stream event one past the last
+/// event, which renders that character as a replacement exactly once.
 /// An incomplete trailing line is an append in progress and is left for later.
 pub(crate) async fn read_output_events(
     events_path: &Path,
@@ -250,28 +257,40 @@ pub(crate) async fn read_output_events(
     );
     let mut preview = PreviewBuffer::new(max_chars);
     let mut pending = Vec::new();
-    let mut next_sequence = from_sequence;
+    let mut event_count = 0;
     let mut line = Vec::new();
+    // A UTF-8 character spans at most 4 bytes, so only the 3 events before the
+    // cursor can carry bytes into the first unread event.
+    let carry_from = from_sequence.saturating_sub(3);
     loop {
         line.clear();
         if reader.read_until(b'\n', &mut line).await? == 0 || line.last() != Some(&b'\n') {
             break;
         }
+        let sequence = serde_json::from_slice::<StoredEventSequence>(&line)
+            .context("invalid command output event")?
+            .sequence;
+        event_count = sequence + 1;
+        if sequence < carry_from {
+            continue;
+        }
         let event: StoredOutputEvent =
             serde_json::from_slice(&line).context("invalid command output event")?;
-        if event.sequence < from_sequence {
+        if sequence < from_sequence {
             // Bytes of a character split by the cursor carry into the first unread event.
             decode_utf8(&mut pending, &event.bytes, false, |_| {});
         } else {
             decode_utf8(&mut pending, &event.bytes, false, |text| {
                 preview.push_text(text);
             });
-            next_sequence = event.sequence + 1;
         }
     }
-    if final_stream && next_sequence > from_sequence {
+    let next_sequence = if final_stream && from_sequence <= event_count {
         decode_utf8(&mut pending, &[], true, |text| preview.push_text(text));
-    }
+        event_count + 1
+    } else {
+        event_count.max(from_sequence)
+    };
     Ok(UnreturnedOutput {
         output: preview.render(),
         next_sequence,
