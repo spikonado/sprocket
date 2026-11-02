@@ -148,3 +148,4 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.
 - Local readers of `scrape_url` and `read_skill` `truncated`, `jobId` pairing and command parts without input.
+- Tool parts without `toolInvocationId`, written by the August 2026 transcript migration with `migrated-tool:` source keys.
