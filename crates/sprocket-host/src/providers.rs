@@ -28,7 +28,13 @@ pub async fn usable_providers(
             .await
             .inspect_err(|error| tracing::warn!("failed to check the OpenAI API key: {error:#}"))
             .is_ok_and(|configuration| configuration.openai);
-    let chatgpt = host.chatgpt_credentials.connected(user_id).await;
+    let chatgpt = enabled.contains(&CompletionProvider::Chatgpt)
+        && host
+            .chatgpt_credentials
+            .for_user(user_id.to_owned())
+            .connection()
+            .borrow()
+            .is_some();
     Ok(enabled
         .into_iter()
         .filter(|provider| match provider {
