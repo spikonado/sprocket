@@ -1082,7 +1082,7 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
 	expect(await screen.findByText(question.question)).toBeTruthy();
-	expect(screen.getByRole('button', { name: 'Send answer' })).toHaveProperty('disabled', true);
+	expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
 
 	await act(async () => {
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
