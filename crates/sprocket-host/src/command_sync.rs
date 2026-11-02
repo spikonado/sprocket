@@ -186,7 +186,7 @@ async fn sync_directory(
     idle: &mut IdleSessions,
 ) -> Result<bool> {
     let mut complete = true;
-    for user_records in session_records(store.root()).await? {
+    for user_records in session_records(&store.root()).await? {
         let mut client = None;
         for path in user_records {
             let directory = path
@@ -427,7 +427,7 @@ pub async fn fetch(
 }
 
 pub async fn settle_interrupted(store: &TranscriptStore, machine_id: &str) {
-    let records = match session_records(store.root()).await {
+    let records = match session_records(&store.root()).await {
         Ok(records) => records,
         Err(error) => {
             tracing::warn!("failed to list command sessions to settle: {error:#}");
