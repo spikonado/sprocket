@@ -19,7 +19,9 @@ use rig::tool::{DynamicTool, ToolOutput};
 use rig::wire::{Body, Mode, Operation, Wire};
 use serde_json::{Value as JsonValue, json};
 
-use super::{apply_completed_text, apply_completed_tool_call, durable_items_json};
+use super::transcript_sink::{
+    apply_completed_text, apply_completed_tool_call, apply_completion_origin, durable_items_json,
+};
 use crate::history::agent_history_from_parts;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::now_ms;
@@ -1123,7 +1125,7 @@ async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
         let mut saved = Vec::new();
         while let Some(item) = stream.next().await {
             if let Some(origin) = pending.and_then(|turn| origin_hook.take_for(turn)) {
-                super::apply_completion_origin(&parts.parts, &mut metadata, &origin);
+                apply_completion_origin(&parts.parts, &mut metadata, &origin);
                 saved.push(durable_items_json(&parts.parts, &metadata));
                 parts.clear();
                 metadata.clear();

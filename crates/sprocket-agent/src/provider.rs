@@ -1,7 +1,9 @@
-use std::collections::{HashMap, VecDeque};
+mod transcript_sink;
+
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -14,9 +16,11 @@ use rig::message::AssistantContent;
 use rig::operation::Completion;
 use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
+use sprocket_transcript::LiveCompletionHub;
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
 
+use self::transcript_sink::TranscriptSink;
 use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
@@ -25,9 +29,7 @@ use crate::convex::{ContextHandoffWrite, RuntimeClient};
 use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
-use crate::now_ms;
 use crate::openai::stateless_responses_model;
-use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
@@ -36,10 +38,6 @@ use crate::types::{
 };
 use crate::usage::{ModelCallUsage, UsageSource};
 use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
-use sprocket_transcript::{
-    LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
-    join_assistant_text_parts,
-};
 
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -621,19 +619,7 @@ async fn run_with_completion_model(
     .await
     {
         Ok(sink) => sink,
-        Err(error) => {
-            let result = match classify_provider_error(&error) {
-                ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded { error },
-                ProviderErrorDisposition::Cancelled => AgentProviderResult::Cancelled {
-                    text: String::new(),
-                },
-                ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
-                    text: String::new(),
-                    error,
-                },
-            };
-            return result;
-        }
+        Err(error) => return transcript_error(error, "", ""),
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
@@ -851,7 +837,7 @@ async fn run_with_completion_model(
                         }
                         let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
-                            if completed_attempt == Some(transcript.attempt_seq) {
+                            if completed_attempt == Some(transcript.attempt_seq()) {
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
@@ -863,7 +849,7 @@ async fn run_with_completion_model(
                             | Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(_)))
                                 if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
-                                completed_attempt = Some(transcript.attempt_seq);
+                                completed_attempt = Some(transcript.attempt_seq());
                                 let (provider, model, fast, pricing) = match provider_switch
                                     .as_ref()
                                     .filter(|_| context_handoff_hook.is_writing())
@@ -902,8 +888,7 @@ async fn run_with_completion_model(
                                     handoff_calls.extend(call_usage);
                                 } else {
                                     transcript.record_usage(tokens, call_usage);
-                                    transcript.parts.order_stream_parts(&transcript.stream_id);
-                                    transcript.tool_call_tracker.record_parts(&transcript.parts.parts);
+                                    transcript.record_stream_parts();
                                     pending_origin_turn = Some(call.call_index + 1);
                                 }
                                 if let Some(error) = incomplete_completion_error(call.finish_reason.as_ref()) {
@@ -927,17 +912,17 @@ async fn run_with_completion_model(
                                 Item::Event(StreamEvent::Text { part, text }),
                             ))) => {
                                 transcript.push_streamed_text(part.index(), &text);
-                                streamed_text = join_assistant_text_parts(&transcript.parts.parts);
+                                streamed_text = transcript.assistant_text();
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                                 Item::Event(StreamEvent::Start { part, kind: rig::streaming::PartKind::Reasoning, .. }),
                             ))) => {
-                                transcript.push_reasoning(&format!("reasoning:{}", part.index()), "");
+                                transcript.push_reasoning(part.index(), "");
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                                 Item::Event(StreamEvent::Reasoning { part, text }),
                             ))) => {
-                                transcript.push_reasoning(&format!("reasoning:{}", part.index()), &text);
+                                transcript.push_reasoning(part.index(), &text);
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                                 Item::Event(StreamEvent::End { part, content }),
@@ -945,18 +930,13 @@ async fn run_with_completion_model(
                                 match content {
                                     AssistantContent::Text(text) => {
                                         transcript.complete_text(part.index(), &text);
-                                        streamed_text = join_assistant_text_parts(&transcript.parts.parts);
+                                        streamed_text = transcript.assistant_text();
                                     }
                                     AssistantContent::Reasoning(reasoning) => {
-                                        transcript.complete_reasoning(
-                                            &format!("reasoning:{}", part.index()), &reasoning,
-                                        );
+                                        transcript.complete_reasoning(part.index(), &reasoning);
                                     }
                                     AssistantContent::ToolCall(tool_call) => {
-                                        transcript.push_tool_call(
-                                            Some(format!("{}:tool:{}", transcript.stream_id, part.index())),
-                                            tool_call,
-                                        );
+                                        transcript.push_tool_call(part.index(), tool_call);
                                     }
                                     _ => {}
                                 }
@@ -988,7 +968,7 @@ async fn run_with_completion_model(
                                 let live_context = request.workspace_context.prompts(&cwd.get());
                                 let handoff = ContextHandoffWrite {
                                     summary: &summary,
-                                    completion_attempt_seq: transcript.attempt_seq,
+                                    completion_attempt_seq: transcript.attempt_seq(),
                                     handoff_calls: &handoff_calls,
                                 };
                                 let begin = if before_prompt { pending_begin.take() } else { None };
@@ -1063,10 +1043,7 @@ async fn run_with_completion_model(
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
-                                transcript.live.clear(&request.thread_id);
-                                if let Some(output) = &transcript.runtime.output {
-                                    output.notify_live_update();
-                                }
+                                transcript.clear_live();
                                 completed_attempt = None;
                                 final_text.clear();
                                 final_response_received = false;
@@ -1090,10 +1067,7 @@ async fn run_with_completion_model(
                                     if let Err(error) = transcript.advance_attempt().await {
                                         break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                     }
-                                    transcript.live.clear(&request.thread_id);
-                                    if let Some(output) = &transcript.runtime.output {
-                                        output.notify_live_update();
-                                    }
+                                    transcript.clear_live();
                                     final_text.clear();
                                     final_response_received = false;
                                     streamed_text.clear();
@@ -1124,10 +1098,7 @@ async fn run_with_completion_model(
                                     if let Err(error) = transcript.advance_attempt().await {
                                         break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                     }
-                                    transcript.live.clear(&request.thread_id);
-                                    if let Some(output) = &transcript.runtime.output {
-                                        output.notify_live_update();
-                                    }
+                                    transcript.clear_live();
                                     final_text.clear();
                                     final_response_received = false;
                                     streamed_text.clear();
@@ -1141,26 +1112,11 @@ async fn run_with_completion_model(
                                         error: anyhow!(error).context("Context handoff failed. Retry to continue the conversation."),
                                     };
                                 } else {
-                                    let text = if final_text.is_empty() {
-                                        streamed_text
-                                    } else {
-                                        final_text
-                                    };
-                                    let result = match classify_provider_error(&error) {
-                                        ProviderErrorDisposition::Superseded => {
-                                            AgentProviderResult::Superseded {
-                                                error: anyhow!(error),
-                                            }
-                                        }
-                                        ProviderErrorDisposition::Cancelled => {
-                                            AgentProviderResult::Cancelled { text }
-                                        }
-                                        ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
-                                            text,
-                                            error: anyhow!(error),
-                                        },
-                                    };
-                                    break 'agent_run result;
+                                    break 'agent_run transcript_error(
+                                        anyhow!(error),
+                                        &final_text,
+                                        &streamed_text,
+                                    );
                                 }
                             }
                             None => {
@@ -1198,11 +1154,6 @@ async fn run_with_completion_model(
     }
 }
 
-const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
-
-#[cfg(test)]
-mod reasoning_integration_tests;
-
 fn transcript_error(
     error: anyhow::Error,
     final_text: &str,
@@ -1220,366 +1171,8 @@ fn transcript_error(
     }
 }
 
-struct TranscriptSink {
-    runtime: RuntimeClient,
-    live: Arc<LiveCompletionHub>,
-    run_id: String,
-    claim_id: String,
-    thread_id: String,
-    stream_id: String,
-    attempt_seq: u64,
-    parts: LiveAssistantParts,
-    provider_metadata: HashMap<String, serde_json::Value>,
-    last_publish: Instant,
-    unpublished: usize,
-    streamed: bool,
-    finalized: bool,
-    usage_tokens: Option<u64>,
-    call_usage: Option<ModelCallUsage>,
-    tool_call_tracker: ToolCallTracker,
-}
-
-impl TranscriptSink {
-    async fn start(
-        runtime: RuntimeClient,
-        live: Arc<LiveCompletionHub>,
-        run_id: String,
-        claim_id: String,
-        thread_id: String,
-        tool_call_tracker: ToolCallTracker,
-    ) -> anyhow::Result<Self> {
-        runtime
-            .register_completion_attempt(&run_id, &claim_id, 1)
-            .await?;
-        Ok(Self {
-            stream_id: format!("agent:{run_id}:{claim_id}:1"),
-            runtime,
-            live,
-            run_id,
-            claim_id,
-            thread_id,
-            attempt_seq: 1,
-            parts: LiveAssistantParts::default(),
-            provider_metadata: HashMap::new(),
-            last_publish: Instant::now(),
-            unpublished: 0,
-            streamed: false,
-            finalized: false,
-            usage_tokens: None,
-            call_usage: None,
-            tool_call_tracker,
-        })
-    }
-
-    fn push_streamed_text(&mut self, part: usize, text: &str) {
-        let id = format!("{}:text:{part}", self.stream_id);
-        let turn_id = Some(self.stream_id.clone());
-        self.apply_text_delta("text", id, text, turn_id);
-        self.publish_if_needed(false);
-    }
-
-    fn complete_text(&mut self, part: usize, text: &rig::message::Text) -> String {
-        self.streamed = true;
-        self.unpublished += 1;
-        let previous = apply_completed_text(
-            &mut self.parts,
-            &mut self.provider_metadata,
-            &self.stream_id,
-            part,
-            text,
-        );
-        self.publish_if_needed(true);
-        previous
-    }
-
-    fn push_reasoning(&mut self, id: &str, text: &str) {
-        let part_id = format!("{}:{id}", self.stream_id);
-        let turn_id = Some(self.stream_id.clone());
-        self.apply_text_delta("reasoning", part_id, text, turn_id);
-        self.publish_if_needed(false);
-    }
-
-    fn complete_reasoning(&mut self, correlator: &str, reasoning: &rig::message::Reasoning) {
-        self.streamed = true;
-        self.unpublished += 1;
-        apply_completed_reasoning(
-            &mut self.parts,
-            &mut self.provider_metadata,
-            &self.stream_id,
-            correlator,
-            reasoning,
-        );
-        self.publish_if_needed(true);
-    }
-
-    fn push_tool_call(&mut self, part_id: Option<String>, call: rig::message::ToolCall) {
-        self.streamed = true;
-        self.unpublished += 1;
-        apply_completed_tool_call(
-            &mut self.parts,
-            &mut self.provider_metadata,
-            &self.stream_id,
-            part_id,
-            call,
-        );
-        self.publish_if_needed(true);
-    }
-
-    fn reset_parts(&mut self) {
-        self.parts.clear();
-        self.provider_metadata.clear();
-        self.unpublished = 0;
-        self.streamed = false;
-        self.finalized = false;
-        self.usage_tokens = None;
-        self.call_usage = None;
-    }
-
-    async fn finalize_turn(&mut self) -> anyhow::Result<()> {
-        self.publish_if_needed(true);
-        self.runtime
-            .finalize_completion_call(
-                &self.run_id,
-                &self.claim_id,
-                self.attempt_seq,
-                &self.stream_id,
-                self.items_json(),
-                self.tool_call_tracker.completion_assignments(),
-                self.usage_tokens,
-                self.call_usage.as_ref(),
-            )
-            .await?;
-        self.streamed = false;
-        self.finalized = true;
-        Ok(())
-    }
-
-    async fn advance_attempt(&mut self) -> anyhow::Result<()> {
-        self.reset_parts();
-        self.attempt_seq += 1;
-        self.stream_id = format!(
-            "agent:{}:{}:{}",
-            self.run_id, self.claim_id, self.attempt_seq
-        );
-        self.runtime
-            .register_completion_attempt(&self.run_id, &self.claim_id, self.attempt_seq)
-            .await?;
-        self.tool_call_tracker
-            .begin_attempt(self.attempt_seq, &self.stream_id);
-        Ok(())
-    }
-
-    async fn finalize_turn_if_streamed(&mut self) -> anyhow::Result<()> {
-        if self.streamed {
-            self.finalize_turn().await?;
-        }
-        Ok(())
-    }
-
-    async fn begin_next_turn_after_tools(&mut self) -> anyhow::Result<()> {
-        self.finalize_turn_if_streamed().await?;
-        if self.finalized {
-            self.advance_attempt().await?;
-        }
-        Ok(())
-    }
-
-    fn items_json(&self) -> Vec<serde_json::Value> {
-        durable_items_json(&self.parts.parts, &self.provider_metadata)
-    }
-
-    fn has_unpublished(&self) -> bool {
-        self.unpublished > 0
-    }
-
-    fn record_usage(&mut self, tokens: Option<u64>, call_usage: Option<ModelCallUsage>) {
-        if tokens.is_some() {
-            self.usage_tokens = tokens;
-        }
-        if call_usage.is_some() {
-            self.call_usage = call_usage;
-        }
-    }
-
-    fn record_origin(&mut self, origin: &rig::message::Origin) {
-        apply_completion_origin(&self.parts.parts, &mut self.provider_metadata, origin);
-    }
-
-    fn publish_delay(&self) -> Duration {
-        TRANSCRIPT_FLUSH_INTERVAL.saturating_sub(self.last_publish.elapsed())
-    }
-
-    fn publish_if_needed(&mut self, force: bool) {
-        if self.unpublished == 0 {
-            return;
-        }
-        if !force
-            && self.unpublished < 24
-            && self.last_publish.elapsed() < TRANSCRIPT_FLUSH_INTERVAL
-        {
-            return;
-        }
-        self.publish();
-    }
-
-    fn publish(&mut self) {
-        self.unpublished = 0;
-        self.last_publish = Instant::now();
-        let overlay = LiveCompletionOverlay {
-            thread_id: self.thread_id.clone(),
-            run_id: self.run_id.clone(),
-            run_status: "running".to_string(),
-            stream_id: self.stream_id.clone(),
-            text: join_assistant_text_parts(&self.parts.parts),
-            parts: visible_live_parts(&self.parts.parts),
-        };
-        self.live.publish(overlay);
-        if let Some(output) = &self.runtime.output {
-            output.notify_live_update();
-        }
-    }
-
-    fn apply_text_delta(
-        &mut self,
-        event_type: &str,
-        id: String,
-        delta: &str,
-        turn_id: Option<String>,
-    ) {
-        self.streamed = true;
-        self.unpublished += 1;
-        self.parts
-            .apply_text_delta(event_type, id, delta, turn_id, now_ms());
-    }
-}
-
-impl Drop for TranscriptSink {
-    fn drop(&mut self) {
-        self.publish_if_needed(true);
-        self.live.clear(&self.thread_id);
-        if let Some(output) = &self.runtime.output {
-            output.notify_live_update();
-        }
-    }
-}
-
-fn visible_live_parts(parts: &[LiveAssistantPart]) -> Vec<LiveAssistantPart> {
-    parts
-        .iter()
-        .filter(|part| {
-            !matches!(part, LiveAssistantPart::Reasoning { text, .. } if text.trim().is_empty())
-        })
-        .cloned()
-        .collect()
-}
-
-fn durable_items_json(
-    parts: &[LiveAssistantPart],
-    provider_metadata: &HashMap<String, serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    parts
-        .iter()
-        .map(|part| {
-            let key = match part {
-                LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
-                LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
-                LiveAssistantPart::ToolCall {
-                    part_id, call_id, ..
-                } => part_id.clone().unwrap_or_else(|| call_id.clone()),
-            };
-            merge_provider_metadata(part, provider_metadata.get(&key))
-        })
-        .collect()
-}
-
-fn apply_completion_origin(
-    parts: &[LiveAssistantPart],
-    provider_metadata: &mut HashMap<String, serde_json::Value>,
-    origin: &rig::message::Origin,
-) {
-    for part in parts {
-        let key = match part {
-            LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
-            LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
-            LiveAssistantPart::ToolCall {
-                part_id, call_id, ..
-            } => part_id.clone().unwrap_or_else(|| call_id.clone()),
-        };
-        let metadata = provider_metadata
-            .entry(key)
-            .or_insert_with(|| serde_json::json!({}));
-        metadata["origin"] = serde_json::to_value(origin).expect("origin always serializes");
-    }
-}
-
-fn apply_completed_text(
-    parts: &mut LiveAssistantParts,
-    provider_metadata: &mut HashMap<String, serde_json::Value>,
-    stream_id: &str,
-    part: usize,
-    completed: &rig::message::Text,
-) -> String {
-    let id = format!("{stream_id}:text:{part}");
-    let previous = parts.apply_completed_text(
-        id.clone(),
-        completed.text.clone(),
-        Some(stream_id.to_string()),
-        now_ms(),
-    );
-    let block = AssistantContent::Text(completed.clone());
-    if let Some(native) = block.native_item() {
-        let mut item = native.clone();
-        if let Some(content) = item
-            .get_mut("content")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for part in content {
-                if let Some(part) = part.as_object_mut() {
-                    part.remove("text");
-                }
-            }
-        }
-        provider_metadata.insert(
-            format!("text:{id}"),
-            serde_json::json!({ "rigNative": item }),
-        );
-    }
-    previous
-}
-
-fn apply_completed_tool_call(
-    parts: &mut LiveAssistantParts,
-    provider_metadata: &mut HashMap<String, serde_json::Value>,
-    stream_id: &str,
-    part_id: Option<String>,
-    call: rig::message::ToolCall,
-) {
-    let call_id = call.id.wire().into_owned();
-    let key = part_id.clone().unwrap_or_else(|| call_id.clone());
-    let block = AssistantContent::ToolCall(call.clone());
-    if let Some(native) = block.native_item() {
-        let mut item = native.clone();
-        // Replay rebuilds canonical arguments, so only keep the model's
-        // spelling when it differs; replaying other bytes breaks prompt caching.
-        let canonical = call.function.arguments_value().to_string();
-        if let Some(item) = item.as_object_mut()
-            && item.get("arguments").and_then(serde_json::Value::as_str) == Some(&canonical)
-        {
-            item.remove("arguments");
-        }
-        provider_metadata.insert(key, serde_json::json!({ "rigNative": item }));
-    } else {
-        provider_metadata.remove(&key);
-    }
-    parts.apply_tool_call(
-        part_id,
-        call_id,
-        call.function.name.into(),
-        call.function.arguments.into(),
-        Some(stream_id.to_string()),
-        now_ms(),
-    );
-}
+#[cfg(test)]
+mod reasoning_integration_tests;
 
 #[cfg(test)]
 mod tests;
