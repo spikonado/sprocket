@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
+import migrationsTest from '@convex-dev/migrations/test';
 import exaTest from '@exalabs/convex-exa/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import posthogTest from '@posthog/convex/test';
@@ -97,6 +98,7 @@ export function initConvexTest(): ConvexTestInstance {
 	// TestConvex variance; the convex-test backend object is the same instance.
 	const backend = t as never;
 	rateLimiterTest.register(backend);
+	migrationsTest.register(backend);
 	exaTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'contextDevWorkpool');

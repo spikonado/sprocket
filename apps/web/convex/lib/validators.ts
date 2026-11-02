@@ -1095,7 +1095,7 @@ export const vTranscriptToolStatus = v.union(
 );
 
 export const vTranscriptToolBody = v.object({
-	toolInvocationId: v.string(),
+	toolInvocationId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
 	input: v.optional(vJsonValue),
