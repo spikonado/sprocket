@@ -186,6 +186,12 @@ export const vPullRequestState = v.union(
 	v.literal('merged')
 );
 
+const vPollPrCheck = v.object({
+	name: v.string(),
+	url: v.optional(v.string()),
+	required: v.optional(v.boolean())
+});
+
 export const vPollPrResult = v.object({
 	changes: v.array(
 		v.union(
@@ -193,6 +199,7 @@ export const vPollPrResult = v.object({
 			v.literal('closed'),
 			v.literal('checksFailed'),
 			v.literal('checksFinished'),
+			v.literal('requiredChecksPassed'),
 			v.literal('conflicting'),
 			v.literal('newComments')
 		)
@@ -203,8 +210,8 @@ export const vPollPrResult = v.object({
 	conflicting: v.union(v.boolean(), v.null()),
 	checks: v.object({
 		passed: v.number(),
-		pending: v.array(v.string()),
-		failed: v.array(v.object({ name: v.string(), url: v.optional(v.string()) }))
+		pending: v.array(vPollPrCheck),
+		failed: v.array(vPollPrCheck)
 	}),
 	newComments: v.optional(
 		v.array(

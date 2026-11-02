@@ -1,0 +1,233 @@
+# A check context of the head commit. `isRequired` is asked for on github.com only (`$required`):
+# an older Enterprise server may not know it, and an unknown field fails the whole read.
+fragment CheckContext on StatusCheckRollupContext {
+	__typename
+	... on StatusContext {
+		context
+		state
+		targetUrl
+		isRequired(pullRequestNumber: $number) @include(if: $required)
+	}
+	... on CheckRun {
+		name
+		status
+		conclusion
+		detailsUrl
+		isRequired(pullRequestNumber: $number) @include(if: $required)
+	}
+}
+
+fragment ThreadComment on PullRequestReviewComment {
+	id
+	author {
+		login
+	}
+	body
+	createdAt
+	lastEditedAt
+	url
+}
+
+# Whether anything a watch reports could have changed, for a point or so instead of a full read.
+query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!) {
+	repository(owner: $owner, name: $name) {
+		pullRequest(number: $number) {
+			state
+			mergeable
+			headRefOid
+			comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
+				totalCount
+				nodes {
+					lastEditedAt
+				}
+			}
+			reviews(last: 100) {
+				totalCount
+				nodes {
+					lastEditedAt
+				}
+			}
+			reviewThreads {
+				totalCount
+			}
+			commits(last: 1) {
+				nodes {
+					commit {
+						statusCheckRollup {
+							contexts {
+								checkRunCountsByState {
+									state
+									count
+								}
+								statusContextCountsByState {
+									state
+									count
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+query PullRequestCore($owner: String!, $name: String!, $number: Int!, $required: Boolean!) {
+	viewer {
+		login
+	}
+	repository(owner: $owner, name: $name) {
+		pullRequest(number: $number) {
+			state
+			mergeable
+			headRefOid
+			commits(last: 1) {
+				nodes {
+					commit {
+						statusCheckRollup {
+							contexts(first: 100) {
+								nodes {
+									...CheckContext
+								}
+								pageInfo {
+									hasNextPage
+									endCursor
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+# Every check context of the head commit, a page at a time, for a rollup past one page.
+query PullRequestCheckContexts(
+	$owner: String!
+	$name: String!
+	$number: Int!
+	$required: Boolean!
+	$after: String
+) {
+	repository(owner: $owner, name: $name) {
+		pullRequest(number: $number) {
+			headRefOid
+			commits(last: 1) {
+				nodes {
+					commit {
+						statusCheckRollup {
+							contexts(first: 100, after: $after) {
+								nodes {
+									...CheckContext
+								}
+								pageInfo {
+									hasNextPage
+									endCursor
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+query PullRequestActivity(
+	$owner: String!
+	$name: String!
+	$number: Int!
+	$withComments: Boolean!
+	$commentsAfter: String
+	$withReviews: Boolean!
+	$reviewsAfter: String
+) {
+	repository(owner: $owner, name: $name) {
+		pullRequest(number: $number) {
+			comments(first: 100, after: $commentsAfter) @include(if: $withComments) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					id
+					body
+					createdAt
+					lastEditedAt
+					url
+					author {
+						login
+					}
+				}
+			}
+			reviews(first: 100, after: $reviewsAfter) @include(if: $withReviews) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					id
+					body
+					state
+					submittedAt
+					lastEditedAt
+					url
+					author {
+						login
+					}
+				}
+			}
+		}
+	}
+}
+
+# One page of review threads with their comments. `$after` is null for the first page and the last
+# page's `endCursor` after that, so a pull request with more threads than one page holds is walked
+# rather than cut off.
+query ReviewThreads($owner: String!, $name: String!, $number: Int!, $after: String) {
+	repository(owner: $owner, name: $name) {
+		pullRequest(number: $number) {
+			reviewThreads(first: 100, after: $after) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					id
+					path
+					# Only ten comments ride with each thread. A hundred threads times a hundred comments
+					# made GitHub reserve 10,000 nested rows and charge 104 points; unfinished threads are
+					# paged from their own cursor by `ReviewThreadComments`.
+					comments(first: 10) {
+						pageInfo {
+							hasNextPage
+							endCursor
+						}
+						nodes {
+							...ThreadComment
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+# The rest of one thread's conversation. GraphQL pages a connection nested inside another only
+# from the inner node itself, so a thread longer than a page is followed on its own.
+query ReviewThreadComments($threadId: ID!, $after: String) {
+	node(id: $threadId) {
+		... on PullRequestReviewThread {
+			comments(first: 100, after: $after) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					...ThreadComment
+				}
+			}
+		}
+	}
+}

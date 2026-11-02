@@ -1,26 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use super::{PullRequestRef, PullRequestState, parse_repository};
-use crate::github::{GitHubApi, GitHubError};
+use super::PullRequestState;
+
+mod reader;
+pub use reader::ActivityReader;
 
 const SNIPPET_CHARS: usize = 300;
 const MARKUP_TAGS: &[&str] = &[
     "a", "b", "br", "code", "details", "em", "img", "p", "strong", "sub", "summary", "sup",
 ];
-
-const QUERY: &str = "query PullRequestActivity($owner: String!, $name: String!, $number: Int!) { \
-    viewer { login } \
-    repository(owner: $owner, name: $name) { pullRequest(number: $number) { \
-        state mergeable headRefOid \
-        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { \
-            __typename \
-            ... on CheckRun { name status conclusion detailsUrl } \
-            ... on StatusContext { context state targetUrl } \
-        } } } } } } \
-        comments(last: 20) { nodes { id author { login } body createdAt lastEditedAt url } } \
-        reviews(last: 20) { nodes { id author { login } state body submittedAt url \
-            comments(first: 20) { nodes { id path body url } } } } \
-    } } }";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckOutcome {
@@ -36,6 +24,9 @@ pub struct Check {
     pub outcome: CheckOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Branch protection must see it pass before the PR can merge.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 /// A comment, review, or inline review comment.
@@ -71,6 +62,7 @@ pub enum Change {
     Closed,
     ChecksFailed,
     ChecksFinished,
+    RequiredChecksPassed,
     Conflicting,
     NewComments,
 }
@@ -84,6 +76,7 @@ pub struct Seen {
     head_sha: String,
     failed_checks: Vec<String>,
     checks_finished: bool,
+    required_passed: bool,
     conflicting: bool,
     remarks_through: Option<String>,
     /// Remarks at `remarks_through`, since GitHub stamps to the second.
@@ -100,6 +93,7 @@ impl Seen {
             head_sha: activity.head_sha.clone(),
             failed_checks: Vec::new(),
             checks_finished: false,
+            required_passed: false,
             conflicting: false,
             remarks_through,
             remark_ids,
@@ -142,8 +136,17 @@ pub fn compare(seen: &Seen, activity: &Activity) -> Report {
             .checks
             .iter()
             .all(|check| check.outcome != CheckOutcome::Pending);
+    let mut required = activity
+        .checks
+        .iter()
+        .filter(|check| check.required)
+        .peekable();
+    let required_passed =
+        required.peek().is_some() && required.all(|check| check.outcome == CheckOutcome::Passed);
     if checks_finished && !(same_head && seen.checks_finished) {
         changes.push(Change::ChecksFinished);
+    } else if required_passed && !(same_head && seen.required_passed) {
+        changes.push(Change::RequiredChecksPassed);
     }
 
     if activity.conflicting == Some(true) && !seen.conflicting {
@@ -176,6 +179,7 @@ pub fn compare(seen: &Seen, activity: &Activity) -> Report {
             head_sha: activity.head_sha.clone(),
             failed_checks,
             checks_finished,
+            required_passed,
             conflicting: activity.conflicting.unwrap_or(seen.conflicting),
             remarks_through,
             remark_ids,
@@ -204,256 +208,6 @@ fn seen_through(
             .map(|remark| remark.id.clone()),
     );
     (Some(latest.to_owned()), latest_ids)
-}
-
-pub async fn fetch_activity(
-    user_id: &str,
-    pull_request: &PullRequestRef,
-) -> Result<Activity, GitHubError> {
-    let repository = parse_repository(&pull_request.repository).ok_or_else(|| {
-        anyhow::anyhow!(
-            "{:?} is not a repository. Repositories look like `github.com/owner/name`.",
-            pull_request.repository
-        )
-    })?;
-    let api = GitHubApi::connect(user_id, repository.host).await?;
-    let variables = serde_json::json!({
-        "owner": repository.owner,
-        "name": repository.name,
-        "number": pull_request.number,
-    });
-    let response = api.graphql::<Data>(QUERY, variables).await?;
-    let missing = || {
-        let reason = response
-            .errors
-            .first()
-            .map_or("not found", |error| error.message.as_str());
-        anyhow::anyhow!(
-            "Reading {}#{} failed: {reason}",
-            pull_request.repository,
-            pull_request.number
-        )
-    };
-    let data = response.data.as_ref().ok_or_else(missing)?;
-    let node = data
-        .repository
-        .as_ref()
-        .and_then(|repository| repository.pull_request.as_ref())
-        .ok_or_else(missing)?;
-    Ok(node.activity(&data.viewer.login))
-}
-
-#[derive(Deserialize)]
-struct Data {
-    viewer: Author,
-    repository: Option<RepositoryNode>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RepositoryNode {
-    pull_request: Option<PullRequestNode>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PullRequestNode {
-    state: PullRequestState,
-    mergeable: String,
-    head_ref_oid: String,
-    commits: Nodes<CommitNode>,
-    comments: Nodes<CommentNode>,
-    reviews: Nodes<ReviewNode>,
-}
-
-#[derive(Deserialize)]
-struct Nodes<T> {
-    nodes: Vec<T>,
-}
-
-#[derive(Deserialize)]
-struct Author {
-    login: String,
-}
-
-#[derive(Deserialize)]
-struct CommitNode {
-    commit: Commit,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Commit {
-    status_check_rollup: Option<Rollup>,
-}
-
-#[derive(Deserialize)]
-struct Rollup {
-    contexts: Nodes<Context>,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "__typename")]
-enum Context {
-    CheckRun(CheckRunNode),
-    StatusContext(StatusContextNode),
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CheckRunNode {
-    name: String,
-    status: String,
-    conclusion: Option<String>,
-    details_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StatusContextNode {
-    context: String,
-    state: String,
-    target_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CommentNode {
-    id: String,
-    author: Option<Author>,
-    body: String,
-    created_at: String,
-    last_edited_at: Option<String>,
-    url: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewNode {
-    id: String,
-    author: Option<Author>,
-    state: String,
-    body: String,
-    /// `None` for a review that is still a draft.
-    submitted_at: Option<String>,
-    url: String,
-    comments: Nodes<ReviewCommentNode>,
-}
-
-#[derive(Deserialize)]
-struct ReviewCommentNode {
-    id: String,
-    path: String,
-    body: String,
-    url: String,
-}
-
-impl PullRequestNode {
-    fn activity(&self, viewer: &str) -> Activity {
-        let checks = self
-            .commits
-            .nodes
-            .last()
-            .and_then(|node| node.commit.status_check_rollup.as_ref())
-            .map_or_else(Vec::new, |rollup| {
-                rollup.contexts.nodes.iter().map(Context::check).collect()
-            });
-
-        let author = |author: &Option<Author>| {
-            author
-                .as_ref()
-                .map_or_else(|| "ghost".to_string(), |author| author.login.clone())
-        };
-        let mut remarks = Vec::new();
-        for comment in &self.comments.nodes {
-            remarks.push(Remark {
-                id: comment.id.clone(),
-                author: author(&comment.author),
-                path: None,
-                body: snippet(&comment.body),
-                at: comment
-                    .last_edited_at
-                    .clone()
-                    .unwrap_or_else(|| comment.created_at.clone()),
-                url: comment.url.clone(),
-            });
-        }
-        for review in &self.reviews.nodes {
-            let Some(at) = &review.submitted_at else {
-                continue;
-            };
-            let verdict = match review.state.as_str() {
-                "APPROVED" => "Approved",
-                "CHANGES_REQUESTED" => "Requested changes",
-                _ => "",
-            };
-            let summary = snippet(&review.body);
-            let body = match (verdict, summary.as_str()) {
-                ("", _) => summary.clone(),
-                (verdict, "") => verdict.to_string(),
-                (verdict, summary) => format!("{verdict}: {summary}"),
-            };
-            if !body.is_empty() {
-                remarks.push(Remark {
-                    id: review.id.clone(),
-                    author: author(&review.author),
-                    path: None,
-                    body,
-                    at: at.clone(),
-                    url: review.url.clone(),
-                });
-            }
-            for comment in &review.comments.nodes {
-                remarks.push(Remark {
-                    id: comment.id.clone(),
-                    author: author(&review.author),
-                    path: Some(comment.path.clone()),
-                    body: snippet(&comment.body),
-                    at: at.clone(),
-                    url: comment.url.clone(),
-                });
-            }
-        }
-        remarks.retain(|remark| !remark.author.eq_ignore_ascii_case(viewer));
-        remarks.sort_by(|a, b| a.at.cmp(&b.at));
-
-        Activity {
-            state: self.state,
-            head_sha: self.head_ref_oid.clone(),
-            conflicting: match self.mergeable.as_str() {
-                "CONFLICTING" => Some(true),
-                "MERGEABLE" => Some(false),
-                _ => None,
-            },
-            checks,
-            remarks,
-        }
-    }
-}
-
-impl Context {
-    fn check(&self) -> Check {
-        match self {
-            Self::CheckRun(run) => Check {
-                name: run.name.clone(),
-                outcome: match (run.status.as_str(), run.conclusion.as_deref()) {
-                    ("COMPLETED", Some("SUCCESS" | "NEUTRAL" | "SKIPPED")) => CheckOutcome::Passed,
-                    ("COMPLETED", _) => CheckOutcome::Failed,
-                    _ => CheckOutcome::Pending,
-                },
-                url: run.details_url.clone(),
-            },
-            Self::StatusContext(status) => Check {
-                name: status.context.clone(),
-                outcome: match status.state.as_str() {
-                    "SUCCESS" => CheckOutcome::Passed,
-                    "ERROR" | "FAILURE" => CheckOutcome::Failed,
-                    _ => CheckOutcome::Pending,
-                },
-                url: status.target_url.clone(),
-            },
-        }
-    }
 }
 
 /// The start of `body` as plain text. Review bots wrap findings in HTML, and

@@ -138,9 +138,34 @@ impl GitHubApi {
         query: &str,
         variables: serde_json::Value,
     ) -> Result<GraphQlResponse<T>, GitHubError> {
-        let body =
-            serde_json::to_vec(&serde_json::json!({ "query": query, "variables": variables }))
-                .map_err(anyhow::Error::from)?;
+        self.send(serde_json::json!({ "query": query, "variables": variables }))
+            .await
+    }
+
+    /// Runs one named operation from a document that holds several.
+    pub async fn operation<T: DeserializeOwned>(
+        &self,
+        document: &str,
+        operation_name: &str,
+        variables: serde_json::Value,
+    ) -> Result<GraphQlResponse<T>, GitHubError> {
+        self.send(serde_json::json!({
+            "query": document,
+            "operationName": operation_name,
+            "variables": variables,
+        }))
+        .await
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    async fn send<T: DeserializeOwned>(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<GraphQlResponse<T>, GitHubError> {
+        let body = serde_json::to_vec(&request).map_err(anyhow::Error::from)?;
         let response = self
             .http
             .post(self.graphql_url.clone())

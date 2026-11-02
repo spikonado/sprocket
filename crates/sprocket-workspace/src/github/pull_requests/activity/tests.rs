@@ -5,6 +5,14 @@ fn check(name: &str, outcome: CheckOutcome) -> Check {
         name: name.into(),
         outcome,
         url: None,
+        required: false,
+    }
+}
+
+fn required(name: &str, outcome: CheckOutcome) -> Check {
+    Check {
+        required: true,
+        ..check(name, outcome)
     }
 }
 
@@ -112,59 +120,39 @@ fn reports_conflicts_and_merges() {
 }
 
 #[test]
-fn reads_checks_and_others_remarks_from_graphql() {
-    let data: Data = serde_json::from_value(serde_json::json!({
-        "viewer": { "login": "Me" },
-        "repository": { "pullRequest": {
-            "state": "OPEN",
-            "mergeable": "UNKNOWN",
-            "headRefOid": "a1",
-            "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": [
-                { "__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "TIMED_OUT", "detailsUrl": "https://ci/rust" },
-                { "__typename": "CheckRun", "name": "docs", "status": "COMPLETED", "conclusion": "SKIPPED", "detailsUrl": null },
-                { "__typename": "StatusContext", "context": "deploy", "state": "PENDING", "targetUrl": null }
-            ] } } } }] },
-            "comments": { "nodes": [
-                { "id": "c1", "author": { "login": "me" }, "body": "My own note", "createdAt": "2026-01-01T00:00:00Z", "lastEditedAt": null, "url": "u1" }
-            ] },
-            "reviews": { "nodes": [
-                { "id": "r1", "author": { "login": "review-bot" }, "state": "APPROVED", "body": "<!-- meta -->", "submittedAt": "2026-01-01T00:02:00Z", "url": "u2", "comments": { "nodes": [] } },
-                { "id": "r2", "author": null, "state": "COMMENTED", "body": "", "submittedAt": "2026-01-01T00:01:00Z", "url": "u3", "comments": { "nodes": [
-                    { "id": "rc1", "path": "src/lib.rs", "body": "<a href=\"#\"><img alt=\"P1\" src=\"x.svg\"></a> Use `Vec<u8>` here.", "url": "u4" }
-                ] } },
-                { "id": "r3", "author": { "login": "draft" }, "state": "PENDING", "body": "Draft", "submittedAt": null, "url": "u5", "comments": { "nodes": [] } }
-            ] }
-        } }
-    }))
-    .unwrap();
-
-    let activity = data
-        .repository
-        .unwrap()
-        .pull_request
-        .unwrap()
-        .activity(&data.viewer.login);
-
-    let outcomes: Vec<_> = activity.checks.iter().map(|c| c.outcome).collect();
-    assert_eq!(
-        outcomes,
-        [
-            CheckOutcome::Failed,
-            CheckOutcome::Passed,
-            CheckOutcome::Pending
-        ]
+fn reports_required_checks_passing_once_before_the_rest_finish() {
+    let pending = activity(
+        "a1",
+        vec![
+            required("rust", CheckOutcome::Pending),
+            check("bench", CheckOutcome::Pending),
+        ],
+        vec![],
     );
-    assert_eq!(activity.conflicting, None);
-    let remarks: Vec<_> = activity
-        .remarks
-        .iter()
-        .map(|r| (r.author.as_str(), r.path.as_deref(), r.body.as_str()))
-        .collect();
+    let seen = compare(&Seen::first_look(&pending), &pending).next;
+    let required_done = activity(
+        "a1",
+        vec![
+            required("rust", CheckOutcome::Passed),
+            check("bench", CheckOutcome::Pending),
+        ],
+        vec![],
+    );
+
+    let report = compare(&seen, &required_done);
+
+    assert_eq!(report.changes, [Change::RequiredChecksPassed]);
+    assert!(compare(&report.next, &required_done).changes.is_empty());
+    let all_done = activity(
+        "a1",
+        vec![
+            required("rust", CheckOutcome::Passed),
+            check("bench", CheckOutcome::Passed),
+        ],
+        vec![],
+    );
     assert_eq!(
-        remarks,
-        [
-            ("ghost", Some("src/lib.rs"), "P1 Use `Vec<u8>` here."),
-            ("review-bot", None, "Approved"),
-        ]
+        compare(&report.next, &all_done).changes,
+        [Change::ChecksFinished]
     );
 }

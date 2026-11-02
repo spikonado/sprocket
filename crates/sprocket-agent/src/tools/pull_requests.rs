@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::WorkspaceOperationCancelled;
 use sprocket_workspace::github::pull_requests::activity::{
-    Activity, CheckOutcome, Report, Seen, compare, fetch_activity,
+    Activity, ActivityReader, CheckOutcome, Report, Seen, compare,
 };
 use sprocket_workspace::github::pull_requests::{PullRequestRef, fetch_states};
 use tokio::time::{Instant, sleep_until};
@@ -196,21 +196,32 @@ async fn poll_pr(
 ) -> anyhow::Result<serde_json::Value> {
     let pull_request = pull_request_ref(&args.repository, args.number);
     let mut seen = args.cursor.as_deref().map(decode_cursor).transpose()?;
+    let mut reader = ActivityReader::connect(user_id, &pull_request).await?;
+    let mut latest = None;
     let deadline = Instant::now() + wait;
     loop {
-        let activity = fetch_activity(user_id, &pull_request).await?;
-        let report = compare(
-            seen.get_or_insert_with(|| Seen::first_look(&activity)),
-            &activity,
-        );
-        if !report.changes.is_empty() {
-            return poll_pr_output(&activity, &report);
+        if let Some(activity) = reader.read().await? {
+            let report = compare(
+                seen.get_or_insert_with(|| Seen::first_look(&activity)),
+                &activity,
+            );
+            if !report.changes.is_empty() {
+                return poll_pr_output(&activity, &report);
+            }
+            latest = Some((activity, report));
         }
         let next_read = Instant::now() + POLL_PR_INTERVAL;
         sleep_until(next_read.min(deadline)).await;
         // The cursor comes from this read, so news after it waits for the next poll.
         if next_read >= deadline {
-            return poll_pr_output(&activity, &report);
+            let (activity, report) = latest.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reading {}#{} returned nothing.",
+                    pull_request.repository,
+                    pull_request.number
+                )
+            })?;
+            return poll_pr_output(activity, report);
         }
     }
 }
@@ -230,7 +241,7 @@ fn poll_pr_output(activity: &Activity, report: &Report) -> anyhow::Result<serde_
         "conflicting": activity.conflicting,
         "checks": {
             "passed": checks(CheckOutcome::Passed).count(),
-            "pending": checks(CheckOutcome::Pending).map(|check| &check.name).collect::<Vec<_>>(),
+            "pending": checks(CheckOutcome::Pending).collect::<Vec<_>>(),
             "failed": checks(CheckOutcome::Failed).collect::<Vec<_>>(),
         },
     });
