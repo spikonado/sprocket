@@ -101,6 +101,7 @@ describe('json-render', () => {
 				}
 			}
 		});
+
 		const { findByText, queryByRole } = render(
 			<ChatMarkdown content={'```json-render\n' + spec + '\n```'} />
 		);
