@@ -65,6 +65,8 @@
       {
         formatter = pkgs.nixfmt-tree;
 
+        packages.bun = pkgs.bun;
+
         devShells.convex = pkgs.mkShell {
           packages = with pkgs; [
             bun

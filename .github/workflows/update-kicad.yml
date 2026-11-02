@@ -27,7 +27,7 @@ jobs:
       - name: Mirror and pin the newest KiCad nightly
         run: >-
           nix shell --inputs-from .
-          nixpkgs#bun nixpkgs#uv nixpkgs#minisign nixpkgs#osslsigncode nixpkgs#rcodesign nixpkgs#dwarfs
+          .#bun nixpkgs#uv nixpkgs#minisign nixpkgs#osslsigncode nixpkgs#rcodesign nixpkgs#dwarfs
           -c bun tools/kicad/update-release.mjs
 
       - name: Create or update pull request
