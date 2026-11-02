@@ -4,8 +4,9 @@ load_dev_env
 
 busy=$(dev_port_listeners)
 if [[ -n "$busy" ]]; then
-	echo "Ports already in use: $busy. Another dev instance is running. Run doctor.sh." >&2
-	exit 1
+	echo "Ports in use: $busy. Waiting for that instance to stop. If it is this worktree's leftover, run stop.sh." >&2
+	while [[ -n "$(dev_port_listeners)" ]]; do sleep 30; done
+	echo "Ports free. Launching." >&2
 fi
 
 # The shell may export the prod deployment. run-dev.mjs derives the dev one from the env file.
