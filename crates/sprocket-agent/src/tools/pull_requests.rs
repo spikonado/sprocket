@@ -162,7 +162,7 @@ impl rig::tool::Tool for PollPrTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Wait for news on a pull request: a check failed, all checks finished, someone else commented or reviewed, the branch conflicts, or the PR merged or closed. Keep working while CI runs and poll when you need the result. Comments from before your first poll are not news; read those yourself.".to_string()
+        "Wait for news on a PR's checks, comments, or state.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
