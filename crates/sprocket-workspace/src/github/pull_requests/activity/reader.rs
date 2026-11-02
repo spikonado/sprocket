@@ -55,7 +55,9 @@ impl Fingerprint {
                 pr.state,
                 pr.mergeable,
                 pr.head_ref_oid,
-                rollup.map(|rollup| rollup.state.clone()).unwrap_or_default(),
+                rollup
+                    .map(|rollup| rollup.state.clone())
+                    .unwrap_or_default(),
                 state_counts(
                     rollup.and_then(|rollup| rollup.contexts.check_run_counts_by_state.as_deref()),
                 ),
