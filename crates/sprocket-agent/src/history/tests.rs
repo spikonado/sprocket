@@ -536,11 +536,14 @@ fn completed_reasoning_roundtrips_summary_and_one_envelope() {
         "extra": { "data": "  redacted\n\0+/=  " }
     });
     for issuer in ["openai", "anthropic", "openrouter/anthropic"] {
-        let AssistantContent::Reasoning(original) =
+        let AssistantContent::Reasoning(mut original) =
             AssistantContent::Reasoning(Reasoning::new(summary)).with_native(native_item.clone())
         else {
             unreachable!()
         };
+        if let Some(native) = original.native.as_mut() {
+            native.blob_slot = Some("/encrypted_content".into());
+        }
         let mut parts = LiveAssistantParts::default();
         parts.apply_text_delta("reasoning", "s:r".into(), "partial", None, 10);
         let mut metadata = HashMap::new();

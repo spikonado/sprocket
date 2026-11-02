@@ -1,13 +1,10 @@
 use std::collections::HashMap;
 
-use rig::message::{Api, AssistantContent, Native, Reasoning};
+use rig::message::{AssistantContent, Native, Reasoning};
 use serde_json::Value as JsonValue;
 use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 use crate::now_ms;
-
-/// Every provider Sprocket streams from speaks Responses.
-const RESPONSES_API: Api = Api::from_static("openai.responses");
 
 /// Durable OpenAI-shaped metadata already stored on transcript reasoning items.
 /// `encrypted` is gateway envelope bytes: persist and replay as-is, never decode.
@@ -44,11 +41,9 @@ fn native_reasoning(reasoning: &Reasoning) -> Option<&Native> {
 }
 
 pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
-    Some(
-        native_reasoning(reasoning)?
-            .reasoning_blob(&RESPONSES_API)?
-            .value,
-    )
+    native_reasoning(reasoning)?
+        .reasoning_blob()
+        .map(|blob| blob.value)
 }
 
 /// The OpenAI summary when it has text, otherwise the raw reasoning, which
