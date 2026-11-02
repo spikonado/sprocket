@@ -162,11 +162,13 @@ async fn usable_providers(
     let enabled: Vec<CompletionProvider> = rpc
         .query("uiPreferences:getMyEnabledProviders", BTreeMap::new())
         .await?;
+    // Like the web app, a failed key lookup only rules out OpenAI.
     let openai = enabled.contains(&CompletionProvider::Openai)
         && rpc
             .act::<ProviderConfiguration>("providerCredentials:getMyConfiguration", BTreeMap::new())
-            .await?
-            .openai;
+            .await
+            .inspect_err(|error| tracing::warn!("failed to check the OpenAI API key: {error:#}"))
+            .is_ok_and(|configuration| configuration.openai);
     let chatgpt = state.host.chatgpt_credentials.connected(user_id).await;
     Ok(enabled
         .into_iter()
