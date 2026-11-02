@@ -19,7 +19,7 @@ pub struct ActivityReader {
 
 struct LastRead {
     fingerprint: Fingerprint,
-    remarks: Vec<Remark>,
+    activity: Activity,
 }
 
 #[derive(PartialEq, Eq)]
@@ -52,26 +52,23 @@ impl ActivityReader {
         })
     }
 
-    /// `None` when GitHub reports nothing new since the last read.
-    pub async fn read(&mut self) -> Result<Option<Activity>, GitHubError> {
+    pub async fn read(&mut self) -> Result<Activity, GitHubError> {
         let fingerprint = self.fingerprint().await?;
-        if self
-            .last
-            .as_ref()
-            .is_some_and(|last| last.fingerprint == fingerprint)
+        if let Some(last) = &self.last
+            && last.fingerprint == fingerprint
         {
-            return Ok(None);
+            return Ok(last.activity.clone());
         }
         let (viewer, mut activity) = self.status().await?;
         activity.remarks = match self.last.take() {
-            Some(last) if last.fingerprint.remarks == fingerprint.remarks => last.remarks,
+            Some(last) if last.fingerprint.remarks == fingerprint.remarks => last.activity.remarks,
             _ => self.remarks(&viewer).await?,
         };
         self.last = Some(LastRead {
             fingerprint,
-            remarks: activity.remarks.clone(),
+            activity: activity.clone(),
         });
-        Ok(Some(activity))
+        Ok(activity)
     }
 
     async fn query<T: DeserializeOwned>(
@@ -104,7 +101,7 @@ impl ActivityReader {
     }
 
     async fn fingerprint(&self) -> Result<Fingerprint, GitHubError> {
-        let data: FingerprintData = self.query("PullRequestWatchFingerprint", json!({})).await?;
+        let data: FingerprintData = self.query("PullRequestFingerprint", json!({})).await?;
         let pr = self.pull_request(data.repository)?;
         let counts = pr
             .commits
@@ -137,13 +134,13 @@ impl ActivityReader {
 
     /// The viewer's login and everything but the remarks.
     async fn status(&self) -> Result<(String, Activity), GitHubError> {
-        let data: CoreData = self.query("PullRequestCore", json!({})).await?;
+        let data: StatusData = self.query("PullRequestStatus", json!({})).await?;
         let pr = self.pull_request(data.repository)?;
         let mut checks = Vec::new();
         let mut after = pr.commits.read_contexts(&mut checks);
         while let Some(cursor) = after.take() {
-            let next: CheckContextsData = self
-                .query("PullRequestCheckContexts", json!({ "after": cursor }))
+            let next: StatusData = self
+                .query("PullRequestStatus", json!({ "after": cursor }))
                 .await?;
             let page = self.pull_request(next.repository)?;
             // Each page names the head it read, so a push mid-walk fails rather
@@ -379,28 +376,16 @@ struct StateCount {
 }
 
 #[derive(Deserialize)]
-struct CoreData {
+struct StatusData {
     viewer: Login,
-    repository: Option<Repo<CorePullRequest>>,
+    repository: Option<Repo<StatusPullRequest>>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CorePullRequest {
+struct StatusPullRequest {
     state: PullRequestState,
     mergeable: String,
-    head_ref_oid: String,
-    commits: Nodes<ContextsCommitNode>,
-}
-
-#[derive(Deserialize)]
-struct CheckContextsData {
-    repository: Option<Repo<CheckContextsPullRequest>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CheckContextsPullRequest {
     head_ref_oid: String,
     commits: Nodes<ContextsCommitNode>,
 }

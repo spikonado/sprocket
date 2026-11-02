@@ -197,31 +197,21 @@ async fn poll_pr(
     let pull_request = pull_request_ref(&args.repository, args.number);
     let mut seen = args.cursor.as_deref().map(decode_cursor).transpose()?;
     let mut reader = ActivityReader::connect(user_id, &pull_request).await?;
-    let mut latest = None;
     let deadline = Instant::now() + wait;
     loop {
-        if let Some(activity) = reader.read().await? {
-            let report = compare(
-                seen.get_or_insert_with(|| Seen::first_look(&activity)),
-                &activity,
-            );
-            if !report.changes.is_empty() {
-                return poll_pr_output(&activity, &report);
-            }
-            latest = Some((activity, report));
+        let activity = reader.read().await?;
+        let report = compare(
+            seen.get_or_insert_with(|| Seen::first_look(&activity)),
+            &activity,
+        );
+        if !report.changes.is_empty() {
+            return poll_pr_output(&activity, &report);
         }
         let next_read = Instant::now() + POLL_PR_INTERVAL;
         sleep_until(next_read.min(deadline)).await;
         // The cursor comes from this read, so news after it waits for the next poll.
         if next_read >= deadline {
-            let (activity, report) = latest.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Reading {}#{} returned nothing.",
-                    pull_request.repository,
-                    pull_request.number
-                )
-            })?;
-            return poll_pr_output(activity, report);
+            return poll_pr_output(&activity, &report);
         }
     }
 }

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn reads_check_outcomes_and_required_flags() {
-    let data: CoreData = serde_json::from_value(json!({
+    let data: StatusData = serde_json::from_value(json!({
         "viewer": { "login": "me" },
         "repository": { "pullRequest": {
             "state": "OPEN",
