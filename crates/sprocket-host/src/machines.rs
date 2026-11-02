@@ -303,9 +303,10 @@ impl MachineManager {
 }
 
 fn is_terminal_heartbeat_error(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.is::<sprocket_convex::AuthSignedOut>())
+    error.chain().any(|cause| {
+        cause.is::<sprocket_convex::AuthSignedOut>()
+            || cause.to_string().contains("Machine is not active.")
+    })
 }
 
 #[cfg(test)]

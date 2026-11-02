@@ -273,9 +273,12 @@ async fn heartbeat_loop_stops_once_presence_is_gone() {
 }
 
 #[test]
-fn signed_out_errors_stop_heartbeats() {
+fn terminal_heartbeat_errors_stop_retries() {
     assert!(is_terminal_heartbeat_error(&anyhow::Error::from(
         sprocket_convex::AuthSignedOut
+    )));
+    assert!(is_terminal_heartbeat_error(&anyhow::anyhow!(
+        "machines:heartbeatProcess: Machine is not active."
     )));
     assert!(!is_terminal_heartbeat_error(&anyhow::anyhow!(
         "machine heartbeat timed out"
