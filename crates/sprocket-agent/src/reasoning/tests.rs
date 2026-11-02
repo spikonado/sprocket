@@ -21,18 +21,36 @@ fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Reasoning
     if let Some(id) = id {
         item["id"] = serde_json::json!(id);
     }
-    if let Some(encrypted) = content.iter().find_map(|block| match block {
-        ReasoningContent::Encrypted(content) => Some(content),
+    let encrypted = content.iter().find_map(|block| match block {
+        ReasoningContent::Encrypted(content) => Some(content.as_str()),
         _ => None,
-    }) {
+    });
+    if let Some(encrypted) = encrypted {
         item["encrypted_content"] = serde_json::json!(encrypted);
     }
-    let AssistantContent::Reasoning(reasoning) =
+    let AssistantContent::Reasoning(mut reasoning) =
         AssistantContent::Reasoning(Reasoning::new(summary.join("\n"))).with_native(item)
     else {
         unreachable!()
     };
+    if encrypted.is_some_and(|content| !content.is_empty()) {
+        if let Some(native) = reasoning.native.as_mut() {
+            native.blob_slot = Some("/encrypted_content".into());
+        }
+    }
     reasoning
+}
+
+#[test]
+fn opaque_blob_prefers_the_native_blob_slot() {
+    let mut reasoning = reasoning_with(
+        Some("rs_1"),
+        vec![ReasoningContent::Encrypted("envelope".into())],
+    );
+    let native = reasoning.native.as_mut().expect("native item");
+    native.item["signature"] = serde_json::json!("sig");
+    native.blob_slot = Some("/signature".into());
+    assert_eq!(opaque_reasoning_blob(&reasoning), Some("sig"));
 }
 
 #[test]
