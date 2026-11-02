@@ -52,3 +52,4 @@ jobs:
           fi
 
           bunx convex deploy --message "$CONVEX_DEPLOY_MESSAGE"
+          bunx convex run migrations:run

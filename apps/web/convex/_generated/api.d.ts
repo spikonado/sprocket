@@ -90,6 +90,7 @@ import type * as lib_webPools from "../lib/webPools.js";
 import type * as lib_workSections from "../lib/workSections.js";
 import type * as lib_workosVault from "../lib/workosVault.js";
 import type * as machines from "../machines.js";
+import type * as migrations from "../migrations.js";
 import type * as payments from "../payments.js";
 import type * as pricing from "../pricing.js";
 import type * as pricingData from "../pricingData.js";
@@ -201,6 +202,7 @@ declare const fullApi: ApiFromModules<{
   "lib/workSections": typeof lib_workSections;
   "lib/workosVault": typeof lib_workosVault;
   machines: typeof machines;
+  migrations: typeof migrations;
   payments: typeof payments;
   pricing: typeof pricing;
   pricingData: typeof pricingData;
@@ -254,6 +256,7 @@ export declare const components: {
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   posthog: import("@posthog/convex/_generated/component.js").ComponentApi<"posthog">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   webSearchWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webSearchWorkpool">;
   contextDevWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"contextDevWorkpool">;
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;

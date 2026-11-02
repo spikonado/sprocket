@@ -78,7 +78,11 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 
 ### Migration records
 
-`migrationSchedules` and the unmounted `migrations` component keep completion records for finished backfills. Remove the table after an operator deletes or archives those records on each deployment, and delete the component's data with them.
+`migrationSchedules` and the `migrations` component's data keep completion records for finished backfills. Remove the table and that data after an operator deletes or archives those records on each deployment.
+
+### Migrated tool parts without invocation IDs
+
+Tool parts written by the August 2026 transcript migration, with `migrated-tool:` source keys, lack `toolInvocationId`, so `vTranscriptToolBody` keeps it optional. `migrations:backfillToolInvocationIds` sets it to the source key, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, make the field required and remove the migration, its workflow step and the `migrations` component mount.
 
 ### Retired Prava mandate rows
 
@@ -148,4 +152,3 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.
 - Local readers of `scrape_url` and `read_skill` `truncated`, `jobId` pairing and command parts without input.
-- Tool parts without `toolInvocationId`, written by the August 2026 transcript migration with `migrated-tool:` source keys.
