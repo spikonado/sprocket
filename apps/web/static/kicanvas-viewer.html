@@ -7,19 +7,10 @@
 			body {
 				margin: 0;
 				height: 100%;
+				background: var(--background);
 			}
 		</style>
-		<script>
-			// The sandbox's opaque origin makes localStorage throw, and KiCanvas keeps its settings there.
-			const settings = new Map();
-			Object.defineProperty(window, 'localStorage', {
-				value: {
-					getItem: (key) => settings.get(key) ?? null,
-					setItem: (key, value) => settings.set(key, String(value)),
-					removeItem: (key) => settings.delete(key)
-				}
-			});
-		</script>
+		<style id="sprocket-theme"></style>
 	</head>
 	<body>
 		<!-- In the body, since the bundle appends its font stylesheet to `document.body`. -->
@@ -82,6 +73,8 @@
 			function load(sources) {
 				embed = document.createElement('kicanvas-embed');
 				embed.setAttribute('controls', 'full');
+				// KiCanvas's focus overlay swallows the first click, which only helps embeds on scrolling pages.
+				embed.setAttribute('controlslist', 'nooverlay');
 				embed.style.cssText = 'width: 100%; height: 100%;';
 
 				for (const { name, content } of sources) {
@@ -111,6 +104,9 @@
 
 			addEventListener('message', ({ source, data }) => {
 				if (source !== parent) return;
+
+				if (data?.type === 'theme')
+					document.getElementById('sprocket-theme').textContent = data.css;
 
 				if (data?.type === 'sources') load(data.sources);
 
