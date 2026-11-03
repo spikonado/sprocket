@@ -3,35 +3,29 @@ name: working-with-kicad
 description: 'Use when creating or editing KiCad schematics or PCBs, or exporting from KiCad (Gerbers, renders, BOMs, ERC/DRC).'
 ---
 
-Edit KiCad files through KiCad's Python API (kipy) against a headless
-`kicad-cli api-server`, and use `kicad-cli` for checks and exports, so every
-file is written in the installed version's format.
+Edit KiCad files through kipy against a headless `kicad-cli api-server`, so
+files keep the installed version's format. Use `kicad-cli` for checks and
+exports.
 
 ## 1. Check the connector
 
 Call `list_connectors`. If KiCad isn't listed, ask the user to install it in
-Settings → Connectors and stop KiCad work until they confirm. When it is
-listed, these commands are on PATH:
-
-- `kicad-python`: Python with kipy. Run every API script with it.
-- `kicad-cli`: ERC, DRC, exports, renders, file upgrades.
-- `kicad`: the GUI. Run it only when the user asks to open a project.
+Settings → Connectors and stop KiCad work until they confirm. The connector
+puts `kicad-python` (run API scripts with it), `kicad-cli`, and `kicad` (the
+GUI, only when the user asks) on PATH.
 
 ## 2. Before editing
 
-- The user may have the same files open in the KiCad GUI; tell them to
-  reload after you save.
+- After you save, tell the user to reload any of the files open in the
+  KiCad GUI.
 - Before the first save of an existing project, compare the file header's
   `(generator_version "…")` with the installed KiCad version. If the file is
   older, ask the user once: saving upgrades the format irreversibly, and only
   git can undo it.
-- Circuit facts (pinouts, strapping pins, regulator capacitors, USB CC
-  resistors, reset timing) come from the part's current datasheet and the
-  vendor reference design.
-- Prefer parts with a 3D model. KiCad's library footprints usually link one;
-  otherwise look for the manufacturer's STEP file, then SnapMagic or Ultra
-  Librarian. If a part has no model anywhere, consider an equivalent part
-  that has one and tell the user about the swap.
+- Take circuit facts from the part's current datasheet and the vendor
+  reference design.
+- Pick parts that have a 3D model. When a part has none anywhere, propose an
+  equivalent part that does.
 
 ## 3. Script shape
 
@@ -59,11 +53,9 @@ with KiCad(headless=True, timeout_ms=60000) as kicad:
   that reads libraries fails until `wait_for_libraries` returns. Calls block
   during the load, and kipy's default 2 s timeout fails them, hence
   `timeout_ms`.
-- Edits use `create_items`, `get_items`, `update_items`, `remove_items` on the
-  schematic or board. Mutate the objects these return, then `update_items`.
-- Look up library IDs before using them: `kicad.get_library_symbols(["Device"])`
-  and `kicad.get_library_footprints(["Resistor_SMD"])` return items whose
-  `str()` is the ID, such as `Device:R`.
+- Look up library IDs with `kicad.get_library_symbols(["Device"])` and
+  `kicad.get_library_footprints(["Resistor_SMD"])`; each item's `str()` is
+  the ID.
 
 ## 4. Schematic first
 
@@ -116,14 +108,10 @@ sch.create_items([wire, label])
   `power:` symbols (`power:GND`, `power:VCC`) with `value` set to the net
   name. Put a `power:PWR_FLAG` on each power net fed from a connector or
   off-board, or ERC reports `power_pin_not_driven`.
-- A pin connects where its end touches a wire. `pin_end` maps the local,
-  Y-down pin positions in `definition.pins` through rotation but not
-  mirroring, so leave symbols unmirrored.
-- Style: short wire stubs, local labels between blocks, global labels only
-  across sheets, one name per net, a clear gutter around each functional
-  block, passive values with units and no space (`10kΩ`, `100nF`). Leave
-  about 10 mm between neighbouring power symbols so their names don't
-  overlap.
+- `pin_end` handles rotation but not mirroring, so leave symbols unmirrored.
+- Style: local labels between blocks, global labels only across sheets,
+  passive values with units and no space (`10kΩ`, `100nF`), and about 10 mm
+  between neighbouring power symbols so their names don't overlap.
 - `sch.get_netlist()` lists net names only. Check pin-level connections in
   the exported `.net` file's `(node (ref …) (pin …))` entries.
 
@@ -180,17 +168,15 @@ board.save()
   rounding drift that DRC reports as `lib_footprint_mismatch`, so set
   orientation at placement. Pass `layer=BoardLayer.BL_B_Cu` for the back.
 - Pad positions are absolute; re-read footprints after moving them.
-- Route every net yourself; there is no autorouter. Change layers with a
-  `Via`; it has zero size until you set `diameter` and `drill_diameter`.
-- Keep the silkscreen clean. Hide reference designators (`R1`, `J3`, `U6`)
-  there; library footprints keep a `${REFERENCE}` copy on the Fab layer for
-  assembly. Silkscreen keeps outlines, pin-1 and polarity marks, short
-  connector pin labels, and at most a board name and version. Put
-  documentation in the project's docs, never as text on the board.
-- Check `fp.definition.models` for every footprint, and look at the 3D
-  render for parts drawn without a body. Save a downloaded model under
-  `proj/3dmodels/` and attach it with `fp.definition.add_item()` of a
-  `kipy.board_types.Footprint3DModel` whose `filename` is
+- There is no autorouter, so route every net. A `Via` has zero size until
+  you set `diameter` and `drill_diameter`.
+- Silkscreen holds only outlines, pin-1 and polarity marks, short connector
+  pin labels, and at most a board name and version. Reference designators
+  stay hidden there; the Fab layer's `${REFERENCE}` text keeps them for
+  assembly. Documentation goes in the project's docs.
+- Footprints missing from `fp.definition.models` render without a body. Save
+  the part's STEP under `proj/3dmodels/` and attach it with
+  `fp.definition.add_item()` of a `Footprint3DModel` whose `filename` is
   `${KIPRJMOD}/3dmodels/<file>.step`, then `update_items([fp])`. Set
   `visible`, `opacity = 1`, and `scale = Vector3D.from_xyz(1, 1, 1)`; a new
   model's scale is 0.
