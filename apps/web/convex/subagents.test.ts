@@ -6,10 +6,7 @@ import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
-import {
-	AUTOMATIC_RECOVERY_GRACE_MS,
-	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX
-} from '@convex/lib/runRecovery';
+import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import { getRunExecutionState } from '@convex/lib/runExecution';
 import {
 	abandonRun,
@@ -1540,7 +1537,7 @@ describe('subagents.control', () => {
 		}
 	});
 
-	it('reports an abandoned child as working until recovery or stop', async () => {
+	it('reports an abandoned child as failed and stopping it discards its recovery', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
 		const args = createArgs(caller);
@@ -1559,7 +1556,14 @@ describe('subagents.control', () => {
 		};
 
 		const monitor = () => t.mutation(api.subagents.threadMonitorInfo, target);
-		expect(await monitor()).toMatchObject({ status: 'queued', active: true });
+		expect(await monitor()).toMatchObject({ status: 'failed', active: false });
+		expect(
+			await t.query(api.subagents.threadActivity, {
+				runId: caller.runId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId
+			})
+		).toEqual({ status: 'failed', active: false, hasPendingQuestions: false });
 
 		const stopArgs = { ...target, action: 'stop' as const };
 
@@ -1585,25 +1589,6 @@ describe('subagents.control', () => {
 				continuationOfRunId: child.runId
 			})
 		).rejects.toThrow('This run cannot recover automatically.');
-	});
-
-	it('reports an abandoned child as failed once recovery is overdue', async () => {
-		const t = initConvexTest();
-		const caller = await startCallerRun(t);
-		const child = await createChild(t, caller);
-		await abandonRun(t, child.runId);
-		await t.run((ctx) =>
-			ctx.db.patch('runs', child.runId, { completedAt: Date.now() - AUTOMATIC_RECOVERY_GRACE_MS })
-		);
-
-		expect(
-			await t.mutation(api.subagents.threadMonitorInfo, {
-				runId: caller.runId,
-				claimId: caller.claimId,
-				executionSecret: caller.executionSecret,
-				threadId: child.threadId
-			})
-		).toMatchObject({ status: 'failed', active: false });
 	});
 
 	it('observes the stopped run even after replacement work starts', async () => {
@@ -1641,6 +1626,20 @@ describe('subagents.control', () => {
 				targetRunId: stopped.stoppedRunId
 			})
 		).toMatchObject({ status: 'cancelled' });
+
+		const activity = (targetRunId?: Id<'runs'>) =>
+			t.query(api.subagents.threadActivity, {
+				runId: caller.runId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId,
+				targetRunId
+			});
+
+		expect(await activity(stopped.stoppedRunId)).toMatchObject({
+			status: 'cancelled',
+			active: false
+		});
+		expect(await activity()).toMatchObject({ status: 'queued', active: true });
 		expect(await t.mutation(api.subagents.threadMonitorInfo, target)).toMatchObject({
 			status: 'queued'
 		});
@@ -1651,6 +1650,7 @@ describe('subagents.control', () => {
 				targetRunId: sibling.runId
 			})
 		).rejects.toThrow(/does not belong/);
+		await expect(activity(sibling.runId)).rejects.toThrow(/does not belong/);
 	});
 });
 

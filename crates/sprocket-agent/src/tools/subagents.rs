@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use convex::Value;
+use futures::{Stream, StreamExt};
 use hmac::{Hmac, KeyInit, Mac};
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
@@ -12,13 +13,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{WorkspaceCancellation, async_tools::ZeroPollCooldown};
 use tokio::sync::Mutex;
-use tokio::time::{Instant, sleep, timeout};
+use tokio::time::{Instant, sleep, sleep_until, timeout};
 
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
 use crate::catalog::ProviderCatalog;
-use crate::convex::MutationFailure;
+use crate::convex::{MutationFailure, RuntimeClient};
 use crate::subagents::{
     CreateSubagentRunResponse, ResolvedSubagentSettings, SharedSubagentLauncher,
     SubagentControlResponse, SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo,
@@ -32,12 +33,12 @@ const CREATE_OR_SEND: &str = "subagents:createOrSend";
 const RECOVER_SUBMISSION: &str = "subagents:recoverSubmission";
 const SNAPSHOT: &str = "subagents:snapshot";
 const MONITOR_INFO: &str = "subagents:threadMonitorInfo";
+const ACTIVITY: &str = "subagents:threadActivity";
 const TRANSCRIPT_PARTS_PAGE: &str = "subagents:transcriptPartsPage";
 const CONTROL: &str = "subagents:control";
 const LIST_CHILDREN: &str = "subagents:listChildren";
 
 const SUBAGENT_LIST_PAGE_SIZE: u32 = 32;
-const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const CONTROL_MAX_ATTEMPTS: usize = 3;
 const CONTROL_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
@@ -634,7 +635,7 @@ impl PollSubagentTool {
                     .subagent_polls
                     .observe_pending(
                         &args.thread_id,
-                        || fetch_monitor_info(&self.context, &args.thread_id),
+                        || fetch_monitor_info(&self.context, &args.thread_id, None),
                         |info| {
                             read_transcript_snapshot(&self.context, info, args.cursor.as_deref())
                         },
@@ -826,27 +827,21 @@ impl ControlSubagentTool {
         let yield_time_ms =
             YieldMode::Action.normalize(args.yield_time_ms, self.context.max_yield_ms);
         let mut result = if matches!(args.action, SubagentControlAction::Stop) {
-            let info = if let Some(run_id) = response.stopped_run_id.as_deref() {
-                wait_for_stopped_run_using(&cancellation, || {
-                    self.context.runtime.mutation_json(
-                        MONITOR_INFO,
-                        subagent_args(
-                            &self.context,
-                            BTreeMap::from([
-                                ("threadId".to_string(), args.thread_id.clone().into()),
-                                ("targetRunId".to_string(), run_id.to_string().into()),
-                            ]),
-                        ),
-                    )
-                })
-                .await?
-            } else {
-                cancelled_read(
+            let stopped_run_id = response.stopped_run_id.as_deref();
+            if let Some(run_id) = stopped_run_id {
+                let updates = cancelled_read(
                     &cancellation,
-                    fetch_monitor_info(&self.context, &args.thread_id),
+                    watch_activity(&self.context, &args.thread_id, Some(run_id)),
                 )
-                .await?
-            };
+                .await?;
+                tokio::pin!(updates);
+                wait_for_final_status(&mut updates, &cancellation).await?;
+            }
+            let info = cancelled_read(
+                &cancellation,
+                fetch_monitor_info(&self.context, &args.thread_id, stopped_run_id),
+            )
+            .await?;
             subagent_action_result(info, yield_time_ms, &cancellation, |info| {
                 read_transcript_snapshot(&self.context, info, None)
             })
@@ -1130,11 +1125,53 @@ fn list_page_response(page: &SubagentListPage) -> serde_json::Value {
     })
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubagentActivity {
+    status: String,
+    active: bool,
+    has_pending_questions: bool,
+}
+
+fn monitor_fields(thread_id: &str, target_run_id: Option<&str>) -> BTreeMap<String, Value> {
+    let mut fields = BTreeMap::from([("threadId".to_string(), thread_id.to_string().into())]);
+    if let Some(run_id) = target_run_id {
+        fields.insert("targetRunId".to_string(), run_id.to_string().into());
+    }
+    fields
+}
+
 async fn fetch_monitor_info(
     context: &AgentToolContext,
     thread_id: &str,
+    target_run_id: Option<&str>,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    fetch_thread(context, MONITOR_INFO, thread_id).await
+    context
+        .runtime
+        .mutation_json(
+            MONITOR_INFO,
+            subagent_args(context, monitor_fields(thread_id, target_run_id)),
+        )
+        .await
+        .map_err(tool_error)
+}
+
+async fn watch_activity(
+    context: &AgentToolContext,
+    thread_id: &str,
+    target_run_id: Option<&str>,
+) -> Result<impl Stream<Item = Result<SubagentActivity, ToolExecutionError>>, ToolExecutionError> {
+    let mut fields = monitor_fields(thread_id, target_run_id);
+    fields.insert("runId".to_string(), context.run_id.clone().into());
+    let updates = context
+        .runtime
+        .subscribe(ACTIVITY, fields)
+        .await
+        .map_err(tool_error)?;
+    Ok(updates.map(|update| {
+        RuntimeClient::decode_subscription_update::<SubagentActivity>(update, ACTIVITY)
+            .map_err(tool_error)
+    }))
 }
 
 async fn wait_for_settlement(
@@ -1143,10 +1180,14 @@ async fn wait_for_settlement(
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    wait_for_settlement_using(yield_time_ms, cancellation, || {
-        fetch_monitor_info(context, thread_id)
-    })
-    .await
+    if yield_time_ms > 0 {
+        let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+        let updates =
+            cancelled_read(cancellation, watch_activity(context, thread_id, None)).await?;
+        tokio::pin!(updates);
+        wait_for_settlement_using(&mut updates, deadline, cancellation).await?;
+    }
+    cancelled_read(cancellation, fetch_monitor_info(context, thread_id, None)).await
 }
 
 async fn cancelled_read<T>(
@@ -1160,52 +1201,58 @@ async fn cancelled_read<T>(
     }
 }
 
-async fn wait_for_settlement_using<F, Fut>(
-    yield_time_ms: u64,
+async fn next_activity<S>(
+    updates: &mut S,
     cancellation: &WorkspaceCancellation,
-    mut fetch: F,
-) -> Result<SubagentMonitorInfo, ToolExecutionError>
+) -> Result<SubagentActivity, ToolExecutionError>
 where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<SubagentMonitorInfo, ToolExecutionError>>,
+    S: Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin,
 {
-    let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+    cancelled_read(cancellation, async {
+        updates
+            .next()
+            .await
+            .unwrap_or_else(|| Err(tool_failure("subagent activity subscription closed")))
+    })
+    .await
+}
+
+/// Returns when the subagent goes idle or asks a question, or at `deadline`.
+async fn wait_for_settlement_using<S>(
+    updates: &mut S,
+    deadline: Instant,
+    cancellation: &WorkspaceCancellation,
+) -> Result<(), ToolExecutionError>
+where
+    S: Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin,
+{
     loop {
-        let info = cancelled_read(cancellation, fetch()).await?;
-        if !info.active || !info.pending_questions.is_empty() {
-            return Ok(info);
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Ok(info);
-        }
-        tokio::select! {
+        let activity = tokio::select! {
             biased;
-            _ = cancellation.cancelled() => return Err(cancelled_error()),
-            _ = sleep(remaining.min(WAIT_POLL_INTERVAL)) => {}
+            activity = next_activity(updates, cancellation) => activity?,
+            _ = sleep_until(deadline) => return Ok(()),
+        };
+        if activity.has_pending_questions || !activity.active {
+            return Ok(());
         }
     }
 }
 
-async fn wait_for_stopped_run_using<F, Fut>(
+async fn wait_for_final_status<S>(
+    updates: &mut S,
     cancellation: &WorkspaceCancellation,
-    mut fetch: F,
-) -> Result<SubagentMonitorInfo, ToolExecutionError>
+) -> Result<(), ToolExecutionError>
 where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = anyhow::Result<SubagentMonitorInfo>>,
+    S: Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin,
 {
     loop {
-        let info =
-            cancelled_read(cancellation, async { fetch().await.map_err(tool_error) }).await?;
-        if matches!(info.status.as_str(), "completed" | "failed" | "cancelled") {
-            return Ok(info);
+        let activity = next_activity(updates, cancellation).await?;
+        if matches!(
+            activity.status.as_str(),
+            "completed" | "failed" | "cancelled"
+        ) {
+            return Ok(());
         }
-        cancelled_read(cancellation, async {
-            sleep(WAIT_POLL_INTERVAL).await;
-            Ok(())
-        })
-        .await?;
     }
 }
 

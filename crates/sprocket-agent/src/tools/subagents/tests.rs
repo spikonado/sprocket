@@ -114,106 +114,78 @@ async fn immediate_actions_return_lifecycle_without_reading_transcripts() {
     );
 }
 
+fn activity(status: &str, active: bool, has_pending_questions: bool) -> SubagentActivity {
+    SubagentActivity {
+        status: status.to_string(),
+        active,
+        has_pending_questions,
+    }
+}
+
+fn activity_updates(
+    updates: Vec<SubagentActivity>,
+) -> impl Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin {
+    futures::stream::iter(updates.into_iter().map(Ok)).chain(futures::stream::pending())
+}
+
 #[tokio::test(start_paused = true)]
 async fn stop_waits_for_the_target_run_to_finish_even_with_pending_questions() {
-    let started = Instant::now();
-    let mut reads = 0;
-    let info = wait_for_stopped_run_using(&WorkspaceCancellation::new(), || {
-        reads += 1;
-        let mut info = monitor_info(true);
-        info.pending_questions
-            .push(crate::subagents::SubagentQuestion {
-                question_id: "question".to_string(),
-                question: "Continue?".to_string(),
-                options: Vec::new(),
-            });
-        if reads == 3 {
-            info.status = "cancelled".to_string();
-        }
-        async move { Ok(info) }
-    })
-    .await
-    .unwrap();
-    assert_eq!(reads, 3);
-    assert_eq!(started.elapsed(), WAIT_POLL_INTERVAL * 2);
-    assert_eq!(
-        subagent_metadata(&info),
-        json!({
-            "status": "cancelled", "lastError": null,
-            "pendingQuestions": [{"questionId": "question", "question": "Continue?", "options": []}]
-        })
-    );
-}
-
-#[tokio::test]
-async fn cancellation_aborts_a_stalled_stop_observation() {
-    let cancellation = WorkspaceCancellation::new();
-    let cancel = cancellation.clone();
-    let error = wait_for_stopped_run_using(&cancellation, || {
-        cancel.cancel();
-        std::future::pending::<anyhow::Result<SubagentMonitorInfo>>()
-    })
-    .await
-    .unwrap_err();
-    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Cancelled);
+    let mut updates = activity_updates(vec![
+        activity("running", true, true),
+        activity("cancelled", true, true),
+        activity("running", true, false),
+    ]);
+    wait_for_final_status(&mut updates, &WorkspaceCancellation::new())
+        .await
+        .unwrap();
+    assert_eq!(updates.next().await.unwrap().unwrap().status, "running");
 }
 
 #[tokio::test(start_paused = true)]
-async fn settlement_waits_until_completion_and_returns_the_last_snapshot() {
+async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
     let started = Instant::now();
-    let mut reads = 0;
-    let info = wait_for_settlement_using(10_000, &WorkspaceCancellation::new(), || {
-        reads += 1;
-        let mut info = monitor_info(reads < 3);
-        info.last_error = Some(format!("snapshot-{reads}"));
-        async move { Ok(info) }
-    })
-    .await
-    .unwrap();
-    assert_eq!(started.elapsed(), WAIT_POLL_INTERVAL * 2);
-    assert_eq!(reads, 3);
-    assert_eq!(info.status, "completed");
-    assert_eq!(info.last_error.as_deref(), Some("snapshot-3"));
+    for last in [
+        activity("completed", false, false),
+        activity("running", true, true),
+    ] {
+        let mut updates = activity_updates(vec![activity("running", true, false), last]);
+        wait_for_settlement_using(
+            &mut updates,
+            started + Duration::from_secs(10),
+            &WorkspaceCancellation::new(),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(started.elapsed(), Duration::ZERO);
 }
 
 #[tokio::test(start_paused = true)]
-async fn settlement_returns_a_pending_question_without_waiting_for_completion() {
-    let started = Instant::now();
-    let mut reads = 0;
-    let info = wait_for_settlement_using(10_000, &WorkspaceCancellation::new(), || {
-        reads += 1;
-        let mut info = monitor_info(true);
-        if reads == 2 {
-            info.pending_questions
-                .push(crate::subagents::SubagentQuestion {
-                    question_id: "question".to_string(),
-                    question: "Which direction?".to_string(),
-                    options: Vec::new(),
-                });
-        }
-        async move { Ok(info) }
-    })
-    .await
-    .unwrap();
-    assert_eq!(started.elapsed(), WAIT_POLL_INTERVAL);
-    assert!(info.active);
-    assert_eq!(info.pending_questions[0].question_id, "question");
+async fn settlement_yields_at_the_deadline_while_the_subagent_works() {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut updates = activity_updates(vec![activity("running", true, false)]);
+    wait_for_settlement_using(&mut updates, deadline, &WorkspaceCancellation::new())
+        .await
+        .unwrap();
+    assert_eq!(Instant::now(), deadline);
 }
 
 #[tokio::test]
-async fn cancellation_aborts_a_stalled_post_launch_observation() {
+async fn cancellation_aborts_a_stalled_activity_wait() {
     let cancellation = WorkspaceCancellation::new();
-    let cancel = cancellation.clone();
-    let result = wait_for_settlement_using(10_000, &cancellation, || {
-        let cancel = cancel.clone();
-        async move {
-            cancel.cancel();
-            std::future::pending::<Result<SubagentMonitorInfo, ToolExecutionError>>().await
-        }
-    })
-    .await
-    .unwrap_err();
-    assert_eq!(result.kind(), rig::tool::ToolErrorKind::Cancelled);
+    cancellation.cancel();
+    let mut updates = activity_updates(Vec::new());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    for error in [
+        wait_for_settlement_using(&mut updates, deadline, &cancellation)
+            .await
+            .unwrap_err(),
+        wait_for_final_status(&mut updates, &cancellation)
+            .await
+            .unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), rig::tool::ToolErrorKind::Cancelled);
+    }
 }
 
 #[tokio::test]
