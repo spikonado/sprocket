@@ -1,3 +1,72 @@
+diff --git a/src/base/dom/pan-and-zoom.ts b/src/base/dom/pan-and-zoom.ts
+index ccb30a1..433337c 100644
+--- a/src/base/dom/pan-and-zoom.ts
++++ b/src/base/dom/pan-and-zoom.ts
+@@ -5,7 +5,6 @@
+ */
+
+ import { BBox, Camera2, Vec2 } from "../math";
+-import { Preferences } from "../../kicanvas/preferences";
+
+ const line_delta_multiplier = 8;
+ const page_delta_multiplier = 24;
+@@ -13,7 +12,6 @@ const zoom_speed = 0.005;
+ const pan_speed = 1;
+
+ export type PanAndZoomCallback = () => void;
+-const prefs = Preferences.INSTANCE;
+
+ /**
+  * Interactive Pan and Zoom helper
+@@ -135,15 +133,9 @@ export class PanAndZoom {
+         let dx = e.deltaX;
+         let dy = e.deltaY;
+
+-        // shift modifier flips the X and Y axes (horizontal scroll)
+-        if (!prefs.alignControlsWithKiCad) {
+-            if (dx == 0 && e.shiftKey) {
+-                [dx, dy] = [dy, dx];
+-            }
+-        } else {
+-            if (dx == 0 && e.ctrlKey) {
+-                [dx, dy] = [dy, dx];
+-            }
++        // ctrl modifier flips the X and Y axes (horizontal scroll)
++        if (dx == 0 && e.ctrlKey) {
++            [dx, dy] = [dy, dx];
+         }
+
+         // work around line/page scrolling
+@@ -159,25 +151,11 @@ export class PanAndZoom {
+         dx = Math.sign(dx) * Math.min(page_delta_multiplier, Math.abs(dx));
+         dy = Math.sign(dy) * Math.min(page_delta_multiplier, Math.abs(dy));
+
+-        if (!prefs.alignControlsWithKiCad) {
+-            // pinch zoom
+-            if (e.ctrlKey) {
+-                this.#rect = this.target.getBoundingClientRect();
+-                this.#handle_zoom(dy, this.#relative_mouse_pos(e));
+-            }
+-            // pan
+-            else {
+-                this.#handle_pan(dx, dy);
+-            }
++        if (e.shiftKey || e.ctrlKey) {
++            this.#handle_pan(-dx, dy);
+         } else {
+-            if (e.shiftKey || e.ctrlKey) {
+-                this.#handle_pan(-dx, dy);
+-            }
+-            // pinch zoom
+-            else {
+-                this.#rect = this.target.getBoundingClientRect();
+-                this.#handle_zoom(dy, this.#relative_mouse_pos(e));
+-            }
++            this.#rect = this.target.getBoundingClientRect();
++            this.#handle_zoom(dy, this.#relative_mouse_pos(e));
+         }
+
+         this.target.dispatchEvent(
 diff --git a/src/kc-ui/activity-side-bar.ts b/src/kc-ui/activity-side-bar.ts
 index 9040b3c..e471e34 100644
 --- a/src/kc-ui/activity-side-bar.ts
@@ -326,23 +395,54 @@ index 69d9fb0..356fc97 100644
  }
 
  /*
+diff --git a/src/kicanvas/elements/common/app.ts b/src/kicanvas/elements/common/app.ts
+index d6c91e6..ecfa127 100644
+--- a/src/kicanvas/elements/common/app.ts
++++ b/src/kicanvas/elements/common/app.ts
+@@ -25,7 +25,6 @@ import { KCBoardViewerElement } from "../kc-board/viewer";
+
+ // import dependent elements so they're registered before use.
+ import "./help-panel";
+-import "./preferences-panel";
+ import "./project-panel";
+ import "./viewer-bottom-toolbar";
+
+@@ -161,15 +160,6 @@ export abstract class KCViewerAppElement<
+
+     protected make_post_activities() {
+         return [
+-            // Preferences
+-            html`<kc-ui-activity
+-                slot="activities"
+-                name="Preferences"
+-                icon="settings"
+-                button-location="bottom">
+-                <kc-preferences-panel></kc-preferences-panel>
+-            </kc-ui-activity>`,
+-
+             // Help
+             html` <kc-ui-activity
+                 slot="activities"
 diff --git a/src/kicanvas/elements/common/preferences-panel.ts b/src/kicanvas/elements/common/preferences-panel.ts
-index b8c28d3..c916109 100644
+deleted file mode 100644
+index b8c28d3..0000000
 --- a/src/kicanvas/elements/common/preferences-panel.ts
-+++ b/src/kicanvas/elements/common/preferences-panel.ts
-@@ -4,70 +4,17 @@
-     Full text available at: https://opensource.org/licenses/MIT
- */
-
++++ /dev/null
+@@ -1,114 +0,0 @@
+-/*
+-    Copyright (c) 2023 Alethea Katherine Flowers.
+-    Published under the standard MIT License.
+-    Full text available at: https://opensource.org/licenses/MIT
+-*/
+-
 -import { css, html, query } from "../../../base/web-components";
-+import { html } from "../../../base/web-components";
- import { KCUIElement } from "../../../kc-ui";
- import { Preferences } from "../../preferences";
+-import { KCUIElement } from "../../../kc-ui";
+-import { Preferences } from "../../preferences";
 -import themes from "../../themes";
-
- const prefs = Preferences.INSTANCE;
-
- export class KCPreferencesPanel extends KCUIElement {
+-
+-const prefs = Preferences.INSTANCE;
+-
+-export class KCPreferencesPanel extends KCUIElement {
 -    static override styles = [
 -        ...KCUIElement.styles,
 -        css`
@@ -392,20 +492,21 @@ index b8c28d3..c916109 100644
 -    @query("[name=theme]", true)
 -    private theme_control!: HTMLSelectElement;
 -
-     override initialContentCallback() {
-         this.renderRoot.addEventListener("input", (e) => {
-             const target = e.target as HTMLInputElement;
-
+-    override initialContentCallback() {
+-        this.renderRoot.addEventListener("input", (e) => {
+-            const target = e.target as HTMLInputElement;
+-
 -            if (target.name === "theme") {
 -                prefs.theme = themes.by_name(this.theme_control.value);
 -            }
-             if (target.name === "align-controls-kicad") {
-                 prefs.alignControlsWithKiCad = target.checked;
-             }
-@@ -76,26 +23,10 @@ export class KCPreferencesPanel extends KCUIElement {
-     }
-
-     override render() {
+-            if (target.name === "align-controls-kicad") {
+-                prefs.alignControlsWithKiCad = target.checked;
+-            }
+-            prefs.save();
+-        });
+-    }
+-
+-    override render() {
 -        const theme_options = themes.list().map((v) => {
 -            return html`<option
 -                value="${v.name}"
@@ -414,10 +515,10 @@ index b8c28d3..c916109 100644
 -            </option>`;
 -        });
 -
-         return html`
-             <kc-ui-panel>
-                 <kc-ui-panel-title title="Preferences"></kc-ui-panel-title>
-                 <kc-ui-panel-body padded>
+-        return html`
+-            <kc-ui-panel>
+-                <kc-ui-panel-title title="Preferences"></kc-ui-panel-title>
+-                <kc-ui-panel-body padded>
 -                    <kc-ui-control-list>
 -                        <kc-ui-control>
 -                            <label>Theme</label>
@@ -426,9 +527,22 @@ index b8c28d3..c916109 100644
 -                            </select>
 -                        </kc-ui-control>
 -                    </kc-ui-control-list>
-                     <kc-ui-control>
-                         <label>
-                             <input
+-                    <kc-ui-control>
+-                        <label>
+-                            <input
+-                                type="checkbox"
+-                                name="align-controls-kicad"
+-                                checked="${prefs.alignControlsWithKiCad}" />
+-                            Align controls with KiCad
+-                        </label>
+-                    </kc-ui-control>
+-                </kc-ui-panel-body>
+-            </kc-ui-panel>
+-        `;
+-    }
+-}
+-
+-window.customElements.define("kc-preferences-panel", KCPreferencesPanel);
 diff --git a/src/kicanvas/elements/common/project-panel.ts b/src/kicanvas/elements/common/project-panel.ts
 index 4a0c543..f68ad4c 100644
 --- a/src/kicanvas/elements/common/project-panel.ts
@@ -442,6 +556,18 @@ index 4a0c543..f68ad4c 100644
              }
 
              .page kc-ui-button {
+diff --git a/src/kicanvas/elements/kc-board/app.ts b/src/kicanvas/elements/kc-board/app.ts
+index 3401887..23d20fa 100644
+--- a/src/kicanvas/elements/kc-board/app.ts
++++ b/src/kicanvas/elements/kc-board/app.ts
+@@ -12,7 +12,6 @@ import { KCBoardViewerElement } from "./viewer";
+
+ // Import dependent elements so they're registered before use.
+ import "../common/help-panel";
+-import "../common/preferences-panel";
+ import "../common/viewer-bottom-toolbar";
+ import "./footprints-panel";
+ import "./info-panel";
 diff --git a/src/kicanvas/elements/kc-board/layers-panel.ts b/src/kicanvas/elements/kc-board/layers-panel.ts
 index 0fc5121..4bf0951 100644
 --- a/src/kicanvas/elements/kc-board/layers-panel.ts
@@ -515,6 +641,49 @@ index c21bc7c..bc7b93c 100644
 +        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,0,0&display=swap"
          crossorigin="anonymous" />`,
  );
+diff --git a/src/kicanvas/preferences.ts b/src/kicanvas/preferences.ts
+index d2d011d..24511b2 100644
+--- a/src/kicanvas/preferences.ts
++++ b/src/kicanvas/preferences.ts
+@@ -5,7 +5,6 @@
+ */
+
+ import { listen } from "../base/events";
+-import { LocalStorage } from "../base/local-storage";
+ import type { Constructor } from "../base/types";
+ import type { KCUIElement } from "../kc-ui";
+ import type { Theme } from "../kicad";
+@@ -14,30 +13,9 @@ import themes from "./themes";
+ export class Preferences extends EventTarget {
+     public static readonly INSTANCE = new Preferences();
+
+-    private storage = new LocalStorage("kc:prefs");
+-
+     public theme: Theme = themes.default;
+-    public alignControlsWithKiCad: boolean = true;
+-
+-    public save() {
+-        this.storage.set("theme", this.theme.name);
+-        this.storage.set("alignControlsWithKiCad", this.alignControlsWithKiCad);
+-        this.dispatchEvent(new PreferencesChangeEvent({ preferences: this }));
+-    }
+-
+-    public load() {
+-        this.theme = themes.by_name(
+-            this.storage.get("theme", themes.default.name),
+-        );
+-        this.alignControlsWithKiCad = this.storage.get(
+-            "alignControlsWithKiCad",
+-            false,
+-        );
+-    }
+ }
+
+-Preferences.INSTANCE.load();
+-
+ export type PreferencesChangeEventDetails = {
+     preferences: Preferences;
+ };
 diff --git a/src/kicanvas/themes/index.ts b/src/kicanvas/themes/index.ts
 index 7e121c5..c2bdb4c 100644
 --- a/src/kicanvas/themes/index.ts

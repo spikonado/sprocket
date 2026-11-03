@@ -11,17 +11,6 @@
 			}
 		</style>
 		<style id="sprocket-theme"></style>
-		<script>
-			// The sandbox's opaque origin makes localStorage throw, and KiCanvas keeps its settings there.
-			const settings = new Map();
-			Object.defineProperty(window, 'localStorage', {
-				value: {
-					getItem: (key) => settings.get(key) ?? null,
-					setItem: (key, value) => settings.set(key, String(value)),
-					removeItem: (key) => settings.delete(key)
-				}
-			});
-		</script>
 	</head>
 	<body>
 		<!-- In the body, since the bundle appends its font stylesheet to `document.body`. -->
