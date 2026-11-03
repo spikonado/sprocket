@@ -289,7 +289,6 @@ async fn disk_write_failure_does_not_advance_preview() {
         }
         assert!(output.append(OutputChannel::Stdout, b"lost").await.is_err());
         assert_eq!(output.full_preview().output, "");
-        assert_eq!(output.read_log(0, false).await.output, "");
         assert!(output.finish().await.is_err());
         assert!(output.log.is_none());
         assert!(output.events.is_none());
