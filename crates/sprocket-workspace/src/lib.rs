@@ -14,6 +14,7 @@ pub mod github;
 mod patch;
 mod paths;
 mod project_root;
+mod skill_commands;
 mod skill_name;
 mod skills;
 #[cfg(test)]
