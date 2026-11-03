@@ -295,13 +295,14 @@ impl CommandSessionManager {
         if command.trim().is_empty() {
             bail!("command cannot be empty");
         }
+        let max_output_chars = max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS);
 
         let cwd = resolve_directory(&self.workspace_root, workdir)?;
         let shell = resolve_command_shell(shell, &cwd)?;
         let output = Arc::new(Mutex::new(
             CapturedOutput::create_with_limits(
                 &self.log_directory,
-                max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+                max_output_chars,
                 self.output_limits,
             )
             .await?,
@@ -331,7 +332,7 @@ impl CommandSessionManager {
             machine_id: self.history_scope.2.clone(),
             command: command.to_string(),
             workdir: cwd.to_string_lossy().to_string(),
-            max_output_chars: max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+            max_output_chars,
             result: CommandOutput {
                 exit_code: None,
                 success: false,
@@ -413,7 +414,7 @@ impl CommandSessionManager {
             stdin,
             completion,
             output,
-            max_output_chars: max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+            max_output_chars,
             observation: Mutex::new(CommandObservation::default()),
         });
         sessions.insert(session_id.clone(), session.clone());
@@ -873,7 +874,7 @@ async fn supervise_command(
     output: Arc<Mutex<CapturedOutput>>,
     timeout: Option<Duration>,
     lifetime_guard: Option<CommandLifetimeGuard>,
-    (history_path, mut history): (PathBuf, CommandHistory),
+    history: (PathBuf, CommandHistory),
     changes: Option<watch::Sender<()>>,
 ) {
     let timeout = wait_for_timeout(timeout);
@@ -937,8 +938,9 @@ async fn supervise_command(
         timed_out,
         error,
     };
+    let (path, mut history) = history;
     history.result = completion_output(&completed, output.lock().await.full_preview());
-    match history.save(&history_path).await {
+    match history.save(&path).await {
         Ok(()) => completed.archived = true,
         Err(error) => {
             completed.success = false;
@@ -1060,7 +1062,7 @@ async fn terminate_child(child: &mut Child, process_id: Option<u32>) -> Result<E
 }
 
 #[cfg(unix)]
-pub(crate) fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
+fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
     if let Some(pid) = process_id {
         let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
         if result != 0 {
@@ -1082,7 +1084,7 @@ fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
 }
 
 #[cfg(windows)]
-pub(crate) fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
+fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
     if let Some(pid) = process_id {
         std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
