@@ -4,6 +4,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Copy,
+	FolderInput,
 	FolderPlus,
 	RotateCcw,
 	Settings,
@@ -38,6 +39,8 @@ import ProjectSelectorMenu from './project-selector-menu';
 const SETTLED_INBOX_OPEN_KEY = 'sprocket.inbox.settled-open';
 
 type Thread = Doc<'threadRecords'>;
+
+type ThreadMenu = { thread: Thread; x: number; y: number; choosingProject?: boolean };
 
 const labels = {
 	unsettled: 'Unsettled',
@@ -99,6 +102,7 @@ type InboxSidebarProps = {
 	onChange: (thread: Thread, state: InboxState) => Promise<void>;
 	onRename: (thread: Thread, title: string) => Promise<void>;
 	onRegenerateTitle: (thread: Thread) => Promise<void>;
+	onMove: (thread: Thread, project: Project) => Promise<void>;
 	expansion: UseExpandedThreads;
 	resolveChildren: SidebarChildrenResolver;
 	readTreeSummary?: ThreadTreeSummaryRead;
@@ -125,12 +129,13 @@ export default function InboxSidebar({
 	onChange,
 	onRename,
 	onRegenerateTitle,
+	onMove,
 	expansion,
 	resolveChildren,
 	readTreeSummary = useThreadTreeSummary
 }: InboxSidebarProps) {
 	const [dragging, setDragging] = useState<Thread | null>(null);
-	const [menu, setMenu] = useState<{ thread: Thread; x: number; y: number } | null>(null);
+	const [menu, setMenu] = useState<ThreadMenu | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [renameThread, setRenameThread] = useState<Thread | null>(null);
@@ -203,7 +208,11 @@ export default function InboxSidebar({
 
 	useEffect(() => {
 		if (!menu) return;
-		document.querySelector<HTMLButtonElement>('.inbox-context-menu button:not(:disabled)')?.focus();
+		document
+			.querySelector<HTMLElement>(
+				'.inbox-context-menu input, .inbox-context-menu button:not(:disabled)'
+			)
+			?.focus();
 	}, [menu]);
 
 	function projectName(thread: Thread) {
@@ -286,6 +295,25 @@ export default function InboxSidebar({
 			await onRegenerateTitle(thread);
 		} catch (error) {
 			setNotice(error instanceof Error ? error.message : 'Could not regenerate thread title.');
+		} finally {
+			busyRef.current = false;
+			setBusy(false);
+		}
+	}
+
+	async function move(thread: Thread, project: Project) {
+		if (!mutationsEnabled || busyRef.current) return;
+		closeMenu();
+
+		if (project.repositoryKey === thread.repositoryKey) return;
+		busyRef.current = true;
+		setBusy(true);
+		setNotice(null);
+
+		try {
+			await onMove(thread, project);
+		} catch (error) {
+			setNotice(error instanceof Error ? error.message : 'Could not move thread.');
 		} finally {
 			busyRef.current = false;
 			setBusy(false);
@@ -388,14 +416,18 @@ export default function InboxSidebar({
 	);
 
 	function navigateMenu(event: ReactKeyboardEvent<HTMLDivElement>) {
-		if (event.key === 'Tab' || event.key === 'Escape') {
+		const inSearch = event.target instanceof HTMLInputElement;
+
+		if (event.key === 'Escape' || (event.key === 'Tab' && !inSearch)) {
 			event.preventDefault();
 			closeMenu();
 
 			return;
 		}
 
-		if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+		const keys = inSearch ? ['ArrowUp', 'ArrowDown'] : ['ArrowUp', 'ArrowDown', 'Home', 'End'];
+
+		if (!keys.includes(event.key)) return;
 		event.preventDefault();
 
 		const buttons = [
@@ -583,69 +615,101 @@ export default function InboxSidebar({
 						tabIndex={-1}
 						onKeyDown={navigateMenu}
 					>
-						{isRootThread(menuThread) &&
-							(inboxState(menuThread) === 'unsettled' ? (
+						{menu.choosingProject ? (
+							<ProjectSelectorMenu
+								projects={projects}
+								isSelected={(project) => project.repositoryKey === menuThread.repositoryKey}
+								onSelect={(project) => void move(menuThread, project)}
+							/>
+						) : (
+							<>
+								{isRootThread(menuThread) &&
+									(inboxState(menuThread) === 'unsettled' ? (
+										<button
+											type="button"
+											role="menuitem"
+											data-ph-capture-attribute-action="settle_thread"
+											disabled={
+												!mutationsEnabled ||
+												busy ||
+												!canChange(menuThread, 'settled', menuSummary?.anyActive === true)
+											}
+											onClick={() =>
+												void change(menuThread, 'settled', menuSummary?.anyActive === true)
+											}
+										>
+											<Check size={14} />
+											Settle
+										</button>
+									) : (
+										<button
+											type="button"
+											role="menuitem"
+											data-ph-capture-attribute-action="unsettle_thread"
+											disabled={!mutationsEnabled || busy}
+											onClick={() => void change(menuThread, 'unsettled', false)}
+										>
+											<RotateCcw size={14} />
+											Unsettle
+										</button>
+									))}
 								<button
 									type="button"
 									role="menuitem"
-									data-ph-capture-attribute-action="settle_thread"
-									disabled={
-										!mutationsEnabled ||
-										busy ||
-										!canChange(menuThread, 'settled', menuSummary?.anyActive === true)
-									}
-									onClick={() =>
-										void change(menuThread, 'settled', menuSummary?.anyActive === true)
-									}
+									data-ph-capture-attribute-action="rename_thread"
+									disabled={!mutationsEnabled}
+									onClick={() => beginRename(menuThread)}
 								>
-									<Check size={14} />
-									Settle
+									<SquarePen size={14} />
+									Rename
 								</button>
-							) : (
 								<button
 									type="button"
 									role="menuitem"
-									data-ph-capture-attribute-action="unsettle_thread"
+									data-ph-capture-attribute-action="regenerate_thread_title"
 									disabled={!mutationsEnabled || busy}
-									onClick={() => void change(menuThread, 'unsettled', false)}
+									onClick={() => void regenerateTitle(menuThread)}
 								>
 									<RotateCcw size={14} />
-									Unsettle
+									Regenerate thread title
 								</button>
-							))}
-						<button
-							type="button"
-							role="menuitem"
-							data-ph-capture-attribute-action="rename_thread"
-							disabled={!mutationsEnabled}
-							onClick={() => beginRename(menuThread)}
-						>
-							<SquarePen size={14} />
-							Rename
-						</button>
-						<button
-							type="button"
-							role="menuitem"
-							data-ph-capture-attribute-action="regenerate_thread_title"
-							disabled={!mutationsEnabled || busy}
-							onClick={() => void regenerateTitle(menuThread)}
-						>
-							<RotateCcw size={14} />
-							Regenerate thread title
-						</button>
-						<button
-							type="button"
-							role="menuitem"
-							onClick={() => {
-								void navigator.clipboard.writeText(menuThread._id).catch(() => {
-									setNotice('Could not copy thread ID.');
-								});
-								setMenu(null);
-							}}
-						>
-							<Copy size={14} />
-							Copy thread ID
-						</button>
+								{isRootThread(menuThread) && (
+									<button
+										type="button"
+										role="menuitem"
+										data-ph-capture-attribute-action="move_thread_to_project"
+										disabled={
+											!mutationsEnabled ||
+											busy ||
+											!canSettleThread(menuThread, menuSummary?.anyActive === true)
+										}
+										onClick={() =>
+											setMenu({
+												...menu,
+												y: Math.min(menu.y, window.innerHeight - 360),
+												choosingProject: true
+											})
+										}
+									>
+										<FolderInput size={14} />
+										Move to project
+									</button>
+								)}
+								<button
+									type="button"
+									role="menuitem"
+									onClick={() => {
+										void navigator.clipboard.writeText(menuThread._id).catch(() => {
+											setNotice('Could not copy thread ID.');
+										});
+										setMenu(null);
+									}}
+								>
+									<Copy size={14} />
+									Copy thread ID
+								</button>
+							</>
+						)}
 					</div>
 				</>
 			)}

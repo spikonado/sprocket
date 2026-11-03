@@ -12,6 +12,9 @@ import {
 	threadAncestryIds
 } from '@convex/lib/threadHierarchy';
 
+// One transaction moves the whole tree, so no run can start in a half-moved tree.
+const MAX_MOVED_DESCENDANTS = 1000;
+
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
 
@@ -103,6 +106,59 @@ export const unsettle = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await unsettleOwnedThread(ctx, args.threadId);
+
+		return null;
+	}
+});
+
+export const moveToProject = mutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		repositoryKey: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const repositoryKey = args.repositoryKey.trim();
+
+		if (!repositoryKey) {
+			throw new Error('Repository key is required.');
+		}
+
+		const userId = await getUserId(ctx);
+		const record = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		if (record.parentThreadId !== undefined) {
+			throw new Error('Only root threads can be moved.');
+		}
+
+		if (record.repositoryKey === repositoryKey) return null;
+
+		const summary = await subtreeSummary(ctx.db, record);
+
+		if (summary.anyActive) {
+			throw new Error('Cannot move a thread with active work.');
+		}
+
+		if (summary.descendantCount > MAX_MOVED_DESCENDANTS) {
+			throw new Error('This thread has too many subagents to move.');
+		}
+
+		const pending: Id<'threadRecords'>[] = [args.threadId];
+
+		while (pending.length > 0) {
+			const threadId = pending.pop()!;
+
+			// The saved cwd points into the old project, so runs restart at the new root.
+			await ctx.db.patch('threadRecords', threadId, { repositoryKey, cwd: undefined });
+
+			const children = ctx.db
+				.query('threadRecords')
+				.withIndex('by_userId_parentThreadId', (q) =>
+					q.eq('userId', userId).eq('parentThreadId', threadId)
+				);
+
+			for await (const child of children) pending.push(child._id);
+		}
 
 		return null;
 	}

@@ -592,6 +592,17 @@
 	background: var(--hover-fill);
 }
 
+.inbox-context-menu .inbox-project-menu {
+	position: static;
+	padding: 0;
+	border: 0;
+	box-shadow: none;
+}
+
+.inbox-context-menu .inbox-project-option {
+	display: block;
+}
+
 .inbox-sidebar button:disabled,
 .inbox-context-menu button:disabled {
 	cursor: not-allowed;

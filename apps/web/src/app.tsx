@@ -354,6 +354,7 @@ export default function App({
 	const regenerateThreadTitleRecord = useAction(api.threadTitles.regenerate);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
+	const moveThreadRecord = useMutation(api.threads.moveToProject);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const skipAgentQuestion = useMutation(api.agentQuestions.skip);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
@@ -2875,6 +2876,12 @@ export default function App({
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
 							onRegenerateTitle={(thread) => regenerateThreadTitle(thread._id)}
+							onMove={async (thread, project) => {
+								await moveThreadRecord({
+									threadId: thread._id,
+									repositoryKey: project.repositoryKey
+								});
+							}}
 						/>
 					)}
 				</div>
