@@ -25,8 +25,6 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new().route("/pull-requests/states", post(states_handler))
 }
 
-/// Reads PR states with this machine's GitHub credentials, which never leave it.
-/// PRs GitHub can't answer for are left out, so the caller keeps its last state.
 async fn states_handler(
     AuthorizedJson(payload): AuthorizedJson<StatesRequest>,
 ) -> Json<Vec<PullRequestStatus>> {

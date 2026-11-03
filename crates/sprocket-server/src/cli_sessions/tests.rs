@@ -46,8 +46,6 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
             .await
             .unwrap();
         let session_id = started.session_id.unwrap();
-        // Even an immediate CLI disconnect and run completion cannot leave
-        // a gap between the run guard and process ownership.
         lifetime.release(&client_id, "client").unwrap();
         drop(run_guard);
         assert!(!lifetime.tick(Instant::now()).0);

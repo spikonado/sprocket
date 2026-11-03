@@ -9,8 +9,6 @@ use crate::AppState;
 use crate::auth::require_session;
 use crate::routes::api_error::ApiError;
 
-/// Request extractor proving the caller holds a session that may access this
-/// machine, from either a bearer token or the session cookie.
 pub(crate) struct MachineSession;
 
 impl FromRequestParts<AppState> for MachineSession {

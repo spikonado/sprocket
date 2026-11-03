@@ -45,7 +45,6 @@ struct Frontmatter {
     disable_model_invocation: Option<bool>,
 }
 
-/// User skill dirs in precedence order: `~/.sprocket/skills`, then `~/.agents/skills`.
 pub fn default_user_skills_dirs() -> Vec<PathBuf> {
     let Some(home) = crate::paths::home_dir() else {
         return Vec::new();
@@ -54,7 +53,6 @@ pub fn default_user_skills_dirs() -> Vec<PathBuf> {
     vec![home.join(".sprocket/skills"), home.join(".agents/skills")]
 }
 
-/// Load skills with precedence: project `.sprocket/skills`, project `.agents/skills`, then `user_skills_dirs`, then `builtin`.
 pub fn load_workspace_skills(
     cwd: &Path,
     user_skills_dirs: &[PathBuf],
@@ -117,7 +115,6 @@ pub fn load_workspace_skills(
     WorkspaceSkills { skills, warnings }
 }
 
-/// Parse SKILL.md frontmatter (`name`, `description`) and return the body.
 pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
     let Some((frontmatter, body)) = split_frontmatter(contents) else {
         return Err("missing YAML frontmatter".to_string());

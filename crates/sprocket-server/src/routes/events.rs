@@ -1,7 +1,3 @@
-//! One WebSocket per client carries every server-pushed update. Each
-//! subscription starts with a snapshot, so a client recovers from a dropped
-//! socket by subscribing again.
-
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -167,9 +163,6 @@ async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
     }
 }
 
-/// Streams don't see sign-outs, expiry or account switches on their own, so
-/// the socket re-checks each subscription. Native sign-outs and account
-/// switches unbind local sessions, so in-memory session checks see them too.
 async fn revoke_unauthorized(
     state: &AppState,
     headers: &HeaderMap,

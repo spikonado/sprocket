@@ -21,8 +21,6 @@ impl UserScoped for StatusQuery {
     }
 }
 
-/// One switch from Settings → Version Control. Tokens are saved through
-/// Convex instead, so every machine of the user can use them.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SettingsUpdate {

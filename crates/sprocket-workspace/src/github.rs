@@ -29,8 +29,6 @@ static TOKENS: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
 
 static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::default);
 
-/// Which hosts the user turned off on this machine in Settings → Version
-/// Control. The host persists it; tokens are saved per user in `saved_tokens`.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GitHubSettings {
@@ -72,10 +70,7 @@ pub enum GitHubError {
     #[error("GitHub access to {0} is turned off in Settings → Version Control.")]
     Disabled(String),
     #[error("GitHub rate limit reached")]
-    RateLimited {
-        /// How long GitHub asked us to wait, when it said.
-        retry_after: Option<Duration>,
-    },
+    RateLimited { retry_after: Option<Duration> },
     #[error("GitHub returned {0}")]
     Status(StatusCode),
     #[error(transparent)]
@@ -90,7 +85,6 @@ pub struct GraphQlError {
     pub message: String,
 }
 
-/// A GraphQL answer that may be partial: aliased lookups fail one by one in `errors`.
 #[derive(Debug, Deserialize)]
 pub struct GraphQlResponse<T> {
     pub data: Option<T>,
@@ -98,8 +92,6 @@ pub struct GraphQlResponse<T> {
     pub errors: Vec<GraphQlError>,
 }
 
-/// GraphQL access to one GitHub host with the local user's own credentials, so
-/// private repositories work without Sprocket holding a shared token.
 pub struct GitHubApi {
     http: reqwest::Client,
     host: String,
@@ -109,8 +101,6 @@ pub struct GitHubApi {
 }
 
 impl GitHubApi {
-    /// Connects with `user_id`'s saved token for `host`, or this machine's own
-    /// credentials when they saved none.
     pub async fn connect(user_id: &str, host: &str) -> Result<Self, GitHubError> {
         let host = host.trim().to_ascii_lowercase();
         let graphql_url = graphql_url(&host)?;
@@ -142,7 +132,6 @@ impl GitHubApi {
             .await
     }
 
-    /// Runs one named operation from a document that holds several.
     pub async fn operation<T: DeserializeOwned>(
         &self,
         document: &str,
@@ -276,7 +265,6 @@ fn graphql_url(host: &str) -> anyhow::Result<Url> {
     Ok(Url::parse(&url)?)
 }
 
-/// Saved token, then the environment's, then the `gh` login, like t3code.
 async fn credential(user_id: &str, host: &str) -> Result<(String, CredentialSource), GitHubError> {
     {
         let settings = read_settings();
@@ -318,8 +306,6 @@ fn lock_tokens() -> std::sync::MutexGuard<'static, HashMap<String, (Option<Strin
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Follows `gh`'s variables, except an enterprise token only goes to the host
-/// named by `GH_HOST`, so a crafted remote can't capture it.
 fn env_token(host: &str, var: impl Fn(&str) -> Option<String>) -> Option<String> {
     let read = |name: &str| {
         var(name)
@@ -341,8 +327,6 @@ async fn gh_auth_token(host: &str) -> Option<String> {
     (!token.is_empty()).then_some(token)
 }
 
-/// Stdout of a `gh` run, or `None` when `gh` is missing or hangs. The exit
-/// status is ignored: `gh auth status` fails when any one host is signed out.
 async fn gh_output(args: &[&str]) -> Option<String> {
     let output = tokio::time::timeout(GH_AUTH_TIMEOUT, gh_command(args).output())
         .await

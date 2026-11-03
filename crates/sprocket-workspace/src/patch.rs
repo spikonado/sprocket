@@ -58,7 +58,6 @@ enum FileState {
 
 struct TrackedFile {
     original: FileState,
-    /// `None` until a section changes the file.
     updated: Option<FileState>,
 }
 

@@ -282,7 +282,6 @@ where
     .boxed()
 }
 
-/// Plain text, so viewers skip JSON escaping of boards that reach ~100 MiB.
 async fn read_text(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceEntryRequest>,

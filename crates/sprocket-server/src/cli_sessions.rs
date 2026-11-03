@@ -35,7 +35,6 @@ struct ClientState {
     used: bool,
 }
 
-/// CLI client leases, which also end a temporary server once every client leaves.
 pub(crate) struct CliSessions {
     host: Arc<HostLifetime>,
     state: Mutex<ClientState>,

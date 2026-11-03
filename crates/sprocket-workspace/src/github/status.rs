@@ -10,16 +10,13 @@ use super::{
     settings,
 };
 
-/// Keeps an unreachable Enterprise host, e.g. off VPN, from stalling the page.
 const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubStatus {
     pub enabled: bool,
-    /// `None` when the GitHub CLI isn't installed.
     pub cli_version: Option<String>,
-    /// Why the user's saved tokens couldn't be loaded, if they couldn't.
     pub saved_tokens_problem: Option<String>,
     pub hosts: Vec<HostStatus>,
 }
@@ -35,8 +32,6 @@ pub struct HostStatus {
     pub problem: Option<String>,
 }
 
-/// Lists github.com, `GH_HOST`, hosts `gh` is signed in to, and hosts with
-/// saved tokens or settings, each with the account its credential belongs to.
 pub async fn status(user_id: &str) -> GitHubStatus {
     let (cli_version, cli_hosts, saved) = tokio::join!(
         gh_output(&["--version"]),
@@ -141,7 +136,6 @@ async fn viewer_login(api: &GitHubApi) -> Result<String, GitHubError> {
         .ok_or_else(|| anyhow::anyhow!("GitHub didn't say who this credential belongs to").into())
 }
 
-/// `gh version 2.46.0 (2025-12-13)` → `2.46.0`.
 fn parse_cli_version(output: &str) -> Option<String> {
     output
         .lines()

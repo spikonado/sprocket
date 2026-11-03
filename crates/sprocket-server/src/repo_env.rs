@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 include!(concat!(env!("OUT_DIR"), "/repo_env.rs"));
 
-/// Return a public environment variable embedded from the repo `.env` at compile time.
 pub fn compile_time_env_var(key: &str) -> Option<&'static str> {
     if !key.starts_with("PUBLIC_") {
         return None;
@@ -13,10 +12,6 @@ pub fn compile_time_env_var(key: &str) -> Option<&'static str> {
         .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
 }
 
-/// Return the repo `.env` public variables known to this process.
-///
-/// Values from the actual process environment win over embedded defaults so
-/// callers still honor explicit runtime overrides.
 pub fn repo_env_vars() -> BTreeMap<String, String> {
     let mut entries = BTreeMap::new();
 

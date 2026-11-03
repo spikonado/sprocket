@@ -149,7 +149,6 @@ impl CommandSessionManager {
         self
     }
 
-    /// Bumps `changes` whenever `running_commands` may return a different list.
     pub fn with_change_signal(mut self, changes: watch::Sender<()>) -> Self {
         self.changes = Some(changes);
         self
@@ -250,8 +249,6 @@ impl CommandSessionManager {
         })
     }
 
-    /// Keeps the process's host alive independently of the initiating run.
-    /// The guard is acquired before spawning and released by the supervisor.
     pub fn with_lifetime_guard_factory<F, G>(mut self, factory: F) -> Self
     where
         F: Fn() -> Result<G> + Send + Sync + 'static,
@@ -400,8 +397,6 @@ impl CommandSessionManager {
             self.changes.clone(),
         ));
 
-        // Sessions appear in saved agent history and browser requests, so their
-        // IDs must remain distinct when a manager or the server is recreated.
         let session = Arc::new(CommandSession {
             id: session_id.clone(),
             command: command.to_string(),
@@ -514,7 +509,6 @@ impl CommandSessionManager {
         })
     }
 
-    /// Lists live processes without consuming command output or poll cooldowns.
     pub async fn running_commands(&self) -> Vec<RunningCommand> {
         let sessions = self.sessions.lock().await;
         let mut commands = sessions
@@ -550,8 +544,6 @@ impl CommandSessionManager {
         });
     }
 
-    /// True when no sessions remain and no clone still holds this manager.
-    /// Returns false without waiting if another task holds the session lock.
     pub fn try_is_unused(&self) -> bool {
         self.sessions
             .try_lock()
@@ -1099,8 +1091,6 @@ fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
 
 #[cfg(windows)]
 fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
-    // Match Unix: after the shell exits, kill any leftover process tree so
-    // background children from PowerShell do not outlive the session.
     stop_remaining_processes(process_id)
 }
 
@@ -1128,7 +1118,6 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
 pub struct CommandExecOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    /// The `output.log` byte after this output.
     pub next_offset: u64,
     #[serde(flatten, serialize_with = "serialize_for_model")]
     pub result: CommandOutput,
@@ -1144,7 +1133,6 @@ pub struct CommandStdinOutput {
     pub result: CommandOutput,
 }
 
-/// Command history keeps the full `CommandOutput`; models get only the fields that apply.
 fn serialize_for_model<S: serde::Serializer>(
     output: &CommandOutput,
     serializer: S,

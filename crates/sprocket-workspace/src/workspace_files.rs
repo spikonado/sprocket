@@ -10,7 +10,6 @@ use sha2::{Digest, Sha256};
 use crate::paths::{canonicalize_with_missing_tail, normalize_path};
 
 pub const MAX_EDITABLE_FILE_BYTES: u64 = 2 * 1024 * 1024;
-/// Viewers such as KiCanvas render large boards; real `.kicad_pcb` files reach ~100 MiB.
 const MAX_VIEWABLE_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
