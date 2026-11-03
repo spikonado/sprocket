@@ -34,6 +34,7 @@ jobs:
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       version: ${{ steps.version.outputs.value }}
       npm-tag: ${{ steps.version.outputs.npm-tag }}
@@ -82,6 +83,7 @@ jobs:
   web:
     needs: prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -125,6 +127,7 @@ jobs:
             runner: windows-2022
             executable: sprocket.exe
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     env:
       # Dev builds publish on every main push, and LTO triples their build time.
       CARGO_PROFILE_RELEASE_LTO: ${{ needs.prepare.outputs.npm-tag == 'dev' && 'false' || 'true' }}
@@ -172,6 +175,7 @@ jobs:
   package:
     needs: [prepare, web, native]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -219,6 +223,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_run' || inputs.publish
     needs: [prepare, package]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
