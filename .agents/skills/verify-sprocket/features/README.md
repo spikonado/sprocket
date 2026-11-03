@@ -17,6 +17,7 @@ Proof follows Evidence in `SKILL.md`. Report an unreachable path as a failure wi
 - [Sign-in](./sign-in.md): the signed-out gate, host and browser device codes, persistence across restarts.
 - [Projects](./projects.md): adding from the empty state and the project menu, switching projects, filtering the inbox by project, removing a project from the list.
 - [Threads](./threads.md): sending a prompt, the model reply, stopping a run, renaming and settling, the transcript after reload.
+- [Questions](./questions.md): agent questions above the composer, skip and send answer, collapse when the run ends.
 - [Side panel](./side-panel.md): opening, the view picker, tabs, full workspace, closing and restoring.
 - [Files](./files.md): the project tree, editing and saving a file, KiCad in KiCanvas, save conflicts, the discard prompt, creating, renaming and deleting, search.
 - [Settings](./settings.md): the settings pages including Connectors, a preference switch, the GitHub switch.
