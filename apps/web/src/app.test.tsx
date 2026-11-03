@@ -1100,10 +1100,10 @@ it('collapses a pending question once its run has finished', async () => {
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
-	const title = await screen.findByRole('button', { name: 'Which board should I target?' });
+	const toggle = await screen.findByRole('button', { name: 'Expand question' });
 	expect(screen.queryByRole('button', { name: 'Option A' })).toBeNull();
 
-	fireEvent.click(title);
+	fireEvent.click(toggle);
 	expect(screen.getByRole('button', { name: 'Option A' })).toBeTruthy();
 });
 
