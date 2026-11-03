@@ -31,7 +31,7 @@ import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreat
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { automaticRecoveryEndsAt, awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
+import { awaitsAutomaticRecovery, canRecoverAutomatically } from '@convex/lib/runRecovery';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
@@ -519,7 +519,8 @@ async function monitoredRun(
 }
 
 /** Subscribed while waiting on a subagent. It skips the claim lease and the
- * transcript so lease renewals and transcript writes don't re-run it. */
+ * transcript so lease renewals and transcript writes don't re-run it. Without
+ * a clock, an abandoned run stays active for as long as it could recover. */
 export const threadActivity = query({
 	args: {
 		runId: v.id('runs'),
@@ -530,8 +531,7 @@ export const threadActivity = query({
 	returns: v.object({
 		status: vRunStatus,
 		active: v.boolean(),
-		hasPendingQuestions: v.boolean(),
-		automaticRecoveryEndsAt: v.optional(v.number())
+		hasPendingQuestions: v.boolean()
 	}),
 	handler: async (ctx, args) => {
 		try {
@@ -543,12 +543,14 @@ export const threadActivity = query({
 			const hasPendingQuestions =
 				(await headActionablePendingQuestion(ctx.db, thread._id)) !== null;
 
+			if (!args.targetRunId && run && (await canRecoverAutomatically(ctx.db, run))) {
+				return { status: 'queued' as const, active: true, hasPendingQuestions };
+			}
+
 			return {
 				status: run?.status ?? thread.status,
 				active: (run !== null && !isRunFinalStatus(run.status)) || hasPendingQuestions,
-				hasPendingQuestions,
-				automaticRecoveryEndsAt:
-					run && !args.targetRunId ? await automaticRecoveryEndsAt(ctx.db, run) : undefined
+				hasPendingQuestions
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

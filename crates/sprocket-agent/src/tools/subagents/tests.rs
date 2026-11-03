@@ -119,7 +119,6 @@ fn activity(status: &str, active: bool, has_pending_questions: bool) -> Subagent
         status: status.to_string(),
         active,
         has_pending_questions,
-        automatic_recovery_ends_at: None,
     }
 }
 
@@ -127,14 +126,6 @@ fn activity_updates(
     updates: Vec<SubagentActivity>,
 ) -> impl Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin {
     futures::stream::iter(updates.into_iter().map(Ok)).chain(futures::stream::pending())
-}
-
-fn unix_ms_after(delay: Duration) -> f64 {
-    (SystemTime::now() + delay)
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
-        * 1000.0
 }
 
 #[tokio::test(start_paused = true)]
@@ -177,23 +168,6 @@ async fn settlement_yields_at_the_deadline_while_the_subagent_works() {
         .await
         .unwrap();
     assert_eq!(Instant::now(), deadline);
-}
-
-#[tokio::test(start_paused = true)]
-async fn settlement_treats_an_abandoned_run_as_working_until_its_recovery_window_ends() {
-    let started = Instant::now();
-    let mut abandoned = activity("failed", false, false);
-    abandoned.automatic_recovery_ends_at = Some(unix_ms_after(Duration::from_secs(5)));
-    let mut updates = activity_updates(vec![abandoned]);
-    wait_for_settlement_using(
-        &mut updates,
-        started + Duration::from_secs(10),
-        &WorkspaceCancellation::new(),
-    )
-    .await
-    .unwrap();
-    let waited = started.elapsed();
-    assert!(waited > Duration::from_secs(4) && waited <= Duration::from_secs(5));
 }
 
 #[tokio::test]

@@ -1560,19 +1560,13 @@ describe('subagents.control', () => {
 
 		const monitor = () => t.mutation(api.subagents.threadMonitorInfo, target);
 		expect(await monitor()).toMatchObject({ status: 'queued', active: true });
-		const abandoned = await t.run((ctx) => ctx.db.get('runs', child.runId));
 		expect(
 			await t.query(api.subagents.threadActivity, {
 				runId: caller.runId,
 				executionSecret: caller.executionSecret,
 				threadId: child.threadId
 			})
-		).toEqual({
-			status: 'failed',
-			active: false,
-			hasPendingQuestions: false,
-			automaticRecoveryEndsAt: abandoned!.completedAt! + AUTOMATIC_RECOVERY_GRACE_MS
-		});
+		).toEqual({ status: 'queued', active: true, hasPendingQuestions: false });
 
 		const stopArgs = { ...target, action: 'stop' as const };
 

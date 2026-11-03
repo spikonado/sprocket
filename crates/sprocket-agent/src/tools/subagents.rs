@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use convex::Value;
 use futures::{Stream, StreamExt};
@@ -1131,8 +1131,6 @@ struct SubagentActivity {
     status: String,
     active: bool,
     has_pending_questions: bool,
-    #[serde(default)]
-    automatic_recovery_ends_at: Option<f64>,
 }
 
 fn monitor_fields(thread_id: &str, target_run_id: Option<&str>) -> BTreeMap<String, Value> {
@@ -1182,13 +1180,14 @@ async fn wait_for_settlement(
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    if yield_time_ms > 0 {
-        let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
-        let updates =
-            cancelled_read(cancellation, watch_activity(context, thread_id, None)).await?;
-        tokio::pin!(updates);
-        wait_for_settlement_using(&mut updates, deadline, cancellation).await?;
+    let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+    let info = cancelled_read(cancellation, fetch_monitor_info(context, thread_id, None)).await?;
+    if yield_time_ms == 0 || !info.active || !info.pending_questions.is_empty() {
+        return Ok(info);
     }
+    let updates = cancelled_read(cancellation, watch_activity(context, thread_id, None)).await?;
+    tokio::pin!(updates);
+    wait_for_settlement_using(&mut updates, deadline, cancellation).await?;
     cancelled_read(cancellation, fetch_monitor_info(context, thread_id, None)).await
 }
 
@@ -1228,32 +1227,16 @@ async fn wait_for_settlement_using<S>(
 where
     S: Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin,
 {
-    let mut wake_at = deadline;
     loop {
         let activity = tokio::select! {
             biased;
             activity = next_activity(updates, cancellation) => activity?,
-            _ = sleep_until(wake_at) => return Ok(()),
+            _ = sleep_until(deadline) => return Ok(()),
         };
-        if activity.has_pending_questions {
+        if activity.has_pending_questions || !activity.active {
             return Ok(());
         }
-        // The query can't read the clock, so the recovery grace period ends here.
-        wake_at = match activity.automatic_recovery_ends_at {
-            _ if activity.active => deadline,
-            Some(ends_at) => deadline.min(instant_at_unix_ms(ends_at)),
-            None => return Ok(()),
-        };
     }
-}
-
-fn instant_at_unix_ms(unix_ms: f64) -> Instant {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
-        * 1000.0;
-    Instant::now() + Duration::from_secs_f64((unix_ms - now_ms).max(0.0) / 1000.0)
 }
 
 async fn wait_for_final_status<S>(

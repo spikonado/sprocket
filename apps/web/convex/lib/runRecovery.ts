@@ -27,26 +27,26 @@ export function isAutomaticallyRecoverableRun(
 	);
 }
 
-/** Reads no clock, so queries can call it. */
-export async function automaticRecoveryEndsAt(
+/** Ignores the grace period, so queries can call it. */
+export async function canRecoverAutomatically(
 	db: DatabaseReader,
 	run: Doc<'runs'>
-): Promise<number | undefined> {
-	if (
-		run.machineId === undefined ||
-		!isAutomaticallyRecoverableRun(run, run.machineId) ||
-		run.completedAt === undefined ||
-		!(await automaticAgentContinuationEnabled(db, run.userId))
-	) {
-		return undefined;
-	}
-
-	return run.completedAt + AUTOMATIC_RECOVERY_GRACE_MS;
+): Promise<boolean> {
+	return (
+		run.machineId !== undefined &&
+		isAutomaticallyRecoverableRun(run, run.machineId) &&
+		run.completedAt !== undefined &&
+		(await automaticAgentContinuationEnabled(db, run.userId))
+	);
 }
 
 export async function awaitsAutomaticRecovery(
 	db: DatabaseReader,
 	run: Doc<'runs'>
 ): Promise<boolean> {
-	return ((await automaticRecoveryEndsAt(db, run)) ?? 0) > Date.now();
+	return (
+		run.completedAt !== undefined &&
+		run.completedAt + AUTOMATIC_RECOVERY_GRACE_MS > Date.now() &&
+		(await canRecoverAutomatically(db, run))
+	);
 }
