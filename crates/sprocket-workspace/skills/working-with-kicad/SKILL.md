@@ -28,6 +28,10 @@ listed, these commands are on PATH:
 - Circuit facts (pinouts, strapping pins, regulator capacitors, USB CC
   resistors, reset timing) come from the part's current datasheet and the
   vendor reference design.
+- Prefer parts with a 3D model. KiCad's library footprints usually link one;
+  otherwise look for the manufacturer's STEP file, then SnapMagic or Ultra
+  Librarian. If a part has no model anywhere, consider an equivalent part
+  that has one and tell the user about the swap.
 
 ## 3. Script shape
 
@@ -139,6 +143,7 @@ for ref, lib_id, x, y, deg in [("R1", "Resistor_SMD:R_0603_1608Metric", 111, 106
     fp = board.place_footprint_from_library(
         lib_id, Vector2.from_xy_mm(x, y), orientation=Angle.from_degrees(deg))
     fp.reference_field.text.value = ref
+    fp.reference_field.visible = False
     board.update_items([fp])
 result = board.import_netlist("/abs/proj/board.net", match_mode=NetlistMatchMode.NMM_REFERENCE)
 print(result.report)   # check result.error_count
@@ -177,6 +182,18 @@ board.save()
 - Pad positions are absolute; re-read footprints after moving them.
 - Route every net yourself; there is no autorouter. Change layers with a
   `Via`; it has zero size until you set `diameter` and `drill_diameter`.
+- Keep the silkscreen clean. Hide reference designators (`R1`, `J3`, `U6`)
+  there; library footprints keep a `${REFERENCE}` copy on the Fab layer for
+  assembly. Silkscreen keeps outlines, pin-1 and polarity marks, short
+  connector pin labels, and at most a board name and version. Put
+  documentation in the project's docs, never as text on the board.
+- Check `fp.definition.models` for every footprint, and look at the 3D
+  render for parts drawn without a body. Save a downloaded model under
+  `proj/3dmodels/` and attach it with `fp.definition.add_item()` of a
+  `kipy.board_types.Footprint3DModel` whose `filename` is
+  `${KIPRJMOD}/3dmodels/<file>.step`, then `update_items([fp])`. Set
+  `visible`, `opacity = 1`, and `scale = Vector3D.from_xyz(1, 1, 1)`; a new
+  model's scale is 0.
 
 ## 6. Check, show, export
 
