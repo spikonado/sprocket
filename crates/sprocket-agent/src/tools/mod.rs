@@ -19,6 +19,7 @@ mod questions;
 mod scrape_files;
 mod skills;
 mod subagents;
+mod url_fetch;
 mod web;
 mod web_request;
 

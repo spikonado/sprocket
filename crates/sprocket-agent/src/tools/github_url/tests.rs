@@ -312,49 +312,6 @@ async fn image_bytes_use_the_existing_model_and_cache_limits() {
 }
 
 #[tokio::test]
-async fn download_limit_applies_with_or_without_content_length() {
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    for bytes in [
-        response(200, "text/plain", b"123456789"),
-        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n9\r\n123456789\r\n0\r\n\r\n".to_vec(),
-    ] {
-        let (url, server) = serve(vec![bytes]).await;
-        let error = download_file(&client, url, 8).await.unwrap_err();
-        assert!(error.to_string().contains("download limit"));
-        server.await.unwrap();
-    }
-}
-
-#[tokio::test]
-async fn image_limit_applies_during_download_even_without_an_image_content_type() {
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let signature = b"\x89PNG\r\n\x1a\n";
-    let declared = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        MAX_PARSE_FILE_IMAGE_BYTES + 1
-    );
-    let mut oversized = declared.into_bytes();
-    oversized.extend_from_slice(signature);
-
-    let mut chunked = b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".to_vec();
-    for byte in signature {
-        chunked.extend_from_slice(&[b'1', b'\r', b'\n', *byte, b'\r', b'\n']);
-    }
-    chunked.extend_from_slice(format!("{MAX_PARSE_FILE_IMAGE_BYTES:x}\r\n").as_bytes());
-    chunked.resize(chunked.len() + MAX_PARSE_FILE_IMAGE_BYTES, 0);
-    chunked.extend_from_slice(b"\r\n0\r\n\r\n");
-
-    for response in [oversized, chunked] {
-        let (url, server) = serve(vec![response]).await;
-        let error = download_file(&client, url, MAX_SCRAPE_BYTES)
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("download limit"), "{error:#}");
-        server.await.unwrap();
-    }
-}
-
-#[tokio::test]
 async fn cancellation_aborts_the_request() {
     let cache = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
