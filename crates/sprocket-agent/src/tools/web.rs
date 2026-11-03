@@ -3,7 +3,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context;
-use rig::message::MimeType;
 use rig::tool::{ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,13 +10,11 @@ use serde_json::json;
 use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{AgentToolContext, tool_error};
-use super::convert::{
-    MAX_PARSE_FILE_IMAGE_BYTES, convert_document, fit_image_for_model_blocking,
-    persist_image_bytes, replay_tool_output,
-};
+use super::convert::{MAX_PARSE_FILE_IMAGE_BYTES, convert_document, replay_tool_output};
 use super::hosted_parse::HostedParseContext;
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::scrape_files::MAX_SCRAPE_BYTES;
+use super::url_fetch::{download_file, persist_web_image, url_file_name};
 
 pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
 const DOCUMENT_SNIFF_BYTES: usize = 1024;
@@ -231,10 +228,9 @@ async fn fetch_raw_document(
         let transport: RawDocumentTransport = serde_json::from_value(result)?;
         let url = validate_web_url(&transport.url)?;
         let document_url = validate_web_url(&transport.document_url)?;
-        let (_, bytes) =
-            super::github_url::download_file(&scrape_client()?, document_url, MAX_SCRAPE_BYTES)
-                .await
-                .context("failed to download the document the cloud scraper fetched")?;
+        let (_, bytes) = download_file(&scrape_client()?, document_url, MAX_SCRAPE_BYTES)
+            .await
+            .context("failed to download the document the cloud scraper fetched")?;
         let csv = is_csv(
             &normalize_media_type(transport.content_type.as_deref().unwrap_or_default()),
             &url,
@@ -258,7 +254,7 @@ async fn convert_web_document(
     hosted: &HostedParseContext<'_>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<serde_json::Value> {
-    let name = super::github_url::url_file_name(&url);
+    let name = url_file_name(&url);
     let (markdown, _) = convert_document(bytes, name, hint, Some(hosted), cancellation)
         .await
         .with_context(|| format!("failed to parse the document at {url}"))?;
@@ -329,21 +325,6 @@ async fn download_image(
     }
     let url = response.url().clone();
     persist_web_image(bytes, &url, cache_dir).await
-}
-
-pub(super) async fn persist_web_image(
-    bytes: Vec<u8>,
-    url: &reqwest::Url,
-    cache_dir: &Path,
-) -> anyhow::Result<serde_json::Value> {
-    let image = fit_image_for_model_blocking(bytes).await?;
-    let path = persist_image_bytes(cache_dir, &image.bytes, &image.media_type).await?;
-    Ok(json!({
-        "outputType": "image", "url": url.as_str(),
-        "path": path,
-        "mediaType": image.media_type.to_mime_type(), "byteSize": image.bytes.len(),
-        "width": image.width, "height": image.height,
-    }))
 }
 
 async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
@@ -502,11 +483,11 @@ fn is_download_media_type(media_type: &str) -> bool {
 }
 
 fn has_document_extension(url: &reqwest::Url) -> bool {
-    anydoc::Format::from_path(&super::github_url::url_file_name(url)).is_some()
+    anydoc::Format::from_path(&url_file_name(url)).is_some()
 }
 
 fn has_csv_extension(url: &reqwest::Url) -> bool {
-    anydoc::Format::from_path(&super::github_url::url_file_name(url)) == Some(anydoc::Format::Csv)
+    anydoc::Format::from_path(&url_file_name(url)) == Some(anydoc::Format::Csv)
 }
 
 fn has_image_extension(url: &reqwest::Url) -> bool {

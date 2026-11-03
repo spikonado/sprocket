@@ -1,15 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use reqwest::Url;
 use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
-use super::convert::{
-    IMAGE_SNIFF_BYTES, MAX_PARSE_FILE_IMAGE_BYTES, convert_document, sniff_supported_image_format,
-};
+use super::convert::{convert_document, sniff_supported_image_format};
 use super::hosted_parse::HostedParseContext;
 use super::scrape_files::MAX_SCRAPE_BYTES;
+use super::url_fetch::{download_file, persist_web_image, url_file_name};
 
 pub(super) fn github_raw_url(url: &Url) -> Option<Url> {
     if !matches!(url.scheme(), "http" | "https") {
@@ -62,7 +61,7 @@ pub(super) async fn fetch_github_file(
     };
     if sniff_supported_image_format(&bytes).is_some() {
         anyhow::ensure!(supports_images, "The selected model cannot view images.");
-        return super::web::persist_web_image(bytes, &url, cache_dir).await;
+        return persist_web_image(bytes, &url, cache_dir).await;
     }
     let (markdown, _) =
         convert_document(bytes, url_file_name(&url), None, hosted, cancellation).await?;
@@ -71,53 +70,6 @@ pub(super) async fn fetch_github_file(
         "markdown": markdown,
         "images": [],
     }))
-}
-
-pub(super) fn url_file_name(url: &Url) -> PathBuf {
-    let filename = url.path_segments().and_then(Iterator::last).unwrap_or("");
-    PathBuf::from(
-        percent_encoding::percent_decode_str(filename)
-            .decode_utf8_lossy()
-            .as_ref(),
-    )
-}
-
-pub(super) async fn download_file(
-    client: &reqwest::Client,
-    url: Url,
-    mut max_bytes: u64,
-) -> anyhow::Result<(Url, Vec<u8>)> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(reqwest::Error::without_url)?;
-    let status = response.status();
-    anyhow::ensure!(status == reqwest::StatusCode::OK, "HTTP {status}");
-    let content_length = response.content_length();
-    anyhow::ensure!(
-        content_length.is_none_or(|size| size <= max_bytes),
-        "file exceeds the download limit"
-    );
-    let mut bytes = Vec::new();
-    let mut prefix = Vec::with_capacity(IMAGE_SNIFF_BYTES);
-    while let Some(chunk) = response.chunk().await? {
-        let prefix_bytes = chunk.len().min(IMAGE_SNIFF_BYTES - prefix.len());
-        prefix.extend_from_slice(&chunk[..prefix_bytes]);
-        if sniff_supported_image_format(&prefix).is_some() {
-            max_bytes = max_bytes.min(MAX_PARSE_FILE_IMAGE_BYTES as u64);
-        }
-        anyhow::ensure!(
-            content_length.is_none_or(|size| size <= max_bytes),
-            "file exceeds the download limit"
-        );
-        anyhow::ensure!(
-            bytes.len().saturating_add(chunk.len()) as u64 <= max_bytes,
-            "file exceeds the download limit"
-        );
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok((response.url().clone(), bytes))
 }
 
 #[cfg(test)]

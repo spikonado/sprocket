@@ -1,3 +1,4 @@
+use super::super::url_fetch::persist_web_image;
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -314,7 +315,7 @@ async fn csv_is_parsed_locally() {
         assert_eq!(document.hint, Some(anydoc::Format::Csv));
         let (markdown, format) = convert_document(
             document.bytes,
-            super::super::github_url::url_file_name(&document.url),
+            super::super::url_fetch::url_file_name(&document.url),
             document.hint,
             None,
             &WorkspaceCancellation::new(),
