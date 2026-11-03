@@ -889,6 +889,7 @@ export default function App({
 	useShownPullRequests(pullRequestRefresher, selectedThreadRows);
 
 	const runState = currentLifecycle?.run ?? null;
+	const runEnded = runState?.completedAt !== undefined;
 	const pendingAgentQuestion = dataForThread(pendingAgentQuestionQuery.data, currentThreadId);
 
 	useEffect(() => {
@@ -3057,7 +3058,7 @@ export default function App({
 										fastMode={fastMode}
 										onFastModeChange={setFastMode}
 										pendingQuestion={pendingAgentQuestion}
-										runEnded={runState?.completedAt !== undefined}
+										runEnded={runEnded}
 										showContinueWorking={latestRunResumeKind != null}
 										onContinueWorking={() => void continueWorking()}
 										runningCommands={
@@ -3077,7 +3078,7 @@ export default function App({
 										}
 										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
-										isWorking={!hasPendingAgentLaunch && isRunInProgress}
+										isWorking={!hasPendingAgentLaunch && isRunInProgress && !runEnded}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}
 										onSubmit={() => void submitPrompt()}
