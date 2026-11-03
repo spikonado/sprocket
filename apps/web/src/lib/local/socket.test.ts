@@ -1,17 +1,16 @@
-import type { Id } from '@convex/_generated/dataModel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { localSocket } from './socket';
 import { stubWebSocket } from './socket-test-support';
 import { LocalResponseError } from './transport';
+import { fixtureId } from '$lib/convex-test-client';
 
 afterEach(() => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
-// SAFETY: fixture strings are only compared as opaque Convex document ids.
-const scope = { userId: 'user-1', threadId: 'thread-1' as Id<'threadRecords'> };
+const scope = { userId: 'user-1', threadId: fixtureId<'threadRecords'>('thread-1') };
 
 const staleSchema = z.object({ stale: z.boolean() });
 

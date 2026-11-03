@@ -13,21 +13,13 @@ import {
 	type AssistantTimelineWorkBlock
 } from '$lib/chat/assistant-timeline';
 import type { ExecutorJob } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
-function executorJobId(value: string): ExecutorJob['_id'] {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as ExecutorJob['_id'];
-}
+const executorJobId = fixtureId<'executorJobs'>;
 
-function executorThreadId(value: string): ExecutorJob['threadId'] {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as ExecutorJob['threadId'];
-}
+const executorThreadId = fixtureId<'threadRecords'>;
 
-function executorRunId(value: string): ExecutorJob['runId'] {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as ExecutorJob['runId'];
-}
+const executorRunId = fixtureId<'runs'>;
 
 function executorJob(
 	id: string,
@@ -309,7 +301,6 @@ describe('groupAssistantTimelineSections', () => {
 		expect(sections.map((section) => section.type)).toEqual(['work', 'text', 'work', 'text']);
 		expect(sections[0]).toMatchObject({
 			type: 'work',
-			key: 'reasoning::r1',
 			blocks: [
 				{ type: 'reasoning', id: 'r1' },
 				{ type: 'tool-group', toolKey: 'exec_command' }
@@ -318,36 +309,12 @@ describe('groupAssistantTimelineSections', () => {
 		expect(sections[1]).toMatchObject({ type: 'text', id: 't1' });
 		expect(sections[2]).toMatchObject({
 			type: 'work',
-			key: 'reasoning::r2',
 			blocks: [
 				{ type: 'reasoning', id: 'r2' },
 				{ type: 'tool-group', toolKey: 'apply_patch' }
 			]
 		});
 		expect(sections[3]).toMatchObject({ type: 'text', id: 't2' });
-	});
-
-	it('keeps the work-section key on the first callId after running tools settle', () => {
-		const running = tool('c1', 'exec_command', {
-			job: executorJob('job-1', 1, { status: 'claimed', kind: 'exec_command' })
-		});
-
-		const done = tool('c2', 'exec_command', {
-			job: executorJob('job-2', 2, { status: 'completed', kind: 'exec_command' })
-		});
-
-		const sections = groupAssistantTimelineSections(groupAssistantTimeline([running, done]));
-		const work = sections[0];
-
-		if (work?.type !== 'work') throw new Error('Expected a work section.');
-
-		const { settledBlocks } = partitionWorkSectionTools(work.blocks, true);
-
-		expect(work.key).toBe('c1');
-		expect(settledBlocks[0]).toMatchObject({
-			type: 'tool-group',
-			tools: [expect.objectContaining({ callId: 'c2' })]
-		});
 	});
 });
 

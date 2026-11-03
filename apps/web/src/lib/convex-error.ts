@@ -18,7 +18,6 @@ function firstLineAfterPrefix(message: string, prefix: string): string | null {
 	return text || null;
 }
 
-/** Readable sentence from a Convex client error, preferring ConvexError data. */
 export function convexClientErrorMessage(error: Error): string | null {
 	if (error instanceof ConvexError) {
 		// SAFETY: this app throws ConvexError with a string payload.

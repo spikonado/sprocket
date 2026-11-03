@@ -30,7 +30,6 @@ export function resolveCatalogModel(
 	return modelId && getCatalogModel(catalog, modelId) ? modelId : catalog.defaultModelId;
 }
 
-/** Prefer a known label; fall back to the raw id so newer catalog values still render. */
 export function reasoningEffortLabel(effort: string): string {
 	switch (effort) {
 		case 'none':
@@ -121,7 +120,6 @@ function catalogFromGatewayPayload(
 	};
 }
 
-/** Live catalog from `GET {origin}/api/v1/models`. */
 export async function fetchGatewayModelCatalog(gatewayOrigin: string): Promise<ModelCatalog> {
 	const origin = gatewayOrigin.replace(/\/+$/, '');
 

@@ -60,7 +60,6 @@ export default function SettingsVersionControl({
 		void check();
 	}, [check]);
 
-	/** Runs one change, then shows the status that results from it. */
 	async function change(key: string, run: (api: GitHubApi) => Promise<GitHubStatus>) {
 		if (!localApi || pendingKey) return false;
 		setPendingKey(key);

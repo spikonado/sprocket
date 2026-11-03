@@ -1,16 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import type { TranscriptDisplayRow, TranscriptMessage } from '$lib/types/sprocket';
 import ThreadTranscript from './thread-transcript';
+import { fixtureId } from '$lib/convex-test-client';
 
 it.each(['persisted', 'live-fallback', 'live-section'])(
 	"resolves %s model images against the thread's cwd, falling back to the project",
 	(kind) => {
-		// SAFETY: Fixture IDs never leave the mounted component.
-		const threadId = 'image-thread' as Id<'threadRecords'>;
-		// SAFETY: Fixture IDs never leave the mounted component.
-		const runId = 'image-run' as Id<'runs'>;
+		const threadId = fixtureId<'threadRecords'>('image-thread');
+		const runId = fixtureId<'runs'>('image-run');
 
 		const text = '![Model screenshot](shots/a.png)';
 
@@ -66,16 +64,13 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 
 	const message = {
 		id: 'prompt:1',
-		// SAFETY: Fixture IDs never leave the mounted component.
-		threadId: 'thread' as Id<'threadRecords'>,
-		// SAFETY: Fixture IDs never leave the mounted component.
-		runId: 'run' as Id<'runs'>,
+		threadId: fixtureId<'threadRecords'>('thread'),
+		runId: fixtureId<'runs'>('run'),
 		kind: 'prompt',
 		text: 'Check this board',
 		attachments: [
 			{
-				// SAFETY: The test loader resolves this fixture ID without a backend.
-				storageId: 'image' as Id<'_storage'>,
+				storageId: fixtureId<'_storage'>('image'),
 				name: 'board.png',
 				mediaType: 'image/png',
 				size: 100

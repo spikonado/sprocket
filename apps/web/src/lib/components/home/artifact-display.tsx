@@ -13,7 +13,6 @@ type Props = {
 	workspacePath?: string;
 	localError?: string;
 	variant?: 'card' | 'full';
-	/** Enter true browser fullscreen for this artifact (content only). */
 	onOpenFullscreen?: () => void;
 	onBack?: () => void;
 	onDelete?: () => Promise<void>;

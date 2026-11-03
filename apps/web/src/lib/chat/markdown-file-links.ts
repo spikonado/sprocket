@@ -39,7 +39,6 @@ function resolvePath(base: string | null | undefined, path: string) {
 	return base ? normalizePath(`${base}/${path}`) : null;
 }
 
-/** Returns `path` relative to `root`, `''` for the root itself, or null when outside. */
 function relativePath(root: string, path: string) {
 	const normalizedRoot = normalizePath(root);
 

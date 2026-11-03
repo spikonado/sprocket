@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { render as renderView, within } from '@testing-library/react';
-import type { Id } from '@convex/_generated/dataModel';
 import type { TranscriptDisplayDetails } from '$lib/types/sprocket';
 import WorkSectionDetails from './work-section-details';
+import { fixtureId } from '$lib/convex-test-client';
 
 type Props = React.ComponentProps<typeof WorkSectionDetails>;
 
@@ -65,10 +65,8 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 	const props: Props = {
 		row: {
 			id: 'work',
-			// SAFETY: Fixture IDs never leave the mounted component.
-			threadId: 'thread' as Id<'threadRecords'>,
-			// SAFETY: Fixture IDs never leave the mounted component.
-			runId: 'run' as Id<'runs'>,
+			threadId: fixtureId<'threadRecords'>('thread'),
+			runId: fixtureId<'runs'>('run'),
 			kind: 'work',
 			text: '',
 			sequence: 1,

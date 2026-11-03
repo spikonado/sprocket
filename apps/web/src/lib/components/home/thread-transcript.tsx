@@ -331,7 +331,6 @@ export default function ThreadTranscript({
 		lastScrollTopRef.current = root.scrollTop;
 		historyPrefetchPagesRef.current = HISTORY_PREFETCH_PAGES;
 
-		// A shorter scroll range must preserve the reader's existing follow state.
 		if (!clampedToBottom) {
 			const distanceToBottom = bottom - root.scrollTop;
 			stickToBottomRef.current = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;

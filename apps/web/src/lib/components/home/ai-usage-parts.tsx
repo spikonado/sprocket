@@ -93,7 +93,6 @@ export type ShareItem = {
 	share: number;
 };
 
-/** Rows with a bar for each item's share, for comparing models or subagents at a glance. */
 export function UsageShareList({ items }: { items: readonly ShareItem[] }) {
 	return (
 		<ul className="mt-2 space-y-2.5 text-[12.5px]">

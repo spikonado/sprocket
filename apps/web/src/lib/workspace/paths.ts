@@ -42,7 +42,6 @@ export function withTrailingPathSeparator(path: string): string {
 	return `${path}${pathSeparator(path)}`;
 }
 
-/** True while the Windows drive list should keep filtering locally instead of browsing. */
 export function isWindowsVolumeListQuery(value: string): boolean {
 	const trimmed = value.trim();
 
@@ -77,7 +76,6 @@ type BrowsePathInput = {
 	browseEntries: BrowseEntry[];
 };
 
-/** Resolves a typed leaf against browse entries or the current parent directory. */
 function matchBrowseLeafPath(input: {
 	leaf: string;
 	browseParentPath: string;

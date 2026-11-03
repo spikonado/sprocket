@@ -5,7 +5,6 @@ export default function ProviderLogo({
 	provider,
 	className = ''
 }: {
-	/** Provider id from the model catalog; unknown values get a neutral glyph. */
 	provider: string;
 	className?: string;
 }) {

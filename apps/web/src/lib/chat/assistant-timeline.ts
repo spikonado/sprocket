@@ -34,7 +34,6 @@ export type AssistantTimelineWorkBlock = Exclude<AssistantTimelineBlock, { type:
 export type AssistantTimelineSection =
 	| {
 			type: 'work';
-			key: string;
 			blocks: AssistantTimelineWorkBlock[];
 	  }
 	| Extract<AssistantTimelineBlock, { type: 'text' }>;
@@ -53,10 +52,6 @@ export function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
 	return tool.name || tool.job?.kind || 'tool';
 }
 
-/**
- * Group consecutive same-type tool calls. Text and reasoning always break a group;
- * a different tool key starts a new group even when contiguous.
- */
 export function groupAssistantTimeline(items: AssistantTimelineItem[]): AssistantTimelineBlock[] {
 	const blocks: AssistantTimelineBlock[] = [];
 
@@ -86,19 +81,6 @@ export function assistantTimelinePartKey(
 	return `${part.type}:${part.turnId ?? ''}:${part.id}`;
 }
 
-/** Use the unpartitioned group so running tools settling does not change the key. */
-function assistantTimelineWorkSectionKey(block: AssistantTimelineWorkBlock): string {
-	if (block.type === 'reasoning') {
-		return assistantTimelinePartKey(block);
-	}
-
-	return block.tools[0]?.callId ?? block.toolKey;
-}
-
-/**
- * Wrap contiguous non-text blocks into work sections. Each text block is its own
- * section and breaks work.
- */
 export function groupAssistantTimelineSections(
 	blocks: AssistantTimelineBlock[]
 ): AssistantTimelineSection[] {
@@ -119,7 +101,6 @@ export function groupAssistantTimelineSections(
 
 		sections.push({
 			type: 'work',
-			key: assistantTimelineWorkSectionKey(block),
 			blocks: [block]
 		});
 	}
@@ -127,7 +108,6 @@ export function groupAssistantTimelineSections(
 	return sections;
 }
 
-/** Whether a tool call never reached a durable result (no output and no finished job). */
 function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean {
 	if (tool.output !== undefined) {
 		return false;
@@ -140,7 +120,6 @@ function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean
 	return true;
 }
 
-/** Tools that can yield an operation id and wait for that operation in a later call. */
 function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
 	const kind = assistantTimelineToolKey(tool);
 
@@ -158,7 +137,6 @@ function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
 	);
 }
 
-/** Whether an async tool call is still in flight while the run is streaming. */
 export function isAssistantTimelineToolRunning(
 	tool: AssistantTimelineTool,
 	isStreaming: boolean
@@ -168,7 +146,6 @@ export function isAssistantTimelineToolRunning(
 	);
 }
 
-/** Session id from a launch result or a session-bound tool's input. */
 function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
 	return (
 		jsonObjectString(tool.output, 'sessionId') ??
@@ -177,7 +154,6 @@ function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefin
 	);
 }
 
-/** Map session id → shell command from command tool calls and results. */
 export function buildCommandSessionCommandMap(
 	tools: readonly AssistantTimelineTool[]
 ): Map<string, string> {
@@ -204,7 +180,6 @@ export function buildCommandSessionCommandMap(
 	return sessionCommands;
 }
 
-/** User-facing command label for session-bound command tools. */
 export function resolveCommandSessionLabel(
 	tool: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>

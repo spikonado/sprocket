@@ -1,5 +1,5 @@
 import type { AssistantPart } from '@convex/lib/assistantParts';
-import type { DataModel, Id } from '@convex/_generated/dataModel';
+import { convexId } from '$lib/convex-id';
 import type {
 	ArtifactsWatchEvent,
 	LocalApi,
@@ -7,7 +7,6 @@ import type {
 	LiveCompletionWatchEvent,
 	ProjectAttachment
 } from '$lib/types/sprocket';
-import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
 import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
@@ -119,13 +118,13 @@ const runningCommandsSchema = z.array(
 );
 
 const agentRunStartSchema = z.object({
-	runId: z.string(),
-	threadId: z.string(),
+	runId: convexId<'runs'>(),
+	threadId: convexId<'threadRecords'>(),
 	stopped: z.boolean()
 });
 
 const localTranscriptAttachmentSchema = z.object({
-	storageId: z.string(),
+	storageId: convexId<'_storage'>(),
 	name: z.string(),
 	mediaType: z.string(),
 	size: z.int(),
@@ -133,7 +132,7 @@ const localTranscriptAttachmentSchema = z.object({
 });
 
 const transcriptUploadSuccessSchema = z.object({
-	storageId: z.string(),
+	storageId: convexId<'_storage'>(),
 	name: z.string(),
 	mediaType: z.string(),
 	size: z.number(),
@@ -155,29 +154,19 @@ function transcriptUploadPath(args: { userId: string; name: string; threadId?: s
 	return `/api/transcript/upload?${query}`;
 }
 
-const displayRowSchema = z
-	.object({
-		id: z.string(),
-		threadId: z.string(),
-		runId: z.string(),
-		sequence: z.int().nonnegative(),
-		kind: z.enum(['prompt', 'text', 'work']),
-		text: z.string().optional(),
-		attachments: z.array(localTranscriptAttachmentSchema).optional(),
-		toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
-		unpersistedToolCallIds: z.array(z.string()).optional(),
-		closed: z.boolean().optional(),
-		revision: z.int().nonnegative()
-	})
-	.transform((row) => ({
-		...row,
-		threadId: asConvexId<'threadRecords'>(row.threadId),
-		runId: asConvexId<'runs'>(row.runId),
-		attachments: row.attachments?.map((attachment) => ({
-			...attachment,
-			storageId: asConvexId<'_storage'>(attachment.storageId)
-		}))
-	}));
+const displayRowSchema = z.object({
+	id: z.string(),
+	threadId: convexId<'threadRecords'>(),
+	runId: convexId<'runs'>(),
+	sequence: z.int().nonnegative(),
+	kind: z.enum(['prompt', 'text', 'work']),
+	text: z.string().optional(),
+	attachments: z.array(localTranscriptAttachmentSchema).optional(),
+	toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
+	unpersistedToolCallIds: z.array(z.string()).optional(),
+	closed: z.boolean().optional(),
+	revision: z.int().nonnegative()
+});
 
 const displayPageSchema = z.object({
 	replicaId: z.string(),
@@ -187,9 +176,7 @@ const displayPageSchema = z.object({
 	stale: z.boolean(),
 	nextBefore: z.int().nonnegative().optional(),
 	revision: z.int().nonnegative(),
-	persistedStreams: z.array(
-		z.object({ runId: z.string().transform((id) => asConvexId<'runs'>(id)), streamId: z.string() })
-	),
+	persistedStreams: z.array(z.object({ runId: convexId<'runs'>(), streamId: z.string() })),
 	changes: z.array(
 		z.object({
 			id: z.string(),
@@ -216,8 +203,8 @@ const transcriptWatchEventSchema = z.object({
 });
 
 const liveCompletionOverlaySchema = z.object({
-	threadId: z.string(),
-	runId: z.string(),
+	threadId: convexId<'threadRecords'>(),
+	runId: convexId<'runs'>(),
 	runStatus: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
 	streamId: z.string().min(1),
 	text: z.string(),
@@ -290,13 +277,6 @@ const chatGptBrowserLoginResultSchema = z.object({
 
 const chatGptDisconnectSchema = z.object({ warning: z.string().nullable() });
 
-function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
-	value: string
-): Id<TableName> {
-	// SAFETY: the local API returns Convex document ids; branding is compile-time only.
-	return value as Id<TableName>;
-}
-
 function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
@@ -307,11 +287,7 @@ function parseLiveCompletionOverlay(
 	live: z.infer<typeof liveCompletionOverlaySchema>
 ): LiveCompletionOverlay {
 	return {
-		threadId: asConvexId(live.threadId),
-		runId: asConvexId(live.runId),
-		runStatus: live.runStatus,
-		streamId: live.streamId,
-		text: live.text,
+		...live,
 		// SAFETY: overlay parts match AssistantPart; the local event payload is produced by the hub.
 		parts: live.parts as AssistantPart[]
 	};
@@ -574,18 +550,11 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify(input)
 			}),
-		runAgent: async (requestBody) => {
-			const result = await request('/api/agent/run', agentRunStartSchema, {
+		runAgent: async (requestBody) =>
+			await request('/api/agent/run', agentRunStartSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			});
-
-			return {
-				runId: asConvexId(result.runId),
-				threadId: asConvexId(result.threadId),
-				stopped: result.stopped
-			};
-		},
+			}),
 		fetchTranscriptDisplay: async (requestBody, signal) =>
 			await request('/api/transcript/display', displayPageSchema, {
 				method: 'POST',
@@ -644,8 +613,8 @@ export function createLocalClient(baseUrl: string): LocalApi {
 
 			return await response.blob();
 		},
-		uploadTranscriptAttachment: async (requestBody) => {
-			const result = await request(
+		uploadTranscriptAttachment: async (requestBody) =>
+			await request(
 				transcriptUploadPath({
 					userId: requestBody.userId,
 					name: requestBody.name,
@@ -659,20 +628,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 					},
 					body: requestBody.file
 				}
-			);
-
-			if ('error' in result) {
-				return result;
-			}
-
-			return {
-				storageId: asConvexId<'_storage'>(result.storageId),
-				name: result.name,
-				mediaType: result.mediaType,
-				size: result.size,
-				url: result.url
-			};
-		},
+			),
 		discardTranscriptAttachment: async (requestBody) =>
 			await request('/api/transcript/discard', z.boolean(), {
 				method: 'POST',

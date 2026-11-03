@@ -18,7 +18,6 @@ function editorApi(onDisk: WorkspaceFileContent | null) {
 
 	const api: FileEditorApi = {
 		watchWorkspaceFile: vi.fn(async (_input, { onEvent, signal }) => {
-			// Like the socket, an aborted subscription delivers nothing.
 			push = (event) => {
 				if (!signal.aborted) onEvent(event);
 			};

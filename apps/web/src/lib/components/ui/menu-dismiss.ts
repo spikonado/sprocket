@@ -1,4 +1,3 @@
-/** Close an open menu on pointerdown outside its root(s) or Escape. */
 export function listenOpenMenuDismiss(options: {
 	getRoot: () => HTMLElement | null | readonly (HTMLElement | null)[];
 	onOutside: () => void;

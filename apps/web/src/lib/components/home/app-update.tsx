@@ -71,7 +71,6 @@ export default function AppUpdate() {
 
 		void (async () => {
 			while (!watch.signal.aborted) {
-				// Background checks must not interrupt work when the server or registry is offline.
 				await watchPackageUpdate({ signal: watch.signal, onEvent: onState }).catch(() => undefined);
 
 				if (!watch.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));

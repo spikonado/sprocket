@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import { watchCloudArtifacts } from './cloud-artifacts';
 import { mergeArtifactSources, type ArtifactWatchState } from './artifacts';
+import { fixtureId } from '$lib/convex-test-client';
 
 function clientFixture() {
 	let update: (revision: number) => void = () => {};
@@ -62,8 +62,7 @@ describe('cloud artifact subscriptions', () => {
 
 	it('filters a cached response from the previous account during auth handoff', async () => {
 		const fixture = clientFixture();
-		// SAFETY: this mocked response uses the ID only as an opaque string, never in a Convex request.
-		const artifactId = 'artifact' as Id<'artifacts'>;
+		const artifactId = fixtureId<'artifacts'>('artifact');
 		fixture.query.mockResolvedValue({
 			page: [
 				{

@@ -19,7 +19,6 @@ const stateDisplay: Record<PullRequestState, { Icon: LucideIcon; label: string }
 	merged: { Icon: GitMerge, label: 'Merged' }
 };
 
-// Open PRs still need the user, and merged ones outrank PRs closed along the way.
 const SUMMARY_ORDER: readonly PullRequestState[] = ['open', 'merged', 'closed'];
 
 const DASHBOARD_GAP_PX = 6;
@@ -30,7 +29,6 @@ const pullRequestUrl = (pr: PullRequest) => `https://${pr.repository}/pull/${pr.
 
 const shortRepository = (repository: string) => repository.replace(/^github\.com\//, '');
 
-/** One button for a thread's linked PRs: a link for one PR, a dashboard for several. */
 export default function LinkedPullRequests({
 	pullRequests
 }: {
@@ -96,7 +94,6 @@ function PullRequestDashboard({ pullRequests }: { pullRequests: readonly PullReq
 	useEffect(() => {
 		if (!open) return;
 
-		// Placed once on open, so it closes rather than drift away from its button.
 		function closeOnMove(event: Event) {
 			if (event.target instanceof Node && panelRef.current?.contains(event.target)) return;
 			setOpen(false);

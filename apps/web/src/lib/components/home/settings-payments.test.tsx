@@ -1,15 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
-import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import SettingsPayments from './settings-payments';
 
-// SAFETY: this opaque id is used only by the in-memory client.
-const threadId = 'thread-test' as Id<'threadRecords'>;
+const threadId = fixtureId<'threadRecords'>('thread-test');
 
-// SAFETY: this opaque id is used only by the in-memory client.
-const purchaseId = 'purchase-test' as Id<'purchases'>;
+const purchaseId = fixtureId<'purchases'>('purchase-test');
 
 afterEach(() => vi.restoreAllMocks());
 

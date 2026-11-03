@@ -221,7 +221,6 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
-/** Local file-backed artifact snapshot from the `artifacts` live-update topic. */
 export type LocalArtifact = {
 	_id: string;
 	userId: string;
@@ -329,7 +328,6 @@ export type WorkspaceFileContent = {
 	unsupported: 'binary' | 'tooLarge' | null;
 };
 
-/** Sent when what's on disk changes; the first event is the current state. */
 export type DiskEvent<T> = ({ kind: 'snapshot' } & T) | { kind: 'error'; message: string };
 
 export type WatchHandlers<T> = { onEvent: (event: T) => void; signal: AbortSignal };

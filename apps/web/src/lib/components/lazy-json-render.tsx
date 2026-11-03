@@ -25,7 +25,6 @@ export default function LazyJsonRender({
 	fallback: ReactNode;
 }) {
 	return (
-		// Keyed on source because JSONUIProvider only seeds state on mount.
 		<RenderErrorBoundary key={source} fallback={fallback}>
 			<Suspense fallback={fallback}>
 				<JsonRenderView source={source} fallback={fallback} />

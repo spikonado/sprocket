@@ -65,9 +65,7 @@ type Props = {
 	onOpenFile: (file: WorkspaceFileTarget) => void;
 	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
 	onFileDeleted: (workspacePath: string, path: string) => void;
-	/** Enter true browser fullscreen for a single artifact (content only). */
 	onOpenFullscreen: (key: string) => void;
-	/** Omitted when the panel can only be fullscreen. */
 	onToggleExpanded?: () => void;
 	onClose: () => void;
 };
@@ -295,11 +293,9 @@ function Pane({
 	/** Whether chat links open here; only shown when the panel is split. */
 	focused: boolean;
 	showsPanelButtons: boolean;
-	/** True until the panel is measured. */
 	canSplitRight: boolean;
 	canSplitDown: boolean;
 	onSplit: (direction: SplitDirection) => void;
-	/** True once, for the pane a split just created. */
 	takeNewPaneFocus: () => boolean;
 	onRequestCloseTab: (id: string) => void;
 }) {

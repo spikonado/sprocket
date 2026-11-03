@@ -1,4 +1,3 @@
-/** Shared local host and port settings for development and the installed app. */
 export const DEV_HOST = 'localhost';
 
 export const DEV_API_HOST = '127.0.0.1';
@@ -16,7 +15,6 @@ export const DEV_API_URL = `http://${DEV_API_HOST}:${DEV_API_PORT}`;
 export const DEV_WEB_URL = `http://${DEV_HOST}:${WEB_DEV_PORT}`;
 
 /**
- * Keep browser auth, local session cookies, and PKCE state on one development origin.
  * @param {string} currentUrl
  * @returns {string | null}
  */
@@ -33,7 +31,6 @@ export function canonicalDevWebUrl(currentUrl) {
 }
 
 /**
- * Installed loopback pages and the Electron renderer use the server-mediated auth callback.
  * @param {string} hostname
  * @param {boolean} hasDesktopBridge
  */

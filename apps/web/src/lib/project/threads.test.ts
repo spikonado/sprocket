@@ -14,18 +14,13 @@ import {
 } from '$lib/project/threads';
 import type { Id } from '@convex/_generated/dataModel';
 import type { ThreadSummary, Project } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
 type RunId = Id<'runs'>;
 
-function threadId(value: string): ThreadSummary['threadId'] {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as ThreadSummary['threadId'];
-}
+const threadId = fixtureId<'threadRecords'>;
 
-function runId(value: string): RunId {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as RunId;
-}
+const runId = fixtureId<'runs'>;
 
 const threadA = threadId('thread-record-a');
 

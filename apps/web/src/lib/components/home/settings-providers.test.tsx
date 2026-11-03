@@ -1,14 +1,13 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
-import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import type { CompletionProvider } from '@convex/lib/validators';
 import SettingsProviders from './settings-providers';
 
 const preferences: Doc<'uiPreferences'> = {
-	// SAFETY: this fixture id is only used by the in-memory Convex client.
-	_id: 'preferences-test' as Id<'uiPreferences'>,
+	_id: fixtureId<'uiPreferences'>('preferences-test'),
 	_creationTime: 1,
 	userId: 'user-test',
 	theme: 'light'

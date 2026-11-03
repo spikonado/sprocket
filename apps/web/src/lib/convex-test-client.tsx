@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import type { Id, TableNames } from '@convex/_generated/dataModel';
+import { convexId } from '$lib/convex-id';
 import {
 	ConvexProviderWithAuth,
 	ConvexReactClient,
@@ -15,8 +17,13 @@ import {
 	type FunctionReference,
 	type FunctionReference_future,
 	type FunctionReturnType,
-	type OptionalRestArgs
+	type OptionalRestArgs,
+	type SystemTableNames
 } from 'convex/server';
+
+export function fixtureId<Table extends TableNames | SystemTableNames>(value: string): Id<Table> {
+	return convexId<Table>().parse(value);
+}
 
 type QueryReference = FunctionReference<'query'> | FunctionReference_future<'query'>;
 

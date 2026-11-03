@@ -224,7 +224,6 @@ function ThreadUsagePanel({
 	);
 }
 
-/** Largest first, each sized by its share of `total` tokens. */
 function shareItems(
 	total: number,
 	entries: { key: string; label: string; detail?: string; tokens: number; cost: CostSummary }[]

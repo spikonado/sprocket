@@ -28,7 +28,6 @@ export default function AgentQuestion({
 	return (
 		<div className="mb-3" role="group" aria-label="Agent question">
 			<div className="text-foreground flex items-start gap-1.5 text-[14px] leading-6 font-medium">
-				{/* Mouse shortcut only; the chevron button is the accessible toggle. */}
 				<span
 					className={`min-w-0 flex-1 ${expanded ? '' : 'cursor-pointer truncate'}`}
 					onClick={expanded ? undefined : () => setExpanded(true)}

@@ -25,7 +25,6 @@ import {
 	type LucideIcon
 } from 'lucide-react';
 
-/** Small lucide icon for a tool kind / tool-group key. */
 export function toolKindIcon(kind: string): LucideIcon {
 	switch (kind) {
 		case 'apply_patch':

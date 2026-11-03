@@ -30,7 +30,6 @@ export function applyTheme(theme: SprocketTheme): void {
 	}
 
 	if (entryThemeDepth > 0) {
-		// Keep entry shells light; remember the preferred theme for restore.
 		themeBeforeEntry = theme;
 
 		return;
@@ -39,7 +38,6 @@ export function applyTheme(theme: SprocketTheme): void {
 	writeTheme(theme);
 }
 
-/** Force light theme for entry shells; restores the previous theme when the last shell unmounts. */
 export function forceEntryTheme(): () => void {
 	if (!globalThis.document) {
 		return () => {};

@@ -471,7 +471,6 @@ it('ignores a stale login completion after the user cancels and starts again', a
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(1_500);
 	});
-	// Cancel the first login and start a second one.
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 	});
@@ -479,7 +478,6 @@ it('ignores a stale login completion after the user cancels and starts again', a
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
-	// The first login's late completion must not touch the second login.
 	await act(async () => {
 		firstResult.resolve({ status: 'complete' });
 	});

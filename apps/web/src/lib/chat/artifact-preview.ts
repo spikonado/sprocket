@@ -1,6 +1,5 @@
 import type { ArtifactType } from '@convex/lib/validators';
 
-/** How the UI shows an artifact. A json-render spec is stored as a Markdown artifact. */
 export type ArtifactPreviewType = ArtifactType | 'json-render';
 
 const JSON_RENDER_FILE = /\.render\.json$/i;
@@ -9,7 +8,6 @@ export function artifactPreviewType(type: ArtifactType, title: string): Artifact
 	return type === 'markdown' && JSON_RENDER_FILE.test(title) ? 'json-render' : type;
 }
 
-/** Escape sequences that would break out of the inline <script> holding the react source. */
 function escapeInlineScript(source: string): string {
 	return source.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
 }
@@ -83,12 +81,10 @@ if (!__App) {
 	);
 }
 
-/** Build a full HTML document that mounts agent-authored React/JSX as `App`. */
 export function buildReactPreviewDocument(source: string): string {
 	return reactDocument(source, REACT_ARTIFACT_STYLE);
 }
 
-/** Normalize HTML artifact content into a document suitable for iframe srcdoc. */
 export function buildHtmlPreviewDocument(source: string): string {
 	const trimmed = source.trim();
 
@@ -99,7 +95,6 @@ export function buildHtmlPreviewDocument(source: string): string {
 	return previewDocumentShell('', trimmed);
 }
 
-/** Returns null for artifact types that render as text rather than a live preview. */
 export function buildArtifactPreviewDocument(
 	artifactType: ArtifactPreviewType,
 	content: string
@@ -157,7 +152,6 @@ const VISUAL_BASE_CSS =
 	'html{color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}' +
 	'body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}';
 
-/** CSS that gives a visual the app's current theme tokens; the page itself stays transparent. */
 export function readVisualThemeCss(): string {
 	const root = document.documentElement;
 	const style = getComputedStyle(root);
@@ -180,7 +174,6 @@ function visualPrelude(themeCss: string): string {
 	return `<style id="sprocket-theme">${themeCss}</style>\n<script>${VISUAL_SCRIPT}</script>\n`;
 }
 
-/** Build the document for a visual that an agent wrote inline in a message. */
 export function buildVisualDocument(kind: VisualKind, source: string, themeCss: string): string {
 	const prelude = visualPrelude(themeCss);
 

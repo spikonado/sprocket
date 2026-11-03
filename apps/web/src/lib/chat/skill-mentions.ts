@@ -62,7 +62,6 @@ export function applySkillSelection(
 		tokenEnd += 1;
 	}
 
-	// Replacement includes a trailing space; consume an existing one so we don't double it.
 	if (text[tokenEnd] === ' ') {
 		tokenEnd += 1;
 	}

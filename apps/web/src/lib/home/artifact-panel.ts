@@ -225,7 +225,6 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Splits the pane in two; the new pane opens on the view picker and takes focus. */
 	splitPane(id: string, direction: SplitDirection) {
 		const tab = this.#createTab();
 
@@ -270,7 +269,6 @@ export class ArtifactPanel implements Store<number> {
 		if (!tab.draft !== !draft) this.#emit();
 	}
 
-	/** Closing a pane's last tab closes the pane; closing the last pane resets the panel. */
 	closeTab(id: string) {
 		const pane = this.#paneOf(id);
 
@@ -305,7 +303,6 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Focuses a tab already showing the artifact, reuses an empty tab, or opens a new one. */
 	openArtifact(key: string) {
 		this.#show(
 			this.tabs.find((tab) => tab.view === 'artifacts' && tab.selectedKey === key),
@@ -319,7 +316,6 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Shows the tab already editing the file, reuses an empty tab, or opens a new one. */
 	openFile(file: WorkspaceFileTarget) {
 		const existing = this.tabs.find(
 			(tab) =>
@@ -332,7 +328,6 @@ export class ArtifactPanel implements Store<number> {
 		this.#show(existing, { view: 'file', file });
 	}
 
-	/** Shows `directory` in the active files tab, the first files tab, an empty tab, or a new one. */
 	openDirectory(directory: WorkspaceFileTarget) {
 		this.#show(
 			[this.activeTab, ...this.tabs].find((tab) => tab.view === 'files'),
@@ -340,7 +335,6 @@ export class ArtifactPanel implements Store<number> {
 		);
 	}
 
-	/** Keeps open file tabs pointing at a renamed file or folder. */
 	renameFile(workspacePath: string, from: string, to: string) {
 		let changed = false;
 
@@ -387,7 +381,6 @@ export class ArtifactPanel implements Store<number> {
 		this.panel = { ...this.panel, activePaneId: pane.id };
 	}
 
-	/** Puts `content` in `existing`, else the active tab when it's empty, else a new tab in the active pane, and focuses it. */
 	#show(existing: SidePanelTab | undefined, content: Partial<Omit<SidePanelTab, 'id'>>) {
 		const active = this.activeTab;
 		const target = existing ?? (active.view === null ? active : this.#createTab());

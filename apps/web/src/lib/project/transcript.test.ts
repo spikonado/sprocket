@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import type { LiveCompletionOverlay } from '$lib/types/sprocket';
 import { mergeLiveOverlays } from './transcript';
+import { fixtureId } from '$lib/convex-test-client';
 
 function overlay(streamId: string, text: string): LiveCompletionOverlay {
 	return {
-		// SAFETY: these IDs only identify in-memory fixtures.
-		threadId: 'thread' as Id<'threadRecords'>,
-		// SAFETY: these IDs only identify in-memory fixtures.
-		runId: 'run' as Id<'runs'>,
+		threadId: fixtureId<'threadRecords'>('thread'),
+		runId: fixtureId<'runs'>('run'),
 		streamId,
 		runStatus: 'running',
 		text,

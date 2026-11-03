@@ -29,8 +29,6 @@ function nestedMarkdownFence(source: string): Tokens.Code | undefined {
 
 	if (!outer || !language || !MARKDOWN_LANGUAGES.has(language) || firstLineEnd === -1) return;
 
-	// Agents often nest same-length fences inside a Markdown block. An inner fence that names a
-	// language must open a nested block, so the next bare fence closes it instead of ours.
 	const inner: Fence[] = [];
 	const content: string[] = [];
 	let nested = false;

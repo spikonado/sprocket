@@ -9,7 +9,6 @@ import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
 const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, SPROCKET_RELEASE_VERSION } = process.env;
 
-// Release builds upload source maps for PostHog error tracking; builds without the keys skip it.
 const posthogSourceMaps =
 	POSTHOG_PERSONAL_API_KEY && POSTHOG_PROJECT_ID
 		? [

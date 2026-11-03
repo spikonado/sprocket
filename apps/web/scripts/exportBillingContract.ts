@@ -28,14 +28,10 @@ function contract(fn: AnyRegisteredFunction) {
 		throw new Error('Billing contract must contain registered public Convex functions.');
 	}
 
-	return {
-		kind: kindOf(fn),
-		// SAFETY: exportArgs/exportReturns are attached at registration; their
-		// output is serialized validator JSON.
-		args: JSON.parse(fn.exportArgs()) as unknown,
-		// SAFETY: same registration guarantee as args above.
-		returns: JSON.parse(fn.exportReturns()) as unknown
-	};
+	const args: unknown = JSON.parse(fn.exportArgs());
+	const returns: unknown = JSON.parse(fn.exportReturns());
+
+	return { kind: kindOf(fn), args, returns };
 }
 
 console.log(

@@ -42,7 +42,6 @@ export function breakdownOf(rows: readonly TokenUsageTotals[]): TokenBreakdown {
 	);
 }
 
-/** Cache reads are excluded, since the same context is re-read on every turn. */
 export function newTokens(breakdown: TokenBreakdown): number {
 	return breakdown.uncachedInput + breakdown.cacheWrite + breakdown.output;
 }
@@ -83,7 +82,6 @@ function countsCost(
 	};
 }
 
-/** USD per token type at today's direct-API list prices, or null when the catalog can't price the model or the row's cache writes. */
 export function apiCostByType(
 	row: TokenUsageTotals,
 	catalog: ModelCatalog | undefined
@@ -163,7 +161,6 @@ export function modelUsageKey(row: { provider: CompletionProvider; model: string
 	return `${row.provider}:${row.model}`;
 }
 
-/** Groups by provider and model, merging service tiers, largest first. */
 export function usageByModel(
 	rows: readonly TokenUsageTotals[],
 	catalog: ModelCatalog | undefined
@@ -220,7 +217,6 @@ export function formatCalls(calls: number): string {
 	return `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`;
 }
 
-/** Round axis ticks from 0 to at least `peak`, so gridlines land on readable values. */
 export function axisTicks(peak: number): number[] {
 	if (!(peak > 0)) return [];
 
@@ -274,7 +270,6 @@ function shiftBucket(unit: BucketUnit, start: number, count: number): number {
 	return start + count * { hour: HOUR_MS, day: DAY_MS, week: 7 * DAY_MS }[unit];
 }
 
-/** The range's bucket starts, oldest first, ending with the bucket that contains `now`. */
 export function rangeBucketStarts(range: UsageRange, now: number): number[] {
 	const last = bucketStartFor(range.unit, now);
 
@@ -283,7 +278,6 @@ export function rangeBucketStarts(range: UsageRange, now: number): number[] {
 	);
 }
 
-/** Stored rows are hourly or daily; weeks and months are summed from days. */
 export function rangeQuery(range: UsageRange, now: number) {
 	const starts = rangeBucketStarts(range, now);
 
@@ -294,7 +288,6 @@ export function rangeQuery(range: UsageRange, now: number) {
 	};
 }
 
-/** Hours are exact instants, so they show in local time. Days are stored as UTC days. */
 const bucketLabelFormats: Record<BucketUnit, Intl.DateTimeFormat> = {
 	hour: new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }),
 	day: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),

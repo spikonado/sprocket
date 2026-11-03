@@ -15,7 +15,6 @@ function parseSpecDocument(source: string): Spec | undefined {
 	}
 }
 
-/** Reads a spec written as one JSON document or as JSONL patches, which may still be streaming. */
 export function parseJsonRenderSpec(source: string): Spec | null {
 	const spec = parseSpecDocument(source) ?? specSchema.safeParse(compileSpecStream(source)).data;
 

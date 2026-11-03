@@ -54,7 +54,6 @@ export type PromptComposerProps = {
 	fastMode?: boolean;
 	onFastModeChange?: (fastMode: boolean) => void;
 	pendingQuestion?: PendingAgentQuestion | null;
-	/** The latest run finished; its pending question stays answerable. */
 	runEnded?: boolean;
 	showContinueWorking?: boolean;
 	onContinueWorking?: () => void;
@@ -67,7 +66,6 @@ export type PromptComposerProps = {
 	isStarting: boolean;
 	isRunning: boolean;
 	isWorking: boolean;
-	/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 	projectSkills?: {
 		workspacePath: string | null;
 		load: () => Promise<SkillSummary[]>;
@@ -173,7 +171,6 @@ export function PromptComposerView({
 	const answeringQuestion = pendingQuestion != null;
 	const composerLocked = (isRunning && !answeringQuestion) || isSubmitting;
 
-	// Unknown policies count as metered, matching backend enforcement.
 	const selectedModelUnmetered = selectedCatalogModel?.usagePolicy === 'unlimited';
 
 	// The cached result can outlive its own reset time because the query only
@@ -245,7 +242,6 @@ export function PromptComposerView({
 		setCaretPosition(composerTextarea.current?.selectionStart ?? prompt.length);
 	}, [prompt.length]);
 
-	/** Fallback only when field-sizing is unavailable; CSS handles modern browsers. */
 	const syncComposerHeight = useCallback(() => {
 		const textarea = composerTextarea.current;
 

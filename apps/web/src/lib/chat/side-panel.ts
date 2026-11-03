@@ -3,20 +3,15 @@ import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
 
-/** Unsaved edits to `base`, the content read at `version`. */
 export type FileDraft = { doc: Text; base: Text; version: string };
 
 export type SidePanelTab = {
 	id: string;
 	/** `null` shows the view picker. */
 	view: SidePanelView | null;
-	/** Selected artifact, for the artifacts view. */
 	selectedKey: string | null;
-	/** Open workspace file, for the file view. */
 	file?: WorkspaceFileTarget;
-	/** Folder to show, for the files view; `workspacePath` overrides the thread or project root. */
 	directory?: WorkspaceFileTarget;
-	/** Unsaved edits in the file view; they live here so they outlive the editor. */
 	draft?: FileDraft;
 };
 
@@ -34,12 +29,10 @@ export function isSameOrInside(path: string, entry: string) {
 	return path === entry || path.startsWith(`${entry}/`);
 }
 
-/** Maps `path` through a rename of `from` to `to`; returns null when unaffected. */
 export function renamedPath(path: string, from: string, to: string) {
 	return isSameOrInside(path, from) ? `${to}${path.slice(from.length)}` : null;
 }
 
-/** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {
 	open: boolean;
 	/** When true, the panel covers the full Sprocket workspace UI. */
@@ -67,14 +60,12 @@ export type SidePanelPane = {
 	activeTabId: string;
 };
 
-/** `row` puts `first` left of `second`; `column` puts it above. */
 export type SplitDirection = 'row' | 'column';
 
 export type SidePanelSplit = {
 	type: 'split';
 	id: string;
 	direction: SplitDirection;
-	/** Share of the split taken by `first`. */
 	ratio: number;
 	first: SidePanelLayout;
 	second: SidePanelLayout;
@@ -82,13 +73,11 @@ export type SidePanelSplit = {
 
 export type SidePanelLayout = SidePanelPane | SidePanelSplit;
 
-/** Smallest pane, in pixels, that still fits its header and content along each split direction. */
 export const MIN_PANE_SIZE = { row: 240, column: 160 } as const satisfies Record<
 	SplitDirection,
 	number
 >;
 
-/** Pixels `node` needs along `direction` so every pane inside it, at its current ratios, keeps `MIN_PANE_SIZE`. */
 export function minLayoutSize(node: SidePanelLayout, direction: SplitDirection): number {
 	if (node.type === 'pane') return MIN_PANE_SIZE[direction];
 
@@ -162,7 +151,6 @@ export function layoutRects(
 	};
 }
 
-/** The pane in the panel's top-right corner, which holds the panel-wide buttons. */
 export function topRightPane(node: SidePanelLayout): SidePanelPane {
 	if (node.type === 'pane') return node;
 
