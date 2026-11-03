@@ -23,3 +23,22 @@ export function isAutomaticallyRecoverableRun(
 		run.machineId === machineId
 	);
 }
+
+/** True while the host can still continue this abandoned run. No clock: the
+ * host journal and a later replacement run are what end the wait. */
+export async function isAwaitingHostRecovery(
+	db: DatabaseReader,
+	run: Doc<'runs'> | null
+): Promise<boolean> {
+	if (!run?.machineId || !isAutomaticallyRecoverableRun(run, run.machineId)) {
+		return false;
+	}
+
+	const latest = await db
+		.query('runs')
+		.withIndex('by_threadId', (q) => q.eq('threadId', run.threadId))
+		.order('desc')
+		.first();
+
+	return latest?._id === run._id && (await automaticAgentContinuationEnabled(db, run.userId));
+}
