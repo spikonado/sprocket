@@ -31,6 +31,7 @@ use self::artifacts::{
     AddArtifactTool, DeleteArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool,
 };
 pub(crate) use self::async_tools::max_yield_ms;
+pub(crate) use self::commands::CommandCursors;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::connectors::ListConnectorsTool;
 use self::context::{AgentToolContext, WorkingDirectory};
@@ -166,6 +167,7 @@ pub(crate) fn agent_tools(
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
     command_sessions: CommandSessionManager,
+    command_cursors: CommandCursors,
     subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     installed_connectors: crate::InstalledConnectors,
     max_yield_ms: u64,
@@ -184,6 +186,7 @@ pub(crate) fn agent_tools(
         supports_images,
         tool_call_tracker,
         command_sessions,
+        command_cursors,
         max_yield_ms,
         question_polls: questions::QuestionPolls::default(),
         checkouts: payments::Checkouts::default(),

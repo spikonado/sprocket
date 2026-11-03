@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use crate::command_output::{CapturedOutput, read_output_events};
+use crate::command_output::{CapturedOutput, UnreturnedOutput, read_output_events};
 use crate::commands::CommandOutput;
 use crate::process_identity::{CommandProcess, stop_leftover_process_group};
 
@@ -20,14 +20,8 @@ pub struct CommandHistory {
     pub workdir: String,
     pub max_output_chars: usize,
     pub result: CommandOutput,
-    /// The sequence of the first `events.jsonl` event not yet returned to the model.
-    #[serde(default)]
-    pub read_sequence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<CommandProcess>,
-    /// Unreturned output saved by released servers before `read_sequence` existed.
-    #[serde(default, skip_serializing)]
-    pub pending_output: Option<String>,
 }
 
 #[cfg(test)]
@@ -106,18 +100,14 @@ impl CommandHistory {
         Ok(())
     }
 
-    /// Returns output the model hasn't received and advances `read_sequence`
-    /// past it. Callers save the history before returning the output.
-    pub(crate) async fn take_unreturned_output(&mut self, final_stream: bool) -> Result<String> {
-        let unreturned = read_output_events(
+    pub(crate) async fn read_output(&self, from_sequence: u64) -> Result<UnreturnedOutput> {
+        read_output_events(
             Path::new(&self.result.events_path),
-            self.read_sequence,
+            from_sequence,
             self.max_output_chars,
-            final_stream,
+            !self.result.running,
         )
-        .await?;
-        self.read_sequence = unreturned.next_sequence;
-        Ok(self.pending_output.take().unwrap_or(unreturned.output))
+        .await
     }
 }
 

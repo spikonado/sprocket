@@ -133,10 +133,6 @@ A server process started before an update returns HTTP 401 instead of 409 for CL
 
 Transcripts from released clients lack `providerMetadata.rigNative` and `origin`. `transcript/history.rs` rebuilds native items from their older `providerMetadata` fields, and `assign_unidentified_legacy_history_origin` assigns the selected model's origin. A missing `reasoningIssuer` means `openai`. Keep these fallbacks until a versioned migration rewrites all stored local JSONL and Convex transcripts.
 
-### Pending command output
-
-Released servers saved output the model hadn't received as `pending_output` in `command-logs/sessions/*.json`, without a `read_sequence` cursor. The next poll returns that text once, moves the cursor past every saved event and rewrites the file without the field. Remove `pending_output` from `CommandHistory` once releases that wrote it are outside the direct-upgrade window.
-
 ## Permanent history formats
 
 Stored executor jobs and transcripts keep accepting these historical shapes so history stays readable. No lossless rewrite exists, so they have no removal gate:

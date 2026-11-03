@@ -25,9 +25,7 @@ async fn running_history(root: &Path, output: &[u8]) -> CommandHistory {
             events_path: preview.events_path,
             error: None,
         },
-        read_sequence: 0,
         process: None,
-        pending_output: None,
     }
 }
 

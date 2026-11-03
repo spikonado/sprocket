@@ -53,6 +53,15 @@ pub(crate) struct UnreturnedOutput {
     pub next_sequence: u64,
 }
 
+impl UnreturnedOutput {
+    pub(crate) fn none(from_sequence: u64) -> Self {
+        Self {
+            output: String::new(),
+            next_sequence: from_sequence,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OutputPreview {

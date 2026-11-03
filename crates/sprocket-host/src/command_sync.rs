@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
 use sprocket_transcript::TranscriptStore;
-use sprocket_workspace::{CommandHistory, CommandOutput};
+use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::command_sessions::ThreadCommandSessions;
@@ -408,7 +408,7 @@ pub async fn fetch(
     if remote.result.running {
         remote.result.error = Some("command belongs to another machine; this is its last synced output, not a live process observation".into());
     }
-    Ok(Some(CommandHistory {
+    let history = CommandHistory {
         user_id: user_id.into(),
         thread_id: thread_id.into(),
         machine_id: remote.machine_id,
@@ -420,10 +420,10 @@ pub async fn fetch(
             events_path: events.to_string_lossy().into_owned(),
             ..remote.result
         },
-        read_sequence: 0,
         process: None,
-        pending_output: None,
-    }))
+    };
+    history.save(&history_path(directory, session_id)?).await?;
+    Ok(Some(history))
 }
 
 pub async fn settle_interrupted(store: &TranscriptStore, machine_id: &str) {

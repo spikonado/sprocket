@@ -1,14 +1,114 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sprocket_transcript::TranscriptPart;
 use sprocket_workspace::{CommandAction, default_command_shell};
+use tokio::sync::Mutex;
 
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_serialized_tool_job;
 
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
+
+/// Where each command session's next read starts. A result's `nextSequence`
+/// only counts once `executor:complete` accepts it, which is the mutation that
+/// records it in the transcript, so later runs resume from the transcript.
+#[derive(Clone, Default)]
+pub(crate) struct CommandCursors(Arc<Mutex<HashMap<String, Arc<Mutex<u64>>>>>);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordedRead {
+    session_id: Option<String>,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
+    next_sequence: u64,
+}
+
+impl CommandCursors {
+    pub(crate) fn from_parts(parts: &[TranscriptPart]) -> Self {
+        let mut latest = HashMap::<String, (u32, u64)>::new();
+        for part in parts {
+            let Some(tool) = &part.tool else { continue };
+            if tool.status != "completed"
+                || !matches!(tool.name.as_str(), "exec_cmd" | "poll_cmd" | "control_cmd")
+            {
+                continue;
+            }
+            let Some(read) = tool
+                .output
+                .clone()
+                .and_then(|output| serde_json::from_value::<RecordedRead>(output).ok())
+            else {
+                continue;
+            };
+            let session_id = read.session_id.or_else(|| {
+                let input = tool.input.as_ref()?;
+                Some(input.get("sessionId")?.as_str()?.to_string())
+            });
+            if let Some(session_id) = session_id {
+                let entry = latest
+                    .entry(session_id)
+                    .or_insert((part.number, read.next_sequence));
+                if part.number >= entry.0 {
+                    *entry = (part.number, read.next_sequence);
+                }
+            }
+        }
+        let cursors = latest
+            .into_iter()
+            .map(|(session_id, (_, next))| (session_id, Arc::new(Mutex::new(next))))
+            .collect();
+        Self(Arc::new(Mutex::new(cursors)))
+    }
+
+    async fn session(&self, session_id: &str) -> Arc<Mutex<u64>> {
+        self.0
+            .lock()
+            .await
+            .entry(session_id.to_string())
+            .or_default()
+            .clone()
+    }
+
+    async fn record_start(&self, result: &serde_json::Value) {
+        if let (Some(session_id), Some(next)) = (
+            result.get("sessionId").and_then(serde_json::Value::as_str),
+            next_sequence(result),
+        ) {
+            *self.session(session_id).await.lock().await = next;
+        }
+    }
+
+    /// Reads one session's output from its cursor and advances the cursor only
+    /// when the result reached the model. Holding the cursor keeps parallel reads
+    /// of a session from returning the same output.
+    async fn read<F, Fut>(
+        &self,
+        session_id: &str,
+        read: F,
+    ) -> Result<serde_json::Value, ToolExecutionError>
+    where
+        F: FnOnce(u64) -> Fut,
+        Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
+    {
+        let cursor = self.session(session_id).await;
+        let mut cursor = cursor.lock().await;
+        let result = read(*cursor).await?;
+        if let Some(next) = next_sequence(&result) {
+            *cursor = next;
+        }
+        Ok(result)
+    }
+}
+
+fn next_sequence(result: &serde_json::Value) -> Option<u64> {
+    result.get("nextSequence")?.as_u64()
+}
 
 #[derive(Clone)]
 pub(crate) struct ExecCmdTool(pub(super) AgentToolContext);
@@ -167,23 +267,26 @@ impl rig::tool::Tool for ExecCmdTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
-            let cwd = self.0.cwd.get();
-            self.0
-                .command_sessions
-                .exec_command(
-                    cancellation,
-                    &args.cmd,
-                    &cwd.to_string_lossy(),
-                    &args.shell.clone().unwrap_or_else(default_command_shell),
-                    args.timeout_ms,
-                    YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
-                    DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
-                )
-                .await
-                .map_err(tool_error)
-        })
-        .await
+        let result =
+            execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
+                let cwd = self.0.cwd.get();
+                self.0
+                    .command_sessions
+                    .exec_command(
+                        cancellation,
+                        &args.cmd,
+                        &cwd.to_string_lossy(),
+                        &args.shell.clone().unwrap_or_else(default_command_shell),
+                        args.timeout_ms,
+                        YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
+                        DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
+                    )
+                    .await
+                    .map_err(tool_error)
+            })
+            .await?;
+        self.0.command_cursors.record_start(&result).await;
+        Ok(result)
     }
 }
 
@@ -208,20 +311,32 @@ impl rig::tool::Tool for ControlCmdTool {
     ) -> Result<Self::Output, Self::Error> {
         let action = args.action.action();
         action.validate(&args.chars).map_err(tool_error)?;
-        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
-            self.0
-                .command_sessions
-                .control_command(
-                    cancellation,
-                    &args.session_id,
-                    action,
-                    &args.chars,
-                    YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
+        let args = &args;
+        self.0
+            .command_cursors
+            .read(&args.session_id, move |from_sequence| {
+                execute_serialized_tool_job(
+                    &self.0,
+                    Self::NAME,
+                    args,
+                    move |cancellation| async move {
+                        self.0
+                            .command_sessions
+                            .control_command(
+                                cancellation,
+                                &args.session_id,
+                                action,
+                                &args.chars,
+                                YieldMode::Action
+                                    .normalize(args.yield_time_ms, self.0.max_yield_ms),
+                                from_sequence,
+                            )
+                            .await
+                            .map_err(tool_error)
+                    },
                 )
-                .await
-                .map_err(tool_error)
-        })
-        .await
+            })
+            .await
     }
 }
 
@@ -244,18 +359,29 @@ impl rig::tool::Tool for PollCmdTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
-            self.0
-                .command_sessions
-                .poll_command(
-                    cancellation,
-                    &args.session_id,
-                    YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
+        let args = &args;
+        self.0
+            .command_cursors
+            .read(&args.session_id, move |from_sequence| {
+                execute_serialized_tool_job(
+                    &self.0,
+                    Self::NAME,
+                    args,
+                    move |cancellation| async move {
+                        self.0
+                            .command_sessions
+                            .poll_command(
+                                cancellation,
+                                &args.session_id,
+                                YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
+                                from_sequence,
+                            )
+                            .await
+                            .map_err(tool_error)
+                    },
                 )
-                .await
-                .map_err(tool_error)
-        })
-        .await
+            })
+            .await
     }
 }
 

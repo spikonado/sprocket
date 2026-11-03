@@ -265,3 +265,96 @@ fn timeout_is_optional_and_preserved_when_set() {
         json!({"cmd": "sleep 120", "timeoutMs": 1_000})
     );
 }
+
+fn command_part(
+    number: u32,
+    name: &str,
+    status: &str,
+    input: serde_json::Value,
+    output: serde_json::Value,
+) -> TranscriptPart {
+    serde_json::from_value(json!({
+        "number": number,
+        "sourceKey": format!("tool:{number}"),
+        "kind": "tool",
+        "runId": "run",
+        "tool": {
+            "callId": format!("call-{number}"),
+            "name": name,
+            "input": input,
+            "output": output,
+            "status": status,
+        },
+    }))
+    .unwrap()
+}
+
+async fn read_from(cursors: &CommandCursors, session_id: &str, next: u64) -> u64 {
+    let mut seen = None;
+    cursors
+        .read(session_id, |from| {
+            seen = Some(from);
+            async move { Ok(json!({ "nextSequence": next })) }
+        })
+        .await
+        .unwrap();
+    seen.unwrap()
+}
+
+#[tokio::test]
+async fn cursors_resume_from_the_latest_recorded_read_of_each_session() {
+    let parts = [
+        command_part(
+            4,
+            "poll_cmd",
+            "completed",
+            json!({"sessionId": "a"}),
+            json!({"nextSequence": 5.0, "running": false}),
+        ),
+        command_part(
+            1,
+            "exec_cmd",
+            "completed",
+            json!({"cmd": "build"}),
+            json!({"sessionId": "a", "nextSequence": 2}),
+        ),
+        command_part(
+            2,
+            "exec_cmd",
+            "completed",
+            json!({"cmd": "test"}),
+            json!({"sessionId": "b", "nextSequence": 3}),
+        ),
+        command_part(
+            5,
+            "poll_cmd",
+            "completed",
+            json!({"sessionId": "b"}),
+            json!({"running": false}),
+        ),
+        command_part(
+            6,
+            "poll_cmd",
+            "failed",
+            json!({"sessionId": "b"}),
+            json!({"nextSequence": 9}),
+        ),
+    ];
+    let cursors = CommandCursors::from_parts(&parts);
+    assert_eq!(read_from(&cursors, "a", 6).await, 5);
+    assert_eq!(read_from(&cursors, "b", 4).await, 3);
+    assert_eq!(read_from(&cursors, "new", 1).await, 0);
+}
+
+#[tokio::test]
+async fn failed_reads_keep_the_cursor() {
+    let cursors = CommandCursors::default();
+    assert_eq!(read_from(&cursors, "a", 2).await, 0);
+    cursors
+        .read("a", |_| async {
+            Err(tool_error(anyhow::anyhow!("offline")))
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(read_from(&cursors, "a", 3).await, 2);
+}
