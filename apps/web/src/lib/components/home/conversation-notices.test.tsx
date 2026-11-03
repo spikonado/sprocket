@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import ConversationNotices from './conversation-notices';
 import { PromptComposerView } from './prompt-composer';
 
@@ -8,12 +8,11 @@ const usageLimit =
 	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
 
 function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}, key?: string) {
-	return ({ usageBlocked }: { usageBlocked: boolean }) => (
+	return (
 		<ConversationNotices
 			key={key}
 			error={null}
 			runError={null}
-			usageBlocked={usageBlocked}
 			reconnecting={false}
 			syncing={false}
 			catalogError={false}
@@ -24,10 +23,7 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 	);
 }
 
-function composer(
-	children: ComponentProps<typeof PromptComposerView>['notices'],
-	exhausted = false
-) {
+function composer(children: ReactNode, exhausted = false) {
 	return (
 		<PromptComposerView
 			notices={children}
@@ -42,7 +38,6 @@ function composer(
 			onSubmit={vi.fn()}
 			onCancel={vi.fn()}
 			usage={{ tier: 'pro', exhausted, resetsAt: null }}
-			usageFailed={false}
 		/>
 	);
 }
@@ -123,17 +118,6 @@ describe('Conversation notices', () => {
 		const usageAlert = within(group).getByRole('alert');
 		expect(usageAlert.textContent).toContain("You're out of usage");
 		expect(usageAlert.className).toBe(cardClass);
-	});
-
-	it('shows only the usage notice while usage is blocked, then the run error once unblocked', () => {
-		const runError = 'status 429 Too Many Requests';
-		const view = render(composer(notices({ runError }), true));
-		expect(screen.getByRole('alert').textContent).toContain("You're out of usage");
-
-		view.rerender(composer(notices({ runError })));
-		const alert = screen.getByRole('alert');
-		expect(alert.textContent).toContain("Run couldn't continue");
-		expect(alert.textContent).toContain(runError);
 	});
 
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {

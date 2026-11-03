@@ -13,7 +13,7 @@ import { api } from '@convex/_generated/api';
 import { resolveProviderOrder, type ProviderOrderEntry } from '@convex/lib/providerOrder';
 import type { CompletionProvider } from '@convex/lib/validators';
 import { completionProviderLabels, reorderShownProviders } from '$lib/chat/providers';
-import PreferenceToggle, { SwitchTrack } from '$lib/components/home/preference-toggle';
+import { SwitchTrack } from '$lib/components/home/preference-toggle';
 import ProviderLogo from '$lib/components/provider-logo';
 
 function ProviderRow({
@@ -81,10 +81,6 @@ export default function SettingsProviders({
 	});
 
 	const setProviderOrder = useMutation(api.uiPreferences.setProviderOrder);
-
-	const setRestrictSubagentsToProvider = useMutation(
-		api.uiPreferences.setRestrictSubagentsToProvider
-	);
 
 	const [pendingOrder, setPendingOrder] = useState<ProviderOrderEntry[] | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
@@ -179,14 +175,6 @@ export default function SettingsProviders({
 							{saveError}
 						</p>
 					)}
-
-					<PreferenceToggle
-						title="Restrict subagents to the parent's provider"
-						description="When off, agents can delegate to models from any enabled provider. When on, subagents only use models from the provider running the parent agent."
-						savedEnabled={preferences?.restrictSubagentsToProvider ?? false}
-						disabled={disabled}
-						save={setRestrictSubagentsToProvider}
-					/>
 					{preferencesQuery.status === 'error' && (
 						<p role="alert" className="text-destructive px-3 text-sm">
 							Couldn't load your preferences right now.

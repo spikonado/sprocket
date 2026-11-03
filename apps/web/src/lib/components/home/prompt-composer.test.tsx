@@ -51,7 +51,6 @@ function composerProps(overrides: Partial<PromptComposerViewProps> = {}): Prompt
 		isRunning: false,
 		isWorking: false,
 		usage: undefined,
-		usageFailed: false,
 		onSubmit: vi.fn(),
 		onCancel: vi.fn(),
 		...overrides
@@ -450,7 +449,7 @@ describe('PromptComposer submission', () => {
 		expect(props.onSubmit).toHaveBeenCalledOnce();
 	});
 
-	it('blocks submission and explains the limit when usage is exhausted', async () => {
+	it('explains the limit when usage is exhausted and leaves sending to the server', async () => {
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
@@ -461,12 +460,8 @@ describe('PromptComposer submission', () => {
 		const alert = document.querySelector('[role="alert"]');
 		expect(alert?.textContent).toContain("You're out of usage");
 		expect(alert?.textContent).toContain('Upgrade your subscription to keep going.');
-		expect(document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(
-			true
-		);
-
 		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).not.toHaveBeenCalled();
+		expect(props.onSubmit).toHaveBeenCalledOnce();
 	});
 
 	it('allows retrying after a run failure', async () => {
@@ -475,7 +470,7 @@ describe('PromptComposer submission', () => {
 			selectedModel: 'model-one',
 			prompt: 'Try again',
 			usage: { tier: 'pro', exhausted: false, resetsAt: null },
-			notices: () => <div role="alert">A previous run failed.</div>
+			notices: <div role="alert">A previous run failed.</div>
 		});
 
 		expect(composer.querySelector('[role="alert"]')?.textContent).toBe('A previous run failed.');
@@ -735,59 +730,6 @@ describe('PromptComposer model selection', () => {
 		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model Two · High');
 	});
 
-	const mixedCatalog: ModelCatalog = {
-		...modelCatalog,
-		models: [
-			{ ...modelCatalog.models[0], provider: 'openai' },
-			{ ...modelCatalog.models[1], provider: 'anthropic' }
-		]
-	};
-
-	it('lists models served by any available provider', async () => {
-		renderComposer({
-			modelCatalog: mixedCatalog,
-			availableProviders: ['chatgpt'],
-			selectedModel: 'model-one'
-		});
-
-		await click(screen.getByRole('button', { name: 'Select model' }));
-		const menu = screen.getByRole('dialog', { name: 'Model' });
-		expect(within(menu).getByRole('button', { name: /Model One/ })).toBeTruthy();
-		expect(within(menu).queryByRole('button', { name: /Model Two/ })).toBeNull();
-	});
-
-	it('turns Fast off unless Spikonado serves the model first', () => {
-		const onFastModeChange = vi.fn();
-		renderComposer({
-			modelCatalog: mixedCatalog,
-			availableProviders: ['chatgpt', 'spikonado'],
-			selectedModel: 'model-one',
-			fastMode: true,
-			onFastModeChange
-		});
-
-		expect(onFastModeChange).toHaveBeenCalledWith(false);
-	});
-
-	it('blocks sending and links to provider settings when no provider is available', async () => {
-		const onOpenProviderSettings = vi.fn();
-
-		const { props, textarea } = renderComposer({
-			modelCatalog,
-			availableProviders: [],
-			selectedModel: 'model-one',
-			prompt: 'Hello',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null },
-			onOpenProviderSettings
-		});
-
-		expect(screen.getByText('No provider is available')).toBeTruthy();
-		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).not.toHaveBeenCalled();
-		await click(screen.getByRole('button', { name: 'Open provider settings' }));
-		expect(onOpenProviderSettings).toHaveBeenCalledOnce();
-	});
-
 	it('uses the fallback model default reasoning', async () => {
 		renderComposer({
 			modelCatalog: {
@@ -797,12 +739,18 @@ describe('PromptComposer model selection', () => {
 					{ ...modelCatalog.models[0], provider: 'openai' }
 				]
 			},
-			availableProviders: ['chatgpt'],
-			selectedModel: 'model-two',
+			selectedModel: 'removed-model',
 			selectedReasoningEffort: 'low'
 		});
 
 		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Medium');
+	});
+
+	it("fills unset reasoning with the model's own default", () => {
+		const onSelectedReasoningEffortChange = vi.fn();
+		renderComposer({ modelCatalog, selectedModel: 'model-two', onSelectedReasoningEffortChange });
+
+		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
 	});
 
 	it('keeps the model menu anchored when a parent scrolls', async () => {
@@ -967,43 +915,6 @@ describe('PromptComposer model selection', () => {
 		);
 	});
 
-	it('offers ChatGPT gateway models and allows sending when connected', async () => {
-		const onSelectedModelChange = vi.fn();
-
-		const { props, textarea } = renderComposer({
-			modelCatalog: {
-				...modelCatalog,
-				models: [
-					{
-						...modelCatalog.models[0],
-						id: 'gpt-6.1-sol',
-						label: 'GPT-6.1 Sol',
-						provider: 'openai'
-					},
-					{ ...modelCatalog.models[1], id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'openai' },
-					modelCatalog.models[0]
-				]
-			},
-			availableProviders: ['chatgpt'],
-			selectedModel: 'gpt-6.1-sol',
-			prompt: 'Hello',
-			onSelectedModelChange
-		});
-
-		await click(screen.getByRole('button', { name: 'Select model' }));
-		const menu = screen.getByRole('dialog', { name: 'Model' });
-		expect(within(menu).getByRole('button', { name: /GPT-6\.1 Sol/ })).toBeTruthy();
-		expect(within(menu).getByRole('button', { name: /GPT-6 Luna/ })).toBeTruthy();
-		expect(within(menu).queryByRole('button', { name: /Model One/ })).toBeNull();
-		fireEvent.mouseEnter(within(menu).getByRole('button', { name: /GPT-6\.1 Sol/ }));
-		expect(within(menu).getByRole('button', { name: 'Low' })).toBeTruthy();
-		expect(within(menu).queryByRole('switch')).toBeNull();
-		await click(within(menu).getByRole('button', { name: /GPT-6 Luna/ }));
-		expect(onSelectedModelChange).toHaveBeenCalledWith('gpt-6-luna');
-		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).toHaveBeenCalledOnce();
-	});
-
 	it.each(['free', 'go', 'budget', 'pro', 'enterprise', undefined])(
 		'selects every model and resets reasoning on tier %s',
 		async (tier) => {
@@ -1136,19 +1047,6 @@ describe('PromptComposer Fast mode', () => {
 		expect(onFastModeChange).toHaveBeenCalledWith(false);
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		expect(screen.queryByRole('switch')).toBeNull();
-	});
-
-	it('blocks submit when the free usage quota is exhausted even with Fast off', async () => {
-		const { textarea, props } = renderComposer({
-			modelCatalog,
-			selectedModel: 'model-one',
-			selectedReasoningEffort: 'medium',
-			prompt: 'Hello',
-			usage: { tier: 'free', exhausted: true, resetsAt: null }
-		});
-
-		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 });
 

@@ -17,16 +17,14 @@ export default function ModelSelector({
 	modelId,
 	reasoningEffort,
 	fastMode,
-	allowsFastMode,
 	disabled,
 	onSelect,
 	onFastModeChange
 }: {
-	models: CatalogModel[];
+	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
 	fastMode: boolean;
-	allowsFastMode: boolean;
 	disabled: boolean;
 	onSelect: (modelId: string, effort: string) => void;
 	onFastModeChange?: (fastMode: boolean) => void;
@@ -43,7 +41,7 @@ export default function ModelSelector({
 	const reasoningRef = useRef<HTMLDivElement>(null);
 	const touchPreviewRef = useRef(false);
 	const selectedModel = models.find((model) => model.id === modelId);
-	const fastModeAvailable = allowsFastMode && selectedModel?.supportsFastMode;
+	const fastModeAvailable = selectedModel?.supportsFastMode;
 
 	const previewModel = models.find((model) => model.id === previewId);
 
@@ -170,7 +168,6 @@ export default function ModelSelector({
 					modelId={modelId}
 					reasoningEffort={reasoningEffort}
 					fastMode={fastMode}
-					allowsFastMode={allowsFastMode}
 					onDismiss={closeMenu}
 					returnFocusRef={triggerRef}
 					onApply={(model, effort, fast) => {

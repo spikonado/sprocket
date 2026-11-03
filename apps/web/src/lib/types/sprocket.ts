@@ -32,7 +32,6 @@ export type ThreadSummary = {
 	repositoryKey: string;
 	title: string;
 	selectedModel: string;
-	completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
 	reasoningEffort: string;
 	fastMode: boolean;
 	lastMessageAt: number;
@@ -64,7 +63,6 @@ export type RunState = {
 	submissionId: string;
 	claimExpiresAt?: number;
 	selectedModel: string;
-	completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
 	reasoningEffort: string;
 	fastMode: boolean;
 	startedAt: number;
@@ -97,7 +95,6 @@ export type AgentRunRequest = {
 	prompt: string;
 	storageIds: Id<'_storage'>[];
 	selectedModel: string;
-	completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
 	reasoningEffort: string;
 	fastMode: boolean;
 	workspacePath: string;

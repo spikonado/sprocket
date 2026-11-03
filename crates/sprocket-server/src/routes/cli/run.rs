@@ -8,17 +8,28 @@ use axum::Json;
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use convex::Value;
+use serde::Deserialize;
+use sprocket_agent::{ModelSettings, SettingsOverrides, model_catalog};
 
 use super::client_session;
-use super::models::{RunContext, available, gateway_url, resolve};
 use crate::AppState;
 use crate::cli_protocol::*;
 use crate::cli_sessions::CliSession;
 use crate::routes::agent::launch_run;
 use crate::routes::api_error::ApiError;
+use crate::routes::run_settings::{self, convex_client, gateway_url};
 use sprocket_host::agent_launch::{AgentLaunchRequest, WorkspaceAccess};
 use sprocket_host::project_attachments::repository_key_matches;
 use sprocket_host::transcript_client::UserConvexClient;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadSettings {
+    repository_key: String,
+    selected_model: String,
+    reasoning_effort: String,
+    fast_mode: bool,
+}
 
 pub(super) async fn list_models(
     State(state): State<AppState>,
@@ -40,15 +51,23 @@ pub(super) async fn list_models(
         .bind_session_user(&client.session_token, &user.id)
         .await
         .map_err(ApiError::internal)?;
-    let rpc = convex_client(&state, &user.id)
+    let gateway_url = gateway_url().map_err(ApiError::internal)?;
+    let catalog = model_catalog(&gateway_url)
         .await
         .map_err(ApiError::internal)?;
-    let context = tokio::time::timeout(Duration::from_secs(20), run_context(&rpc, None))
-        .await
-        .map_err(|error| ApiError::internal(error.into()))?
-        .map_err(ApiError::internal)?;
-    let response = available(&context).await.map_err(ApiError::internal)?;
-    Ok(Json(response))
+    Ok(Json(CliModelsResponse {
+        default_model_id: catalog.default_model_id,
+        models: catalog
+            .models
+            .into_iter()
+            .map(|model| CliModel {
+                id: model.id,
+                label: model.label,
+                reasoning_efforts: model.reasoning_efforts,
+                default_reasoning_effort: model.default_reasoning_effort,
+            })
+            .collect(),
+    }))
 }
 
 pub(super) async fn start(
@@ -112,26 +131,12 @@ pub(super) async fn start(
     result.map(Json).map_err(ApiError::bad_request)
 }
 
-async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserConvexClient> {
-    state.host.native_auth.require_user(user_id).await?;
-    state.host.convex_client_for(user_id).await
-}
-
-async fn run_context(
+async fn thread_settings(
     rpc: &UserConvexClient,
-    thread_id: Option<&str>,
-) -> anyhow::Result<RunContext> {
-    let thread = match thread_id {
-        Some(thread_id) => {
-            let args = BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
-            Some(rpc.query("threads:getByThreadId", args).await?)
-        }
-        None => None,
-    };
-    Ok(RunContext {
-        gateway_url: gateway_url()?,
-        thread,
-    })
+    thread_id: &str,
+) -> anyhow::Result<ThreadSettings> {
+    let args = BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
+    rpc.query("threads:getByThreadId", args).await
 }
 
 async fn prepare_run(
@@ -151,24 +156,37 @@ async fn prepare_run(
         .auth
         .bind_session_user(&client.session_token, &user.id)
         .await?;
-    let rpc = convex_client(state, &user.id).await?;
-    let context = tokio::time::timeout(
-        Duration::from_secs(20),
-        run_context(&rpc, request.thread_id.as_deref()),
-    )
-    .await??;
+    let rpc = convex_client(&state.host, &user.id).await?;
+    let thread = match &request.thread_id {
+        Some(thread_id) => Some(
+            tokio::time::timeout(Duration::from_secs(20), thread_settings(&rpc, thread_id))
+                .await
+                .context("timed out reading the thread")??,
+        ),
+        None => None,
+    };
     let attachment = state
         .host
         .project_attachments
         .resolve_run_workspace(request.directory.clone())
         .await?;
-    if let Some(thread) = &context.thread {
+    if let Some(thread) = &thread {
         anyhow::ensure!(
             repository_key_matches(&attachment, &thread.repository_key),
             "thread belongs to a different repository"
         );
     }
-    let settings = resolve(&context, request).await?;
+    let saved = thread.map(|thread| ModelSettings {
+        model: thread.selected_model,
+        reasoning: thread.reasoning_effort,
+        fast: thread.fast_mode,
+    });
+    let overrides = SettingsOverrides {
+        model: request.model.clone(),
+        reasoning: request.reasoning.clone(),
+        fast: request.fast,
+    };
+    let settings = run_settings::resolve(&rpc, saved.as_ref(), &overrides).await?;
     Ok(AgentLaunchRequest {
         user_id: user.id,
         submission_id: format!("cli:{}", request.client_id),
@@ -180,7 +198,7 @@ async fn prepare_run(
         prompt: request.prompt.clone(),
         storage_ids: Vec::new(),
         selected_model: settings.model,
-        completion_provider: Default::default(),
+        completion_provider: settings.provider,
         reasoning_effort: settings.reasoning,
         fast_mode: settings.fast,
         workspace_path: attachment.workspace_path,

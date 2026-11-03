@@ -1,4 +1,3 @@
-mod models;
 mod run;
 #[cfg(test)]
 mod tests;

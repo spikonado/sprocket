@@ -28,6 +28,10 @@ Released clients don't send `completionProvider`, and older thread and run rows 
 
 Released runners omit `completionProvider` from `subagents:createOrSend`, so creation inherits the caller's provider and follow-ups keep the child's saved one. Make the argument required once those runners age out.
 
+### Retired subagent provider restriction
+
+Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
+
 ### Descendant status counts
 
 `threads.subtreeSummaryForThread` still returns `descendantStatusCounts`, deriving `running` from `workingDescendantCount` and `completed` from the remaining total. Remove it once released inbox clients age out.
@@ -148,6 +152,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
 - `summary` on `scrape_url` results, from before `outline` replaced it.
+- `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on `list_subagent_models` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.

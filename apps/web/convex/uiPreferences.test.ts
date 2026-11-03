@@ -52,6 +52,28 @@ describe('theme preferences', () => {
 		await expect(t.query(api.uiPreferences.getMine, {})).rejects.toThrow('Authentication required');
 	});
 
+	it('lists enabled providers in the saved order', async () => {
+		const alice = initConvexTest().withIdentity({ subject: 'alice' });
+		expect(await alice.query(api.uiPreferences.getMyEnabledProviders, {})).toEqual([
+			'spikonado',
+			'openai',
+			'chatgpt'
+		]);
+
+		await alice.mutation(api.uiPreferences.setProviderOrder, {
+			providerOrder: [
+				{ provider: 'chatgpt', enabled: true },
+				{ provider: 'spikonado', enabled: false },
+				{ provider: 'openai', enabled: true }
+			]
+		});
+
+		expect(await alice.query(api.uiPreferences.getMyEnabledProviders, {})).toEqual([
+			'chatgpt',
+			'openai'
+		]);
+	});
+
 	it('rejects a provider order that disables every provider', async () => {
 		const alice = initConvexTest().withIdentity({ subject: 'alice' });
 

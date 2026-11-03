@@ -12,6 +12,7 @@ pub(crate) mod events;
 pub(crate) mod github;
 pub mod health;
 pub mod pull_requests;
+mod run_settings;
 pub(crate) mod session;
 pub mod threads;
 pub mod transcript;

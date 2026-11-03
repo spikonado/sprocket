@@ -16,6 +16,7 @@ use tokio::sync::broadcast;
 use crate::AppState;
 use crate::cli_protocol::{CliRunSettings, RunStarted};
 use crate::routes::api_error::ApiError;
+use crate::routes::run_settings;
 use crate::routes::session::{AuthorizedJson, UserScoped};
 
 impl UserScoped for AgentLaunchRequest {
@@ -105,8 +106,20 @@ async fn terminate_command_handler(
 
 async fn run_agent_handler(
     State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<AgentLaunchRequest>,
+    AuthorizedJson(mut payload): AuthorizedJson<AgentLaunchRequest>,
 ) -> Result<(StatusCode, Json<RunStarted>), ApiError> {
+    let rpc = run_settings::convex_client(&state.host, &payload.user_id)
+        .await
+        .map_err(ApiError::internal)?;
+    let overrides = sprocket_agent::SettingsOverrides {
+        model: Some(payload.selected_model.clone()),
+        reasoning: Some(payload.reasoning_effort.clone()),
+        fast: Some(payload.fast_mode),
+    };
+    let settings = run_settings::resolve(&rpc, None, &overrides)
+        .await
+        .map_err(ApiError::bad_request)?;
+    payload.completion_provider = settings.provider;
     let started = launch_run(
         state.host,
         payload,

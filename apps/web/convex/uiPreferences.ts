@@ -4,7 +4,12 @@ import { v } from 'convex/values';
 import type { Doc } from '@convex/_generated/dataModel';
 import { getUserId } from '@convex/lib/auth';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
-import { assertValidProviderOrder, vProviderOrderEntry } from '@convex/lib/providerOrder';
+import {
+	assertValidProviderOrder,
+	enabledProviders,
+	vProviderOrderEntry
+} from '@convex/lib/providerOrder';
+import { vCompletionProvider } from '@convex/lib/validators';
 import schema from '@convex/schema';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
@@ -81,6 +86,16 @@ export const getMine = query({
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx) => {
 		return await getUiPreferences(ctx.db, await getUserId(ctx));
+	}
+});
+
+export const getMyEnabledProviders = query({
+	args: {},
+	returns: v.array(vCompletionProvider),
+	handler: async (ctx) => {
+		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
+
+		return enabledProviders(preferences?.providerOrder);
 	}
 });
 

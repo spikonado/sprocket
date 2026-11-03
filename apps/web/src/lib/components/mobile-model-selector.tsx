@@ -14,16 +14,14 @@ export default function MobileModelSelector({
 	modelId,
 	reasoningEffort,
 	fastMode,
-	allowsFastMode,
 	onApply,
 	onDismiss,
 	returnFocusRef
 }: {
-	models: CatalogModel[];
+	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
 	fastMode: boolean;
-	allowsFastMode: boolean;
 	onApply: (model: CatalogModel, effort: string, fast: boolean) => void;
 	onDismiss: () => void;
 	returnFocusRef: RefObject<HTMLButtonElement | null>;
@@ -32,7 +30,7 @@ export default function MobileModelSelector({
 	const [draftEffort, setDraftEffort] = useState(reasoningEffort);
 	const [draftFast, setDraftFast] = useState(fastMode);
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
-	const fastAvailable = allowsFastMode && model?.supportsFastMode;
+	const fastAvailable = model?.supportsFastMode;
 
 	return (
 		<MobileSelectorSheet

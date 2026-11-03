@@ -5,19 +5,16 @@ import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { canSubmitQuestionAnswer, type AgentQuestionOption } from '@convex/lib/agentQuestions';
-import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
 import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/chat/skill-mentions';
 import {
 	getCatalogModel,
-	modelOptionsForProviders,
-	resolveModelForProviders,
+	resolveCatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import { providersForModel } from '$lib/chat/providers';
 import { formatCountdownDuration } from '$lib/format';
 import { useUsageTime } from '$lib/usage-time';
 import AgentQuestion from '$lib/components/home/agent-question';
@@ -43,7 +40,7 @@ export type PendingAgentQuestion = {
 };
 
 export type PromptComposerProps = {
-	notices?: (state: { usageBlocked: boolean }) => ReactNode;
+	notices?: ReactNode;
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
 	attachments: ComposerAttachment[];
@@ -52,10 +49,6 @@ export type PromptComposerProps = {
 	modelCatalog?: ModelCatalog;
 	selectedModel?: CatalogModelId;
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
-	/** Enabled, set-up providers in the user's fallback order. */
-	availableProviders?: CompletionProvider[];
-	providersReady?: boolean;
-	onOpenProviderSettings?: () => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
 	fastMode?: boolean;
@@ -92,10 +85,7 @@ export type ComposerUsage = Pick<
 
 export type PromptComposerViewProps = PromptComposerProps & {
 	usage: ComposerUsage | undefined;
-	usageFailed: boolean;
 };
-
-const DEFAULT_AVAILABLE_PROVIDERS: CompletionProvider[] = ['spikonado'];
 
 const COMPOSER_MIN_HEIGHT_PX = 68;
 
@@ -121,9 +111,6 @@ export function PromptComposerView({
 	modelCatalog,
 	selectedModel,
 	onSelectedModelChange,
-	availableProviders = DEFAULT_AVAILABLE_PROVIDERS,
-	providersReady = true,
-	onOpenProviderSettings,
 	selectedReasoningEffort,
 	onSelectedReasoningEffortChange,
 	fastMode = false,
@@ -146,8 +133,7 @@ export function PromptComposerView({
 	onSubmit,
 	onCancel,
 	onSkipQuestion,
-	usage,
-	usageFailed
+	usage
 }: PromptComposerViewProps) {
 	const [now, setNow] = useState(() => Date.now());
 	const continueWorkingVisible = showContinueWorking && Boolean(onContinueWorking);
@@ -162,21 +148,8 @@ export function PromptComposerView({
 		};
 	}, []);
 
-	const modelOptions = modelCatalog
-		? modelOptionsForProviders(modelCatalog, availableProviders)
-		: [];
-
 	const selectedCatalogModel =
 		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
-
-	const modelProviders = providersForModel(availableProviders, selectedCatalogModel);
-	const runsOnSpikonado = modelProviders[0] === 'spikonado';
-	const noProviderAvailable = providersReady && availableProviders.length === 0;
-
-	const canSubmitWithModel =
-		providersReady &&
-		modelProviders.length > 0 &&
-		(!runsOnSpikonado || usageFailed || usage !== undefined);
 
 	const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
@@ -205,25 +178,16 @@ export function PromptComposerView({
 
 	// The cached result can outlive its own reset time because the query only
 	// re-runs when the limiter document changes, so expire it on the local clock.
-	const usageBlocked =
+	const outOfUsage =
 		usage?.exhausted === true &&
 		(usage.resetsAt === null || usage.resetsAt > now) &&
-		!selectedModelUnmetered &&
-		availableProviders.includes('spikonado') &&
-		modelProviders.every((provider) => provider === 'spikonado');
+		!selectedModelUnmetered;
 
-	const unlimitedAlternativeLabel = (() => {
-		if (!modelCatalog) return null;
-
-		const option = modelOptions.find(
-			(candidate) => getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
-		);
-
-		return option?.label ?? null;
-	})();
+	const unlimitedAlternativeLabel =
+		modelCatalog?.models.find((model) => model.usagePolicy === 'unlimited')?.label ?? null;
 
 	const composerNotice = (() => {
-		if (!usageBlocked || usage === undefined) return null;
+		if (!outOfUsage || usage === undefined) return null;
 
 		const keepGoing =
 			unlimitedAlternativeLabel !== null
@@ -543,8 +507,6 @@ export function PromptComposerView({
 
 		if (
 			!canSend ||
-			(!answeringQuestion && !canSubmitWithModel) ||
-			(!answeringQuestion && usageBlocked) ||
 			isSubmitting ||
 			composerLocked ||
 			!canSubmitContent ||
@@ -579,9 +541,9 @@ export function PromptComposerView({
 	useEffect(() => {
 		if (!modelCatalog) return;
 
-		const resolvedModel = resolveModelForProviders(modelCatalog, availableProviders, selectedModel);
+		const resolvedModel = resolveCatalogModel(modelCatalog, selectedModel);
 
-		if (resolvedModel && resolvedModel !== selectedModel) {
+		if (resolvedModel !== selectedModel) {
 			const model = getCatalogModel(modelCatalog, resolvedModel);
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
@@ -591,18 +553,11 @@ export function PromptComposerView({
 		}
 	}, [
 		modelCatalog,
-		availableProviders,
 		selectedModel,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
 		onFastModeChange
 	]);
-
-	useEffect(() => {
-		if (providersReady && !runsOnSpikonado && fastMode) {
-			onFastModeChange?.(false);
-		}
-	}, [providersReady, runsOnSpikonado, fastMode, onFastModeChange]);
 
 	useEffect(() => {
 		if (!selectedCatalogModel) return;
@@ -721,7 +676,7 @@ export function PromptComposerView({
 								type="button"
 								className="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
 								onClick={onContinueWorking}
-								disabled={isSubmitting || !providersReady}
+								disabled={isSubmitting}
 							>
 								Continue working
 							</button>
@@ -755,27 +710,9 @@ export function PromptComposerView({
 									aria-label="Conversation notices"
 									tabIndex={0}
 								>
-									{notices?.({ usageBlocked })}
+									{notices}
 									{composerNotice ? (
 										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
-									) : null}
-									{noProviderAvailable && !answeringQuestion ? (
-										<ComposerNotice
-											title="No provider is available"
-											action={
-												onOpenProviderSettings ? (
-													<button
-														type="button"
-														className="cursor-pointer text-[12.5px] font-medium underline underline-offset-2"
-														onClick={onOpenProviderSettings}
-													>
-														Open provider settings
-													</button>
-												) : null
-											}
-										>
-											Turn on a provider that is set up in Settings → Providers to send messages.
-										</ComposerNotice>
 									) : null}
 								</div>
 								{pendingQuestion ? (
@@ -895,12 +832,9 @@ export function PromptComposerView({
 
 												<ModelSelector
 													modelId={selectedModel}
-													models={modelCatalog.models.filter((model) =>
-														modelOptions.some((option) => option.id === model.id)
-													)}
+													models={modelCatalog.models}
 													reasoningEffort={selectedReasoningEffort}
 													fastMode={fastMode}
-													allowsFastMode={runsOnSpikonado}
 													disabled={composerLocked || answeringQuestion}
 													onSelect={handleModelChange}
 													onFastModeChange={onFastModeChange}
@@ -950,12 +884,7 @@ export function PromptComposerView({
 												className="bg-primary/90 text-primary-foreground hover:bg-primary flex size-11 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:size-10"
 												onClick={onSubmit}
 												disabled={
-													!canSend ||
-													!canSubmitWithModel ||
-													usageBlocked ||
-													isSubmitting ||
-													!canSubmitContent ||
-													attachmentsPending
+													!canSend || isSubmitting || !canSubmitContent || attachmentsPending
 												}
 												aria-label="Send message"
 												data-ph-capture-attribute-action="send_message"
@@ -997,7 +926,6 @@ export default function PromptComposer(props: PromptComposerProps) {
 		<PromptComposerView
 			{...props}
 			usage={usageQuery.status === 'success' ? usageQuery.data : undefined}
-			usageFailed={usageQuery.status === 'error'}
 		/>
 	);
 }

@@ -180,21 +180,6 @@ function createConvexFixtures(): ConvexTestClient {
 	return client;
 }
 
-function preferChatGpt(client: ConvexTestClient) {
-	client.registerQuery(api.uiPreferences.getMine, {
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		_id: 'preferences-a' as Id<'uiPreferences'>,
-		_creationTime: 1,
-		userId: 'user-a',
-		theme: 'light',
-		providerOrder: [
-			{ provider: 'chatgpt', enabled: true },
-			{ provider: 'spikonado', enabled: true },
-			{ provider: 'openai', enabled: true }
-		]
-	});
-}
-
 function createRuntime(localApi: LocalApi): AppRuntime {
 	return {
 		resolveLocalApi: async () => localApi,
@@ -991,87 +976,6 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 	expect(runAgent).toHaveBeenCalledOnce();
 });
 
-it('launches ChatGPT with a gateway model and a connected local account', async () => {
-	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
-	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
-
-	const runtime = createRuntime(
-		createLocalApi({
-			listProjectAttachments: async () => [alpha],
-			resolveWorkspacePath: async () => alpha,
-			fetchChatGptStatus: async () => ({
-				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
-				activeConnectionId: 'chatgpt-1',
-				loginAvailable: true
-			}),
-			runAgent
-		})
-	);
-
-	runtime.fetchGatewayModelCatalog = async () => ({
-		...modelCatalog,
-		models: [
-			...modelCatalog.models,
-			{ ...modelCatalog.models[0], id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai' }
-		]
-	});
-	const client = createConvexFixtures();
-	preferChatGpt(client);
-	await renderApp(client, runtime);
-	await projectTrigger('Alpha');
-	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
-	fireEvent.click(await screen.findByRole('button', { name: /GPT-6\.1 Sol/ }));
-	await waitFor(() =>
-		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toContain(
-			'GPT-6.1 Sol'
-		)
-	);
-	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
-	const send = screen.getByRole('button', { name: 'Send message' });
-	await waitFor(() => expect(send).toHaveProperty('disabled', false));
-	fireEvent.click(send);
-	await waitFor(() =>
-		expect(runAgent).toHaveBeenCalledWith(
-			expect.objectContaining({
-				completionProvider: 'chatgpt',
-				selectedModel: 'gpt-6.1-sol',
-				prompt: 'Fix the robot'
-			})
-		)
-	);
-});
-
-it('sends on Spikonado while the ChatGPT fallback check is pending', async () => {
-	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const runAgent = vi.fn<LocalApi['runAgent']>(() => new Promise(() => {}));
-
-	await renderApp(
-		createConvexFixtures(),
-		createRuntime(
-			createLocalApi({
-				listProjectAttachments: async () => [alpha],
-				resolveWorkspacePath: async () => alpha,
-				fetchChatGptStatus: () => new Promise(() => {}),
-				runAgent
-			})
-		)
-	);
-	await projectTrigger('Alpha');
-	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'New work' } });
-	const send = screen.getByRole('button', { name: 'Send message' });
-	await waitFor(() => expect(send).toHaveProperty('disabled', false));
-	fireEvent.click(send);
-	await waitFor(() =>
-		expect(runAgent).toHaveBeenCalledWith(
-			expect.objectContaining({
-				completionProvider: 'spikonado',
-				prompt: 'New work'
-			})
-		)
-	);
-});
-
 it('collapses a pending question once its run has finished', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
@@ -1442,12 +1346,11 @@ it('launches the continuation prompt after an agent question is answered', async
 	);
 });
 
-it('restores a ChatGPT continuation and launches after its connection is confirmed', async () => {
+it('launches a continuation answered before leaving the thread when returning to it', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 
 	const thread = {
 		...threadRecord('thread-1', 'repo-alpha', 'Fix the robot'),
-		completionProvider: 'chatgpt' as const,
 		selectedModel: 'gpt-6.1-sol'
 	};
 
@@ -1472,16 +1375,9 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 		continuation: { runId: Id<'runs'>; prompt: string };
 	}>();
 
-	const status = Promise.withResolvers<Awaited<ReturnType<LocalApi['fetchChatGptStatus']>>>();
-
-	const configuration =
-		Promise.withResolvers<FunctionReturnType<typeof api.providerCredentials.getMyConfiguration>>();
-
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const client = createConvexFixtures();
-	preferChatGpt(client);
-	client.handleAction(api.providerCredentials.getMyConfiguration, () => configuration.promise);
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
 	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
@@ -1495,7 +1391,6 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	const runtime = createRuntime(
 		createLocalApi({
 			listProjectAttachments: async () => [alpha],
-			fetchChatGptStatus: () => status.promise,
 			runAgent
 		})
 	);
@@ -1527,22 +1422,8 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	});
 	fireEvent.click(await screen.findByText('Fix the robot'));
 	await waitFor(() =>
-		expect(screen.getByRole('combobox')).toHaveProperty('value', 'Continue with the robot fix')
-	);
-	await flushPendingWork();
-	expect(runAgent).not.toHaveBeenCalled();
-	await act(async () => {
-		status.resolve({
-			accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
-			activeConnectionId: 'chatgpt-1',
-			loginAvailable: true
-		});
-		configuration.resolve({ openai: false, chatgpt: false, chatgptModelIds: null });
-	});
-	await waitFor(() =>
 		expect(runAgent).toHaveBeenCalledWith(
 			expect.objectContaining({
-				completionProvider: 'chatgpt',
 				selectedModel: thread.selectedModel,
 				prompt: 'Continue with the robot fix',
 				continuationOfRunId: continuationRunId

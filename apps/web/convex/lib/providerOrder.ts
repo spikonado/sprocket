@@ -1,9 +1,5 @@
 import { v, type Infer } from 'convex/values';
-import {
-	completionProviderIds,
-	vCompletionProvider,
-	type CompletionProvider
-} from '@convex/lib/validators';
+import { completionProviderIds, vCompletionProvider } from '@convex/lib/validators';
 
 export const vProviderOrderEntry = v.object({
 	provider: vCompletionProvider,
@@ -45,9 +41,4 @@ export function assertValidProviderOrder(order: readonly ProviderOrderEntry[]) {
 	) {
 		throw new Error('Provider order must list every provider once with at least one enabled.');
 	}
-}
-
-/** BYOK/BYOS providers only serve models whose catalog vendor is OpenAI. */
-export function providerServesVendor(provider: CompletionProvider, vendor: string) {
-	return provider === 'spikonado' || vendor === 'openai';
 }

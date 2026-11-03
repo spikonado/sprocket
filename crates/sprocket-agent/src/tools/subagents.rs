@@ -18,13 +18,12 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
-use crate::catalog::ProviderCatalog;
+use crate::catalog::model_catalog;
 use crate::convex::{MutationFailure, RuntimeClient};
+use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
-    CreateSubagentRunResponse, ResolvedSubagentSettings, SharedSubagentLauncher,
-    SubagentControlResponse, SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo,
-    SubagentSettingsOverrides, SubagentThreadSnapshot, resolve_settings_for_target,
-    resolve_subagent_settings,
+    CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
+    SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo, SubagentThreadSnapshot,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::CompletionProvider;
@@ -214,6 +213,20 @@ pub(crate) struct ListSubagentsArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ListSubagentModelsArgs {}
+
+#[derive(Serialize)]
+struct SubagentModels {
+    models: Vec<SubagentModel>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubagentModel {
+    id: String,
+    reasoning_efforts: Vec<String>,
+    default_reasoning_effort: String,
+    service_tiers: Vec<String>,
+}
 
 fn spawn_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
@@ -490,12 +503,12 @@ async fn run_subagent(
     let created = if let Some(created) = recovered {
         created
     } else {
-        let overrides = SubagentSettingsOverrides {
+        let overrides = SettingsOverrides {
             model: args.model,
             reasoning: args.reasoning,
             fast: args.fast,
         };
-        let (resolved, completion_provider) = cancelled_read(&cancellation, async {
+        let resolved = cancelled_read(&cancellation, async {
             resolve_child_settings(context, thread_id.as_deref(), &overrides).await
         })
         .await?;
@@ -510,7 +523,7 @@ async fn run_subagent(
         fields.insert("fast".to_string(), resolved.fast.into());
         fields.insert(
             "completionProvider".to_string(),
-            completion_provider.as_str().into(),
+            resolved.provider.as_str().into(),
         );
         if let Some(timeout_ms) = args.timeout_ms {
             fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
@@ -769,11 +782,11 @@ impl ControlSubagentTool {
                 (Some(recovered), _) => Some(recovered),
                 (None, Some(continuation)) => {
                     require_launcher(&self.context)?;
-                    let (settings, completion_provider) = cancelled_read(&cancellation, async {
+                    let settings = cancelled_read(&cancellation, async {
                         resolve_child_settings(
                             &self.context,
                             Some(&args.thread_id),
-                            &SubagentSettingsOverrides::default(),
+                            &SettingsOverrides::default(),
                         )
                         .await
                     })
@@ -786,7 +799,7 @@ impl ControlSubagentTool {
                         ("fast".to_string(), settings.fast.into()),
                         (
                             "completionProvider".to_string(),
-                            completion_provider.as_str().into(),
+                            settings.provider.as_str().into(),
                         ),
                         (
                             "continuationOfRunId".to_string(),
@@ -981,25 +994,27 @@ impl rig::tool::Tool for ListSubagentModelsTool {
             let context = self.0.clone();
             async move {
                 cancelled_read(&cancellation, async {
-                    let catalog =
-                        fetch_model_catalog(&context, &child_providers(&context).await?).await?;
-                    serde_json::to_value(catalog).map_err(|e| tool_error(e.into()))
+                    let catalog = model_catalog(&context.gateway_url)
+                        .await
+                        .map_err(tool_error)?;
+                    let models = catalog
+                        .models
+                        .into_iter()
+                        .map(|model| SubagentModel {
+                            id: model.id,
+                            reasoning_efforts: model.reasoning_efforts,
+                            default_reasoning_effort: model.default_reasoning_effort,
+                            service_tiers: model.service_tiers,
+                        })
+                        .collect();
+                    serde_json::to_value(SubagentModels { models })
+                        .map_err(|e| tool_error(e.into()))
                 })
                 .await
             }
         })
         .await
     }
-}
-
-/// Provider identity never comes from a tool argument.
-async fn fetch_model_catalog(
-    context: &AgentToolContext,
-    providers: &[CompletionProvider],
-) -> Result<ProviderCatalog, ToolExecutionError> {
-    crate::catalog::catalog_for_providers(&context.gateway_url, providers)
-        .await
-        .map_err(tool_error)
 }
 
 fn require_launcher(
@@ -1011,8 +1026,8 @@ fn require_launcher(
         .ok_or_else(|| tool_failure("subagent execution is unavailable in this environment"))
 }
 
-/// The providers a child may use, in the user's order.
-async fn child_providers(
+/// Provider identity never comes from a tool argument.
+async fn enabled_providers(
     context: &AgentToolContext,
 ) -> Result<Vec<CompletionProvider>, ToolExecutionError> {
     let run_context: crate::types::RunContextResponse = context
@@ -1020,42 +1035,32 @@ async fn child_providers(
         .run_context(&context.run_id)
         .await
         .map_err(tool_error)?;
-    let preferences = run_context.provider_preferences;
-    Ok(if preferences.restrict_subagents_to_provider {
-        vec![run_context.run.completion_provider]
-    } else {
-        preferences.enabled_providers
-    })
+    Ok(run_context.provider_preferences.enabled_providers)
 }
 
-/// The child's settings and the first of `child_providers` that serves its model.
 async fn resolve_child_settings(
     context: &AgentToolContext,
     thread_id: Option<&str>,
-    overrides: &SubagentSettingsOverrides,
-) -> Result<(ResolvedSubagentSettings, CompletionProvider), ToolExecutionError> {
-    let providers = child_providers(context).await?;
-    let catalog = fetch_model_catalog(context, &providers).await?;
-    let resolved = match thread_id {
+    overrides: &SettingsOverrides,
+) -> Result<ResolvedSettings, ToolExecutionError> {
+    let providers = enabled_providers(context).await?;
+    let catalog = model_catalog(&context.gateway_url)
+        .await
+        .map_err(tool_error)?;
+    let saved = match thread_id {
         Some(thread_id) => {
             let existing: SubagentThreadSnapshot =
                 fetch_thread(context, SNAPSHOT, thread_id).await?;
-            resolve_settings_for_target(&catalog, &existing.settings, overrides)
+            Some(ModelSettings {
+                model: existing.settings.model,
+                reasoning: existing.settings.reasoning,
+                fast: existing.settings.fast,
+            })
         }
-        None => resolve_subagent_settings(&catalog, overrides),
-    }
-    .map_err(|error| tool_failure(format!("{error:#}")))?;
-    let vendor = catalog
-        .models
-        .iter()
-        .find(|model| model.id == resolved.model)
-        .map(|model| model.vendor.as_str())
-        .unwrap_or_default();
-    let provider = providers
-        .into_iter()
-        .find(|provider| provider.serves_vendor(vendor))
-        .ok_or_else(|| tool_failure(format!("no enabled provider serves {}", resolved.model)))?;
-    Ok((resolved, provider))
+        None => None,
+    };
+    resolve_settings(&catalog, &providers, saved.as_ref(), overrides)
+        .map_err(|error| tool_failure(format!("{error:#}")))
 }
 
 fn subagent_args(

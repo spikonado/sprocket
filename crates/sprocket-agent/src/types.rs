@@ -165,14 +165,12 @@ pub struct RunContextResponse {
 pub struct ProviderPreferences {
     /// The user's enabled providers, in fallback order.
     pub enabled_providers: Vec<CompletionProvider>,
-    pub restrict_subagents_to_provider: bool,
 }
 
 impl Default for ProviderPreferences {
     fn default() -> Self {
         Self {
             enabled_providers: vec![CompletionProvider::Spikonado],
-            restrict_subagents_to_provider: false,
         }
     }
 }
