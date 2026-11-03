@@ -19,6 +19,11 @@
 			"prPriority": 100
 		},
 		{
+			"description": "tools/kicad/update-release.mjs compiles these pins from kicad-python's constraints",
+			"matchFileNames": ["tools/kicad/requirements.txt"],
+			"enabled": false
+		},
+		{
 			"matchDepTypes": ["action", "devDependencies", "uses-with"],
 			"automerge": true,
 			"prPriority": 20
