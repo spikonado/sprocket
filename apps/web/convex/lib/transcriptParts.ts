@@ -47,7 +47,6 @@ export async function getPromptPart(
 	return part?.kind === 'prompt' && part.runId === runId && part.prompt ? part : null;
 }
 
-/** Skips the prompts the agent writes for the model. */
 export async function firstUserPromptPart(
 	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>

@@ -31,11 +31,6 @@ function accessTarget(subscription: ExpiryFields, now: number) {
 	);
 }
 
-/**
- * Materialize the access phase and schedule the boundary check that advances
- * it. Safe to call after every projection change; obsolete scheduled checks
- * are cancelled, and an already-correct pending check is kept.
- */
 export async function scheduleSubscriptionExpiry(
 	ctx: MutationCtx,
 	subscription: ExpiryFields
@@ -51,9 +46,6 @@ export async function scheduleSubscriptionExpiry(
 	const endsAtCurrent =
 		(subscription.accessEndsAt ?? undefined) === (target.accessEndsAt ?? undefined);
 
-	// Every future boundary (term start, term end, grace end) keeps a pending
-	// check so the materialized phase advances even when the current phase
-	// grants no access (e.g. a confirmed term that starts in the future).
 	const needsCheck =
 		managed &&
 		subscription.status === 'active' &&
@@ -71,8 +63,6 @@ export async function scheduleSubscriptionExpiry(
 		check.args[0]?.dodoSubscriptionId === dodoSubscriptionId &&
 		check.args[0]?.projectionRevision === (subscription.projectionRevision ?? 0)
 	) {
-		// Correct fence and time already pending; only repair materialized
-		// fields if they drifted.
 		if (!phaseCurrent || !endsAtCurrent) {
 			await ctx.db.patch('subscriptions', subscription._id, {
 				accessPhase: target.accessPhase,
@@ -106,14 +96,6 @@ export async function scheduleSubscriptionExpiry(
 	});
 }
 
-/**
- * Advance the access phase at a scheduled boundary. Fenced by subscription
- * id + provider subscription id + projection revision, so stale checks for
- * superseded terms or subscriptions are no-ops. Entering renewal-processing
- * grace kicks off provider reconciliation; grace exhaustion ends access.
- * Every transition that still has a future boundary chains the next check,
- * so a term that starts in the future advances at its end too.
- */
 export const checkSubscriptionExpiry = internalMutation({
 	args: {
 		subscriptionId: v.id('subscriptions'),
@@ -154,11 +136,6 @@ export const checkSubscriptionExpiry = internalMutation({
 			billingPeriodCheckId: undefined
 		});
 
-		// A still-active subscription with a future boundary (a paid term
-		// that just opened at its start, or renewal-processing grace with a
-		// grace deadline) chains the next boundary check. Without this a
-		// term confirmed before its start would open paid access at its
-		// start but never advance at its end.
 		const nextBoundary =
 			subscription.status === 'active' &&
 			target.accessEndsAt !== undefined &&
@@ -209,7 +186,6 @@ export const checkSubscriptionExpiry = internalMutation({
 	}
 });
 
-/** Ledger of subscription access state for operational lookups. */
 export const getSubscriptionAccess = internalQuery({
 	args: { dodoSubscriptionId: v.string() },
 	returns: v.union(

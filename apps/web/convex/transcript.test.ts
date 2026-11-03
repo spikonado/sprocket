@@ -159,8 +159,6 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		// Encrypted-only reasoning has no display text. The agent tracker skips it
-		// as work while still persisting the envelope for replay.
 		const items = [
 			{
 				type: 'reasoning' as const,
@@ -195,7 +193,6 @@ describe('numbered transcript parts', () => {
 
 		expect(part?.completion?.items).toHaveLength(2);
 
-		// Empty reasoning must not carry work; visible reasoning must.
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 				runId,
@@ -1063,7 +1060,6 @@ describe('transcript range reads', () => {
 			expect(measured.result.parts.length).toBeGreaterThan(0);
 			expect(measured.result.parts.length).toBeLessThan(numbers.length);
 			expect(measured.bytes).toBeGreaterThanOrEqual(1_000_000);
-			// Pagination includes the document that crosses the byte target.
 			expect(measured.bytes).toBeLessThan(1_500_000);
 			await t.run((ctx) =>
 				ctx.db.insert('threadTranscriptParts', {

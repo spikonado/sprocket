@@ -268,7 +268,6 @@ describe('public pricing catalog', () => {
 			});
 		});
 
-		// Another instance holds a live lease; no fetch may be attempted.
 		const now = Date.now();
 		await t.mutation(internal.pricingData.acquireProductRefreshLease, {
 			environment: 'test_mode',
@@ -387,9 +386,6 @@ describe('public pricing catalog', () => {
 		});
 		expect(catalog.plans.find((plan) => plan.id === 'pro')?.prices.monthly).toBeNull();
 
-		// The healthy price persists per-product while the failed one is in
-		// transient backoff, and the failed product is not refetched within the
-		// retry window.
 		const again = await t.action(api.pricing.getPublicCatalog, {});
 
 		expect(again.plans.find((plan) => plan.id === 'team')?.prices.monthly).toMatchObject({
@@ -433,8 +429,6 @@ describe('public pricing catalog', () => {
 				activeFetches += 1;
 				maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
 
-				// Hold each fetch on an explicit gate so overlap is measured
-				// deterministically without relying on timers.
 				await new Promise<void>((resolve) => {
 					gates.set(productId, resolve);
 				});
@@ -456,9 +450,6 @@ describe('public pricing catalog', () => {
 
 		const pendingCatalog = t.action(api.pricing.getPublicCatalog, {});
 
-		// Wait for the worker pool to saturate, then release one gate at a time;
-		// each release must admit exactly one more fetch, proving the pool caps
-		// concurrency instead of fanning out unbounded.
 		await vi.waitFor(() => {
 			expect(activeFetches).toBe(4);
 		});
@@ -488,7 +479,6 @@ describe('public pricing catalog', () => {
 
 		const catalog = await pendingCatalog;
 
-		// Budget: at most 8 products refreshed; the rest stay null.
 		expect(fetched.length).toBe(8);
 		expect(maxActiveFetches).toBe(4);
 
@@ -503,8 +493,6 @@ describe('public pricing catalog', () => {
 		const t = initConvexTest();
 		const now = Date.now();
 
-		// Other instances already hold the full environment-wide lease budget;
-		// rows without a lease remain claimable in principle.
 		await t.run(async (ctx) => {
 			for (let i = 0; i < 8; i++) {
 				await ctx.db.insert('dodoPricingCache', {
@@ -539,7 +527,6 @@ describe('public pricing catalog', () => {
 		expect(fetches).toBe(0);
 		expect(catalog.plans.find((plan) => plan.id === 'pro')?.prices.monthly).toBeNull();
 
-		// No row is created for a product whose claim the budget refused.
 		const rows = await t.run(async (ctx) =>
 			ctx.db
 				.query('dodoPricingCache')
@@ -551,8 +538,6 @@ describe('public pricing catalog', () => {
 
 		expect(rows).toEqual([]);
 
-		// Once the other instances' leases lapse, the product refreshes
-		// normally.
 		vi.setSystemTime(now + 61_000);
 		vi.stubGlobal(
 			'fetch',

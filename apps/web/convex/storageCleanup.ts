@@ -7,7 +7,6 @@ const UNREGISTERED_STORAGE_TTL_MS = 24 * 60 * 60 * 1_000;
 
 const BATCH_SIZE = 100;
 
-// Upload responses and action callbacks can be lost after bytes reach storage.
 export const cleanupUnregistered = internalMutation({
 	args: { cursor: v.optional(v.string()), cutoff: v.optional(v.number()) },
 	returns: v.number(),

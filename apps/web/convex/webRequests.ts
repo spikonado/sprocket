@@ -1,4 +1,4 @@
-import { vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
+import { vOnCompleteArgs } from '@convex-dev/workpool';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getRunWithExecution } from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
@@ -264,8 +264,7 @@ export const complete = internalMutation({
 
 async function remove(ctx: MutationCtx, request: WebRequest) {
 	if (request.workId && (request.status === 'queued' || request.status === 'running')) {
-		// SAFETY: Stored directly from this pool's enqueueAction result.
-		await contextDevPool.cancel(ctx, request.workId as WorkId);
+		await contextDevPool.cancel(ctx, request.workId);
 	}
 
 	if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);

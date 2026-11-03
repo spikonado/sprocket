@@ -4,10 +4,8 @@ import type { DataModel, Doc } from '@convex/_generated/dataModel';
 /** Tier ids are operator-owned (see the `tiers` table); an opaque string, not a union. */
 export type SubscriptionTier = string;
 
-/** Quota units per dollar. Tier limits in the `tiers` table use this scale. */
 export const MODEL_USAGE_UNITS_PER_DOLLAR = 1_000_000_000;
 
-/** Quota units each meter may use per monthly billing window. */
 export type TierLimits = { modelUsage: number };
 
 export type CachedTier = {
@@ -43,7 +41,6 @@ export async function getCachedTier(
 	return row ? rowToCachedTier(row) : null;
 }
 
-/** Limits for a tier, falling back to the free tier when unknown. */
 export async function resolveTierLimits(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
@@ -87,9 +84,7 @@ function pickSubscription(rows: Doc<'subscriptions'>[]): Doc<'subscriptions'> | 
 	if (grants.length) rows = grants;
 
 	return rows.reduce((best, row) => {
-		// Recency wins so a newer row supersedes an older one.
 		if (row.eventAt !== best.eventAt) return row.eventAt > best.eventAt ? row : best;
-		// Same event time (e.g. retried edits): keep an active row over a lapsed one.
 		const rowActive = row.status === 'active';
 		const bestActive = best.status === 'active';
 
@@ -219,12 +214,6 @@ export function subscriptionMaterializedTier(
 		: (subscription?.tier ?? 'free');
 }
 
-/**
- * Renewal-processing grace: a normally renewing customer keeps paid access
- * for at most one hour past the last confirmed paid-term end. The deadline
- * anchors to the provider term end, never to event receipt or retry time.
- * Confirmed failure/cancellation/expiry ends access without this grace.
- */
 export const RENEWAL_GRACE_MS = 60 * 60 * 1_000;
 
 export type AccessPhase = 'paid' | 'renewal_processing' | 'none';
@@ -240,14 +229,6 @@ type AccessFields = Pick<
 	| 'cancelAtNextBillingDate'
 >;
 
-/**
- * Paid-access phase for enforcement at wall time `now`.
- * 'renewal_processing' means the confirmed term ended but a renewal
- * confirmation may still arrive; the previous term's remaining allowance
- * stays open until the fixed grace deadline. The effective deadline never
- * moves: a stalled scheduler keeps the bounded grace window computed from
- * the confirmed term end instead of dropping access early or extending it.
- */
 export function subscriptionAccessPhase(
 	subscription: AccessFields | null,
 	now: number
@@ -257,8 +238,6 @@ export function subscriptionAccessPhase(
 	// Operator grants have no provider clock.
 	if (!subscription.dodoSubscriptionId) return 'paid';
 
-	// A Dodo-linked paid subscription without a confirmed term fails closed:
-	// with no term boundary there is no basis for paid access.
 	if (!Number.isFinite(subscription.billingPeriodEnd)) return 'none';
 	const termEnd = subscription.billingPeriodEnd!;
 	const termStart = subscription.billingPeriodStart;
@@ -273,8 +252,6 @@ export function subscriptionAccessPhase(
 
 	if (now < termEnd) return 'paid';
 
-	// Past the confirmed term end: only the bounded renewal-processing grace
-	// remains, and never after a scheduled cancellation deadline.
 	if (subscription.cancelAtNextBillingDate === true) return 'none';
 
 	const graceEnd = termEnd + RENEWAL_GRACE_MS;
@@ -289,12 +266,6 @@ function hasPendingTermStart(subscription: AccessFields): boolean {
 	);
 }
 
-/**
- * Latest wall time at which `subscriptionIsActive` can report paid access
- * for this row, or undefined when access has no clock bound (operator grants,
- * missing rows, or a Dodo row with no confirmed term). Charge/check paths
- * refuse to meter past this deadline even when the expiry scheduler stalls.
- */
 export function subscriptionAccessDeadline(subscription: AccessFields | null): number | undefined {
 	if (!subscription) return undefined;
 
@@ -312,7 +283,6 @@ export function subscriptionAccessDeadline(subscription: AccessFields | null): n
 	return subscription.billingPeriodEnd + RENEWAL_GRACE_MS;
 }
 
-/** Insert a free/active row when missing; never overwrites an existing grant. */
 export async function ensureSubscription(
 	ctx: GenericMutationCtx<DataModel>,
 	userId: string,

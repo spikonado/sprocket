@@ -107,7 +107,6 @@ export const recoverSubmission = mutation({
 				throw new Error('Submission belongs to a different executor.');
 			}
 
-			// Released agents compare it with the prompt they are about to send.
 			const prompt = (await getPromptPart(ctx, run.threadId, run._id))?.prompt?.text ?? '';
 
 			return {
@@ -198,8 +197,6 @@ export const createOrSend = mutation({
 					? callerThread
 					: await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 
-			// Released runners omit the provider: creation inherits the caller's,
-			// follow-ups keep the child's saved one.
 			const completionProvider =
 				args.completionProvider ??
 				(creating ? callerRun.completionProvider : targetThread.completionProvider) ??

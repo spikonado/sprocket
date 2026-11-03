@@ -28,8 +28,7 @@ describe('web search workpool fencing', () => {
 				await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 			});
 			await t.mutation(internal.webSearchPool.completeWebSearch, {
-				// SAFETY: Workpool onComplete only uses workId for its own bookkeeping.
-				workId: (stored?.cloudWorkId ?? 'work') as WorkId,
+				workId: stored!.cloudWorkId!,
 				context: { jobId, runId, claimId },
 				result: { kind: 'success', returnValue: { results: [{ url: 'https://example.com' }] } }
 			});

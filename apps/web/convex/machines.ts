@@ -183,8 +183,6 @@ export const endProcess = mutation({
 		)
 });
 
-// Released clients register with a credential hash and authenticate heartbeats
-// and ends with its secret instead of a user token. The hash is their process ID.
 export const tryRegister = mutation({
 	args: { ...vMachineMetadata, credentialHash: v.string() },
 	returns: vRegistrationResult,

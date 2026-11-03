@@ -31,7 +31,6 @@ async function threadTotals(ctx: QueryCtx, threadId: Id<'threadRecords'>) {
 	return rows.map(totalsOf);
 }
 
-/** The thread's own totals, plus every descendant subagent thread's totals. */
 export const getThreadUsage = query({
 	args: { threadId: v.id('threadRecords') },
 	returns: v.object({
@@ -88,7 +87,6 @@ export const getRunUsage = query({
 	}
 });
 
-/** UTC buckets with `from <= bucketStart < to`. */
 export const getMyUsageBuckets = query({
 	args: {
 		granularity: v.union(v.literal('hour'), v.literal('day')),

@@ -147,7 +147,6 @@ export async function finalizeRunRecord(
 	return true;
 }
 
-// A new thread whose first run stopped before it began has nothing to show.
 async function settleEmptyRootThread(ctx: MutationCtx, threadId: Doc<'threadRecords'>['_id']) {
 	const thread = await ctx.db.get('threadRecords', threadId);
 

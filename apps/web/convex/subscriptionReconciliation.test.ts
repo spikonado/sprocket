@@ -181,7 +181,6 @@ describe('subscription reconciliation retrieval', () => {
 			})
 		).toMatchObject({ state: 'pending', attempt: 1 });
 
-		// The row itself is untouched.
 		expect(await readSubscription(t)).toMatchObject({
 			accessPhase: 'renewal_processing',
 			billingPeriodStart: termStart

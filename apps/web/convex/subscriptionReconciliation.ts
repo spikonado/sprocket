@@ -340,9 +340,6 @@ export const reconcileSubscription = internalAction({
 		if (result.outcome === 'stale')
 			return { outcome: 'skipped', detail: result.detail ?? 'Observation superseded.' };
 
-		// Reconciliation is unresolved until the provider projects access; a
-		// converged duplicate/noop means the subscription shows paid or
-		// terminal now.
 		const stillCurrent = await ctx.runQuery(internal.subscriptionExpiry.getSubscriptionAccess, {
 			dodoSubscriptionId: args.dodoSubscriptionId
 		});
@@ -374,11 +371,6 @@ export const reconcileSubscription = internalAction({
 	}
 });
 
-/**
- * Re-fences on the projection revision captured before the provider fetch,
- * then applies the observation through the ordinary projection path.
- * All-or-nothing with the projection write.
- */
 export const applyObservation = internalMutation({
 	args: {
 		userId: v.optional(v.string()),

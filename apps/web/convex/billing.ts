@@ -103,13 +103,6 @@ type SubscriptionActivityRow = Pick<
 	| 'terminalConfirmed'
 >;
 
-/**
- * Query-time classification without a wall clock. Reads the materialized
- * access phase/deadline for Dodo-linked rows (kept current by the expiry
- * scheduler); legacy rows without the fields fall back to the provider-confirmed
- * billing period stored on the document, never to `Date.now()`. Operator
- * grants have no provider clock and are always paid while active.
- */
 function paidAccessState(subscription: SubscriptionActivityRow | null): PaidAccessState {
 	if (!subscription || subscription.tier === 'free') return 'none';
 
@@ -196,8 +189,6 @@ export const checkout = action({
 			interval
 		});
 
-		// Cached display prices never authorize a purchase: revalidate the
-		// operator mapping here and the provider product before freezing create.
 		if (!productId) {
 			throw new Error(`No ${interval} checkout product is configured for tier "${tier}".`);
 		}
@@ -293,9 +284,6 @@ export const checkout = action({
 
 		const freshUrls = resolveMarketingPricingUrls(env, tier);
 
-		// A previous create may have committed provider-side but its response
-		// was lost before the session id was persisted. Reissuing the same
-		// idempotency key is the only recovery Dodo supports; pace the retry.
 		if (
 			reserved.outcome === 'create_ambiguous' &&
 			reserved.outcomeUpdatedAt !== undefined &&
@@ -323,8 +311,6 @@ export const checkout = action({
 			}
 		});
 
-		// First freeze wins for both the body and the idempotency key: the
-		// returned pair is exactly what any prior provider create used.
 		const createBody = frozen.createRequest;
 		const idempotencyKey = frozen.idempotencyKey;
 
@@ -371,9 +357,6 @@ export const checkout = action({
 		});
 
 		if (!attached) {
-			// The reservation moved on (newer selection or expiry) while the
-			// provider create was in flight. Keep the created link; it is still
-			// payable, and the provider enforces one active subscription.
 			console.warn(
 				`Checkout attempt ${reserved.attemptId} for user ${identity.subject} finished after its reservation moved on; returning the created link.`
 			);
@@ -445,8 +428,6 @@ export const reserveCheckoutSession = internalMutation({
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.take(MAX_OPEN_CHECKOUT_SELECTIONS + 1);
 
-		// Same-selection retries keep their original key and frozen request,
-		// including when a response was lost before the session id was saved.
 		const ambiguousMatch = [...openRows, ...retainedRows].find(
 			(attempt) =>
 				attempt.outcome === 'create_ambiguous' &&
@@ -467,8 +448,6 @@ export const reserveCheckoutSession = internalMutation({
 				attemptId: ambiguousMatch.attemptId,
 				interval: ambiguousMatch.interval,
 				productId: ambiguousMatch.productId,
-				// Only the persisted key is ever replayed; legacy rows without one
-				// fail closed at the checkout action.
 				idempotencyKey: ambiguousMatch.idempotencyKey,
 				outcome: ambiguousMatch.outcome,
 				outcomeUpdatedAt: ambiguousMatch.outcomeUpdatedAt,
@@ -492,7 +471,6 @@ export const reserveCheckoutSession = internalMutation({
 			existing.interval === args.interval &&
 			existing.productId === args.productId
 		) {
-			// Terminal attempts never resume; the caller gets a fresh reservation.
 			if (!checkoutOutcomeIsTerminal(existing.outcome)) {
 				if (existing.checkoutUrl) {
 					return {
@@ -550,7 +528,6 @@ export const reserveCheckoutSession = internalMutation({
 	}
 });
 
-/** Move a superseded/expired attempt into the retained history table. */
 async function archiveCheckoutAttempt(
 	ctx: MutationCtx,
 	attempt: Doc<'billingCheckoutSessions'>,
@@ -635,10 +612,6 @@ export const attachCheckoutSession = internalMutation({
 	}
 });
 
-/**
- * Resolve an attempt across the open reservation and the retained history.
- * The open table is checked first so the returned table name matches the row.
- */
 async function findCheckoutAttempt(
 	ctx: MutationCtx,
 	userId: string,
@@ -666,13 +639,6 @@ async function findCheckoutAttempt(
 	return retained ? { row: retained, table: 'billingCheckoutAttempts' } : null;
 }
 
-/**
- * Freeze the create body the first time a provider create is attempted. The
- * frozen body and the persisted idempotency key are coupled: concurrent
- * callers all receive the first frozen pair, so a retry can never send a new
- * body under an old key. Rows that already paid through to a session are
- * untouched.
- */
 export const freezeCheckoutCreateRequest = internalMutation({
 	args: {
 		userId: v.string(),
@@ -732,8 +698,6 @@ export const freezeCheckoutCreateRequest = internalMutation({
 		const idempotencyKey = reservation.idempotencyKey ?? `sprocket-checkout:${crypto.randomUUID()}`;
 
 		if (reservation.dodoSessionId) {
-			// A provider session is already attached; the frozen pair only needs
-			// to be readable, so never mark a fresh create as ambiguous here.
 			return { idempotencyKey, createRequest };
 		}
 
@@ -761,8 +725,6 @@ export const markCheckoutAttemptAmbiguous = internalMutation({
 		if (!match || checkoutOutcomeIsTerminal(match.row.outcome) || match.row.dodoSessionId)
 			return null;
 
-		// Record the actual outcome transition time for retry pacing; the local
-		// expiry keeps its original meaning.
 		await ctx.db.patch(match.table, match.row._id, {
 			outcome: 'create_ambiguous',
 			outcomeUpdatedAt: Date.now()
@@ -792,33 +754,6 @@ export const failCheckoutAttempt = internalMutation({
 	}
 });
 
-/**
- * Called from the webhook path once an active subscription confirms the
- * attempt; reserved for the subscription/webhook owner to invoke.
- */
-export const completeCheckoutAttempt = internalMutation({
-	args: { userId: v.string(), attemptId: v.string() },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const reservation = await ctx.db
-			.query('billingCheckoutSessions')
-			.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', args.userId))
-			.unique();
-
-		if (reservation && reservation.attemptId === args.attemptId) {
-			await ctx.db.patch('billingCheckoutSessions', reservation._id, {
-				outcome: 'paid',
-				outcomeUpdatedAt: Date.now(),
-				checkoutUrl: undefined,
-				createRequest: undefined,
-				idempotencyKey: undefined
-			});
-		}
-
-		return null;
-	}
-});
-
 export const cleanupCheckoutHistory = internalMutation({
 	args: {
 		table: v.optional(
@@ -828,10 +763,6 @@ export const cleanupCheckoutHistory = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		// Snapshot pagination: rows compacted in this pass fall out of the
-		// index range and are not revisited, and rows deleted in this pass are
-		// not re-read. Concurrent inserts may shift the page window; the next
-		// cron run covers anything missed.
 		const table = args.table ?? 'billingCheckoutSessions';
 
 		const page = await ctx.db.query(table).paginate({
@@ -882,9 +813,6 @@ export const getCheckoutStatus = action({
 		attemptId: v.string(),
 		status: vCheckoutAttemptStatus,
 		mode: vDodoMode,
-		// True only when this account's projection shows paid access matching
-		// this attempt's tier/interval. Never asserted from provider state or a
-		// different attempt.
 		activated: v.optional(v.boolean()),
 		checkout_url: v.optional(v.string()),
 		sessionId: v.optional(v.string()),
@@ -931,9 +859,6 @@ export const getCheckoutStatus = action({
 			return { attemptId, mode, status: 'failed', expiresAt: attempt.expiresAt };
 		}
 
-		// Local expiry is never proof of provider expiry. A lost create response
-		// may still have committed provider-side, so a locally expired ambiguous
-		// attempt stays 'pending' unless the provider resolves it below.
 		const locallyExpired = attempt.expiresAt <= now;
 
 		if (
@@ -943,8 +868,6 @@ export const getCheckoutStatus = action({
 			!attempt.checkoutUrl &&
 			!attempt.dodoSessionId
 		) {
-			// Reserved-but-never-sent attempts have no provider identity; the local
-			// reservation is the only possible record and its expiry is final.
 			return { attemptId, mode, status: 'expired', expiresAt: attempt.expiresAt };
 		}
 
@@ -977,8 +900,6 @@ export const getCheckoutStatus = action({
 				};
 			}
 
-			// The provider still knows the session, so it outlives the local
-			// expiry; report the authoritative status.
 			switch (provider.status) {
 				case 'succeeded':
 					return {
@@ -1016,13 +937,9 @@ export const getCheckoutStatus = action({
 		}
 
 		if (locallyExpired && attempt.outcome === 'create_ambiguous') {
-			// Status lookup is read-only. Recovery uses the explicit checkout
-			// retry path; POST /checkouts is not a provider lookup operation.
 			return { attemptId, mode, status: 'unknown', expiresAt: attempt.expiresAt };
 		}
 
-		// No session id yet: creation either never reached the provider or the
-		// response was lost. The local reservation is the only safe statement.
 		return {
 			attemptId,
 			status: attempt.outcome === 'create_ambiguous' ? 'pending' : 'awaiting_payment',
@@ -1092,11 +1009,6 @@ export const lookupCheckoutAttempt = internalQuery({
 	}
 });
 
-/**
- * Wall-clock projection check for an attempt's tier/interval: true only when
- * the account's current subscription shows paid access on exactly that
- * selection. Used to report activation for a specific attempt.
- */
 export const attemptActivated = internalQuery({
 	args: {
 		userId: v.string(),
@@ -1214,12 +1126,6 @@ export type ProjectionOutcome = {
 	detail?: string;
 };
 
-/**
- * The single subscription-projection path for signed webhooks and fenced
- * reconciliation observations. Pure reads and validation run before the first
- * write, so a rejected payload commits nothing and the caller's ledger outcome
- * stays atomic with the projection.
- */
 export async function applyDodoSubscriptionProjection(
 	ctx: MutationCtx,
 	args: DodoSubscriptionEventArgs
@@ -1263,8 +1169,7 @@ export async function applyDodoSubscriptionProjection(
 	const existing = await getSubscriptionDoc(ctx, userId);
 	const sameIdentity = existing?.dodoSubscriptionId === args.dodoSubscriptionId;
 
-	// Dodo's failed status is mandate-creation failure, not a failed upgrade
-	// charge. A previously established identity needs provider repair instead.
+	// Dodo's failed status is mandate-creation failure, not a failed upgrade charge.
 	if (sameIdentity && args.status === 'failed' && existing.status !== 'failed') {
 		await ctx.scheduler.runAfter(0, internal.subscriptionReconciliation.queueReconciliation, {
 			subscriptionId: existing._id,
@@ -1285,7 +1190,6 @@ export async function applyDodoSubscriptionProjection(
 		return { outcome: 'competing' as const, detail: 'Operator-granted subscription preserved.' };
 	}
 
-	// Events for a superseded identity never reclaim the projection.
 	if (existing?.dodoSubscriptionId !== args.dodoSubscriptionId) {
 		const superseded = await ctx.db
 			.query('supersededSubscriptions')
@@ -1316,13 +1220,9 @@ export async function applyDodoSubscriptionProjection(
 		scheduledChange: args.scheduledChange ?? null
 	};
 
-	// past_due is the provider grace-period status; Sprocket keeps Dodo's
-	// grace period off, so treat it like an on-hold renewal failure.
 	const normalizedStatus = payload.status === 'past_due' ? 'on_hold' : payload.status;
 	const isObservation = payload.observedAt !== undefined;
 
-	// Status, product, term, and schedule fence independently; a payload stale
-	// on all of them is a duplicate/older redelivery and changes nothing.
 	const staleStatus = isStaleStatus({ existing, payload });
 	const stalePayload = isStalePayload({ existing, payload });
 	const staleTerm = isStaleTerm(existing, payload);
@@ -1449,8 +1349,6 @@ export async function applyDodoSubscriptionProjection(
 		return { outcome: 'unresolved', detail: 'An established product changed billing interval.' };
 	}
 
-	// Old signed metadata tier is only authoritative while the product is
-	// unchanged; a changed product resolves via attempt/mapping instead.
 	const metadataTier = productUnchanged ? (args.tier ?? null) : null;
 
 	const resolvedTier = resolveEffectiveTier({
@@ -1570,11 +1468,6 @@ export async function applyDodoSubscriptionProjection(
 		return { outcome: 'noop' as const };
 	}
 
-	// --- First write below this point; every check above committed nothing. ---
-
-	// A payable attempt that pays late (e.g. after a selection switch) still
-	// resolves its outcome so status lookups converge. Unrelated attempts are
-	// never marked paid by this subscription's confirmation.
 	if (paidAttempt && paidAttempt.outcome !== 'paid' && effectiveStatus === 'active') {
 		const current = currentAttempt;
 

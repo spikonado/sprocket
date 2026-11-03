@@ -928,7 +928,6 @@ describe('agentQuestions', () => {
 			optionId: 'a'
 		});
 
-		// A repeated UI answer returns the committed answer and never overwrites.
 		const repeat = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
 			questionId: question.questionId,
@@ -954,8 +953,6 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		// Manual stop requests cancellation; pending questions are retired in the
-		// same transaction, well before the run reaches its terminal state.
 		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
 
 		await expect(

@@ -19,7 +19,6 @@ export function firecrawlRetryAfterMs(error: Error): number | undefined {
 	return error instanceof SdkError && error.status === 429 ? 0 : undefined;
 }
 
-/** `action` names the call, as in "Firecrawl parse failed (500): ...". */
 export function firecrawlFailure(action: string, error: Error): Error {
 	if (!(error instanceof SdkError)) return error;
 

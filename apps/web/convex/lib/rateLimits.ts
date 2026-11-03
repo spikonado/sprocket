@@ -173,8 +173,7 @@ async function checkMeterLimits(
 	const blocked = await blockedMeterLimit(ctx, meterId, userId, limits, subscription, now);
 
 	if (!blocked) return;
-	// A ConvexError keeps its message through production error masking, and
-	// the executor only retries masked server failures.
+	// A ConvexError keeps its message through production error masking.
 	throw new ConvexError(
 		`${meterLimitLabel(meterId)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
 	);

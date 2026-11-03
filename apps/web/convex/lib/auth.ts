@@ -54,8 +54,6 @@ export async function getPrimaryUser(
 	return pickPrimaryUser(rows);
 }
 
-/** Query-safe lookup of the caller's users row; null until their first
- * ensureCurrentUser ran. */
 export async function getCurrentUser(
 	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>
 ): Promise<Doc<'users'> | null> {
@@ -69,8 +67,6 @@ export async function getCurrentUser(
 	return pickPrimaryUser(rows);
 }
 
-/** Mutation/action-only: resolves the caller's users row, creating it on
- * first sight. */
 export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Promise<Doc<'users'>> {
 	const identity = await requireIdentity(ctx);
 	const email = identity.email!;
@@ -162,7 +158,6 @@ export async function executionSecretHash(secret: string): Promise<string> {
 	return await hashExecutionSecret(secret);
 }
 
-/** Authorize a run using the capability held by its local executor. */
 export async function getExecutionRun(
 	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
 	runId: Id<'runs'>,

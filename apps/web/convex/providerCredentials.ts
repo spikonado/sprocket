@@ -50,8 +50,6 @@ export const getMyConfiguration = action({
 			await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject)
 		);
 
-		// Cloud-held ChatGPT is retired; released clients read these fields to
-		// render the connection state and must see it as disconnected.
 		return { openai: openAiObject !== null, chatgpt: false, chatgptModelIds: null };
 	}
 });

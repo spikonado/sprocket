@@ -10,7 +10,6 @@ export const backfillToolInvocationIds = migrations.define({
 	migrateOne: (_ctx, part) => {
 		if (!part.tool || part.tool.toolInvocationId !== undefined) return;
 
-		// The source key is unique per thread, like an invocation ID.
 		return { tool: { ...part.tool, toolInvocationId: part.sourceKey } };
 	}
 });

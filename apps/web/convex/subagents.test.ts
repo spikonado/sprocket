@@ -63,7 +63,6 @@ async function startCallerRun(t: ConvexTestInstance, subject = 'user_alice'): Pr
 		'Root task'
 	);
 
-	// The queued run executes on the caller's machine.
 	await t.run(async (ctx) => {
 		await ctx.db.patch('runs', created.runId, { machineId: machine.machineId });
 	});
@@ -120,8 +119,6 @@ async function finishTreeCancellation(t: ConvexTestInstance) {
 	throw new Error('Tree cancellation did not finish.');
 }
 
-/** Claim a child's queued run with the exact secret chosen at create time —
- * the same secret the native launcher reuses for start/renew/getContext. */
 async function claimChildRun(
 	t: ConvexTestInstance,
 	child: { runId: Id<'runs'>; threadId: Id<'threadRecords'> },
@@ -323,7 +320,6 @@ describe('subagents.createOrSend', () => {
 			})
 		).rejects.toThrow(/different executor/);
 
-		// The parent secret cannot claim the child's run; the chosen child secret can.
 		await expect(
 			t.mutation(api.agentRuntime.start, {
 				runId: created.runId,
@@ -455,7 +451,6 @@ describe('subagents.createOrSend', () => {
 			executionSecret: childRun.executionSecret
 		});
 
-		// Complete the run; the pending question keeps the thread waiting.
 		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: child.runId,
 			text: 'done',
@@ -1047,7 +1042,6 @@ describe('subagents access control', () => {
 		const caller = await startCallerRun(t);
 		const child = await createChild(t, caller);
 
-		// Let the caller's claim lease lapse.
 		await vi.advanceTimersByTimeAsync(RUN_CLAIM_LEASE_DURATION_MS + 1_000);
 
 		await expect(
@@ -1315,7 +1309,6 @@ describe('subagents.control', () => {
 			pendingQuestions: [expect.objectContaining({ questionId })]
 		});
 
-		// The human (UI) answers first; the agent's later answer must not overwrite.
 		await caller.asUser.mutation(api.agentQuestions.answer, {
 			threadId: child.threadId,
 			questionId,
@@ -2115,7 +2108,6 @@ describe('subagents.control delegated answer retries', () => {
 
 			expect(answered.continuation).toMatchObject({ runId: child.runId, prompt: 'East' });
 
-			// Stop lands after the answer committed but before the continuation queued.
 			await stop(t, caller, child);
 
 			const stored = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));

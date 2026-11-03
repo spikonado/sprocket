@@ -148,7 +148,6 @@ export const moveToProject = mutation({
 		while (pending.length > 0) {
 			const threadId = pending.pop()!;
 
-			// The saved cwd points into the old project, so runs restart at the new root.
 			await ctx.db.patch('threadRecords', threadId, { repositoryKey, cwd: undefined });
 
 			const children = ctx.db

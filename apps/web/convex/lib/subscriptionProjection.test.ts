@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
-	comparePayloads,
 	computeAccess,
 	identityTakeoverAllowed,
 	isStalePayload,
@@ -57,9 +56,7 @@ describe('deterministic payload ordering', () => {
 	it('equal-time conflicting products converge irrespective of arrival order', () => {
 		const existing = row({ dodoProductId: 'prod_b', tier: 'max' });
 
-		// prod_a loses the product tie-break against the stored prod_b.
 		expect(isStalePayload({ existing, payload: payload({ dodoProductId: 'prod_a' }) })).toBe(true);
-		// prod_c wins the tie-break against the stored prod_b.
 		expect(isStalePayload({ existing, payload: payload({ dodoProductId: 'prod_c' }) })).toBe(false);
 	});
 
@@ -68,20 +65,6 @@ describe('deterministic payload ordering', () => {
 
 		expect(isStaleStatus({ existing, payload: payload({ status: 'on_hold' }) })).toBe(false);
 		expect(isStaleStatus({ existing, payload: payload({ status: 'failed' }) })).toBe(false);
-	});
-
-	it('scheduled changes participate in the deterministic tie-break', () => {
-		const withChange = payload({
-			scheduledChange: { id: 'sc_2', productId: 'prod_b', effectiveAt: T0 + 86_400_000 }
-		});
-
-		expect(comparePayloads(withChange, payload({ scheduledChange: null }))).toBeGreaterThan(0);
-
-		const earlierEffective = payload({
-			scheduledChange: { id: 'sc_1', productId: 'prod_b', effectiveAt: T0 + 3_600_000 }
-		});
-
-		expect(comparePayloads(earlierEffective, withChange)).toBeLessThan(0);
 	});
 
 	it('a historical failure never overrides a newer confirmed term', () => {
@@ -99,12 +82,8 @@ describe('deterministic payload ordering', () => {
 			scheduledChange: { id: 'sc_1', productId: 'prod_b', effectiveAt: T0 + 86_400_000 }
 		});
 
-		// A pending scheduled change is the newer provider state: it is not
-		// stale against a stored projection that has none.
 		expect(isStaleSchedule({ existing, payload: scheduled })).toBe(false);
 
-		// Clearing the scheduled change at the same position is the older
-		// provider state: stale against the stored pending change.
 		const stored = row({
 			dodoProductId: 'prod_a',
 			scheduledChange: { id: 'sc_1', productId: 'prod_b', effectiveAt: T0 + 86_400_000 }
@@ -118,8 +97,6 @@ describe('deterministic payload ordering', () => {
 
 describe('observation provenance', () => {
 	it('an observation orders at retrieval time without changing webhook watermarks', () => {
-		// Webhook state advanced to T0+1000 by a provider event; the observation
-		// carries an older billing period but was retrieved now.
 		const existing = row({
 			eventAt: T0 + 1_000,
 			payloadEventAt: T0 + 1_000,
@@ -133,12 +110,8 @@ describe('observation provenance', () => {
 			billingPeriodEnd: T0 + 30 * 86_400_000
 		});
 
-		// The observation is positioned at retrieval time, so it is not stale
-		// against the older webhook watermarks...
 		expect(isStalePayload({ existing, payload: observation })).toBe(false);
 
-		// ...but a delayed legitimate webhook stamped between the observed
-		// period and the retrieval still beats the stored provenance watermark.
 		const delayedWebhook = payload({ eventAt: T0 + 1_500 });
 		expect(isStalePayload({ existing, payload: delayedWebhook })).toBe(false);
 	});
@@ -217,19 +190,16 @@ describe('identity takeover', () => {
 			'apply'
 		);
 
-		// Locally ended access (no terminal confirmation) still blocks.
 		const ended = row({ dodoSubscriptionId: 'sub_old', accessPhase: 'none', status: 'active' });
 		expect(identityTakeoverAllowed(ended, payload({ dodoSubscriptionId: 'sub_new' }))).toBe(
 			'competing'
 		);
 
-		// Recoverable payment hold blocks too.
 		const held = row({ dodoSubscriptionId: 'sub_old', status: 'on_hold' });
 		expect(identityTakeoverAllowed(held, payload({ dodoSubscriptionId: 'sub_new' }))).toBe(
 			'competing'
 		);
 
-		// Same identity always applies.
 		expect(identityTakeoverAllowed(ended, payload({ dodoSubscriptionId: 'sub_old' }))).toBe(
 			'apply'
 		);

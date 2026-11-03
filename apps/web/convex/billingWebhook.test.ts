@@ -72,8 +72,6 @@ function subscriptionData(overrides: SubscriptionDataOverrides = {}) {
 	};
 }
 
-// The envelope `type`/`timestamp` always agree with the recorded
-// `eventType`/`eventAt`; the compact payload persists the same values.
 function envelope<T>(eventType: string, eventAt: number, data: T): string {
 	return JSON.stringify({
 		business_id: 'bus_test',
@@ -196,7 +194,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		await t.mutation(internal.billingWebhook.processEvent, { eventId: first });
 
-		// First redelivery bumps the counter but keeps the applied outcome.
 		const second = await t.mutation(internal.billingWebhook.recordEvent, {
 			environment: 'test_mode',
 			webhookId: 'wh_dup',
@@ -212,7 +209,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(event?.outcome).toBe('applied');
 		expect(event?.duplicateCount).toBe(1);
 
-		// A third redelivery increments again without touching the outcome.
 		const third = await t.mutation(internal.billingWebhook.recordEvent, {
 			environment: 'test_mode',
 			webhookId: 'wh_dup',
@@ -228,8 +224,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(after?.outcome).toBe('applied');
 		expect(after?.duplicateCount).toBe(2);
 
-		// The stored payload is compacted to the allowlisted projection fields;
-		// customer details beyond the id are never persisted.
 		expect(after?.payload).toBeDefined();
 		expect(after?.payload).not.toContain('owner@example.com');
 		expect(after?.payload).not.toContain('business_id');
@@ -239,7 +233,6 @@ describe('durable webhook ingestion and projection', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 
-		// Deliver failure first, then an equal-time active; terminal wins.
 		const failedEvent = await recordEvent(t, {
 			webhookId: 'wh_fail',
 			eventType: 'subscription.failed',
@@ -292,9 +285,6 @@ describe('durable webhook ingestion and projection', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 
-		// A provider status we do not recognize. The compact payload must drop
-		// the unparsable data but keep type/timestamp so the event stays
-		// observable, and a repaired schema can still process it on replay.
 		const rawData = {
 			...subscriptionData({ status: 'suspended_future_state' }),
 			customer: { customer_id: 'cus_1', email: 'owner@example.com', name: 'Owner' }
@@ -312,9 +302,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		const event = await requireEvent(t, eventId);
 		expect(event.outcome).toBe('unsupported');
-		// Compact payload: customer email/name stripped, but the allowlisted
-		// subscription fields (including the unknown status) are preserved so
-		// the event stays durable and replayable after a repair.
 		expect(event.payload).toBeDefined();
 		expect(event.payload).not.toContain('owner@example.com');
 		expect(event.payload).not.toContain('Owner');
@@ -322,13 +309,9 @@ describe('durable webhook ingestion and projection', () => {
 		expect(event.payload).toContain('sub_1');
 		expect(await readSubscription(t)).toBeNull();
 
-		// Observable via the problem lookup.
 		const problems = await t.query(internal.billingWebhook.listProblemEvents, {});
 		expect(problems.some((problem) => problem.eventId === eventId)).toBe(true);
 
-		// After a repair that maps the product, replay re-parses the retained
-		// payload; the unknown status is still gated as unsupported (never
-		// applied) but the event stays replayable rather than dropped.
 		await t.mutation(internal.billingWebhook.replayEvent, { eventId });
 		const replayed = await requireEvent(t, eventId);
 		expect(replayed.outcome).toBe('pending');
@@ -339,7 +322,6 @@ describe('durable webhook ingestion and projection', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 
-		// Establish subscription sub_1, then terminate it, then a new purchase sub_2.
 		const sub1 = await recordEvent(t, {
 			webhookId: 'wh_sub1',
 			eventType: 'subscription.active',
@@ -386,7 +368,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(subscription?.dodoSubscriptionId).toBe('sub_2');
 		expect(subscription?.tier).toBe('max');
 
-		// A late event for superseded sub_1 must not reclaim the projection.
 		const late = await recordEvent(t, {
 			webhookId: 'wh_late',
 			eventType: 'subscription.updated',
@@ -472,7 +453,6 @@ describe('durable webhook ingestion and projection', () => {
 		const before = await readSubscription(t);
 		expect(before?.quotaResetAt).toBe(termStart);
 
-		// Plan change to max at a later event time resets the generation.
 		const change = await recordEvent(t, {
 			webhookId: 'wh_change',
 			eventType: 'subscription.plan_changed',
@@ -494,7 +474,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(after?.tier).toBe('max');
 		expect(after?.quotaResetAt).toBe(termStart + 5_000);
 
-		// A duplicate replay of the same change does not grant a fresh generation.
 		const replay = await recordEvent(t, {
 			webhookId: 'wh_change2',
 			eventType: 'subscription.plan_changed',
@@ -530,7 +509,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		await t.mutation(internal.billingWebhook.processEvent, { eventId: sub });
 
-		// Advance to just past the term end; the expiry check flips to grace.
 		vi.setSystemTime(termEnd + 1_000);
 
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
@@ -545,8 +523,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(subscription?.accessPhase).toBe('renewal_processing');
 		expect(subscription?.accessEndsAt).toBe(termEnd + HOUR);
 
-		// A stale scheduler that fires after the grace deadline must not extend
-		// access past it: enforcement re-checks the wall clock via accessEndsAt.
 		vi.setSystemTime(termEnd + HOUR + 1);
 
 		subscription = await readSubscription(t);
@@ -567,7 +543,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		await t.mutation(internal.billingWebhook.processEvent, { eventId: sub });
 
-		// Plan change payload with WRONG metadata tierId but a mapped product.
 		const change = await recordEvent(t, {
 			webhookId: 'wh_map2',
 			eventType: 'subscription.plan_changed',
@@ -586,8 +561,6 @@ describe('durable webhook ingestion and projection', () => {
 		await t.mutation(internal.billingWebhook.processEvent, { eventId: change });
 
 		const subscription = await readSubscription(t);
-		// The changed product resolves via the product→tier mapping (prod_max→max),
-		// not the stale 'pro' metadata tier id.
 		expect(subscription?.tier).toBe('max');
 	});
 
@@ -615,11 +588,9 @@ describe('durable webhook ingestion and projection', () => {
 		const event = await readEvent(t, eventId);
 		expect(event?.outcome).toBe('unresolved');
 
-		// No projection is written for an unresolved product.
 		const subscription = await readSubscription(t);
 		expect(subscription).toBeNull();
 
-		// After repair (mapping the product), replay applies it.
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', {
 				tierId: 'repaired',
@@ -631,7 +602,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		await t.mutation(internal.billingWebhook.replayEvent, { eventId });
 
-		// Replay enqueues the worker through the workpool; let it run.
 		await drainWebhookJobs(t);
 
 		const repaired = await readSubscription(t);
@@ -666,8 +636,6 @@ describe('durable webhook ingestion and projection', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 
-		// Deliberately no longer applied: only the payload's own status is
-		// authoritative for the projection.
 		const eventId = await recordEvent(t, {
 			webhookId: 'wh_update_pm',
 			eventType: 'subscription.update_payment_method',
@@ -733,12 +701,10 @@ describe('durable webhook ingestion and projection', () => {
 				'positive duration'
 			);
 
-			// The completion callback is fenced on the event's actual workId.
 			const current = await requireEvent(t, eventId);
 
 			await t.mutation(internal.billingWebhook.completeProcessing, {
-				// SAFETY: recordEvent populated the field from workpool enqueue.
-				workId: current.workId as WorkId,
+				workId: current.workId!,
 				context: { eventId },
 				result: { kind: 'failed', error: 'Dodo billing period must have a positive duration.' }
 			});
@@ -747,7 +713,6 @@ describe('durable webhook ingestion and projection', () => {
 			expect(event.attempts).toBe(attempt);
 
 			if (attempt < 5) {
-				// Bounded backoff is scheduled; the ledger stays pending for retry.
 				expect(event.outcome).toBe('pending');
 				expect(event.nextAttemptAt).toBeGreaterThan(Date.now());
 				expect(event.outcomeDetail).toBe('Processing failed; retry scheduled.');
@@ -758,7 +723,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(exhausted.outcome).toBe('failed');
 		expect(exhausted.nextAttemptAt).toBeUndefined();
 
-		// No partial projection committed beside the failed ledger outcomes.
 		expect(await readSubscription(t)).toBeNull();
 	});
 
@@ -783,8 +747,6 @@ describe('durable webhook ingestion and projection', () => {
 			'positive duration'
 		);
 
-		// A callback carrying an invented (stale) workId must be ignored: the
-		// fence keeps an old completion from clobbering the current retry state.
 		await t.mutation(internal.billingWebhook.completeProcessing, {
 			// SAFETY: deliberately fabricated branded id exercises the stale fence.
 			workId: 'work_stale_invented' as WorkId,
@@ -801,8 +763,6 @@ describe('durable webhook ingestion and projection', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 
-		// Record and fully drain a healthy event so its workpool job reaches a
-		// finished state in the component, yielding a real finished workId.
 		const eventId = await recordEvent(t, {
 			webhookId: 'wh_pump',
 			eventType: 'subscription.active',
@@ -817,10 +777,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(finished.outcome).toBe('applied');
 		expect(finished.workId).toBeDefined();
 
-		// Simulate a lost retry: the ledger is back to pending with a due backoff,
-		// but its recorded workId points at the already-finished workpool job.
-		// The pump's status fence sees 'finished' and re-enqueues rather than
-		// trusting the stale workId.
 		await t.run((ctx) =>
 			ctx.db.patch('dodoWebhookEvents', eventId, {
 				outcome: 'pending',
@@ -832,8 +788,6 @@ describe('durable webhook ingestion and projection', () => {
 		await t.mutation(internal.billingWebhook.retryPending, {});
 
 		const event = await requireEvent(t, eventId);
-		// The pump re-enqueued with a fresh workId distinct from the finished one;
-		// still pending until the workpool runs it.
 		expect(event.workId).toBeDefined();
 		expect(event.workId).not.toBe(finished.workId);
 		expect(event.outcome).toBe('pending');
@@ -851,9 +805,6 @@ describe('durable webhook ingestion and projection', () => {
 			payload: envelope('subscription.active', termStart, subscriptionData())
 		});
 
-		// Backoff is due, but the recorded workId is the live job the workpool
-		// has not started yet (still pending in the component), so the fence
-		// holds and the pump must not double-enqueue.
 		const live = await requireEvent(t, eventId);
 		await t.run((ctx) =>
 			ctx.db.patch('dodoWebhookEvents', eventId, { nextAttemptAt: Date.now() - 1_000 })
@@ -881,7 +832,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		await t.mutation(internal.billingWebhook.processEvent, { eventId });
 
-		// Past the 48h payload horizon but inside the 14d dedup horizon.
 		vi.setSystemTime(termStart + 3 * DAY);
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});
 
@@ -889,7 +839,6 @@ describe('durable webhook ingestion and projection', () => {
 		expect(pruned.payload).toBeUndefined();
 		expect(pruned.outcome).toBe('applied');
 
-		// Dedup still works from the preserved identity row.
 		const redelivery = await t.mutation(internal.billingWebhook.recordEvent, {
 			environment: 'test_mode',
 			webhookId: 'wh_old',
@@ -901,7 +850,6 @@ describe('durable webhook ingestion and projection', () => {
 
 		expect(redelivery.duplicate).toBe(true);
 
-		// Past the 14d dedup horizon, the compact row itself is removed.
 		vi.setSystemTime(termStart + 15 * DAY);
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});
 

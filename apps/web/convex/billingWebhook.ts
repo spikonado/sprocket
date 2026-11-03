@@ -1,4 +1,4 @@
-import { Workpool, vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
+import { Workpool, vOnCompleteArgs } from '@convex-dev/workpool';
 import { v, type Infer } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -17,8 +17,6 @@ import {
 } from '@convex/lib/dodoProducts';
 import { vDodoWebhookRejected } from '@convex/lib/validators';
 
-// Dedicated pool so webhook processing never competes with web-search or
-// scrape work; bounded parallelism keeps projection writes predictable.
 export const billingWebhookWorkpool = new Workpool(components.billingWebhookWorkpool, {
 	maxParallelism: 4
 });
@@ -31,7 +29,6 @@ const DEDUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 // replayable through the finite dedup horizon.
 const PAYLOAD_RETENTION_MS = 48 * 60 * 60 * 1_000;
 
-// Signed payloads beyond this size are rejected before persistence.
 const MAX_PAYLOAD_BYTES = 256 * 1_024;
 
 const MAX_ATTEMPTS = 5;
@@ -150,13 +147,6 @@ const vIngestResult = v.union(
 	vDodoWebhookRejected
 );
 
-/**
- * Durable ingestion entry point. The signature over the raw request body is
- * verified first; the verified event is then persisted and enqueued to the
- * workpool in one atomic mutation, so an acknowledged event is always
- * durably queued. Requests Dodo got wrong come back as `rejected`; anything
- * thrown is ours to fix or retry.
- */
 export const ingest = internalAction({
 	args: {
 		body: v.string(),
@@ -216,8 +206,6 @@ export const recordEvent = internalMutation({
 			.unique();
 
 		if (existing) {
-			// Preserve the original processing outcome; redelivery only bumps the
-			// duplicate counter so incident/replay lookup keeps the real result.
 			await ctx.db.patch('dodoWebhookEvents', existing._id, {
 				duplicateCount: (existing.duplicateCount ?? 0) + 1
 			});
@@ -242,8 +230,6 @@ export const recordEvent = internalMutation({
 			outcome: 'pending'
 		});
 
-		// Enqueue in the same transaction as the insert: a committed event is
-		// always queued, and an enqueue failure rolls the insert back.
 		const workId = await billingWebhookWorkpool.enqueueMutation(
 			ctx,
 			internal.billingWebhook.processEvent,
@@ -260,8 +246,6 @@ export const recordEvent = internalMutation({
 	}
 });
 
-// Subscription lifecycle events whose signed payloads we apply. The payload's
-// own status is authoritative; other event types stay durable but unsupported.
 const SUPPORTED_SUBSCRIPTION_EVENTS = new Set([
 	'subscription.active',
 	'subscription.renewed',
@@ -292,8 +276,6 @@ async function applyEvent(
 	const envelope = dodoWebhookEnvelopeSchema.parse(JSON.parse(event.payload!));
 
 	if (!SUPPORTED_SUBSCRIPTION_EVENTS.has(envelope.type)) {
-		// Includes subscription.paused/unpaused, payment.*, refund/dispute, and
-		// anything else we do not handle: durable and observable, never applied.
 		return { outcome: 'unsupported', detail: `Unhandled event type ${envelope.type}.` };
 	}
 
@@ -333,8 +315,6 @@ async function applyEvent(
 		dodoSubscriptionId: data.subscription_id,
 		dodoProductId: data.product_id,
 		dodoCustomerId: data.customer.customer_id,
-		// The payload's actual status is authoritative; lifecycle events
-		// (plan_changed, updated) still carry it.
 		status: data.status,
 		eventAt,
 		billingInterval: interval,
@@ -367,14 +347,6 @@ async function applyEvent(
 	}
 }
 
-/**
- * Workpool worker. Applies the projection and records the ledger outcome in
- * one mutation; when the projection upsert throws, Convex rolls the whole
- * mutation back so no partial projection commits beside a failed ledger, and
- * the workpool reports the failure to `completeProcessing` for bounded retry
- * bookkeeping. Payload-less events (payload already pruned by retention) can
- * never be re-applied; their identity/outcome row is the durable record.
- */
 export const processEvent = internalMutation({
 	args: { eventId: v.id('dodoWebhookEvents') },
 	returns: vLedgerOutcome,
@@ -399,12 +371,6 @@ export const processEvent = internalMutation({
 	}
 });
 
-/**
- * Workpool completion callback, separate from the projection mutation. Only
- * thrown runs land here as failures; they are retried with bounded backoff
- * until attempts are exhausted, after which the event stays 'failed' for
- * operator replay.
- */
 export const completeProcessing = internalMutation({
 	args: vOnCompleteArgs(v.object({ eventId: v.id('dodoWebhookEvents') })),
 	returns: v.null(),
@@ -457,7 +423,6 @@ export const completeProcessing = internalMutation({
 	}
 });
 
-/** Cron-driven pump re-enqueues events whose scheduled retry was lost. */
 export const retryPending = internalMutation({
 	args: {},
 	returns: v.null(),
@@ -475,8 +440,7 @@ export const retryPending = internalMutation({
 			if (event.attempts >= MAX_ATTEMPTS) continue;
 
 			if (event.workId) {
-				// SAFETY: only workpool enqueue results populate this stored field.
-				const status = await billingWebhookWorkpool.status(ctx, event.workId as WorkId);
+				const status = await billingWebhookWorkpool.status(ctx, event.workId);
 
 				if (status.state !== 'finished') continue;
 			}
@@ -498,7 +462,6 @@ export const retryPending = internalMutation({
 	}
 });
 
-/** Operator replay after configuration repair; requires a retained payload. */
 export const replayEvent = internalMutation({
 	args: { eventId: v.id('dodoWebhookEvents') },
 	returns: v.null(),
@@ -536,7 +499,6 @@ export const replayEvent = internalMutation({
 	}
 });
 
-/** Protected lookup for unresolved/competing/exhausted processing. */
 export const listProblemEvents = internalQuery({
 	args: { limit: v.optional(v.number()) },
 	returns: v.array(

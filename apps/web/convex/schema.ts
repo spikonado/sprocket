@@ -1,3 +1,4 @@
+import { vWorkId } from '@convex-dev/workpool';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
@@ -31,7 +32,6 @@ import {
 
 export default defineSchema({
 	users: defineTable({
-		// WorkOS JWT subject; every owned table stores this value as `userId`.
 		subject: v.string(),
 		tokenIdentifier: v.string(),
 		email: v.string(),
@@ -53,8 +53,6 @@ export default defineSchema({
 		runIds: v.array(v.id('runs')),
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
-	// Operator-managed subscription tiers (edited directly in prod data).
-	// The rate limiter reads monthly quota units from these rows.
 	tiers: defineTable({
 		tierId: v.string(),
 		label: v.string(),
@@ -77,8 +75,6 @@ export default defineSchema({
 		productId: v.string(),
 		checkoutUrl: v.optional(v.string()),
 		dodoSessionId: v.optional(v.string()),
-		// Idempotency key for the provider create call. Attempts created before
-		// this field existed minted no key, so it is absent on legacy rows.
 		idempotencyKey: v.optional(v.string()),
 		outcome: v.optional(
 			v.union(
@@ -90,12 +86,8 @@ export default defineSchema({
 				v.literal('failed')
 			)
 		),
-		// Wall time of the last outcome transition; retry pacing reads this
-		// instead of inferring it from expiresAt.
 		outcomeUpdatedAt: v.optional(v.number()),
 		createStartedAt: v.optional(v.number()),
-		// Frozen provider create body for an ambiguous attempt: retries must
-		// reissue byte-identical parameters under the same idempotency key.
 		createRequest: v.optional(
 			v.object({
 				productId: v.string(),
@@ -166,7 +158,7 @@ export default defineSchema({
 		projectionRevision: v.number(),
 		attempt: v.number(),
 		accessPhase: v.string(),
-		workId: v.string(),
+		workId: vWorkId,
 		state: v.union(v.literal('pending'), v.literal('completed'), v.literal('exhausted')),
 		updatedAt: v.number()
 	}).index('by_subscriptionId', ['subscriptionId']),
@@ -176,24 +168,15 @@ export default defineSchema({
 		tier: v.string(),
 		status: vSubscriptionStatus,
 		eventAt: v.number(),
-		// Monotonic per-subscription projection revision. Scheduled expiry
-		// checks and reconciliation fetches fence on it so stale results
-		// cannot overwrite a newer projection.
 		projectionRevision: v.optional(v.number()),
 		observedAt: v.optional(v.number()),
 		providerStatus: v.optional(v.string()),
 		scheduleEventAt: v.optional(v.number()),
 		checkoutAttemptId: v.optional(v.string()),
-		// Paid-access phase and the wall-clock deadline it ends at. The expiry
-		// scheduler advances it; enforcement re-checks `accessEndsAt` so a
-		// delayed scheduler cannot extend access. Only rows never projected
-		// from Dodo leave it undefined.
 		accessPhase: v.optional(
 			v.union(v.literal('paid'), v.literal('renewal_processing'), v.literal('none'))
 		),
 		accessEndsAt: v.optional(v.number()),
-		// Pending provider-scheduled product change. Kept separate from the
-		// effective tier and applied only once provider state confirms it.
 		scheduledChange: v.optional(
 			v.object({
 				id: v.string(),
@@ -213,26 +196,15 @@ export default defineSchema({
 		billingPeriodEnd: v.optional(v.number()),
 		billingPeriodCheckId: v.optional(v.id('_scheduled_functions')),
 		cancelAtNextBillingDate: v.optional(v.boolean()),
-		// Retained as the bucket key until released timestamp-keyed gateways
-		// age out and consumed buckets are migrated to counter-only keys.
 		quotaResetAt: v.optional(v.number()),
-		// Durable transition counter; released meters still key on quotaResetAt.
 		quotaGeneration: v.optional(v.number()),
-		// Provider event time of the latest usage-generation transition. A
-		// redelivered or older plan-change event never mints a second
-		// generation for the same change.
 		quotaTransitionAt: v.optional(v.number()),
-		// Set by the projection once the provider state is authoritatively
-		// terminal (cancelled/expired past term, non-recoverable). Purchase
-		// eligibility reads this: only terminal rows unblock a new purchase.
 		terminalConfirmed: v.optional(v.boolean()),
 		dodoSubscriptionId: v.optional(v.string()),
 		dodoProductId: v.optional(v.string())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
-	// Provider subscriptions that once held the projection slot. Events from
-	// these identities must not reclaim the current projection.
 	supersededSubscriptions: defineTable({
 		userId: v.string(),
 		dodoSubscriptionId: v.string(),
@@ -240,27 +212,18 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
-	// Verified Dodo webhook events. One row per (environment, webhook-id);
-	// deduplication and replay both go through this ledger.
 	dodoWebhookEvents: defineTable({
-		// Monotonic ingestion sequence, separate from receivedAt so cleanup
-		// cursors never starve behind same-receiptAt inserts.
 		seq: v.number(),
 		environment: v.string(),
 		webhookId: v.string(),
 		eventType: v.string(),
-		// Provider event time; `receivedAt` is local receipt time.
 		eventAt: v.optional(v.number()),
 		receivedAt: v.number(),
 		subscriptionId: v.optional(v.string()),
 		productId: v.optional(v.string()),
 		customerId: v.optional(v.string()),
-		// Sanitized payload kept for replay; dropped by retention cleanup
-		// while identity/outcome fields persist for dedup.
 		payload: v.optional(v.string()),
 		attempts: v.number(),
-		// Duplicate deliveries after the first persisted record. The original
-		// processing outcome is never overwritten by a duplicate.
 		duplicateCount: v.optional(v.number()),
 		nextAttemptAt: v.optional(v.number()),
 		outcome: v.union(
@@ -276,8 +239,7 @@ export default defineSchema({
 		),
 		outcomeDetail: v.optional(v.string()),
 		processedAt: v.optional(v.number()),
-		// Workpool work id of the currently queued processing run.
-		workId: v.optional(v.string())
+		workId: v.optional(vWorkId)
 	})
 		.index('by_seq', ['seq'])
 		.index('by_environment_and_webhookId', ['environment', 'webhookId'])
@@ -313,12 +275,8 @@ export default defineSchema({
 		contextSummary: v.optional(v.string()),
 		// Inclusive last covered part. -1 means the handoff covers an empty prefix.
 		contextSummaryThroughPartNumber: v.optional(v.number()),
-		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
-		// Inclusive last part whose reasoning replay is omitted after a failed
-		// provider-switch handoff. Ordinary messages and tool history stay.
 		reasoningStrippedThroughPartNumber: v.optional(v.number()),
-		// Absolute local path from the latest set_cwd call; subagents inherit it.
 		cwd: v.optional(v.string()),
 		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
@@ -362,7 +320,6 @@ export default defineSchema({
 		userId: v.string(),
 		...vTokenUsageTotals.fields
 	}).index('by_threadId_model', ['threadId', 'provider', 'model', 'serviceTier', 'cacheWriteTtl']),
-	// UTC buckets; weeks and months are summed from `day` rows.
 	userTokenUsage: defineTable({
 		userId: v.string(),
 		granularity: v.union(v.literal('hour'), v.literal('day')),
@@ -384,7 +341,6 @@ export default defineSchema({
 		userId: v.string(),
 		submissionId: v.string(),
 		status: vRunStatus,
-		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
@@ -392,7 +348,6 @@ export default defineSchema({
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
-		// Set until the run begins, which writes it as the run's prompt part.
 		pendingPrompt: v.optional(vTranscriptPromptBody),
 		agentVersion: v.optional(v.string()),
 		completedAt: v.optional(v.number()),
@@ -488,7 +443,6 @@ export default defineSchema({
 		attached: v.boolean(),
 		threadId: v.optional(v.id('threadRecords')),
 		storageDeletedAt: v.optional(v.number()),
-		/** Hex sha256 of a tool-result image the agent sends to the model by URL. */
 		sha256: v.optional(v.string())
 	})
 		.index('by_userId', ['userId'])
@@ -535,7 +489,7 @@ export default defineSchema({
 			v.literal('completed'),
 			v.literal('failed')
 		),
-		workId: v.optional(v.string()),
+		workId: v.optional(vWorkId),
 		resultStorageId: v.optional(v.id('_storage')),
 		error: v.optional(v.string()),
 		expiresAt: v.number()
@@ -551,7 +505,6 @@ export default defineSchema({
 		attemptSeq: v.optional(v.number()),
 		streamId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
-		// Historical rows only. New jobs have no visibility flag.
 		hidden: v.optional(v.boolean()),
 		status: vExecutorJobStatus,
 		enqueuedAt: v.number(),
@@ -560,7 +513,7 @@ export default defineSchema({
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
 		sequence: v.number(),
-		cloudWorkId: v.optional(v.string())
+		cloudWorkId: v.optional(vWorkId)
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
@@ -606,7 +559,6 @@ export default defineSchema({
 	})
 		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
 		.index('by_userId_and_repositoryKey_and_scope', ['userId', 'repositoryKey', 'scope']),
-	// Retired Prava rows, kept only until payments:deleteRetiredMandates empties them.
 	mandates: defineTable(v.any()),
 	mandateCharges: defineTable(v.any()),
 	agentcardUsers: defineTable({
@@ -622,7 +574,6 @@ export default defineSchema({
 	purchases: defineTable({
 		userId: v.string(),
 		threadId: v.id('threadRecords'),
-		// Chosen by the host per paused payment, so a create whose reply was lost resumes the same purchase.
 		attemptId: v.string(),
 		authorizationId: v.string(),
 		merchant: v.string(),

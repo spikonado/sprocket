@@ -5,7 +5,6 @@ import { initConvexTest, type ConvexTestInstance } from './test.setup';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
 
-/** Mirror of the ai-gateway tiers document so quota tests run without network. */
 async function seedTiers(t: ConvexTestInstance): Promise<void> {
 	await t.run(async (ctx) => {
 		const tiers = [
@@ -245,7 +244,6 @@ describe('subscription and usage backend', () => {
 		});
 		expect(await currentTier()).toBe('free');
 
-		// An older 'active' row must not resurrect the subscription.
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', {
 				userId,
@@ -270,7 +268,6 @@ describe('subscription and usage backend', () => {
 
 		expect((await asUser.query(api.usage.getMyUsage, { now: Date.now() })).tier).toBe('free');
 
-		// Ensuring collapses the duplicates onto the newer cancellation.
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 
 		const rows = await t.run(async (ctx) =>
@@ -397,7 +394,6 @@ describe('subscription and usage backend', () => {
 			userId,
 			count: 6 * UNITS_PER_DOLLAR
 		});
-		// 6 dollars of usage is far below the max tier's own limits.
 		await t.mutation(internal.lib.rateLimits.checkUsageLimits, {
 			userId
 		});
@@ -527,9 +523,6 @@ describe('subscription and usage backend', () => {
 
 		const generationBefore = await quotaGeneration();
 
-		// Renewal: same product, same tier, new confirmed term. The monthly
-		// window opens empty because the window start advanced — NOT because a
-		// new usage generation was minted.
 		const renewed = await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			eventAt: now + 30 * 86_400_000,
@@ -541,8 +534,6 @@ describe('subscription and usage backend', () => {
 		expect(await monthlyUsage()).toBe(0);
 		expect(await quotaGeneration()).toBe(generationBefore);
 
-		// A redelivered renewal and a status-only touch at a later event time
-		// must not mint a new usage generation.
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			eventAt: now + 30 * 86_400_000,
@@ -570,7 +561,6 @@ describe('subscription and usage backend', () => {
 			now + 30 * 86_400_000
 		);
 
-		// Confirmed plan change resets once.
 		const change = await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			dodoProductId: 'prod_max',
@@ -585,8 +575,6 @@ describe('subscription and usage backend', () => {
 			count: 5 * UNITS_PER_DOLLAR
 		});
 
-		// The same plan-change event redelivered is an ordering no-op and keeps
-		// the charged usage.
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			dodoProductId: 'prod_max',

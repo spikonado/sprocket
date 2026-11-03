@@ -19,13 +19,11 @@ const app = defineApp({
 		FIRECRAWL_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),
 		WORKOS_API_KEY: v.optional(v.string()),
-		// Sandbox credentials on dev and preview deployments, live ones on production.
 		AGENTCARD_CLIENT_ID: v.optional(v.string()),
 		AGENTCARD_CLIENT_SECRET: v.optional(v.string()),
 		AGENTCARD_WEBHOOK_SECRET: v.optional(v.string()),
 		MODEL_GATEWAY_URL: v.optional(v.string()),
 		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string()),
-		// Dev and preview deployments use a dummy token; their sends fail.
 		POSTHOG_PROJECT_TOKEN: v.string()
 	}
 });

@@ -133,7 +133,6 @@ describe('Dodo webhook ingestion', () => {
 		expect(events).toHaveLength(1);
 		expect(events[0]?.eventType).toBe('subscription.paused');
 		expect(events[0]?.outcome).toBe('unsupported');
-		// Unsupported pause state is durable but compacted: no customer PII.
 		expect(events[0]?.payload).not.toContain('owner@example.com');
 		expect(await readSubscription(t)).toBeNull();
 	});
@@ -148,8 +147,6 @@ describe('Dodo webhook ingestion', () => {
 
 		const events = await t.run((ctx) => ctx.db.query('dodoWebhookEvents').collect());
 		expect(events).toHaveLength(1);
-		// The signed body carries the customer's email/name; the durable payload
-		// must be the compact allowlisted projection copy without them.
 		expect(events[0]?.payload).toBeDefined();
 		expect(events[0]?.payload).not.toContain('owner@example.com');
 		expect(events[0]?.payload).not.toContain('Owner');
@@ -170,7 +167,6 @@ describe('Dodo webhook ingestion', () => {
 
 		const webhookId = 'wh_redelivered';
 
-		// First delivery, then an exact signed redelivery under the same id.
 		for (let delivery = 0; delivery < 2; delivery++) {
 			const response = await sendRawWebhook(t, body, { webhookId });
 			expect(response.status).toBe(200);
@@ -183,7 +179,6 @@ describe('Dodo webhook ingestion', () => {
 		expect(redelivered[0]?.duplicateCount).toBe(1);
 		expect(redelivered[0]?.outcome).toBe('applied');
 
-		// No additional projection write from the duplicate.
 		const after = await readSubscription(t);
 		expect(after?.projectionRevision).toBe(1);
 	});
@@ -196,7 +191,6 @@ describe('Dodo webhook ingestion', () => {
 		const changed = { ...data, product_id: 'prod_team' };
 		const eventAt = Date.now() + 1;
 
-		// Distinct webhook-ids, same subscription, delivered concurrently.
 		const [first, second] = await Promise.all([
 			sendSubscriptionWebhook(t, 'subscription.active', data, Date.now()),
 			sendSubscriptionWebhook(t, 'subscription.plan_changed', changed, eventAt)
@@ -214,7 +208,6 @@ describe('Dodo webhook ingestion', () => {
 			/^(applied|noop|stale)$/
 		);
 
-		// The later plan_changed event wins the projection exactly once.
 		const subscription = await readSubscription(t);
 		expect(subscription?.tier).toBe('team');
 		expect(subscription?.eventAt).toBe(eventAt);

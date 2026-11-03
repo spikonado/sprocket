@@ -2,7 +2,6 @@ const BACKOFF_BASE_MS = 1_000;
 
 const BACKOFF_MAX_MS = 16_000;
 
-/** Below this, another attempt cannot finish useful work. */
 const MIN_ATTEMPT_MS = 5_000;
 
 /**

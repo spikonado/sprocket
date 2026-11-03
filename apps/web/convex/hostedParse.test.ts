@@ -1,5 +1,3 @@
-/// <reference types="vite/client" />
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import type { WorkId } from '@convex-dev/workpool';
@@ -113,8 +111,7 @@ function auth(run: Awaited<ReturnType<typeof seedParseJob>>) {
 function workId(job: Doc<'executorJobs'> | null): WorkId {
 	if (!job?.cloudWorkId) throw new Error('Expected an enqueued parse job');
 
-	// SAFETY: start stores the ID returned by Workpool.enqueueAction without changing it.
-	return job.cloudWorkId as WorkId;
+	return job.cloudWorkId;
 }
 
 describe('Firecrawl parse document contract', () => {
@@ -146,7 +143,6 @@ describe('Firecrawl parse document contract', () => {
 				true
 			)
 		).toEqual({ error: 'Firecrawl parse response is too large.' });
-		// JSON escaping doubles each quote, so only the stored file exceeds the limit.
 		const quotes = '"'.repeat(HOSTED_PARSE_MAX_OUTPUT_BYTES / 2 + 1);
 		expect(
 			parseFirecrawlParseDocument({ pages: [{ pageNumber: 1, markdown: quotes }] }, true)

@@ -10,8 +10,6 @@ import {
 	vTranscriptPromptBody
 } from '@convex/lib/validators';
 
-/** Function argument/return validators derived from the schema plus hand-shaped results. */
-
 export const vTranscriptStateResult = v.object({
 	threadId: v.id('threadRecords'),
 	totalParts: v.number(),
@@ -115,7 +113,6 @@ export const vMyUsage = v.object({
 			label: v.string(),
 			description: v.string(),
 			...usageMeterWindowFields,
-			// Released clients render each entry; see BACKWARDS_COMPATIBILITY.md.
 			windows: v.array(v.object({ period: v.literal('monthly'), ...usageMeterWindowFields }))
 		})
 	)

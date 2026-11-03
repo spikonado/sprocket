@@ -30,8 +30,6 @@ describe('UTC usage windows', () => {
 			start: timestamp('2026-01-15T13:40:00Z'),
 			end: timestamp('2026-02-15T13:40:00Z')
 		});
-		// Exactly at the term end the one-hour renewal-processing grace freezes
-		// the last paid window; the free monthly calendar does not take over.
 		expect(billingWindow(paid, timestamp('2026-02-15T13:40:00Z'))).toEqual({
 			start: timestamp('2026-01-15T13:40:00Z'),
 			end: timestamp('2026-02-15T13:40:00Z')
@@ -68,13 +66,11 @@ describe('UTC usage windows', () => {
 	it('clamps annual subwindows to the confirmed term end and stays positive', () => {
 		const paid = paidSubscription('annual', '2026-01-15T00:00:00Z', '2027-01-15T00:00:00Z');
 
-		// The final subwindow is capped at the actual confirmed term end.
 		const last = billingWindow(paid, timestamp('2027-01-01T00:00:00Z'));
 		expect(last.start).toBe(timestamp('2026-12-15T00:00:00Z'));
 		expect(last.end).toBe(timestamp('2027-01-15T00:00:00Z'));
 		expect(last.end).toBeGreaterThan(last.start);
 
-		// A short confirmed term shorter than one subwindow reports the term itself.
 		const short = paidSubscription('annual', '2026-01-15T00:00:00Z', '2026-01-20T00:00:00Z');
 		const shortWindow = billingWindow(short, timestamp('2026-01-18T00:00:00Z'));
 		expect(shortWindow).toEqual({
@@ -90,8 +86,6 @@ describe('UTC usage windows', () => {
 			accessEndsAt: timestamp('2026-02-15T01:00:00Z')
 		});
 
-		// During grace, the window stays on the preserved paid bucket instead of
-		// opening a new empty window or switching to the free calendar month.
 		expect(billingWindow(paid, timestamp('2026-02-15T00:30:00Z'))).toEqual({
 			start: timestamp('2026-01-15T00:00:00Z'),
 			end: timestamp('2026-02-15T00:00:00Z')

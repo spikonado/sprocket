@@ -35,9 +35,6 @@ function paidSubscription(
 async function seedTiers(t: ConvexTestInstance): Promise<void> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 15 });
-		// The product mapping is required: the projection resolves the initial
-		// product through the unique tier/interval mapping when no checkout
-		// reservation or unchanged-product tier applies.
 		await ctx.db.insert('tiers', {
 			tierId: 'pro',
 			label: 'Pro',
@@ -115,8 +112,6 @@ describe('subscription access phase boundaries', () => {
 			cancelAtNextBillingDate: false
 		});
 
-		// Before the term starts there is no paid access, but the start
-		// boundary has a pending check.
 		let subscription = await readSubscription(t);
 		expect(subscription).toMatchObject({ accessPhase: 'none', accessEndsAt: futureStart });
 		const startCheckId = subscription?.billingPeriodCheckId;
@@ -126,7 +121,6 @@ describe('subscription access phase boundaries', () => {
 		const asUser = t.withIdentity({ subject: userId });
 		expect(await asUser.query(api.billing.getMySubscription, {})).toMatchObject({ tier: 'free' });
 
-		// At the start boundary, access opens and the term-end check chains.
 		vi.setSystemTime(futureStart + 1);
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({ tier: 'pro' });
 		await expect(
@@ -153,7 +147,6 @@ describe('subscription access phase boundaries', () => {
 
 		expect(await asUser.query(api.billing.getMySubscription, {})).toMatchObject({ tier: 'pro' });
 
-		// At the term end the chained check advances into renewal grace.
 		vi.setSystemTime(futureEnd + 1);
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: subscription!._id,
@@ -180,7 +173,6 @@ describe('subscription access phase boundaries', () => {
 
 		if (!checkId) throw new Error('Missing expiry check.');
 
-		// Advance to just past the term end and run the scheduled boundary check.
 		vi.setSystemTime(deadline + 1_000);
 
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
@@ -197,7 +189,6 @@ describe('subscription access phase boundaries', () => {
 			accessEndsAt: deadline + HOUR
 		});
 
-		// Paid access continues during grace; usage stays on the preserved bucket.
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, args.userId))).toMatchObject({
 			tier: 'pro'
 		});
@@ -220,7 +211,6 @@ describe('subscription access phase boundaries', () => {
 			expectedPhase: 'paid'
 		});
 
-		// Advance past the grace deadline and run the follow-up boundary check.
 		vi.setSystemTime(deadline + HOUR + 1);
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: subscription!._id,
@@ -254,9 +244,6 @@ describe('subscription access phase boundaries', () => {
 			expectedPhase: 'paid'
 		});
 
-		// The materialized phase still says renewal_processing after the deadline
-		// because the follow-up scheduler has not run; enforcement re-checks the
-		// wall-clock deadline and reports no access.
 		vi.setSystemTime(deadline + HOUR + 5_000);
 		const stale = await readSubscription(t);
 		expect(stale?.accessPhase).toBe('renewal_processing');
@@ -272,21 +259,14 @@ describe('subscription access phase boundaries', () => {
 		await seedTiers(t);
 		const args = await upsertPaidSubscription(t);
 
-		// No boundary check runs: the materialized row still says paid with the
-		// term-end deadline. Enforcement re-derives the bounded grace window
-		// from the confirmed term end.
 		const subscription = await readSubscription(t);
 		expect(subscription).toMatchObject({ accessPhase: 'paid', accessEndsAt: deadline });
 
-		// Inside the grace hour, enforcement reports renewal-processing access
-		// even though the scheduler never materialized it.
 		vi.setSystemTime(deadline + HOUR / 2);
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, args.userId))).toMatchObject({
 			tier: 'pro'
 		});
 
-		// Exactly at the grace deadline, access ends regardless of the stale
-		// materialized paid phase.
 		vi.setSystemTime(deadline + HOUR);
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, args.userId))).toMatchObject({
 			tier: 'free'
@@ -299,7 +279,6 @@ describe('subscription access phase boundaries', () => {
 		const args = await upsertPaidSubscription(t);
 		const subscription = await readSubscription(t);
 
-		// Exhaust the grace window through the boundary checks.
 		vi.setSystemTime(deadline + 1_000);
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: subscription!._id,
@@ -318,13 +297,9 @@ describe('subscription access phase boundaries', () => {
 		});
 
 		const ended = await readSubscription(t);
-		// Local grace exhaustion is not authoritative termination: the row must
-		// not become repurchasable without a provider terminal event.
 		expect(ended?.accessPhase).toBe('none');
 		expect(ended?.terminalConfirmed).toBe(false);
 
-		// A new purchase event for a different Dodo subscription is still
-		// competing: the current identity was never provider-terminated.
 		const takeover = await t.mutation(internal.billing.upsertDodoSubscription, {
 			userId: args.userId,
 			dodoSubscriptionId: 'sub_new_purchase',
@@ -340,7 +315,6 @@ describe('subscription access phase boundaries', () => {
 
 		expect(takeover.outcome).toBe('competing');
 
-		// A provider-confirmed terminal event releases the identity.
 		const terminal = await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
 			status: 'expired',
@@ -397,7 +371,6 @@ describe('subscription access phase boundaries', () => {
 			eventAt: now + 1_000
 		});
 
-		// Still active until the effective deadline.
 		let subscription = await readSubscription(t);
 		expect(subscription).toMatchObject({
 			status: 'active',
@@ -406,7 +379,6 @@ describe('subscription access phase boundaries', () => {
 			cancelAtNextBillingDate: true
 		});
 
-		// At the deadline there is no renewal grace.
 		vi.setSystemTime(deadline + 1);
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: subscription!._id,
@@ -430,8 +402,6 @@ describe('subscription access phase boundaries', () => {
 
 		if (!firstCheckId) throw new Error('Missing scheduled expiry.');
 
-		// Renew with a later event and term; the projection revision advances and
-		// the old check is superseded.
 		vi.setSystemTime(deadline);
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
@@ -444,7 +414,6 @@ describe('subscription access phase boundaries', () => {
 		expect(renewed?.billingPeriodCheckId).not.toBe(firstCheckId);
 		expect(await readCheck(t, firstCheckId)).toMatchObject({ state: { kind: 'canceled' } });
 
-		// Firing the old fenced check must not change the newer projection.
 		vi.setSystemTime(deadline + 1);
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: first!._id,
@@ -465,7 +434,6 @@ describe('subscription access phase boundaries', () => {
 		await seedTiers(t);
 		const args = await upsertPaidSubscription(t);
 
-		// Confirm a newer term.
 		vi.setSystemTime(deadline);
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
@@ -474,7 +442,6 @@ describe('subscription access phase boundaries', () => {
 			billingPeriodEnd: deadline + 60_000
 		});
 
-		// A delayed failure for the older term must not close the current one.
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
 			status: 'on_hold',
@@ -498,7 +465,6 @@ describe('subscription access phase boundaries', () => {
 			});
 		});
 
-		// A provider event must not overwrite the operator grant.
 		const result = await t.mutation(internal.billing.upsertDodoSubscription, {
 			userId,
 			dodoSubscriptionId: 'sub_new',
@@ -524,8 +490,6 @@ describe('subscription access phase boundaries', () => {
 		const args = await upsertPaidSubscription(t);
 		const before = await readSubscription(t);
 
-		// A reconciliation observation retrieved after the webhook applies:
-		// it confirms the same term and must not move any provider watermark.
 		const observedAt = now + 60_000;
 
 		const observation = await t.mutation(internal.subscriptionReconciliation.applyObservation, {
@@ -554,8 +518,6 @@ describe('subscription access phase boundaries', () => {
 			observedAt
 		});
 
-		// A delayed legitimate webhook stamped after the original confirmation
-		// (but before the observation's retrieval) still applies and renews.
 		const delayed = await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
 			eventAt: now + 5_000,
@@ -579,9 +541,6 @@ describe('subscription access phase boundaries', () => {
 		await seedTiers(t);
 		const args = await upsertPaidSubscription(t);
 
-		// A payload at the same position with a losing product is fenced on
-		// the payload side but wins the status side; the stored product/term
-		// must survive.
 		const result = await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
 			status: 'on_hold',
@@ -625,8 +584,7 @@ describe('subscription reconciliation queueing', () => {
 		expect(records).toHaveLength(1);
 		const pending = records[0]!;
 		await t.mutation(internal.subscriptionReconciliation.completeReconciliation, {
-			// SAFETY: the record stores the id returned by workpool enqueue.
-			workId: pending.workId as import('@convex-dev/workpool').WorkId,
+			workId: pending.workId,
 			context: { subscriptionId: subscription._id },
 			result: { kind: 'failed', error: 'transient' }
 		});
@@ -672,8 +630,7 @@ describe('subscription reconciliation queueing', () => {
 		}))!;
 
 		await t.mutation(internal.subscriptionReconciliation.completeReconciliation, {
-			// SAFETY: the record stores the id returned by workpool enqueue.
-			workId: pending.workId as import('@convex-dev/workpool').WorkId,
+			workId: pending.workId,
 			context: { subscriptionId: subscription._id },
 			result: {
 				kind: 'success',
@@ -700,9 +657,6 @@ describe('subscription reconciliation queueing', () => {
 		const args = await upsertPaidSubscription(t);
 		const subscription = await readSubscription(t);
 
-		// The projection queues forced retrievals with `force: true`; the
-		// queue mutation must accept the argument (Convex rejects undeclared
-		// args) and enqueue without throwing.
 		await t.mutation(internal.subscriptionReconciliation.queueReconciliation, {
 			subscriptionId: subscription!._id,
 			dodoSubscriptionId: args.dodoSubscriptionId,
@@ -710,7 +664,6 @@ describe('subscription reconciliation queueing', () => {
 			force: true
 		});
 
-		// A bounded chain step carries its attempt counter through the queue.
 		await t.mutation(internal.subscriptionReconciliation.queueReconciliation, {
 			subscriptionId: subscription!._id,
 			dodoSubscriptionId: args.dodoSubscriptionId,
@@ -749,8 +702,6 @@ describe('subscription reconciliation queueing', () => {
 		await seedTiers(t);
 		const args = await upsertPaidSubscription(t);
 
-		// Exhaust the grace window through the boundary checks so the row is
-		// access-none and recovery reconciliation is active.
 		const subscription = await readSubscription(t);
 		vi.setSystemTime(deadline + 1_000);
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
@@ -772,8 +723,6 @@ describe('subscription reconciliation queueing', () => {
 		const ended = await readSubscription(t);
 		expect(ended).toMatchObject({ accessPhase: 'none', terminalConfirmed: false });
 
-		// A recovery observation confirming provider expiry applies through
-		// the projection path and marks the identity terminal.
 		const observed = await t.mutation(internal.subscriptionReconciliation.applyObservation, {
 			subscriptionId: ended!._id,
 			expectedProjectionRevision: ended!.projectionRevision ?? 1,
@@ -799,7 +748,6 @@ describe('subscription reconciliation queueing', () => {
 			accessPhase: 'none'
 		});
 
-		// The terminal identity no longer blocks a new purchase.
 		const repurchase = await t.mutation(internal.billing.upsertDodoSubscription, {
 			userId: args.userId,
 			dodoSubscriptionId: 'sub_after_recovery',
