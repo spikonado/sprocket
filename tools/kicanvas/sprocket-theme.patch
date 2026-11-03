@@ -1,5 +1,5 @@
 diff --git a/src/base/dom/pan-and-zoom.ts b/src/base/dom/pan-and-zoom.ts
-index ccb30a1..433337c 100644
+index ccb30a1..bf46f98 100644
 --- a/src/base/dom/pan-and-zoom.ts
 +++ b/src/base/dom/pan-and-zoom.ts
 @@ -5,7 +5,6 @@
@@ -18,7 +18,7 @@ index ccb30a1..433337c 100644
 
  /**
   * Interactive Pan and Zoom helper
-@@ -135,15 +133,9 @@ export class PanAndZoom {
+@@ -135,17 +133,6 @@ export class PanAndZoom {
          let dx = e.deltaX;
          let dy = e.deltaY;
 
@@ -31,13 +31,12 @@ index ccb30a1..433337c 100644
 -            if (dx == 0 && e.ctrlKey) {
 -                [dx, dy] = [dy, dx];
 -            }
-+        // ctrl modifier flips the X and Y axes (horizontal scroll)
-+        if (dx == 0 && e.ctrlKey) {
-+            [dx, dy] = [dy, dx];
-         }
-
+-        }
+-
          // work around line/page scrolling
-@@ -159,25 +151,11 @@ export class PanAndZoom {
+         if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+             dx *= line_delta_multiplier;
+@@ -159,25 +146,13 @@ export class PanAndZoom {
          dx = Math.sign(dx) * Math.min(page_delta_multiplier, Math.abs(dx));
          dy = Math.sign(dy) * Math.min(page_delta_multiplier, Math.abs(dy));
 
@@ -51,7 +50,9 @@ index ccb30a1..433337c 100644
 -            else {
 -                this.#handle_pan(dx, dy);
 -            }
-+        if (e.shiftKey || e.ctrlKey) {
++        // Browsers send trackpad pinches as ctrl+wheel, so ctrl zooms instead of
++        // panning like KiCad's ctrl+wheel.
++        if (e.shiftKey) {
 +            this.#handle_pan(-dx, dy);
          } else {
 -            if (e.shiftKey || e.ctrlKey) {
