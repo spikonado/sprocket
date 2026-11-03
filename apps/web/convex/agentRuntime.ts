@@ -394,7 +394,7 @@ export const getContext = query({
 			providerHandoff,
 			providerPreferences: {
 				enabledProviders: enabledProviders(preferences?.providerOrder),
-				restrictSubagentsToProvider: preferences?.restrictSubagentsToProvider ?? false
+				restrictSubagentsToProvider: false
 			},
 			cwd: thread?.cwd,
 			shareConversationContent: preferences?.shareConversationContent ?? true

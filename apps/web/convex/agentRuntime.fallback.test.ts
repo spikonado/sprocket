@@ -61,7 +61,6 @@ describe('provider fallback', () => {
 				{ provider: 'openai', enabled: true }
 			]
 		});
-		await asUser.mutation(api.uiPreferences.setRestrictSubagentsToProvider, { enabled: true });
 		await asUser.mutation(api.uiPreferences.setShareConversationContent, { enabled: false });
 
 		const { runId } = await insertQueuedRun(t, asUser, {
@@ -75,7 +74,7 @@ describe('provider fallback', () => {
 
 		expect(context.providerPreferences).toEqual({
 			enabledProviders: ['chatgpt', 'openai'],
-			restrictSubagentsToProvider: true
+			restrictSubagentsToProvider: false
 		});
 		expect(context.shareConversationContent).toBe(false);
 	});

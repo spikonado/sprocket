@@ -596,7 +596,16 @@ describe('subagents.createOrSend', () => {
 });
 
 describe('subagent tool job results', () => {
-	it.each(['spawn', 'legacy follow-up', 'send', 'send with options', 'stop', 'poll'] as const)(
+	it.each([
+		'spawn',
+		'legacy follow-up',
+		'send',
+		'send with options',
+		'stop',
+		'poll',
+		'list models',
+		'released list models'
+	] as const)(
 		'commits and retrieves the %s payload and result through the executor lifecycle',
 		async (action) => {
 			const t = initConvexTest();
@@ -619,6 +628,18 @@ describe('subagent tool job results', () => {
 			};
 
 			const sendResult = { ...metadata, threadId: child.threadId, settings: child.settings };
+
+			const models = [
+				{
+					id: 'gpt-5.6-sol',
+					label: 'GPT-5.6 Sol',
+					vendor: 'openai',
+					reasoningEfforts: ['low', 'high'],
+					defaultReasoningEffort: 'high',
+					serviceTiers: ['standard', 'fast'],
+					supportsImages: true
+				}
+			];
 
 			const cases = {
 				spawn: {
@@ -654,6 +675,16 @@ describe('subagent tool job results', () => {
 					kind: 'poll_subagent',
 					payload: { threadId: child.threadId, yieldTimeMs: 0 },
 					result: snapshot
+				},
+				'list models': {
+					kind: 'list_subagent_models',
+					payload: {},
+					result: { defaultModelId: 'gpt-5.6-sol', models }
+				},
+				'released list models': {
+					kind: 'list_subagent_models',
+					payload: {},
+					result: { defaultModelId: 'gpt-5.6-sol', defaultFast: false, models }
 				}
 			} as const;
 

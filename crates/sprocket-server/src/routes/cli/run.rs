@@ -41,14 +41,7 @@ pub(super) async fn list_models(
         .bind_session_user(&client.session_token, &user.id)
         .await
         .map_err(ApiError::internal)?;
-    let rpc = convex_client(&state, &user.id)
-        .await
-        .map_err(ApiError::internal)?;
-    let context = tokio::time::timeout(Duration::from_secs(20), run_context(&rpc, None))
-        .await
-        .map_err(|error| ApiError::internal(error.into()))?
-        .map_err(ApiError::internal)?;
-    let response = available(&context).await.map_err(ApiError::internal)?;
+    let response = available().await.map_err(ApiError::internal)?;
     Ok(Json(response))
 }
 

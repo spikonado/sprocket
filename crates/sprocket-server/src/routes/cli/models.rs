@@ -1,7 +1,7 @@
 use anyhow::Context;
 use serde::Deserialize;
 use sprocket_agent::{
-    CompletionProvider, ModelSettings, ResolvedSettings, SettingsOverrides, catalog_for_providers,
+    CompletionProvider, ModelSettings, ResolvedSettings, SettingsOverrides, model_catalog,
     resolve_settings,
 };
 
@@ -50,15 +50,15 @@ pub(super) async fn resolve(
         fast: request.fast,
     };
     resolve_settings(
-        &catalog_for_providers(&context.gateway_url, &context.providers).await?,
+        &model_catalog(&context.gateway_url).await?,
         &context.providers,
         saved.as_ref(),
         &overrides,
     )
 }
 
-pub(super) async fn available(context: &RunContext) -> anyhow::Result<CliModelsResponse> {
-    let catalog = catalog_for_providers(&context.gateway_url, &context.providers).await?;
+pub(super) async fn available() -> anyhow::Result<CliModelsResponse> {
+    let catalog = model_catalog(&gateway_url()?).await?;
     Ok(CliModelsResponse {
         default_model_id: catalog.default_model_id,
         models: catalog

@@ -22,7 +22,7 @@ export default function ModelSelector({
 	onSelect,
 	onFastModeChange
 }: {
-	models: CatalogModel[];
+	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
 	fastMode: boolean;

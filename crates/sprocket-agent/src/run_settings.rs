@@ -1,6 +1,6 @@
 use anyhow::Context;
 
-use crate::catalog::ProviderCatalog;
+use crate::catalog::ModelCatalog;
 use crate::types::CompletionProvider;
 
 /// A thread's saved model, reasoning, and fast mode.
@@ -26,13 +26,12 @@ pub struct ResolvedSettings {
     pub provider: CompletionProvider,
 }
 
-/// Settings for a new run, as the web composer picks them. `catalog` holds the models
-/// `providers` (enabled, in the user's order) serve. Saved settings carry over unless
-/// unsupported, a saved model no longer served falls back to the default, and explicit
-/// unsupported choices are errors. The run starts on the first provider serving the model;
-/// run-start failover moves past providers that can't start.
+/// Settings for a new run, as the web composer picks them. Saved settings carry over unless
+/// unsupported, a saved model no longer in the catalog falls back to the default, and explicit
+/// unsupported choices are errors. The run starts on the first of `providers` (enabled, in the
+/// user's order) serving the model; run-start failover moves past providers that can't start.
 pub fn resolve_settings(
-    catalog: &ProviderCatalog,
+    catalog: &ModelCatalog,
     providers: &[CompletionProvider],
     saved: Option<&ModelSettings>,
     overrides: &SettingsOverrides,
@@ -44,18 +43,17 @@ pub fn resolve_settings(
         .as_deref()
         .or(saved.map(|saved| saved.model.as_str()))
         .unwrap_or(catalog.default_model_id.as_str());
-    let model = find(model_id).with_context(|| {
-        let providers: Vec<_> = providers.iter().map(|provider| provider.as_str()).collect();
-        format!(
-            "model {model_id} is unavailable from the enabled providers ({})",
-            providers.join(", ")
-        )
-    })?;
+    let model =
+        find(model_id).with_context(|| format!("model {model_id} is not in the model catalog"))?;
     let provider = providers
         .iter()
         .copied()
         .find(|provider| provider.serves_vendor(&model.vendor))
-        .with_context(|| format!("no enabled provider serves {model_id}"))?;
+        .with_context(|| {
+            format!(
+                "no enabled provider offers {model_id}; check your providers in Settings → Providers"
+            )
+        })?;
     let reasoning = match &overrides.reasoning {
         Some(reasoning) => {
             anyhow::ensure!(

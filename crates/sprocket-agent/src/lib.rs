@@ -20,7 +20,7 @@ mod types;
 mod usage;
 mod workspace_context;
 
-pub use catalog::catalog_for_providers;
+pub use catalog::model_catalog;
 pub use output::{RunOutcome, RunOutput};
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};

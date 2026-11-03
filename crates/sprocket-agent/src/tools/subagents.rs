@@ -18,7 +18,7 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
-use crate::catalog::ProviderCatalog;
+use crate::catalog::model_catalog;
 use crate::convex::{MutationFailure, RuntimeClient};
 use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
@@ -980,8 +980,9 @@ impl rig::tool::Tool for ListSubagentModelsTool {
             let context = self.0.clone();
             async move {
                 cancelled_read(&cancellation, async {
-                    let catalog =
-                        fetch_model_catalog(&context, &child_providers(&context).await?).await?;
+                    let catalog = model_catalog(&context.gateway_url)
+                        .await
+                        .map_err(tool_error)?;
                     serde_json::to_value(catalog).map_err(|e| tool_error(e.into()))
                 })
                 .await
@@ -989,16 +990,6 @@ impl rig::tool::Tool for ListSubagentModelsTool {
         })
         .await
     }
-}
-
-/// Provider identity never comes from a tool argument.
-async fn fetch_model_catalog(
-    context: &AgentToolContext,
-    providers: &[CompletionProvider],
-) -> Result<ProviderCatalog, ToolExecutionError> {
-    crate::catalog::catalog_for_providers(&context.gateway_url, providers)
-        .await
-        .map_err(tool_error)
 }
 
 fn require_launcher(
@@ -1010,8 +1001,8 @@ fn require_launcher(
         .ok_or_else(|| tool_failure("subagent execution is unavailable in this environment"))
 }
 
-/// The providers a child may use, in the user's order.
-async fn child_providers(
+/// Provider identity never comes from a tool argument.
+async fn enabled_providers(
     context: &AgentToolContext,
 ) -> Result<Vec<CompletionProvider>, ToolExecutionError> {
     let run_context: crate::types::RunContextResponse = context
@@ -1019,12 +1010,7 @@ async fn child_providers(
         .run_context(&context.run_id)
         .await
         .map_err(tool_error)?;
-    let preferences = run_context.provider_preferences;
-    Ok(if preferences.restrict_subagents_to_provider {
-        vec![run_context.run.completion_provider]
-    } else {
-        preferences.enabled_providers
-    })
+    Ok(run_context.provider_preferences.enabled_providers)
 }
 
 async fn resolve_child_settings(
@@ -1032,8 +1018,10 @@ async fn resolve_child_settings(
     thread_id: Option<&str>,
     overrides: &SettingsOverrides,
 ) -> Result<ResolvedSettings, ToolExecutionError> {
-    let providers = child_providers(context).await?;
-    let catalog = fetch_model_catalog(context, &providers).await?;
+    let providers = enabled_providers(context).await?;
+    let catalog = model_catalog(&context.gateway_url)
+        .await
+        .map_err(tool_error)?;
     let saved = match thread_id {
         Some(thread_id) => {
             let existing: SubagentThreadSnapshot =

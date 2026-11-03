@@ -45,7 +45,6 @@ struct GatewayModelsResponse {
 struct GatewaySprocketCatalog {
     protocol_version: u64,
     default_model_id: String,
-    default_service_tier: String,
     models: Vec<GatewayCatalogModel>,
 }
 
@@ -82,19 +81,16 @@ struct GatewayLongContextPricing {
     threshold_input_tokens: u64,
 }
 
-/// The live gateway catalog entries served by at least one of a set of
-/// completion providers.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProviderCatalog {
+pub struct ModelCatalog {
     pub default_model_id: String,
-    pub default_fast: bool,
-    pub models: Vec<ProviderCatalogModel>,
+    pub models: Vec<CatalogModel>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProviderCatalogModel {
+pub struct CatalogModel {
     pub id: String,
     pub label: String,
     pub vendor: String,
@@ -104,7 +100,7 @@ pub struct ProviderCatalogModel {
     pub service_tiers: Vec<String>,
 }
 
-impl ProviderCatalogModel {
+impl CatalogModel {
     pub fn supports_fast(&self) -> bool {
         self.service_tiers.iter().any(|tier| tier == "fast")
     }
@@ -134,47 +130,23 @@ async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatal
     Ok(payload.sprocket)
 }
 
-/// Fetch the catalog of models any of `providers` serves, with defaults. The
-/// default model is the catalog default when served, otherwise the first
-/// served model.
-pub async fn catalog_for_providers(
-    gateway_url: &str,
-    providers: &[CompletionProvider],
-) -> anyhow::Result<ProviderCatalog> {
+pub async fn model_catalog(gateway_url: &str) -> anyhow::Result<ModelCatalog> {
     let catalog = fetch_catalog(gateway_url).await?;
-    let models: Vec<ProviderCatalogModel> = catalog
-        .models
-        .into_iter()
-        .filter(|model| {
-            providers
-                .iter()
-                .any(|provider| provider.serves_vendor(&model.provider))
-        })
-        .map(|model| ProviderCatalogModel {
-            id: model.id,
-            label: model.label,
-            vendor: model.provider,
-            supports_images: model.supports_images,
-            reasoning_efforts: model.reasoning_efforts,
-            default_reasoning_effort: model.default_reasoning_effort,
-            service_tiers: model.service_tiers,
-        })
-        .collect();
-    let default_model_id = if models
-        .iter()
-        .any(|model| model.id == catalog.default_model_id)
-    {
-        catalog.default_model_id
-    } else {
-        models
-            .first()
-            .map(|model| model.id.clone())
-            .ok_or_else(|| anyhow!("no models are available from the enabled providers"))?
-    };
-    Ok(ProviderCatalog {
-        default_model_id,
-        default_fast: catalog.default_service_tier == "fast",
-        models,
+    Ok(ModelCatalog {
+        default_model_id: catalog.default_model_id,
+        models: catalog
+            .models
+            .into_iter()
+            .map(|model| CatalogModel {
+                id: model.id,
+                label: model.label,
+                vendor: model.provider,
+                supports_images: model.supports_images,
+                reasoning_efforts: model.reasoning_efforts,
+                default_reasoning_effort: model.default_reasoning_effort,
+                service_tiers: model.service_tiers,
+            })
+            .collect(),
     })
 }
 

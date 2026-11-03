@@ -772,11 +772,12 @@ export const vListSubagentsResult = v.object({
 
 export const vListModelsResult = v.object({
 	defaultModelId: v.string(),
-	defaultFast: v.boolean(),
+	defaultFast: v.optional(v.boolean()),
 	models: v.array(
 		v.object({
 			id: v.string(),
 			label: v.string(),
+			vendor: v.optional(v.string()),
 			reasoningEfforts: v.array(v.string()),
 			defaultReasoningEffort: v.string(),
 			serviceTiers: v.array(v.string()),

@@ -1,9 +1,9 @@
 use super::*;
 use crate::types::CompletionProvider::{Chatgpt, Spikonado};
 
-fn catalog() -> ProviderCatalog {
+fn catalog() -> ModelCatalog {
     serde_json::from_value(serde_json::json!({
-        "defaultModelId": "default", "defaultFast": false,
+        "defaultModelId": "default",
         "models": [
             {"id": "default", "label": "Default", "vendor": "anthropic", "supportsImages": true, "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
             {"id": "pro", "label": "Pro", "vendor": "anthropic", "supportsImages": true, "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
@@ -132,11 +132,12 @@ fn unsupported_saved_settings_fall_back_quietly() {
 
 #[test]
 fn unsupported_explicit_choices_fail() {
-    let error = resolve(&[Spikonado, Chatgpt], None, model("missing")).unwrap_err();
+    assert!(resolve(&[Spikonado], None, model("missing")).is_err());
+    let unserved = resolve(&[Chatgpt], None, model("default")).unwrap_err();
     assert!(
-        error
+        unserved
             .to_string()
-            .contains("enabled providers (spikonado, chatgpt)")
+            .contains("no enabled provider offers default")
     );
 
     let reasoning = SettingsOverrides {

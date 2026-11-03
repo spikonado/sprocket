@@ -19,7 +19,7 @@ export default function MobileModelSelector({
 	onDismiss,
 	returnFocusRef
 }: {
-	models: CatalogModel[];
+	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
 	fastMode: boolean;

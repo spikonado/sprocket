@@ -1,6 +1,4 @@
 import type { CatalogModel, ModelCatalog } from '@convex/lib/uiModelCatalog';
-import type { CompletionProvider } from '@convex/lib/validators';
-import { providersForModel } from '$lib/chat/providers';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	GATEWAY_API_PREFIX,
@@ -14,12 +12,6 @@ export type CatalogModelId = CatalogModel['id'];
 
 export { CATALOG_UNAVAILABLE_MESSAGE };
 
-export type ModelSelectorOption = {
-	id: CatalogModelId;
-	label: string;
-	provider: string;
-};
-
 export function getCatalogModel(
 	catalog: ModelCatalog,
 	modelId: CatalogModelId
@@ -31,28 +23,11 @@ export function showsReasoningControl(model: CatalogModel): boolean {
 	return model.reasoningEfforts.length !== 1 || model.reasoningEfforts[0] !== 'none';
 }
 
-/** Models served by at least one of `providers`. */
-export function modelOptionsForProviders(
+export function resolveCatalogModel(
 	catalog: ModelCatalog,
-	providers: readonly CompletionProvider[]
-): ModelSelectorOption[] {
-	return catalog.models
-		.filter((model) => providersForModel(providers, model).length > 0)
-		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
-}
-
-export function resolveModelForProviders(
-	catalog: ModelCatalog,
-	providers: readonly CompletionProvider[],
 	modelId: CatalogModelId | undefined
-): CatalogModelId | undefined {
-	const options = modelOptionsForProviders(catalog, providers);
-
-	if (options.some((option) => option.id === modelId)) return modelId;
-
-	return options.some((option) => option.id === catalog.defaultModelId)
-		? catalog.defaultModelId
-		: options[0]?.id;
+): CatalogModelId {
+	return modelId && getCatalogModel(catalog, modelId) ? modelId : catalog.defaultModelId;
 }
 
 /** Prefer a known label; fall back to the raw id so newer catalog values still render. */

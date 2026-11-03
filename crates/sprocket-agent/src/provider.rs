@@ -176,21 +176,15 @@ impl AgentProvider {
         chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
-        let preferences = &context.provider_preferences;
-        let restricted =
-            context.run.parent_thread_id.is_some() && preferences.restrict_subagents_to_provider;
-        let fallback_providers = if restricted {
-            VecDeque::new()
-        } else {
-            preferences
-                .enabled_providers
-                .iter()
-                .copied()
-                .filter(|provider| {
-                    *provider != completion_provider && provider.serves_vendor(model_vendor)
-                })
-                .collect()
-        };
+        let fallback_providers = context
+            .provider_preferences
+            .enabled_providers
+            .iter()
+            .copied()
+            .filter(|provider| {
+                *provider != completion_provider && provider.serves_vendor(model_vendor)
+            })
+            .collect();
         Self {
             completion_provider,
             fallback_providers,

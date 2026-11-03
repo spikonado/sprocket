@@ -84,7 +84,4 @@ it('hides unconfigured providers and keeps the last shown provider on', async ()
 	expect(screen.getByRole('switch', { name: 'Spikonado' })).toHaveProperty('disabled', false);
 	fireEvent.click(screen.getByRole('button', { name: 'Set up more providers in BYOK/BYOS' }));
 	expect(onOpenCredentials).toHaveBeenCalledOnce();
-	expect(
-		screen.getByRole('switch', { name: "Restrict subagents to the parent's provider" })
-	).toHaveProperty('ariaChecked', 'false');
 });

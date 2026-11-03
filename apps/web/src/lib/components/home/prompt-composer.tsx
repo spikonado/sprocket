@@ -12,8 +12,7 @@ import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
 import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/chat/skill-mentions';
 import {
 	getCatalogModel,
-	modelOptionsForProviders,
-	resolveModelForProviders,
+	resolveCatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
@@ -160,10 +159,6 @@ export function PromptComposerView({
 		};
 	}, []);
 
-	const modelOptions = modelCatalog
-		? modelOptionsForProviders(modelCatalog, availableProviders)
-		: [];
-
 	const selectedCatalogModel =
 		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
 
@@ -171,9 +166,7 @@ export function PromptComposerView({
 	const runsOnSpikonado = modelProviders[0] === 'spikonado';
 
 	const canSubmitWithModel =
-		providersReady &&
-		modelProviders.length > 0 &&
-		(!runsOnSpikonado || usageFailed || usage !== undefined);
+		providersReady && (!runsOnSpikonado || usageFailed || usage !== undefined);
 
 	const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
@@ -209,15 +202,8 @@ export function PromptComposerView({
 		availableProviders.includes('spikonado') &&
 		modelProviders.every((provider) => provider === 'spikonado');
 
-	const unlimitedAlternativeLabel = (() => {
-		if (!modelCatalog) return null;
-
-		const option = modelOptions.find(
-			(candidate) => getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
-		);
-
-		return option?.label ?? null;
-	})();
+	const unlimitedAlternativeLabel =
+		modelCatalog?.models.find((model) => model.usagePolicy === 'unlimited')?.label ?? null;
 
 	const composerNotice = (() => {
 		if (!usageBlocked || usage === undefined) return null;
@@ -303,7 +289,7 @@ export function PromptComposerView({
 		setSkillsDismissed(false);
 		setHighlightedIndex(0);
 		skillsRequestId.current += 1;
-	}, []);
+	}, [setHighlightedIndex]);
 
 	const ensureSkillsLoaded = useCallback(
 		async (force = false) => {
@@ -576,9 +562,9 @@ export function PromptComposerView({
 	useEffect(() => {
 		if (!modelCatalog) return;
 
-		const resolvedModel = resolveModelForProviders(modelCatalog, availableProviders, selectedModel);
+		const resolvedModel = resolveCatalogModel(modelCatalog, selectedModel);
 
-		if (resolvedModel && resolvedModel !== selectedModel) {
+		if (resolvedModel !== selectedModel) {
 			const model = getCatalogModel(modelCatalog, resolvedModel);
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
@@ -588,7 +574,6 @@ export function PromptComposerView({
 		}
 	}, [
 		modelCatalog,
-		availableProviders,
 		selectedModel,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
@@ -874,9 +859,7 @@ export function PromptComposerView({
 
 												<ModelSelector
 													modelId={selectedModel}
-													models={modelCatalog.models.filter((model) =>
-														modelOptions.some((option) => option.id === model.id)
-													)}
+													models={modelCatalog.models}
 													reasoningEffort={selectedReasoningEffort}
 													fastMode={fastMode}
 													allowsFastMode={runsOnSpikonado}

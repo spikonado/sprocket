@@ -743,7 +743,7 @@ describe('PromptComposer model selection', () => {
 		]
 	};
 
-	it('lists models served by any available provider', async () => {
+	it('lists every catalog model whatever the enabled providers', async () => {
 		renderComposer({
 			modelCatalog: mixedCatalog,
 			availableProviders: ['chatgpt'],
@@ -753,7 +753,7 @@ describe('PromptComposer model selection', () => {
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		const menu = screen.getByRole('dialog', { name: 'Model' });
 		expect(within(menu).getByRole('button', { name: /Model One/ })).toBeTruthy();
-		expect(within(menu).queryByRole('button', { name: /Model Two/ })).toBeNull();
+		expect(within(menu).getByRole('button', { name: /Model Two/ })).toBeTruthy();
 	});
 
 	it('turns Fast off unless Spikonado serves the model first', () => {
@@ -778,8 +778,7 @@ describe('PromptComposer model selection', () => {
 					{ ...modelCatalog.models[0], provider: 'openai' }
 				]
 			},
-			availableProviders: ['chatgpt'],
-			selectedModel: 'model-two',
+			selectedModel: 'removed-model',
 			selectedReasoningEffort: 'low'
 		});
 
@@ -975,7 +974,6 @@ describe('PromptComposer model selection', () => {
 		const menu = screen.getByRole('dialog', { name: 'Model' });
 		expect(within(menu).getByRole('button', { name: /GPT-6\.1 Sol/ })).toBeTruthy();
 		expect(within(menu).getByRole('button', { name: /GPT-6 Luna/ })).toBeTruthy();
-		expect(within(menu).queryByRole('button', { name: /Model One/ })).toBeNull();
 		fireEvent.mouseEnter(within(menu).getByRole('button', { name: /GPT-6\.1 Sol/ }));
 		expect(within(menu).getByRole('button', { name: 'Low' })).toBeTruthy();
 		expect(within(menu).queryByRole('switch')).toBeNull();
