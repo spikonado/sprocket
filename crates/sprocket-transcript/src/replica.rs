@@ -71,7 +71,8 @@ impl WorkReplica {
         std::fs::create_dir_all(&directory)?;
         let mut db = Connection::open(directory.join("history.sqlite3"))?;
         db.busy_timeout(std::time::Duration::from_secs(10))?;
-        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
+        db.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+        db.pragma_update(None, "synchronous", "FULL")?;
         if Self::schema_version(&db)? != SCHEMA_VERSION {
             let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
             if Self::schema_version(&tx)? != SCHEMA_VERSION {
@@ -85,7 +86,7 @@ impl WorkReplica {
                 tx.execute_batch(SCHEMA)?;
                 ReadIndex::initialize(&tx)?;
                 Self::put_state(&tx, "replicaId", &uuid::Uuid::new_v4().to_string())?;
-                tx.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION};"))?;
+                tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             tx.commit()?;
         }
@@ -93,7 +94,7 @@ impl WorkReplica {
     }
 
     fn schema_version(db: &Connection) -> anyhow::Result<i64> {
-        Ok(db.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+        Ok(db.pragma_query_value(None, "user_version", |row| row.get(0))?)
     }
 
     pub(crate) fn state<T: DeserializeOwned>(&self, key: &str) -> anyhow::Result<Option<T>> {
