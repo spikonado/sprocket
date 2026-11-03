@@ -1,5 +1,5 @@
 use super::*;
-use crate::command_output::OutputChannel;
+use crate::command_output::{CapturedOutput, OutputChannel};
 
 #[tokio::test]
 async fn interrupted_session_recovers_output_without_claiming_success() {
