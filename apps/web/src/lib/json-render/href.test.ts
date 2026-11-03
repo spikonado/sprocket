@@ -21,7 +21,10 @@ test.each([
 	'mailto:user@example.com',
 	'',
 	null,
-	undefined
+	undefined,
+	1,
+	true,
+	{}
 ])('drops %s', (href) => {
 	expect(safeExternalHref(href)).toBeUndefined();
 });
