@@ -1191,7 +1191,7 @@ describe('PromptComposer agent questions', () => {
 		expect(actions()).toEqual(['Send answer']);
 	});
 
-	it('collapses the question when the run ends and expands it on click', async () => {
+	it('collapses the question when the run ends and expands it from the chevron', async () => {
 		const { props, rerender } = renderComposer({
 			pendingQuestion: {
 				questionId: 'question-1',
@@ -1206,7 +1206,7 @@ describe('PromptComposer agent questions', () => {
 		rerender({ ...props, runEnded: true });
 		expect(answerOptions()).toBeNull();
 
-		await click(findButton('Which board should I target?'));
+		await click(document.querySelector<HTMLElement>('[aria-label="Expand question"]'));
 		expect(answerOptions()).not.toBeNull();
 	});
 });

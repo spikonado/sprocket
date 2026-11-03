@@ -27,18 +27,21 @@ export default function AgentQuestion({
 
 	return (
 		<div className="mb-3" role="group" aria-label="Agent question">
-			<button
-				type="button"
-				className="text-foreground flex w-full cursor-pointer items-start gap-1.5 text-left text-[14px] leading-6 font-medium"
-				aria-expanded={expanded}
-				onClick={() => setExpanded((value) => !value)}
-			>
-				<span className={expanded ? '' : 'truncate'}>{question}</span>
-				<ChevronRight
-					className={`text-muted-foreground mt-1 size-4 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-					aria-hidden="true"
-				/>
-			</button>
+			<div className="text-foreground flex items-start gap-1.5 text-[14px] leading-6 font-medium">
+				<span className={`min-w-0 flex-1 ${expanded ? '' : 'truncate'}`}>{question}</span>
+				<button
+					type="button"
+					className="text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring mt-0.5 shrink-0 cursor-pointer rounded p-0.5 transition focus-visible:ring-2 focus-visible:outline-none"
+					aria-label={expanded ? 'Collapse question' : 'Expand question'}
+					aria-expanded={expanded}
+					onClick={() => setExpanded((value) => !value)}
+				>
+					<ChevronRight
+						className={`size-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
+						aria-hidden="true"
+					/>
+				</button>
+			</div>
 			{expanded ? (
 				<ul className="mt-2 flex flex-col gap-1.5" aria-label="Answer options">
 					{options.map((option) => {
