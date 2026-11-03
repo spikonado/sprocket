@@ -41,6 +41,7 @@ repos:
         args: ['--verbose']
       - id: check-github-workflows
         args: ['--verbose']
+      - id: check-github-workflows-require-timeout
 
   - repo: local
     hooks:

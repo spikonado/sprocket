@@ -17,6 +17,7 @@ concurrency:
 jobs:
   run_prek:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
 
