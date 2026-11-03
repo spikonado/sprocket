@@ -1191,7 +1191,7 @@ describe('PromptComposer agent questions', () => {
 		expect(actions()).toEqual(['Send answer']);
 	});
 
-	it('collapses the question when the run ends and expands it on click', async () => {
+	it('expands the question from its text but collapses it only from the chevron', async () => {
 		const { props, rerender } = renderComposer({
 			pendingQuestion: {
 				questionId: 'question-1',
@@ -1206,8 +1206,16 @@ describe('PromptComposer agent questions', () => {
 		rerender({ ...props, runEnded: true });
 		expect(answerOptions()).toBeNull();
 
-		await click(findButton('Which board should I target?'));
+		const questionText = () => screen.getByText('Which board should I target?');
+
+		await click(questionText());
 		expect(answerOptions()).not.toBeNull();
+
+		await click(questionText());
+		expect(answerOptions()).not.toBeNull();
+
+		await click(document.querySelector<HTMLElement>('[aria-label="Collapse question"]'));
+		expect(answerOptions()).toBeNull();
 	});
 });
 
