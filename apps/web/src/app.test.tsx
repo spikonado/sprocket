@@ -1102,6 +1102,7 @@ it('collapses a pending question once its run has finished', async () => {
 	fireEvent.click(await screen.findByText('Fix the robot'));
 	const toggle = await screen.findByRole('button', { name: 'Expand question' });
 	expect(screen.queryByRole('button', { name: 'Option A' })).toBeNull();
+	expect(screen.queryByText('Agent is running')).toBeNull();
 
 	fireEvent.click(toggle);
 	expect(screen.getByRole('button', { name: 'Option A' })).toBeTruthy();
@@ -1151,6 +1152,7 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 		});
 	});
 	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
+	expect(screen.getByText('Agent is running')).toBeTruthy();
 	fireEvent.click(screen.getByRole('button', { name: 'Skip question' }));
 	await waitFor(() =>
 		expect(mutation).toHaveBeenCalledWith(
