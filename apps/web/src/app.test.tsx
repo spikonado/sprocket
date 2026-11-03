@@ -1131,7 +1131,7 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.agentQuestions.headPendingForThread, question);
 	client.registerMutation(api.agentRuntime.requestCancellation, true);
-	client.registerMutation(api.agentQuestions.skip, {});
+	client.registerMutation(api.agentQuestions.skip, { continuation: undefined });
 
 	const mutation = vi.spyOn(client, 'mutation');
 
