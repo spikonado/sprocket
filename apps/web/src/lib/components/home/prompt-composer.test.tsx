@@ -746,6 +746,13 @@ describe('PromptComposer model selection', () => {
 		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Medium');
 	});
 
+	it("fills unset reasoning with the model's own default", () => {
+		const onSelectedReasoningEffortChange = vi.fn();
+		renderComposer({ modelCatalog, selectedModel: 'model-two', onSelectedReasoningEffortChange });
+
+		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
+	});
+
 	it('keeps the model menu anchored when a parent scrolls', async () => {
 		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
 		const trigger = screen.getByRole('button', { name: 'Select model' });

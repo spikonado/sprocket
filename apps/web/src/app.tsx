@@ -2289,7 +2289,7 @@ export default function App({
 		});
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId);
-		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort);
+		setSelectedReasoningEffort(undefined);
 		setFastMode(false);
 		setProjectPickerOpen(false);
 		setProjectPickerReconnectWorkspacePath(null);
