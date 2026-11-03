@@ -1097,6 +1097,7 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
+		(pendingAgentQuestion || (selectedModel && selectedReasoningEffort)) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
@@ -2948,14 +2949,13 @@ export default function App({
 									className={!currentThreadId ? 'create-thread-composer' : ''}
 								>
 									<PromptComposer
-										notices={({ outOfUsage }) => (
+										notices={
 											<>
 												<PurchaseApprovals purchases={pendingApprovals} />
 												<ConversationNotices
 													key={currentThreadId}
 													error={conversationError}
 													runError={runError}
-													outOfUsage={outOfUsage}
 													reconnecting={Boolean(
 														currentThreadId &&
 														transcript.threadId === currentThreadId &&
@@ -2971,7 +2971,7 @@ export default function App({
 													onRetryCatalog={() => void loadModelCatalog()}
 												/>
 											</>
-										)}
+										}
 										prompt={prompt}
 										onPromptChange={setPrompt}
 										attachments={composerAttachments.items}

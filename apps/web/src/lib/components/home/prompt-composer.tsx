@@ -40,7 +40,7 @@ export type PendingAgentQuestion = {
 };
 
 export type PromptComposerProps = {
-	notices?: (state: { outOfUsage: boolean }) => ReactNode;
+	notices?: ReactNode;
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
 	attachments: ComposerAttachment[];
@@ -710,7 +710,7 @@ export function PromptComposerView({
 									aria-label="Conversation notices"
 									tabIndex={0}
 								>
-									{notices?.({ outOfUsage })}
+									{notices}
 									{composerNotice ? (
 										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
 									) : null}
