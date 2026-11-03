@@ -92,6 +92,15 @@ describe('deterministic payload ordering', () => {
 		expect(isStaleSchedule({ existing: stored, payload: payload({ scheduledChange: null }) })).toBe(
 			true
 		);
+
+		const earlierChange = { id: 'sc_0', productId: 'prod_b', effectiveAt: T0 + 3_600_000 };
+
+		expect(
+			isStaleSchedule({ existing: stored, payload: payload({ scheduledChange: earlierChange }) })
+		).toBe(true);
+		expect(
+			isStaleSchedule({ existing: row({ scheduledChange: earlierChange }), payload: scheduled })
+		).toBe(false);
 	});
 });
 
