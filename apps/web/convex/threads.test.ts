@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { initConvexTest, seedOwnedThread } from './test.setup';
 
@@ -21,7 +21,6 @@ describe('thread mutations', () => {
 	});
 
 	it('moves a thread tree to another project and resets its cwd', async () => {
-		vi.useFakeTimers();
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 
@@ -51,8 +50,6 @@ describe('thread mutations', () => {
 		});
 
 		await asUser.mutation(api.threads.moveToProject, { threadId, repositoryKey: 'beta' });
-		await t.finishAllScheduledFunctions(vi.runAllTimers);
-		vi.useRealTimers();
 
 		for (const id of [threadId, grandchildId]) {
 			const moved = await t.run(async (ctx) => await ctx.db.get('threadRecords', id));

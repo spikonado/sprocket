@@ -416,14 +416,18 @@ export default function InboxSidebar({
 	);
 
 	function navigateMenu(event: ReactKeyboardEvent<HTMLDivElement>) {
-		if (event.key === 'Tab' || event.key === 'Escape') {
+		const inSearch = event.target instanceof HTMLInputElement;
+
+		if (event.key === 'Escape' || (event.key === 'Tab' && !inSearch)) {
 			event.preventDefault();
 			closeMenu();
 
 			return;
 		}
 
-		if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+		const keys = inSearch ? ['ArrowUp', 'ArrowDown'] : ['ArrowUp', 'ArrowDown', 'Home', 'End'];
+
+		if (!keys.includes(event.key)) return;
 		event.preventDefault();
 
 		const buttons = [

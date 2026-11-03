@@ -1,6 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel';
-import { internal } from '@convex/_generated/api';
-import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -12,6 +11,9 @@ import {
 	subtreeSummary,
 	threadAncestryIds
 } from '@convex/lib/threadHierarchy';
+
+// One transaction moves the whole tree, so no run can start in a half-moved tree.
+const MAX_MOVED_DESCENDANTS = 1000;
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -137,55 +139,25 @@ export const moveToProject = mutation({
 			throw new Error('Cannot move a thread with active work.');
 		}
 
-		// The saved cwd points into the old project, so runs restart at the new root.
-		await ctx.db.patch('threadRecords', args.threadId, { repositoryKey, cwd: undefined });
-
-		if (summary.descendantCount > 0) {
-			await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
-				parentThreadId: args.threadId,
-				cursor: null
-			});
+		if (summary.descendantCount > MAX_MOVED_DESCENDANTS) {
+			throw new Error('This thread has too many subagents to move.');
 		}
 
-		return null;
-	}
-});
+		const pending: Id<'threadRecords'>[] = [args.threadId];
 
-// Children copy their parent's current project, so overlapping moves converge on the latest one.
-export const moveDescendants = internalMutation({
-	args: {
-		parentThreadId: v.id('threadRecords'),
-		cursor: v.union(v.string(), v.null())
-	},
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const parent = await ctx.db.get('threadRecords', args.parentThreadId);
+		while (pending.length > 0) {
+			const threadId = pending.pop()!;
 
-		if (!parent) return null;
+			// The saved cwd points into the old project, so runs restart at the new root.
+			await ctx.db.patch('threadRecords', threadId, { repositoryKey, cwd: undefined });
 
-		const result = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_parentThreadId', (q) =>
-				q.eq('userId', parent.userId).eq('parentThreadId', parent._id)
-			)
-			.paginate({ numItems: 64, cursor: args.cursor });
+			const children = ctx.db
+				.query('threadRecords')
+				.withIndex('by_userId_parentThreadId', (q) =>
+					q.eq('userId', userId).eq('parentThreadId', threadId)
+				);
 
-		for (const child of result.page) {
-			await ctx.db.patch('threadRecords', child._id, {
-				repositoryKey: parent.repositoryKey,
-				cwd: undefined
-			});
-			await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
-				parentThreadId: child._id,
-				cursor: null
-			});
-		}
-
-		if (!result.isDone) {
-			await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
-				parentThreadId: args.parentThreadId,
-				cursor: result.continueCursor
-			});
+			for await (const child of children) pending.push(child._id);
 		}
 
 		return null;
