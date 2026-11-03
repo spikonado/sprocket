@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { initConvexTest, seedOwnedThread } from './test.setup';
 
@@ -18,5 +18,46 @@ describe('thread mutations', () => {
 		expect(
 			(await asUser.query(api.threads.getByThreadId, { threadId })).archivedAt
 		).toBeUndefined();
+	});
+
+	it('moves a thread tree to another project and resets its cwd', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+
+		const grandchildId = await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', threadId, { cwd: '/alpha/sub' });
+			await ctx.db.insert('threadHierarchyStates', {
+				threadId,
+				descendantCount: 2,
+				workingDescendantCount: 0,
+				activeDescendantCount: 0
+			});
+
+			const child = {
+				userId: subject,
+				status: 'completed',
+				repositoryKey: 'alpha',
+				cwd: '/alpha/sub',
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				fastMode: false,
+				lastMessageAt: Date.now()
+			} as const;
+
+			const childId = await ctx.db.insert('threadRecords', { ...child, parentThreadId: threadId });
+
+			return await ctx.db.insert('threadRecords', { ...child, parentThreadId: childId });
+		});
+
+		await asUser.mutation(api.threads.moveToProject, { threadId, repositoryKey: 'beta' });
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+		vi.useRealTimers();
+
+		for (const id of [threadId, grandchildId]) {
+			const moved = await t.run(async (ctx) => await ctx.db.get('threadRecords', id));
+			expect(moved?.repositoryKey).toBe('beta');
+			expect(moved?.cwd).toBeUndefined();
+		}
 	});
 });

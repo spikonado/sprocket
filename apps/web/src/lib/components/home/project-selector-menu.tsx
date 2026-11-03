@@ -17,7 +17,7 @@ export default function ProjectSelectorMenu({
 	allProjectsSelected?: boolean;
 	onSelect: (project: Project) => void;
 	onSelectAll?: () => void;
-	onAddProject: () => void;
+	onAddProject?: () => void;
 	onRemoveProject?: (project: Project) => void;
 }) {
 	const [search, setSearch] = useState('');
@@ -103,21 +103,23 @@ export default function ProjectSelectorMenu({
 					);
 				})}
 			</span>
-			<span className="inbox-project-footer">
-				<button
-					type="button"
-					className="inbox-project-option"
-					onClick={() => {
-						setSearch('');
-						onAddProject();
-					}}
-				>
-					<span className="inline-flex items-center gap-2">
-						<FolderPlus size={14} aria-hidden="true" />
-						Add project
-					</span>
-				</button>
-			</span>
+			{onAddProject && (
+				<span className="inbox-project-footer">
+					<button
+						type="button"
+						className="inbox-project-option"
+						onClick={() => {
+							setSearch('');
+							onAddProject();
+						}}
+					>
+						<span className="inline-flex items-center gap-2">
+							<FolderPlus size={14} aria-hidden="true" />
+							Add project
+						</span>
+					</button>
+				</span>
+			)}
 		</span>
 	);
 }

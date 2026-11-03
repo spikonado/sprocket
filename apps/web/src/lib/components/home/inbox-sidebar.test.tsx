@@ -108,6 +108,7 @@ function props(records: Thread[]) {
 		onChange: vi.fn().mockResolvedValue(undefined),
 		onRename: vi.fn().mockResolvedValue(undefined),
 		onRegenerateTitle: vi.fn().mockResolvedValue(undefined),
+		onMove: vi.fn().mockResolvedValue(undefined),
 		expansion: expansionStub(),
 		resolveChildren: childrenResolverStub(),
 		readTreeSummary
@@ -512,6 +513,7 @@ it('shows an icon for every thread menu action without selection controls', asyn
 		'Settle',
 		'Rename',
 		'Regenerate thread title',
+		'Move to project',
 		'Copy thread ID'
 	]);
 	expect(actions.every((action) => action.querySelector('svg'))).toBe(true);
@@ -535,6 +537,28 @@ it('requests title regeneration for the right-clicked thread and closes the menu
 	expect(input.onRegenerateTitle).toHaveBeenCalledExactlyOnceWith(record);
 	expect(document.querySelector('.inbox-context-menu')).toBeNull();
 	expect(input.onRename).not.toHaveBeenCalled();
+});
+
+it('moves the right-clicked thread to the project chosen in the menu', async () => {
+	const record = thread();
+	const input = await render([record]);
+
+	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+	fireEvent.click(
+		[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+			(button) => button.textContent?.trim() === 'Move to project'
+		)!
+	);
+	fireEvent.click(
+		document.querySelector<HTMLButtonElement>('.inbox-context-menu [aria-label="Other project"]')!
+	);
+	await flush();
+
+	expect(input.onMove).toHaveBeenCalledExactlyOnceWith(
+		record,
+		expect.objectContaining({ repositoryKey: 'other' })
+	);
+	expect(document.querySelector('.inbox-context-menu')).toBeNull();
 });
 
 it('disables title regeneration when mutations are unavailable', async () => {

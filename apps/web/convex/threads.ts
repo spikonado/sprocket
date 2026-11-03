@@ -1,5 +1,6 @@
 import type { Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
+import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -59,6 +60,46 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 	return { userId, record };
 }
 
+async function moveOwnedThread(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>,
+	repositoryKey: string
+) {
+	const targetRepositoryKey = repositoryKey.trim();
+
+	if (!targetRepositoryKey) {
+		throw new Error('Repository key is required.');
+	}
+
+	const userId = await getUserId(ctx);
+	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
+
+	if (record.parentThreadId !== undefined) {
+		throw new Error('Only root threads can be moved.');
+	}
+
+	if (record.repositoryKey === targetRepositoryKey) return;
+
+	const summary = await subtreeSummary(ctx.db, record);
+
+	if (summary.anyActive) {
+		throw new Error('Cannot move a thread with active work.');
+	}
+
+	// The saved cwd points into the old project, so runs restart at the new root.
+	await ctx.db.patch('threadRecords', threadId, {
+		repositoryKey: targetRepositoryKey,
+		cwd: undefined
+	});
+
+	if (summary.descendantCount > 0) {
+		await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
+			parentThreadId: threadId,
+			cursor: null
+		});
+	}
+}
+
 export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
@@ -103,6 +144,60 @@ export const unsettle = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await unsettleOwnedThread(ctx, args.threadId);
+
+		return null;
+	}
+});
+
+export const moveToProject = mutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		repositoryKey: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await moveOwnedThread(ctx, args.threadId, args.repositoryKey);
+
+		return null;
+	}
+});
+
+// Children copy their parent's current project, so overlapping moves converge on the latest one.
+export const moveDescendants = internalMutation({
+	args: {
+		parentThreadId: v.id('threadRecords'),
+		cursor: v.union(v.string(), v.null())
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const parent = await ctx.db.get('threadRecords', args.parentThreadId);
+
+		if (!parent) return null;
+
+		const result = await ctx.db
+			.query('threadRecords')
+			.withIndex('by_userId_parentThreadId', (q) =>
+				q.eq('userId', parent.userId).eq('parentThreadId', parent._id)
+			)
+			.paginate({ numItems: 64, cursor: args.cursor });
+
+		for (const child of result.page) {
+			await ctx.db.patch('threadRecords', child._id, {
+				repositoryKey: parent.repositoryKey,
+				cwd: undefined
+			});
+			await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
+				parentThreadId: child._id,
+				cursor: null
+			});
+		}
+
+		if (!result.isDone) {
+			await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
+				parentThreadId: args.parentThreadId,
+				cursor: result.continueCursor
+			});
+		}
 
 		return null;
 	}
