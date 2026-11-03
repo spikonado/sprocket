@@ -1,5 +1,5 @@
 use super::*;
-use crate::command_output::OutputChannel;
+use crate::command_output::{CapturedOutput, OutputChannel};
 
 #[tokio::test]
 async fn interrupted_session_recovers_output_without_claiming_success() {
@@ -28,7 +28,6 @@ async fn interrupted_session_recovers_output_without_claiming_success() {
             events_path: preview.events_path,
             error: None,
         },
-        pending_output: None,
     };
     history
         .save(&history_path(root.path(), &id).unwrap())

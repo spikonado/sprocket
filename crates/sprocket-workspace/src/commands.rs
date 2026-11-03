@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::async_tools::ZeroPollCooldown;
 use crate::command_history::{CommandHistory, history_path};
-use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
+use crate::command_output::{
+    CapturedOutput, CommandOutputLimits, OutputChannel, UnreturnedOutput, read_log_from,
+};
 use crate::command_shell::resolve_command_shell;
 use crate::paths::resolve_directory;
 use anyhow::{Context, Result, anyhow, bail};
@@ -198,18 +200,17 @@ impl CommandSessionManager {
     async fn saved_result(
         &self,
         session_id: &str,
-        consume_output: bool,
+        reveal_output: bool,
+        from_offset: u64,
     ) -> Result<CommandStdinOutput> {
         let path = history_path(&self.log_directory, session_id)?;
-        let local = match tokio::fs::read(&path).await {
-            Ok(bytes) => Some(serde_json::from_slice::<CommandHistory>(&bytes)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        if local.as_ref().is_none_or(|history| {
-            history.machine_id != self.history_scope.2 && history.result.running
-        }) {
-            if let Some(resolver) = &self.history_resolver {
+        let local = CommandHistory::read(&path).await?;
+        let fetched = match &self.history_resolver {
+            Some(resolver)
+                if local.as_ref().is_none_or(|history| {
+                    history.machine_id != self.history_scope.2 && history.result.running
+                }) =>
+            {
                 let fetched = tokio::time::timeout(Duration::from_secs(10), async {
                     let _fetch = self.history_fetch_lock.lock().await;
                     resolver(session_id.to_string(), self.log_directory.clone()).await
@@ -218,36 +219,34 @@ impl CommandSessionManager {
                 .context("remote command history fetch timed out")
                 .and_then(|result| result);
                 match fetched {
-                    Ok(Some(history)) => {
-                        return Ok(CommandStdinOutput {
-                            command: history.command,
-                            workdir: history.workdir,
-                            result: history.result,
-                        });
-                    }
+                    Ok(fetched) => fetched,
                     Err(error) if local.is_none() => return Err(error),
-                    _ => {}
+                    Err(_) => None,
                 }
             }
-        }
-        let Some(mut history) = local else {
+            _ => None,
+        };
+        let Some(mut history) = fetched.or(local) else {
             bail!("unknown command session: {session_id}");
         };
         if history.machine_id == self.history_scope.2 && history.result.running {
-            // The supervisor may have archived this session since the initial read.
-            return CommandHistory::load(&self.log_directory, session_id).await;
+            // Outside the live map, this machine's sessions only stay running
+            // after the server exited before their final status was saved.
+            history.mark_interrupted().await?;
         }
-        if consume_output && let Some(pending) = &mut history.pending_output {
-            let output = std::mem::take(pending);
-            if !output.is_empty() {
-                history.save(&path).await?;
-            }
-            history.result.output = output;
-        }
+        let unreturned = if reveal_output {
+            history.read_output(from_offset).await?
+        } else {
+            UnreturnedOutput::none(from_offset)
+        };
         Ok(CommandStdinOutput {
             command: history.command,
             workdir: history.workdir,
-            result: history.result,
+            next_offset: unreturned.next_offset,
+            result: CommandOutput {
+                output: unreturned.output,
+                ..history.result
+            },
         })
     }
 
@@ -296,13 +295,14 @@ impl CommandSessionManager {
         if command.trim().is_empty() {
             bail!("command cannot be empty");
         }
+        let max_output_chars = max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS);
 
         let cwd = resolve_directory(&self.workspace_root, workdir)?;
         let shell = resolve_command_shell(shell, &cwd)?;
         let output = Arc::new(Mutex::new(
             CapturedOutput::create_with_limits(
                 &self.log_directory,
-                max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+                max_output_chars,
                 self.output_limits,
             )
             .await?,
@@ -332,7 +332,7 @@ impl CommandSessionManager {
             machine_id: self.history_scope.2.clone(),
             command: command.to_string(),
             workdir: cwd.to_string_lossy().to_string(),
-            max_output_chars: max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+            max_output_chars,
             result: CommandOutput {
                 exit_code: None,
                 success: false,
@@ -343,7 +343,6 @@ impl CommandSessionManager {
                 events_path: preview.events_path,
                 error: None,
             },
-            pending_output: None,
         };
         history.save(&history_path).await?;
         let launch: Result<_> = (|| {
@@ -415,22 +414,25 @@ impl CommandSessionManager {
             stdin,
             completion,
             output,
+            max_output_chars,
             observation: Mutex::new(CommandObservation::default()),
         });
         sessions.insert(session_id.clone(), session.clone());
         drop(sessions);
         signal_change(&self.changes);
 
-        let result = self
+        let (result, next_offset) = self
             .observe_session(
                 session,
                 cancellation,
                 yield_time_ms,
                 ObservationMode::after_action(yield_time_ms),
+                0,
             )
             .await?;
         Ok(CommandExecOutput {
             session_id: Some(session_id),
+            next_offset,
             result,
         })
     }
@@ -442,30 +444,36 @@ impl CommandSessionManager {
         action: CommandAction,
         chars: &str,
         yield_time_ms: u64,
+        from_offset: u64,
     ) -> Result<CommandStdinOutput> {
         action.validate(chars)?;
         cancellation.ensure_active()?;
         let Some(session) = self.session(session_id).await else {
-            let mut output = tokio::select! {
+            let output = tokio::select! {
                 _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, yield_time_ms != 0) => result?,
+                result = self.saved_result(session_id, yield_time_ms != 0, from_offset) => result?,
             };
             if output.result.running {
                 bail!(
                     "command is running on another machine; control it on its originating machine"
                 );
             }
-            if yield_time_ms == 0 {
-                output.result.output.clear();
-            }
             return Ok(output);
         };
-        let result = self
-            .write_session(session.clone(), cancellation, action, chars, yield_time_ms)
+        let (result, next_offset) = self
+            .write_session(
+                session.clone(),
+                cancellation,
+                action,
+                chars,
+                yield_time_ms,
+                from_offset,
+            )
             .await?;
         Ok(CommandStdinOutput {
             command: session.command.clone(),
             workdir: session.workdir.clone(),
+            next_offset,
             result,
         })
     }
@@ -475,12 +483,13 @@ impl CommandSessionManager {
         cancellation: WorkspaceCancellation,
         session_id: &str,
         yield_time_ms: u64,
+        from_offset: u64,
     ) -> Result<CommandStdinOutput> {
         cancellation.ensure_active()?;
         let Some(session) = self.session(session_id).await else {
             return tokio::select! {
                 _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, true) => result,
+                result = self.saved_result(session_id, true, from_offset) => result,
             };
         };
         let mode = if yield_time_ms == 0 {
@@ -488,12 +497,19 @@ impl CommandSessionManager {
         } else {
             ObservationMode::Output
         };
-        let result = self
-            .observe_session(session.clone(), cancellation, yield_time_ms, mode)
+        let (result, next_offset) = self
+            .observe_session(
+                session.clone(),
+                cancellation,
+                yield_time_ms,
+                mode,
+                from_offset,
+            )
             .await?;
         Ok(CommandStdinOutput {
             command: session.command.clone(),
             workdir: session.workdir.clone(),
+            next_offset,
             result,
         })
     }
@@ -523,35 +539,15 @@ impl CommandSessionManager {
     }
 
     /// Release live handles only after their completed results are saved on disk.
-    /// Output the model hasn't received yet moves into the saved history so later
-    /// polls still return only new output.
     pub async fn prune_completed(&self) {
-        let mut sessions = self.sessions.lock().await;
-        let archived = sessions
-            .iter()
-            .filter(|(_, session)| {
-                Arc::strong_count(session) == 1
-                    && session
-                        .completion
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|completion| completion.archived)
-            })
-            .map(|(id, session)| (id.clone(), session.clone()))
-            .collect::<Vec<_>>();
-        for (id, session) in archived {
-            // Retry on the next prune; until then the live session serves polls.
-            if self.save_pending_output(&id, &session).await.is_ok() {
-                sessions.remove(&id);
-            }
-        }
-    }
-
-    async fn save_pending_output(&self, session_id: &str, session: &CommandSession) -> Result<()> {
-        let path = history_path(&self.log_directory, session_id)?;
-        let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
-        history.pending_output = Some(session.output.lock().await.pending_output());
-        history.save(&path).await
+        self.sessions.lock().await.retain(|_, session| {
+            Arc::strong_count(session) > 1
+                || !session
+                    .completion
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|completion| completion.archived)
+        });
     }
 
     /// True when no sessions remain and no clone still holds this manager.
@@ -573,7 +569,8 @@ impl CommandSessionManager {
         action: CommandAction,
         chars: &str,
         yield_time_ms: u64,
-    ) -> Result<CommandOutput> {
+        from_offset: u64,
+    ) -> Result<(CommandOutput, u64)> {
         cancellation.ensure_active()?;
 
         if session.completion.borrow().is_none() {
@@ -590,7 +587,13 @@ impl CommandSessionManager {
                             return Err(error);
                         }
                         return self
-                            .observe_after_write_error(session, cancellation, yield_time_ms, error)
+                            .observe_after_write_error(
+                                session,
+                                cancellation,
+                                yield_time_ms,
+                                error,
+                                from_offset,
+                            )
                             .await;
                     }
                 }
@@ -603,6 +606,7 @@ impl CommandSessionManager {
             cancellation,
             yield_time_ms,
             ObservationMode::after_action(yield_time_ms),
+            from_offset,
         )
         .await
     }
@@ -628,7 +632,8 @@ impl CommandSessionManager {
             }
         })
         .await;
-        self.sessions.lock().await.clear();
+        // Unfinished sessions stay live so polls never race their supervisor's final save.
+        self.prune_completed().await;
     }
 
     async fn observe_session(
@@ -637,9 +642,12 @@ impl CommandSessionManager {
         cancellation: WorkspaceCancellation,
         yield_time_ms: u64,
         mode: ObservationMode,
-    ) -> Result<CommandOutput> {
+        from_offset: u64,
+    ) -> Result<(CommandOutput, u64)> {
         let completion = wait_for_completion(&session, &cancellation, yield_time_ms).await?;
-        session.output_snapshot(completion, None, mode).await
+        session
+            .output_snapshot(completion, None, mode, from_offset)
+            .await
     }
 
     async fn observe_after_write_error(
@@ -648,7 +656,8 @@ impl CommandSessionManager {
         cancellation: WorkspaceCancellation,
         yield_time_ms: u64,
         write_error: anyhow::Error,
-    ) -> Result<CommandOutput> {
+        from_offset: u64,
+    ) -> Result<(CommandOutput, u64)> {
         match wait_for_completion(&session, &cancellation, yield_time_ms).await {
             Ok(Some(completion)) => {
                 let write_error = format!("failed to write command stdin: {write_error:#}");
@@ -657,6 +666,7 @@ impl CommandSessionManager {
                         Some(completion),
                         Some(write_error),
                         ObservationMode::after_action(yield_time_ms),
+                        from_offset,
                     )
                     .await
             }
@@ -678,6 +688,7 @@ struct CommandSession {
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,
+    max_output_chars: usize,
     observation: Mutex<CommandObservation>,
 }
 
@@ -710,17 +721,19 @@ impl CommandSession {
         completion: Option<CommandCompletion>,
         write_error: Option<String>,
         mode: ObservationMode,
-    ) -> Result<CommandOutput> {
+        from_offset: u64,
+    ) -> Result<(CommandOutput, u64)> {
         let mut observation = self.observation.lock().await;
-        let mut output = match observation.final_output.clone() {
+        let (mut output, next_offset) = match observation.final_output.clone() {
             Some(mut output) => {
-                if !matches!(mode, ObservationMode::Metadata) {
-                    output.output = self.output.lock().await.take_preview().output;
-                }
-                output
+                let unreturned = self
+                    .read_output(&output.complete_log_path, from_offset, true, mode)
+                    .await?;
+                output.output = unreturned.output;
+                (output, unreturned.next_offset)
             }
             None => {
-                self.snapshot_output(completion, mode, &mut observation)
+                self.snapshot_output(completion, mode, &mut observation, from_offset)
                     .await?
             }
         };
@@ -737,7 +750,26 @@ impl CommandSession {
                 ..output.clone()
             });
         }
-        Ok(output)
+        Ok((output, next_offset))
+    }
+
+    async fn read_output(
+        &self,
+        log_path: &str,
+        from_offset: u64,
+        final_stream: bool,
+        mode: ObservationMode,
+    ) -> Result<UnreturnedOutput> {
+        if matches!(mode, ObservationMode::Metadata) {
+            return Ok(UnreturnedOutput::none(from_offset));
+        }
+        read_log_from(
+            Path::new(log_path),
+            from_offset,
+            self.max_output_chars,
+            final_stream,
+        )
+        .await
     }
 
     async fn snapshot_output(
@@ -745,8 +777,9 @@ impl CommandSession {
         completion: Option<CommandCompletion>,
         mode: ObservationMode,
         observation: &mut CommandObservation,
-    ) -> Result<CommandOutput> {
-        let mut capture = self.output.lock().await;
+        from_offset: u64,
+    ) -> Result<(CommandOutput, u64)> {
+        let preview = self.output.lock().await.preview_metadata();
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
@@ -756,27 +789,31 @@ impl CommandSession {
                 .check()
                 .map_err(|error| anyhow!(error.message("Command is still running.")))?;
         }
-        let preview = if matches!(mode, ObservationMode::Metadata) {
-            capture.preview_metadata()
-        } else {
-            capture.take_preview()
-        };
+        let unreturned = self
+            .read_output(
+                &preview.complete_log_path,
+                from_offset,
+                completion.is_some(),
+                mode,
+            )
+            .await?;
         if pending_zero_poll {
             observation.zero_poll_cooldown.record_success();
         }
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 
-        Ok(CommandOutput {
+        let output = CommandOutput {
             exit_code: completion.exit_code,
             success: completion.success,
             running,
             timed_out: completion.timed_out,
-            output: preview.output,
+            output: unreturned.output,
             complete_log_path: preview.complete_log_path,
             events_path: preview.events_path,
             error: completion.error,
-        })
+        };
+        Ok((output, unreturned.next_offset))
     }
 }
 
@@ -1091,6 +1128,8 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
 pub struct CommandExecOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// The `output.log` byte after this output.
+    pub next_offset: u64,
     #[serde(flatten, serialize_with = "serialize_for_model")]
     pub result: CommandOutput,
 }
@@ -1100,6 +1139,7 @@ pub struct CommandExecOutput {
 pub struct CommandStdinOutput {
     pub command: String,
     pub workdir: String,
+    pub next_offset: u64,
     #[serde(flatten, serialize_with = "serialize_for_model")]
     pub result: CommandOutput,
 }

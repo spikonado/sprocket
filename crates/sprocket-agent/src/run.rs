@@ -658,6 +658,7 @@ pub async fn finalize_failed_start(
 
 struct PriorHistory {
     messages: Vec<Message>,
+    command_cursors: crate::tools::CommandCursors,
     shown_workspace_context: Vec<HiddenPrompt>,
     continue_from_finished_turns: bool,
     current_prompt: Option<String>,
@@ -729,6 +730,7 @@ async fn load_prior_history(
         .await;
     Ok(PriorHistory {
         current_prompt,
+        command_cursors: crate::tools::CommandCursors::from_parts(&parts),
         messages: deserialize_agent_history(history)?,
         shown_workspace_context,
         continue_from_finished_turns: current_run_had_context_handoff
@@ -1046,6 +1048,7 @@ pub async fn run_agent(
                         &workspace_root,
                     ),
                     command_sessions: command_sessions.clone(),
+                    command_cursors: prior_history.command_cursors,
                     workspace_root,
                     cwd,
                     skills,

@@ -1,11 +1,12 @@
 use std::collections::VecDeque;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandOutputLimits {
@@ -38,6 +39,20 @@ struct OutputEvent<'a> {
     bytes: &'a [u8],
 }
 
+pub(crate) struct UnreturnedOutput {
+    pub output: String,
+    pub next_offset: u64,
+}
+
+impl UnreturnedOutput {
+    pub(crate) fn none(from_offset: u64) -> Self {
+        Self {
+            output: String::new(),
+            next_offset: from_offset,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OutputPreview {
@@ -55,7 +70,6 @@ pub(crate) struct CapturedOutput {
     log_bytes: u64,
     limits: CommandOutputLimits,
     pending_utf8: Vec<u8>,
-    preview: PreviewBuffer,
     full_preview: PreviewBuffer,
 }
 
@@ -102,7 +116,6 @@ impl CapturedOutput {
             log_bytes: 0,
             limits,
             pending_utf8: Vec::new(),
-            preview: PreviewBuffer::new(max_chars),
             full_preview: PreviewBuffer::new(max_chars),
         })
     }
@@ -170,7 +183,6 @@ impl CapturedOutput {
 
     fn decode(&mut self, bytes: &[u8], final_chunk: bool) {
         decode_utf8(&mut self.pending_utf8, bytes, final_chunk, |text| {
-            self.preview.push_text(text);
             self.full_preview.push_text(text);
         });
     }
@@ -192,42 +204,10 @@ impl CapturedOutput {
         Ok(())
     }
 
-    pub(crate) fn take_preview(&mut self) -> OutputPreview {
-        let max_chars = self.preview.max_chars;
-        let preview = std::mem::replace(&mut self.preview, PreviewBuffer::new(max_chars));
-        OutputPreview {
-            output: preview.render(),
-            ..self.preview_metadata()
-        }
-    }
-
     pub(crate) fn full_preview(&self) -> OutputPreview {
         OutputPreview {
             output: self.full_preview.clone().render(),
             ..self.preview_metadata()
-        }
-    }
-
-    /// Output not yet consumed by `take_preview`.
-    pub(crate) fn pending_output(&self) -> String {
-        self.preview.clone().render()
-    }
-
-    pub(crate) async fn read_log_preview(path: &Path, max_chars: usize) -> Result<String> {
-        use tokio::io::AsyncReadExt;
-
-        let mut file = File::open(path).await?;
-        let mut preview = PreviewBuffer::new(max_chars);
-        let mut buffer = [0_u8; 8_192];
-        let mut pending = Vec::new();
-        loop {
-            let read = file.read(&mut buffer).await?;
-            decode_utf8(&mut pending, &buffer[..read], read == 0, |text| {
-                preview.push_text(text);
-            });
-            if read == 0 {
-                return Ok(preview.render());
-            }
         }
     }
 
@@ -238,6 +218,43 @@ impl CapturedOutput {
             events_path: self.events_path.clone(),
         }
     }
+}
+
+/// Renders `output.log` from byte `from_offset` on. Until the stream is final,
+/// a trailing incomplete character is left for a later read to complete.
+pub(crate) async fn read_log_from(
+    log_path: &Path,
+    from_offset: u64,
+    max_chars: usize,
+    final_stream: bool,
+) -> Result<UnreturnedOutput> {
+    let mut log = File::open(log_path)
+        .await
+        .context("failed to open command output log")?;
+    log.seek(SeekFrom::Start(from_offset)).await?;
+    let mut preview = PreviewBuffer::new(max_chars);
+    let mut pending = Vec::new();
+    let mut next_offset = from_offset;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = log.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        next_offset += read as u64;
+        decode_utf8(&mut pending, &buffer[..read], false, |text| {
+            preview.push_text(text);
+        });
+    }
+    if final_stream {
+        decode_utf8(&mut pending, &[], true, |text| preview.push_text(text));
+    } else {
+        next_offset -= pending.len() as u64;
+    }
+    Ok(UnreturnedOutput {
+        output: preview.render(),
+        next_offset,
+    })
 }
 
 fn decode_utf8(

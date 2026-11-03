@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +11,18 @@ use super::{
 use crate::default_command_shell;
 use crate::test_support::temp_workspace;
 use tokio::sync::{Mutex, mpsc, watch};
+
+/// Mirrors the agent, which resumes each read from the previous result's
+/// `nextOffset`. Session IDs are unique, so tests share one map.
+static CURSORS: std::sync::Mutex<BTreeMap<String, u64>> = std::sync::Mutex::new(BTreeMap::new());
+
+fn cursor(id: &str) -> u64 {
+    CURSORS.lock().unwrap().get(id).copied().unwrap_or(0)
+}
+
+fn advance(id: &str, next_offset: u64) {
+    CURSORS.lock().unwrap().insert(id.to_string(), next_offset);
+}
 
 async fn wait_for_log(path: &str, expected: &[u8]) {
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -25,6 +38,8 @@ struct StubSession {
     session: Arc<CommandSession>,
     completion: watch::Sender<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,
+    history: super::CommandHistory,
+    history_path: std::path::PathBuf,
 }
 
 impl StubSession {
@@ -41,26 +56,23 @@ impl StubSession {
         self.completion.send(Some(completed_ok())).unwrap();
     }
 
-    async fn archive(&self, root: &Path, id: &str) {
+    /// Saves the completed result as the supervisor does, then reports completion.
+    async fn archive(&self) {
         let preview = self.output.lock().await.full_preview();
-        super::CommandHistory {
-            user_id: String::new(),
-            thread_id: String::new(),
-            machine_id: String::new(),
-            command: "test".into(),
-            workdir: root.to_string_lossy().into_owned(),
-            max_output_chars: 20_000,
-            result: super::completion_output(&completed_ok(), preview),
-            pending_output: None,
-        }
-        .save(&super::history_path(&root.join("logs"), id).unwrap())
-        .await
-        .unwrap();
+        let mut history = self.history.clone();
+        history.result = super::completion_output(&completed_ok(), preview);
+        history.save(&self.history_path).await.unwrap();
         self.complete();
     }
 
     async fn observe(&self, mode: ObservationMode) -> anyhow::Result<CommandOutput> {
-        self.session.output_snapshot(None, None, mode).await
+        let id = &self.session.id;
+        let (output, next_offset) = self
+            .session
+            .output_snapshot(None, None, mode, cursor(id))
+            .await?;
+        advance(id, next_offset);
+        Ok(output)
     }
 
     async fn last_zero_poll(&self) -> Option<tokio::time::Instant> {
@@ -98,13 +110,27 @@ async fn stub_session(root: &Path) -> StubSession {
     let output = CapturedOutput::create(&root.join("logs"), 20_000)
         .await
         .unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let history = super::CommandHistory {
+        user_id: String::new(),
+        thread_id: String::new(),
+        machine_id: String::new(),
+        command: "test".into(),
+        workdir: root.to_string_lossy().into_owned(),
+        max_output_chars: 20_000,
+        result: CommandOutput {
+            running: true,
+            ..super::completion_output(&CommandCompletion::default(), output.preview_metadata())
+        },
+    };
     let (completion, completion_rx) = watch::channel(None);
     let (control, _controls) = mpsc::unbounded_channel();
     let (stdin, _requests) = mpsc::channel(1);
     let output = Arc::new(Mutex::new(output));
     StubSession {
+        history_path: super::history_path(&root.join("logs"), &id).unwrap(),
         session: Arc::new(CommandSession {
-            id: "test".into(),
+            id,
             command: "test".into(),
             workdir: root.to_string_lossy().into_owned(),
             started_at: 0,
@@ -112,10 +138,12 @@ async fn stub_session(root: &Path) -> StubSession {
             stdin,
             completion: completion_rx,
             output: output.clone(),
+            max_output_chars: 20_000,
             observation: Mutex::new(CommandObservation::default()),
         }),
         completion,
         output,
+        history,
     }
 }
 
@@ -136,7 +164,9 @@ async fn exec_running_with_timeout(
         )
         .await
         .expect("command should start");
-    (started.session_id.unwrap(), started.result)
+    let id = started.session_id.unwrap();
+    advance(&id, started.next_offset);
+    (id, started.result)
 }
 
 async fn exec_running(sessions: &CommandSessionManager, command: &str) -> (String, CommandOutput) {
@@ -149,17 +179,9 @@ async fn write(
     chars: &str,
     yield_time_ms: u64,
 ) -> CommandOutput {
-    sessions
-        .control_command(
-            WorkspaceCancellation::new(),
-            id,
-            CommandAction::Write,
-            chars,
-            yield_time_ms,
-        )
+    control(sessions, id, CommandAction::Write, chars, yield_time_ms)
         .await
         .unwrap()
-        .result
 }
 
 async fn terminate(
@@ -167,25 +189,46 @@ async fn terminate(
     id: &str,
     yield_time_ms: u64,
 ) -> CommandOutput {
-    sessions
+    control(sessions, id, CommandAction::Terminate, "", yield_time_ms)
+        .await
+        .unwrap()
+}
+
+async fn control(
+    sessions: &CommandSessionManager,
+    id: &str,
+    action: CommandAction,
+    chars: &str,
+    yield_time_ms: u64,
+) -> anyhow::Result<CommandOutput> {
+    let controlled = sessions
         .control_command(
             WorkspaceCancellation::new(),
             id,
-            CommandAction::Terminate,
-            "",
+            action,
+            chars,
             yield_time_ms,
+            cursor(id),
         )
-        .await
-        .unwrap()
-        .result
+        .await?;
+    advance(id, controlled.next_offset);
+    Ok(controlled.result)
 }
 
 async fn poll(sessions: &CommandSessionManager, id: &str, yield_time_ms: u64) -> CommandOutput {
-    sessions
-        .poll_command(WorkspaceCancellation::new(), id, yield_time_ms)
-        .await
-        .unwrap()
-        .result
+    try_poll(sessions, id, yield_time_ms).await.unwrap()
+}
+
+async fn try_poll(
+    sessions: &CommandSessionManager,
+    id: &str,
+    yield_time_ms: u64,
+) -> anyhow::Result<CommandOutput> {
+    let polled = sessions
+        .poll_command(WorkspaceCancellation::new(), id, yield_time_ms, cursor(id))
+        .await?;
+    advance(id, polled.next_offset);
+    Ok(polled.result)
 }
 
 #[tokio::test]
@@ -330,6 +373,7 @@ async fn output_preserves_observed_stream_order() {
         serde_json::to_value(&output).unwrap(),
         serde_json::json!({
             "sessionId": output.session_id,
+            "nextOffset": output.next_offset,
             "exitCode": 0,
             "success": true,
             "running": false,
@@ -364,12 +408,13 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::to_value(&started).unwrap(),
         serde_json::json!({
             "sessionId": id,
+            "nextOffset": 0,
             "running": true,
             "completeLogPath": log_path,
         })
     );
     let running = sessions
-        .poll_command(WorkspaceCancellation::new(), id, 0)
+        .poll_command(WorkspaceCancellation::new(), id, 0, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -377,6 +422,7 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::json!({
             "command": command,
             "workdir": root.to_string_lossy(),
+            "nextOffset": 0,
             "running": true,
             "completeLogPath": log_path,
         })
@@ -388,6 +434,7 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
             CommandAction::Write,
             "done\n",
             5_000,
+            0,
         )
         .await
         .unwrap();
@@ -396,6 +443,7 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::json!({
             "command": command,
             "workdir": root.to_string_lossy(),
+            "nextOffset": 4,
             "exitCode": 0,
             "success": true,
             "running": false,
@@ -599,7 +647,6 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         workdir: root.to_string_lossy().into_owned(),
         max_output_chars: 100,
         result: super::completion_output(&CommandCompletion::default(), output.preview_metadata()),
-        pending_output: None,
     };
     let mut process = super::build_shell_command(command, &default_command_shell());
     process.current_dir(&root).kill_on_drop(true);
@@ -636,7 +683,7 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
 }
 
 #[tokio::test]
-async fn concurrent_observers_return_completed_output_once() {
+async fn reads_from_the_same_cursor_return_the_same_output() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let started = sessions
@@ -659,15 +706,16 @@ async fn concurrent_observers_return_completed_output_once() {
             CommandAction::Write,
             "done\n",
             5_000,
+            0,
         ),
-        sessions.poll_command(WorkspaceCancellation::new(), &id, 5_000),
+        sessions.poll_command(WorkspaceCancellation::new(), &id, 5_000, 0),
     );
     let finished = finished.unwrap();
     let concurrent = concurrent.unwrap();
-    assert_eq!(
-        [finished.result.output.as_str(), &concurrent.result.output].concat(),
-        "done"
-    );
+    assert_eq!(finished.result.output, "done");
+    assert_eq!(concurrent.result.output, "done");
+    assert_eq!(finished.next_offset, concurrent.next_offset);
+    advance(&id, finished.next_offset);
     let repeated = poll(&sessions, &id, 10_000).await;
 
     assert!(!repeated.running);
@@ -933,6 +981,7 @@ async fn blocked_stdin_does_not_prevent_command_timeout() {
             CommandAction::Write,
             &"input".repeat(500_000),
             5_000,
+            0,
         ),
     )
     .await
@@ -977,6 +1026,7 @@ async fn reports_input_dropped_during_normal_command_completion() {
             CommandAction::Write,
             &"input".repeat(500_000),
             5_000,
+            0,
         )
         .await
         .expect("completed command should return its result");
@@ -996,6 +1046,7 @@ async fn reports_input_dropped_during_normal_command_completion() {
             WorkspaceCancellation::new(),
             started.session_id.as_deref().unwrap(),
             0,
+            finished.next_offset,
         )
         .await
         .unwrap();
@@ -1024,7 +1075,7 @@ async fn cancelled_observation_preserves_command_for_a_later_run() {
         .expect("command should start");
     let session_id = started.session_id.as_deref().unwrap();
     let cancellation = WorkspaceCancellation::new();
-    let observer = sessions.poll_command(cancellation.clone(), session_id, 5_000);
+    let observer = sessions.poll_command(cancellation.clone(), session_id, 5_000, 0);
     let cancel = async {
         tokio::task::yield_now().await;
         cancellation.cancel();
@@ -1037,7 +1088,14 @@ async fn cancelled_observation_preserves_command_for_a_later_run() {
             .is_some()
     );
     let cancelled_write = sessions
-        .control_command(cancellation, session_id, CommandAction::Write, "x", 5_000)
+        .control_command(
+            cancellation,
+            session_id,
+            CommandAction::Write,
+            "x",
+            5_000,
+            0,
+        )
         .await;
     assert!(
         cancelled_write
@@ -1108,24 +1166,25 @@ async fn cancelled_exec_keeps_the_started_command_discoverable() {
 async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-    let [running_id, observed_id, completed_id] =
-        std::array::from_fn(|_| uuid::Uuid::new_v4().to_string());
     let running = stub_session(&root).await;
+    let running_id = running.session.id.clone();
     sessions
         .sessions
         .lock()
         .await
         .insert(running_id.clone(), running.session.clone());
     let observed = stub_session(&root).await;
-    observed.archive(&root, &observed_id).await;
+    let observed_id = observed.session.id.clone();
+    observed.archive().await;
     sessions
         .sessions
         .lock()
         .await
         .insert(observed_id.clone(), observed.session.clone());
     let completed = stub_session(&root).await;
+    let completed_id = completed.session.id.clone();
     completed.append(b"unreturned").await;
-    completed.archive(&root, &completed_id).await;
+    completed.archive().await;
     sessions
         .sessions
         .lock()
@@ -1146,6 +1205,46 @@ async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
 }
 
 #[tokio::test]
+async fn interrupted_session_output_is_returned_once() {
+    let root = temp_workspace();
+    let stub = stub_session(&root).await;
+    stub.append(b"before restart\n").await;
+    stub.history.save(&stub.history_path).await.unwrap();
+
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let first = poll(&sessions, &stub.session.id, 270_000).await;
+    assert_eq!(first.output, "before restart\n");
+    assert!(!first.running);
+    assert!(first.error.unwrap().contains("interrupted"));
+    assert_eq!(poll(&sessions, &stub.session.id, 270_000).await.output, "");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn stop_all_keeps_unreturned_output_for_later_polls() {
+    let root = temp_workspace();
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let completed = stub_session(&root).await;
+    let id = completed.session.id.clone();
+    sessions
+        .sessions
+        .lock()
+        .await
+        .insert(id.clone(), completed.session.clone());
+    completed.append(b"returned").await;
+    assert_eq!(poll(&sessions, &id, 0).await.output, "returned");
+    completed.append(b" unreturned").await;
+    completed.archive().await;
+    sessions.stop_all().await;
+    drop(sessions);
+
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    assert_eq!(poll(&sessions, &id, 270_000).await.output, " unreturned");
+    assert_eq!(poll(&sessions, &id, 270_000).await.output, "");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
@@ -1158,9 +1257,10 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
     assert!(sessions.sessions.lock().await.is_empty());
     assert!(terminate(&sessions, &id, 0).await.output.is_empty());
     let replay = sessions
-        .poll_command(WorkspaceCancellation::new(), &id, 270_000)
+        .poll_command(WorkspaceCancellation::new(), &id, 270_000, cursor(&id))
         .await
         .unwrap();
+    advance(&id, replay.next_offset);
     assert_eq!(replay.command, "printf ready; read value; printf ':done'");
     assert_eq!(replay.result.output, ":done");
     assert_eq!(replay.result.exit_code, Some(0));
@@ -1181,7 +1281,7 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
     let other = CommandSessionManager::new(root.clone(), root.join("other-thread"));
     assert!(
         other
-            .poll_command(WorkspaceCancellation::new(), &id, 0)
+            .poll_command(WorkspaceCancellation::new(), &id, 0, 0)
             .await
             .is_err()
     );
@@ -1263,7 +1363,9 @@ async fn another_machine_resolves_the_same_session_and_keeps_a_local_replica() {
     assert!(std::path::Path::new(&replay.complete_log_path).starts_with(&destination));
     drop(remote);
     let offline = CommandSessionManager::new(destination.clone(), destination.join("logs"));
-    assert_eq!(poll(&offline, &id, 0).await.output, "shared");
+    let cached = poll(&offline, &id, 0).await;
+    assert!(cached.success);
+    assert_eq!(cached.output, "");
     fs::remove_dir_all(origin).unwrap();
     fs::remove_dir_all(destination).unwrap();
 }
@@ -1298,7 +1400,6 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
     )
     .unwrap();
     remote.machine_id = "origin".into();
-    remote.pending_output = None;
     remote.result.running = true;
     remote.result.success = false;
     remote.result.exit_code = None;
@@ -1325,7 +1426,7 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
     assert!(cached.error.unwrap().contains("last synced"));
     let unknown = uuid::Uuid::new_v4().to_string();
     let timed_out = sessions
-        .poll_command(WorkspaceCancellation::new(), &unknown, 0)
+        .poll_command(WorkspaceCancellation::new(), &unknown, 0, 0)
         .await
         .unwrap_err();
     assert!(timed_out.to_string().contains("timed out"));
@@ -1334,7 +1435,7 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
     let sessions = sessions.with_history_resolver(|_, _| async { anyhow::bail!("offline") });
     let cached = poll(&sessions, &remote_id, 0).await;
     assert!(cached.running);
-    assert_eq!(cached.output, "cached");
+    assert_eq!(cached.output, "");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1356,6 +1457,7 @@ async fn recreated_manager_cannot_retarget_stale_session_ids() {
             &old_id,
             CommandAction::Terminate,
             "",
+            0,
             0,
         )
         .await
@@ -1472,7 +1574,7 @@ async fn zero_poll_cooldown_rejects_until_exactly_10s_and_restarts_on_acceptance
 }
 
 #[tokio::test(start_paused = true)]
-async fn rejected_zero_poll_keeps_pending_output_and_cooldown() {
+async fn rejected_zero_poll_keeps_unreturned_output_and_cooldown() {
     let root = temp_workspace();
     let stub = stub_session(&root).await;
     stub.append(b"ready").await;
@@ -1536,14 +1638,14 @@ async fn concurrent_zero_polls_admit_exactly_one_running_caller() {
         let session = stub.session.clone();
         calls.spawn(async move {
             session
-                .output_snapshot(None, None, ObservationMode::ZeroPoll)
+                .output_snapshot(None, None, ObservationMode::ZeroPoll, 0)
                 .await
         });
     }
     let mut admitted = Vec::new();
     while let Some(result) = calls.join_next().await {
         match result.unwrap() {
-            Ok(output) => admitted.push(output),
+            Ok((output, _)) => admitted.push(output),
             Err(error) => assert_cooldown_rejected(Err(error), 10),
         }
     }
@@ -1568,9 +1670,10 @@ async fn completion_seen_after_capture_lock_bypasses_zero_poll_cooldown() {
     let observation = stub.session.observation.lock().await;
     let capture = stub.output.lock().await;
     let session = stub.session.clone();
+    let from_offset = cursor(&session.id);
     let blocked = tokio::spawn(async move {
         session
-            .output_snapshot(None, None, ObservationMode::ZeroPoll)
+            .output_snapshot(None, None, ObservationMode::ZeroPoll, from_offset)
             .await
     });
     tokio::task::yield_now().await;
@@ -1580,10 +1683,11 @@ async fn completion_seen_after_capture_lock_bypasses_zero_poll_cooldown() {
     stub.complete();
     drop(capture);
 
-    let raced = blocked
+    let (raced, next_offset) = blocked
         .await
         .unwrap()
         .expect("a completion observed after the capture lock must bypass the cooldown");
+    advance(&stub.session.id, next_offset);
     assert!(!raced.running);
     assert!(raced.success);
     assert_eq!(raced.output, "late");
@@ -1643,7 +1747,7 @@ async fn waiting_poll_finishes_on_completion_not_new_output() {
     let id = stub.session.id.clone();
     let waiting = tokio::spawn(async move {
         manager
-            .poll_command(WorkspaceCancellation::new(), &id, 270_000)
+            .poll_command(WorkspaceCancellation::new(), &id, 270_000, 0)
             .await
             .unwrap()
     });
@@ -1690,6 +1794,7 @@ async fn command_action_validation_rejects_mismatched_chars() {
             &id,
             CommandAction::Terminate,
             "x",
+            0,
             0,
         )
         .await
@@ -1748,7 +1853,7 @@ async fn unknown_session_ids_are_rejected() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let error = sessions
-        .poll_command(WorkspaceCancellation::new(), "missing", 0)
+        .poll_command(WorkspaceCancellation::new(), "missing", 0, 0)
         .await
         .expect_err("unknown sessions must be rejected");
     assert!(error.to_string().contains("unknown command session"));
@@ -1758,6 +1863,7 @@ async fn unknown_session_ids_are_rejected() {
             "missing",
             CommandAction::Write,
             "x",
+            0,
             0,
         )
         .await

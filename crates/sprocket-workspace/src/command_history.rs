@@ -4,8 +4,11 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use crate::command_output::CapturedOutput;
-use crate::commands::{CommandOutput, CommandStdinOutput};
+use crate::command_output::{UnreturnedOutput, read_log_from};
+use crate::commands::CommandOutput;
+
+const INTERRUPTED_ERROR: &str =
+    "command session was interrupted before its final status was saved; output may be incomplete";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct CommandHistory {
@@ -16,9 +19,6 @@ pub struct CommandHistory {
     pub workdir: String,
     pub max_output_chars: usize,
     pub result: CommandOutput,
-    /// Output not yet returned to the model, saved once the live session is released.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_output: Option<String>,
 }
 
 #[cfg(test)]
@@ -32,7 +32,12 @@ impl CommandHistory {
     ) -> Result<()> {
         if self.result.running {
             // The supervisor may have archived the result since this snapshot was read.
-            self.result = Self::load(log_directory, session_id).await?.result;
+            let Some(mut saved) = Self::read(&history_path(log_directory, session_id)?).await?
+            else {
+                bail!("unknown command session: {session_id}");
+            };
+            saved.mark_interrupted().await?;
+            self.result = saved.result;
         }
         Ok(())
     }
@@ -51,35 +56,34 @@ impl CommandHistory {
         Ok(())
     }
 
-    pub async fn load(log_directory: &Path, session_id: &str) -> Result<CommandStdinOutput> {
-        let path = history_path(log_directory, session_id)?;
-        let contents = match tokio::fs::read(&path).await {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                bail!("unknown command session: {session_id}");
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let mut history: Self = serde_json::from_slice(&contents)
-            .with_context(|| format!("failed to read command session {session_id}"))?;
-        if history.result.running {
-            history.result.running = false;
-            history.result.success = false;
-            history.result.error = Some(
-                "command session was interrupted before its final status was saved; output may be incomplete"
-                    .into(),
-            );
-            history.result.output = CapturedOutput::read_log_preview(
-                Path::new(&history.result.complete_log_path),
-                history.max_output_chars,
-            )
-            .await?;
+    pub(crate) async fn read(path: &Path) -> Result<Option<Self>> {
+        match tokio::fs::read(path).await {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).with_context(|| {
+                format!("failed to read command history {}", path.display())
+            })?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
         }
-        Ok(CommandStdinOutput {
-            command: history.command,
-            workdir: history.workdir,
-            result: history.result,
-        })
+    }
+
+    pub(crate) async fn mark_interrupted(&mut self) -> Result<()> {
+        if self.result.running {
+            self.result.running = false;
+            self.result.success = false;
+            self.result.error = Some(INTERRUPTED_ERROR.into());
+            self.result.output = self.read_output(0).await?.output;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn read_output(&self, from_offset: u64) -> Result<UnreturnedOutput> {
+        read_log_from(
+            Path::new(&self.result.complete_log_path),
+            from_offset,
+            self.max_output_chars,
+            !self.result.running,
+        )
+        .await
     }
 }
 
