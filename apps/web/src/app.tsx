@@ -2989,6 +2989,7 @@ export default function App({
 											workspacePath={currentWorkspacePath}
 											onProject={startThreadDraftForProject}
 											onAddProject={() => openProjectPicker('add')}
+											onRemoveProject={localApi ? removeProject : undefined}
 										/>
 										{currentProject?.localAttachmentAvailability === 'unavailable' && (
 											<p className="create-thread-message">
