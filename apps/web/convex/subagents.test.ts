@@ -1560,6 +1560,19 @@ describe('subagents.control', () => {
 
 		const monitor = () => t.mutation(api.subagents.threadMonitorInfo, target);
 		expect(await monitor()).toMatchObject({ status: 'queued', active: true });
+		const abandoned = await t.run((ctx) => ctx.db.get('runs', child.runId));
+		expect(
+			await t.query(api.subagents.threadActivity, {
+				runId: caller.runId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId
+			})
+		).toEqual({
+			status: 'failed',
+			active: false,
+			hasPendingQuestions: false,
+			automaticRecoveryEndsAt: abandoned!.completedAt! + AUTOMATIC_RECOVERY_GRACE_MS
+		});
 
 		const stopArgs = { ...target, action: 'stop' as const };
 
@@ -1641,6 +1654,18 @@ describe('subagents.control', () => {
 				targetRunId: stopped.stoppedRunId
 			})
 		).toMatchObject({ status: 'cancelled' });
+		const activity = (targetRunId?: Id<'runs'>) =>
+			t.query(api.subagents.threadActivity, {
+				runId: caller.runId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId,
+				targetRunId
+			});
+		expect(await activity(stopped.stoppedRunId)).toMatchObject({
+			status: 'cancelled',
+			active: false
+		});
+		expect(await activity()).toMatchObject({ status: 'queued', active: true });
 		expect(await t.mutation(api.subagents.threadMonitorInfo, target)).toMatchObject({
 			status: 'queued'
 		});
@@ -1651,6 +1676,7 @@ describe('subagents.control', () => {
 				targetRunId: sibling.runId
 			})
 		).rejects.toThrow(/does not belong/);
+		await expect(activity(sibling.runId)).rejects.toThrow(/does not belong/);
 	});
 });
 

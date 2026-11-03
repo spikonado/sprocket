@@ -1,8 +1,10 @@
 import { internal } from '@convex/_generated/api';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
 	internalMutation,
 	mutation,
+	query,
+	type DatabaseReader,
 	type MutationCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
@@ -13,10 +15,13 @@ import {
 	questionContinuation,
 	toAgentQuestionSnapshot
 } from '@convex/agentQuestions';
-import { actionablePendingQuestionsForThread } from '@convex/lib/agentQuestions';
+import {
+	actionablePendingQuestionsForThread,
+	headActionablePendingQuestion
+} from '@convex/lib/agentQuestions';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { normalizeTaskTimeoutMs } from '@convex/lib/models';
-import { executionSecretHash, getExecutionRun } from '@convex/lib/auth';
+import { executionSecretHash, getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import {
 	vAgentQuestionSnapshot,
 	vTranscriptPartsResult,
@@ -26,7 +31,7 @@ import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreat
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
+import { automaticRecoveryEndsAt, awaitsAutomaticRecovery } from '@convex/lib/runRecovery';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
@@ -497,6 +502,59 @@ export const transcriptPartsPage = mutation({
 	}
 });
 
+async function monitoredRun(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>,
+	targetRunId: Id<'runs'> | undefined
+) {
+	if (!targetRunId) return await latestRunForThread(db, threadId);
+
+	const run = await db.get('runs', targetRunId);
+
+	if (!run || run.threadId !== threadId) {
+		throw new Error('Target run does not belong to the descendant thread.');
+	}
+
+	return run;
+}
+
+/** Subscribed while waiting on a subagent. It skips the claim lease and the
+ * transcript so lease renewals and transcript writes don't re-run it. */
+export const threadActivity = query({
+	args: {
+		runId: v.id('runs'),
+		executionSecret: v.string(),
+		threadId: v.id('threadRecords'),
+		targetRunId: v.optional(v.id('runs'))
+	},
+	returns: v.object({
+		status: vRunStatus,
+		active: v.boolean(),
+		hasPendingQuestions: v.boolean(),
+		automaticRecoveryEndsAt: v.optional(v.number())
+	}),
+	handler: async (ctx, args) => {
+		try {
+			const callerRun = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+			assertRunAcceptsModelCompletion(callerRun);
+			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+			const run = await monitoredRun(ctx.db, thread._id, args.targetRunId);
+			const hasPendingQuestions =
+				(await headActionablePendingQuestion(ctx.db, thread._id)) !== null;
+
+			return {
+				status: run?.status ?? thread.status,
+				active: (run !== null && !isRunFinalStatus(run.status)) || hasPendingQuestions,
+				hasPendingQuestions,
+				automaticRecoveryEndsAt:
+					run && !args.targetRunId ? await automaticRecoveryEndsAt(ctx.db, run) : undefined
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
 export const threadMonitorInfo = mutation({
 	args: vDescendantCaller.extend({ targetRunId: v.optional(v.id('runs')) }).fields,
 	returns: v.object({
@@ -510,15 +568,7 @@ export const threadMonitorInfo = mutation({
 		try {
 			const thread = await requireDescendantThread(ctx, args);
 			const pending = await actionablePendingQuestionsForThread(ctx.db, thread._id);
-
-			const latest = args.targetRunId
-				? await ctx.db.get('runs', args.targetRunId)
-				: await latestRunForThread(ctx.db, thread._id);
-
-			if (args.targetRunId && (!latest || latest.threadId !== thread._id)) {
-				throw new Error('Target run does not belong to the descendant thread.');
-			}
-
+			const latest = await monitoredRun(ctx.db, thread._id, args.targetRunId);
 			const transcript = await transcriptStateResult(ctx, thread._id, thread);
 			const pendingQuestions = pending.map(toAgentQuestionSnapshot);
 
