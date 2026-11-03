@@ -42,8 +42,8 @@ impl CommandCursors {
             }
             let Some(read) = tool
                 .output
-                .clone()
-                .and_then(|output| serde_json::from_value::<RecordedRead>(output).ok())
+                .as_ref()
+                .and_then(|output| RecordedRead::deserialize(output).ok())
             else {
                 continue;
             };
@@ -73,8 +73,6 @@ impl CommandCursors {
         }
     }
 
-    /// Reads one session's output from its cursor and advances the cursor only
-    /// when the result reached the model.
     async fn read<F, Fut>(
         &self,
         session_id: &str,

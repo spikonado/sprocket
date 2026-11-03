@@ -66,12 +66,6 @@ struct CommandObservation {
     zero_poll_cooldown: ZeroPollCooldown,
 }
 
-#[derive(Clone, Copy)]
-enum SavedRequest {
-    Poll,
-    Control { reveal_output: bool },
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceCancellation(CancellationToken);
 
@@ -207,7 +201,7 @@ impl CommandSessionManager {
     async fn saved_result(
         &self,
         session_id: &str,
-        request: SavedRequest,
+        reveal_output: bool,
         from_sequence: u64,
     ) -> Result<CommandStdinOutput> {
         let path = history_path(&self.log_directory, session_id)?;
@@ -240,14 +234,6 @@ impl CommandSessionManager {
             // Outside the live map, this machine's sessions only stay running
             // after a server exit whose startup settling failed.
             history.mark_interrupted().await?;
-        }
-        let running = history.result.running;
-        let reveal_output = match request {
-            SavedRequest::Poll => true,
-            SavedRequest::Control { reveal_output } => reveal_output && !running,
-        };
-        if running && matches!(request, SavedRequest::Control { .. }) {
-            bail!("command is running on another machine; control it on its originating machine");
         }
         let unreturned = if reveal_output {
             history.read_output(from_sequence).await?
@@ -457,8 +443,6 @@ impl CommandSessionManager {
         })
     }
 
-    /// Returns output from `from_sequence` on; callers resume from the returned
-    /// `next_sequence` once the model has received the output.
     pub async fn control_command(
         &self,
         cancellation: WorkspaceCancellation,
@@ -471,13 +455,16 @@ impl CommandSessionManager {
         action.validate(chars)?;
         cancellation.ensure_active()?;
         let Some(session) = self.session(session_id).await else {
-            let request = SavedRequest::Control {
-                reveal_output: yield_time_ms != 0,
+            let output = tokio::select! {
+                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
+                result = self.saved_result(session_id, yield_time_ms != 0, from_sequence) => result?,
             };
-            return tokio::select! {
-                _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, request, from_sequence) => result,
-            };
+            if output.result.running {
+                bail!(
+                    "command is running on another machine; control it on its originating machine"
+                );
+            }
+            return Ok(output);
         };
         let (result, next_sequence) = self
             .write_session(
@@ -497,8 +484,6 @@ impl CommandSessionManager {
         })
     }
 
-    /// Returns output from `from_sequence` on; callers resume from the returned
-    /// `next_sequence` once the model has received the output.
     pub async fn poll_command(
         &self,
         cancellation: WorkspaceCancellation,
@@ -510,7 +495,7 @@ impl CommandSessionManager {
         let Some(session) = self.session(session_id).await else {
             return tokio::select! {
                 _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, SavedRequest::Poll, from_sequence) => result,
+                result = self.saved_result(session_id, true, from_sequence) => result,
             };
         };
         let mode = if yield_time_ms == 0 {
