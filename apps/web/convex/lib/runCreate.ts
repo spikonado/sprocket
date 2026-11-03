@@ -235,6 +235,10 @@ export async function createQueuedRunRecord(
 		if (machine) {
 			machine = (await ctx.db.get('machines', machine._id)) ?? machine;
 		}
+
+		const refreshedThread = await ctx.db.get('threadRecords', threadRecord._id);
+
+		if (refreshedThread) threadRecord = refreshedThread;
 	} else {
 		assertThreadCanStartRun(latestRun?.status);
 	}
@@ -344,6 +348,9 @@ export async function createQueuedRunRecord(
 		archivedAt: undefined
 	};
 
+	// Unsettle before clearing archivedAt. Abandon can archive the root in this
+	// same mutation; the helper reads the current DB row to restore settleWhenIdle.
+	await unsettleRootOfThread(ctx, threadRecord);
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 
 	if (created.promptPart) {
@@ -354,7 +361,6 @@ export async function createQueuedRunRecord(
 		);
 	}
 
-	await unsettleRootOfThread(ctx, threadRecord);
 	await updateThreadHierarchyAfterChange(ctx, before);
 	await startRunLifecycle(ctx, runId);
 
