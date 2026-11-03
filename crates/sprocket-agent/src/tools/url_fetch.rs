@@ -1,5 +1,3 @@
-//! Shared URL downloads used by scrape_url and GitHub fetches.
-
 use std::path::{Path, PathBuf};
 
 use reqwest::Url;

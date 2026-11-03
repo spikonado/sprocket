@@ -16,9 +16,6 @@ const CONCURRENT_UPLOADS: usize = 4;
 /// Hex sha256 of a replayed image to the URL the model fetches it from.
 pub(super) type ImageUrlMap = HashMap<String, String>;
 
-/// Stores tool-result images in the thread's Convex file storage. Each image
-/// keeps one URL while its thread is active, so the request prefix, and with
-/// it the provider's prompt cache, stays byte-identical across turns.
 pub(crate) struct ConvexImageUrls<'a> {
     runtime: &'a RuntimeClient,
     run_id: &'a str,
@@ -45,7 +42,6 @@ enum StoredImage {
 }
 
 impl ConvexImageUrls<'_> {
-    /// Images missing from the result go to the model as base64.
     pub(super) async fn urls(&self, images: &[&ReplayedImage]) -> ImageUrlMap {
         let by_hash: HashMap<&str, &ReplayedImage> = images
             .iter()

@@ -107,7 +107,6 @@ fn prepare_ask_question_normalizes_and_enforces_limits() {
     .expect_err("overlong question");
     assert!(error.to_string().contains("2000"));
 
-    // Multibyte Unicode must be counted by characters, matching Convex validation.
     let unicode_question = "é".repeat(MAX_QUESTION_CHARS);
     prepare_ask_question(&AskQuestionArgs {
         question: unicode_question,

@@ -9,7 +9,6 @@ use rig::error::ErrorKind;
 use rig::{ErrorReport, ProviderError};
 
 const MAX_STREAM_RECOVERIES: u32 = 3;
-/// Each timed-out attempt already streamed for the gateway's full duration cap.
 const MAX_STREAM_TIMEOUT_RECOVERIES: u32 = 1;
 const GATEWAY_STREAM_TIMEOUT_CODE: &str = "gateway_stream_timeout";
 
@@ -36,7 +35,6 @@ fn is_gateway_stream_timeout(error: &PromptError) -> bool {
     provider_error_code(error).as_deref() == Some(GATEWAY_STREAM_TIMEOUT_CODE)
 }
 
-/// The code a provider reply's error names, however rig wrapped the reply.
 pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> Option<String> {
     let response = if let Some(error) = error.downcast_ref::<PromptError>() {
         match error {
@@ -73,7 +71,6 @@ pub(crate) fn is_provider_failure(error: &PromptError) -> bool {
 }
 
 impl StreamRecovery {
-    /// The failed call's input, to replay it on another provider.
     pub(crate) fn take_input(&self) -> Option<(Vec<Message>, Message)> {
         self.input.lock().ok()?.take()
     }
@@ -109,7 +106,6 @@ impl AgentHook for StreamRecovery {
     ) -> CompletionCallAction {
         match self.input.lock() {
             Ok(mut input) => {
-                // The next call's input includes committed tool results, not partial output.
                 let history = event.history.iter().map(|message| (**message).clone());
                 *input = Some((history.collect(), event.prompt.clone()));
                 CompletionCallAction::Continue

@@ -18,7 +18,6 @@ use super::{ProcessorResponse, Recognizer, fulfilled_headers, recognize};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A processor request held paused in the browser until its purchase resolves.
 pub(super) struct PausedPayment {
     session_id: String,
     request_id: String,
@@ -92,10 +91,6 @@ enum Command {
     Close,
 }
 
-/// Holds a browser-level CDP connection that pauses every request in one tab
-/// and its cross-origin frames, keeps the first recognized payment request,
-/// and continues everything else. Closing the connection detaches every
-/// session, which releases anything still paused.
 pub(super) struct Interceptor {
     commands: mpsc::UnboundedSender<Command>,
     payment: oneshot::Receiver<PausedPayment>,
@@ -159,7 +154,6 @@ impl Interceptor {
         Ok(interceptor)
     }
 
-    /// Resolves with the first recognized payment request.
     pub(super) async fn payment(&mut self) -> anyhow::Result<PausedPayment> {
         (&mut self.payment)
             .await
@@ -208,7 +202,6 @@ impl Interceptor {
         .map(drop)
     }
 
-    /// Fails the paused request so the placeholder card never reaches the processor.
     pub(super) async fn fail(&self, payment: &PausedPayment) {
         let _ = self
             .call(
@@ -302,7 +295,6 @@ impl Pump {
                     let Ok(message) = serde_json::from_str::<Value>(text.as_str()) else {
                         continue;
                     };
-                    // A closed checkout tab ends the connection, so its purchase gets cancelled.
                     if is_checkout_detach(&message) {
                         break;
                     }
@@ -364,7 +356,6 @@ impl Pump {
                 });
             }
             if self.arming.remove(&id) {
-                // Frames that detach while arming fail here; they can't send payments.
                 if let Some(error) = message.pointer("/error/message").and_then(Value::as_str) {
                     eprintln!("sprocket-agent: could not intercept a checkout frame: {error}");
                 }

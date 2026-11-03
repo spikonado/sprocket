@@ -75,7 +75,6 @@ struct RawDocumentTransport {
 enum LocalResource {
     Image(serde_json::Value),
     Document(WebDocument),
-    /// Looks like a document, but the local download failed.
     UnreadableDocument,
     Page,
 }
@@ -90,7 +89,6 @@ struct WebDocument {
 enum Probe {
     Image(reqwest::Url),
     Document(reqwest::Url),
-    /// HEAD was inconclusive, so the GET decides.
     Unknown(reqwest::Url),
     Page,
 }
@@ -179,7 +177,6 @@ impl rig::tool::Tool for ScrapeUrlTool {
                         None
                     }
                 };
-                // Documents are parsed locally; the cloud page scrape only sees web pages.
                 if let Some(document) = document {
                     let result = convert_web_document(document, &hosted, &cancellation).await.map_err(tool_error)?;
                     return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
@@ -213,8 +210,6 @@ pub(super) fn web_request_args(
     ])
 }
 
-/// Fetches the bytes of a document the cloud scraper can reach but we cannot,
-/// so it is still parsed locally. `None` means the URL serves no document after all.
 async fn fetch_raw_document(
     context: &AgentToolContext,
     job_id: &str,

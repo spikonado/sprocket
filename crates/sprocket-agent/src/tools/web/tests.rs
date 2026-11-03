@@ -16,7 +16,6 @@ async fn serve(content_type: &str, bytes: Vec<u8>) -> reqwest::Url {
     serve_split(headers.clone(), headers, bytes).await
 }
 
-/// Answers HEAD with `head`, and GET with `get` followed by `body`.
 async fn serve_split(head: String, get: String, body: Vec<u8>) -> reqwest::Url {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();

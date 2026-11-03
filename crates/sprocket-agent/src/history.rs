@@ -62,8 +62,6 @@ fn is_workspace_context_part(part: &TranscriptPart) -> bool {
     )
 }
 
-/// Workspace context prompts in the history, oldest first. A completed set_cwd
-/// outdates earlier Environment prompts, so a run restoring a different cwd resends it.
 pub(crate) fn shown_workspace_context(
     state: &TranscriptState,
     parts: &[TranscriptPart],
@@ -92,9 +90,6 @@ pub(crate) fn shown_workspace_context(
     shown
 }
 
-/// The prompt a run should answer, kept out of its history. A continuation
-/// whose earlier runs ended without output re-answers the last user prompt
-/// instead of being told to "continue" work that never started.
 pub(crate) fn pending_prompt_part<'a>(
     state: &TranscriptState,
     parts: &'a [TranscriptPart],

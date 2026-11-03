@@ -213,7 +213,6 @@ async fn spawn_siwc_sse(
                     body: serde_json::from_slice(&request[body_start..body_start + length])
                         .unwrap(),
                 });
-                // SIWC can omit Content-Type; exercise the real transport's fallback.
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\nx-request-id: req-siwc-{turn}\r\n\r\n{body}",
                     body.len()
@@ -853,7 +852,6 @@ async fn rejects_requests_after_the_connection_changes_or_clears() {
                 .await
                 .is_err()
         );
-        // The run stays rejected even if the original connection comes back.
         credentials
             .connection
             .send(Some("connection-1".to_string()))

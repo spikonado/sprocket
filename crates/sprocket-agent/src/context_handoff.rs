@@ -32,7 +32,6 @@ pub(crate) fn context_summary_text(summary: &str) -> String {
 #[derive(Default)]
 struct HandoffState {
     context_tokens: u64,
-    /// The history the handoff summarizes, set once one is due.
     handoff_history: Option<Vec<Message>>,
     writing: bool,
     summary: Option<String>,
@@ -85,7 +84,6 @@ impl ContextHandoffHook {
         }
     }
 
-    /// The last reported context already reaches the handoff limit.
     pub(crate) fn handoff_due(&self) -> bool {
         self.state
             .lock()

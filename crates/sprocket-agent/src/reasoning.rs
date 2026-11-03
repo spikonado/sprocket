@@ -46,8 +46,6 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
         .map(|blob| blob.value)
 }
 
-/// The OpenAI summary when it has text, otherwise the raw reasoning, which
-/// is where Opus thinking arrives.
 pub(crate) fn completed_reasoning_text(reasoning: &Reasoning) -> String {
     let summary = native_reasoning(reasoning)
         .map(|native| &native.item)

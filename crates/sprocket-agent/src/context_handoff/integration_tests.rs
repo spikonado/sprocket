@@ -1,5 +1,3 @@
-//! Rig runner context handoff against a local Responses API SSE fixture.
-
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

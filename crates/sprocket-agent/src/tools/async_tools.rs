@@ -4,9 +4,7 @@ use crate::types::CompletionProvider;
 
 pub(super) const DEFAULT_YIELD_MS: u64 = 10_000;
 pub(super) const MIN_POLL_YIELD_MS: u64 = 10_000;
-/// Waits end this long before the prompt cache expires, so the next request still reads it.
 const CACHE_EXPIRY_MARGIN_MS: u64 = 30_000;
-/// Assumed when a provider documents no retention.
 const UNDOCUMENTED_CACHE_RETENTION_MS: u64 = 300_000;
 
 #[derive(Clone, Copy, Debug)]

@@ -251,8 +251,6 @@ async fn wall_clock_expired_cache_entry_is_not_reused() {
         }
     });
     auth.resolve_credential().await.unwrap();
-    // A wall-clock jump past expiry must force a refresh even though the
-    // monotonic refresh deadline is still far ahead.
     auth.cached.lock().await.as_mut().unwrap().expires_at = now_ms() - 1;
     auth.resolve_credential().await.unwrap();
     assert_eq!(issued.load(Ordering::SeqCst), 2);

@@ -160,7 +160,6 @@ impl rig::tool::Tool for PollCheckoutTool {
                 }
                 None => end_orphaned_checkout(&self.0, &cancellation, &args.purchase_id).await,
             }?;
-            // The caller already has the purchase id and merchant from card_checkout.
             let mut polled = json!({ "status": result["status"] });
             if let Some(reason) = result.get("reason") {
                 polled["reason"] = reason.clone();
@@ -211,7 +210,6 @@ pub(super) struct RecognizerSpec {
     host_and_path: String,
 }
 
-/// A processor endpoint Agentcard can complete.
 pub(super) struct Recognizer {
     psp: String,
     hosts: Vec<Regex>,
@@ -248,8 +246,6 @@ pub(super) fn compile_recognizers(specs: &[RecognizerSpec]) -> Vec<Recognizer> {
         .collect()
 }
 
-/// Returns the processor of a payment request, matching the parsed URL so a
-/// processor endpoint in the query never counts.
 pub(super) fn recognize<'a>(recognizers: &'a [Recognizer], url: &str) -> Option<&'a str> {
     let url = url::Url::parse(url).ok()?;
     let host = url.host_str()?;
@@ -269,7 +265,6 @@ pub(super) fn recognize<'a>(recognizers: &'a [Recognizer], url: &str) -> Option<
         .map(|recognizer| recognizer.psp.as_str())
 }
 
-/// The exact origin Agentcard binds a purchase to, or `None` for non-https pages.
 pub(super) fn checkout_origin(page_url: &str) -> Option<String> {
     let url = url::Url::parse(page_url).ok()?;
     (url.scheme() == "https").then(|| url.origin().ascii_serialization())
@@ -329,7 +324,6 @@ enum Outcome {
         merchant: String,
         response: ProcessorResponse,
     },
-    /// Anything else; the paused request must not reach the processor.
     Stopped(Value),
 }
 
@@ -343,7 +337,6 @@ enum CheckoutProgress {
     Finished(Result<Value, String>),
 }
 
-/// The run's checkouts by purchase id, so `poll_checkout` can wait on them.
 #[derive(Clone, Default)]
 pub(super) struct Checkouts(Arc<Mutex<HashMap<String, watch::Receiver<CheckoutProgress>>>>);
 
@@ -364,8 +357,6 @@ impl Checkouts {
     }
 }
 
-/// Runs the checkout outside the tool call, so approval can outlast one call.
-/// The paused request lives in this process, so the checkout ends with its run.
 fn start_checkout(
     context: AgentToolContext,
     args: CardCheckoutArgs,
@@ -427,8 +418,6 @@ async fn wait_for_checkout(
     }
 }
 
-/// A purchase this run isn't running belongs to an ended run or a restarted
-/// host, so nothing can complete it anymore.
 async fn end_orphaned_checkout(
     context: &AgentToolContext,
     cancellation: &WorkspaceCancellation,
@@ -764,8 +753,6 @@ async fn cancellable<T>(
     }
 }
 
-/// Runs agent-browser like the agent's own commands do, so it reaches the
-/// thread's browser session.
 async fn agent_browser(
     context: &AgentToolContext,
     args: &[&str],

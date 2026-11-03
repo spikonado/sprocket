@@ -9,13 +9,11 @@ use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use super::convert::{LocalConversionFailed, run_cancellable_blocking};
 use super::hosted_parse::{HostedParseContext, ParsedPage};
 
-/// Hosted OCR bills per page, so scanned pages beyond this stay unextracted.
 const MAX_OCR_PAGES: usize = 20;
 /// Mirrors pdf-inspector's per-stream bound against decompression bombs.
 const MAX_STREAM_DECOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PAGE_TREE_DEPTH: usize = 64;
 const INHERITED_PAGE_KEYS: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
-/// Document navigation, which can reference dropped pages and never renders.
 const CATALOG_NAVIGATION: [&[u8]; 6] = [
     b"Outlines",
     b"Dests",
@@ -178,7 +176,6 @@ fn ensure_intact(document: &mut lopdf::Document) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Page attributes the page inherits from its tree, which a flat tree drops.
 fn inherited_attributes(
     document: &lopdf::Document,
     page: ObjectId,
@@ -328,7 +325,6 @@ fn pages_label(pages: &[u32]) -> String {
     format!("{noun} {}", page_ranges(pages))
 }
 
-/// Formats ascending pages compactly, e.g. `2, 5-7, 12`.
 fn page_ranges(pages: &[u32]) -> String {
     let mut ranges = Vec::new();
     let mut index = 0;

@@ -1,5 +1,3 @@
-//! Native Rig streaming, durable transcript reload, and Responses API serialization.
-
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -84,8 +82,6 @@ fn responses_wire(request: CompletionRequest) -> JsonValue {
     serde_json::from_slice(&bytes).expect("deserialize responses request")
 }
 
-/// Gateway wire order: empty encrypted reasoning item, summary delta, then
-/// authoritative completed reasoning, then function call, then text.
 fn gateway_sse_body() -> String {
     let empty_reasoning = json!({
         "type": "reasoning",
@@ -404,7 +400,6 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     state.remote_total_parts = 5;
     store.save_state("user", "thread", &state).await.unwrap();
 
-    // Reopen the cache just as the next run does, including covered cached parts.
     let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
     let state = reloaded_store.load_state("user", "thread").await.unwrap();
     let loaded = reloaded_store

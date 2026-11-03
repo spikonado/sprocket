@@ -16,12 +16,8 @@ use uuid::Uuid;
 
 use crate::types::CompletionProvider;
 
-/// One oversized tool result would otherwise get the whole capture batch rejected.
 const MAX_CONTENT_BYTES: usize = 256 * 1024;
 
-/// Joins each model call's input, the provider facts only the provider loop knows, and the
-/// call's output into one `$ai_generation` event, and captures each tool run as an `$ai_span`
-/// under the generation that called it.
 #[derive(Clone)]
 pub(crate) struct GenerationTracker {
     // Hashed ids, also the personless distinct id, so generations don't link to the user.
@@ -35,7 +31,6 @@ pub(crate) struct GenerationTracker {
 struct TrackerState {
     conversation_len: usize,
     turns: HashMap<usize, PendingGeneration>,
-    /// Tools run after their model call and before the next one.
     latest_generation_span_id: Option<String>,
     tools: HashMap<EffectId, PendingTool>,
 }
@@ -246,8 +241,6 @@ fn tool_arguments(args: &str) -> Value {
     serde_json::from_str(args).unwrap_or_else(|_| json!(args))
 }
 
-/// The messages added since the previous call, without the previous call's own output.
-/// A run's first call sends only its prompt.
 fn input_delta(event: CompletionCallEvent<'_>, previous_len: usize) -> Value {
     let added = if event.turn == 1 || previous_len > event.history.len() {
         &[][..]
@@ -321,7 +314,6 @@ fn to_json(value: impl Serialize) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
-/// Run failures carry the user so PostHog groups them with that person's errors.
 pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, run_id: &str) {
     let source: &(dyn std::error::Error + Send + Sync + 'static) = error.as_ref();
     let Ok(options) = posthog_rs::CaptureExceptionOptions::new()
@@ -330,7 +322,6 @@ pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, ru
     else {
         return;
     };
-    // Errors only mean analytics is off.
     let _ = posthog_rs::capture_exception_with(source, options).await;
 }
 
