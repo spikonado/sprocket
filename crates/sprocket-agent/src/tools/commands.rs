@@ -51,9 +51,7 @@ impl CommandCursors {
                 Some(input.get("sessionId")?.as_str()?.to_string())
             });
             if let Some(session_id) = session_id {
-                let entry = latest
-                    .entry(session_id)
-                    .or_insert((part.number, read.next_sequence));
+                let entry = latest.entry(session_id).or_default();
                 if part.number >= entry.0 {
                     *entry = (part.number, read.next_sequence);
                 }
