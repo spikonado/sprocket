@@ -22,24 +22,22 @@ http.route({
 
 		const body = await request.text();
 
-		try {
-			await ctx.runAction(internal.billingWebhook.ingest, {
+		const result = await ctx
+			.runAction(internal.billingWebhook.ingest, {
 				body,
 				webhookId,
 				webhookSignature,
 				webhookTimestamp
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : 'Webhook rejected.';
+			})
+			.catch(() => null);
 
-			// Verification and shape failures are client errors; transient
-			// storage failures surface as 500 so the provider retries.
-			const status = /signature|timestamp|size limit|event type|secret/i.test(message) ? 401 : 500;
+		// Our misconfiguration or a transient storage failure: 500 so Dodo retries.
+		if (!result) return new Response('Webhook ingestion failed.', { status: 500 });
 
-			return new Response(
-				status === 401 ? 'Webhook verification failed.' : 'Webhook ingestion failed.',
-				{ status }
-			);
+		if (result.kind === 'rejected') {
+			return result.reason === 'signature'
+				? new Response('Webhook verification failed.', { status: 401 })
+				: new Response('Malformed webhook payload.', { status: 400 });
 		}
 
 		return new Response(JSON.stringify({ received: true }), {

@@ -3,22 +3,24 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 
 pub fn expand_home(path: &str) -> String {
+    expand_home_with(path, home_dir().as_deref())
+}
+
+fn expand_home_with(path: &str, home: Option<&Path>) -> String {
+    let Some(home) = home else {
+        return path.to_string();
+    };
+
     if path == "~" {
-        return home_dir()
-            .map(|home| home.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string());
+        return home.to_string_lossy().to_string();
     }
 
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = home_dir() {
-            return format!("{}/{}", home.to_string_lossy(), rest);
-        }
+        return format!("{}/{}", home.to_string_lossy(), rest);
     }
 
     if let Some(rest) = path.strip_prefix("~\\") {
-        if let Some(home) = home_dir() {
-            return format!("{}\\{}", home.to_string_lossy(), rest);
-        }
+        return format!("{}\\{}", home.to_string_lossy(), rest);
     }
 
     path.to_string()

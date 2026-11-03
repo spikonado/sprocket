@@ -94,6 +94,28 @@ describe('Dodo webhook ingestion', () => {
 		expect(response.status).toBe(400);
 	});
 
+	it.each([
+		['invalid JSON', '{'],
+		['no event type', JSON.stringify({ data: subscriptionPayload() })]
+	])('rejects a signed body with %s as malformed', async (_, body) => {
+		const t = initConvexTest();
+
+		const response = await sendRawWebhook(t, body);
+
+		expect(response.status).toBe(400);
+		expect(await t.run((ctx) => ctx.db.query('dodoWebhookEvents').collect())).toHaveLength(0);
+	});
+
+	it('fails with 500 when the webhook secret is not configured', async () => {
+		const t = initConvexTest();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const body = JSON.stringify({ type: 'subscription.active', data: subscriptionPayload() });
+		const response = await sendRawWebhook(t, body, { configuredSecret: '' });
+
+		expect(response.status).toBe(500);
+	});
+
 	it('persists and acknowledges unknown event types without applying them', async () => {
 		const t = initConvexTest();
 

@@ -1,5 +1,5 @@
 import { Workpool, vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
@@ -11,6 +11,7 @@ import {
 } from '@convex/_generated/server';
 import { z } from 'zod';
 import { classifyBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
+import { vDodoWebhookRejected } from '@convex/lib/validators';
 
 // Dedicated pool so webhook processing never competes with web-search or
 // scrape work; bounded parallelism keeps projection writes predictable.
@@ -147,11 +148,17 @@ function compactPayload(raw: string): string {
 	});
 }
 
+const vIngestResult = v.union(
+	v.object({ kind: v.literal('stored'), duplicate: v.boolean() }),
+	vDodoWebhookRejected
+);
+
 /**
  * Durable ingestion entry point. The signature over the raw request body is
  * verified first; the verified event is then persisted and enqueued to the
  * workpool in one atomic mutation, so an acknowledged event is always
- * durably queued and a partial failure surfaces as a 500 for provider retry.
+ * durably queued. Requests Dodo got wrong come back as `rejected`; anything
+ * thrown is ours to fix or retry.
  */
 export const ingest = internalAction({
 	args: {
@@ -160,10 +167,10 @@ export const ingest = internalAction({
 		webhookSignature: v.string(),
 		webhookTimestamp: v.string()
 	},
-	returns: v.object({ stored: v.boolean(), duplicate: v.boolean() }),
-	handler: async (ctx, args): Promise<{ stored: boolean; duplicate: boolean }> => {
+	returns: vIngestResult,
+	handler: async (ctx, args): Promise<Infer<typeof vIngestResult>> => {
 		if (new TextEncoder().encode(args.body).length > MAX_PAYLOAD_BYTES) {
-			throw new Error('Dodo webhook payload exceeds the size limit.');
+			return { kind: 'rejected', reason: 'payload' };
 		}
 
 		const verified = await ctx.runAction(internal.pricing.verifyWebhookSignature, {
@@ -173,7 +180,9 @@ export const ingest = internalAction({
 			webhookTimestamp: args.webhookTimestamp
 		});
 
-		return await ctx.runMutation(internal.billingWebhook.recordEvent, {
+		if (verified.kind === 'rejected') return verified;
+
+		const { duplicate } = await ctx.runMutation(internal.billingWebhook.recordEvent, {
 			environment: verifiedEnvironment(),
 			webhookId: args.webhookId,
 			eventType: verified.eventType,
@@ -184,6 +193,8 @@ export const ingest = internalAction({
 			// recordEvent owns compaction at the persistence boundary.
 			payload: args.body
 		});
+
+		return { kind: 'stored', duplicate };
 	}
 });
 

@@ -1,7 +1,7 @@
 'use node';
 
 import DodoPayments from 'dodopayments';
-import { Webhook } from 'standardwebhooks';
+import { Webhook, WebhookVerificationError } from 'standardwebhooks';
 import { v } from 'convex/values';
 import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
@@ -18,7 +18,7 @@ import {
 	type PublicPricingPlan,
 	type TierPricingConfig
 } from '@convex/lib/pricingValidators';
-import { vBillingInterval } from '@convex/lib/validators';
+import { vBillingInterval, vDodoWebhookRejected } from '@convex/lib/validators';
 
 const DODO_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
 
@@ -519,8 +519,8 @@ const webhookSecret = (): string => {
 
 /**
  * Verify a Dodo webhook's Standard Webhooks signature over the raw request
- * body and return the event identity used for the durable ledger. Throws on
- * invalid signatures or an out-of-tolerance timestamp. Uses the maintained
+ * body and return the event identity used for the durable ledger, or why the
+ * request was rejected. Throws only on our own misconfiguration. Uses the maintained
  * `standardwebhooks` verifier directly rather than the SDK's rigid typed
  * event unwrap so unknown event types stay durable. Must run in node.
  */
@@ -531,23 +531,39 @@ export const verifyWebhookSignature = internalAction({
 		webhookSignature: v.string(),
 		webhookTimestamp: v.string()
 	},
-	returns: v.object({
-		eventType: v.string(),
-		eventAt: v.optional(v.number()),
-		subscriptionId: v.optional(v.string()),
-		productId: v.optional(v.string()),
-		customerId: v.optional(v.string())
-	}),
+	returns: v.union(
+		v.object({
+			kind: v.literal('verified'),
+			eventType: v.string(),
+			eventAt: v.optional(v.number()),
+			subscriptionId: v.optional(v.string()),
+			productId: v.optional(v.string()),
+			customerId: v.optional(v.string())
+		}),
+		vDodoWebhookRejected
+	),
 	handler: async (_ctx, args) => {
 		const verifier = new Webhook(webhookSecret());
+		let payload: unknown;
 
-		// Throws WebhookVerificationError on a bad signature or a timestamp
-		// outside the tolerance window; the raw body is verified verbatim.
-		verifier.verify(args.body, {
-			'webhook-id': args.webhookId,
-			'webhook-signature': args.webhookSignature,
-			'webhook-timestamp': args.webhookTimestamp
-		});
+		try {
+			payload = verifier.verify(args.body, {
+				'webhook-id': args.webhookId,
+				'webhook-signature': args.webhookSignature,
+				'webhook-timestamp': args.webhookTimestamp
+			});
+		} catch (error) {
+			if (error instanceof WebhookVerificationError) {
+				return { kind: 'rejected' as const, reason: 'signature' as const };
+			}
+
+			// `verify` JSON-parses the body once the signature matches.
+			if (error instanceof SyntaxError) {
+				return { kind: 'rejected' as const, reason: 'payload' as const };
+			}
+
+			throw error;
+		}
 
 		const envelope = z
 			.object({
@@ -561,16 +577,20 @@ export const verifyWebhookSignature = internalAction({
 					})
 					.optional()
 			})
-			.parse(JSON.parse(args.body));
+			.safeParse(payload);
 
-		const eventAt = envelope.timestamp ? Date.parse(envelope.timestamp) : Number.NaN;
+		if (!envelope.success) return { kind: 'rejected' as const, reason: 'payload' as const };
+
+		const { type, timestamp, data } = envelope.data;
+		const eventAt = timestamp ? Date.parse(timestamp) : Number.NaN;
 
 		return {
-			eventType: envelope.type,
+			kind: 'verified' as const,
+			eventType: type,
 			eventAt: Number.isFinite(eventAt) ? eventAt : undefined,
-			subscriptionId: envelope.data?.subscription_id,
-			productId: envelope.data?.product_id,
-			customerId: envelope.data?.customer?.customer_id
+			subscriptionId: data?.subscription_id,
+			productId: data?.product_id,
+			customerId: data?.customer?.customer_id
 		};
 	}
 });
