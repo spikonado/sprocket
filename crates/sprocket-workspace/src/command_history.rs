@@ -4,9 +4,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use crate::command_output::{CapturedOutput, UnreturnedOutput, read_output_events};
+use crate::command_output::{UnreturnedOutput, read_log_from};
 use crate::commands::CommandOutput;
-use crate::process_identity::{CommandProcess, stop_leftover_process_group};
 
 const INTERRUPTED_ERROR: &str =
     "command session was interrupted before its final status was saved; output may be incomplete";
@@ -20,8 +19,6 @@ pub struct CommandHistory {
     pub workdir: String,
     pub max_output_chars: usize,
     pub result: CommandOutput,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process: Option<CommandProcess>,
 }
 
 #[cfg(test)]
@@ -69,41 +66,20 @@ impl CommandHistory {
         }
     }
 
-    /// Settles a session that an earlier server process on this machine left
-    /// running and kills its leftover process group. Call only before this
-    /// process starts commands.
-    pub async fn settle_interrupted(path: &Path, machine_id: &str) -> Result<()> {
-        let Some(mut history) = Self::read(path).await? else {
-            return Ok(());
-        };
-        if !history.result.running || history.machine_id != machine_id {
-            return Ok(());
-        }
-        if let Some(process) = history.process {
-            stop_leftover_process_group(process)?;
-        }
-        history.mark_interrupted().await?;
-        history.save(path).await
-    }
-
     pub(crate) async fn mark_interrupted(&mut self) -> Result<()> {
         if self.result.running {
             self.result.running = false;
             self.result.success = false;
             self.result.error = Some(INTERRUPTED_ERROR.into());
-            self.result.output = CapturedOutput::read_log_preview(
-                Path::new(&self.result.complete_log_path),
-                self.max_output_chars,
-            )
-            .await?;
+            self.result.output = self.read_output(0).await?.output;
         }
         Ok(())
     }
 
-    pub(crate) async fn read_output(&self, from_sequence: u64) -> Result<UnreturnedOutput> {
-        read_output_events(
-            Path::new(&self.result.events_path),
-            from_sequence,
+    pub(crate) async fn read_output(&self, from_offset: u64) -> Result<UnreturnedOutput> {
+        read_log_from(
+            Path::new(&self.result.complete_log_path),
+            from_offset,
             self.max_output_chars,
             !self.result.running,
         )

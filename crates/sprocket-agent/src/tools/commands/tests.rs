@@ -294,7 +294,7 @@ async fn read_from(cursors: &CommandCursors, session_id: &str, next: u64) -> u64
     cursors
         .read(session_id, |from| {
             seen = Some(from);
-            async move { Ok(json!({ "nextSequence": next })) }
+            async move { Ok(json!({ "nextOffset": next })) }
         })
         .await
         .unwrap();
@@ -309,21 +309,21 @@ async fn cursors_resume_from_the_furthest_recorded_read_of_each_session() {
             "poll_cmd",
             "completed",
             json!({"sessionId": "a"}),
-            json!({"nextSequence": 5.0, "running": false}),
+            json!({"nextOffset": 5.0, "running": false}),
         ),
         command_part(
             1,
             "exec_cmd",
             "completed",
             json!({"cmd": "build"}),
-            json!({"sessionId": "a", "nextSequence": 2}),
+            json!({"sessionId": "a", "nextOffset": 2}),
         ),
         command_part(
             2,
             "exec_cmd",
             "completed",
             json!({"cmd": "test"}),
-            json!({"sessionId": "b", "nextSequence": 3}),
+            json!({"sessionId": "b", "nextOffset": 3}),
         ),
         command_part(
             5,
@@ -337,7 +337,7 @@ async fn cursors_resume_from_the_furthest_recorded_read_of_each_session() {
             "poll_cmd",
             "failed",
             json!({"sessionId": "b"}),
-            json!({"nextSequence": 9}),
+            json!({"nextOffset": 9}),
         ),
     ];
     let cursors = CommandCursors::from_parts(&parts);

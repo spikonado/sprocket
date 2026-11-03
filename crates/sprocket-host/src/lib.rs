@@ -258,12 +258,6 @@ impl Host {
             command_cleanup,
         }
     }
-
-    /// Settles commands an earlier server process left running. Run before `start`.
-    pub async fn settle_interrupted_commands(&self) {
-        command_sync::settle_interrupted(&self.transcript, &self.machine_identity.installation_id)
-            .await;
-    }
 }
 
 pub struct HostTasks {

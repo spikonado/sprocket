@@ -17,12 +17,7 @@ async fn full_preview_and_disk_recovery_match_with_bounded_utf8() {
     assert!(full.output.starts_with("start\n"));
     assert!(full.output.ends_with("end\n\u{fffd}\u{fffd}"));
     assert!(full.output.chars().count() <= 40);
-    assert_eq!(
-        CapturedOutput::read_log_preview(Path::new(&full.complete_log_path), 40)
-            .await
-            .unwrap(),
-        full.output
-    );
+    assert_eq!(output.read_log(0, true).await.output, full.output);
 }
 
 #[tokio::test]
@@ -40,7 +35,7 @@ async fn log_quota_counts_both_files_and_rejects_a_chunk_before_writing() {
         .unwrap_err();
     assert!(error.to_string().contains("log quota"));
     output.finish().await.unwrap();
-    assert_eq!(output.read_events(0, true).await.output, "ok");
+    assert_eq!(output.read_log(0, true).await.output, "ok");
     assert_eq!(std::fs::read(&output.log_path).unwrap(), log);
     assert_eq!(std::fs::read(&output.events_path).unwrap(), events);
 }
@@ -70,7 +65,7 @@ async fn preview_marks_omitted_lines_and_preserves_the_full_log() {
         .await
         .unwrap();
     output.finish().await.unwrap();
-    let preview = output.read_events(0, true).await;
+    let preview = output.read_log(0, true).await;
     assert_eq!(
         preview.output,
         format!(
@@ -135,31 +130,15 @@ async fn each_poll_gets_its_own_omission_notice() {
         .append(OutputChannel::Stdout, &[b'\n'; 120])
         .await
         .unwrap();
-    let first = output.read_events(0, false).await;
+    let first = output.read_log(0, false).await;
     assert!(first.output.contains("<101 lines omitted>"));
     output.append(OutputChannel::Stdout, b"next").await.unwrap();
-    let second = output.read_events(first.next_sequence, false).await;
+    let second = output.read_log(first.next_offset, false).await;
     assert_eq!(second.output, "next");
-    let third = output.read_events(second.next_sequence, false).await;
+    let third = output.read_log(second.next_offset, false).await;
     assert_eq!(third.output, "");
-    assert_eq!(third.next_sequence, second.next_sequence);
+    assert_eq!(third.next_offset, second.next_offset);
     output.finish().await.unwrap();
-}
-
-#[tokio::test]
-async fn reads_stop_before_an_unfinished_event_line() {
-    let root = tempfile::tempdir().unwrap();
-    let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
-    output.append(OutputChannel::Stdout, b"done").await.unwrap();
-    output.finish().await.unwrap();
-    let mut events = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&output.events_path)
-        .unwrap();
-    std::io::Write::write_all(&mut events, br#"{"sequence":1,"bytes":[1"#).unwrap();
-    let read = output.read_events(0, false).await;
-    assert_eq!(read.output, "done");
-    assert_eq!(read.next_sequence, 1);
 }
 
 #[tokio::test]
@@ -170,14 +149,14 @@ async fn utf8_split_across_reads_and_polls_is_not_replaced() {
         .append(OutputChannel::Stdout, &[b'a', 0xf0, 0x9f])
         .await
         .unwrap();
-    let first = output.read_events(0, false).await;
+    let first = output.read_log(0, false).await;
     assert_eq!(first.output, "a");
     output
         .append(OutputChannel::Stdout, &[0x98, 0x80, b'b'])
         .await
         .unwrap();
     output.finish().await.unwrap();
-    let second = output.read_events(first.next_sequence, true).await;
+    let second = output.read_log(first.next_offset, true).await;
     assert_eq!(second.output, "😀b");
     assert_eq!(std::fs::read(&output.log_path).unwrap(), "a😀b".as_bytes());
 }
@@ -190,14 +169,14 @@ async fn unfinished_character_is_replaced_once_when_the_stream_ends() {
         .append(OutputChannel::Stdout, &[b'a', 0xe2])
         .await
         .unwrap();
-    let live = output.read_events(0, false).await;
-    assert_eq!((live.output.as_str(), live.next_sequence), ("a", 1));
+    let live = output.read_log(0, false).await;
+    assert_eq!((live.output.as_str(), live.next_offset), ("a", 1));
     output.finish().await.unwrap();
-    let last = output.read_events(live.next_sequence, true).await;
+    let last = output.read_log(live.next_offset, true).await;
     assert_eq!(last.output, "\u{fffd}");
-    let after = output.read_events(last.next_sequence, true).await;
+    let after = output.read_log(last.next_offset, true).await;
     assert_eq!(after.output, "");
-    assert_eq!(after.next_sequence, last.next_sequence);
+    assert_eq!(after.next_offset, last.next_offset);
 }
 
 #[tokio::test]
@@ -207,7 +186,7 @@ async fn invalid_bytes_and_unfinished_utf8_are_preserved_in_logs() {
     let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
     output.append(OutputChannel::Stderr, &bytes).await.unwrap();
     output.finish().await.unwrap();
-    assert_eq!(output.read_events(0, true).await.output, "a��");
+    assert_eq!(output.read_log(0, true).await.output, "a��");
     let preview = output.full_preview();
     assert_eq!(preview.output, "a��");
     drop(output);
@@ -310,7 +289,7 @@ async fn disk_write_failure_does_not_advance_preview() {
         }
         assert!(output.append(OutputChannel::Stdout, b"lost").await.is_err());
         assert_eq!(output.full_preview().output, "");
-        assert_eq!(output.read_events(0, false).await.output, "");
+        assert_eq!(output.read_log(0, false).await.output, "");
         assert!(output.finish().await.is_err());
         assert!(output.log.is_none());
         assert!(output.events.is_none());

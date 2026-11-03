@@ -466,7 +466,7 @@ const vCommandOutput = v.object({
 	eventsPath: v.optional(v.string()),
 	error: v.optional(v.string()),
 	// Released agents omit it; the next poll of that session reads from the start.
-	nextSequence: v.optional(v.number())
+	nextOffset: v.optional(v.number())
 });
 
 export const vCommandExecResult = vCommandOutput.extend({

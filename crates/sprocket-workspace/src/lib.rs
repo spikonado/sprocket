@@ -13,7 +13,6 @@ mod git_repository;
 pub mod github;
 mod patch;
 mod paths;
-mod process_identity;
 mod project_root;
 mod skill_name;
 mod skills;

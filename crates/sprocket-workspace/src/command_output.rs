@@ -1,11 +1,12 @@
 use std::collections::VecDeque;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandOutputLimits {
@@ -38,26 +39,16 @@ struct OutputEvent<'a> {
     bytes: &'a [u8],
 }
 
-#[derive(Deserialize)]
-struct StoredEventBytes {
-    bytes: Vec<u8>,
-}
-
-#[derive(Deserialize)]
-struct StoredEventSequence {
-    sequence: u64,
-}
-
 pub(crate) struct UnreturnedOutput {
     pub output: String,
-    pub next_sequence: u64,
+    pub next_offset: u64,
 }
 
 impl UnreturnedOutput {
-    pub(crate) fn none(from_sequence: u64) -> Self {
+    pub(crate) fn none(from_offset: u64) -> Self {
         Self {
             output: String::new(),
-            next_sequence: from_sequence,
+            next_offset: from_offset,
         }
     }
 }
@@ -172,15 +163,14 @@ impl CapturedOutput {
         log.write_all(bytes)
             .await
             .context("failed to spool command output")?;
-        // Tokio file writes may return before the blocking write finishes.
-        // Polls read events, so an event is written only once its bytes are logged.
-        log.flush()
-            .await
-            .context("failed to flush command output")?;
         events
             .write_all(&encoded)
             .await
             .context("failed to spool command output event")?;
+        // Tokio file writes may return before the blocking write finishes.
+        log.flush()
+            .await
+            .context("failed to flush command output")?;
         events
             .flush()
             .await
@@ -221,24 +211,6 @@ impl CapturedOutput {
         }
     }
 
-    pub(crate) async fn read_log_preview(path: &Path, max_chars: usize) -> Result<String> {
-        use tokio::io::AsyncReadExt;
-
-        let mut file = File::open(path).await?;
-        let mut preview = PreviewBuffer::new(max_chars);
-        let mut buffer = [0_u8; 8_192];
-        let mut pending = Vec::new();
-        loop {
-            let read = file.read(&mut buffer).await?;
-            decode_utf8(&mut pending, &buffer[..read], read == 0, |text| {
-                preview.push_text(text);
-            });
-            if read == 0 {
-                return Ok(preview.render());
-            }
-        }
-    }
-
     pub(crate) fn preview_metadata(&self) -> OutputPreview {
         OutputPreview {
             output: String::new(),
@@ -248,61 +220,40 @@ impl CapturedOutput {
     }
 }
 
-/// Renders the events from `from_sequence` on. A trailing incomplete character
-/// stays unrendered until a later read completes it or the stream is final.
-/// A final read also consumes a virtual end-of-stream event one past the last
-/// event, which renders that character as a replacement exactly once.
-/// An incomplete trailing line is an append in progress and is left for later.
-pub(crate) async fn read_output_events(
-    events_path: &Path,
-    from_sequence: u64,
+/// Renders `output.log` from byte `from_offset` on. Until the stream is final,
+/// a trailing incomplete character is left for a later read to complete.
+pub(crate) async fn read_log_from(
+    log_path: &Path,
+    from_offset: u64,
     max_chars: usize,
     final_stream: bool,
 ) -> Result<UnreturnedOutput> {
-    let mut reader = tokio::io::BufReader::new(
-        File::open(events_path)
-            .await
-            .context("failed to open command output events")?,
-    );
+    let mut log = File::open(log_path)
+        .await
+        .context("failed to open command output log")?;
+    log.seek(SeekFrom::Start(from_offset)).await?;
     let mut preview = PreviewBuffer::new(max_chars);
     let mut pending = Vec::new();
-    let mut event_count = 0;
-    let mut line = Vec::new();
-    // A UTF-8 character spans at most 4 bytes, so only the 3 events before the
-    // cursor can carry bytes into the first unread event.
-    let carry_from = from_sequence.saturating_sub(3);
+    let mut next_offset = from_offset;
+    let mut buffer = vec![0_u8; 64 * 1024];
     loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line).await? == 0 || line.last() != Some(&b'\n') {
+        let read = log.read(&mut buffer).await?;
+        if read == 0 {
             break;
         }
-        let sequence = serde_json::from_slice::<StoredEventSequence>(&line)
-            .context("invalid command output event")?
-            .sequence;
-        event_count = sequence + 1;
-        if sequence < carry_from {
-            continue;
-        }
-        let event: StoredEventBytes =
-            serde_json::from_slice(&line).context("invalid command output event")?;
-        if sequence < from_sequence {
-            // Bytes of a character split by the cursor carry into the first unread event.
-            decode_utf8(&mut pending, &event.bytes, false, |_| {});
-        } else {
-            decode_utf8(&mut pending, &event.bytes, false, |text| {
-                preview.push_text(text);
-            });
-        }
+        next_offset += read as u64;
+        decode_utf8(&mut pending, &buffer[..read], false, |text| {
+            preview.push_text(text);
+        });
     }
-    let next_sequence = if final_stream && from_sequence <= event_count {
+    if final_stream {
         decode_utf8(&mut pending, &[], true, |text| preview.push_text(text));
-        event_count + 1
     } else {
-        event_count.max(from_sequence)
-    };
+        next_offset -= pending.len() as u64;
+    }
     Ok(UnreturnedOutput {
         output: preview.render(),
-        next_sequence,
+        next_offset,
     })
 }
 

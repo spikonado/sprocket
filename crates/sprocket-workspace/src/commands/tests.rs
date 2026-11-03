@@ -13,18 +13,15 @@ use crate::test_support::temp_workspace;
 use tokio::sync::{Mutex, mpsc, watch};
 
 /// Mirrors the agent, which resumes each read from the previous result's
-/// `nextSequence`. Session IDs are unique, so tests share one map.
+/// `nextOffset`. Session IDs are unique, so tests share one map.
 static CURSORS: std::sync::Mutex<BTreeMap<String, u64>> = std::sync::Mutex::new(BTreeMap::new());
 
 fn cursor(id: &str) -> u64 {
     CURSORS.lock().unwrap().get(id).copied().unwrap_or(0)
 }
 
-fn advance(id: &str, next_sequence: u64) {
-    CURSORS
-        .lock()
-        .unwrap()
-        .insert(id.to_string(), next_sequence);
+fn advance(id: &str, next_offset: u64) {
+    CURSORS.lock().unwrap().insert(id.to_string(), next_offset);
 }
 
 async fn wait_for_log(path: &str, expected: &[u8]) {
@@ -70,11 +67,11 @@ impl StubSession {
 
     async fn observe(&self, mode: ObservationMode) -> anyhow::Result<CommandOutput> {
         let id = &self.session.id;
-        let (output, next_sequence) = self
+        let (output, next_offset) = self
             .session
             .output_snapshot(None, None, mode, cursor(id))
             .await?;
-        advance(id, next_sequence);
+        advance(id, next_offset);
         Ok(output)
     }
 
@@ -125,7 +122,6 @@ async fn stub_session(root: &Path) -> StubSession {
             running: true,
             ..super::completion_output(&CommandCompletion::default(), output.preview_metadata())
         },
-        process: None,
     };
     let (completion, completion_rx) = watch::channel(None);
     let (control, _controls) = mpsc::unbounded_channel();
@@ -169,7 +165,7 @@ async fn exec_running_with_timeout(
         .await
         .expect("command should start");
     let id = started.session_id.unwrap();
-    advance(&id, started.next_sequence);
+    advance(&id, started.next_offset);
     (id, started.result)
 }
 
@@ -215,7 +211,7 @@ async fn control(
             cursor(id),
         )
         .await?;
-    advance(id, controlled.next_sequence);
+    advance(id, controlled.next_offset);
     Ok(controlled.result)
 }
 
@@ -231,7 +227,7 @@ async fn try_poll(
     let polled = sessions
         .poll_command(WorkspaceCancellation::new(), id, yield_time_ms, cursor(id))
         .await?;
-    advance(id, polled.next_sequence);
+    advance(id, polled.next_offset);
     Ok(polled.result)
 }
 
@@ -377,7 +373,7 @@ async fn output_preserves_observed_stream_order() {
         serde_json::to_value(&output).unwrap(),
         serde_json::json!({
             "sessionId": output.session_id,
-            "nextSequence": output.next_sequence,
+            "nextOffset": output.next_offset,
             "exitCode": 0,
             "success": true,
             "running": false,
@@ -412,7 +408,7 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::to_value(&started).unwrap(),
         serde_json::json!({
             "sessionId": id,
-            "nextSequence": 0,
+            "nextOffset": 0,
             "running": true,
             "completeLogPath": log_path,
         })
@@ -426,7 +422,7 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::json!({
             "command": command,
             "workdir": root.to_string_lossy(),
-            "nextSequence": 0,
+            "nextOffset": 0,
             "running": true,
             "completeLogPath": log_path,
         })
@@ -447,7 +443,7 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         serde_json::json!({
             "command": command,
             "workdir": root.to_string_lossy(),
-            "nextSequence": 2,
+            "nextOffset": 4,
             "exitCode": 0,
             "success": true,
             "running": false,
@@ -651,7 +647,6 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         workdir: root.to_string_lossy().into_owned(),
         max_output_chars: 100,
         result: super::completion_output(&CommandCompletion::default(), output.preview_metadata()),
-        process: None,
     };
     let mut process = super::build_shell_command(command, &default_command_shell());
     process.current_dir(&root).kill_on_drop(true);
@@ -719,8 +714,8 @@ async fn reads_from_the_same_cursor_return_the_same_output() {
     let concurrent = concurrent.unwrap();
     assert_eq!(finished.result.output, "done");
     assert_eq!(concurrent.result.output, "done");
-    assert_eq!(finished.next_sequence, concurrent.next_sequence);
-    advance(&id, finished.next_sequence);
+    assert_eq!(finished.next_offset, concurrent.next_offset);
+    advance(&id, finished.next_offset);
     let repeated = poll(&sessions, &id, 10_000).await;
 
     assert!(!repeated.running);
@@ -1051,7 +1046,7 @@ async fn reports_input_dropped_during_normal_command_completion() {
             WorkspaceCancellation::new(),
             started.session_id.as_deref().unwrap(),
             0,
-            finished.next_sequence,
+            finished.next_offset,
         )
         .await
         .unwrap();
@@ -1265,7 +1260,7 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
         .poll_command(WorkspaceCancellation::new(), &id, 270_000, cursor(&id))
         .await
         .unwrap();
-    advance(&id, replay.next_sequence);
+    advance(&id, replay.next_offset);
     assert_eq!(replay.command, "printf ready; read value; printf ':done'");
     assert_eq!(replay.result.output, ":done");
     assert_eq!(replay.result.exit_code, Some(0));
@@ -1675,10 +1670,10 @@ async fn completion_seen_after_capture_lock_bypasses_zero_poll_cooldown() {
     let observation = stub.session.observation.lock().await;
     let capture = stub.output.lock().await;
     let session = stub.session.clone();
-    let from_sequence = cursor(&session.id);
+    let from_offset = cursor(&session.id);
     let blocked = tokio::spawn(async move {
         session
-            .output_snapshot(None, None, ObservationMode::ZeroPoll, from_sequence)
+            .output_snapshot(None, None, ObservationMode::ZeroPoll, from_offset)
             .await
     });
     tokio::task::yield_now().await;
@@ -1688,11 +1683,11 @@ async fn completion_seen_after_capture_lock_bypasses_zero_poll_cooldown() {
     stub.complete();
     drop(capture);
 
-    let (raced, next_sequence) = blocked
+    let (raced, next_offset) = blocked
         .await
         .unwrap()
         .expect("a completion observed after the capture lock must bypass the cooldown");
-    advance(&stub.session.id, next_sequence);
+    advance(&stub.session.id, next_offset);
     assert!(!raced.running);
     assert!(raced.success);
     assert_eq!(raced.output, "late");

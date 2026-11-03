@@ -14,7 +14,7 @@ use super::job::execute_serialized_tool_job;
 
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 
-/// Where each command session's next read starts. A result's `nextSequence`
+/// Where each command session's next read starts. A result's `nextOffset`
 /// only counts once `executor:complete` accepts it, which is the mutation that
 /// records it in the transcript, so later runs resume from the transcript.
 /// Parallel reads of one session may return the same output; serializing them
@@ -27,7 +27,7 @@ pub(crate) struct CommandCursors(Arc<Mutex<HashMap<String, u64>>>);
 struct RecordedRead {
     session_id: Option<String>,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
-    next_sequence: u64,
+    next_offset: u64,
 }
 
 impl CommandCursors {
@@ -52,22 +52,22 @@ impl CommandCursors {
                 Some(input.get("sessionId")?.as_str()?.to_string())
             });
             if let Some(session_id) = session_id {
-                cursors.advance(&session_id, read.next_sequence);
+                cursors.advance(&session_id, read.next_offset);
             }
         }
         cursors
     }
 
-    fn advance(&self, session_id: &str, next_sequence: u64) {
+    fn advance(&self, session_id: &str, next_offset: u64) {
         let mut cursors = self.0.lock().unwrap();
         let cursor = cursors.entry(session_id.to_string()).or_default();
-        *cursor = (*cursor).max(next_sequence);
+        *cursor = (*cursor).max(next_offset);
     }
 
     fn record_start(&self, result: &serde_json::Value) {
         if let (Some(session_id), Some(next)) = (
             result.get("sessionId").and_then(serde_json::Value::as_str),
-            next_sequence(result),
+            next_offset(result),
         ) {
             self.advance(session_id, next);
         }
@@ -82,17 +82,17 @@ impl CommandCursors {
         F: FnOnce(u64) -> Fut,
         Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
     {
-        let from_sequence = self.0.lock().unwrap().get(session_id).copied().unwrap_or(0);
-        let result = read(from_sequence).await?;
-        if let Some(next) = next_sequence(&result) {
+        let from_offset = self.0.lock().unwrap().get(session_id).copied().unwrap_or(0);
+        let result = read(from_offset).await?;
+        if let Some(next) = next_offset(&result) {
             self.advance(session_id, next);
         }
         Ok(result)
     }
 }
 
-fn next_sequence(result: &serde_json::Value) -> Option<u64> {
-    result.get("nextSequence")?.as_u64()
+fn next_offset(result: &serde_json::Value) -> Option<u64> {
+    result.get("nextOffset")?.as_u64()
 }
 
 #[derive(Clone)]
@@ -299,7 +299,7 @@ impl rig::tool::Tool for ControlCmdTool {
         let args = &args;
         self.0
             .command_cursors
-            .read(&args.session_id, move |from_sequence| {
+            .read(&args.session_id, move |from_offset| {
                 execute_serialized_tool_job(
                     &self.0,
                     Self::NAME,
@@ -314,7 +314,7 @@ impl rig::tool::Tool for ControlCmdTool {
                                 &args.chars,
                                 YieldMode::Action
                                     .normalize(args.yield_time_ms, self.0.max_yield_ms),
-                                from_sequence,
+                                from_offset,
                             )
                             .await
                             .map_err(tool_error)
@@ -347,7 +347,7 @@ impl rig::tool::Tool for PollCmdTool {
         let args = &args;
         self.0
             .command_cursors
-            .read(&args.session_id, move |from_sequence| {
+            .read(&args.session_id, move |from_offset| {
                 execute_serialized_tool_job(
                     &self.0,
                     Self::NAME,
@@ -359,7 +359,7 @@ impl rig::tool::Tool for PollCmdTool {
                                 cancellation,
                                 &args.session_id,
                                 YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
-                                from_sequence,
+                                from_offset,
                             )
                             .await
                             .map_err(tool_error)

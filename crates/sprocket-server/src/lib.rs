@@ -214,7 +214,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         }
     }
 
-    host.settle_interrupted_commands().await;
     let host_tasks = host.start();
     let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
