@@ -253,7 +253,6 @@ impl PackageUpdateManager {
         inner.snapshot.clone()
     }
 
-    /// Tells the npm launcher which updated launcher to start once this process exits.
     pub async fn prepare_restart(&self) -> anyhow::Result<()> {
         let inner = self.inner.lock().await;
         anyhow::ensure!(

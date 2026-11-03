@@ -36,7 +36,6 @@ fn tool_part(
     tool_part_in_run(number, "run", invocation, call_id, name, status, output)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn tool_part_in_run(
     number: u32,
     run: &str,
@@ -379,8 +378,6 @@ fn late_patch_completion_blocks_until_result_lands() {
 
 #[test]
 fn patch_result_pairs_by_canonical_identity_without_started_event() {
-    // No `started` event: the result arrives first/only, and the call first
-    // appears when its completion part is downloaded.
     let (_dir, mut replica) = open_replica();
     replica
         .save_parts(
@@ -771,7 +768,7 @@ fn multiple_oversized_entries_page_in_order_without_loss() {
 #[test]
 fn unicode_text_resumes_cumulatively_on_char_boundaries() {
     let (_dir, mut replica) = open_replica();
-    let long: String = "ab\u{1f600}".repeat(4000); // 12k chars, multibyte
+    let long: String = "ab\u{1f600}".repeat(4000);
     replica
         .save_parts(
             "thread",

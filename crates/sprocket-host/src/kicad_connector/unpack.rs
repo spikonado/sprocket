@@ -1,8 +1,5 @@
-//! Unpacks the unmodified upstream KiCad build into a tree that runs in place.
-
 use std::path::{Path, PathBuf};
 
-/// The `kicad-cli` inside an unpacked tree.
 pub(super) fn cli(tree: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
         tree.join("KiCad.app/Contents/MacOS/kicad-cli")
@@ -20,7 +17,6 @@ pub(super) use macos::unpack;
 #[cfg(windows)]
 pub(super) use windows::unpack;
 
-/// Extracts the DwarFS image appended to the AppImage's ELF runtime.
 #[cfg(target_os = "linux")]
 mod linux {
     use std::fs::{self, File, Permissions};
@@ -144,7 +140,6 @@ mod windows {
     }
 }
 
-/// Copies `KiCad.app` out of the disk image.
 #[cfg(target_os = "macos")]
 mod macos {
     use std::path::Path;

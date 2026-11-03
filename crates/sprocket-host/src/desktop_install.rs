@@ -20,7 +20,6 @@ pub(crate) fn installer(data_dir: &Path) -> anyhow::Result<PinnedTool> {
     )
 }
 
-/// Unpacks the CLI and the platform helper that its release keeps beside it.
 fn unpack(archive: &Path, bin: &Path) -> anyhow::Result<()> {
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(File::open(archive)?));
     for entry in archive.entries()? {

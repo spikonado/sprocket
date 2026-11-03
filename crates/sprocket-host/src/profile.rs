@@ -158,8 +158,6 @@ fn current_user_sid() -> anyhow::Result<String> {
     }
 }
 
-/// The contents of these files are lost to this user either way; deleting them
-/// lets the server start and recreate them.
 #[cfg(windows)]
 fn remove_unreadable_private_files(directory: &Path) {
     const DATA_DIR_FILES: &[&str] = &[

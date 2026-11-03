@@ -44,7 +44,6 @@ fn refresh_delay_uses_remaining_lifetime_for_cached_tokens() {
         now,
     )
     .expect("schedulable");
-    // remaining 40s, leeway 10s -> 30s, not the 140s full lifetime.
     assert_eq!(delay, Duration::from_secs(30));
 }
 

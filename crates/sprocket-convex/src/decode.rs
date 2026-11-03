@@ -1,13 +1,3 @@
-//! Shared Convex RPC decode helpers for agent and server.
-//!
-//! - [`decode_function_result`] cleans transport noise and returns the readable
-//!   sentence. Prefer this when the error is shown to a model or end user.
-//! - [`decode_labeled_function_result`] does the same, then prefixes RPC failures
-//!   with the Convex function path. Prefer this in server/ops paths that need to
-//!   know which call failed.
-//! - [`deserialize_convex_u64`] / [`deserialize_convex_u32`] decode Convex wire
-//!   numbers (`f64`) into integers. Do not use them on non-Convex JSON.
-
 use anyhow::{Context, anyhow};
 use convex::{ConvexError, FunctionResult, Value};
 use serde::{Deserialize, de::Deserializer};
@@ -39,8 +29,6 @@ pub fn decode_function_result<T: for<'de> Deserialize<'de>>(
     }
 }
 
-/// Like [`decode_function_result`], but prefixes cleaned RPC failures with
-/// `{function}: ` so logs and watchers can identify the call.
 pub fn decode_labeled_function_result<T: for<'de> Deserialize<'de>>(
     result: FunctionResult,
     function: &str,
@@ -68,9 +56,6 @@ fn convex_error_text(error: &ConvexError) -> &str {
     }
 }
 
-/// Strips the transport noise Convex wraps around failed function calls:
-/// production masking lines ("[Request ID ...] Server Error"), `Uncaught`
-/// prefixes, and stack frames.
 fn clean_function_error_message(raw: &str) -> String {
     let mut content: Vec<&str> = Vec::new();
     for line in raw.lines() {
@@ -91,14 +76,11 @@ fn clean_function_error_message(raw: &str) -> String {
         content.push(message);
     }
     if content.is_empty() {
-        // Production masking left nothing readable behind; the request id
-        // stays available in the Convex dashboard logs.
         return "The server failed without a readable error.".to_string();
     }
     content.join(" ")
 }
 
-/// Convert a Convex `Value` into plain `serde_json::Value` for deserialization.
 fn value_to_plain_json(value: Value) -> serde_json::Value {
     match value {
         Value::Null => serde_json::Value::Null,
@@ -133,7 +115,6 @@ fn float_to_json(number: f64) -> serde_json::Value {
     }
 }
 
-/// Deserialize a Convex number (`f64` on the wire) into a non-negative `u64`.
 pub fn deserialize_convex_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
@@ -147,7 +128,6 @@ where
     Ok(value as u64)
 }
 
-/// Deserialize a Convex number (`f64` on the wire) into a `u32`.
 pub fn deserialize_convex_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
     D: Deserializer<'de>,

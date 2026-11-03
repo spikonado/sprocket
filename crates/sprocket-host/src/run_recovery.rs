@@ -18,7 +18,7 @@ const MAX_RECORDS: usize = 256;
 const MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 const RETRY_DELAY_MS: u64 = 30_000;
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
-// Must match convex/lib/runRecovery.ts.
+// Must match apps/web/convex/lib/runRecovery.ts.
 const SUBMISSION_PREFIX: &str = "automatic-recovery:";
 
 #[derive(Clone, Serialize, Deserialize)]

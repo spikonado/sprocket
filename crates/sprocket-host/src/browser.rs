@@ -59,7 +59,6 @@ impl From<&DashboardState> for BrowserStatus {
 pub struct BrowserManager {
     installer: BrowserInstaller,
     state: watch::Sender<DashboardState>,
-    /// The task that owns the running dashboard child.
     supervisor: std::sync::Mutex<Option<JoinHandle<()>>>,
     dashboard_client: reqwest::Client,
     shutdown: WorkspaceCancellation,
@@ -99,7 +98,6 @@ impl BrowserManager {
         });
     }
 
-    /// The current status, then each change.
     pub fn status_events(&self) -> BoxStream<'static, BrowserStatus> {
         let mut receiver = self.state.subscribe();
         receiver.mark_changed();
@@ -155,7 +153,6 @@ impl BrowserManager {
         });
     }
 
-    /// Marks the dashboard ready and flips it to an error as soon as its process exits.
     fn supervise(self: &Arc<Self>, dashboard: Dashboard) {
         let Dashboard { mut child, port } = dashboard;
         let mut supervisor = self.supervisor.lock().expect("browser supervisor lock");

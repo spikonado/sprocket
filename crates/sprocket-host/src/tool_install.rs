@@ -1,6 +1,3 @@
-//! Pinned tools installed under `<data-dir>/tools/<tool>/<version>/bin`, which agents get on
-//! their `PATH`.
-
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -157,7 +154,6 @@ fn download_client() -> anyhow::Result<reqwest::Client> {
     Ok(client_builder().timeout(DOWNLOAD_TIMEOUT).build()?)
 }
 
-/// For downloads too large for a total timeout; a stalled transfer still fails.
 pub(crate) fn large_download_client() -> anyhow::Result<reqwest::Client> {
     Ok(client_builder().read_timeout(READ_TIMEOUT).build()?)
 }
@@ -168,7 +164,6 @@ fn client_builder() -> reqwest::ClientBuilder {
         .connect_timeout(Duration::from_secs(30))
 }
 
-/// Puts `directories` ahead of the `PATH` in `environment`, or of the server's own `PATH`.
 pub(crate) fn prepend_path(
     environment: Vec<(OsString, OsString)>,
     directories: impl IntoIterator<Item = PathBuf>,
@@ -203,7 +198,6 @@ fn is_store_aliases(path: &Path) -> bool {
             .ends_with(r"microsoft\windowsapps")
 }
 
-/// Rewrites the `PATH` in `environment`, or the server's own `PATH`.
 fn rewrite_path(
     mut environment: Vec<(OsString, OsString)>,
     rewrite: impl FnOnce(Vec<PathBuf>) -> Vec<PathBuf>,
@@ -265,8 +259,6 @@ pub(crate) async fn acquire_lock(path: PathBuf) -> anyhow::Result<File> {
     }
 }
 
-/// Holds a shared lock on `version_dir` for the server's lifetime so that other
-/// Sprocket versions sharing this data directory don't prune it.
 async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Path) {
     let mut lease = lease.lock().await;
     if lease.is_some() {
@@ -287,8 +279,6 @@ async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Path) {
     }
 }
 
-/// Removes other versions along with tombstones left by earlier failed removals.
-/// A version is skipped while an installer or a lease holds one of its locks.
 pub(crate) fn prune_versions(tool_dir: &Path, current: &str) {
     let entries = match std::fs::read_dir(tool_dir) {
         Ok(entries) => entries,
@@ -351,7 +341,6 @@ pub(crate) fn is_version(name: &str) -> bool {
         })
 }
 
-/// Publishes `url` at `destination` only once its size and SHA256 match.
 pub(crate) async fn download_atomic(
     client: &reqwest::Client,
     url: &str,

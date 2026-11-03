@@ -10,16 +10,12 @@ use crate::transcript_client::UserConvexClient;
 
 const FILE_NAME: &str = "github-settings.json";
 
-/// Keeps this machine's Settings → Version Control switches in the data dir
-/// and hands them to the GitHub client.
 pub struct GitHubSettingsStore {
     path: PathBuf,
     write_lock: tokio::sync::Mutex<()>,
 }
 
 impl GitHubSettingsStore {
-    /// Unreadable settings fall back to the defaults so GitHub keeps working;
-    /// the next change overwrites the file.
     pub fn load(data_dir: &Path) -> Arc<Self> {
         let path = data_dir.join(FILE_NAME);
         match read(&path) {

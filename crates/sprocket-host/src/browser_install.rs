@@ -44,7 +44,6 @@ impl BrowserInstaller {
         })
     }
 
-    /// Returns the CLI once it, its skills, and a Chromium it can launch are installed.
     pub async fn ensure_ready(&self) -> anyhow::Result<PathBuf> {
         let mut ready = self.ready.lock().await;
         self.tool.ensure_installed().await?;
@@ -124,8 +123,6 @@ impl BrowserInstaller {
         Ok(())
     }
 
-    /// Chromium discovery is left to agent-browser so Sprocket only installs Chromium when the
-    /// CLI itself can't find a browser to launch.
     async fn ensure_chromium(&self, cli: &Path) -> anyhow::Result<()> {
         if std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH").is_some_and(|path| !path.is_empty())
             || chromium_installed(cli).await?
@@ -182,7 +179,6 @@ async fn run(command: &mut Command) -> anyhow::Result<Output> {
     Ok(output)
 }
 
-/// Each release asset is the bare CLI.
 fn unpack(download: &Path, bin: &Path) -> anyhow::Result<()> {
     let cli = bin.join(CLI);
     std::fs::copy(download, &cli)?;

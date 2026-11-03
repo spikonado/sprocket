@@ -1,6 +1,3 @@
-//! Sprocket's machine-side services: auth, agent launch, transcript and
-//! artifact sync, and command sessions, independent of the HTTP server.
-
 pub mod agent_launch;
 pub mod artifact_watch;
 pub mod browser;
@@ -164,7 +161,6 @@ impl Host {
         })
     }
 
-    /// Installs agents' pinned tools in the background.
     pub fn prepare_tools(&self) {
         self.browsers.prepare_tools();
         self.bun.prepare();
@@ -220,7 +216,6 @@ impl Host {
         self.native_auth.sign_out().await
     }
 
-    /// Starts the background work that keeps local state in sync with the cloud.
     pub fn start(&self) -> HostTasks {
         self.prepare_tools();
         let transcript = Arc::clone(&self.transcript);
@@ -269,7 +264,6 @@ pub struct HostTasks {
 }
 
 impl HostTasks {
-    /// Stops background work, ends running commands, and flushes their logs.
     pub async fn shutdown(self) {
         let host = self.host;
         for task in [self.attachment_cleanup, self.recovery, self.command_cleanup] {

@@ -53,7 +53,6 @@ impl ThreadCommandSessions {
         }
     }
 
-    /// Changes whenever any thread's running commands may have changed.
     pub fn subscribe_changes(&self) -> watch::Receiver<()> {
         self.changes.subscribe()
     }

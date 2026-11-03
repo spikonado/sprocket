@@ -222,7 +222,6 @@ fn serve_local(
 }
 
 async fn init_analytics() -> anyhow::Result<()> {
-    // Dev runs set an empty key, which keeps analytics off.
     let Some(api_key) = std::env::var("PUBLIC_POSTHOG_KEY")
         .ok()
         .filter(|key| !key.trim().is_empty())

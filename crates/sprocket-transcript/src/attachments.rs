@@ -139,7 +139,6 @@ where
     Ok(())
 }
 
-/// Sets each attachment's local path, or leaves it unset when the file is gone.
 pub async fn cache_attachments<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
