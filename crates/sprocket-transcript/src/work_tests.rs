@@ -393,6 +393,17 @@ fn command_calls_settle_on_their_own_snapshot_results() {
 }
 
 #[test]
+fn replica_opens_in_wal_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let journal: String = replica
+        .db
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal.to_ascii_lowercase(), "wal");
+}
+
+#[test]
 fn caches_from_other_schema_versions_rebuild_on_open() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
