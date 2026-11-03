@@ -96,7 +96,8 @@ describe('Dodo webhook ingestion', () => {
 
 	it.each([
 		['invalid JSON', '{'],
-		['no event type', JSON.stringify({ data: subscriptionPayload() })]
+		['no event type', JSON.stringify({ data: subscriptionPayload() })],
+		['a non-string business_id', JSON.stringify({ type: 'subscription.active', business_id: 1 })]
 	])('rejects a signed body with %s as malformed', async (_, body) => {
 		const t = initConvexTest();
 

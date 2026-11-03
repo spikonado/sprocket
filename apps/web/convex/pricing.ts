@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
 import { action, env, internalAction } from '@convex/_generated/server';
 import {
+	dodoWebhookEnvelopeSchema,
 	matchesBillingInterval,
 	readDodoEnvironment,
 	type BillingInterval,
@@ -565,10 +566,8 @@ export const verifyWebhookSignature = internalAction({
 			throw error;
 		}
 
-		const envelope = z
-			.object({
-				type: z.string().min(1),
-				timestamp: z.string().optional(),
+		const envelope = dodoWebhookEnvelopeSchema
+			.extend({
 				data: z
 					.object({
 						subscription_id: z.string().optional(),

@@ -10,7 +10,11 @@ import {
 	type MutationCtx
 } from '@convex/_generated/server';
 import { z } from 'zod';
-import { classifyBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
+import {
+	classifyBillingInterval,
+	dodoWebhookEnvelopeSchema,
+	readDodoEnvironment
+} from '@convex/lib/dodoProducts';
 import { vDodoWebhookRejected } from '@convex/lib/validators';
 
 // Dedicated pool so webhook processing never competes with web-search or
@@ -77,13 +81,6 @@ const subscriptionDataSchema = z.object({
 		.optional()
 });
 
-const eventEnvelopeSchema = z.object({
-	business_id: z.string().optional(),
-	type: z.string(),
-	timestamp: z.string().optional(),
-	data: z.unknown()
-});
-
 // Storage schema for compaction: identical allowlist to the strict
 // processing schema, but `status` is a plain string so an unrecognized
 // provider status stays durable and replayable after a repair that teaches
@@ -120,7 +117,7 @@ function backoffMs(attempts: number): number {
  * other provider extras never reach durable storage or logs.
  */
 function compactPayload(raw: string): string {
-	const envelope = eventEnvelopeSchema.parse(JSON.parse(raw));
+	const envelope = dodoWebhookEnvelopeSchema.parse(JSON.parse(raw));
 	const data = compactSubscriptionDataSchema.safeParse(envelope.data);
 
 	if (!data.success)
@@ -292,7 +289,7 @@ async function applyEvent(
 	ctx: MutationCtx,
 	event: Doc<'dodoWebhookEvents'>
 ): Promise<{ outcome: LedgerOutcome; detail?: string }> {
-	const envelope = eventEnvelopeSchema.parse(JSON.parse(event.payload!));
+	const envelope = dodoWebhookEnvelopeSchema.parse(JSON.parse(event.payload!));
 
 	if (!SUPPORTED_SUBSCRIPTION_EVENTS.has(envelope.type)) {
 		// Includes subscription.paused/unpaused, payment.*, refund/dispute, and
