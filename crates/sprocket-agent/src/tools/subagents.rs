@@ -214,6 +214,20 @@ pub(crate) struct ListSubagentsArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ListSubagentModelsArgs {}
 
+#[derive(Serialize)]
+struct SubagentModels {
+    models: Vec<SubagentModel>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubagentModel {
+    id: String,
+    reasoning_efforts: Vec<String>,
+    default_reasoning_effort: String,
+    service_tiers: Vec<String>,
+}
+
 fn spawn_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
@@ -983,7 +997,18 @@ impl rig::tool::Tool for ListSubagentModelsTool {
                     let catalog = model_catalog(&context.gateway_url)
                         .await
                         .map_err(tool_error)?;
-                    serde_json::to_value(catalog).map_err(|e| tool_error(e.into()))
+                    let models = catalog
+                        .models
+                        .into_iter()
+                        .map(|model| SubagentModel {
+                            id: model.id,
+                            reasoning_efforts: model.reasoning_efforts,
+                            default_reasoning_effort: model.default_reasoning_effort,
+                            service_tiers: model.service_tiers,
+                        })
+                        .collect();
+                    serde_json::to_value(SubagentModels { models })
+                        .map_err(|e| tool_error(e.into()))
                 })
                 .await
             }

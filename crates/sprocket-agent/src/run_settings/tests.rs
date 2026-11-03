@@ -5,9 +5,9 @@ fn catalog() -> ModelCatalog {
     serde_json::from_value(serde_json::json!({
         "defaultModelId": "default",
         "models": [
-            {"id": "default", "label": "Default", "vendor": "anthropic", "supportsImages": true, "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
-            {"id": "pro", "label": "Pro", "vendor": "anthropic", "supportsImages": true, "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
-            {"id": "gpt", "label": "GPT", "vendor": "openai", "supportsImages": true, "reasoningEfforts": ["low", "xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard", "fast"]}
+            {"id": "default", "label": "Default", "vendor": "anthropic", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
+            {"id": "pro", "label": "Pro", "vendor": "anthropic", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
+            {"id": "gpt", "label": "GPT", "vendor": "openai", "reasoningEfforts": ["low", "xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard", "fast"]}
         ]
     }))
     .unwrap()

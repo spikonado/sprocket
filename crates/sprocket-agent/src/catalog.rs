@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::types::{
     CatalogModelCapabilities, CompletionProvider, ContextBudget, ProviderHandoff, RunSnapshot,
@@ -81,20 +81,19 @@ struct GatewayLongContextPricing {
     threshold_input_tokens: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCatalog {
     pub default_model_id: String,
     pub models: Vec<CatalogModel>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogModel {
     pub id: String,
     pub label: String,
     pub vendor: String,
-    pub supports_images: bool,
     pub reasoning_efforts: Vec<String>,
     pub default_reasoning_effort: String,
     pub service_tiers: Vec<String>,
@@ -141,7 +140,6 @@ pub async fn model_catalog(gateway_url: &str) -> anyhow::Result<ModelCatalog> {
                 id: model.id,
                 label: model.label,
                 vendor: model.provider,
-                supports_images: model.supports_images,
                 reasoning_efforts: model.reasoning_efforts,
                 default_reasoning_effort: model.default_reasoning_effort,
                 service_tiers: model.service_tiers,

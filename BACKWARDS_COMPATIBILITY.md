@@ -152,7 +152,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
 - `summary` on `scrape_url` results, from before `outline` replaced it.
-- `defaultFast` on `list_subagent_models` results, and results without model `vendor`.
+- `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on `list_subagent_models` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.

@@ -629,16 +629,17 @@ describe('subagent tool job results', () => {
 
 			const sendResult = { ...metadata, threadId: child.threadId, settings: child.settings };
 
-			const models = [
-				{
-					id: 'gpt-5.6-sol',
-					label: 'GPT-5.6 Sol',
-					vendor: 'openai',
-					reasoningEfforts: ['low', 'high'],
-					defaultReasoningEffort: 'high',
-					serviceTiers: ['standard', 'fast'],
-					supportsImages: true
-				}
+			const model = {
+				id: 'gpt-5.6-sol',
+				reasoningEfforts: ['low', 'high'],
+				defaultReasoningEffort: 'high',
+				serviceTiers: ['standard', 'fast']
+			};
+
+			const models = [model];
+
+			const releasedModels = [
+				{ ...model, label: 'GPT-5.6 Sol', vendor: 'openai', supportsImages: true }
 			];
 
 			const cases = {
@@ -679,12 +680,12 @@ describe('subagent tool job results', () => {
 				'list models': {
 					kind: 'list_subagent_models',
 					payload: {},
-					result: { defaultModelId: 'gpt-5.6-sol', models }
+					result: { models }
 				},
 				'released list models': {
 					kind: 'list_subagent_models',
 					payload: {},
-					result: { defaultModelId: 'gpt-5.6-sol', defaultFast: false, models }
+					result: { defaultModelId: 'gpt-5.6-sol', defaultFast: false, models: releasedModels }
 				}
 			} as const;
 
