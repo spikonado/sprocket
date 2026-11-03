@@ -3,35 +3,23 @@ name: working-with-kicad
 description: 'Use when creating or editing KiCad schematics or PCBs, or exporting from KiCad (Gerbers, renders, BOMs, ERC/DRC).'
 ---
 
-Edit KiCad files through kipy against a headless `kicad-cli api-server`, so
-files keep the installed version's format. Use `kicad-cli` for checks and
-exports.
+Use `kipy` and `kicad-cli api-server` to edit KiCad files.
 
-## 1. Check the connector
+## Set up the connector
 
-Call `list_connectors`. If KiCad isn't listed, ask the user to install it in
-Settings → Connectors and stop KiCad work until they confirm. The connector
-puts `kicad-python` (run API scripts with it), `kicad-cli`, and `kicad` (the
-GUI, only when the user asks) on PATH.
+- Check if KiCad is listed in `list_connectors`. If it isn't, ask the user to install it in Settings -> Connectors.
+- The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, and `kicad` on PATH.
 
-## 2. Before editing
+## Before editing
 
-- After you save, tell the user to reload any of the files open in the
-  KiCad GUI.
-- Before the first save of an existing project, compare the file header's
-  `(generator_version "…")` with the installed KiCad version. If the file is
-  older, ask the user once: saving upgrades the format irreversibly, and only
-  git can undo it.
-- Take circuit facts from the part's current datasheet and the vendor
-  reference design.
-- Pick parts that have a 3D model. When a part has none anywhere, propose an
-  equivalent part that does.
+- Before the first save of an existing project, compare the file header's `(generator_version "…")` with the KiCad version from the connector.
+  If the file is older, ask the user once: saving upgrades the format irreversibly, and only git can undo it.
 
-## 3. Script shape
+## Script shape
 
-One headless server per script. Units are nanometers; build points with
-`Vector2.from_xy_mm` and lengths with `from_mm`. Y increases downward in both
-editors.
+- Use one headless server per script.
+- Units are nanometers; build points with `Vector2.from_xy_mm` and lengths with `from_mm`.
+- Y increases downward in both editors.
 
 ```python
 from kipy import KiCad
@@ -46,18 +34,13 @@ with KiCad(headless=True, timeout_ms=60000) as kicad:
     sch.save()
 ```
 
-- `open_document` loads an existing file. `create_document` starts an empty
-  one (plus the `.kicad_pro`) and replaces an existing file on save, so use
-  it only for new files. A server holds one schematic and one board.
-- `load_all_libraries` loads the library tables in the background; anything
-  that reads libraries fails until `wait_for_libraries` returns. Calls block
-  during the load, and kipy's default 2 s timeout fails them, hence
-  `timeout_ms`.
-- Look up library IDs with `kicad.get_library_symbols(["Device"])` and
-  `kicad.get_library_footprints(["Resistor_SMD"])`; each item's `str()` is
-  the ID.
+- `open_document` loads an existing file. `create_document` starts an empty one (plus the `.kicad_pro`) and replaces an existing file on save, so use it only for new files.
+  A server holds one schematic and one board.
+- `load_all_libraries` loads the library tables in the background; anything that reads libraries fails until `wait_for_libraries` returns.
+  Calls block during the load, and kipy's default 2 s timeout fails them, hence `timeout_ms`.
+- Look up library IDs with `kicad.get_library_symbols(["Device"])` and `kicad.get_library_footprints(["Resistor_SMD"])`; each item's `str()` is the ID.
 
-## 4. Schematic first
+## Designing the schematic
 
 ```python
 from kipy.geometry import Vector2
@@ -97,25 +80,20 @@ label.spin_style = SchematicLabelSpinStyle.SLSS_RIGHT
 sch.create_items([wire, label])
 ```
 
-- Place every symbol before the first `update_items`. Placing a symbol after
-  updating another instance of it forks its library link (`R_1`, ERC
-  `lib_symbol_issues`).
-- Pass `reference=` to every placement, power symbols included (`#PWR01`,
-  `#FLG01`); unset references can come back duplicated.
-- Put symbol origins and wire ends on the 1.27 mm grid, or ERC reports
-  `endpoint_off_grid`.
-- Give every symbol a footprint before the board step. Power nets use
-  `power:` symbols (`power:GND`, `power:VCC`) with `value` set to the net
-  name. Put a `power:PWR_FLAG` on each power net fed from a connector or
-  off-board, or ERC reports `power_pin_not_driven`.
+- Place every symbol before the first `update_items`.
+  Placing a symbol after updating another instance of it forks its library link (`R_1`, ERC `lib_symbol_issues`).
+- Pass `reference=` to every placement, power symbols included (`#PWR01`, `#FLG01`); unset references can come back duplicated.
+- Put symbol origins and wire ends on the 1.27 mm grid, or ERC reports `endpoint_off_grid`.
+- Give every symbol a footprint before the board step.
+  Power nets use `power:` symbols (`power:GND`, `power:VCC`) with `value` set to the net name.
+- Put a `power:PWR_FLAG` on each power net fed from a connector or off-board, or ERC reports `power_pin_not_driven`.
 - `pin_end` handles rotation but not mirroring, so leave symbols unmirrored.
-- Style: local labels between blocks, global labels only across sheets,
-  passive values with units and no space (`10kΩ`, `100nF`), and about 10 mm
-  between neighbouring power symbols so their names don't overlap.
-- `sch.get_netlist()` lists net names only. Check pin-level connections in
-  the exported `.net` file's `(node (ref …) (pin …))` entries.
+- Use local labels between blocks and global labels only across sheets.
+- Passive values should have units (`10 kΩ`, `100 nF`) and about 10 mm between neighbouring power symbols so their names don't overlap.
+- `sch.get_netlist()` lists net names only.
+  Check pin-level connections in the exported `.net` file's `(node (ref …) (pin …))` entries.
 
-## 5. Board from the netlist
+## Designing the board
 
 ```python
 from kipy.board_types import BoardLayer, BoardSegment, Track, Via, Zone
@@ -162,40 +140,31 @@ board.refill_zones()
 board.save()
 ```
 
-- Place footprints yourself before the import; `NMM_REFERENCE` links them by
-  reference and assigns nets. Footprints the import adds land near the
-  origin. Rotating an existing footprint through `update_items` leaves
-  rounding drift that DRC reports as `lib_footprint_mismatch`, so set
-  orientation at placement. Pass `layer=BoardLayer.BL_B_Cu` for the back.
+- Place footprints yourself before the import; `NMM_REFERENCE` links them by reference and assigns nets.
+  Footprints the import adds land near the origin.
+  Rotating an existing footprint through `update_items` leaves rounding drift that DRC reports as `lib_footprint_mismatch`, so set orientation at placement.
+  Pass `layer=BoardLayer.BL_B_Cu` for the back.
 - Pad positions are absolute; re-read footprints after moving them.
-- There is no autorouter, so route every net. A `Via` has zero size until
-  you set `diameter` and `drill_diameter`.
-- Silkscreen holds only outlines, pin-1 and polarity marks, short connector
-  pin labels, and at most a board name and version. Reference designators
-  stay hidden there; the Fab layer's `${REFERENCE}` text keeps them for
-  assembly. Documentation goes in the project's docs.
-- Footprints missing from `fp.definition.models` render without a body. Save
-  the part's STEP under `proj/3dmodels/` and attach it with
-  `fp.definition.add_item()` of a `Footprint3DModel` whose `filename` is
-  `${KIPRJMOD}/3dmodels/<file>.step`, then `update_items([fp])`. Set
-  `visible`, `opacity = 1`, and `scale = Vector3D.from_xyz(1, 1, 1)`; a new
-  model's scale is 0.
+- A `Via` has zero size until you set `diameter` and `drill_diameter`.
+- Footprints missing from `fp.definition.models` render without a body.
+  Save the part's STEP under `proj/3dmodels/` and attach it with `fp.definition.add_item()` of a `Footprint3DModel` whose `filename` is `${KIPRJMOD}/3dmodels/<file>.step`, then `update_items([fp])`.
+  Set `visible`, `opacity = 1`, and `scale = Vector3D.from_xyz(1, 1, 1)`; a new model's scale is 0.
 
-## 6. Check, show, export
+## Designing silkscreen
 
-Run checks after each save and fix every finding before moving on:
+- Hide reference designators in the silkscreen; ensure they are present in the Fab layer's `${REFERENCE}` text instead.
+- Don't clutter the silkscreen by using it as a place to write documentation about the board.
+- Add connector pin labels and similar.
+- Add the project's logo, if it has one.
+
+## Suggested checks
 
 ```bash
 kicad-cli sch erc --severity-all --format json -o erc.json proj/board.kicad_sch
 kicad-cli pcb drc --schematic-parity --severity-all --format json -o drc.json proj/board.kicad_pcb
-kicad-cli sch export png -e -o out/ proj/board.kicad_sch
-kicad-cli pcb render --side top -o out/top.png proj/board.kicad_pcb
 ```
 
-Look at the PNGs yourself, and show them in the thread after each meaningful
-change. When the project is ready for the user, embed it with
-`kicad:proj/board.kicad_pro` in its own paragraph so they can explore it.
-For fabrication, `kicad-cli pcb export gerbers -l
-F.Cu,B.Cu,F.Mask,B.Mask,F.Paste,B.Paste,F.Silkscreen,B.Silkscreen,Edge.Cuts`
-(without `-l` it plots every user layer too), then `pcb export
-drill|pos|step` and `sch export bom`.
+## Show the result to the user
+
+- Send images of the schematic(s) and 3D renders of the PCB.
+- Link to the KiCad project by writing `kicad:proj/board.kicad_pro` in a new paragraph.
