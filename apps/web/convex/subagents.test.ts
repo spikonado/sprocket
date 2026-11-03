@@ -1563,7 +1563,12 @@ describe('subagents.control', () => {
 				executionSecret: caller.executionSecret,
 				threadId: child.threadId
 			})
-		).toEqual({ status: 'failed', active: false, hasPendingQuestions: false });
+		).toEqual({
+			status: 'failed',
+			active: false,
+			hasPendingQuestions: false,
+			awaitingRecovery: true
+		});
 
 		const stopArgs = { ...target, action: 'stop' as const };
 
@@ -1574,6 +1579,18 @@ describe('subagents.control', () => {
 		expect(stopped?.cancellationRequestedAt).toBeDefined();
 		expect(stopped?.status).toBe('failed');
 		expect(await monitor()).toMatchObject({ status: 'failed', active: false });
+		expect(
+			await t.query(api.subagents.threadActivity, {
+				runId: caller.runId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId
+			})
+		).toEqual({
+			status: 'failed',
+			active: false,
+			hasPendingQuestions: false,
+			awaitingRecovery: false
+		});
 		await t.mutation(api.subagents.control, stopArgs);
 		expect(await t.run((ctx) => ctx.db.get('runs', child.runId))).toEqual(stopped);
 		expect(await caller.asUser.query(api.runRecovery.state, queryArgs)).toEqual({

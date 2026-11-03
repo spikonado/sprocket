@@ -32,6 +32,7 @@ import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
+import { isAwaitingHostRecovery } from '@convex/lib/runRecovery';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
 import {
@@ -529,7 +530,8 @@ export const threadActivity = query({
 	returns: v.object({
 		status: vRunStatus,
 		active: v.boolean(),
-		hasPendingQuestions: v.boolean()
+		hasPendingQuestions: v.boolean(),
+		awaitingRecovery: v.boolean()
 	}),
 	handler: async (ctx, args) => {
 		try {
@@ -544,7 +546,8 @@ export const threadActivity = query({
 			return {
 				status: run?.status ?? thread.status,
 				active: (run !== null && !isRunFinalStatus(run.status)) || hasPendingQuestions,
-				hasPendingQuestions
+				hasPendingQuestions,
+				awaitingRecovery: await isAwaitingHostRecovery(ctx.db, run)
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

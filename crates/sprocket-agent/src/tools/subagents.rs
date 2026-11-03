@@ -1131,6 +1131,8 @@ struct SubagentActivity {
     status: String,
     active: bool,
     has_pending_questions: bool,
+    #[serde(default)]
+    awaiting_recovery: bool,
 }
 
 fn monitor_fields(thread_id: &str, target_run_id: Option<&str>) -> BTreeMap<String, Value> {
@@ -1218,6 +1220,7 @@ where
 }
 
 /// Returns when the subagent goes idle or asks a question, or at `deadline`.
+/// Abandoned children stay unsettled while the host can still recover them.
 async fn wait_for_settlement_using<S>(
     updates: &mut S,
     deadline: Instant,
@@ -1232,7 +1235,7 @@ where
             activity = next_activity(updates, cancellation) => activity?,
             _ = sleep_until(deadline) => return Ok(()),
         };
-        if activity.has_pending_questions || !activity.active {
+        if activity.has_pending_questions || (!activity.active && !activity.awaiting_recovery) {
             return Ok(());
         }
     }

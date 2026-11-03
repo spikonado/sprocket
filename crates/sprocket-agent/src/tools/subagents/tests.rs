@@ -119,6 +119,7 @@ fn activity(status: &str, active: bool, has_pending_questions: bool) -> Subagent
         status: status.to_string(),
         active,
         has_pending_questions,
+        awaiting_recovery: false,
     }
 }
 
@@ -147,6 +148,7 @@ async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
     for last in [
         activity("completed", false, false),
         activity("running", true, true),
+        activity("failed", false, false),
     ] {
         let mut updates = activity_updates(vec![activity("running", true, false), last]);
         wait_for_settlement_using(
@@ -158,6 +160,21 @@ async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
         .unwrap();
     }
     assert_eq!(started.elapsed(), Duration::ZERO);
+}
+
+#[tokio::test(start_paused = true)]
+async fn settlement_waits_while_an_abandoned_child_can_still_recover() {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut updates = activity_updates(vec![SubagentActivity {
+        status: "failed".into(),
+        active: false,
+        has_pending_questions: false,
+        awaiting_recovery: true,
+    }]);
+    wait_for_settlement_using(&mut updates, deadline, &WorkspaceCancellation::new())
+        .await
+        .unwrap();
+    assert_eq!(Instant::now(), deadline);
 }
 
 #[tokio::test(start_paused = true)]
