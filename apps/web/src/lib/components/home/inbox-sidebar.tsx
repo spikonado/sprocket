@@ -173,7 +173,6 @@ export default function InboxSidebar({
 				: `${selectedProjects.length} projects`;
 
 	const menuThread = menu?.thread ?? null;
-	const choosingProject = menu?.choosingProject === true;
 
 	const menuSummary = readTreeSummary({
 		threadId: menuThread?._id ?? null,
@@ -612,7 +611,7 @@ export default function InboxSidebar({
 						tabIndex={-1}
 						onKeyDown={navigateMenu}
 					>
-						{choosingProject ? (
+						{menu.choosingProject ? (
 							<ProjectSelectorMenu
 								projects={projects}
 								isSelected={(project) => project.repositoryKey === menuThread.repositoryKey}

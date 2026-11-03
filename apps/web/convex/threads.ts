@@ -60,46 +60,6 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 	return { userId, record };
 }
 
-async function moveOwnedThread(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>,
-	repositoryKey: string
-) {
-	const targetRepositoryKey = repositoryKey.trim();
-
-	if (!targetRepositoryKey) {
-		throw new Error('Repository key is required.');
-	}
-
-	const userId = await getUserId(ctx);
-	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-
-	if (record.parentThreadId !== undefined) {
-		throw new Error('Only root threads can be moved.');
-	}
-
-	if (record.repositoryKey === targetRepositoryKey) return;
-
-	const summary = await subtreeSummary(ctx.db, record);
-
-	if (summary.anyActive) {
-		throw new Error('Cannot move a thread with active work.');
-	}
-
-	// The saved cwd points into the old project, so runs restart at the new root.
-	await ctx.db.patch('threadRecords', threadId, {
-		repositoryKey: targetRepositoryKey,
-		cwd: undefined
-	});
-
-	if (summary.descendantCount > 0) {
-		await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
-			parentThreadId: threadId,
-			cursor: null
-		});
-	}
-}
-
 export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
@@ -156,7 +116,36 @@ export const moveToProject = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await moveOwnedThread(ctx, args.threadId, args.repositoryKey);
+		const repositoryKey = args.repositoryKey.trim();
+
+		if (!repositoryKey) {
+			throw new Error('Repository key is required.');
+		}
+
+		const userId = await getUserId(ctx);
+		const record = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		if (record.parentThreadId !== undefined) {
+			throw new Error('Only root threads can be moved.');
+		}
+
+		if (record.repositoryKey === repositoryKey) return null;
+
+		const summary = await subtreeSummary(ctx.db, record);
+
+		if (summary.anyActive) {
+			throw new Error('Cannot move a thread with active work.');
+		}
+
+		// The saved cwd points into the old project, so runs restart at the new root.
+		await ctx.db.patch('threadRecords', args.threadId, { repositoryKey, cwd: undefined });
+
+		if (summary.descendantCount > 0) {
+			await ctx.scheduler.runAfter(0, internal.threads.moveDescendants, {
+				parentThreadId: args.threadId,
+				cursor: null
+			});
+		}
 
 		return null;
 	}
