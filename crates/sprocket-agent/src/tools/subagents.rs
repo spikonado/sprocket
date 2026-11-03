@@ -1180,14 +1180,13 @@ async fn wait_for_settlement(
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
-    let info = cancelled_read(cancellation, fetch_monitor_info(context, thread_id, None)).await?;
-    if yield_time_ms == 0 || !info.active || !info.pending_questions.is_empty() {
-        return Ok(info);
+    if yield_time_ms > 0 {
+        let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+        let updates =
+            cancelled_read(cancellation, watch_activity(context, thread_id, None)).await?;
+        tokio::pin!(updates);
+        wait_for_settlement_using(&mut updates, deadline, cancellation).await?;
     }
-    let updates = cancelled_read(cancellation, watch_activity(context, thread_id, None)).await?;
-    tokio::pin!(updates);
-    wait_for_settlement_using(&mut updates, deadline, cancellation).await?;
     cancelled_read(cancellation, fetch_monitor_info(context, thread_id, None)).await
 }
 

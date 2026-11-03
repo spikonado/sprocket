@@ -31,7 +31,6 @@ import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreat
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { awaitsAutomaticRecovery, canRecoverAutomatically } from '@convex/lib/runRecovery';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
@@ -519,8 +518,7 @@ async function monitoredRun(
 }
 
 /** Subscribed while waiting on a subagent. It skips the claim lease and the
- * transcript so lease renewals and transcript writes don't re-run it. Without
- * a clock, an abandoned run stays active for as long as it could recover. */
+ * transcript so lease renewals and transcript writes don't re-run it. */
 export const threadActivity = query({
 	args: {
 		runId: v.id('runs'),
@@ -542,10 +540,6 @@ export const threadActivity = query({
 
 			const hasPendingQuestions =
 				(await headActionablePendingQuestion(ctx.db, thread._id)) !== null;
-
-			if (!args.targetRunId && run && (await canRecoverAutomatically(ctx.db, run))) {
-				return { status: 'queued' as const, active: true, hasPendingQuestions };
-			}
 
 			return {
 				status: run?.status ?? thread.status,
@@ -574,10 +568,6 @@ export const threadMonitorInfo = mutation({
 			const latest = await monitoredRun(ctx.db, thread._id, args.targetRunId);
 			const transcript = await transcriptStateResult(ctx, thread._id, thread);
 			const pendingQuestions = pending.map(toAgentQuestionSnapshot);
-
-			if (!args.targetRunId && latest && (await awaitsAutomaticRecovery(ctx.db, latest))) {
-				return { transcript, status: 'queued' as const, active: true, pendingQuestions };
-			}
 
 			return {
 				transcript,

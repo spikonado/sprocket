@@ -4,9 +4,6 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 export const AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
 
-// Hosts scan for recoverable runs every 30 seconds with a 15 second request timeout.
-export const AUTOMATIC_RECOVERY_GRACE_MS = 120_000;
-
 export async function automaticAgentContinuationEnabled(
 	db: DatabaseReader,
 	userId: string
@@ -24,29 +21,5 @@ export function isAutomaticallyRecoverableRun(
 		run.cancellationRequestedAt === undefined &&
 		run.pendingPrompt === undefined &&
 		run.machineId === machineId
-	);
-}
-
-/** Ignores the grace period, so queries can call it. */
-export async function canRecoverAutomatically(
-	db: DatabaseReader,
-	run: Doc<'runs'>
-): Promise<boolean> {
-	return (
-		run.machineId !== undefined &&
-		isAutomaticallyRecoverableRun(run, run.machineId) &&
-		run.completedAt !== undefined &&
-		(await automaticAgentContinuationEnabled(db, run.userId))
-	);
-}
-
-export async function awaitsAutomaticRecovery(
-	db: DatabaseReader,
-	run: Doc<'runs'>
-): Promise<boolean> {
-	return (
-		run.completedAt !== undefined &&
-		run.completedAt + AUTOMATIC_RECOVERY_GRACE_MS > Date.now() &&
-		(await canRecoverAutomatically(db, run))
 	);
 }
