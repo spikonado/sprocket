@@ -539,6 +539,7 @@ export const threadActivity = query({
 			assertRunAcceptsModelCompletion(callerRun);
 			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 			const run = await monitoredRun(ctx.db, thread._id, args.targetRunId);
+
 			const hasPendingQuestions =
 				(await headActionablePendingQuestion(ctx.db, thread._id)) !== null;
 

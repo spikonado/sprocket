@@ -1654,6 +1654,7 @@ describe('subagents.control', () => {
 				targetRunId: stopped.stoppedRunId
 			})
 		).toMatchObject({ status: 'cancelled' });
+
 		const activity = (targetRunId?: Id<'runs'>) =>
 			t.query(api.subagents.threadActivity, {
 				runId: caller.runId,
@@ -1661,6 +1662,7 @@ describe('subagents.control', () => {
 				threadId: child.threadId,
 				targetRunId
 			});
+
 		expect(await activity(stopped.stoppedRunId)).toMatchObject({
 			status: 'cancelled',
 			active: false
