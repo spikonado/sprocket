@@ -37,7 +37,7 @@ with KiCad(headless=True, timeout_ms=60000) as kicad:
 - `open_document` loads an existing file. `create_document` starts an empty one (plus the `.kicad_pro`) and replaces an existing file on save, so use it only for new files.
   A server holds one schematic and one board.
 - `load_all_libraries` loads the library tables in the background; anything that reads libraries fails until `wait_for_libraries` returns.
-  Calls block during the load, and kipy's default 2 s timeout fails them, hence `timeout_ms`.
+  Calls block during the load and fail under kipy's default 2 s timeout, so set `timeout_ms`.
 - Look up library IDs with `kicad.get_library_symbols(["Device"])` and `kicad.get_library_footprints(["Resistor_SMD"])`; each item's `str()` is the ID.
 
 ## Designing the schematic
@@ -55,7 +55,7 @@ r1 = sch.place_symbol_from_library(
 gnd = sch.place_symbol_from_library(
     "power:GND", Vector2.from_xy_mm(110.49, 90.17), reference="#PWR01")
 # ...place every symbol, then edit fields in one update
-r1.value = "10kΩ"
+r1.value = "10 kΩ"
 r1.footprint_field.text.value = "Resistor_SMD:R_0603_1608Metric"
 sch.update_items([r1])
 
@@ -85,11 +85,12 @@ sch.create_items([wire, label])
 - Pass `reference=` to every placement, power symbols included (`#PWR01`, `#FLG01`); unset references can come back duplicated.
 - Put symbol origins and wire ends on the 1.27 mm grid, or ERC reports `endpoint_off_grid`.
 - Give every symbol a footprint before the board step.
-  Power nets use `power:` symbols (`power:GND`, `power:VCC`) with `value` set to the net name.
-- Put a `power:PWR_FLAG` on each power net fed from a connector or off-board, or ERC reports `power_pin_not_driven`.
+- Power nets use `power:` symbols (`power:GND`, `power:VCC`) with `value` set to the net name.
+  Put a `power:PWR_FLAG` on each power net fed from a connector or off-board, or ERC reports `power_pin_not_driven`.
 - `pin_end` handles rotation but not mirroring, so leave symbols unmirrored.
 - Use local labels between blocks and global labels only across sheets.
-- Passive values should have units (`10 kΩ`, `100 nF`) and about 10 mm between neighbouring power symbols so their names don't overlap.
+- Write passive values with units (`10 kΩ`, `100 nF`).
+- Leave about 10 mm between neighbouring power symbols so their names don't overlap.
 - `sch.get_netlist()` lists net names only.
   Check pin-level connections in the exported `.net` file's `(node (ref …) (pin …))` entries.
 
@@ -147,15 +148,15 @@ board.save()
 - Pad positions are absolute; re-read footprints after moving them.
 - A `Via` has zero size until you set `diameter` and `drill_diameter`.
 - Footprints missing from `fp.definition.models` render without a body.
-  Save the part's STEP under `proj/3dmodels/` and attach it with `fp.definition.add_item()` of a `Footprint3DModel` whose `filename` is `${KIPRJMOD}/3dmodels/<file>.step`, then `update_items([fp])`.
-  Set `visible`, `opacity = 1`, and `scale = Vector3D.from_xyz(1, 1, 1)`; a new model's scale is 0.
+  Save the part's STEP under `proj/3dmodels/`, then add a `Footprint3DModel` (`kipy.board_types`) with `fp.definition.add_item()` and call `update_items([fp])`.
+  Set its `filename` to `${KIPRJMOD}/3dmodels/<file>.step`, `visible = True`, `opacity = 1`, and `scale = Vector3D.from_xyz(1, 1, 1)` (`kipy.geometry`); a new model's scale is 0.
 
-## Designing silkscreen
+## Designing the silkscreen
 
-- Hide reference designators in the silkscreen; ensure they are present in the Fab layer's `${REFERENCE}` text instead.
-- Don't clutter the silkscreen by using it as a place to write documentation about the board.
-- Add connector pin labels and similar.
-- Add the project's logo, if it has one.
+- Hide reference designators on the silkscreen, as the sample does.
+  Library footprints keep a `${REFERENCE}` text on the Fab layer for assembly.
+- Limit the silkscreen to footprint outlines, polarity marks, short connector pin labels, and the project's logo if it has one.
+  Board documentation goes in the project's docs.
 
 ## Suggested checks
 
@@ -166,5 +167,5 @@ kicad-cli pcb drc --schematic-parity --severity-all --format json -o drc.json pr
 
 ## Show the result to the user
 
-- Send images of the schematic(s) and 3D renders of the PCB.
-- Link to the KiCad project by writing `kicad:proj/board.kicad_pro` in a new paragraph.
+- Send images of each schematic sheet and 3D renders of the PCB.
+- Embed the KiCad project by writing `kicad:proj/board.kicad_pro` in its own paragraph.
