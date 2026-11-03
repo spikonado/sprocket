@@ -1128,8 +1128,7 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
 pub struct CommandExecOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    /// The `output.log` byte after this output. The transcript keeps it with
-    /// the tool result, so the next poll starts where the model stopped.
+    /// The `output.log` byte after this output.
     pub next_offset: u64,
     #[serde(flatten, serialize_with = "serialize_for_model")]
     pub result: CommandOutput,

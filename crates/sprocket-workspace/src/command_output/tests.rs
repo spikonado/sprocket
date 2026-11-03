@@ -1,5 +1,18 @@
 use super::*;
 
+impl CapturedOutput {
+    async fn read_log(&self, from_offset: u64, final_stream: bool) -> UnreturnedOutput {
+        read_log_from(
+            Path::new(&self.log_path),
+            from_offset,
+            self.full_preview.max_chars,
+            final_stream,
+        )
+        .await
+        .unwrap()
+    }
+}
+
 #[tokio::test]
 async fn full_preview_and_disk_recovery_match_with_bounded_utf8() {
     let root = tempfile::tempdir().unwrap();

@@ -35,42 +35,30 @@ impl CommandCursors {
         let cursors = Self::default();
         for part in parts {
             let Some(tool) = &part.tool else { continue };
-            if tool.status != "completed"
-                || !matches!(tool.name.as_str(), "exec_cmd" | "poll_cmd" | "control_cmd")
+            if tool.status == "completed"
+                && matches!(tool.name.as_str(), "exec_cmd" | "poll_cmd" | "control_cmd")
+                && let Some(output) = &tool.output
             {
-                continue;
-            }
-            let Some(read) = tool
-                .output
-                .as_ref()
-                .and_then(|output| RecordedRead::deserialize(output).ok())
-            else {
-                continue;
-            };
-            let session_id = read.session_id.or_else(|| {
-                let input = tool.input.as_ref()?;
-                Some(input.get("sessionId")?.as_str()?.to_string())
-            });
-            if let Some(session_id) = session_id {
-                cursors.advance(&session_id, read.next_offset);
+                let input_session_id = tool
+                    .input
+                    .as_ref()
+                    .and_then(|input| input.get("sessionId")?.as_str());
+                cursors.record(output, input_session_id);
             }
         }
         cursors
     }
 
-    fn advance(&self, session_id: &str, next_offset: u64) {
+    fn record(&self, output: &serde_json::Value, input_session_id: Option<&str>) {
+        let Ok(read) = RecordedRead::deserialize(output) else {
+            return;
+        };
+        let Some(session_id) = read.session_id.as_deref().or(input_session_id) else {
+            return;
+        };
         let mut cursors = self.0.lock().unwrap();
         let cursor = cursors.entry(session_id.to_string()).or_default();
-        *cursor = (*cursor).max(next_offset);
-    }
-
-    fn record_start(&self, result: &serde_json::Value) {
-        if let (Some(session_id), Some(next)) = (
-            result.get("sessionId").and_then(serde_json::Value::as_str),
-            next_offset(result),
-        ) {
-            self.advance(session_id, next);
-        }
+        *cursor = (*cursor).max(read.next_offset);
     }
 
     async fn read<F, Fut>(
@@ -84,15 +72,9 @@ impl CommandCursors {
     {
         let from_offset = self.0.lock().unwrap().get(session_id).copied().unwrap_or(0);
         let result = read(from_offset).await?;
-        if let Some(next) = next_offset(&result) {
-            self.advance(session_id, next);
-        }
+        self.record(&result, Some(session_id));
         Ok(result)
     }
-}
-
-fn next_offset(result: &serde_json::Value) -> Option<u64> {
-    result.get("nextOffset")?.as_u64()
 }
 
 #[derive(Clone)]
@@ -270,7 +252,7 @@ impl rig::tool::Tool for ExecCmdTool {
                     .map_err(tool_error)
             })
             .await?;
-        self.0.command_cursors.record_start(&result);
+        self.0.command_cursors.record(&result, None);
         Ok(result)
     }
 }
