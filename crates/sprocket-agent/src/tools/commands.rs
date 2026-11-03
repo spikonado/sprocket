@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_transcript::TranscriptPart;
 use sprocket_workspace::{CommandAction, default_command_shell};
-use tokio::sync::Mutex;
 
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, tool_error};
@@ -18,8 +17,10 @@ pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 /// Where each command session's next read starts. A result's `nextSequence`
 /// only counts once `executor:complete` accepts it, which is the mutation that
 /// records it in the transcript, so later runs resume from the transcript.
+/// Parallel reads of one session may return the same output; serializing them
+/// would let a waiting poll block the control call it waits for.
 #[derive(Clone, Default)]
-pub(crate) struct CommandCursors(Arc<Mutex<HashMap<String, Arc<Mutex<u64>>>>>);
+pub(crate) struct CommandCursors(Arc<Mutex<HashMap<String, u64>>>);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,7 +32,7 @@ struct RecordedRead {
 
 impl CommandCursors {
     pub(crate) fn from_parts(parts: &[TranscriptPart]) -> Self {
-        let mut latest = HashMap::<String, (u32, u64)>::new();
+        let cursors = Self::default();
         for part in parts {
             let Some(tool) = &part.tool else { continue };
             if tool.status != "completed"
@@ -51,40 +52,29 @@ impl CommandCursors {
                 Some(input.get("sessionId")?.as_str()?.to_string())
             });
             if let Some(session_id) = session_id {
-                let entry = latest.entry(session_id).or_default();
-                if part.number >= entry.0 {
-                    *entry = (part.number, read.next_sequence);
-                }
+                cursors.advance(&session_id, read.next_sequence);
             }
         }
-        let cursors = latest
-            .into_iter()
-            .map(|(session_id, (_, next))| (session_id, Arc::new(Mutex::new(next))))
-            .collect();
-        Self(Arc::new(Mutex::new(cursors)))
+        cursors
     }
 
-    async fn session(&self, session_id: &str) -> Arc<Mutex<u64>> {
-        self.0
-            .lock()
-            .await
-            .entry(session_id.to_string())
-            .or_default()
-            .clone()
+    fn advance(&self, session_id: &str, next_sequence: u64) {
+        let mut cursors = self.0.lock().unwrap();
+        let cursor = cursors.entry(session_id.to_string()).or_default();
+        *cursor = (*cursor).max(next_sequence);
     }
 
-    async fn record_start(&self, result: &serde_json::Value) {
+    fn record_start(&self, result: &serde_json::Value) {
         if let (Some(session_id), Some(next)) = (
             result.get("sessionId").and_then(serde_json::Value::as_str),
             next_sequence(result),
         ) {
-            *self.session(session_id).await.lock().await = next;
+            self.advance(session_id, next);
         }
     }
 
     /// Reads one session's output from its cursor and advances the cursor only
-    /// when the result reached the model. Holding the cursor keeps parallel reads
-    /// of a session from returning the same output.
+    /// when the result reached the model.
     async fn read<F, Fut>(
         &self,
         session_id: &str,
@@ -94,11 +84,10 @@ impl CommandCursors {
         F: FnOnce(u64) -> Fut,
         Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
     {
-        let cursor = self.session(session_id).await;
-        let mut cursor = cursor.lock().await;
-        let result = read(*cursor).await?;
+        let from_sequence = self.0.lock().unwrap().get(session_id).copied().unwrap_or(0);
+        let result = read(from_sequence).await?;
         if let Some(next) = next_sequence(&result) {
-            *cursor = next;
+            self.advance(session_id, next);
         }
         Ok(result)
     }
@@ -283,7 +272,7 @@ impl rig::tool::Tool for ExecCmdTool {
                     .map_err(tool_error)
             })
             .await?;
-        self.0.command_cursors.record_start(&result).await;
+        self.0.command_cursors.record_start(&result);
         Ok(result)
     }
 }

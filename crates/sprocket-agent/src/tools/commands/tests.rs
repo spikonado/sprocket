@@ -302,7 +302,7 @@ async fn read_from(cursors: &CommandCursors, session_id: &str, next: u64) -> u64
 }
 
 #[tokio::test]
-async fn cursors_resume_from_the_latest_recorded_read_of_each_session() {
+async fn cursors_resume_from_the_furthest_recorded_read_of_each_session() {
     let parts = [
         command_part(
             4,
