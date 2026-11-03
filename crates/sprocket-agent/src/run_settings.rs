@@ -26,10 +26,9 @@ pub struct ResolvedSettings {
     pub provider: CompletionProvider,
 }
 
-/// Settings for a new run, as the web composer picks them. Saved settings carry over unless
-/// unsupported, a saved model no longer in the catalog falls back to the default, and explicit
-/// unsupported choices are errors. The run starts on the first of `providers` (enabled, in the
-/// user's order) serving the model; run-start failover moves past providers that can't start.
+/// Saved settings the model no longer supports fall back quietly; unsupported overrides are
+/// errors. The run starts on the first of `providers` serving the model, and run-start
+/// failover moves past providers that can't start.
 pub fn resolve_settings(
     catalog: &ModelCatalog,
     providers: &[CompletionProvider],
@@ -74,19 +73,10 @@ pub fn resolve_settings(
                 model.supports_fast(),
                 "fast mode is unavailable for {model_id}"
             );
-            anyhow::ensure!(
-                provider.serves_fast_mode(),
-                "fast mode needs the Spikonado provider; {model_id} runs on {}",
-                provider.as_str()
-            );
             true
         }
         Some(false) => false,
-        None => {
-            saved.is_some_and(|saved| saved.fast)
-                && model.supports_fast()
-                && provider.serves_fast_mode()
-        }
+        None => saved.is_some_and(|saved| saved.fast) && model.supports_fast(),
     };
     Ok(ResolvedSettings {
         model: model.id.clone(),

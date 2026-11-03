@@ -44,13 +44,11 @@ export function resolveSubmissionId(args: {
 	storageIds: Id<'_storage'>[];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	fastMode: AgentRunRequest['fastMode'];
-	completionProvider?: AgentRunRequest['completionProvider'];
 	recoveredSubmission?: {
 		prompt: string;
 		storageIds?: Id<'_storage'>[];
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
 		fastMode: AgentRunRequest['fastMode'];
-		completionProvider?: AgentRunRequest['completionProvider'];
 		selectedModel: AgentRunRequest['selectedModel'];
 		submissionId: string;
 		continuationOfRunId?: Id<'runs'>;
@@ -78,8 +76,6 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
 		recoveredSubmission.fastMode === args.fastMode &&
-		(recoveredSubmission.completionProvider ?? 'spikonado') ===
-			(args.completionProvider ?? 'spikonado') &&
 		recoveredSubmission.continuationOfRunId === args.continuationOfRunId &&
 		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
 		? recoveredSubmission.submissionId
@@ -112,7 +108,6 @@ export function launchAgentRun(args: {
 	prompt: string;
 	storageIds: Id<'_storage'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
-	completionProvider?: AgentRunRequest['completionProvider'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	fastMode: AgentRunRequest['fastMode'];
 	submissionId: string;
@@ -129,8 +124,6 @@ export function launchAgentRun(args: {
 		submissionId: args.submissionId,
 		workspacePath: args.workspacePath
 	};
-
-	if (args.completionProvider) request.completionProvider = args.completionProvider;
 
 	if (args.threadId) request.threadId = args.threadId;
 

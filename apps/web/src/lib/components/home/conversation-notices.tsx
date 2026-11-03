@@ -6,7 +6,7 @@ import { CATALOG_UNAVAILABLE_MESSAGE } from '$lib/chat/model-catalog';
 type Props = {
 	error: string | null;
 	runError: string | null;
-	usageBlocked: boolean;
+	outOfUsage: boolean;
 	reconnecting: boolean;
 	syncing: boolean;
 	catalogError: boolean;
@@ -17,7 +17,7 @@ type Props = {
 export default function ConversationNotices({
 	error,
 	runError,
-	usageBlocked,
+	outOfUsage,
 	reconnecting,
 	syncing,
 	catalogError,
@@ -32,7 +32,7 @@ export default function ConversationNotices({
 				</ComposerNotice>
 			) : null}
 			{/* The composer's usage notice already explains why the run stopped. */}
-			{runError && runError !== error && !usageBlocked ? (
+			{runError && runError !== error && !outOfUsage ? (
 				<ComposerNotice title="Run couldn't continue">{runError}</ComposerNotice>
 			) : null}
 			{reconnecting ? (

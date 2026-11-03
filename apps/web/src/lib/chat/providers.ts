@@ -1,4 +1,4 @@
-import { providerServesVendor, type ProviderOrderEntry } from '@convex/lib/providerOrder';
+import type { ProviderOrderEntry } from '@convex/lib/providerOrder';
 import type { CompletionProvider } from '@convex/lib/validators';
 
 export const completionProviderLabels: Record<CompletionProvider, string> = {
@@ -6,15 +6,6 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	openai: 'OpenAI API',
 	chatgpt: 'ChatGPT Subscription'
 };
-
-export function providersForModel(
-	providers: readonly CompletionProvider[],
-	model: { provider: string } | undefined
-): CompletionProvider[] {
-	return model
-		? providers.filter((provider) => providerServesVendor(provider, model.provider))
-		: [];
-}
 
 /** Applies a new order of the shown providers, keeping hidden ones in their slots. */
 export function reorderShownProviders(

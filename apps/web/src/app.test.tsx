@@ -180,21 +180,6 @@ function createConvexFixtures(): ConvexTestClient {
 	return client;
 }
 
-function preferChatGpt(client: ConvexTestClient) {
-	client.registerQuery(api.uiPreferences.getMine, {
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		_id: 'preferences-a' as Id<'uiPreferences'>,
-		_creationTime: 1,
-		userId: 'user-a',
-		theme: 'light',
-		providerOrder: [
-			{ provider: 'chatgpt', enabled: true },
-			{ provider: 'spikonado', enabled: true },
-			{ provider: 'openai', enabled: true }
-		]
-	});
-}
-
 function createRuntime(localApi: LocalApi): AppRuntime {
 	return {
 		resolveLocalApi: async () => localApi,
@@ -991,52 +976,6 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 	expect(runAgent).toHaveBeenCalledOnce();
 });
 
-it('launches on the first enabled provider for the model even when it is not set up', async () => {
-	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
-	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
-
-	const runtime = createRuntime(
-		createLocalApi({
-			listProjectAttachments: async () => [alpha],
-			resolveWorkspacePath: async () => alpha,
-			runAgent
-		})
-	);
-
-	runtime.fetchGatewayModelCatalog = async () => ({
-		...modelCatalog,
-		models: [
-			...modelCatalog.models,
-			{ ...modelCatalog.models[0], id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai' }
-		]
-	});
-	const client = createConvexFixtures();
-	preferChatGpt(client);
-	await renderApp(client, runtime);
-	await projectTrigger('Alpha');
-	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
-	fireEvent.click(await screen.findByRole('button', { name: /GPT-6\.1 Sol/ }));
-	await waitFor(() =>
-		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toContain(
-			'GPT-6.1 Sol'
-		)
-	);
-	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
-	const send = screen.getByRole('button', { name: 'Send message' });
-	await waitFor(() => expect(send).toHaveProperty('disabled', false));
-	fireEvent.click(send);
-	await waitFor(() =>
-		expect(runAgent).toHaveBeenCalledWith(
-			expect.objectContaining({
-				completionProvider: 'chatgpt',
-				selectedModel: 'gpt-6.1-sol',
-				prompt: 'Fix the robot'
-			})
-		)
-	);
-});
-
 it('collapses a pending question once its run has finished', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
@@ -1407,12 +1346,11 @@ it('launches the continuation prompt after an agent question is answered', async
 	);
 });
 
-it('restores a ChatGPT continuation and launches it on ChatGPT', async () => {
+it('launches a continuation answered before leaving the thread when returning to it', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 
 	const thread = {
 		...threadRecord('thread-1', 'repo-alpha', 'Fix the robot'),
-		completionProvider: 'chatgpt' as const,
 		selectedModel: 'gpt-6.1-sol'
 	};
 
@@ -1440,7 +1378,6 @@ it('restores a ChatGPT continuation and launches it on ChatGPT', async () => {
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const client = createConvexFixtures();
-	preferChatGpt(client);
 	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
 	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
@@ -1487,7 +1424,6 @@ it('restores a ChatGPT continuation and launches it on ChatGPT', async () => {
 	await waitFor(() =>
 		expect(runAgent).toHaveBeenCalledWith(
 			expect.objectContaining({
-				completionProvider: 'chatgpt',
 				selectedModel: thread.selectedModel,
 				prompt: 'Continue with the robot fix',
 				continuationOfRunId: continuationRunId

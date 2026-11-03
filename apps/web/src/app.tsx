@@ -90,12 +90,9 @@ import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
-	getCatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import { providersForModel } from '$lib/chat/providers';
-import { enabledProviders } from '@convex/lib/providerOrder';
 import { isLifecycleInProgress } from '@convex/lib/runCancellation';
 import {
 	beginPendingAgentLaunch,
@@ -159,9 +156,6 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 }
 
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
-
-const noProviderMessage =
-	'No enabled provider offers this model. Check your providers in Settings → Providers.';
 
 const agentLaunchTimeoutMs = 30_000;
 
@@ -275,7 +269,6 @@ type ComposerRecovery = {
 	reasoningEffort?: string;
 	fastMode?: boolean;
 	selectedModel?: CatalogModelId;
-	completionProvider?: CompletionProvider;
 	submissionId?: string;
 	continuationOfRunId?: Id<'runs'>;
 	autoSubmit?: boolean;
@@ -613,7 +606,6 @@ export default function App({
 				reasoningEffort: string;
 				fastMode: boolean;
 				selectedModel: CatalogModelId;
-				completionProvider: CompletionProvider;
 				submissionId: string;
 				continuationOfRunId?: Id<'runs'>;
 			}
@@ -688,17 +680,6 @@ export default function App({
 		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
-	const providerOrder = uiPreferencesQuery.data?.providerOrder;
-
-	const availableProviders = useMemo(() => enabledProviders(providerOrder), [providerOrder]);
-
-	const selectedCatalogModel =
-		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
-
-	// A failed preferences read must not fall back to the default order and re-enable providers.
-	const providersReady = uiPreferencesQuery.data !== undefined;
-
-	const currentProvider = providersForModel(availableProviders, selectedCatalogModel).at(0);
 
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
@@ -1116,7 +1097,6 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
-		(pendingAgentQuestion || providersReady) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
@@ -1698,8 +1678,6 @@ export default function App({
 		);
 
 		const submittedModel = selectedModel;
-		const submittedCompletionProvider = currentProvider;
-		const submittedProvidersReady = providersReady;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
@@ -1747,7 +1725,6 @@ export default function App({
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
-				completionProvider: submittedCompletionProvider,
 				continuationOfRunId,
 				autoSubmit: true
 			});
@@ -1758,12 +1735,6 @@ export default function App({
 		if (continuationPrompt !== null) {
 			setComposerContinuationOfRunId(continuationOfRunId ?? null);
 			setPrompt(continuationPrompt);
-
-			if (!submittedProvidersReady) {
-				setAutoSubmitComposerContinuation(true);
-
-				return;
-			}
 
 			await submitPrompt(
 				{ answeredQuestionId: question.questionId, continuationOfRunId },
@@ -1846,12 +1817,6 @@ export default function App({
 			return;
 		}
 
-		if (!currentProvider) {
-			setCurrentError(noProviderMessage);
-
-			return;
-		}
-
 		const selectedThreadId = currentThreadId;
 		let submittedRepositoryKey = currentRepositoryKey;
 
@@ -1878,7 +1843,6 @@ export default function App({
 		);
 
 		const submittedModel = selectedModel;
-		const submittedCompletionProvider = currentProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 
@@ -1916,7 +1880,6 @@ export default function App({
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
-			completionProvider: submittedCompletionProvider,
 			continuationOfRunId: submittedContinuationOfRunId,
 			recoveredSubmission: recoveredSubmission
 				? { ...recoveredSubmission, selectedModel: recoveredSubmission.selectedModel }
@@ -1950,7 +1913,6 @@ export default function App({
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
-				completionProvider: submittedCompletionProvider,
 				continuationOfRunId: submittedContinuationOfRunId,
 				autoSubmit: false,
 				submissionId:
@@ -2121,7 +2083,6 @@ export default function App({
 				prompt: submittedPrompt,
 				storageIds: submittedStorageIds,
 				selectedModel: submittedModel,
-				completionProvider: submittedCompletionProvider,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
@@ -2223,7 +2184,6 @@ export default function App({
 			!currentProjectPath ||
 			!selectedModel ||
 			!selectedReasoningEffort ||
-			!providersReady ||
 			hasPendingAgentLaunch ||
 			isSubmittingPrompt
 		) {
@@ -2232,12 +2192,6 @@ export default function App({
 
 		if (!localApi) {
 			setCurrentError(localServerRequiredMessage);
-
-			return;
-		}
-
-		if (!currentProvider) {
-			setCurrentError(noProviderMessage);
 
 			return;
 		}
@@ -2286,7 +2240,6 @@ export default function App({
 				prompt: '',
 				storageIds: [],
 				selectedModel,
-				completionProvider: currentProvider,
 				reasoningEffort: selectedReasoningEffort,
 				fastMode,
 				submissionId: crypto.randomUUID(),
@@ -2459,8 +2412,7 @@ export default function App({
 				recovery.submissionId &&
 				(recovery.prompt || recovery.storageIds?.length) &&
 				recovery.reasoningEffort &&
-				recovery.selectedModel &&
-				recovery.completionProvider
+				recovery.selectedModel
 			) {
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
@@ -2468,7 +2420,6 @@ export default function App({
 					reasoningEffort: recovery.reasoningEffort,
 					fastMode: recovery.fastMode ?? false,
 					selectedModel: recovery.selectedModel,
-					completionProvider: recovery.completionProvider,
 					submissionId: recovery.submissionId,
 					continuationOfRunId: recovery.continuationOfRunId
 				});
@@ -2997,14 +2948,14 @@ export default function App({
 									className={!currentThreadId ? 'create-thread-composer' : ''}
 								>
 									<PromptComposer
-										notices={({ usageBlocked }) => (
+										notices={({ outOfUsage }) => (
 											<>
 												<PurchaseApprovals purchases={pendingApprovals} />
 												<ConversationNotices
 													key={currentThreadId}
 													error={conversationError}
 													runError={runError}
-													usageBlocked={usageBlocked}
+													outOfUsage={outOfUsage}
 													reconnecting={Boolean(
 														currentThreadId &&
 														transcript.threadId === currentThreadId &&
@@ -3029,8 +2980,6 @@ export default function App({
 										modelCatalog={modelCatalog}
 										selectedModel={selectedModel}
 										onSelectedModelChange={setSelectedModel}
-										availableProviders={availableProviders}
-										providersReady={providersReady}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										fastMode={fastMode}

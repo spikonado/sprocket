@@ -8,12 +8,12 @@ const usageLimit =
 	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
 
 function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}, key?: string) {
-	return ({ usageBlocked }: { usageBlocked: boolean }) => (
+	return ({ outOfUsage }: { outOfUsage: boolean }) => (
 		<ConversationNotices
 			key={key}
 			error={null}
 			runError={null}
-			usageBlocked={usageBlocked}
+			outOfUsage={outOfUsage}
 			reconnecting={false}
 			syncing={false}
 			catalogError={false}
@@ -42,7 +42,6 @@ function composer(
 			onSubmit={vi.fn()}
 			onCancel={vi.fn()}
 			usage={{ tier: 'pro', exhausted, resetsAt: null }}
-			usageFailed={false}
 		/>
 	);
 }

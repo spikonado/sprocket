@@ -113,15 +113,6 @@ fn unsupported_saved_settings_fall_back_quietly() {
     );
     assert!(!no_fast_model.unwrap().fast);
 
-    let no_fast_provider = resolve(
-        &[Chatgpt],
-        Some(saved("gpt", "low", true)),
-        Default::default(),
-    );
-    let no_fast_provider = no_fast_provider.unwrap();
-    assert_eq!(no_fast_provider.reasoning, "low");
-    assert!(!no_fast_provider.fast);
-
     let stale_reasoning = resolve(
         &[Spikonado],
         Some(saved("pro", "low", false)),
@@ -152,6 +143,5 @@ fn unsupported_explicit_choices_fail() {
         ..Default::default()
     };
     assert!(resolve(&[Spikonado], None, fast("pro")).is_err());
-    assert!(resolve(&[Chatgpt], None, fast("gpt")).is_err());
     assert!(resolve(&[Spikonado], None, fast("gpt")).unwrap().fast);
 }

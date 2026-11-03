@@ -89,7 +89,6 @@ export const getMine = query({
 	}
 });
 
-/** Lets the native CLI apply the web app's provider order without reimplementing it. */
 export const getMyEnabledProviders = query({
 	args: {},
 	returns: v.array(vCompletionProvider),

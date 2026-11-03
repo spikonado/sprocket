@@ -97,7 +97,6 @@ export type AgentRunRequest = {
 	prompt: string;
 	storageIds: Id<'_storage'>[];
 	selectedModel: string;
-	completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
 	reasoningEffort: string;
 	fastMode: boolean;
 	workspacePath: string;
