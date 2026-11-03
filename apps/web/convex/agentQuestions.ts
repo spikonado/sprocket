@@ -299,7 +299,9 @@ export const skip = mutation({
 			throw new Error('Question not found.');
 		}
 
-		if (question.status === 'skipped') return {};
+		if (question.status === 'skipped') {
+			return { continuation: await questionContinuation(ctx, question) };
+		}
 
 		await assertHeadPendingQuestion(ctx, question);
 		const before = await captureThreadActivityBeforeChange(ctx, args.threadId);

@@ -838,9 +838,49 @@ describe('agentQuestions', () => {
 				questionId: skippedAfterRun.questionId
 			})
 		).resolves.toEqual({ continuation: { runId, prompt: 'Yes' } });
+
+		const retry = await asUser.mutation(api.agentQuestions.skip, {
+			threadId,
+			questionId: skippedAfterRun.questionId
+		});
+
+		expect(retry).toEqual({ continuation: { runId, prompt: 'Yes' } });
 		await expect(
 			asUser.query(api.agentQuestions.headPendingForThread, { threadId })
 		).resolves.toBeNull();
+	});
+
+	it('does not start a follow-up when retrying a skip the run already used', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+			runId,
+			claimId,
+			question: 'Skip me?',
+			options: [{ id: 'a', label: 'A' }],
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentQuestions.skip, {
+			threadId,
+			questionId: question.questionId
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'completed',
+			executionSecret
+		});
+
+		const retry = await asUser.mutation(api.agentQuestions.skip, {
+			threadId,
+			questionId: question.questionId
+		});
+
+		expect(retry).toEqual({});
 	});
 
 	it('keeps a pending head answerable until its timeout mutation runs', async () => {
