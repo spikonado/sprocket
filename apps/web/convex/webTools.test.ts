@@ -102,27 +102,7 @@ async function rawDocument(t: ConvexTestInstance, url = 'https://example.com/rep
 }
 
 function scrapeResponse(overrides: Partial<WebScrapeResponse> = {}): WebScrapeResponse {
-<<<<<<< HEAD
-	return {
-		bytes: emptyOutput,
-		cache_metadata: { age_ms: 0, status: 'miss' },
-		highlights: emptyOutput,
-		html: emptyOutput,
-		images: emptyOutput,
-		json: emptyOutput,
-		markdown: { data: '# Page', requested: true, success: true },
-		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
-		parsed: { ...emptyOutput, type: 'custom' },
-		product: emptyOutput,
-		profile: null,
-		request_id: 'request-1',
-		screenshot: emptyOutput,
-		url: PAGE_URL,
-		...overrides
-	};
-=======
 	return contextDevScrapeResponse({ url: PAGE_URL, ...overrides });
->>>>>>> 4391ba9b (refactor(web): Ban TypeScript type assertions)
 }
 
 type ContextDevErrorBody = { error_code?: string; message?: string };

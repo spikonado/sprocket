@@ -73,7 +73,7 @@ export function contextDevScrapeResponse(
 		cache_metadata: { age_ms: 0, status: 'miss' },
 		highlights: emptyScrapeOutput,
 		html: emptyScrapeOutput,
-		images: { data: [], requested: true, success: true },
+		images: emptyScrapeOutput,
 		json: emptyScrapeOutput,
 		markdown: { data: '# Page', requested: true, success: true },
 		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
