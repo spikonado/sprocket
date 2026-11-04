@@ -18,7 +18,7 @@ describe('context handoff part-number cutoff', () => {
 		await t.run((ctx) =>
 			ctx.db.patch('threadRecords', threadId, {
 				contextSummary: 'No prior work',
-				contextSummaryThroughPartNumber: -1
+				contextSummaryPartCount: 0
 			})
 		);
 

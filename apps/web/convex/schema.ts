@@ -2,7 +2,6 @@ import { vWorkId } from '@convex-dev/workpool';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
-import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
@@ -129,12 +128,9 @@ export default defineSchema({
 		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
 		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
 	dodoPricingCache: defineTable({
-		// One row per provider environment + product id. Legacy rows key an
-		// entire tier set under cacheKey; new rows set environment/productId.
-		cacheKey: v.string(),
-		environment: v.optional(v.string()),
-		productId: v.optional(v.string()),
-		tierPrices: v.optional(v.array(vTierPrice)),
+		cacheKey: v.optional(v.string()),
+		environment: v.string(),
+		productId: v.string(),
 		price: v.optional(vDodoPublicPrice),
 		// Set on rows whose last refresh failed: transient errors retry after
 		// retryAt; definitive failures (missing/invalid/ambiguous) hold the
@@ -149,7 +145,6 @@ export default defineSchema({
 		leaseExpiresAt: v.optional(v.number()),
 		expiresAt: v.number()
 	})
-		.index('by_cacheKey', ['cacheKey'])
 		.index('by_environment_and_productId', ['environment', 'productId'])
 		.index('by_environment_and_leaseExpiresAt', ['environment', 'leaseExpiresAt']),
 	subscriptionReconciliations: defineTable({
@@ -273,7 +268,7 @@ export default defineSchema({
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		contextSummary: v.optional(v.string()),
-		// Inclusive last covered part. -1 means the handoff covers an empty prefix.
+		contextSummaryPartCount: v.optional(v.number()),
 		contextSummaryThroughPartNumber: v.optional(v.number()),
 		contextSummaryHandoffKey: v.optional(v.string()),
 		reasoningStrippedThroughPartNumber: v.optional(v.number()),
@@ -413,19 +408,15 @@ export default defineSchema({
 		.index('by_threadId_and_displayOrder', ['threadId', 'displayOrder']),
 	threadTranscriptMemberships: defineTable({
 		threadId: v.id('threadRecords'),
-		// Entry rows written by current section writes; legacy membership rows
-		// are gone after the completed write-time migration.
-		number: v.optional(v.number()),
-		work: v.optional(workMembership),
-		entryKey: v.optional(v.string()),
-		sectionKey: v.optional(v.string()),
-		runId: v.optional(v.id('runs')),
-		partNumber: v.optional(v.number()),
-		start: v.optional(v.number()),
-		end: v.optional(v.number()),
+		entryKey: v.string(),
+		sectionKey: v.string(),
+		runId: v.id('runs'),
+		partNumber: v.number(),
+		start: v.number(),
+		end: v.number(),
 		toolInvocationId: v.optional(v.string()),
-		sectionOrdinal: v.optional(v.number()),
-		closed: v.optional(v.boolean())
+		sectionOrdinal: v.number(),
+		closed: v.boolean()
 	})
 		.index('by_threadId_and_entryKey', ['threadId', 'entryKey'])
 		.index('by_threadId_sectionKey_partNumber_start', [

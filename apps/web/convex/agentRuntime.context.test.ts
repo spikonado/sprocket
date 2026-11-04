@@ -67,7 +67,7 @@ async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecor
 
 		return {
 			contextSummary: thread?.contextSummary,
-			contextSummaryThroughPartNumber: thread?.contextSummaryThroughPartNumber
+			contextSummaryPartCount: thread?.contextSummaryPartCount
 		};
 	});
 }
@@ -522,7 +522,7 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'First step is done.',
-			contextSummaryThroughPartNumber: 2
+			contextSummaryPartCount: 3
 		});
 		const usage = await readThreadUsage(t, threadId);
 		expect(usage.contextTokens).toBeUndefined();
@@ -608,7 +608,7 @@ describe('agentRuntime context accounting', () => {
 			})
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
-			contextSummaryThroughPartNumber: 1
+			contextSummaryPartCount: 2
 		});
 		expect((await readThreadUsage(t, threadId)).totals).toEqual([
 			expect.objectContaining({ calls: 1 })
@@ -693,7 +693,7 @@ describe('agentRuntime context accounting', () => {
 			['prompt', 'environment']
 		]);
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
-			contextSummaryThroughPartNumber: 2
+			contextSummaryPartCount: 3
 		});
 	});
 
@@ -749,7 +749,7 @@ describe('agentRuntime context accounting', () => {
 
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'The old work is complete.',
-			contextSummaryThroughPartNumber: 1
+			contextSummaryPartCount: 2
 		});
 		expect((await readThreadUsage(t, threadId)).contextTokens).toBeUndefined();
 
@@ -906,7 +906,7 @@ describe('agentRuntime context accounting', () => {
 		).rejects.toThrow('Invalid context handoff cutoff.');
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
 			contextSummary: 'First step is done.',
-			contextSummaryThroughPartNumber: 1
+			contextSummaryPartCount: 2
 		});
 	});
 
@@ -992,7 +992,7 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'The old work is complete.',
-			contextSummaryThroughPartNumber: 1
+			contextSummaryPartCount: 2
 		});
 
 		const state = await asUser.query(api.transcript.getStateForRun, {
@@ -1042,7 +1042,7 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'No prior work to cover.',
-			contextSummaryThroughPartNumber: -1
+			contextSummaryPartCount: 0
 		});
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
 			historyFromNumber: 0
@@ -1185,7 +1185,7 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
 			contextSummary: 'Parent work is done.',
-			contextSummaryThroughPartNumber: 1
+			contextSummaryPartCount: 2
 		});
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
 			historyFromNumber: 2
@@ -1248,7 +1248,7 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(false);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: undefined,
-			contextSummaryThroughPartNumber: undefined
+			contextSummaryPartCount: undefined
 		});
 
 		await t.run(async (ctx) => {

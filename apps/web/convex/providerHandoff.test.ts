@@ -191,7 +191,7 @@ describe('provider handoff provenance', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, {
 				contextSummary: 'Old work summarized',
-				contextSummaryThroughPartNumber: 0
+				contextSummaryPartCount: 1
 			});
 		});
 		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');

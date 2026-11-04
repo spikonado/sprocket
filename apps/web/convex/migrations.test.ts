@@ -81,3 +81,45 @@ test('run removes stored artifact types', async () => {
 	expect(artifact?.title).toBe('page.html');
 	vi.useRealTimers();
 });
+
+test('run converts context summary cutoffs to part counts and drops pricing cache keys', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId: emptyPrefixThreadId } = await seedOwnedThread(t);
+	const { threadId: summarizedThreadId } = await seedOwnedThread(t);
+
+	const pricingRowId = await t.run(async (ctx) => {
+		await ctx.db.patch('threadRecords', emptyPrefixThreadId, {
+			contextSummary: 'Nothing yet',
+			contextSummaryThroughPartNumber: -1
+		});
+		await ctx.db.patch('threadRecords', summarizedThreadId, {
+			contextSummary: 'Covered work',
+			contextSummaryThroughPartNumber: 4
+		});
+
+		return ctx.db.insert('dodoPricingCache', {
+			cacheKey: 'live_mode:prod_1',
+			environment: 'live_mode',
+			productId: 'prod_1',
+			expiresAt: 0
+		});
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const [emptyPrefix, summarized, pricingRow] = await t.run((ctx) =>
+		Promise.all([
+			ctx.db.get('threadRecords', emptyPrefixThreadId),
+			ctx.db.get('threadRecords', summarizedThreadId),
+			ctx.db.get('dodoPricingCache', pricingRowId)
+		])
+	);
+
+	expect(emptyPrefix).toMatchObject({ contextSummaryPartCount: 0 });
+	expect(emptyPrefix).not.toHaveProperty('contextSummaryThroughPartNumber');
+	expect(summarized).toMatchObject({ contextSummaryPartCount: 5 });
+	expect(pricingRow).not.toHaveProperty('cacheKey');
+	vi.useRealTimers();
+});

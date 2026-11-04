@@ -23,7 +23,28 @@ export const removeArtifactTypes = migrations.define({
 	}
 });
 
+export const dropPricingCacheKeys = migrations.define({
+	table: 'dodoPricingCache',
+	migrateOne: (_ctx, row) => {
+		if (row.cacheKey !== undefined) return { cacheKey: undefined };
+	}
+});
+
+export const countContextSummaryParts = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		if (thread.contextSummaryThroughPartNumber === undefined) return;
+
+		return {
+			contextSummaryPartCount: thread.contextSummaryThroughPartNumber + 1,
+			contextSummaryThroughPartNumber: undefined
+		};
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
-	internal.migrations.removeArtifactTypes
+	internal.migrations.removeArtifactTypes,
+	internal.migrations.dropPricingCacheKeys,
+	internal.migrations.countContextSummaryParts
 ]);

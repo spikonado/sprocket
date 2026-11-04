@@ -19,7 +19,7 @@ import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToke
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
-	existingThroughPartNumber,
+	existingContextSummaryPartCount,
 	getProviderHandoff,
 	throughPartNumberForHandoff
 } from '@convex/lib/contextHandoff';
@@ -484,17 +484,18 @@ async function recordContextHandoff(
 
 	const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 
-	const throughPartNumber = await throughPartNumberForHandoff(ctx, {
-		threadId: run.threadId,
-		runId: run._id,
-		beforePrompt: args.beforePrompt ?? false
-	});
+	const partCount =
+		(await throughPartNumberForHandoff(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			beforePrompt: args.beforePrompt ?? false
+		})) + 1;
 
 	const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
-	const existingCutoff = existingThroughPartNumber(thread);
+	const existingPartCount = existingContextSummaryPartCount(thread);
 
 	if (thread.contextSummaryHandoffKey === handoffKey) {
-		if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
+		if (existingPartCount !== undefined && partCount < existingPartCount) {
 			throw new Error('Invalid context handoff cutoff.');
 		}
 
@@ -505,13 +506,14 @@ async function recordContextHandoff(
 		return true;
 	}
 
-	if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
+	if (existingPartCount !== undefined && partCount < existingPartCount) {
 		throw new Error('Invalid context handoff cutoff.');
 	}
 
 	await ctx.db.patch('threadRecords', thread._id, {
 		contextSummary: args.summary,
-		contextSummaryThroughPartNumber: throughPartNumber,
+		contextSummaryPartCount: partCount,
+		contextSummaryThroughPartNumber: undefined,
 		contextSummaryHandoffKey: handoffKey
 	});
 

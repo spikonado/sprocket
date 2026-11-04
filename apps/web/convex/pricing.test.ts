@@ -87,56 +87,6 @@ describe('public pricing catalog', () => {
 		}
 	);
 
-	it('caches Dodo prices until their expiration', async () => {
-		const t = initConvexTest();
-
-		const tierPrices = [
-			{
-				tierId: 'team',
-				interval: 'monthly' as const,
-				price: {
-					productId: 'prod_monthly',
-					name: 'Team Monthly',
-					amountMinor: 2_000,
-					currency: 'USD',
-					paymentFrequencyCount: 1,
-					paymentFrequencyInterval: 'Month'
-				}
-			},
-			{
-				tierId: 'team',
-				interval: 'annual' as const,
-				price: {
-					productId: 'prod_annual',
-					name: 'Team Annual',
-					amountMinor: 20_000,
-					currency: 'USD',
-					paymentFrequencyCount: 1,
-					paymentFrequencyInterval: 'Year'
-				}
-			}
-		];
-
-		await t.mutation(internal.pricingData.cacheTierPrices, {
-			cacheKey: 'test:monthly:annual',
-			tierPrices,
-			expiresAt: 2_000
-		});
-
-		await expect(
-			t.query(internal.pricingData.getCachedTierPrices, {
-				cacheKey: 'test:monthly:annual',
-				now: 1_999
-			})
-		).resolves.toEqual(tierPrices);
-		await expect(
-			t.query(internal.pricingData.getCachedTierPrices, {
-				cacheKey: 'test:monthly:annual',
-				now: 2_000
-			})
-		).resolves.toBeNull();
-	});
-
 	it('returns every tier in card order with card defaults when Dodo is not configured', async () => {
 		for (const key of ENV_KEYS) vi.stubEnv(key, undefined);
 		const t = initConvexTest();
@@ -205,7 +155,7 @@ describe('public pricing catalog', () => {
 		const t = initConvexTest();
 		const now = Date.now();
 
-		const tierPrices = await t.run(async (ctx) => {
+		const prices = await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
@@ -214,47 +164,40 @@ describe('public pricing catalog', () => {
 				annualProductId: 'prod_team_annual'
 			});
 
-			const tierPrices = [
-				{
-					tierId: 'team',
-					interval: 'monthly' as const,
-					price: {
-						productId: 'prod_team_monthly',
-						name: 'Team Monthly',
-						amountMinor: 2_000,
-						currency: 'USD',
-						paymentFrequencyCount: 1,
-						paymentFrequencyInterval: 'Month'
-					}
+			const prices = {
+				monthly: {
+					productId: 'prod_team_monthly',
+					name: 'Team Monthly',
+					amountMinor: 2_000,
+					currency: 'USD',
+					paymentFrequencyCount: 1,
+					paymentFrequencyInterval: 'Month'
 				},
-				{
-					tierId: 'team',
-					interval: 'annual' as const,
-					price: {
-						productId: 'prod_team_annual',
-						name: 'Team Annual',
-						amountMinor: 20_000,
-						currency: 'USD',
-						paymentFrequencyCount: 1,
-						paymentFrequencyInterval: 'Year'
-					}
+				annual: {
+					productId: 'prod_team_annual',
+					name: 'Team Annual',
+					amountMinor: 20_000,
+					currency: 'USD',
+					paymentFrequencyCount: 1,
+					paymentFrequencyInterval: 'Year'
 				}
-			];
+			};
 
-			await ctx.db.insert('dodoPricingCache', {
-				cacheKey: 'test_mode:team:annual:prod_team_annual|team:monthly:prod_team_monthly',
-				tierPrices,
-				expiresAt: now + 60_000
-			});
+			for (const price of Object.values(prices)) {
+				await ctx.db.insert('dodoPricingCache', {
+					environment: 'test_mode',
+					productId: price.productId,
+					price,
+					validatedAt: now,
+					expiresAt: now + 60_000
+				});
+			}
 
-			return tierPrices;
+			return prices;
 		});
 
 		const catalog = await t.action(api.pricing.getPublicCatalog, {});
-		expect(catalog.plans[0]?.prices).toEqual({
-			monthly: tierPrices[0]?.price,
-			annual: tierPrices[1]?.price
-		});
+		expect(catalog.plans[0]?.prices).toEqual(prices);
 	});
 
 	it('coalesces cold-cache refreshes through the lease and skips provider calls', async () => {
@@ -497,7 +440,6 @@ describe('public pricing catalog', () => {
 		await t.run(async (ctx) => {
 			for (let i = 0; i < 8; i++) {
 				await ctx.db.insert('dodoPricingCache', {
-					cacheKey: `test_mode:prod_held_${i}`,
 					environment: 'test_mode',
 					productId: `prod_held_${i}`,
 					expiresAt: 0,

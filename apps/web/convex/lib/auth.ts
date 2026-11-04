@@ -33,66 +33,26 @@ export async function requireIdentity(
 	return identity;
 }
 
-/** Earliest row wins so first-login duplicates converge deterministically. */
-export function pickPrimaryUser(rows: Array<Doc<'users'>>): Doc<'users'> | null {
-	if (rows.length === 0) return null;
-
-	return [...rows].sort(
-		(a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id)
-	)[0];
-}
-
-export async function getPrimaryUser(
+export async function getUserBySubject(
 	db: GenericQueryCtx<DataModel>['db'],
 	subject: string
 ): Promise<Doc<'users'> | null> {
-	const rows = await db
+	return await db
 		.query('users')
 		.withIndex('by_subject', (query) => query.eq('subject', subject))
-		.collect();
-
-	return pickPrimaryUser(rows);
-}
-
-export async function getCurrentUser(
-	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>
-): Promise<Doc<'users'> | null> {
-	const subject = await getUserId(ctx);
-
-	const rows = await ctx.db
-		.query('users')
-		.withIndex('by_subject', (query) => query.eq('subject', subject))
-		.collect();
-
-	return pickPrimaryUser(rows);
+		.unique();
 }
 
 export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Promise<Doc<'users'>> {
 	const identity = await requireIdentity(ctx);
 	const email = identity.email!;
+	const existing = await getUserBySubject(ctx.db, identity.subject);
 
-	const rows = await ctx.db
-		.query('users')
-		.withIndex('by_subject', (query) => query.eq('subject', identity.subject))
-		.collect();
+	if (existing) {
+		if (email === existing.email) return existing;
+		await ctx.db.patch('users', existing._id, { email });
 
-	if (rows.length > 0) {
-		let primary = pickPrimaryUser(rows);
-
-		if (!primary) throw new Error('Failed to resolve the user record.');
-
-		// A first-login race can insert two rows for one subject; converge on
-		// the earliest instead of poisoning later unique reads.
-		for (const extra of rows) {
-			if (extra._id !== primary._id) await ctx.db.delete('users', extra._id);
-		}
-
-		if (email !== primary.email) {
-			await ctx.db.patch('users', primary._id, { email });
-			primary = { ...primary, email };
-		}
-
-		return primary;
+		return { ...existing, email };
 	}
 
 	const newUser = {

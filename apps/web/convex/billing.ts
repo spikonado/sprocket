@@ -10,7 +10,7 @@ import {
 } from '@convex/_generated/server';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
-import { ensureCurrentUser, getPrimaryUser, getUserId, requireIdentity } from '@convex/lib/auth';
+import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
 import {
 	computeAccess,
 	identityTakeoverAllowed,
@@ -139,7 +139,7 @@ export const getMySubscription = query({
 		const subscription = await getSubscriptionDoc(ctx, userId);
 		const tier = subscriptionMaterializedTier(subscription);
 
-		const user = await getPrimaryUser(ctx.db, userId);
+		const user = await getUserBySubject(ctx.db, userId);
 
 		const accessPhase = paidAccessState(subscription);
 
@@ -1297,7 +1297,7 @@ export async function applyDodoSubscriptionProjection(
 		};
 	}
 
-	const user = await getPrimaryUser(ctx.db, userId);
+	const user = await getUserBySubject(ctx.db, userId);
 
 	if (user?.dodoCustomerId && user.dodoCustomerId !== args.dodoCustomerId) {
 		throw new Error('Dodo subscription customer does not match this account.');

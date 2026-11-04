@@ -300,13 +300,8 @@ export const getPublicCatalog = action({
 		const environment = readDodoEnvironment(env);
 		const now = Date.now();
 
-		const cacheKey = `${environment}:${configuredProducts
-			.map(({ tierId, interval, productId }) => `${tierId}:${interval}:${productId}`)
-			.sort()
-			.join('|')}`;
-
 		const cachedRows: Array<{
-			productId: string | null;
+			productId: string;
 			price: DodoPublicPrice | null;
 			expiresAt: number;
 			refreshFailed: boolean;
@@ -315,7 +310,6 @@ export const getPublicCatalog = action({
 			leaseActive: boolean;
 		}> = await ctx.runQuery(internal.pricingData.getProductPricesForEnvironment, {
 			environment,
-			cacheKey,
 			productIds: configuredProducts.map((product) => product.productId),
 			now
 		});
@@ -327,15 +321,11 @@ export const getPublicCatalog = action({
 		const priceByProduct = new Map<string, DodoPublicPrice>();
 
 		for (const row of cachedRows) {
-			if (!row.productId || !row.price) continue;
+			if (!row.price || row.validatedAt === null) continue;
 
 			// Bounded staleness: display is allowed from the last provider
-			// confirmation only, never extended by retry deadlines. Rows without
-			// a confirmation time (legacy aggregate rows) fall back to their
-			// expiry as the confirmation bound.
-			const confirmedAt = row.validatedAt ?? row.expiresAt;
-
-			if (confirmedAt + DODO_PRICE_STALE_MAX_MS <= now) continue;
+			// confirmation only, never extended by retry deadlines.
+			if (row.validatedAt + DODO_PRICE_STALE_MAX_MS <= now) continue;
 
 			if (
 				ambiguousProducts.has(row.productId) ||
