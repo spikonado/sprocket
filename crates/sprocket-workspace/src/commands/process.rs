@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::process::ExitStatus;
-use std::sync::Arc;
-use std::time::Duration;
 #[cfg(windows)]
 use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
