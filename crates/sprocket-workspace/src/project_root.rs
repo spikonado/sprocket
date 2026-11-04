@@ -24,5 +24,11 @@ pub(crate) fn discover_repository(cwd: &Path) -> Option<gix::Repository> {
         options.ceiling_dirs.push(temp_root);
     }
 
-    gix::discover_opts(cwd, options, gix::open::Options::default()).ok()
+    let mut repo = gix::discover_opts(cwd, options, gix::open::Options::default()).ok()?;
+    let _ = repo.make_paths_absolute();
+    Some(repo)
 }
+
+#[cfg(test)]
+mod tests;
+
