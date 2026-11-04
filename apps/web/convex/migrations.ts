@@ -2,6 +2,7 @@ import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
+import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, { schema, internalMutation });
 
@@ -42,9 +43,19 @@ export const countContextSummaryParts = migrations.define({
 	}
 });
 
+export const backfillSubscriptionAccess = migrations.define({
+	table: 'subscriptions',
+	migrateOne: async (ctx, subscription) => {
+		if (subscription.accessPhase !== undefined) return;
+
+		await scheduleSubscriptionExpiry(ctx, subscription);
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
 	internal.migrations.dropPricingCacheKeys,
-	internal.migrations.countContextSummaryParts
+	internal.migrations.countContextSummaryParts,
+	internal.migrations.backfillSubscriptionAccess
 ]);

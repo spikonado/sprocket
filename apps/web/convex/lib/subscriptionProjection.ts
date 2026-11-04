@@ -1,20 +1,25 @@
 import type { Doc } from '@convex/_generated/dataModel';
-import { RENEWAL_GRACE_MS } from '@convex/lib/tiers';
+import {
+	accessPhaseAt,
+	isOperatorGrant,
+	RENEWAL_GRACE_MS,
+	type AccessClock
+} from '@convex/lib/tiers';
 
-type AccessPhase = 'paid' | 'renewal_processing' | 'none';
+/**
+ * Webhooks order by the provider's event time. Reconciliation observations
+ * order by when they were retrieved, and never stamp a watermark, so they
+ * cannot fence out a delayed webhook.
+ */
+export type PayloadSource =
+	{ source: 'webhook'; eventAt: number } | { source: 'observation'; observedAt: number };
 
-export type SubscriptionPayload = {
+export type SubscriptionPayload = PayloadSource & {
 	dodoSubscriptionId: string;
 	dodoProductId: string;
 	dodoCustomerId: string;
 	status:
 		'active' | 'on_hold' | 'cancelled' | 'expired' | 'failed' | 'paused' | 'pending' | 'past_due';
-	eventAt: number;
-	// When this observation was retrieved from the provider. Absent on
-	// webhook events; present on reconciliation observations, which carry
-	// `eventAt` only as billing-period provenance and order behind any
-	// webhook event stamped at or after `observedAt`.
-	observedAt?: number;
 	billingInterval: 'monthly' | 'annual';
 	billingPeriodStart: number;
 	billingPeriodEnd: number;
@@ -50,12 +55,8 @@ export function normalizedTerminalOrHold(status: string): boolean {
 	);
 }
 
-// Ordering position against a stored watermark. Observations order at their
-// retrieval time (`observedAt`) instead of their provenance `eventAt`;
-// `observedAt` is never written into a watermark, so it cannot fence out a
-// delayed legitimate webhook.
-function orderAt(payload: { eventAt: number; observedAt?: number }): number {
-	return payload.observedAt ?? payload.eventAt;
+export function payloadPosition(payload: PayloadSource): number {
+	return payload.source === 'webhook' ? payload.eventAt : payload.observedAt;
 }
 
 type ScheduledChange = { id: string; productId: string; effectiveAt: number };
@@ -116,7 +117,7 @@ export function isStalePayload({ existing, payload }: TransitionFences): boolean
 	if (existing.dodoSubscriptionId !== payload.dodoSubscriptionId) return false;
 
 	const watermark = existing.payloadEventAt ?? existing.eventAt;
-	const position = orderAt(payload);
+	const position = payloadPosition(payload);
 
 	if (position < watermark) return true;
 
@@ -143,7 +144,7 @@ export function isStaleStatus({ existing, payload }: TransitionFences): boolean 
 	if (existing.dodoSubscriptionId !== payload.dodoSubscriptionId) return false;
 
 	const watermark = existing.eventAt;
-	const position = orderAt(payload);
+	const position = payloadPosition(payload);
 
 	if (position < watermark) return true;
 
@@ -168,7 +169,7 @@ export function isStaleTerm(
 	)
 		return true;
 
-	if (orderAt(payload) !== termAt) return orderAt(payload) < termAt;
+	if (payloadPosition(payload) !== termAt) return payloadPosition(payload) < termAt;
 
 	if (payload.billingPeriodStart !== existing.billingPeriodStart)
 		return payload.billingPeriodStart < (existing.billingPeriodStart ?? -Infinity);
@@ -179,7 +180,7 @@ export function isStaleTerm(
 export function isStaleSchedule({ existing, payload }: TransitionFences): boolean {
 	if (!existing || existing.dodoSubscriptionId !== payload.dodoSubscriptionId) return false;
 	const watermark = existing.scheduleEventAt ?? existing.payloadEventAt ?? existing.eventAt;
-	const position = orderAt(payload);
+	const position = payloadPosition(payload);
 
 	if (position !== watermark) return position < watermark;
 
@@ -214,50 +215,33 @@ export function identityTakeoverAllowed(
 	return 'competing';
 }
 
-export type SubscriptionAccessSource = Pick<
-	Doc<'subscriptions'>,
-	| 'status'
-	| 'dodoSubscriptionId'
-	| 'billingPeriodStart'
-	| 'billingPeriodEnd'
-	| 'cancelAtNextBillingDate'
->;
-
-type Access = { accessPhase: AccessPhase; accessEndsAt: number | undefined };
-
-function access(accessPhase: AccessPhase, accessEndsAt: number | undefined): Access {
-	return { accessPhase, accessEndsAt };
+/** The materialized access fields: the phase at `now` and when it next changes. */
+export function computeAccess(subscription: AccessClock, now: number) {
+	return {
+		accessPhase: accessPhaseAt(subscription, now),
+		accessEndsAt: accessBoundary(subscription, now)
+	};
 }
 
-export function computeAccess(subscription: SubscriptionAccessSource, now: number) {
-	if (subscription.status !== 'active') return access('none', undefined);
+function accessBoundary(subscription: AccessClock, now: number): number | undefined {
+	const { billingPeriodStart: termStart, billingPeriodEnd: termEnd } = subscription;
 
-	if (!subscription.dodoSubscriptionId) return access('paid', undefined);
+	if (
+		subscription.status !== 'active' ||
+		isOperatorGrant(subscription) ||
+		termEnd === undefined ||
+		!Number.isFinite(termEnd)
+	)
+		return undefined;
 
-	if (!Number.isFinite(subscription.billingPeriodEnd)) {
-		return access('none', undefined);
-	}
+	if (termStart !== undefined && (!Number.isFinite(termStart) || termStart >= termEnd))
+		return termEnd;
 
-	const termEnd = subscription.billingPeriodEnd!;
-	const termStart = subscription.billingPeriodStart;
+	if (termStart !== undefined && now < termStart) return termStart;
 
-	if (termStart !== undefined && (!Number.isFinite(termStart) || termStart >= termEnd)) {
-		return access('none', termEnd);
-	}
+	if (now < termEnd || subscription.cancelAtNextBillingDate === true) return termEnd;
 
-	if (termStart !== undefined && now < termStart) return access('none', termStart);
-
-	if (now < termEnd) return access('paid', termEnd);
-
-	if (subscription.cancelAtNextBillingDate) {
-		return access('none', termEnd);
-	}
-
-	const graceEnd = termEnd + RENEWAL_GRACE_MS;
-
-	if (now < graceEnd) return access('renewal_processing', graceEnd);
-
-	return access('none', graceEnd);
+	return termEnd + RENEWAL_GRACE_MS;
 }
 
 export function projectionMatches(

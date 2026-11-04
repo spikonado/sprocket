@@ -8,8 +8,9 @@ import {
 	mutation,
 	query
 } from '@convex/_generated/server';
-import type { MutationCtx } from '@convex/_generated/server';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { WithoutSystemFields } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
 import {
 	computeAccess,
@@ -19,18 +20,22 @@ import {
 	isStaleTerm,
 	isStaleSchedule,
 	normalizedTerminalOrHold,
+	payloadPosition,
 	projectionMatches,
-	resolveEffectiveTier
+	resolveEffectiveTier,
+	type PayloadSource,
+	type SubscriptionPayload
 } from '@convex/lib/subscriptionProjection';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import {
+	displayAccessPhase,
+	displayTier,
+	enforcementAccessPhase,
 	ensureSubscription,
 	getSubscriptionDoc,
 	getTierLabel,
-	listSubscriptionDocs,
-	subscriptionIsActive,
-	subscriptionMaterializedPhase,
-	subscriptionMaterializedTier
+	isOperatorGrant,
+	listSubscriptionDocs
 } from '@convex/lib/tiers';
 import {
 	vBillingInterval,
@@ -96,9 +101,7 @@ type SubscriptionActivityRow = Pick<
 	| 'tier'
 	| 'status'
 	| 'dodoSubscriptionId'
-	| 'billingPeriodEnd'
 	| 'accessPhase'
-	| 'accessEndsAt'
 	| 'cancelAtNextBillingDate'
 	| 'terminalConfirmed'
 >;
@@ -106,7 +109,7 @@ type SubscriptionActivityRow = Pick<
 function paidAccessState(subscription: SubscriptionActivityRow | null): PaidAccessState {
 	if (!subscription || subscription.tier === 'free') return 'none';
 
-	const phase = subscriptionMaterializedPhase(subscription);
+	const phase = displayAccessPhase(subscription);
 
 	if (phase === 'paid' || phase === 'renewal_processing') {
 		return subscription.cancelAtNextBillingDate === true ? 'scheduled_cancel' : 'active';
@@ -137,7 +140,7 @@ export const getMySubscription = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const subscription = await getSubscriptionDoc(ctx, userId);
-		const tier = subscriptionMaterializedTier(subscription);
+		const tier = displayTier(subscription);
 
 		const user = await getUserBySubject(ctx.db, userId);
 
@@ -610,14 +613,16 @@ export const attachCheckoutSession = internalMutation({
 	}
 });
 
-async function findCheckoutAttempt(
-	ctx: MutationCtx,
-	userId: string,
-	attemptId: string
-): Promise<{
+type CheckoutAttemptRef = {
 	row: Doc<'billingCheckoutSessions'> | Doc<'billingCheckoutAttempts'>;
 	table: 'billingCheckoutSessions' | 'billingCheckoutAttempts';
-} | null> {
+};
+
+async function findCheckoutAttempt(
+	ctx: QueryCtx,
+	userId: string,
+	attemptId: string
+): Promise<CheckoutAttemptRef | null> {
 	const current = await ctx.db
 		.query('billingCheckoutSessions')
 		.withIndex('by_userId_and_attemptId', (query) =>
@@ -1020,7 +1025,7 @@ export const attemptActivated = internalQuery({
 		const subscriptions = await listSubscriptionDocs(ctx, args.userId);
 
 		for (const subscription of subscriptions) {
-			if (!subscriptionIsActive(subscription, args.now)) continue;
+			if (enforcementAccessPhase(subscription, args.now) === 'none') continue;
 
 			if (subscription.checkoutAttemptId !== args.attemptId) continue;
 
@@ -1096,22 +1101,18 @@ export const upsertDodoSubscription = internalMutation({
 		),
 		detail: v.optional(v.string())
 	}),
-	handler: async (ctx, args) => await applyDodoSubscriptionProjection(ctx, args)
+	handler: async (ctx, args) =>
+		await applyDodoSubscriptionProjection(ctx, { ...args, source: 'webhook' })
 });
 
-type DodoSubscriptionEventArgs = {
+type DodoSubscriptionEventArgs = PayloadSource & {
 	userId?: string;
 	tier?: string;
 	checkoutAttemptId?: string;
 	dodoSubscriptionId: string;
 	dodoProductId: string;
 	dodoCustomerId: string;
-	status:
-		'active' | 'on_hold' | 'cancelled' | 'expired' | 'failed' | 'paused' | 'pending' | 'past_due';
-	// Provider event time on webhooks; billing-period provenance on
-	// reconciliation observations, which order on observedAt instead.
-	eventAt: number;
-	observedAt?: number;
+	status: SubscriptionPayload['status'];
 	billingInterval: 'monthly' | 'annual';
 	billingPeriodStart: number;
 	billingPeriodEnd: number;
@@ -1124,10 +1125,72 @@ export type ProjectionOutcome = {
 	detail?: string;
 };
 
+type ReconcileRequest = {
+	subscriptionId: Id<'subscriptions'>;
+	dodoSubscriptionId: string;
+	projectionRevision: number;
+	force?: boolean;
+};
+
+type ProjectionWrite = {
+	kind: 'write';
+	now: number;
+	existingId: Id<'subscriptions'> | undefined;
+	subscription: WithoutSystemFields<Doc<'subscriptions'>> & {
+		dodoSubscriptionId: string;
+		projectionRevision: number;
+	};
+	paidAttempt: CheckoutAttemptRef | null;
+	linkCustomer: { userId: Id<'users'>; dodoCustomerId: string } | null;
+	supersededDodoSubscriptionId: string | null;
+	reconcileAfterWrite: boolean;
+	outcome: 'applied' | 'noop';
+};
+
+type ProjectionPlan =
+	| { kind: 'rejected'; result: ProjectionOutcome; reconcile?: ReconcileRequest }
+	| { kind: 'converged'; subscriptionId: Id<'subscriptions'>; observedAt: number | undefined }
+	| ProjectionWrite;
+
 export async function applyDodoSubscriptionProjection(
 	ctx: MutationCtx,
 	args: DodoSubscriptionEventArgs
 ): Promise<ProjectionOutcome> {
+	return await writeSubscriptionProjection(
+		ctx,
+		await planSubscriptionProjection(ctx, args, Date.now())
+	);
+}
+
+function forcedReconcile(
+	existing: Doc<'subscriptions'>,
+	dodoSubscriptionId: string
+): ReconcileRequest {
+	return {
+		subscriptionId: existing._id,
+		dodoSubscriptionId,
+		projectionRevision: existing.projectionRevision ?? 0,
+		force: true
+	};
+}
+
+function keptWatermarks(existing: Doc<'subscriptions'> | null) {
+	const eventAt = existing?.eventAt ?? 0;
+	const payloadEventAt = existing?.payloadEventAt ?? eventAt;
+
+	return {
+		eventAt,
+		payloadEventAt,
+		scheduleEventAt: existing?.scheduleEventAt ?? payloadEventAt,
+		termEventAt: existing?.termEventAt ?? eventAt
+	};
+}
+
+async function planSubscriptionProjection(
+	ctx: QueryCtx,
+	args: DodoSubscriptionEventArgs,
+	now: number
+): Promise<ProjectionPlan> {
 	if (!Number.isFinite(args.billingPeriodStart) || !Number.isFinite(args.billingPeriodEnd)) {
 		throw new Error('Dodo billing period boundaries must be finite.');
 	}
@@ -1136,13 +1199,13 @@ export async function applyDodoSubscriptionProjection(
 		throw new Error('Dodo billing period must have a positive duration.');
 	}
 
-	const now = Date.now();
-
-	// Provider pause is unsupported and must never grant access.
 	if (args.status === 'paused' || args.status === 'pending') {
 		return {
-			outcome: 'unresolved' as const,
-			detail: `Unsupported Dodo subscription status "${args.status}".`
+			kind: 'rejected',
+			result: {
+				outcome: 'unresolved',
+				detail: `Unsupported Dodo subscription status "${args.status}".`
+			}
 		};
 	}
 
@@ -1155,8 +1218,11 @@ export async function applyDodoSubscriptionProjection(
 
 	if (!userId) {
 		return {
-			outcome: 'unresolved' as const,
-			detail: `Dodo subscription ${args.dodoSubscriptionId} has no mapped Sprocket user.`
+			kind: 'rejected',
+			result: {
+				outcome: 'unresolved',
+				detail: `Dodo subscription ${args.dodoSubscriptionId} has no mapped Sprocket user.`
+			}
 		};
 	}
 
@@ -1169,23 +1235,21 @@ export async function applyDodoSubscriptionProjection(
 
 	// Dodo's failed status is mandate-creation failure, not a failed upgrade charge.
 	if (sameIdentity && args.status === 'failed' && existing.status !== 'failed') {
-		await ctx.scheduler.runAfter(0, internal.subscriptionReconciliation.queueReconciliation, {
-			subscriptionId: existing._id,
-			dodoSubscriptionId: args.dodoSubscriptionId,
-			projectionRevision: existing.projectionRevision ?? 0,
-			force: true
-		});
-
 		return {
-			outcome: 'unresolved',
-			detail: 'Mandate failure conflicts with an established subscription.'
+			kind: 'rejected',
+			result: {
+				outcome: 'unresolved',
+				detail: 'Mandate failure conflicts with an established subscription.'
+			},
+			reconcile: forcedReconcile(existing, args.dodoSubscriptionId)
 		};
 	}
 
-	// Operator-granted paid subscriptions without a Dodo id are never
-	// overwritten by provider events.
-	if (existing?.status === 'active' && existing.tier !== 'free' && !existing.dodoSubscriptionId) {
-		return { outcome: 'competing' as const, detail: 'Operator-granted subscription preserved.' };
+	if (existing?.status === 'active' && existing.tier !== 'free' && isOperatorGrant(existing)) {
+		return {
+			kind: 'rejected',
+			result: { outcome: 'competing', detail: 'Operator-granted subscription preserved.' }
+		};
 	}
 
 	if (existing?.dodoSubscriptionId !== args.dodoSubscriptionId) {
@@ -1198,19 +1262,26 @@ export async function applyDodoSubscriptionProjection(
 
 		if (superseded) {
 			return {
-				outcome: 'stale' as const,
-				detail: `Superseded Dodo subscription ${args.dodoSubscriptionId}.`
+				kind: 'rejected',
+				result: {
+					outcome: 'stale',
+					detail: `Superseded Dodo subscription ${args.dodoSubscriptionId}.`
+				}
 			};
 		}
 	}
 
+	const source: PayloadSource =
+		args.source === 'webhook'
+			? { source: 'webhook', eventAt: args.eventAt }
+			: { source: 'observation', observedAt: args.observedAt };
+
 	const payload = {
+		...source,
 		dodoSubscriptionId: args.dodoSubscriptionId,
 		dodoProductId: args.dodoProductId,
 		dodoCustomerId: args.dodoCustomerId,
 		status: args.status,
-		eventAt: args.eventAt,
-		observedAt: args.observedAt,
 		billingInterval: args.billingInterval,
 		billingPeriodStart: args.billingPeriodStart,
 		billingPeriodEnd: args.billingPeriodEnd,
@@ -1219,7 +1290,6 @@ export async function applyDodoSubscriptionProjection(
 	};
 
 	const normalizedStatus = payload.status === 'past_due' ? 'on_hold' : payload.status;
-	const isObservation = payload.observedAt !== undefined;
 
 	const staleStatus = isStaleStatus({ existing, payload });
 	const stalePayload = isStalePayload({ existing, payload });
@@ -1227,7 +1297,7 @@ export async function applyDodoSubscriptionProjection(
 	const staleSchedule = isStaleSchedule({ existing, payload });
 
 	if (staleStatus && stalePayload && staleTerm && staleSchedule) {
-		return { outcome: 'stale' as const };
+		return { kind: 'rejected', result: { outcome: 'stale' } };
 	}
 
 	if (stalePayload && existing) {
@@ -1248,7 +1318,7 @@ export async function applyDodoSubscriptionProjection(
 	const incomingStatus =
 		normalizedStatus === 'cancelled' &&
 		payload.cancelAtNextBillingDate &&
-		(payload.observedAt ?? payload.eventAt) < payload.billingPeriodEnd
+		payloadPosition(payload) < payload.billingPeriodEnd
 			? 'active'
 			: normalizedStatus;
 
@@ -1257,10 +1327,10 @@ export async function applyDodoSubscriptionProjection(
 	const effectiveStatus = keepStatus && existing ? existing.status : incomingStatus;
 
 	if (
+		payload.source === 'webhook' &&
 		sameIdentity &&
-		!isObservation &&
 		existing.observedAt !== undefined &&
-		args.eventAt < existing.observedAt &&
+		payload.eventAt < existing.observedAt &&
 		args.billingPeriodStart <= (existing.billingPeriodStart ?? args.billingPeriodStart) &&
 		!projectionMatches(existing, {
 			tier: existing.tier,
@@ -1273,25 +1343,25 @@ export async function applyDodoSubscriptionProjection(
 			scheduledChange: args.scheduledChange ?? null
 		})
 	) {
-		await ctx.scheduler.runAfter(0, internal.subscriptionReconciliation.queueReconciliation, {
-			subscriptionId: existing._id,
-			dodoSubscriptionId: args.dodoSubscriptionId,
-			projectionRevision: existing.projectionRevision ?? 0,
-			force: true
-		});
-
 		return {
-			outcome: 'unresolved',
-			detail: 'Delayed webhook conflicts with a provider observation; retrieval required.'
+			kind: 'rejected',
+			result: {
+				outcome: 'unresolved',
+				detail: 'Delayed webhook conflicts with a provider observation; retrieval required.'
+			},
+			reconcile: forcedReconcile(existing, args.dodoSubscriptionId)
 		};
 	}
 
 	if (identityTakeoverAllowed(existing, payload) === 'competing') {
 		return {
-			outcome: 'competing' as const,
-			detail:
-				`Conflicting Dodo subscription ${args.dodoSubscriptionId} while ` +
-				`${existing?.dodoSubscriptionId} is not authoritatively terminal.`
+			kind: 'rejected',
+			result: {
+				outcome: 'competing',
+				detail:
+					`Conflicting Dodo subscription ${args.dodoSubscriptionId} while ` +
+					`${existing?.dodoSubscriptionId} is not authoritatively terminal.`
+			}
 		};
 	}
 
@@ -1301,36 +1371,22 @@ export async function applyDodoSubscriptionProjection(
 		throw new Error('Dodo subscription customer does not match this account.');
 	}
 
-	const currentAttempt = args.checkoutAttemptId
-		? await ctx.db
-				.query('billingCheckoutSessions')
-				.withIndex('by_userId_and_attemptId', (query) =>
-					query.eq('userId', userId).eq('attemptId', args.checkoutAttemptId!)
-				)
-				.unique()
+	const selectedAttempt = args.checkoutAttemptId
+		? await findCheckoutAttempt(ctx, userId, args.checkoutAttemptId)
 		: null;
-
-	const retainedAttempt = args.checkoutAttemptId
-		? await ctx.db
-				.query('billingCheckoutAttempts')
-				.withIndex('by_userId_and_attemptId', (query) =>
-					query.eq('userId', userId).eq('attemptId', args.checkoutAttemptId!)
-				)
-				.unique()
-		: null;
-
-	const selectedAttempt = currentAttempt ?? retainedAttempt;
-
-	const matchedAttempt = selectedAttempt?.productId === args.dodoProductId ? selectedAttempt : null;
 
 	// Only the attempt this subscription actually paid through may be marked
 	// paid; a different open reservation for the same account is untouched.
-	const paidAttempt = matchedAttempt;
+	const matchedAttempt =
+		selectedAttempt?.row.productId === args.dodoProductId ? selectedAttempt : null;
 
-	if (matchedAttempt && matchedAttempt.interval !== args.billingInterval) {
+	if (matchedAttempt && matchedAttempt.row.interval !== args.billingInterval) {
 		return {
-			outcome: 'unresolved',
-			detail: 'Subscription interval does not match the checkout attempt.'
+			kind: 'rejected',
+			result: {
+				outcome: 'unresolved',
+				detail: 'Subscription interval does not match the checkout attempt.'
+			}
 		};
 	}
 
@@ -1344,7 +1400,10 @@ export async function applyDodoSubscriptionProjection(
 		existing.billingInterval !== undefined &&
 		existing.billingInterval !== args.billingInterval
 	) {
-		return { outcome: 'unresolved', detail: 'An established product changed billing interval.' };
+		return {
+			kind: 'rejected',
+			result: { outcome: 'unresolved', detail: 'An established product changed billing interval.' }
+		};
 	}
 
 	const metadataTier = productUnchanged ? (args.tier ?? null) : null;
@@ -1352,7 +1411,7 @@ export async function applyDodoSubscriptionProjection(
 	const resolvedTier = resolveEffectiveTier({
 		existing,
 		payload,
-		checkoutTier: matchedAttempt?.tierId ?? null,
+		checkoutTier: matchedAttempt?.row.tierId ?? null,
 		metadataTier,
 		configuredTier:
 			productUnchanged || matchedAttempt || stalePayload
@@ -1361,40 +1420,38 @@ export async function applyDodoSubscriptionProjection(
 	});
 
 	if (resolvedTier.unresolved && !stalePayload) {
-		return { outcome: 'unresolved' as const, detail: resolvedTier.detail };
+		return { kind: 'rejected', result: { outcome: 'unresolved', detail: resolvedTier.detail } };
 	}
 
 	const tier =
 		stalePayload && existing ? existing.tier : resolvedTier.unresolved ? 'free' : resolvedTier.tier;
 
-	const sameSubscription =
-		existing !== null && existing.dodoSubscriptionId === payload.dodoSubscriptionId;
+	const kept = keptWatermarks(existing);
 
-	// Webhooks advance the term watermark with their own provider event time.
-	// Observations never stamp it: their eventAt is billing-period provenance,
-	// so a retrieval cannot fence out a delayed legitimate webhook.
-	const termEventAt = isObservation
-		? (existing?.termEventAt ?? existing?.eventAt ?? 0)
-		: !staleTerm
-			? Math.max(payload.eventAt, existing?.termEventAt ?? -Infinity)
-			: (existing?.termEventAt ?? payload.eventAt);
+	const watermarks =
+		payload.source === 'observation'
+			? kept
+			: {
+					eventAt: keepStatus ? kept.eventAt : payload.eventAt,
+					payloadEventAt: stalePayload ? kept.payloadEventAt : payload.eventAt,
+					scheduleEventAt: staleSchedule ? kept.scheduleEventAt : payload.eventAt,
+					termEventAt: staleTerm
+						? (existing?.termEventAt ?? payload.eventAt)
+						: Math.max(payload.eventAt, existing?.termEventAt ?? -Infinity)
+				};
 
-	const previousTier = sameSubscription ? existing.tier : undefined;
+	const previousTier = sameIdentity ? existing.tier : undefined;
 
 	// Usage generation resets once per confirmed effective tier change or new
 	// subscription. Renewals, status-only events, scheduled changes, and
 	// unchanged-product remaps never mint a fresh generation.
-	const isNewIdentity = !existing || !sameSubscription;
-
-	const winsPayloadWatermark = !sameSubscription || !stalePayload;
-
 	const isPlanChange = previousTier !== undefined && previousTier !== tier;
 
 	const priorGeneration = existing?.quotaGeneration ?? existing?.quotaResetAt;
-	const transitionAt = payload.observedAt ?? payload.eventAt;
+	const transitionAt = payloadPosition(payload);
 
 	const resets =
-		isNewIdentity || (isPlanChange && winsPayloadWatermark)
+		!sameIdentity || (isPlanChange && !stalePayload)
 			? {
 					generation: (priorGeneration ?? 0) + 1,
 					transitionAt,
@@ -1407,9 +1464,9 @@ export async function applyDodoSubscriptionProjection(
 				};
 
 	const terminalConfirmed =
-		effectiveStatus === 'cancelled' || effectiveStatus === 'expired' || effectiveStatus === 'failed'
-			? true
-			: false;
+		effectiveStatus === 'cancelled' ||
+		effectiveStatus === 'expired' ||
+		effectiveStatus === 'failed';
 
 	const projected = {
 		tier,
@@ -1436,129 +1493,146 @@ export async function applyDodoSubscriptionProjection(
 	// Redelivery of an already-converged projection is a no-op; watermarks
 	// advance only through the applied path.
 	const matches =
-		sameSubscription &&
+		sameIdentity &&
 		projectionMatches(existing, projected) &&
 		existing.terminalConfirmed === terminalConfirmed;
 
-	const statusEventAt = isObservation || keepStatus ? (existing?.eventAt ?? 0) : payload.eventAt;
-
-	const productEventAt =
-		isObservation || stalePayload
-			? (existing?.payloadEventAt ?? existing?.eventAt ?? 0)
-			: payload.eventAt;
-
-	const scheduleEventAt =
-		isObservation || staleSchedule
-			? (existing?.scheduleEventAt ?? existing?.payloadEventAt ?? existing?.eventAt ?? 0)
-			: payload.eventAt;
-
 	if (
 		matches &&
-		statusEventAt === existing.eventAt &&
-		productEventAt === existing.payloadEventAt &&
-		termEventAt === existing.termEventAt &&
-		scheduleEventAt === existing.scheduleEventAt
+		watermarks.eventAt === existing.eventAt &&
+		watermarks.payloadEventAt === existing.payloadEventAt &&
+		watermarks.termEventAt === existing.termEventAt &&
+		watermarks.scheduleEventAt === existing.scheduleEventAt
 	) {
-		if (payload.observedAt !== undefined)
-			await ctx.db.patch('subscriptions', existing._id, { observedAt: payload.observedAt });
-
-		return { outcome: 'noop' as const };
+		return {
+			kind: 'converged',
+			subscriptionId: existing._id,
+			observedAt: payload.source === 'observation' ? payload.observedAt : undefined
+		};
 	}
 
-	if (paidAttempt && paidAttempt.outcome !== 'paid' && effectiveStatus === 'active') {
-		const current = currentAttempt;
-
-		if (current) {
-			await ctx.db.patch('billingCheckoutSessions', current._id, {
-				outcome: 'paid',
-				outcomeUpdatedAt: now,
-				checkoutUrl: undefined,
-				createRequest: undefined,
-				idempotencyKey: undefined
-			});
-		} else {
-			const retained = retainedAttempt;
-
-			if (retained) {
-				await ctx.db.patch('billingCheckoutAttempts', retained._id, {
-					outcome: 'paid',
-					outcomeUpdatedAt: now,
-					checkoutUrl: undefined,
-					createRequest: undefined,
-					idempotencyKey: undefined
-				});
-			}
-		}
-	}
-
-	if (user && !user.dodoCustomerId) {
-		await ctx.db.patch('users', user._id, { dodoCustomerId: args.dodoCustomerId });
-	}
-
-	// Only a webhook-confirmed new identity supersedes; observations never do.
-	if (
-		existing?.dodoSubscriptionId &&
-		existing.dodoSubscriptionId !== payload.dodoSubscriptionId &&
-		!isObservation
-	) {
-		await ctx.db.insert('supersededSubscriptions', {
+	return {
+		kind: 'write',
+		now,
+		existingId: existing?._id,
+		subscription: {
 			userId,
-			dodoSubscriptionId: existing.dodoSubscriptionId,
-			supersededAt: now
+			tier,
+			status: effectiveStatus,
+			...watermarks,
+			providerStatus: keepStatus ? (existing?.providerStatus ?? existing?.status) : args.status,
+			projectionRevision: (existing?.projectionRevision ?? 0) + 1,
+			observedAt: payload.source === 'observation' ? payload.observedAt : existing?.observedAt,
+			checkoutAttemptId:
+				matchedAttempt?.row.attemptId ?? (sameIdentity ? existing.checkoutAttemptId : undefined),
+			accessPhase: access.accessPhase,
+			accessEndsAt: access.accessEndsAt,
+			scheduledChange: payload.scheduledChange ?? undefined,
+			billingInterval: payload.billingInterval,
+			billingPeriodStart: payload.billingPeriodStart,
+			billingPeriodEnd: payload.billingPeriodEnd,
+			billingPeriodCheckId: existing?.billingPeriodCheckId,
+			cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
+			quotaGeneration: resets.generation ?? existing?.quotaGeneration,
+			quotaTransitionAt: resets.transitionAt ?? existing?.quotaTransitionAt,
+			quotaResetAt: resets.resetAt,
+			terminalConfirmed,
+			dodoSubscriptionId: payload.dodoSubscriptionId,
+			dodoProductId: payload.dodoProductId
+		},
+		paidAttempt:
+			matchedAttempt && matchedAttempt.row.outcome !== 'paid' && effectiveStatus === 'active'
+				? matchedAttempt
+				: null,
+		linkCustomer:
+			user && !user.dodoCustomerId
+				? { userId: user._id, dodoCustomerId: args.dodoCustomerId }
+				: null,
+		// Only a webhook-confirmed new identity supersedes; observations never do.
+		supersededDodoSubscriptionId:
+			payload.source === 'webhook' &&
+			existing?.dodoSubscriptionId &&
+			existing.dodoSubscriptionId !== payload.dodoSubscriptionId
+				? existing.dodoSubscriptionId
+				: null,
+		reconcileAfterWrite:
+			payload.source === 'webhook' &&
+			access.accessPhase === 'none' &&
+			!terminalConfirmed &&
+			(!sameIdentity || existing.accessPhase !== 'none' || existing.status !== effectiveStatus),
+		outcome: matches ? 'noop' : 'applied'
+	};
+}
+
+async function writeSubscriptionProjection(
+	ctx: MutationCtx,
+	plan: ProjectionPlan
+): Promise<ProjectionOutcome> {
+	switch (plan.kind) {
+		case 'rejected':
+			if (plan.reconcile) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.subscriptionReconciliation.queueReconciliation,
+					plan.reconcile
+				);
+			}
+
+			return plan.result;
+		case 'converged':
+			if (plan.observedAt !== undefined) {
+				await ctx.db.patch('subscriptions', plan.subscriptionId, { observedAt: plan.observedAt });
+			}
+
+			return { outcome: 'noop' };
+		case 'write':
+			return await writeProjectedSubscription(ctx, plan);
+	}
+}
+
+async function writeProjectedSubscription(
+	ctx: MutationCtx,
+	plan: ProjectionWrite
+): Promise<ProjectionOutcome> {
+	const { subscription } = plan;
+
+	if (plan.paidAttempt) {
+		await ctx.db.patch(plan.paidAttempt.table, plan.paidAttempt.row._id, {
+			outcome: 'paid',
+			outcomeUpdatedAt: plan.now,
+			checkoutUrl: undefined,
+			createRequest: undefined,
+			idempotencyKey: undefined
 		});
 	}
 
-	const revision = (existing?.projectionRevision ?? 0) + 1;
+	if (plan.linkCustomer) {
+		await ctx.db.patch('users', plan.linkCustomer.userId, {
+			dodoCustomerId: plan.linkCustomer.dodoCustomerId
+		});
+	}
 
-	// Watermarks hold webhook provider event times only; observations never
-	// stamp them, so a delayed legitimate webhook is never fenced out.
-	const subscription = {
-		userId,
-		tier,
-		status: effectiveStatus,
-		eventAt: statusEventAt,
-		providerStatus: keepStatus ? (existing?.providerStatus ?? existing?.status) : args.status,
-		payloadEventAt: productEventAt,
-		scheduleEventAt,
-		termEventAt,
-		projectionRevision: revision,
-		observedAt: payload.observedAt ?? existing?.observedAt,
-		checkoutAttemptId:
-			matchedAttempt?.attemptId ?? (sameSubscription ? existing.checkoutAttemptId : undefined),
-		accessPhase: access.accessPhase,
-		accessEndsAt: access.accessEndsAt,
-		scheduledChange: payload.scheduledChange ?? undefined,
-		billingInterval: payload.billingInterval,
-		billingPeriodStart: payload.billingPeriodStart,
-		billingPeriodEnd: payload.billingPeriodEnd,
-		billingPeriodCheckId: existing?.billingPeriodCheckId,
-		cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
-		quotaGeneration: resets.generation ?? existing?.quotaGeneration,
-		quotaTransitionAt: resets.transitionAt ?? existing?.quotaTransitionAt,
-		quotaResetAt: resets.resetAt,
-		terminalConfirmed,
-		dodoSubscriptionId: payload.dodoSubscriptionId,
-		dodoProductId: payload.dodoProductId
-	};
+	if (plan.supersededDodoSubscriptionId) {
+		await ctx.db.insert('supersededSubscriptions', {
+			userId: subscription.userId,
+			dodoSubscriptionId: plan.supersededDodoSubscriptionId,
+			supersededAt: plan.now
+		});
+	}
 
-	const subscriptionId = existing?._id ?? (await ctx.db.insert('subscriptions', subscription));
+	const subscriptionId = plan.existingId ?? (await ctx.db.insert('subscriptions', subscription));
 
-	if (existing) await ctx.db.replace('subscriptions', subscriptionId, subscription);
+	if (plan.existingId) await ctx.db.replace('subscriptions', subscriptionId, subscription);
 
 	await scheduleSubscriptionExpiry(ctx, { _id: subscriptionId, ...subscription });
 
-	if (
-		!isObservation &&
-		access.accessPhase === 'none' &&
-		!terminalConfirmed &&
-		(!sameSubscription || existing.accessPhase !== 'none' || existing.status !== effectiveStatus)
-	) {
+	if (plan.reconcileAfterWrite) {
 		await ctx.scheduler.runAfter(0, internal.subscriptionReconciliation.queueReconciliation, {
 			subscriptionId,
-			dodoSubscriptionId: payload.dodoSubscriptionId,
-			projectionRevision: revision
+			dodoSubscriptionId: subscription.dodoSubscriptionId,
+			projectionRevision: subscription.projectionRevision
 		});
 	}
 
-	return { outcome: matches ? ('noop' as const) : ('applied' as const) };
+	return { outcome: plan.outcome };
 }

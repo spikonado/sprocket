@@ -1,5 +1,5 @@
 import type { Doc } from '@convex/_generated/dataModel';
-import { subscriptionAccessPhase } from '@convex/lib/tiers';
+import { enforcementAccessPhase } from '@convex/lib/tiers';
 
 type UsageWindow = { start: number; end: number };
 
@@ -34,7 +34,7 @@ export function billingWindow(
 	now: number = Date.now()
 ): UsageWindow {
 	const date = new Date(now);
-	const access = subscriptionAccessPhase(subscription, now);
+	const access = enforcementAccessPhase(subscription, now);
 	const paid = subscription !== null && access !== 'none' && !!subscription.dodoSubscriptionId;
 
 	if (paid && subscription.billingInterval === 'monthly') {

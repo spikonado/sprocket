@@ -18,19 +18,6 @@ type ExpiryFields = Pick<
 	| 'cancelAtNextBillingDate'
 >;
 
-function accessTarget(subscription: ExpiryFields, now: number) {
-	return computeAccess(
-		{
-			status: subscription.status,
-			dodoSubscriptionId: subscription.dodoSubscriptionId,
-			billingPeriodStart: subscription.billingPeriodStart,
-			billingPeriodEnd: subscription.billingPeriodEnd,
-			cancelAtNextBillingDate: subscription.cancelAtNextBillingDate
-		},
-		now
-	);
-}
-
 export async function scheduleSubscriptionExpiry(
 	ctx: MutationCtx,
 	subscription: ExpiryFields
@@ -39,7 +26,7 @@ export async function scheduleSubscriptionExpiry(
 	const { dodoSubscriptionId, billingPeriodCheckId } = subscription;
 	const managed = dodoSubscriptionId !== undefined && subscription.billingPeriodEnd !== undefined;
 
-	const target = accessTarget(subscription, now);
+	const target = computeAccess(subscription, now);
 
 	const phaseCurrent = subscription.accessPhase === target.accessPhase;
 
@@ -121,7 +108,7 @@ export const checkSubscriptionExpiry = internalMutation({
 			return null;
 		}
 
-		const target = accessTarget(subscription, now);
+		const target = computeAccess(subscription, now);
 
 		if (
 			subscription.accessPhase === target.accessPhase &&

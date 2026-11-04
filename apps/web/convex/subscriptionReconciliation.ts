@@ -315,8 +315,6 @@ export const reconcileSubscription = internalAction({
 			dodoProductId: retrieved.productId,
 			dodoCustomerId: retrieved.customerId,
 			status,
-			// Billing-period provenance only; ordering uses observedAt.
-			eventAt: previousBillingDate,
 			observedAt,
 			billingInterval: interval,
 			billingPeriodStart: previousBillingDate,
@@ -389,7 +387,6 @@ export const applyObservation = internalMutation({
 			v.literal('failed'),
 			v.literal('past_due')
 		),
-		eventAt: v.number(),
 		observedAt: v.number(),
 		billingInterval: v.union(v.literal('monthly'), v.literal('annual')),
 		billingPeriodStart: v.number(),
@@ -420,6 +417,6 @@ export const applyObservation = internalMutation({
 			};
 		}
 
-		return await applyDodoSubscriptionProjection(ctx, args);
+		return await applyDodoSubscriptionProjection(ctx, { ...args, source: 'observation' });
 	}
 });
