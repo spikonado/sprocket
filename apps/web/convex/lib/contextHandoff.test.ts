@@ -28,6 +28,27 @@ describe('context handoff part-number cutoff', () => {
 		});
 	});
 
+	it.each([
+		[-1, 0],
+		[2, 3]
+	])(
+		'starts history after an unmigrated cutoff of %i at part %i',
+		async (contextSummaryThroughPartNumber, historyFromNumber) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			await t.run((ctx) =>
+				ctx.db.patch('threadRecords', threadId, {
+					contextSummary: 'Covered prior work',
+					contextSummaryThroughPartNumber
+				})
+			);
+
+			expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+				historyFromNumber
+			});
+		}
+	);
+
 	it('rejects a summary missing its cutoff instead of replaying covered reasoning', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
