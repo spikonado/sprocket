@@ -2,6 +2,7 @@ use anyhow::{Context, anyhow};
 use futures::StreamExt;
 use rig::completion::Message;
 use rig::message::UserContent;
+use sprocket_convex::{ConvexErrorCode, convex_error_code};
 use sprocket_workspace::{
     BUILTIN_SKILLS, WorkspaceSkill, default_user_skills_dirs, load_workspace_instructions,
     load_workspace_skills, resolve_directory, resolve_workspace_root, simplified_path,
@@ -30,10 +31,6 @@ use sprocket_transcript::{
     TranscriptStore, apply_remote_state, cache_attachments, cache_prompt_attachments,
 };
 
-// Keep RUN_CLAIM_LEASE_DURATION synchronized with
-// apps/web/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
-const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(120);
-const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(40);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
 const RUN_CLAIM_RENEW_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -43,16 +40,9 @@ const START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2_
 const START_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 
-/// Must match the createGatewayRun conflict ConvexErrors in
-/// apps/web/convex/lib/runCreate.ts ("Submission belongs to a different ...").
-const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
 const CONTINUE_PROMPT: &str = "continue";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
-
-fn submission_owned_by_another_executor(error: &str) -> bool {
-    error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
-}
 
 pub struct AgentRun {
     request: RunAgentRequest,
@@ -355,7 +345,7 @@ async fn claim_run(
     runtime: &RuntimeClient,
     run_id: &str,
     claim_id: &str,
-) -> anyhow::Result<Option<Instant>> {
+) -> anyhow::Result<Option<ClaimLease>> {
     let mut request_started_at = Instant::now();
     let start = match start_run_once(runtime, run_id, claim_id).await {
         Ok(start) => start,
@@ -390,33 +380,62 @@ async fn claim_run(
     }
 
     eprintln!("sprocket-agent: marked run running {}", run_id);
-    Ok(Some(request_started_at))
+    Ok(Some(ClaimLease::new(
+        request_started_at,
+        start.lease_duration_ms,
+    )))
+}
+
+/// Anchored to the start of the request that granted it, so the local
+/// deadline never falls after the server's.
+#[derive(Clone, Copy, Debug)]
+struct ClaimLease {
+    granted_at: Instant,
+    duration: Duration,
+}
+
+impl ClaimLease {
+    fn new(granted_at: Instant, duration_ms: u64) -> Self {
+        Self {
+            granted_at,
+            duration: Duration::from_millis(duration_ms),
+        }
+    }
+
+    fn deadline(self) -> Instant {
+        self.granted_at + self.duration
+    }
+
+    fn renew_at(self) -> Instant {
+        self.granted_at + self.duration / 3
+    }
 }
 
 async fn renew_claim_once(
     runtime: &RuntimeClient,
     run_id: &str,
     claim_id: &str,
-) -> anyhow::Result<(bool, Instant)> {
+) -> anyhow::Result<Option<ClaimLease>> {
     let request_started_at = Instant::now();
-    let renewed = tokio::time::timeout(
+    let response = tokio::time::timeout(
         RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
         runtime.renew_claim(run_id, claim_id),
     )
     .await
-    .map_err(|_| anyhow!("claim renewal timed out"))?
-    .map(|response| response.renewed)?;
-    Ok((renewed, request_started_at))
+    .map_err(|_| anyhow!("claim renewal timed out"))??;
+    Ok(response
+        .renewed
+        .then(|| ClaimLease::new(request_started_at, response.lease_duration_ms)))
 }
 
 async fn renew_claim_with<F, Fut>(
     run_id: &str,
     lease_deadline: Instant,
     mut attempt: F,
-) -> anyhow::Result<(bool, Instant)>
+) -> anyhow::Result<Option<ClaimLease>>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = anyhow::Result<(bool, Instant)>>,
+    Fut: Future<Output = anyhow::Result<Option<ClaimLease>>>,
 {
     let mut first_error: Option<String> = None;
     loop {
@@ -453,29 +472,24 @@ struct ClaimLeaseLost(anyhow::Error);
 /// server decides lease ownership.
 async fn drive_claim_lease<R, RFut, F, T>(
     run_id: &str,
-    lease_started_at: Instant,
+    mut lease: ClaimLease,
     mut renew: R,
     operation: F,
 ) -> Result<T, ClaimLeaseLost>
 where
     R: FnMut(Instant) -> RFut,
-    RFut: Future<Output = anyhow::Result<(bool, Instant)>>,
+    RFut: Future<Output = anyhow::Result<Option<ClaimLease>>>,
     F: Future<Output = T>,
 {
-    let mut lease_deadline = lease_started_at + RUN_CLAIM_LEASE_DURATION;
-    let mut next_renewal_at = lease_started_at + RUN_CLAIM_RENEW_INTERVAL;
     tokio::pin!(operation);
 
     loop {
         tokio::select! {
             biased;
-            _ = sleep_until(next_renewal_at) => {
-                match renew(lease_deadline).await.map_err(ClaimLeaseLost)? {
-                    (true, renewal_started_at) => {
-                        lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
-                        next_renewal_at = renewal_started_at + RUN_CLAIM_RENEW_INTERVAL;
-                    }
-                    (false, _) => {
+            _ = sleep_until(lease.renew_at()) => {
+                match renew(lease.deadline()).await.map_err(ClaimLeaseLost)? {
+                    Some(renewed) => lease = renewed,
+                    None => {
                         return Err(ClaimLeaseLost(anyhow!(
                             "claim lease for run {run_id} was lost"
                         )));
@@ -491,7 +505,7 @@ async fn run_with_claim_lease<F, T>(
     runtime: &RuntimeClient,
     run_id: &str,
     claim_id: &str,
-    lease_started_at: Instant,
+    lease: ClaimLease,
     operation: F,
 ) -> Result<T, ClaimLeaseLost>
 where
@@ -499,7 +513,7 @@ where
 {
     drive_claim_lease(
         run_id,
-        lease_started_at,
+        lease,
         move |lease_deadline| {
             renew_claim_with(run_id, lease_deadline, move || {
                 renew_claim_once(runtime, run_id, claim_id)
@@ -592,15 +606,16 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
 
 pub async fn finalize_failed_start(
     request: RunAgentRequest,
-    startup_error: String,
+    startup_error: &anyhow::Error,
 ) -> anyhow::Result<()> {
-    if submission_owned_by_another_executor(&startup_error) {
+    if convex_error_code(startup_error) == Some(ConvexErrorCode::SubmissionOwnedByAnotherExecutor) {
         eprintln!(
             "sprocket-agent: submission {} already belongs to an active run; standing down",
             request.submission_id
         );
         return Ok(());
     }
+    let startup_error = format!("{startup_error:#}");
     let runtime = RuntimeClient::from_request(&request).await?;
     runtime.client.clear_auth().await;
     let text = format!("Run failed before the model started: {startup_error}");
@@ -963,7 +978,7 @@ pub async fn run_agent(
 
     eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
-    let Some(lease_started_at) = claim_run(&runtime, &run_id, &claim_id).await? else {
+    let Some(lease) = claim_run(&runtime, &run_id, &claim_id).await? else {
         // Another executor owns the run and begins it.
         let _ = begun.send(());
         return Ok(());
@@ -1011,7 +1026,7 @@ pub async fn run_agent(
     let mut prior_messages = prior_history.messages;
     prior_messages.extend(new_workspace_context.iter().map(HiddenPrompt::message));
 
-    match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
+    match run_with_claim_lease(&runtime, &run_id, &claim_id, lease, async {
         let provider_result = provider
             .run(
                 runtime.clone(),

@@ -183,6 +183,7 @@ async fn launch_agent_inner(
     let auth_token_fetcher = host
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
+    let automatic_recovery = recovery.is_some();
     let mut recovery = recovery.unwrap_or_else(|| {
         crate::run_recovery::RecoveryRecord::new(
             payload.clone(),
@@ -223,6 +224,7 @@ async fn launch_agent_inner(
         workspace_path,
         installation_id: host.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
+        automatic_recovery,
         subagent_launcher: Some(crate::subagent_launcher::launcher(&host)),
         transcript_store: Some(Arc::clone(&host.transcript)),
         installed_connectors: installed_connectors(&host),
@@ -253,12 +255,12 @@ async fn launch_agent_inner(
                 let startup_error = format!("{error:#}");
                 let mut cleanup_request = cleanup_request;
                 cleanup_request.auth_token_fetcher = auth_token_fetcher;
-                match timeout(
+                let cleanup = timeout(
                     AGENT_START_CLEANUP_TIMEOUT,
-                    finalize_failed_start(cleanup_request, startup_error.clone()),
+                    finalize_failed_start(cleanup_request, &error),
                 )
-                .await
-                {
+                .await;
+                match cleanup {
                     Ok(Ok(())) => Err(error),
                     Ok(Err(cleanup_error)) => Err(anyhow!(
                         "{startup_error}; additionally failed to reconcile the startup: {cleanup_error:#}"

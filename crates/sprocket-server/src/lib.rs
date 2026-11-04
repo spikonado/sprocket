@@ -121,12 +121,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     }
 }
 
-pub enum ServerExit {
-    Stopped,
-    Restart,
-}
-
-pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<ServerExit> {
+pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
     let profile = ProfileLock::acquire(&data_dir)?;
@@ -256,11 +251,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
     host_tasks.shutdown().await;
     pending_chatgpt_oauth.shutdown().await;
     result?;
-    Ok(if host.lifetime.restart_requested() {
-        ServerExit::Restart
-    } else {
-        ServerExit::Stopped
-    })
+    Ok(())
 }
 
 async fn shutdown_signal() {

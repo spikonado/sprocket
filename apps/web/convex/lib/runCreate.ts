@@ -4,7 +4,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
-import { SPROCKET_SUBMISSION_WAITING } from '@convex/lib/agentErrors';
+import { agentError } from '@convex/lib/agentErrors';
 import { getOwnedImageUploads, markImageUploadsAttached } from '@convex/lib/imageUploads';
 import {
 	attachRunToMachine,
@@ -16,7 +16,6 @@ import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease'
 import { abandonRunRecord, finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import {
-	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
 	automaticAgentContinuationEnabled,
 	isAutomaticallyRecoverableRun
 } from '@convex/lib/runRecovery';
@@ -62,6 +61,7 @@ export type QueuedRunRequest = {
 	agentVersion?: string;
 	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
+	automaticRecovery?: boolean;
 	taskDeadlineAt?: number;
 	deferPrompt?: boolean;
 };
@@ -134,7 +134,7 @@ export async function createQueuedRunRecord(
 		machine = await getOwnedMachine(ctx, args.userId, machineId);
 
 		if (!machine || !isMachineActive(machine)) {
-			throw new Error('Machine is not active.');
+			throw agentError('MACHINE_NOT_ACTIVE');
 		}
 	}
 
@@ -244,7 +244,7 @@ export async function createQueuedRunRecord(
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
 		parentPendingPrompt = parent.pendingPrompt;
-		const automaticRecovery = args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX);
+		const automaticRecovery = args.automaticRecovery === true;
 
 		if (
 			automaticRecovery &&
@@ -269,7 +269,7 @@ export async function createQueuedRunRecord(
 	}
 
 	if (latestRun && !(await terminalJobsReady(ctx, latestRun))) {
-		throw new ConvexError(SPROCKET_SUBMISSION_WAITING);
+		throw agentError('SUBMISSION_WAITING');
 	}
 
 	// A parent that failed before it began never wrote its prompt.
@@ -388,7 +388,7 @@ async function reconcileExistingQueuedRun(
 	secretHash: string
 ): Promise<CreatedGatewayRun> {
 	if (existingRun.executionSecretHash !== secretHash) {
-		throw new ConvexError('Submission belongs to a different executor.');
+		throw agentError('SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR');
 	}
 
 	const continuationMatches =
@@ -409,7 +409,10 @@ async function reconcileExistingQueuedRun(
 		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches
 	) {
-		throw new ConvexError('Submission belongs to a different or incomplete run.');
+		throw agentError(
+			'SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR',
+			'Submission belongs to a different or incomplete run.'
+		);
 	}
 
 	if (!isRunFinalStatus(existingRun.status)) {

@@ -19,7 +19,11 @@ import {
 	actionablePendingQuestionsForThread,
 	headActionablePendingQuestion
 } from '@convex/lib/agentQuestions';
-import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import {
+	agentError,
+	assertRunAcceptsModelCompletion,
+	toAgentToolConvexError
+} from '@convex/lib/agentErrors';
 import { normalizeTaskTimeoutMs } from '@convex/lib/models';
 import { executionSecretHash, getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import {
@@ -104,7 +108,7 @@ export const recoverSubmission = mutation({
 			await assertDescendantThreadAccess(ctx.db, caller, run.threadId);
 
 			if (run.executionSecretHash !== (await executionSecretHash(args.childExecutionSecret))) {
-				throw new Error('Submission belongs to a different executor.');
+				throw agentError('SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR');
 			}
 
 			const prompt = (await getPromptPart(ctx, run.threadId, run._id))?.prompt?.text ?? '';
@@ -137,7 +141,7 @@ async function requireLiveCallerRun(ctx: MutationCtx, args: Infer<typeof vCaller
 	assertRunAcceptsModelCompletion(run);
 
 	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-		throw new Error('Run is no longer active.');
+		throw agentError('RUN_NO_LONGER_ACTIVE');
 	}
 
 	return run;

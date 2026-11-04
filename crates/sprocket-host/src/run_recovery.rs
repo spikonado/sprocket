@@ -18,8 +18,6 @@ const MAX_RECORDS: usize = 256;
 const MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 const RETRY_DELAY_MS: u64 = 30_000;
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
-// Must match apps/web/convex/lib/runRecovery.ts.
-const SUBMISSION_PREFIX: &str = "automatic-recovery:";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RecoveryRecord {
@@ -59,7 +57,7 @@ impl RecoveryRecord {
         }
         let mut next = self.clone();
         next.recoveries += 1;
-        next.request.submission_id = format!("{SUBMISSION_PREFIX}{}", Uuid::new_v4());
+        next.request.submission_id = Uuid::new_v4().to_string();
         next.request.execution_secret = Some(new_execution_secret());
         next.request.thread_id = Some(thread_id);
         next.request.repository_key = None;

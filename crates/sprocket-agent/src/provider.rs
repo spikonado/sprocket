@@ -16,6 +16,7 @@ use rig::message::AssistantContent;
 use rig::operation::Completion;
 use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
+use sprocket_convex::{ConvexErrorCode, convex_error_code};
 use sprocket_transcript::LiveCompletionHub;
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
@@ -42,10 +43,9 @@ use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
 
-/// Must match `RUN_CANCELLED_BY_USER` in `apps/web/convex/lib/agentErrors.ts`.
-const RUN_CANCELLED_BY_USER: &str = "Run is cancelled.";
-/// Must match `RUN_NO_LONGER_ACTIVE` in `apps/web/convex/lib/agentErrors.ts`.
-const RUN_NO_LONGER_ACTIVE: &str = "Run is no longer active.";
+#[derive(Debug, thiserror::Error)]
+#[error("Run is no longer active.")]
+struct RunNoLongerActive;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProviderErrorDisposition {
@@ -54,15 +54,17 @@ enum ProviderErrorDisposition {
     Failed,
 }
 
-fn classify_provider_error(error: &(impl std::fmt::Display + ?Sized)) -> ProviderErrorDisposition {
-    let error_text = error.to_string();
-    if error_text.contains("SPROCKET_COMPLETION_STREAM_SUPERSEDED") {
-        return ProviderErrorDisposition::Superseded;
-    }
-    if error_text.contains(RUN_CANCELLED_BY_USER) || error_text.contains(RUN_NO_LONGER_ACTIVE) {
+fn classify_provider_error(error: &anyhow::Error) -> ProviderErrorDisposition {
+    if error.is::<RunNoLongerActive>() {
         return ProviderErrorDisposition::Cancelled;
     }
-    ProviderErrorDisposition::Failed
+    match convex_error_code(error) {
+        Some(ConvexErrorCode::CompletionStreamSuperseded) => ProviderErrorDisposition::Superseded,
+        Some(ConvexErrorCode::RunCancelled | ConvexErrorCode::RunNoLongerActive) => {
+            ProviderErrorDisposition::Cancelled
+        }
+        _ => ProviderErrorDisposition::Failed,
+    }
 }
 
 fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::Error> {
@@ -318,7 +320,7 @@ impl AgentProvider {
             .await?
             == ClaimStatus::Lost
         {
-            anyhow::bail!(RUN_NO_LONGER_ACTIVE);
+            return Err(RunNoLongerActive.into());
         }
         self.completion_provider = next;
         Ok(true)
@@ -1065,7 +1067,6 @@ async fn run_with_completion_model(
                                 if provider_switch.is_none()
                                     && !target.fallback_providers.is_empty()
                                     && is_provider_failure(&error)
-                                    && classify_provider_error(&error) == ProviderErrorDisposition::Failed
                                     && let Some((next_history, next_prompt)) = stream_recovery.take_input()
                                 {
                                     drop(stream);

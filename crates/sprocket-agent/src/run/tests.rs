@@ -1,6 +1,4 @@
-use super::{
-    base_instructions, should_continue_without_prompt, submission_owned_by_another_executor,
-};
+use super::{base_instructions, should_continue_without_prompt};
 
 const MODEL_LABEL: &str = "GPT-5.6 Sol";
 const MODEL_ID: &str = "gpt-5.6-sol";
@@ -88,22 +86,6 @@ fn prompted_continuations_use_their_user_prompt() {
     assert!(!should_continue_without_prompt(false, true, "Ship it"));
     assert!(should_continue_without_prompt(false, true, ""));
     assert!(should_continue_without_prompt(true, true, "Ship it"));
-}
-
-#[test]
-fn submission_conflict_errors_match_the_convex_sentinel() {
-    assert!(submission_owned_by_another_executor(
-        "agentRuntime:createGatewayRun failed: Submission belongs to a different active executor."
-    ));
-    assert!(submission_owned_by_another_executor(
-        "Submission belongs to a different or incomplete run."
-    ));
-    assert!(!submission_owned_by_another_executor(
-        "timed out starting agent run"
-    ));
-    assert!(!submission_owned_by_another_executor(
-        "Submission prompt does not match the existing run."
-    ));
 }
 
 #[test]

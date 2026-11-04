@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { LEGACY_RUN_ABANDONED_BY_AGENT, RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
-import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import {
 	abandonRun,
 	initConvexTest,
@@ -41,11 +40,12 @@ async function setup() {
 
 	const recoveryArgs = {
 		threadId,
-		submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}next`,
+		submissionId: 'recovery-next',
 		executionSecret: 'next-secret',
 		prompt: '',
 		machineId,
-		continuationOfRunId: runId
+		continuationOfRunId: runId,
+		automaticRecovery: true
 	};
 
 	const abandon = () => abandonRun(t, runId);
@@ -123,7 +123,8 @@ describe('automatic run recovery', () => {
 
 		const manual = await insertQueuedRun(t, asUser, {
 			...recoveryArgs,
-			submissionId: 'manual-continuation'
+			submissionId: 'manual-continuation',
+			automaticRecovery: false
 		});
 
 		expect(manual.created).toBe(true);
@@ -215,7 +216,7 @@ describe('automatic run recovery', () => {
 
 		const recovered = await insertQueuedRun(t, asUser, {
 			...recoveryArgs,
-			submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}second-machine`,
+			submissionId: 'recovery-second-machine',
 			machineId,
 			continuationOfRunId: continuation.runId
 		});

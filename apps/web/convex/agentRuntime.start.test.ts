@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
@@ -49,14 +50,12 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 
-		expect(claimed.claimed).toBe(true);
-		expect(claimed.claimExpiresAt).toBeTypeOf('number');
+		expect(claimed).toEqual({ claimed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS });
 
 		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
 		expect(run).toMatchObject({
 			status: 'running',
-			claimId: 'claim-a',
-			claimExpiresAt: claimed.claimExpiresAt
+			claimId: 'claim-a'
 		});
 
 		const renewed = await asUser.mutation(api.agentRuntime.start, {
@@ -66,7 +65,6 @@ describe('agentRuntime.start', () => {
 		});
 
 		expect(renewed.claimed).toBe(true);
-		expect(renewed.claimExpiresAt).toBeGreaterThanOrEqual(claimed.claimExpiresAt ?? 0);
 		expect(
 			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, runId))?.completionAttemptSeq)
 		).toBe(0);
@@ -133,7 +131,7 @@ describe('agentRuntime.start', () => {
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 		await expect(
 			asUser.mutation(api.agentRuntime.start, { claimId: 'claim-b', runId, executionSecret })
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 	});
 
 	it('does not start a queued run after cancellation is requested', async () => {
@@ -150,7 +148,7 @@ describe('agentRuntime.start', () => {
 				runId,
 				executionSecret
 			})
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 		expect(await t.run(async (ctx) => ctx.db.get('runs', runId))).toMatchObject({
 			status: 'queued',
 			cancellationRequestedAt: expect.any(Number)
@@ -186,7 +184,7 @@ describe('agentRuntime.start', () => {
 				attemptSeq: 1,
 				executionSecret
 			})
-		).rejects.toThrow('Run is no longer active.');
+		).rejects.toMatchObject({ data: { code: 'RUN_NO_LONGER_ACTIVE' } });
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,
@@ -229,7 +227,7 @@ describe('agentRuntime.start', () => {
 				runId,
 				executionSecret
 			})
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 		expect(await t.run(async (ctx) => getRunWithExecution(ctx.db, runId))).toMatchObject({
 			claimId: 'claim-a',
 			completionAttemptSeq: 4
@@ -259,7 +257,7 @@ describe('agentRuntime.start', () => {
 				runId,
 				executionSecret
 			})
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 
 		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
 		expect(run).toMatchObject({

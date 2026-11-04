@@ -222,16 +222,18 @@ describe('provider handoff credential authorization', () => {
 
 			await expect(authorize(source)).resolves.toBeDefined();
 			await expect(authorize(target)).resolves.toBeDefined();
-			await expect(authorize(source, { ...args, claimId: 'stale' })).rejects.toThrow(
-				'Run is no longer active.'
-			);
+			await expect(authorize(source, { ...args, claimId: 'stale' })).rejects.toMatchObject({
+				data: { code: 'RUN_NO_LONGER_ACTIVE' }
+			});
 			await expect(authorize(source, { ...args, executionSecret: 'wrong' })).rejects.toThrow(
 				'Run not found.'
 			);
 			await t.run(async (ctx) => {
 				await ctx.db.patch('runs', run.runId, { cancellationRequestedAt: Date.now() });
 			});
-			await expect(authorize(source)).rejects.toThrow('Run is no longer active.');
+			await expect(authorize(source)).rejects.toMatchObject({
+				data: { code: 'RUN_NO_LONGER_ACTIVE' }
+			});
 			await t.run(async (ctx) => {
 				await ctx.db.patch('runs', run.runId, { cancellationRequestedAt: undefined });
 			});
@@ -250,7 +252,9 @@ describe('provider handoff credential authorization', () => {
 			await t.run(async (ctx) => {
 				await patchRunExecution(ctx, run.runId, { claimExpiresAt: Date.now() - 1 });
 			});
-			await expect(authorize(target)).rejects.toThrow('Run is no longer active.');
+			await expect(authorize(target)).rejects.toMatchObject({
+				data: { code: 'RUN_NO_LONGER_ACTIVE' }
+			});
 		}
 	);
 });

@@ -308,6 +308,9 @@ impl RuntimeClient {
                 continuation_of_run_id.clone().into(),
             );
         }
+        if request.automatic_recovery {
+            args.insert("automaticRecovery".to_string(), Value::Boolean(true));
+        }
         args.insert("deferPrompt".to_string(), Value::Boolean(true));
         self.add_execution_secret(&mut args);
 

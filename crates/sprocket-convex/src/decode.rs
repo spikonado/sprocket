@@ -1,59 +1,112 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use convex::{ConvexError, FunctionResult, Value};
 use serde::{Deserialize, de::Deserializer};
+
+/// Codes from `apps/web/convex/lib/agentErrorCodes.json`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ConvexErrorCode {
+    RunCancelled,
+    RunNoLongerActive,
+    CompletionStreamSuperseded,
+    SubmissionWaiting,
+    SubmissionOwnedByAnotherExecutor,
+    MachineNotActive,
+}
+
+/// A Convex function failure. Its `Display` is the cleaned message.
+#[derive(Debug)]
+pub struct ConvexFunctionError {
+    pub code: Option<ConvexErrorCode>,
+    message: String,
+}
+
+impl std::fmt::Display for ConvexFunctionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ConvexFunctionError {}
+
+/// The code of the first Convex function failure in `error`'s chain.
+pub fn convex_error_code(error: &anyhow::Error) -> Option<ConvexErrorCode> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ConvexFunctionError>())
+        .and_then(|failure| failure.code)
+}
 
 /// Decode a Convex `FunctionResult` into `T`, converting Values through plain JSON.
 ///
 /// Error messages are cleaned of Convex transport noise (request-id masking lines,
 /// `Uncaught` prefixes, stack frames) so callers can surface them to users or tools
-/// without extra stripping. `ConvexError` string `data` is preferred over `message`
-/// because production redacts `message`. The `function` argument is only attached
-/// when a successful Value fails to deserialize into `T`.
+/// without extra stripping. `ConvexError` `data` is preferred over `message`
+/// because production redacts `message`. Failures are `ConvexFunctionError`s.
+/// The `function` argument is only attached when a successful Value fails to
+/// deserialize into `T`.
 pub fn decode_function_result<T: for<'de> Deserialize<'de>>(
     result: FunctionResult,
     function: &str,
 ) -> anyhow::Result<T> {
-    match result {
-        FunctionResult::Value(value) => {
-            let json_value = value_to_plain_json(value);
-            serde_json::from_value(json_value.clone()).with_context(|| {
-                format!("failed to decode response from {function}; payload: {json_value}")
-            })
-        }
-        FunctionResult::ErrorMessage(message) => {
-            Err(anyhow!(clean_function_error_message(&message)))
-        }
-        FunctionResult::ConvexError(error) => Err(anyhow!(clean_function_error_message(
-            convex_error_text(&error)
-        ))),
-    }
+    decode(result, function, false)
 }
 
 pub fn decode_labeled_function_result<T: for<'de> Deserialize<'de>>(
     result: FunctionResult,
     function: &str,
 ) -> anyhow::Result<T> {
-    match result {
-        FunctionResult::Value(_) => decode_function_result(result, function),
-        FunctionResult::ErrorMessage(message) => Err(anyhow!(
-            "{function}: {}",
-            clean_function_error_message(&message)
-        )),
-        FunctionResult::ConvexError(error) => Err(anyhow!(
-            "{function}: {}",
-            clean_function_error_message(convex_error_text(&error))
-        )),
-    }
+    decode(result, function, true)
+}
+
+fn decode<T: for<'de> Deserialize<'de>>(
+    result: FunctionResult,
+    function: &str,
+    labeled: bool,
+) -> anyhow::Result<T> {
+    let (code, message) = match result {
+        FunctionResult::Value(value) => {
+            let json_value = value_to_plain_json(value);
+            return serde_json::from_value(json_value.clone()).with_context(|| {
+                format!("failed to decode response from {function}; payload: {json_value}")
+            });
+        }
+        FunctionResult::ErrorMessage(message) => (None, clean_function_error_message(&message)),
+        FunctionResult::ConvexError(error) => (
+            error_code(&error),
+            clean_function_error_message(convex_error_text(&error)),
+        ),
+    };
+    let message = if labeled {
+        format!("{function}: {message}")
+    } else {
+        message
+    };
+    Err(ConvexFunctionError { code, message }.into())
 }
 
 /// Application payload for a `ConvexError`. Production redacts `message` to a
-/// `[Request ID ...] Server Error` line; string `data` is what the function
-/// threw and is what tools should see.
+/// `[Request ID ...] Server Error` line; `data` (a string, or the `message` of
+/// a coded error) is what the function threw and is what tools should see.
 fn convex_error_text(error: &ConvexError) -> &str {
     match &error.data {
         Value::String(text) if !text.trim().is_empty() => text,
+        Value::Object(fields) => match fields.get("message") {
+            Some(Value::String(text)) if !text.trim().is_empty() => text,
+            _ => error.message.as_str(),
+        },
         _ => error.message.as_str(),
     }
+}
+
+fn error_code(error: &ConvexError) -> Option<ConvexErrorCode> {
+    let Value::Object(fields) = &error.data else {
+        return None;
+    };
+    let Some(Value::String(code)) = fields.get("code") else {
+        return None;
+    };
+    serde_json::from_value(serde_json::Value::String(code.clone())).ok()
 }
 
 fn clean_function_error_message(raw: &str) -> String {

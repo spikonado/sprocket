@@ -1,6 +1,6 @@
 import { ConvexError, v } from 'convex/values';
 import { mutation, query } from '@convex/_generated/server';
-import { RUN_NO_LONGER_ACTIVE, TOOL_NO_LONGER_SUPPORTED } from '@convex/lib/agentErrors';
+import { agentError, TOOL_NO_LONGER_SUPPORTED } from '@convex/lib/agentErrors';
 import {
 	REQUEST_ENDED,
 	disposeRequest,
@@ -22,7 +22,7 @@ export const start = mutation({
 	handler: async (ctx, { kind, jobId, ...args }) => {
 		if (kind === 'screenshot') throw new ConvexError(TOOL_NO_LONGER_SUPPORTED);
 
-		if (!jobId) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		if (!jobId) throw agentError('RUN_NO_LONGER_ACTIVE');
 
 		return await enqueueRequest(ctx, { ...args, jobId, kind });
 	}

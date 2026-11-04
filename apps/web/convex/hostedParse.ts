@@ -12,11 +12,7 @@ import {
 	type MutationCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
-import {
-	RUN_CANCELLED_BY_USER,
-	RUN_NO_LONGER_ACTIVE,
-	toAgentToolConvexError
-} from '@convex/lib/agentErrors';
+import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { getExecutionRun } from '@convex/lib/auth';
 import {
 	HOSTED_PARSE_MAX_INPUT_BYTES,
@@ -135,7 +131,7 @@ export const start = mutation({
 			});
 
 			if (request.claimId !== args.claimId || request.expiresAt <= Date.now()) {
-				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+				throw agentError('RUN_NO_LONGER_ACTIVE');
 			}
 
 			if (request.status !== 'awaiting_upload') {
@@ -486,11 +482,11 @@ async function requireActiveParseJob(
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
 	if (run.cancellationRequestedAt !== undefined) {
-		throw new ConvexError(RUN_CANCELLED_BY_USER);
+		throw agentError('RUN_CANCELLED');
 	}
 
 	if (isRunFinalStatus(run.status) || !ownsActiveRunClaim(run, args.claimId, Date.now())) {
-		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		throw agentError('RUN_NO_LONGER_ACTIVE');
 	}
 
 	const job = await ctx.db.get('executorJobs', args.jobId);
@@ -500,7 +496,7 @@ async function requireActiveParseJob(
 	}
 
 	if (isSettledExecutorJobStatus(job.status)) {
-		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		throw agentError('RUN_NO_LONGER_ACTIVE');
 	}
 
 	return { run, job };

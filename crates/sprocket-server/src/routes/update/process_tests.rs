@@ -151,7 +151,6 @@ async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_run
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(lifetime.shutdown.is_cancelled());
     assert!(lifetime.run_guard().is_err());
-    assert!(lifetime.restart_requested());
     assert_eq!(
         fs::read_to_string(restart_file).unwrap(),
         launcher.to_str().unwrap()

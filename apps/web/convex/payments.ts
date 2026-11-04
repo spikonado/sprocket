@@ -13,7 +13,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { vCompletionActor } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vPurchaseStatus, vReportOrderResult, type PurchaseStatus } from '@convex/lib/validators';
 import {
 	AgentcardError,
@@ -86,7 +86,7 @@ export const paymentActor = internalQuery({
 		const leaseActive = args.allowEndedRun || isRunClaimLeaseActive(run, Date.now());
 
 		if (run.claimId !== args.claimId || !leaseActive) {
-			throw new Error('Run is no longer active.');
+			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 
 		const thread = await ctx.db.get('threadRecords', run.threadId);

@@ -7,6 +7,7 @@ import {
 } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { agentError } from '@convex/lib/agentErrors';
 import { vRegisterFileResult } from '@convex/lib/docs';
 import { isRunFinalStatus, registeredFileUploadError } from '@convex/lib/validators';
 import { registeredParseStorage } from '@convex/lib/hostedParse';
@@ -313,7 +314,7 @@ async function activeRunRecord(
 ): Promise<Doc<'runs'>> {
 	const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 
-	if (isRunFinalStatus(run.status)) throw new Error('Run is no longer active.');
+	if (isRunFinalStatus(run.status)) throw agentError('RUN_NO_LONGER_ACTIVE');
 
 	return run;
 }

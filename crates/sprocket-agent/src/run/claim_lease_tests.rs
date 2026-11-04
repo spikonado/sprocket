@@ -5,24 +5,31 @@ use anyhow::anyhow;
 use tokio::time::{Instant, sleep};
 
 use super::{
-    ClaimLeaseLost, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION,
-    RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
+    ClaimLease, ClaimLeaseLost, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
+    drive_claim_lease, renew_claim_with,
 };
+
+const LEASE_MS: u64 = 120_000;
+const LEASE: Duration = Duration::from_millis(LEASE_MS);
+
+fn lease_from_now() -> ClaimLease {
+    ClaimLease::new(Instant::now(), LEASE_MS)
+}
 
 #[tokio::test(start_paused = true)]
 async fn scheduling_stall_after_a_successful_renewal_does_not_fail_the_run() {
     let renewals = AtomicUsize::new(0);
     let result = drive_claim_lease(
         "run-stalled-tick",
-        Instant::now(),
+        lease_from_now(),
         |_lease_deadline| {
             let attempt = renewals.fetch_add(1, Ordering::SeqCst);
-            let request_started_at = Instant::now();
+            let renewed = lease_from_now();
             async move {
                 if attempt == 0 {
-                    sleep(RUN_CLAIM_RENEW_INTERVAL + Duration::from_secs(25)).await;
+                    sleep(LEASE / 3 + Duration::from_secs(25)).await;
                 }
-                Ok((true, request_started_at))
+                Ok(Some(renewed))
             }
         },
         async {
@@ -40,15 +47,15 @@ async fn renewal_is_attempted_after_the_estimated_lease_deadline() {
     let renewals = AtomicUsize::new(0);
     let result = drive_claim_lease(
         "run-past-estimated-deadline",
-        Instant::now(),
+        lease_from_now(),
         |_lease_deadline| {
             let attempt = renewals.fetch_add(1, Ordering::SeqCst);
-            let request_started_at = Instant::now();
+            let renewed = lease_from_now();
             async move {
                 if attempt == 0 {
-                    sleep(RUN_CLAIM_LEASE_DURATION + Duration::from_secs(10)).await;
+                    sleep(LEASE + Duration::from_secs(10)).await;
                 }
-                Ok((true, request_started_at))
+                Ok(Some(renewed))
             }
         },
         async {
@@ -62,10 +69,32 @@ async fn renewal_is_attempted_after_the_estimated_lease_deadline() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn renewals_follow_the_lease_duration_the_server_grants() {
+    let renewals = AtomicUsize::new(0);
+    let started_at = Instant::now();
+    let result = drive_claim_lease(
+        "run-short-lease",
+        ClaimLease::new(started_at, 3_000),
+        |_lease_deadline| {
+            renewals.fetch_add(1, Ordering::SeqCst);
+            let renewed = ClaimLease::new(Instant::now(), 3_000);
+            async move { Ok(Some(renewed)) }
+        },
+        async {
+            sleep(Duration::from_millis(10_500)).await;
+            "done"
+        },
+    )
+    .await;
+    assert_eq!(result.ok(), Some("done"));
+    assert_eq!(renewals.load(Ordering::SeqCst), 10);
+}
+
+#[tokio::test(start_paused = true)]
 async fn renewal_failures_retry_until_the_lease_window_closes() {
     let attempts = AtomicUsize::new(0);
     let started_at = Instant::now();
-    let result = renew_claim_with("run-flaky", started_at + RUN_CLAIM_LEASE_DURATION, || {
+    let result = renew_claim_with("run-flaky", started_at + LEASE, || {
         attempts.fetch_add(1, Ordering::SeqCst);
         async {
             sleep(RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT).await;
@@ -78,26 +107,22 @@ async fn renewal_failures_retry_until_the_lease_window_closes() {
     assert!(attempts.load(Ordering::SeqCst) >= 3);
     assert!(
         Instant::now()
-            >= started_at + RUN_CLAIM_LEASE_DURATION
+            >= started_at + LEASE
                 - RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT
                 - RUN_CLAIM_EXPIRY_SAFETY_MARGIN
     );
-    assert!(Instant::now() <= started_at + RUN_CLAIM_LEASE_DURATION);
+    assert!(Instant::now() <= started_at + LEASE);
 }
 
 #[tokio::test(start_paused = true)]
 async fn lost_lease_is_not_retried() {
     let attempts = AtomicUsize::new(0);
-    let result = renew_claim_with(
-        "run-lost",
-        Instant::now() + RUN_CLAIM_LEASE_DURATION,
-        || {
-            attempts.fetch_add(1, Ordering::SeqCst);
-            async { Ok((false, Instant::now())) }
-        },
-    )
+    let result = renew_claim_with("run-lost", Instant::now() + LEASE, || {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        async { Ok(None) }
+    })
     .await;
-    assert_eq!(result.ok().map(|(renewed, _)| renewed), Some(false));
+    assert!(result.unwrap().is_none());
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
@@ -105,8 +130,8 @@ async fn lost_lease_is_not_retried() {
 async fn drive_fails_the_run_when_the_lease_is_lost() {
     let result: Result<(), ClaimLeaseLost> = drive_claim_lease(
         "run-taken-over",
-        Instant::now(),
-        |_lease_deadline| async { Ok((false, Instant::now())) },
+        lease_from_now(),
+        |_lease_deadline| async { Ok(None) },
         std::future::pending(),
     )
     .await;
@@ -117,7 +142,7 @@ async fn drive_fails_the_run_when_the_lease_is_lost() {
 async fn drive_fails_the_run_when_renewal_fails() {
     let result: Result<(), ClaimLeaseLost> = drive_claim_lease(
         "run-disconnected",
-        Instant::now(),
+        lease_from_now(),
         |_lease_deadline| async { Err(anyhow!("claim renewal timed out")) },
         std::future::pending(),
     )
@@ -129,8 +154,8 @@ async fn drive_fails_the_run_when_renewal_fails() {
 async fn operation_failure_is_returned_inside_ok() {
     let result = drive_claim_lease(
         "run-provider-error",
-        Instant::now(),
-        |_lease_deadline| async { Ok((true, Instant::now())) },
+        lease_from_now(),
+        |_lease_deadline| async { Ok(Some(lease_from_now())) },
         async { Err::<(), _>(anyhow!("provider failure")) },
     )
     .await;

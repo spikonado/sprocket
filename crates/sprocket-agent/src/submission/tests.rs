@@ -2,25 +2,23 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
-fn recognizes_waiting_after_decoding_a_nested_action_error() {
+fn recognizes_waiting_through_added_context() {
     let error = sprocket_convex::decode_function_result::<()>(
-        convex::FunctionResult::ErrorMessage(
-            concat!(
-                "[Request ID: example] Server Error\n",
-                "Uncaught ConvexError: Uncaught ConvexError: SPROCKET_SUBMISSION_WAITING\n",
-                "    at handler (agentRuntime.ts:200:2)"
-            )
-            .to_string(),
-        ),
+        convex::FunctionResult::ConvexError(convex::ConvexError {
+            message: "[Request ID: example] Server Error".to_string(),
+            data: convex::Value::Object(
+                [("code", "SUBMISSION_WAITING"), ("message", "Waiting.")]
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.into()))
+                    .collect(),
+            ),
+        }),
         "agentRuntime:createGatewayRun",
     )
     .unwrap_err();
     assert!(submission_is_waiting(
         &error.context("failed to create run")
     ));
-    assert!(!submission_is_waiting(&anyhow::anyhow!(
-        "SPROCKET_SUBMISSION_WAITING: unrelated failure"
-    )));
 }
 
 #[tokio::test(start_paused = true)]

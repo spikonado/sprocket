@@ -1,0 +1,8 @@
+{
+	"RUN_CANCELLED": "Run is cancelled.",
+	"RUN_NO_LONGER_ACTIVE": "Run is no longer active.",
+	"COMPLETION_STREAM_SUPERSEDED": "A newer completion stream replaced this one.",
+	"SUBMISSION_WAITING": "The previous run is still settling its jobs.",
+	"SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR": "Submission belongs to a different executor.",
+	"MACHINE_NOT_ACTIVE": "Machine is not active."
+}

@@ -206,7 +206,7 @@ describe('hostedParse', () => {
 				executionSecret: run.executionSecret,
 				jobId: run.jobId
 			})
-		).rejects.toThrow('Run is no longer active.');
+		).rejects.toMatchObject({ data: { code: 'RUN_NO_LONGER_ACTIVE' } });
 	});
 
 	it('rejects createUpload for non parse_file jobs', async () => {

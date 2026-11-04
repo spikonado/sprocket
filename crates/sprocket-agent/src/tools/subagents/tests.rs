@@ -313,14 +313,14 @@ async fn functional_creation_errors_do_not_issue_a_recovery_lookup() {
     let error = submit_or_recover::<()>(
         async {
             Err(MutationFailure::Functional(anyhow::anyhow!(
-                "SPROCKET_SUBMISSION_WAITING"
+                "Submission is waiting."
             )))
         },
         async { panic!("a rejected creation needs no reconciliation") },
     )
     .await
     .unwrap_err();
-    assert!(submission_is_waiting(&error));
+    assert_eq!(error.to_string(), "Submission is waiting.");
 }
 
 #[tokio::test]

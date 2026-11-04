@@ -267,7 +267,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				attemptSeq: 1,
 				executionSecret
 			})
-		).rejects.toThrow('Run is cancelled.');
+		).rejects.toMatchObject({ data: { code: 'RUN_CANCELLED' } });
 		await expect(
 			asUser.mutation(api.agentRuntime.beginToolJob, {
 				claimId: 'claim-cancel',
@@ -277,7 +277,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				payload: { cmd: 'true' },
 				executionSecret
 			})
-		).rejects.toThrow('Run is cancelled.');
+		).rejects.toMatchObject({ data: { code: 'RUN_CANCELLED' } });
 
 		const runStatus = async () =>
 			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status);
