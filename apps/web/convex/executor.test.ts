@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Infer } from 'convex/values';
-import { vAskQuestionResult } from '@convex/lib/validators';
+import { vPollQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
@@ -474,57 +474,67 @@ describe('executor', () => {
 		'persists compact question results for %s questions',
 		async (status) => {
 			const t = initConvexTest();
+			const answered = status === 'answered';
 
-			for (const kind of ['ask_question', 'poll_question'] as const) {
-				const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
-					executionSecret: `compact-question-${kind}-${status}`
-				});
-
-				const questionId = await t.run(async (ctx) => {
-					const run = await ctx.db.get('runs', runId);
-
-					if (!run) throw new Error('Run not found');
-
-					return ctx.db.insert('agentQuestions', {
-						threadId: run.threadId,
-						runId,
-						jobId,
-						question: 'Which configuration?',
-						options: [{ id: 'safe', label: 'Safe' }],
-						status,
-						sequence: 1
-					});
-				});
-
-				await t.run(async (ctx) => {
-					await ctx.db.patch('executorJobs', jobId, {
-						kind,
-						status: 'claimed',
-						payload:
-							kind === 'ask_question'
-								? { question: 'Which configuration?', options: [{ id: 'safe', label: 'Safe' }] }
-								: { questionId }
-					});
-				});
-
-				const result: Omit<Infer<typeof vAskQuestionResult>, 'questionId'> &
-					Partial<Pick<Infer<typeof vAskQuestionResult>, 'questionId'>> = {
+			const resultsByClient = {
+				current: { status, ...(answered && { answer: { optionId: 'safe' } }) },
+				released: {
 					pending: status === 'pending',
 					timedOut: status === 'timedOut',
-					skipped: status === 'skipped'
-				};
+					skipped: status === 'skipped',
+					...(answered && { answer: { optionId: 'safe', optionLabel: 'Safe' } })
+				}
+			} satisfies Record<string, Infer<typeof vPollQuestionResult>>;
 
-				if (kind === 'ask_question') result.questionId = questionId;
+			for (const kind of ['ask_question', 'poll_question'] as const) {
+				for (const [client, pollResult] of Object.entries(resultsByClient)) {
+					const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+						executionSecret: `compact-question-${kind}-${client}-${status}`
+					});
 
-				if (status === 'answered') result.answer = { optionId: 'safe', optionLabel: 'Safe' };
+					const questionId = await t.run(async (ctx) => {
+						const run = await ctx.db.get('runs', runId);
 
-				await expect(
-					asUser.mutation(api.executor.complete, { runId, claimId, executionSecret, jobId, result })
-				).resolves.toBe(true);
+						if (!run) throw new Error('Run not found');
 
-				const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+						return ctx.db.insert('agentQuestions', {
+							threadId: run.threadId,
+							runId,
+							jobId,
+							question: 'Which configuration?',
+							options: [{ id: 'safe', label: 'Safe' }],
+							status,
+							sequence: 1
+						});
+					});
 
-				expect(stored?.result).toEqual(result);
+					await t.run(async (ctx) => {
+						await ctx.db.patch('executorJobs', jobId, {
+							kind,
+							status: 'claimed',
+							payload:
+								kind === 'ask_question'
+									? { question: 'Which configuration?', options: [{ id: 'safe', label: 'Safe' }] }
+									: { questionId }
+						});
+					});
+
+					const result = kind === 'ask_question' ? { ...pollResult, questionId } : pollResult;
+
+					await expect(
+						asUser.mutation(api.executor.complete, {
+							runId,
+							claimId,
+							executionSecret,
+							jobId,
+							result
+						})
+					).resolves.toBe(true);
+
+					const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+
+					expect(stored?.result).toEqual(result);
+				}
 			}
 		}
 	);

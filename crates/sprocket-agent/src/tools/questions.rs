@@ -42,7 +42,7 @@ fn ask_question_parameters(max_yield_ms: u64) -> serde_json::Value {
     schema["properties"]["timeoutMs"] = json!({
         "type": ["integer", "null"],
         "minimum": 0,
-        "description": "Maximum question lifetime. Without a limit, the question stays open until it is answered, skipped, or cancelled."
+        "description": "Close the question unanswered after this long."
     });
     schema
 }
@@ -60,7 +60,6 @@ fn poll_question_parameters(max_yield_ms: u64) -> serde_json::Value {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AskQuestionOption {
-    /// Stable option identifier returned with the user's answer.
     #[schemars(length(min = 1, max = 20))]
     pub(crate) id: String,
     #[schemars(length(min = 1, max = 200))]
@@ -75,7 +74,6 @@ pub(crate) struct AskQuestionArgs {
     /// Answer options. A "Let me (the agent) decide" option is added automatically.
     #[schemars(length(min = 1, max = 4))]
     pub(crate) options: Vec<AskQuestionOption>,
-    /// Maximum time to wait for an answer before returning, in milliseconds. Use 0 to return immediately.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -90,11 +88,10 @@ pub(crate) struct AskQuestionArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PollQuestionArgs {
-    /// Question identifier returned by ask_question.
+    /// From ask_question.
     #[serde(rename = "questionId")]
     #[schemars(length(min = 1))]
     pub(crate) question_id: String,
-    /// Maximum time to wait for an answer or expiry before returning, in milliseconds. Use 0 for an immediate snapshot.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -109,8 +106,6 @@ pub(crate) struct PollQuestionArgs {
 struct QuestionAnswer {
     #[serde(skip_serializing_if = "Option::is_none")]
     option_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    option_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
 }
@@ -170,7 +165,8 @@ impl rig::tool::Tool for AskQuestionTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Ask the user a question.".to_string()
+        "Ask the user a question. If you end your turn first, the answer starts a new turn."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -379,17 +375,9 @@ fn question_creation_result(
 fn question_result_from_snapshot(
     snapshot: &QuestionSnapshot,
 ) -> Result<serde_json::Value, ToolExecutionError> {
-    let mut result = json!({
-        "pending": snapshot.status == "pending",
-        "timedOut": snapshot.status == "timedOut",
-        "skipped": snapshot.status == "skipped",
-    });
     match snapshot.status.as_str() {
-        "pending" | "timedOut" | "skipped" => Ok(result),
-        "answered" => {
-            result["answer"] = json!(snapshot.answer);
-            Ok(result)
-        }
+        status @ ("pending" | "timedOut" | "skipped") => Ok(json!({ "status": status })),
+        "answered" => Ok(json!({ "status": "answered", "answer": snapshot.answer })),
         "cancelled" => Err(tool_failure(
             "Question was cancelled before it was answered.",
         )),

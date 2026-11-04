@@ -668,18 +668,37 @@ export const vAskQuestionAnswer = v.object({
 	text: v.optional(v.string())
 });
 
-export const vPollQuestionResult = v.object({
+const vQuestionResultFields = {
+	status: v.union(
+		v.literal('pending'),
+		v.literal('answered'),
+		v.literal('skipped'),
+		v.literal('timedOut')
+	),
+	answer: v.optional(v.object({ optionId: v.optional(v.string()), text: v.optional(v.string()) }))
+};
+
+const vLegacyQuestionResultFields = {
 	pending: v.boolean(),
 	timedOut: v.boolean(),
 	skipped: v.optional(v.boolean()),
 	answer: v.optional(vAskQuestionAnswer)
-});
+};
 
-export const vAskQuestionResult = vPollQuestionResult.extend({
-	questionId: v.id('agentQuestions'),
-	question: v.optional(v.string()),
-	options: v.optional(v.array(vAskQuestionOption))
-});
+export const vPollQuestionResult = v.union(
+	v.object(vQuestionResultFields),
+	v.object(vLegacyQuestionResultFields)
+);
+
+export const vAskQuestionResult = v.union(
+	v.object({ ...vQuestionResultFields, questionId: v.id('agentQuestions') }),
+	v.object({
+		...vLegacyQuestionResultFields,
+		questionId: v.id('agentQuestions'),
+		question: v.optional(v.string()),
+		options: v.optional(v.array(vAskQuestionOption))
+	})
+);
 
 export const vRunStatus = v.union(
 	v.literal('queued'),
