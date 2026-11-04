@@ -211,12 +211,12 @@ export const vPollPrResult = v.object({
 	),
 	cursor: v.string(),
 	state: vPullRequestState,
-	headSha: v.string(),
-	conflicting: v.union(v.boolean(), v.null()),
+	headSha: v.optional(v.string()),
+	conflicting: v.optional(v.union(v.boolean(), v.null())),
 	checks: v.object({
 		passed: v.number(),
-		pending: v.array(vPollPrCheck),
-		failed: v.array(vPollPrCheck)
+		pending: v.optional(v.array(vPollPrCheck)),
+		failed: v.optional(v.array(vPollPrCheck))
 	}),
 	newComments: v.optional(
 		v.array(
@@ -870,6 +870,7 @@ export const vParsedFileResult = v.union(
 );
 
 export const vExecutorJobResult = v.union(
+	v.object({}),
 	v.string(),
 	vParsedFileResult,
 	v.array(vWorkspaceInstruction),
