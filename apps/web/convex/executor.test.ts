@@ -209,8 +209,6 @@ describe('executor', () => {
 			changes: ['checksFailed' as const, 'requiredChecksPassed' as const, 'newComments' as const],
 			cursor: 'def',
 			state: 'open' as const,
-			headSha: 'a1b2c3',
-			conflicting: null,
 			checks: {
 				passed: 3,
 				pending: [{ name: 'rust', required: true }],

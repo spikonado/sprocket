@@ -1,7 +1,7 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { isJsonObject, isJsonString } from '@convex/lib/json';
+import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
@@ -54,7 +54,8 @@ export async function applyExecutorJobSuccess(
 		await patchRunExecution(ctx, args.run._id, { activeJobId: undefined });
 	}
 
-	const cwd = isJsonObject(args.result) && 'cwd' in args.result ? args.result.cwd : undefined;
+	const result: JsonValue = args.result;
+	const cwd = isJsonObject(result) ? result.cwd : undefined;
 
 	if (args.job.kind === 'set_cwd' && isJsonString(cwd)) {
 		await ctx.db.patch('threadRecords', args.run.threadId, { cwd });
