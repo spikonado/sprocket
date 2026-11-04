@@ -1479,16 +1479,7 @@ async function planSubscriptionProjection(
 		scheduledChange: payload.scheduledChange
 	};
 
-	const access = computeAccess(
-		{
-			status: effectiveStatus,
-			dodoSubscriptionId: payload.dodoSubscriptionId,
-			billingPeriodStart: payload.billingPeriodStart,
-			billingPeriodEnd: payload.billingPeriodEnd,
-			cancelAtNextBillingDate: payload.cancelAtNextBillingDate
-		},
-		now
-	);
+	const access = computeAccess({ ...payload, status: effectiveStatus }, now);
 
 	// Redelivery of an already-converged projection is a no-op; watermarks
 	// advance only through the applied path.

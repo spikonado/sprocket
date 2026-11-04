@@ -215,7 +215,6 @@ export function identityTakeoverAllowed(
 	return 'competing';
 }
 
-/** The materialized access fields: the phase at `now` and when it next changes. */
 export function computeAccess(subscription: AccessClock, now: number) {
 	return {
 		accessPhase: accessPhaseAt(subscription, now),
