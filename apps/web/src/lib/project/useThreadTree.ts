@@ -3,6 +3,7 @@ import {
 	usePaginatedQuery_experimental as usePaginatedQueryResult,
 	useQuery_experimental as useQueryResult
 } from 'convex/react';
+import { writeStorage } from '$lib/storage';
 import type { FunctionReturnType } from 'convex/server';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
@@ -97,11 +98,7 @@ function readStoredExpandedThreadIds(userKey: string): string[] {
 }
 
 function storeExpandedThreadIds(userKey: string, expandedThreadIds: readonly string[]) {
-	try {
-		localStorage.setItem(expandedThreadsStorageKey(userKey), JSON.stringify(expandedThreadIds));
-	} catch {
-		// Browsers can deny storage access while still allowing the app to run.
-	}
+	writeStorage(expandedThreadsStorageKey(userKey), JSON.stringify(expandedThreadIds));
 }
 
 export function useExpandedThreads(userKey: string | null) {

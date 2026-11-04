@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react';
+import { readStorage, writeStorage } from '$lib/storage';
 
 const DEFAULT_WIDTH = 320;
 
 const STORAGE_KEY = 'sprocket.side-panel.width';
 
 function readWidth() {
-	try {
-		const stored = localStorage.getItem(STORAGE_KEY);
-		const width = stored === null ? DEFAULT_WIDTH : Number(stored);
+	const stored = readStorage(STORAGE_KEY);
+	const width = stored === null ? DEFAULT_WIDTH : Number(stored);
 
-		return Number.isFinite(width) && width >= DEFAULT_WIDTH ? width : DEFAULT_WIDTH;
-	} catch {
-		return DEFAULT_WIDTH;
-	}
+	return Number.isFinite(width) && width >= DEFAULT_WIDTH ? width : DEFAULT_WIDTH;
 }
 
 export function useSidePanelWidth(viewportWidth: number, sidebarVisible: boolean) {
@@ -24,11 +21,7 @@ export function useSidePanelWidth(viewportWidth: number, sidebarVisible: boolean
 	const width = Math.min(preferredWidth, maxWidth);
 
 	useEffect(() => {
-		try {
-			localStorage.setItem(STORAGE_KEY, String(preferredWidth));
-		} catch {
-			// Resizing still works when browser storage is unavailable.
-		}
+		writeStorage(STORAGE_KEY, String(preferredWidth));
 	}, [preferredWidth]);
 
 	return {

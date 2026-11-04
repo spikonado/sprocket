@@ -3,7 +3,6 @@ import {
 	type ComponentProps,
 	useEffect,
 	useEffectEvent,
-	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState
@@ -33,6 +32,7 @@ import {
 	signUp
 } from '$lib/auth';
 import { useStore } from '$lib/store';
+import { useLatest } from '$lib/use-latest';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import AuthGate from '$lib/components/home/auth-gate';
 import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay';
@@ -79,13 +79,13 @@ import {
 	type ProjectState
 } from '$lib/home/desktop';
 import { convexClientErrorMessage } from '$lib/convex-error';
-import type { ComposerAttachment } from '$lib/chat/attachments';
 import {
 	MarkdownFileLinksContext,
 	openMarkdownLink,
 	type MarkdownFileLinks
 } from '$lib/chat/markdown-file-links';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
+import { getComposerRecoveryKey, useSubmissionTracker } from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
@@ -257,23 +257,6 @@ function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: s
 	return threadId ? `thread:${threadId}` : workspacePath ? `draft:${workspacePath}` : null;
 }
 
-function getComposerRecoveryKey(userId: string, scope: string) {
-	return `${userId}\0${scope}`;
-}
-
-type ComposerRecovery = {
-	message: string | null;
-	prompt: string;
-	attachments?: ComposerAttachment[];
-	storageIds?: Id<'_storage'>[];
-	reasoningEffort?: string;
-	fastMode?: boolean;
-	selectedModel?: CatalogModelId;
-	submissionId?: string;
-	continuationOfRunId?: Id<'runs'>;
-	autoSubmit?: boolean;
-};
-
 export default function App({
 	config,
 	runtime = productionAppRuntime
@@ -281,9 +264,8 @@ export default function App({
 	config: RuntimeConfig;
 	runtime?: AppRuntime;
 }) {
-	const configRef = useRef(config);
-	const runtimeRef = useRef(runtime);
-	runtimeRef.current = runtime;
+	const configRef = useLatest(config);
+	const runtimeRef = useLatest(runtime);
 
 	const convexAuth = useConvexAuth();
 	const convexClient = useConvex();
@@ -291,10 +273,7 @@ export default function App({
 	const retryPending = useStore(convexAuthRetryPending);
 	const signedInUserId = useStore(convexAuthUserId);
 	const isSignedIn = Boolean(signedInUserId);
-	// Async work (agent launches, uploads, mutations) must compare against the
-	// account that is signed in when it resumes, not the one captured by the
-	// render that started it.
-	const signedInUserIdRef = useRef(signedInUserId);
+	const signedInUserIdRef = useLatest(signedInUserId);
 	const nativeAuthLoading = auth.nativeSession === 'loading';
 
 	const nativeAuthBlocked =
@@ -433,27 +412,22 @@ export default function App({
 
 	useEffect(() => {
 		if (!authReady) return;
-		const userId = signedInUserIdRef.current;
 
-		if (!userId || ensureSubscriptionAttemptedFor.current === userId) return;
-		// Attempt once per signed-in user. Best-effort bootstrap; the backend
-		// also ensures a row on first metered usage, so a failure is safe to
-		// swallow and must not re-trigger the effect into a tight retry loop.
-		ensureSubscriptionAttemptedFor.current = userId;
+		if (!signedInUserId || ensureSubscriptionAttemptedFor.current === signedInUserId) return;
+		ensureSubscriptionAttemptedFor.current = signedInUserId;
 		void ensureMySubscription({}).catch(() => {});
 	}, [authReady, signedInUserId, ensureMySubscription]);
 
 	useEffect(() => {
 		if (!authReady) return;
-		const userId = signedInUserIdRef.current;
 
-		if (!userId || providerConfigurationLoadedFor.current === userId) return;
-		providerConfigurationLoadedFor.current = userId;
-		loadProviderConfigurationEvent(userId);
+		if (!signedInUserId || providerConfigurationLoadedFor.current === signedInUserId) return;
+		providerConfigurationLoadedFor.current = signedInUserId;
+		loadProviderConfigurationEvent(signedInUserId);
 	}, [authReady, signedInUserId]);
 
 	const [localApi, setLocalApi] = useState<LocalApi | null>(null);
-	const localApiRef = useRef(localApi);
+	const localApiRef = useLatest(localApi);
 	const [localApiResolved, setLocalApiResolved] = useState(false);
 
 	const chatGptStatusLoadedFor = useRef<{ userId: string; api: LocalApi } | null>(null);
@@ -526,7 +500,7 @@ export default function App({
 			chatGptStatusGeneration.current += 1;
 			chatGptStatusLoadedFor.current = null;
 		};
-	}, [authReady, signedInUserId, localApi]);
+	}, [authReady, signedInUserId, signedInUserIdRef, localApi]);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -591,27 +565,7 @@ export default function App({
 	const [createThreadComposerElement, setCreateThreadComposerElement] =
 		useState<HTMLElement | null>(null);
 
-	// Submission and recovery bookkeeping. These are concurrency guards and
-	// caches; rendering never reads them directly. Rendering reads go through
-	// submissionTrackingVersion, bumped by every mutation.
-	const submittingPromptScopes = useRef(new Map<string, number>()).current;
-	const composerRecoveries = useRef(new Map<string, ComposerRecovery>()).current;
-
-	const recoveredSubmissionIds = useRef(
-		new Map<
-			string,
-			{
-				prompt: string;
-				storageIds: Id<'_storage'>[];
-				reasoningEffort: string;
-				fastMode: boolean;
-				selectedModel: CatalogModelId;
-				submissionId: string;
-				continuationOfRunId?: Id<'runs'>;
-			}
-		>()
-	).current;
-
+	const submissions = useSubmissionTracker();
 	const latestSubmissionSequencesByRecoveryScope = useRef(new Map<string, number>()).current;
 	const nextAgentLaunchId = useRef(0);
 	const nextSubmissionSequence = useRef(0);
@@ -621,41 +575,6 @@ export default function App({
 	const lastAppliedThemePreferences = useRef<Doc<'uiPreferences'> | null | undefined>(undefined);
 	const [pendingTheme, setPendingTheme] = useState<SprocketTheme | null>(null);
 	const themeSaveGeneration = useRef(0);
-
-	const [submissionTrackingVersion, setSubmissionTrackingVersion] = useState(0);
-
-	const bumpSubmissionTracking = useCallback(
-		() => setSubmissionTrackingVersion((version) => version + 1),
-		[]
-	);
-
-	const clearSubmittingPrompt = useCallback(
-		(scope: string, submissionSequence: number) => {
-			if (submittingPromptScopes.get(scope) === submissionSequence) {
-				submittingPromptScopes.delete(scope);
-				bumpSubmissionTracking();
-			}
-		},
-		[bumpSubmissionTracking, submittingPromptScopes]
-	);
-
-	const storeComposerRecovery = useCallback(
-		(userId: string, scope: string, recovery: ComposerRecovery) => {
-			composerRecoveries.set(getComposerRecoveryKey(userId, scope), recovery);
-			bumpSubmissionTracking();
-		},
-		[bumpSubmissionTracking, composerRecoveries]
-	);
-
-	const clearComposerRecovery = useCallback(
-		(userId: string, scope: string) => {
-			const recoveryKey = getComposerRecoveryKey(userId, scope);
-			composerRecoveries.delete(recoveryKey);
-			recoveredSubmissionIds.delete(recoveryKey);
-			bumpSubmissionTracking();
-		},
-		[bumpSubmissionTracking, composerRecoveries, recoveredSubmissionIds]
-	);
 
 	const composerAttachments = useComposerAttachments({
 		context: {
@@ -851,44 +770,38 @@ export default function App({
 		if (transcript.threadId !== threadId) transcript.selectThread(threadId);
 	}, [currentThreadId, transcript]);
 
+	const currentThreadIdRef = useLatest(currentThreadId);
+	const currentWorkspacePathRef = useLatest(currentWorkspacePath);
+	const currentRepositoryKeyRef = useLatest(currentRepositoryKey);
+	const draftWorkspacePathRef = useLatest(draftWorkspacePath);
+
 	useEffect(() => {
 		const threadId = currentThreadId;
 		const api = localApi;
 
-		if (!threadId || !api || !isSignedIn) return;
-		const userId = signedInUserIdRef.current;
-
-		if (!userId) return;
+		if (!threadId || !api || !isSignedIn || !signedInUserId) return;
 
 		return transcript.watchDisplay({
 			api,
-			userId,
+			userId: signedInUserId,
 			threadId,
 			isCurrent: () => currentThreadIdRef.current === threadId
 		});
-	}, [currentThreadId, localApi, isSignedIn, transcript, signedInUserId]);
+	}, [currentThreadId, currentThreadIdRef, localApi, isSignedIn, transcript, signedInUserId]);
 
 	useEffect(() => {
 		const threadId = currentThreadId;
 		const api = localApi;
 
-		if (!threadId || !api || !isSignedIn) return;
-		const userId = signedInUserIdRef.current;
-
-		if (!userId) return;
+		if (!threadId || !api || !isSignedIn || !signedInUserId) return;
 
 		return transcript.watchLiveCompletion({
 			api,
-			userId,
+			userId: signedInUserId,
 			threadId,
 			isCurrent: () => currentThreadIdRef.current === threadId
 		});
-	}, [currentThreadId, localApi, isSignedIn, transcript, signedInUserId]);
-
-	const currentThreadIdRef = useRef(currentThreadId);
-	const currentWorkspacePathRef = useRef(currentWorkspacePath);
-	const currentRepositoryKeyRef = useRef(currentRepositoryKey);
-	const draftWorkspacePathRef = useRef(draftWorkspacePath);
+	}, [currentThreadId, currentThreadIdRef, localApi, isSignedIn, transcript, signedInUserId]);
 
 	useEffect(() => {
 		transcript.syncOverlays(transcript.overlays);
@@ -1048,7 +961,7 @@ export default function App({
 
 		if (!userId || !currentComposerScope) return undefined;
 
-		return recoveredSubmissionIds.get(getComposerRecoveryKey(userId, currentComposerScope));
+		return submissions.recoveredSubmission(getComposerRecoveryKey(userId, currentComposerScope));
 	})();
 
 	const isRetryableQueuedRun =
@@ -1078,7 +991,7 @@ export default function App({
 	});
 
 	const isSubmittingPrompt = Boolean(
-		currentComposerScope && submittingPromptScopes.has(currentComposerScope)
+		currentComposerScope && submissions.isSubmitting(currentComposerScope)
 	);
 
 	const conversationError =
@@ -1312,7 +1225,7 @@ export default function App({
 				.filter((attachment) => attachment.status !== 'uploading');
 
 			if (scope && (latestPrompt || finishedAttachments.length > 0)) {
-				storeComposerRecovery(userId, scope, {
+				submissions.storeRecovery(userId, scope, {
 					message: '',
 					prompt: latestPrompt,
 					attachments: finishedAttachments,
@@ -1714,7 +1627,7 @@ export default function App({
 		if (signedInUserIdRef.current !== userId) return;
 
 		if (continuationPrompt !== null && currentThreadIdRef.current !== threadId) {
-			storeComposerRecovery(userId, `thread:${threadId}`, {
+			submissions.storeRecovery(userId, `thread:${threadId}`, {
 				message: 'Continuing from your answer when you return to this thread.',
 				prompt: continuationPrompt,
 				attachments: submittedAttachments,
@@ -1740,7 +1653,7 @@ export default function App({
 		}
 	}
 
-	const pendingAgentQuestionRef = useRef(pendingAgentQuestion);
+	const pendingAgentQuestionRef = useLatest(pendingAgentQuestion);
 
 	async function submitPrompt(
 		options?: {
@@ -1860,7 +1773,7 @@ export default function App({
 			originatingRecoveryScope
 		);
 
-		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
+		const recoveredSubmission = submissions.recoveredSubmission(originatingRecoveryKey);
 		const freshSubmissionId = crypto.randomUUID();
 
 		const threadSubmissionId = resolveSubmissionId({
@@ -1885,7 +1798,7 @@ export default function App({
 		});
 
 		const runSubmissionId = threadSubmissionId;
-		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
+		submissions.clearRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
 		const submissionSequence = ++nextSubmissionSequence.current;
@@ -1902,7 +1815,7 @@ export default function App({
 			'This request is still preparing. Wait for it to finish before trying again.';
 
 		const recoverSubmission = (message: string | null, submissionId?: string) => {
-			storeComposerRecovery(submittedUserId, recoveryScope, {
+			submissions.storeRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
 				attachments: submittedAttachments,
@@ -1921,7 +1834,7 @@ export default function App({
 		};
 
 		const clearSubmissionDelay = () => {
-			clearComposerRecovery(submittedUserId, recoveryScope);
+			submissions.clearRecovery(submittedUserId, recoveryScope);
 
 			if (isSubmittedUserCurrent()) {
 				setCurrentError((error) => (error === submissionDelayMessage ? null : error));
@@ -1945,14 +1858,13 @@ export default function App({
 				);
 			}
 
-			clearSubmittingPrompt(submissionScope, submissionSequence);
+			submissions.finishSubmitting(submissionScope, submissionSequence);
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, agentLaunchTimeoutMs);
 
 		setPrompt('');
 		setCurrentError(null);
-		submittingPromptScopes.set(submissionScope, submissionSequence);
-		bumpSubmissionTracking();
+		submissions.startSubmitting(submissionScope, submissionSequence);
 
 		try {
 			if (!selectedThreadId) {
@@ -1977,14 +1889,13 @@ export default function App({
 					const nextSubmissionScope = `draft:${workspacePath}`;
 
 					if (nextSubmissionScope !== submissionScope) {
-						clearSubmittingPrompt(submissionScope, submissionSequence);
+						submissions.finishSubmitting(submissionScope, submissionSequence);
 						latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 						submissionScope = nextSubmissionScope;
 						recoveryScope = nextSubmissionScope;
 						submissionTrackingKey = getComposerRecoveryKey(submittedUserId, nextSubmissionScope);
 						latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
-						submittingPromptScopes.set(submissionScope, submissionSequence);
-						bumpSubmissionTracking();
+						submissions.startSubmitting(submissionScope, submissionSequence);
 					}
 				}
 			}
@@ -2105,7 +2016,7 @@ export default function App({
 			void refreshDesktopProjectAttachments().catch(() => {});
 		} finally {
 			window.clearTimeout(submissionTimeoutId);
-			clearSubmittingPrompt(submissionScope, submissionSequence);
+			submissions.finishSubmitting(submissionScope, submissionSequence);
 
 			if (
 				agentLaunchId === null &&
@@ -2116,39 +2027,10 @@ export default function App({
 		}
 	}
 
-	const runStateRef = useRef(runState);
-	const pendingAgentLaunchesRef = useRef(pendingAgentLaunches);
-	const composerContinuationOfRunIdRef = useRef(composerContinuationOfRunId);
-	const promptRef = useRef(prompt);
-
-	// Async callbacks observe committed selections, never an abandoned render.
-	useLayoutEffect(() => {
-		configRef.current = config;
-		signedInUserIdRef.current = signedInUserId;
-		localApiRef.current = localApi;
-		currentThreadIdRef.current = currentThreadId;
-		currentWorkspacePathRef.current = currentWorkspacePath;
-		currentRepositoryKeyRef.current = currentRepositoryKey;
-		draftWorkspacePathRef.current = draftWorkspacePath;
-		pendingAgentQuestionRef.current = pendingAgentQuestion;
-		runStateRef.current = runState;
-		pendingAgentLaunchesRef.current = pendingAgentLaunches;
-		composerContinuationOfRunIdRef.current = composerContinuationOfRunId;
-		promptRef.current = prompt;
-	}, [
-		config,
-		signedInUserId,
-		localApi,
-		currentThreadId,
-		currentWorkspacePath,
-		currentRepositoryKey,
-		draftWorkspacePath,
-		pendingAgentQuestion,
-		runState,
-		pendingAgentLaunches,
-		composerContinuationOfRunId,
-		prompt
-	]);
+	const runStateRef = useLatest(runState);
+	const pendingAgentLaunchesRef = useLatest(pendingAgentLaunches);
+	const composerContinuationOfRunIdRef = useLatest(composerContinuationOfRunId);
+	const promptRef = useLatest(prompt);
 
 	async function cancelRun() {
 		if (!isStopAvailable) return;
@@ -2379,61 +2261,32 @@ export default function App({
 
 		if (!userId || !recoveryScope) return;
 		const recoveryKey = getComposerRecoveryKey(userId, recoveryScope);
-		const recovery = composerRecoveries.get(recoveryKey);
+		const recovery = submissions.recovery(recoveryKey);
 
 		if (!recovery) return;
 
 		if (prompt !== '' && prompt !== recovery.prompt) return;
 
-		composerRecoveries.delete(recoveryKey);
-		const canRestorePrompt = prompt === '';
+		if (prompt === '') setPrompt(recovery.prompt);
 
-		if (canRestorePrompt) setPrompt(recovery.prompt);
-
-		if (
-			composerAttachments.items.length === 0 &&
-			recovery.attachments?.length &&
-			(canRestorePrompt || prompt === recovery.prompt)
-		) {
+		if (composerAttachments.items.length === 0 && recovery.attachments?.length) {
 			composerAttachments.replace(recovery.attachments);
 		}
 
-		if (prompt === recovery.prompt || canRestorePrompt) {
-			setComposerContinuationOfRunId(recovery.continuationOfRunId ?? null);
-			setAutoSubmitComposerContinuation(
-				recovery.autoSubmit === true && recovery.continuationOfRunId !== undefined
-			);
-
-			if (
-				recovery.submissionId &&
-				(recovery.prompt || recovery.storageIds?.length) &&
-				recovery.reasoningEffort &&
-				recovery.selectedModel
-			) {
-				recoveredSubmissionIds.set(recoveryKey, {
-					prompt: recovery.prompt,
-					storageIds: recovery.storageIds ?? [],
-					reasoningEffort: recovery.reasoningEffort,
-					fastMode: recovery.fastMode ?? false,
-					selectedModel: recovery.selectedModel,
-					submissionId: recovery.submissionId,
-					continuationOfRunId: recovery.continuationOfRunId
-				});
-			}
-		}
+		setComposerContinuationOfRunId(recovery.continuationOfRunId ?? null);
+		setAutoSubmitComposerContinuation(
+			recovery.autoSubmit === true && recovery.continuationOfRunId !== undefined
+		);
 
 		setCurrentError(recovery.message);
-		bumpSubmissionTracking();
+		submissions.restoreRecovery(recoveryKey, recovery);
 	}, [
 		signedInUserId,
 		currentThreadId,
 		currentProjectPath,
 		prompt,
 		composerAttachments,
-		composerRecoveries,
-		recoveredSubmissionIds,
-		submissionTrackingVersion,
-		bumpSubmissionTracking
+		submissions
 	]);
 
 	const submitRestoredContinuation = useEffectEvent(() => {
@@ -2575,10 +2428,23 @@ export default function App({
 		}
 	}, [currentThreadId, runState, pendingAgentLaunches]);
 
-	const boot = useEffectEvent(() => {
+	useEffect(() => {
+		const media = matchMedia('(max-width: 767px)');
+		setSidebarOpen(!media.matches);
+		setViewportWidth(window.innerWidth);
+		const updateViewportWidth = () => setViewportWidth(window.innerWidth);
+		window.addEventListener('resize', updateViewportWidth);
+
+		return () => window.removeEventListener('resize', updateViewportWidth);
+	}, []);
+
+	const loadInitialModelCatalog = useEffectEvent(() => void loadModelCatalog());
+	useEffect(() => loadInitialModelCatalog(), []);
+
+	const watchProjectLaunches = useEffectEvent(() => {
 		const bridge = window.sprocketDesktopBridge;
 
-		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
+		const unsubscribe = bridge?.onWorkspaceLaunch
 			? bridge.onWorkspaceLaunch(() => {
 					void takeDesktopProjectLaunches();
 				})
@@ -2597,6 +2463,12 @@ export default function App({
 			setInitialProjectLaunchResolved(true);
 		}
 
+		return unsubscribe;
+	});
+
+	useEffect(() => watchProjectLaunches(), []);
+
+	const connectLocalApi = useEffectEvent(() => {
 		void runtime
 			.resolveLocalApi()
 			.then(async (client) => {
@@ -2615,24 +2487,9 @@ export default function App({
 				);
 				setLocalApiResolved(true);
 			});
-
-		return unsubscribeWorkspaceLaunch;
 	});
 
-	useEffect(() => {
-		const media = matchMedia('(max-width: 767px)');
-		setSidebarOpen(!media.matches);
-		setViewportWidth(window.innerWidth);
-		const updateViewportWidth = () => setViewportWidth(window.innerWidth);
-		window.addEventListener('resize', updateViewportWidth);
-		void loadModelCatalog();
-		const unsubscribeWorkspaceLaunch = boot();
-
-		return () => {
-			unsubscribeWorkspaceLaunch?.();
-			window.removeEventListener('resize', updateViewportWidth);
-		};
-	}, []);
+	useEffect(() => connectLocalApi(), []);
 
 	async function focusSidebarControl(open: boolean) {
 		await Promise.resolve();
