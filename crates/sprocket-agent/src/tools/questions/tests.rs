@@ -6,7 +6,6 @@ fn snapshot(question_id: &str, status: &str) -> QuestionSnapshot {
         status: status.to_string(),
         answer: (status == "answered").then(|| QuestionAnswer {
             option_id: Some("safe".to_string()),
-            option_label: Some("Use the safe default".to_string()),
             text: None,
         }),
     }
@@ -96,13 +95,9 @@ fn question_results_return_status_and_answer_with_ids_only_on_creation() {
     for status in ["pending", "answered", "timedOut", "skipped"] {
         let observed = snapshot("q1", status);
         let result = question_result_from_snapshot(&observed).unwrap();
-        let mut expected = json!({
-            "pending": status == "pending",
-            "timedOut": status == "timedOut",
-            "skipped": status == "skipped",
-        });
+        let mut expected = json!({ "status": status });
         if status == "answered" {
-            expected["answer"] = json!({"optionId": "safe", "optionLabel": "Use the safe default"});
+            expected["answer"] = json!({"optionId": "safe"});
         }
         assert_eq!(result, expected);
         let creation = question_creation_result(result.clone(), "q1", 10_000);
@@ -166,7 +161,7 @@ async fn terminal_and_failed_reads_do_not_change_pending_poll_timestamp() {
                 .observe_pending("q1", || async { Ok(snapshot("q1", status)) })
                 .await
                 .unwrap();
-            assert_eq!(result["pending"], false);
+            assert_eq!(result["status"], status);
         }
     }
     assert!(
@@ -249,7 +244,6 @@ async fn wait_deadline_performs_an_authoritative_read() {
         )
         .await
         .unwrap();
-        assert_eq!(result["pending"], status == "pending");
-        assert_eq!(result["timedOut"], status == "timedOut");
+        assert_eq!(result["status"], status);
     }
 }
