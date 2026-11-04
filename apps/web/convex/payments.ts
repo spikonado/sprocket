@@ -544,8 +544,7 @@ const vCheckoutCancelResult = v.object({
 		v.literal('expired'),
 		v.literal('cancelled'),
 		v.literal('outcome_unknown')
-	),
-	merchant: v.string()
+	)
 });
 
 /** Idempotent: a purchase that already left approval keeps its status, so a
@@ -557,15 +556,14 @@ export const checkoutCancel = action({
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args, true);
 			const purchase = await requirePurchase(ctx, args.purchaseId, actor.userId);
-			const { merchant } = purchase;
 
 			switch (purchase.status) {
 				case 'awaiting_approval':
 					break;
 				case 'settled':
-					return { status: 'approved' as const, merchant };
+					return { status: 'approved' as const };
 				default:
-					return { status: purchase.status, merchant };
+					return { status: purchase.status };
 			}
 
 			try {
@@ -577,7 +575,7 @@ export const checkoutCancel = action({
 				);
 			} catch (error) {
 				if (error instanceof AgentcardError && error.code === 'outcome_unknown') {
-					return { status: 'outcome_unknown' as const, merchant };
+					return { status: 'outcome_unknown' as const };
 				}
 
 				throw error;
@@ -588,7 +586,7 @@ export const checkoutCancel = action({
 				status: 'cancelled'
 			});
 
-			return { status: 'cancelled' as const, merchant };
+			return { status: 'cancelled' as const };
 		})
 });
 
@@ -633,7 +631,7 @@ export const reportOrder = action({
 				trackingLink: httpsLink(args.trackingLink, 'trackingLink')
 			});
 
-			return { recorded: true as const };
+			return {};
 		})
 });
 

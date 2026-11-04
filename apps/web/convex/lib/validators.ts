@@ -609,7 +609,9 @@ export const vCardCheckoutResult = v.object({
 	reason: v.optional(v.string())
 });
 
-export const vReportOrderResult = v.object({ recorded: v.literal(true) });
+export const vReportOrderResult = v.record(v.string(), v.null());
+
+const vHistoricalReportOrderResult = v.object({ recorded: v.literal(true) });
 
 export const vPollCheckoutResult = v.object({
 	status: v.union(
@@ -904,7 +906,8 @@ export const vExecutorJobResult = v.union(
 	vMandateReportResult,
 	vCardCheckoutResult,
 	vPollCheckoutResult,
-	vReportOrderResult
+	vReportOrderResult,
+	vHistoricalReportOrderResult
 );
 
 export const runFinalStatus = ['cancelled', 'completed', 'failed'] as const;
