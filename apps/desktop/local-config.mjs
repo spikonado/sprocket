@@ -2,7 +2,7 @@ export const DEV_HOST = 'localhost';
 
 export const DEV_API_HOST = '127.0.0.1';
 
-// Must match the `--port` flag in the root package.json `dev` script.
+// Must match the `serve --port` flag in scripts/run-dev.mjs.
 export const DEV_API_PORT = 7731;
 
 export const WEB_DEV_PORT = 5173;

@@ -1,36 +1,25 @@
-# AI Agents
-
 .claude
 .codex
 .sprocket-dev
 
-# Dependencies
 .bun-cache
 .pnp
 .pnp.js
 node_modules
 
-# Env
 .env.*
 !.env.example
 !.env.test
 
-# macOS-specific files
 .DS_Store
 
-# Nix
 .direnv
 
-# Svelte
 .svelte-kit
 
-# Testing
 coverage
 
-# Turbo
 .turbo
-
-# Misc
 
 .worktrees
 dist
