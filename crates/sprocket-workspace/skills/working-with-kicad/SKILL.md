@@ -9,7 +9,8 @@ Use `kicad-cli` for checks and exports.
 ## Set up the connector
 
 - Check if KiCad is listed in `list_connectors`. If it isn't, ask the user to install it in Settings -> Connectors.
-- The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, and `kicad` on PATH.
+- The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, and `kicad` on PATH. Call them by name.
+- Read kipy's API with `kicad-python -m pydoc kipy.<module>`.
 
 ## Before editing
 
