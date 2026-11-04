@@ -25,7 +25,7 @@ use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
-use crate::convex::{ContextHandoffWrite, RuntimeClient};
+use crate::convex::{ClaimStatus, ContextHandoffWrite, RuntimeClient};
 use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
@@ -137,21 +137,20 @@ pub(crate) struct RunBegin {
 }
 
 impl RunBegin {
-    /// Returns false when the run no longer owns its claim.
     async fn write(
         self,
         runtime: &RuntimeClient,
         run_id: &str,
         claim_id: &str,
         handoff: Option<&ContextHandoffWrite<'_>>,
-    ) -> anyhow::Result<bool> {
-        let begun = runtime
+    ) -> anyhow::Result<ClaimStatus> {
+        let status = runtime
             .begin_run(run_id, claim_id, &self.workspace_context, handoff)
             .await?;
-        if begun {
+        if status == ClaimStatus::Active {
             let _ = self.begun.send(());
         }
-        Ok(begun)
+        Ok(status)
     }
 }
 
@@ -314,9 +313,10 @@ impl AgentProvider {
             self.completion_provider.as_str(),
             next.as_str()
         );
-        if !runtime
+        if runtime
             .fall_back_to_provider(run_id, claim_id, next)
             .await?
+            == ClaimStatus::Lost
         {
             anyhow::bail!(RUN_NO_LONGER_ACTIVE);
         }
@@ -443,10 +443,10 @@ pub(crate) async fn resume_context_handoff(
     summary: &str,
     workspace_context: Vec<Message>,
     deferred_prompt: Option<Message>,
-    save: impl std::future::Future<Output = anyhow::Result<bool>>,
+    save: impl std::future::Future<Output = anyhow::Result<ClaimStatus>>,
     next_model: impl std::future::Future<Output = anyhow::Result<Option<DynModel<Completion>>>>,
 ) -> anyhow::Result<Option<(Vec<Message>, Message)>> {
-    if !save.await? {
+    if save.await? == ClaimStatus::Lost {
         return Ok(None);
     }
     if let Some(model) = next_model.await? {
@@ -465,10 +465,10 @@ pub(crate) async fn resume_without_provider_handoff(
     agent: &mut rig::Agent,
     history: Vec<Message>,
     prompt: Message,
-    record: impl std::future::Future<Output = anyhow::Result<bool>>,
+    record: impl std::future::Future<Output = anyhow::Result<ClaimStatus>>,
     next_model: impl std::future::Future<Output = anyhow::Result<DynModel<Completion>>>,
 ) -> anyhow::Result<Option<(Vec<Message>, Message)>> {
-    if !record.await? {
+    if record.await? == ClaimStatus::Lost {
         return Ok(None);
     }
     agent.set_model(next_model.await?);
@@ -651,8 +651,8 @@ async fn run_with_completion_model(
             .omit_reasoning_replay(&request.run_id, &request.claim_id)
             .await
         {
-            Ok(true) => {}
-            Ok(false) => {
+            Ok(ClaimStatus::Active) => {}
+            Ok(ClaimStatus::Lost) => {
                 return AgentProviderResult::Cancelled {
                     text: String::new(),
                 };
@@ -741,8 +741,8 @@ async fn run_with_completion_model(
                     .write(&runtime, &request.run_id, &request.claim_id, None)
                     .await
                 {
-                    Ok(true) => {}
-                    Ok(false) => {
+                    Ok(ClaimStatus::Active) => {}
+                    Ok(ClaimStatus::Lost) => {
                         break 'agent_run AgentProviderResult::Cancelled {
                             text: String::new(),
                         };

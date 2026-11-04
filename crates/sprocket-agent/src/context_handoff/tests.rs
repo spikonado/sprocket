@@ -70,10 +70,10 @@ fn mid_run_handoff_includes_the_pending_tool_result() {
         },
         100,
     );
-    assert_eq!(
-        state.handoff_history.unwrap(),
-        vec![Message::user("old work"), prompt]
-    );
+    let HandoffPhase::Requested(history) = state.phase else {
+        panic!("handoff was not requested");
+    };
+    assert_eq!(history, vec![Message::user("old work"), prompt]);
 }
 
 #[test]
@@ -92,16 +92,16 @@ fn does_not_estimate_tokens_from_large_messages() {
         ),
         CompletionCallAction::Continue
     ));
-    assert!(state.handoff_history.is_none());
+    assert!(matches!(state.phase, HandoffPhase::Idle));
 }
 
 #[test]
 fn handoff_submission_requires_a_pending_request_and_nonempty_document() {
     let mut state = HandoffState::default();
     assert!(state.submit("handoff".into()).is_err());
-    state.writing = true;
+    state.phase = HandoffPhase::Writing;
     assert!(state.submit("  ".into()).is_err());
     assert!(state.submit("handoff".into()).is_ok());
     assert!(state.submit("duplicate".into()).is_err());
-    assert_eq!(state.summary.as_deref(), Some("handoff"));
+    assert!(matches!(&state.phase, HandoffPhase::Written(summary) if summary == "handoff"));
 }

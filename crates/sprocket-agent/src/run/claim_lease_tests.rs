@@ -5,8 +5,8 @@ use anyhow::anyhow;
 use tokio::time::{Instant, sleep};
 
 use super::{
-    RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
-    RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
+    ClaimLeaseLost, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION,
+    RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
 };
 
 #[tokio::test(start_paused = true)]
@@ -103,7 +103,7 @@ async fn lost_lease_is_not_retried() {
 
 #[tokio::test(start_paused = true)]
 async fn drive_fails_the_run_when_the_lease_is_lost() {
-    let result: anyhow::Result<()> = drive_claim_lease(
+    let result: Result<(), ClaimLeaseLost> = drive_claim_lease(
         "run-taken-over",
         Instant::now(),
         |_lease_deadline| async { Ok((false, Instant::now())) },
@@ -115,7 +115,7 @@ async fn drive_fails_the_run_when_the_lease_is_lost() {
 
 #[tokio::test(start_paused = true)]
 async fn drive_fails_the_run_when_renewal_fails() {
-    let result: anyhow::Result<()> = drive_claim_lease(
+    let result: Result<(), ClaimLeaseLost> = drive_claim_lease(
         "run-disconnected",
         Instant::now(),
         |_lease_deadline| async { Err(anyhow!("claim renewal timed out")) },

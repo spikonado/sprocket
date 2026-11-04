@@ -400,7 +400,8 @@ async fn wait_for_checkout(
         let state = progress.borrow_and_update().clone();
         let changed = match state {
             CheckoutProgress::Finished(result) => return result.map_err(tool_failure),
-            // Bounded by the payment request wait and the purchase create.
+            // No deadline here: card_checkout stops when the run ends, except
+            // inside the uncancellable purchase create.
             CheckoutProgress::Starting => progress.changed().await,
             CheckoutProgress::AwaitingApproval {
                 purchase_id,
