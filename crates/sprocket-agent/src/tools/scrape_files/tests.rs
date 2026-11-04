@@ -19,52 +19,37 @@ async fn serve(body: &str, declared_size: usize) -> reqwest::Url {
 }
 
 #[tokio::test]
-async fn short_scrapes_preserve_outline_and_images_without_a_truncation_flag() {
-    let result = localize_scrape(
-        json!({"url": "https://example.com", "markdown": "# Hello", "outline": {"title": "Hello", "headings": []}, "images": ["https://example.com/image.png"], "truncated": false}),
-        &WorkspaceCancellation::new(),
-        &mut None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        result,
-        json!({"url": "https://example.com", "markdown": "# Hello", "outline": {"title": "Hello", "headings": []}, "images": ["https://example.com/image.png"]})
-    );
-}
-
-#[tokio::test]
-async fn direct_scrapes_use_utf16_budget_and_keep_full_json_until_completion() {
-    let short = json!({"url": "https://example.com/page.md", "markdown": "# Short", "images": []});
+async fn direct_scrapes_over_the_utf16_budget_save_markdown_until_completion() {
+    let cache = tempfile::tempdir().unwrap();
+    let cache_dir = cache.path().join("scrape_url");
+    let fits = json!({"url": "https://example.com/page.md", "markdown": "😀".repeat(SCRAPE_INLINE_MAX_CHARS / 2)});
     let mut saved = None;
     assert_eq!(
-        localize_scrape(short.clone(), &WorkspaceCancellation::new(), &mut saved)
-            .await
-            .unwrap(),
-        short
+        localize_scrape(
+            fits.clone(),
+            &cache_dir,
+            &WorkspaceCancellation::new(),
+            &mut saved
+        )
+        .await
+        .unwrap(),
+        fits
     );
     assert!(saved.is_none());
 
-    let mut full = short;
-    full["markdown"] = json!("😀".repeat(20_000));
-    assert!(full.to_string().chars().count() < SCRAPE_INLINE_MAX_CHARS);
-    let result = localize_scrape(full.clone(), &WorkspaceCancellation::new(), &mut saved)
+    let markdown = format!("{}x", "😀".repeat(SCRAPE_INLINE_MAX_CHARS / 2));
+    let full = json!({"url": "https://example.com/page.md", "markdown": markdown});
+    let result = localize_scrape(full, &cache_dir, &WorkspaceCancellation::new(), &mut saved)
         .await
         .unwrap();
     let file = saved.unwrap();
     let path = file.path().to_owned();
-    assert_eq!(path.extension().unwrap(), "json");
+    assert_eq!(path.parent(), Some(cache_dir.as_path()));
+    assert_eq!(path.extension().unwrap(), "md");
+    assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), markdown);
     assert_eq!(
-        serde_json::from_str::<Value>(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap(),
-        full
-    );
-    assert_eq!(result["url"], full["url"]);
-    assert_eq!(
-        result["markdown"],
-        format!(
-            "The scrape was too large to directly output. Instead, it has been saved to {} for you to view.",
-            path.display()
-        )
+        result,
+        json!({"url": "https://example.com/page.md", "savedTo": path.display().to_string()})
     );
     drop(file);
     assert!(!path.exists());
@@ -72,11 +57,13 @@ async fn direct_scrapes_use_utf16_budget_and_keep_full_json_until_completion() {
 
 #[tokio::test]
 async fn cancelled_direct_saves_do_not_return_a_file() {
+    let cache = tempfile::tempdir().unwrap();
     let cancellation = WorkspaceCancellation::new();
     cancellation.cancel();
     let mut saved = None;
     let error = localize_scrape(
-        json!({"markdown": "x".repeat(40_001)}),
+        json!({"markdown": "x".repeat(SCRAPE_INLINE_MAX_CHARS + 1)}),
+        cache.path(),
         &cancellation,
         &mut saved,
     )
@@ -87,37 +74,27 @@ async fn cancelled_direct_saves_do_not_return_a_file() {
 }
 
 #[tokio::test]
-async fn full_scrape_is_saved_while_outline_and_highlights_stay_in_the_output() {
+async fn downloaded_scrape_is_saved_while_outline_and_highlights_stay_in_the_output() {
+    let cache = tempfile::tempdir().unwrap();
     let outline = json!({"title": "Guide", "headings": [{"level": 2, "text": "Install"}]});
-    let scrape = json!({"markdown": "é\n".repeat(40_001), "outline": outline, "images": ["https://example.com/image.png"]});
-    let text = scrape.to_string();
-    let url = serve(&text, text.len()).await;
+    let markdown = "é\n".repeat(SCRAPE_INLINE_MAX_CHARS);
+    let url = serve(&markdown, markdown.len()).await;
     let mut saved_file = None;
     let result = localize_scrape(
         json!({"url": "https://example.com", "scrapeUrl": url.as_str(), "outline": outline, "highlights": ["Run the installer."]}),
+        cache.path(),
         &WorkspaceCancellation::new(),
         &mut saved_file,
     )
     .await
     .unwrap();
-    let path = result["markdown"]
-        .as_str()
-        .unwrap()
-        .strip_prefix("The scrape was too large to directly output. Instead, it has been saved to ")
-        .unwrap()
-        .strip_suffix(" for you to view.")
-        .unwrap();
-    assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), text);
-    assert_eq!(result["outline"], outline);
-    assert_eq!(result["highlights"], json!(["Run the installer."]));
-    assert_eq!(std::path::Path::new(path).extension().unwrap(), "json");
+    let path = saved_file.unwrap().into_temp_path();
+    assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), markdown);
+    assert_eq!(path.extension().unwrap(), "md");
     assert_eq!(
-        std::path::Path::new(path).parent(),
-        Some(std::env::temp_dir().as_path())
+        result,
+        json!({"url": "https://example.com", "savedTo": path.display().to_string(), "outline": outline, "highlights": ["Run the installer."]})
     );
-    assert!(result.get("scrapeUrl").is_none());
-    assert!(result.get("truncated").is_none());
-    tokio::fs::remove_file(path).await.unwrap();
 }
 
 #[tokio::test]

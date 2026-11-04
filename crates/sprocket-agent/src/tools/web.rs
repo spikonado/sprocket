@@ -16,7 +16,6 @@ use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::scrape_files::MAX_SCRAPE_BYTES;
 use super::url_fetch::{download_file, persist_web_image, url_file_name};
 
-pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
 const DOCUMENT_SNIFF_BYTES: usize = 1024;
 const DOCUMENT_TOO_LARGE: &str = "document exceeds the 64 MiB scrape limit; download it with shell tools and split it or extract its text there";
 
@@ -26,39 +25,18 @@ pub(crate) struct ScrapeUrlTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct WebSearchTool(pub(super) AgentToolContext);
 
-fn default_web_search_results() -> u32 {
-    DEFAULT_WEB_SEARCH_RESULTS
-}
-
-fn is_default_web_search_results(num_results: &u32) -> bool {
-    *num_results == DEFAULT_WEB_SEARCH_RESULTS
-}
-
-pub(super) fn web_search_parameters() -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(WebSearchArgs));
-    schema["properties"]["numResults"]["default"] = json!(DEFAULT_WEB_SEARCH_RESULTS);
-    schema
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WebSearchArgs {
     /// Web search query.
     pub(crate) query: String,
-    /// Number of results to return, between 1 and 10. Defaults to 5.
-    #[serde(
-        rename = "numResults",
-        default = "default_web_search_results",
-        skip_serializing_if = "is_default_web_search_results"
-    )]
-    #[schemars(default = "default_web_search_results")]
-    pub(crate) num_results: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
-    /// Optional question about the page. Web pages then also return the passages most relevant to it as `highlights`.
+    /// Question about the page; returns the matching passages as `highlights`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) query: Option<String>,
 }
@@ -100,12 +78,12 @@ impl rig::tool::Tool for WebSearchTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Search the web. Returns relevant pages with their URL, title, and a text excerpt. Use for current events or information beyond the local workspace."
+        "Search the web. Returns relevant pages with their URL, title, and a text excerpt."
             .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        web_search_parameters()
+        json!(schemars::schema_for!(WebSearchArgs))
     }
 
     async fn call(
@@ -158,7 +136,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
                     return if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
                         Ok(result)
                     } else {
-                        super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
+                        super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error)
                     };
                 }
                 let local = tokio::select! {
@@ -172,17 +150,17 @@ impl rig::tool::Tool for ScrapeUrlTool {
                     LocalResource::UnreadableDocument => fetch_raw_document(&self.0, &job_id, &cancellation).await?,
                     LocalResource::Page => {
                         if let Some(result) = super::markdown_url::try_markdown_url(url, &cancellation).await.map_err(tool_error)? {
-                            return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
+                            return super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error);
                         }
                         None
                     }
                 };
                 if let Some(document) = document {
                     let result = convert_web_document(document, &hosted, &cancellation).await.map_err(tool_error)?;
-                    return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
+                    return super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error);
                 }
                 let result = super::web_request::run(&self.0.runtime, cancellation.clone(), web_request_args(&self.0, &job_id), "scrape").await?;
-                super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
+                super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
         .await?;
@@ -256,7 +234,6 @@ async fn convert_web_document(
     Ok(json!({
         "url": url.as_str(),
         "markdown": markdown,
-        "images": [],
     }))
 }
 

@@ -151,7 +151,8 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
-- `summary` on `scrape_url` results, from before `outline` replaced it.
+- `summary` on `scrape_url` results, from before `outline` replaced it, and `images`, from before image references moved into the markdown.
+- `numResults` on `web_search` payloads, which released agents still send. Search ignores it.
 - `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on `list_subagent_models` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
