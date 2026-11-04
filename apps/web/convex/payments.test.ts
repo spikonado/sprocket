@@ -194,7 +194,7 @@ describe('Agentcard payments', () => {
 		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
 
 		const cancel = { ...auth, purchaseId: created.purchaseId };
-		const cancelled = { status: 'cancelled', merchant: 'shop.example.com' };
+		const cancelled = { status: 'cancelled' };
 
 		expect(await t.action(api.payments.checkoutCancel, cancel)).toEqual(cancelled);
 		await t.mutation(internal.payments.updatePurchase, {

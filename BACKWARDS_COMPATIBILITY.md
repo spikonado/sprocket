@@ -152,6 +152,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - Scope and thread metadata on artifact tool payloads and results.
 - `parse_file` URL sources and legacy command results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
+- `merchant` on `card_checkout` results, and `{ recorded: true }` `report_order` results.
 - `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.

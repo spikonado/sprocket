@@ -31,25 +31,20 @@ Done when: the page shows the final total and a Pay / Place order button, and no
 
 Call `card_checkout` with the page's final total, its currency, and the Pay button's ref from `snapshot -i`. The tool clicks the button, and the user approves the purchase with their passkey.
 
-While the status is `awaiting_approval`:
-
-- Keep calling `poll_checkout` with the `purchaseId`. Don't end your turn: the purchase is cancelled when your run ends.
-- Don't touch the checkout tab. The store's page is waiting for the payment.
-
-| status                             | your move                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------------- |
-| `awaiting_approval`                | Call `poll_checkout` until the status changes                                            |
-| `approved`                         | Go to step 4                                                                             |
-| `submitted_on_device`              | Tell the user to finish payment in the Agentcard popup, then go to step 4                |
-| `card_required`                    | Ask the user to save a card (Save a card button or Settings → Payments), then call again |
-| `declined`, `expired`, `cancelled` | Tell the user, with the `reason` if there is one; call again only if they ask            |
-| `no_payment_request`               | Check the page for errors or missing fields, fix them, then call again                   |
-| `outcome_unknown`                  | Stop. Tell the user to check their card and the store before anything else               |
+| status                             | your move                                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `awaiting_approval`                | Call `poll_checkout` until it changes. Don't end your turn or touch the checkout tab; ending the run cancels the purchase. |
+| `approved`                         | Go to step 4                                                                                                                |
+| `submitted_on_device`              | Tell the user to finish payment in the Agentcard popup, then go to step 4                                                   |
+| `card_required`                    | Ask the user to save a card (Save a card button or Settings → Payments), then call again                                    |
+| `declined`, `expired`, `cancelled` | Tell the user, with the `reason` if there is one; call again only if they ask                                               |
+| `no_payment_request`               | Check the page for errors or missing fields, fix them, then call again                                                      |
+| `outcome_unknown`                  | Stop. Tell the user to check their card and the store before anything else                                                  |
 
 A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_unknown` can charge the user twice.
 
 ## 4. Confirm and report
 
-Wait for the store's confirmation page and read the order number. Call `report_order` with the `purchaseId`, the order number, and, when the store shows them, `orderLink` (the order's page) and `trackingLink`. Both links must be https. Then give the user the order number and any tracking link.
+Wait for the store's confirmation page, then call `report_order`. Give the user the order number and any tracking link.
 
 Done when: `report_order` succeeded, or you told the user the store showed no confirmation.

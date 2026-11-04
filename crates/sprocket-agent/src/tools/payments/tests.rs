@@ -89,11 +89,10 @@ async fn checkout_waits_pass_approval_until_the_checkout_finishes() {
 
     progress.send_replace(CheckoutProgress::AwaitingApproval {
         purchase_id: "purchase".into(),
-        merchant: "shop.example.com".into(),
     });
     assert_eq!(
         waiting.await.unwrap().unwrap(),
-        json!({ "status": "awaiting_approval", "purchaseId": "purchase", "merchant": "shop.example.com" })
+        json!({ "status": "awaiting_approval", "purchaseId": "purchase" })
     );
 
     progress.send_replace(CheckoutProgress::Finished(Ok(

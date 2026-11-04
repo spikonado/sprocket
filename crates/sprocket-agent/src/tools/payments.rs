@@ -64,7 +64,7 @@ pub(crate) struct CardCheckoutArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PollCheckoutArgs {
-    /// purchaseId returned by card_checkout.
+    /// From card_checkout.
     purchase_id: String,
     #[serde(
         default = "default_yield_ms",
@@ -77,7 +77,7 @@ pub(crate) struct PollCheckoutArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ReportOrderArgs {
-    /// purchaseId returned by card_checkout.
+    /// From card_checkout.
     purchase_id: String,
     /// Order number shown by the store.
     order_number: String,
@@ -321,7 +321,6 @@ pub(super) struct ProcessorResponse {
 enum Outcome {
     Approved {
         purchase_id: String,
-        merchant: String,
         response: ProcessorResponse,
     },
     Stopped(Value),
@@ -332,7 +331,6 @@ enum CheckoutProgress {
     Starting,
     AwaitingApproval {
         purchase_id: String,
-        merchant: String,
     },
     Finished(Result<Value, String>),
 }
@@ -402,13 +400,10 @@ async fn wait_for_checkout(
             CheckoutProgress::Finished(result) => return result.map_err(tool_failure),
             // Bounded by the payment request wait and the purchase create.
             CheckoutProgress::Starting => progress.changed().await,
-            CheckoutProgress::AwaitingApproval {
-                purchase_id,
-                merchant,
-            } => tokio::select! {
+            CheckoutProgress::AwaitingApproval { purchase_id } => tokio::select! {
                 changed = progress.changed() => changed,
                 _ = sleep_until(deadline) => {
-                    return Ok(finished("awaiting_approval", &purchase_id, &merchant, None));
+                    return Ok(finished("awaiting_approval", &purchase_id, None));
                 }
             },
         };
@@ -426,7 +421,6 @@ async fn end_orphaned_checkout(
     #[derive(Deserialize)]
     struct Ended {
         status: String,
-        merchant: String,
     }
     let ended: Ended = decode(
         payments_action(
@@ -440,12 +434,7 @@ async fn end_orphaned_checkout(
     )?;
     let reason = (ended.status == "cancelled")
         .then(|| "The checkout ended with the run that started it.".to_string());
-    Ok(finished(
-        &ended.status,
-        purchase_id,
-        &ended.merchant,
-        reason,
-    ))
+    Ok(finished(&ended.status, purchase_id, reason))
 }
 
 async fn card_checkout(
@@ -495,14 +484,12 @@ async fn checkout(
     match approve(context, interceptor, args, &payment, progress, cancellation).await {
         Ok(Outcome::Approved {
             purchase_id,
-            merchant,
             response,
         }) => Ok(match interceptor.fulfill(&payment, &response).await {
-            Ok(()) => finished("approved", &purchase_id, &merchant, None),
+            Ok(()) => finished("approved", &purchase_id, None),
             Err(_) => finished(
                 "outcome_unknown",
                 &purchase_id,
-                &merchant,
                 Some("The approved payment could not reach the checkout page.".into()),
             ),
         }),
@@ -554,7 +541,6 @@ async fn approve(
     let page_url = interceptor.page_url().await.map_err(tool_error)?;
     let origin = checkout_origin(&page_url)
         .ok_or_else(|| tool_failure("card_checkout only works on https checkout pages."))?;
-    let merchant = origin.trim_start_matches("https://").to_string();
     let create_args = action_args_from_payload(
         &context.run_id,
         &context.claim_id,
@@ -591,10 +577,7 @@ async fn approve(
     };
     let (purchase_id, mut interval) = match (created.status.as_str(), created.purchase_id) {
         ("card_required", _) => {
-            return Ok(Outcome::Stopped(json!({
-                "status": "card_required",
-                "reason": "The user has no saved card. They can save one with the Save a card button below this tool call, or in Settings → Payments.",
-            })));
+            return Ok(Outcome::Stopped(json!({ "status": "card_required" })));
         }
         ("awaiting_approval", Some(purchase_id)) => {
             (purchase_id, poll_interval(created.poll_interval_ms))
@@ -610,17 +593,16 @@ async fn approve(
         .insert(purchase_id.clone(), progress.subscribe());
     progress.send_replace(CheckoutProgress::AwaitingApproval {
         purchase_id: purchase_id.clone(),
-        merchant: merchant.clone(),
     });
     let mut failures = 0;
     loop {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                return lost(context, &purchase_id, &merchant, "The run ended before the purchase was approved.").await;
+                return lost(context, &purchase_id, "The run ended before the purchase was approved.").await;
             }
             _ = interceptor.closed() => {
-                return lost(context, &purchase_id, &merchant, "The browser closed during checkout.").await;
+                return lost(context, &purchase_id, "The browser closed during checkout.").await;
             }
             _ = sleep(interval) => {}
         }
@@ -640,7 +622,7 @@ async fn approve(
                 if failures < MAX_CONVEX_FAILURES {
                     continue;
                 }
-                return lost(context, &purchase_id, &merchant, &error.to_string()).await;
+                return lost(context, &purchase_id, &error.to_string()).await;
             }
         };
         failures = 0;
@@ -651,18 +633,12 @@ async fn approve(
         return Ok(match (state.status.as_str(), state.response) {
             ("approved", Some(response)) => Outcome::Approved {
                 purchase_id,
-                merchant,
                 response,
             },
             (status @ ("submitted_on_device" | "declined" | "expired"), _) => {
-                Outcome::Stopped(finished(status, &purchase_id, &merchant, state.reason))
+                Outcome::Stopped(finished(status, &purchase_id, state.reason))
             }
-            _ => Outcome::Stopped(finished(
-                "outcome_unknown",
-                &purchase_id,
-                &merchant,
-                state.reason,
-            )),
+            _ => Outcome::Stopped(finished("outcome_unknown", &purchase_id, state.reason)),
         });
     }
 }
@@ -672,20 +648,17 @@ async fn approve(
 async fn lost(
     context: &AgentToolContext,
     purchase_id: &str,
-    merchant: &str,
     reason: &str,
 ) -> Result<Outcome, ToolExecutionError> {
     match cancel_purchase(context, purchase_id).await.as_deref() {
         Some(status @ ("cancelled" | "declined" | "expired")) => Ok(Outcome::Stopped(finished(
             status,
             purchase_id,
-            merchant,
             Some(format!("{reason} The purchase was not paid.")),
         ))),
         _ => Ok(Outcome::Stopped(finished(
             "outcome_unknown",
             purchase_id,
-            merchant,
             Some(reason.into()),
         ))),
     }
@@ -712,8 +685,8 @@ async fn cancel_purchase(context: &AgentToolContext, purchase_id: &str) -> Optio
         .map(str::to_string)
 }
 
-fn finished(status: &str, purchase_id: &str, merchant: &str, reason: Option<String>) -> Value {
-    let mut result = json!({ "status": status, "purchaseId": purchase_id, "merchant": merchant });
+fn finished(status: &str, purchase_id: &str, reason: Option<String>) -> Value {
+    let mut result = json!({ "status": status, "purchaseId": purchase_id });
     if let Some(reason) = reason {
         result["reason"] = reason.into();
     }
