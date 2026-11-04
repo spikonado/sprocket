@@ -25,7 +25,7 @@ describe('renderMarkdown', () => {
 		expect(html).not.toContain('<annotation');
 	});
 
-	it('keeps Unicode text readable when KaTeX warns about missing font metrics', () => {
+	it('keeps Unicode text readable when KaTeX lacks font metrics', () => {
 		const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
 		try {
@@ -34,7 +34,7 @@ describe('renderMarkdown', () => {
 			expect(html).toContain('<mtext>λ</mtext>');
 			expect(html.match(/class="katex"/g)).toHaveLength(2);
 			expect(html).not.toContain('class="katex-error"');
-			expect(warning).toHaveBeenCalledWith(expect.stringContaining('[symbolNotInFont]'));
+			expect(warning).not.toHaveBeenCalled();
 		} finally {
 			warning.mockRestore();
 		}
