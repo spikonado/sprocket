@@ -6,11 +6,6 @@ import type { Infer } from 'convex/values';
 
 export type AgentErrorCode = keyof typeof agentErrorMessages;
 
-/**
- * Production only delivers `data`, and released agents match these exact
- * strings in it, so `data` stays the legacy text. Current agents map it back
- * to the code.
- */
 export function agentError(code: AgentErrorCode): ConvexError<string> {
 	return new ConvexError(agentErrorMessages[code]);
 }

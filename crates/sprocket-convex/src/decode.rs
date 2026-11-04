@@ -16,8 +16,6 @@ pub enum ConvexErrorCode {
     MachineNotActive,
 }
 
-/// Convex sends each code as its legacy string `data` while released agents
-/// that match that text are supported, so codes are looked up by message.
 static CODE_MESSAGES: LazyLock<Vec<(ConvexErrorCode, String)>> = LazyLock::new(|| {
     let messages: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
         "../../../apps/web/convex/lib/agentErrorCodes.json"

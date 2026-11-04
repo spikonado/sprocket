@@ -190,7 +190,6 @@ test('a restarted launcher passes the next restart and its exit code up to its p
 		}
 	});
 
-	// Parent launchers from v0.4.3 and earlier restart only on exit code 75.
 	assert.equal(code, 75);
 	assert.equal(invocations.length, 1);
 	assert.equal(invocations[0].SPROCKET_RESTARTED, '1');
