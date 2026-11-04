@@ -103,11 +103,13 @@ describe('subscription and usage backend', () => {
 
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
+
 		const window = {
 			used: 0,
 			limit: 500 * MODEL_USAGE_UNITS_PER_DOLLAR,
 			resetsAt: expect.any(Number)
 		};
+
 		expect(usage.meters[0]).toMatchObject(window);
 		expect(usage.meters[0]?.windows).toEqual([{ period: 'monthly', ...window }]);
 	});
