@@ -27,7 +27,7 @@ const DODO_PRICE_NEGATIVE_TTL_MS = 30 * 60 * 1_000;
 
 const DODO_PRICE_STALE_MAX_MS = 30 * 60 * 1_000;
 
-const DODO_PRICE_TRANSIENT_RETRY_MS = 30 * 1_000;
+export const DODO_PRICE_TRANSIENT_RETRY_MS = 30 * 1_000;
 
 const DODO_PRICE_LEASE_MS = 30 * 1_000;
 
@@ -36,11 +36,11 @@ const DODO_PRICE_LEASE_MS = 30 * 1_000;
 // many products one catalog request will refresh. The fetch budget stays at
 // or below the durable global lease budget so one operation can never
 // over-claim the environment-wide fetch allowance; the smallest cap wins.
-const DODO_FETCH_CONCURRENCY = 4;
+export const DODO_FETCH_CONCURRENCY = 4;
 
 const DODO_FETCH_TIMEOUT_MS = 8 * 1_000;
 
-const DODO_FETCH_BUDGET_PER_OPERATION = 8;
+export const DODO_FETCH_BUDGET_PER_OPERATION = 8;
 
 function publicPlanFromConfig(
 	plan: TierPricingConfig,

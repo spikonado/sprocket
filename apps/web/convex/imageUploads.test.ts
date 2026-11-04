@@ -367,8 +367,14 @@ describe('tool images for runs', () => {
 				sha256s: [sha256, sha256]
 			})
 		).toEqual([{ sha256, url }]);
-		// upload() asserts that Bob's thread does not see Alice's image.
-		await upload(t, bob);
+
+		const [bobLookup] = await t.mutation(api.imageUploads.toolImageUrlsForRun, {
+			runId: bob.runId,
+			executionSecret: bob.executionSecret,
+			sha256s: [sha256]
+		});
+
+		expect(bobLookup).toHaveProperty('uploadUrl');
 	});
 
 	it('keeps the first URL when the same bytes are registered twice', async () => {

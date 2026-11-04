@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
-
-const UNITS_PER_DOLLAR = 1_000_000_000;
+import { initConvexTest, insertUser, seedTiers, type ConvexTestInstance } from './test.setup';
 
 const now = Date.UTC(2026, 5, 15, 12);
 
@@ -14,26 +12,8 @@ const termStart = now - 60_000;
 const termEnd = now + 30 * 86_400_000;
 
 async function seedTiersAndCustomer(t: ConvexTestInstance): Promise<void> {
-	await t.run(async (ctx) => {
-		await ctx.db.insert('tiers', {
-			tierId: 'free',
-			label: 'Free',
-			monthly: 15 * UNITS_PER_DOLLAR
-		});
-		await ctx.db.insert('tiers', {
-			tierId: 'pro',
-			label: 'Pro',
-			monthlyProductId: 'prod_pro',
-			monthly: 75 * UNITS_PER_DOLLAR
-		});
-		await ctx.db.insert('tiers', {
-			tierId: 'max',
-			label: 'Max',
-			monthlyProductId: 'prod_max',
-			monthly: 500 * UNITS_PER_DOLLAR
-		});
-		await insertUser(ctx, userId, 'cus_ordering');
-	});
+	await seedTiers(t);
+	await t.run((ctx) => insertUser(ctx, userId, 'cus_ordering'));
 }
 
 type PayloadOverrides = {

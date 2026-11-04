@@ -399,10 +399,7 @@ describe('Dodo subscription webhooks', () => {
 		);
 
 		expect(response.status).toBe(200);
-		// Run the workpool job and its completion callback. The projection throws
-		// on the account conflict, so the callback schedules a retry; the event
-		// must stay pending rather than commit a partial projection. Do NOT use
-		// drainWebhookJobs here: the retry stays pending by design.
+		// drainWebhookJobs would also run the scheduled retry this test expects to stay pending.
 		await vi.advanceTimersByTimeAsync(1_000);
 		await t.finishInProgressScheduledFunctions();
 		await t.finishInProgressScheduledFunctions();

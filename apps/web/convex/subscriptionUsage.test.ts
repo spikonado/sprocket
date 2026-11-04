@@ -1,37 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, components, internal } from '@convex/_generated/api';
 import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
-
-const UNITS_PER_DOLLAR = 1_000_000_000;
-
-async function seedTiers(t: ConvexTestInstance): Promise<void> {
-	await t.run(async (ctx) => {
-		const tiers = [
-			{
-				tierId: 'free',
-				label: 'Free',
-				monthly: 15 * UNITS_PER_DOLLAR
-			},
-			{
-				tierId: 'pro',
-				label: 'Pro',
-				monthlyProductId: 'prod_pro',
-				monthly: 75 * UNITS_PER_DOLLAR
-			},
-			{
-				tierId: 'max',
-				label: 'Max',
-				monthlyProductId: 'prod_max',
-				monthly: 500 * UNITS_PER_DOLLAR
-			}
-		];
-
-		for (const tier of tiers) {
-			await ctx.db.insert('tiers', tier);
-		}
-	});
-}
+import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
+import { initConvexTest, seedTiers, type ConvexTestInstance } from './test.setup';
 
 async function seedActiveSubscription(
 	t: ConvexTestInstance,
@@ -56,7 +27,7 @@ async function seedActiveSubscription(
 	await t.mutation(internal.billing.upsertDodoSubscription, subscription);
 	await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 		userId,
-		count: 8 * UNITS_PER_DOLLAR
+		count: 8 * MODEL_USAGE_UNITS_PER_DOLLAR
 	});
 	const asUser = t.withIdentity({ subject: userId });
 
@@ -103,7 +74,7 @@ describe('subscription and usage backend', () => {
 			exhausted: true
 		});
 
-		await setAllowance(UNITS_PER_DOLLAR);
+		await setAllowance(MODEL_USAGE_UNITS_PER_DOLLAR);
 		await t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId });
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
 			exhausted: false
@@ -132,7 +103,13 @@ describe('subscription and usage backend', () => {
 
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
-		const window = { used: 0, limit: 500 * UNITS_PER_DOLLAR, resetsAt: expect.any(Number) };
+
+		const window = {
+			used: 0,
+			limit: 500 * MODEL_USAGE_UNITS_PER_DOLLAR,
+			resetsAt: expect.any(Number)
+		};
+
 		expect(usage.meters[0]).toMatchObject(window);
 		expect(usage.meters[0]?.windows).toEqual([{ period: 'monthly', ...window }]);
 	});
@@ -144,7 +121,7 @@ describe('subscription and usage backend', () => {
 		const asUser = t.withIdentity({ subject: userId });
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			count: 16 * UNITS_PER_DOLLAR
+			count: 16 * MODEL_USAGE_UNITS_PER_DOLLAR
 		});
 
 		const usage = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
@@ -171,11 +148,11 @@ describe('subscription and usage backend', () => {
 			key: userId,
 			config: {
 				kind: 'fixed window',
-				rate: 15 * UNITS_PER_DOLLAR,
+				rate: 15 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				period: 30 * 86_400_000,
 				start: Date.parse('2026-02-03T00:00:00Z')
 			},
-			count: 2 * UNITS_PER_DOLLAR,
+			count: 2 * MODEL_USAGE_UNITS_PER_DOLLAR,
 			reserve: true
 		});
 		const asUser = t.withIdentity({ subject: userId });
@@ -183,12 +160,12 @@ describe('subscription and usage backend', () => {
 		const used = async () =>
 			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.used;
 
-		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
+		expect(await used()).toBe(2 * MODEL_USAGE_UNITS_PER_DOLLAR);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			count: UNITS_PER_DOLLAR
+			count: MODEL_USAGE_UNITS_PER_DOLLAR
 		});
-		expect(await used()).toBe(3 * UNITS_PER_DOLLAR);
+		expect(await used()).toBe(3 * MODEL_USAGE_UNITS_PER_DOLLAR);
 	});
 
 	it('rolls the monthly usage window when the client supplies a later now', async () => {
@@ -199,7 +176,7 @@ describe('subscription and usage backend', () => {
 		const chargedAt = Date.now();
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			count: 16 * UNITS_PER_DOLLAR
+			count: 16 * MODEL_USAGE_UNITS_PER_DOLLAR
 		});
 
 		const duringWindow = await asUser.query(api.usage.getMyUsage, { now: chargedAt });
@@ -392,7 +369,7 @@ describe('subscription and usage backend', () => {
 		});
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			count: 6 * UNITS_PER_DOLLAR
+			count: 6 * MODEL_USAGE_UNITS_PER_DOLLAR
 		});
 		await t.mutation(internal.lib.rateLimits.checkUsageLimits, {
 			userId
@@ -401,7 +378,7 @@ describe('subscription and usage backend', () => {
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
 		expect(usage.exhausted).toBe(false);
-		expect(usage.meters[0]).toMatchObject({ used: 6 * UNITS_PER_DOLLAR });
+		expect(usage.meters[0]).toMatchObject({ used: 6 * MODEL_USAGE_UNITS_PER_DOLLAR });
 	});
 
 	it('resets usage on confirmed plan changes, but preserves it on duplicate events and cancellation', async () => {
@@ -416,7 +393,7 @@ describe('subscription and usage backend', () => {
 			now + 30 * 86_400_000
 		);
 
-		expect(await monthlyUsage()).toBe(8 * UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(8 * MODEL_USAGE_UNITS_PER_DOLLAR);
 
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
@@ -427,7 +404,7 @@ describe('subscription and usage backend', () => {
 		expect(await monthlyUsage()).toBe(0);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId: subscription.userId,
-			count: 30 * UNITS_PER_DOLLAR
+			count: 30 * MODEL_USAGE_UNITS_PER_DOLLAR
 		});
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
@@ -435,7 +412,7 @@ describe('subscription and usage backend', () => {
 			dodoProductId: 'prod_max',
 			eventAt: now + 2
 		});
-		expect(await monthlyUsage()).toBe(30 * UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(30 * MODEL_USAGE_UNITS_PER_DOLLAR);
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			tier: 'max',
@@ -444,7 +421,7 @@ describe('subscription and usage backend', () => {
 			cancelAtNextBillingDate: true,
 			eventAt: now + 3
 		});
-		expect(await monthlyUsage()).toBe(30 * UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(30 * MODEL_USAGE_UNITS_PER_DOLLAR);
 
 		await vi.advanceTimersByTimeAsync(subscription.billingPeriodEnd - Date.now());
 		await t.finishInProgressScheduledFunctions();
@@ -467,7 +444,7 @@ describe('subscription and usage backend', () => {
 				tierId: 'team',
 				label: 'Team',
 				monthlyProductId: 'prod_team',
-				monthly: 75 * UNITS_PER_DOLLAR
+				monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR
 			})
 		);
 
@@ -478,7 +455,7 @@ describe('subscription and usage backend', () => {
 			now + 60_000
 		);
 
-		expect(await monthlyUsage()).toBe(8 * UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(8 * MODEL_USAGE_UNITS_PER_DOLLAR);
 
 		const planChange = {
 			...subscription,
@@ -491,10 +468,10 @@ describe('subscription and usage backend', () => {
 		expect(await monthlyUsage()).toBe(0);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId: subscription.userId,
-			count: UNITS_PER_DOLLAR
+			count: MODEL_USAGE_UNITS_PER_DOLLAR
 		});
 		await t.mutation(internal.billing.upsertDodoSubscription, planChange);
-		expect(await monthlyUsage()).toBe(UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(MODEL_USAGE_UNITS_PER_DOLLAR);
 	});
 
 	it('a renewal term advance opens the new window without minting extra allowance', async () => {
@@ -509,7 +486,7 @@ describe('subscription and usage backend', () => {
 			now + 30 * 86_400_000
 		);
 
-		expect(await monthlyUsage()).toBe(8 * UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(8 * MODEL_USAGE_UNITS_PER_DOLLAR);
 
 		const quotaGeneration = async () =>
 			(
@@ -572,7 +549,7 @@ describe('subscription and usage backend', () => {
 
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId: subscription.userId,
-			count: 5 * UNITS_PER_DOLLAR
+			count: 5 * MODEL_USAGE_UNITS_PER_DOLLAR
 		});
 
 		await t.mutation(internal.billing.upsertDodoSubscription, {
@@ -580,7 +557,7 @@ describe('subscription and usage backend', () => {
 			dodoProductId: 'prod_max',
 			eventAt: now + 10
 		});
-		expect(await monthlyUsage()).toBe(5 * UNITS_PER_DOLLAR);
+		expect(await monthlyUsage()).toBe(5 * MODEL_USAGE_UNITS_PER_DOLLAR);
 	});
 
 	it('materializes exactly one users row per subject across repeated page loads', async () => {
