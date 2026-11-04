@@ -198,18 +198,26 @@ export const answer = mutation({
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const result = await answerPendingQuestion(ctx, args);
+		const { question } = result;
 
 		return {
-			question: toAgentQuestionSnapshot(result.question),
-			continuation: result.continuation
+			question: toAgentQuestionSnapshot(question),
+			continuation:
+				result.kind === 'answered'
+					? result.continuation
+					: question.continuationClaim
+						? undefined
+						: await questionContinuation(ctx, question)
 		};
 	}
 });
 
 type QuestionAnswerResult = {
 	question: Doc<'agentQuestions'>;
-	continuation?: Awaited<ReturnType<typeof questionContinuation>>;
-} & ({ kind: 'answered' } | { kind: 'alreadyAnswered' });
+} & (
+	| { kind: 'answered'; continuation?: Awaited<ReturnType<typeof questionContinuation>> }
+	| { kind: 'alreadyAnswered' }
+);
 
 export async function answerPendingQuestion(
 	ctx: MutationCtx,
@@ -233,10 +241,7 @@ export async function answerPendingQuestion(
 
 		return {
 			kind: 'alreadyAnswered',
-			question,
-			continuation: question.continuationClaim
-				? undefined
-				: await questionContinuation(ctx, question)
+			question
 		};
 	}
 
@@ -300,7 +305,9 @@ export const skip = mutation({
 			throw new Error('Question not found.');
 		}
 
-		if (question.status === 'skipped') return {};
+		if (question.status === 'skipped') {
+			return { continuation: await questionContinuation(ctx, question) };
+		}
 
 		await assertHeadPendingQuestion(ctx, question);
 		const before = await captureThreadActivityBeforeChange(ctx, args.threadId);

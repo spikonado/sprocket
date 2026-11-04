@@ -854,6 +854,13 @@ describe('agentQuestions', () => {
 				questionId: skippedAfterRun.questionId
 			})
 		).resolves.toEqual({ continuation: { runId, prompt: 'Yes' } });
+
+		const retry = await asUser.mutation(api.agentQuestions.skip, {
+			threadId,
+			questionId: skippedAfterRun.questionId
+		});
+
+		expect(retry).toEqual({ continuation: { runId, prompt: 'Yes' } });
 		await expect(
 			asUser.query(api.agentQuestions.headPendingForThread, { threadId })
 		).resolves.toBeNull();
@@ -951,29 +958,36 @@ describe('agentQuestions', () => {
 		});
 
 		expect(repeat.question.answer).toMatchObject({ optionId: 'a', optionLabel: 'A' });
-		expect(repeat).not.toHaveProperty('continuation');
 
 		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', question.questionId));
 		expect(stored?.answer).toMatchObject({ optionId: 'a' });
 	});
 
-	it('does not start a follow-up when retrying an answer the run already used', async () => {
+	it('does not start a follow-up when retrying an answer or skip the run already used', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
-			runId,
-			claimId,
-			question: 'Choose?',
-			options: [{ id: 'a', label: 'A' }],
-			executionSecret
-		});
+		const ask = (question: string) =>
+			t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+				runId,
+				claimId,
+				question,
+				options: [{ id: 'a', label: 'A' }],
+				executionSecret
+			});
+
+		const answered = await ask('Choose?');
+		const skipped = await ask('Skip me?');
 
 		await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
-			questionId: question.questionId,
+			questionId: answered.questionId,
 			optionId: 'a'
+		});
+		await asUser.mutation(api.agentQuestions.skip, {
+			threadId,
+			questionId: skipped.questionId
 		});
 
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -983,14 +997,17 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		const retry = await asUser.mutation(api.agentQuestions.answer, {
+		const answerRetry = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
-			questionId: question.questionId,
+			questionId: answered.questionId,
 			optionId: 'b'
 		});
 
-		expect(retry.question.answer).toMatchObject({ optionId: 'a' });
-		expect(retry).not.toHaveProperty('continuation');
+		expect(answerRetry.question.answer).toMatchObject({ optionId: 'a' });
+		expect(answerRetry).not.toHaveProperty('continuation');
+		await expect(
+			asUser.mutation(api.agentQuestions.skip, { threadId, questionId: skipped.questionId })
+		).resolves.toEqual({});
 	});
 
 	it('rejects answers once cancellation is requested, before terminal cleanup', async () => {
