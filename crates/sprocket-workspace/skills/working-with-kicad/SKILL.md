@@ -24,6 +24,11 @@ Use `kicad-cli` for checks and exports.
 - DRC reports `lib_footprint_mismatch` on rotated footprints: the `orientation` setter truncates rotated coordinates by 1 nm.
   Pass `orientation=` to `place_footprint_from_library` instead.
 
+## Designing the schematic
+
+- Write values with units (`10 kΩ`, `1 µF`).
+- Move fields and symbols until no text overlaps another symbol, field, or label in the rendered schematic.
+
 ## Designing the silkscreen
 
 - Hide reference designators on the silkscreen.
