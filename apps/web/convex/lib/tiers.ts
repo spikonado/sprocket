@@ -79,7 +79,7 @@ export async function resolveTier(
 
 function pickSubscription(rows: Doc<'subscriptions'>[]): Doc<'subscriptions'> | null {
 	if (rows.length === 0) return null;
-	const grants = rows.filter((row) => !row.dodoSubscriptionId && row.tier !== 'free');
+	const grants = rows.filter((row) => isOperatorGrant(row) && row.tier !== 'free');
 
 	if (grants.length) rows = grants;
 
@@ -138,7 +138,7 @@ export async function getSubscriptionDocExclusive(
 		)
 			continue;
 
-		if (!row.dodoSubscriptionId && row.tier !== 'free' && keep.dodoSubscriptionId) continue;
+		if (isOperatorGrant(row) && row.tier !== 'free' && keep.dodoSubscriptionId) continue;
 
 		await ctx.db.delete('subscriptions', row._id);
 	}
@@ -146,100 +146,35 @@ export async function getSubscriptionDocExclusive(
 	return keep;
 }
 
-/** Rows without a Dodo ID are operator grants and skip the billing-period clock check. */
-type SubscriptionActivity = Pick<
-	Doc<'subscriptions'>,
-	'status' | 'dodoSubscriptionId' | 'billingPeriodEnd' | 'accessPhase' | 'accessEndsAt'
->;
-
-/**
- * True while paid access continues: the confirmed paid term, or the bounded
- * renewal-processing grace after it. Confirmed failure/cancellation/expiry
- * and grace exhaustion are inactive.
- *
- * Pure-function variant of the materialized scheduler state so callers that
- * already know "now" (enforcement paths, tests, fake-time fixtures) get the
- * same answer the materialized `accessPhase`/`accessEndsAt` fields converge
- * to. Reactive display queries should prefer the materialized fields.
- */
-export function subscriptionIsActive<T extends SubscriptionActivity>(
-	subscription: T | null,
-	now: number
-): subscription is T {
-	return subscriptionAccessPhase(subscription, now) !== 'none';
-}
-
-/**
- * Tier for enforcement paths that know "now" (mutations, gateway auth,
- * fake-time fixtures): re-checks the wall-clock deadline so a delayed
- * scheduler cannot extend access.
- */
-export function subscriptionTier(
-	subscription: Doc<'subscriptions'> | null,
-	now: number
-): SubscriptionTier {
-	return subscriptionIsActive(subscription, now) ? subscription.tier : 'free';
-}
-
-/**
- * Display variant of the paid-access phase for reactive queries: reads only
- * the materialized fields (never wall time) so the query converges from
- * document changes alone. The deadline stays in `accessEndsAt` for display.
- */
-export function subscriptionMaterializedPhase(
-	subscription: Pick<
-		Doc<'subscriptions'>,
-		'status' | 'dodoSubscriptionId' | 'billingPeriodEnd' | 'accessPhase'
-	> | null
-): AccessPhase {
-	if (!subscription || subscription.status !== 'active') return 'none';
-
-	if (!subscription.dodoSubscriptionId) return 'paid';
-
-	if (subscription.billingPeriodEnd === undefined) return 'none';
-
-	return subscription.accessPhase ?? 'none';
-}
-
-/**
- * Tier for reactive display queries: reads only the materialized access
- * fields the expiry scheduler maintains, so the result converges without the
- * query reading wall time.
- */
-export function subscriptionMaterializedTier(
-	subscription: Doc<'subscriptions'> | null
-): SubscriptionTier {
-	return subscriptionMaterializedPhase(subscription) === 'none'
-		? 'free'
-		: (subscription?.tier ?? 'free');
-}
-
 export const RENEWAL_GRACE_MS = 60 * 60 * 1_000;
 
 export type AccessPhase = 'paid' | 'renewal_processing' | 'none';
 
-type AccessFields = Pick<
+/** Rows without a Dodo subscription are operator-managed and have no provider clock. */
+export function isOperatorGrant(
+	subscription: Pick<Doc<'subscriptions'>, 'dodoSubscriptionId'>
+): boolean {
+	return !subscription.dodoSubscriptionId;
+}
+
+export type AccessClock = Pick<
 	Doc<'subscriptions'>,
 	| 'status'
 	| 'dodoSubscriptionId'
 	| 'billingPeriodStart'
 	| 'billingPeriodEnd'
-	| 'accessPhase'
-	| 'accessEndsAt'
 	| 'cancelAtNextBillingDate'
 >;
 
-export function subscriptionAccessPhase(
-	subscription: AccessFields | null,
-	now: number
-): AccessPhase {
-	if (!subscription || subscription.status !== 'active') return 'none';
+/** The phase the provider billing period gives at `now`, ignoring the materialized phase. */
+export function accessPhaseAt(subscription: AccessClock, now: number): AccessPhase {
+	if (subscription.status !== 'active') return 'none';
 
-	// Operator grants have no provider clock.
-	if (!subscription.dodoSubscriptionId) return 'paid';
+	if (isOperatorGrant(subscription)) return 'paid';
 
-	if (!Number.isFinite(subscription.billingPeriodEnd)) return 'none';
-	const termEnd = subscription.billingPeriodEnd!;
+	const termEnd = subscription.billingPeriodEnd;
+
+	if (termEnd === undefined || !Number.isFinite(termEnd)) return 'none';
 	const termStart = subscription.billingPeriodStart;
 
 	if (
@@ -248,39 +183,60 @@ export function subscriptionAccessPhase(
 	)
 		return 'none';
 
-	if (subscription.accessPhase === 'none' && !hasPendingTermStart(subscription)) return 'none';
-
 	if (now < termEnd) return 'paid';
 
 	if (subscription.cancelAtNextBillingDate === true) return 'none';
 
-	const graceEnd = termEnd + RENEWAL_GRACE_MS;
-
-	return now < graceEnd ? 'renewal_processing' : 'none';
+	return now < termEnd + RENEWAL_GRACE_MS ? 'renewal_processing' : 'none';
 }
 
-function hasPendingTermStart(subscription: AccessFields): boolean {
-	return (
+type EnforcementFields = AccessClock & Pick<Doc<'subscriptions'>, 'accessPhase' | 'accessEndsAt'>;
+
+/**
+ * Phase for paths that know `now`. Re-checking the clock keeps a delayed
+ * expiry scheduler from extending access, and a materialized 'none' still
+ * ends access unless it only waits for the term to start.
+ */
+export function enforcementAccessPhase(
+	subscription: EnforcementFields | null,
+	now: number
+): AccessPhase {
+	if (!subscription) return 'none';
+
+	const awaitingTermStart =
 		subscription.billingPeriodStart !== undefined &&
-		subscription.accessEndsAt === subscription.billingPeriodStart
-	);
+		subscription.accessEndsAt === subscription.billingPeriodStart;
+
+	if (!isOperatorGrant(subscription) && subscription.accessPhase === 'none' && !awaitingTermStart)
+		return 'none';
+
+	return accessPhaseAt(subscription, now);
 }
 
-export function subscriptionAccessDeadline(subscription: AccessFields | null): number | undefined {
-	if (!subscription) return undefined;
+export function enforcementTier(
+	subscription: (EnforcementFields & Pick<Doc<'subscriptions'>, 'tier'>) | null,
+	now: number
+): SubscriptionTier {
+	return subscription && enforcementAccessPhase(subscription, now) !== 'none'
+		? subscription.tier
+		: 'free';
+}
 
-	if (subscription.status !== 'active') return subscription.accessEndsAt ?? 0;
+type DisplayFields = Pick<Doc<'subscriptions'>, 'status' | 'dodoSubscriptionId' | 'accessPhase'>;
 
-	if (!subscription.dodoSubscriptionId) return undefined;
+/** Phase for reactive queries: reads only materialized fields, never wall time. */
+export function displayAccessPhase(subscription: DisplayFields | null): AccessPhase {
+	if (!subscription || subscription.status !== 'active') return 'none';
 
-	if (subscription.billingPeriodEnd === undefined) return undefined;
+	if (isOperatorGrant(subscription)) return 'paid';
 
-	if (subscription.accessPhase === 'none' && !hasPendingTermStart(subscription))
-		return subscription.accessEndsAt ?? 0;
+	return subscription.accessPhase ?? 'none';
+}
 
-	if (subscription.cancelAtNextBillingDate === true) return subscription.billingPeriodEnd;
-
-	return subscription.billingPeriodEnd + RENEWAL_GRACE_MS;
+export function displayTier(
+	subscription: (DisplayFields & Pick<Doc<'subscriptions'>, 'tier'>) | null
+): SubscriptionTier {
+	return subscription && displayAccessPhase(subscription) !== 'none' ? subscription.tier : 'free';
 }
 
 export async function ensureSubscription(
@@ -290,14 +246,15 @@ export async function ensureSubscription(
 ): Promise<{ tier: SubscriptionTier; subscription: Doc<'subscriptions'> }> {
 	const existing = await getSubscriptionDocExclusive(ctx, userId);
 
-	if (existing) return { tier: subscriptionTier(existing, now), subscription: existing };
+	if (existing) return { tier: enforcementTier(existing, now), subscription: existing };
 	// eventAt 0 so bootstrap rows never win ordering over operator edits.
 
 	const id = await ctx.db.insert('subscriptions', {
 		userId,
 		tier: 'free',
 		status: 'active',
-		eventAt: 0
+		eventAt: 0,
+		accessPhase: 'paid'
 	});
 
 	const subscription = await ctx.db.get('subscriptions', id);

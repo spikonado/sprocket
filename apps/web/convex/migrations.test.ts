@@ -123,3 +123,68 @@ test('run converts context summary cutoffs to part counts and drops pricing cach
 	expect(pricingRow).not.toHaveProperty('cacheKey');
 	vi.useRealTimers();
 });
+
+test('backfillSubscriptionAccess materializes access on rows without it', async () => {
+	const now = Date.UTC(2026, 5, 15, 12);
+	vi.useFakeTimers();
+	vi.setSystemTime(now);
+	const t = initConvexTest();
+	const termEnd = now + 60_000;
+
+	const [grantId, paidId, endedId] = await t.run((ctx) =>
+		Promise.all([
+			ctx.db.insert('subscriptions', {
+				userId: 'grant',
+				tier: 'pro',
+				status: 'active',
+				eventAt: 0
+			}),
+			ctx.db.insert('subscriptions', {
+				userId: 'paid',
+				tier: 'pro',
+				status: 'active',
+				eventAt: now,
+				dodoSubscriptionId: 'sub_paid',
+				billingPeriodStart: now - 60_000,
+				billingPeriodEnd: termEnd
+			}),
+			ctx.db.insert('subscriptions', {
+				userId: 'ended',
+				tier: 'pro',
+				status: 'cancelled',
+				eventAt: now,
+				dodoSubscriptionId: 'sub_ended',
+				billingPeriodStart: now - 60_000,
+				billingPeriodEnd: termEnd
+			})
+		])
+	);
+
+	await t.mutation(internal.migrations.run, {});
+
+	for (let step = 0; step < 10; step += 1) {
+		vi.advanceTimersByTime(1);
+		await t.finishInProgressScheduledFunctions();
+	}
+
+	const [grant, paid, ended] = await t.run((ctx) =>
+		Promise.all([
+			ctx.db.get('subscriptions', grantId),
+			ctx.db.get('subscriptions', paidId),
+			ctx.db.get('subscriptions', endedId)
+		])
+	);
+
+	expect(grant?.accessPhase).toBe('paid');
+	expect(paid).toMatchObject({ accessPhase: 'paid', accessEndsAt: termEnd });
+	expect(ended?.accessPhase).toBe('none');
+
+	const checkId = paid?.billingPeriodCheckId;
+
+	const check = checkId
+		? await t.run((ctx) => ctx.db.system.get('_scheduled_functions', checkId))
+		: null;
+
+	expect(check?.scheduledTime).toBe(termEnd);
+	vi.useRealTimers();
+});

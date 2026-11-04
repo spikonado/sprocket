@@ -21,7 +21,6 @@ type PayloadOverrides = {
 	dodoProductId?: string;
 	dodoCustomerId?: string;
 	status?: 'active' | 'on_hold' | 'cancelled' | 'expired' | 'failed' | 'past_due';
-	eventAt?: number;
 	billingInterval?: 'monthly' | 'annual';
 	billingPeriodStart?: number;
 	billingPeriodEnd?: number;
@@ -29,14 +28,13 @@ type PayloadOverrides = {
 	scheduledChange?: { id: string; productId: string; effectiveAt: number } | null;
 };
 
-function webhookArgs(overrides: PayloadOverrides = {}) {
+function payloadArgs(overrides: PayloadOverrides) {
 	return {
 		userId,
 		dodoSubscriptionId: 'sub_1',
 		dodoProductId: 'prod_pro',
 		dodoCustomerId: 'cus_ordering',
 		status: 'active' as const,
-		eventAt: now,
 		billingInterval: 'monthly' as const,
 		billingPeriodStart: termStart,
 		billingPeriodEnd: termEnd,
@@ -44,6 +42,10 @@ function webhookArgs(overrides: PayloadOverrides = {}) {
 		scheduledChange: null,
 		...overrides
 	};
+}
+
+function webhookArgs(overrides: PayloadOverrides & { eventAt?: number } = {}) {
+	return { eventAt: now, ...payloadArgs(overrides) };
 }
 
 function readSubscription(t: ConvexTestInstance): Promise<Doc<'subscriptions'> | null> {
@@ -66,8 +68,7 @@ function observe(
 		subscriptionId: subscription._id,
 		expectedProjectionRevision: subscription.projectionRevision ?? 0,
 		observedAt,
-		...webhookArgs(rest),
-		eventAt: termStart
+		...payloadArgs(rest)
 	});
 }
 

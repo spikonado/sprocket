@@ -10,21 +10,22 @@ import {
 	isStaleSchedule,
 	isStaleTerm,
 	resolveEffectiveTier,
-	type SubscriptionAccessSource,
 	type SubscriptionPayload
 } from './subscriptionProjection';
+import type { AccessClock } from './tiers';
 
 const HOUR = 60 * 60 * 1_000;
 
 const T0 = Date.UTC(2026, 5, 15, 12);
 
-function payload(overrides: Partial<SubscriptionPayload> = {}): SubscriptionPayload {
+type PayloadFields = Omit<SubscriptionPayload, 'source'>;
+
+function fields(overrides: Partial<PayloadFields>): PayloadFields {
 	return {
 		dodoSubscriptionId: 'sub_1',
 		dodoProductId: 'prod_a',
 		dodoCustomerId: 'cus_1',
 		status: 'active',
-		eventAt: T0,
 		billingInterval: 'monthly',
 		billingPeriodStart: T0 - 60_000,
 		billingPeriodEnd: T0 + 30 * 86_400_000,
@@ -32,6 +33,19 @@ function payload(overrides: Partial<SubscriptionPayload> = {}): SubscriptionPayl
 		scheduledChange: null,
 		...overrides
 	};
+}
+
+function payload(
+	overrides: Partial<PayloadFields> & { eventAt?: number } = {}
+): SubscriptionPayload {
+	return { ...fields(overrides), source: 'webhook', eventAt: overrides.eventAt ?? T0 };
+}
+
+function observation(
+	observedAt: number,
+	overrides: Partial<PayloadFields> = {}
+): SubscriptionPayload {
+	return { ...fields(overrides), source: 'observation', observedAt };
 }
 
 function row(overrides: Partial<Doc<'subscriptions'>> = {}): Doc<'subscriptions'> {
@@ -113,14 +127,12 @@ describe('observation provenance', () => {
 			termEventAt: T0 + 1_000
 		});
 
-		const observation = payload({
-			eventAt: T0 - 86_400_000,
-			observedAt: T0 + 2_000,
+		const observed = observation(T0 + 2_000, {
 			billingPeriodStart: T0 - 86_400_000,
 			billingPeriodEnd: T0 + 30 * 86_400_000
 		});
 
-		expect(isStalePayload({ existing, payload: observation })).toBe(false);
+		expect(isStalePayload({ existing, payload: observed })).toBe(false);
 
 		const delayedWebhook = payload({ eventAt: T0 + 1_500 });
 		expect(isStalePayload({ existing, payload: delayedWebhook })).toBe(false);
@@ -128,14 +140,13 @@ describe('observation provenance', () => {
 
 	it('an observation retrieved before the stored watermark is stale', () => {
 		const existing = row({ eventAt: T0 + 5_000, payloadEventAt: T0 + 5_000 });
-		const observation = payload({ eventAt: T0, observedAt: T0 + 2_000 });
 
-		expect(isStalePayload({ existing, payload: observation })).toBe(true);
+		expect(isStalePayload({ existing, payload: observation(T0 + 2_000) })).toBe(true);
 	});
 });
 
 describe('access policy', () => {
-	const sub: SubscriptionAccessSource = {
+	const sub: AccessClock = {
 		status: 'active',
 		dodoSubscriptionId: 'sub_1',
 		billingPeriodEnd: T0,

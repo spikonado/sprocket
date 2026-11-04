@@ -108,6 +108,10 @@ Older `dodoPricingCache` rows carry a `cacheKey` that nothing reads, so the sche
 
 Older threads store the context summary cutoff as `contextSummaryThroughPartNumber`, the inclusive last covered part with `-1` for an empty prefix. When `contextSummaryPartCount` is missing, `existingContextSummaryPartCount` uses that value plus one. `migrations:countContextSummaryParts` rewrites those rows, and the Convex Production workflow runs it after each deploy. Once it reports done on production, remove the old field, the fallback and the migration.
 
+### Subscription rows without an access phase
+
+Older subscription rows, including operator grants and free bootstrap rows, lack `accessPhase`, so the schema keeps it optional and readers treat a missing phase as `'none'`. `migrations:backfillSubscriptionAccess` materializes `accessPhase` and `accessEndsAt` on those rows and schedules their expiry checks, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, make `accessPhase` required, drop the `?? 'none'` reads in `lib/tiers.ts`, `subscriptionExpiry.ts` and `subscriptionReconciliation.ts`, and remove the migration.
+
 ### Retired Prava mandate rows
 
 `mandates` and `mandateCharges` are untyped tables kept only so the schema accepts their old rows. Remove both tables after `bunx convex run payments:deleteRetiredMandates` has emptied them on each deployment, and remove that mutation with them. Delete the unmounted `actionRetrier` component's data on each deployment at the same time.
