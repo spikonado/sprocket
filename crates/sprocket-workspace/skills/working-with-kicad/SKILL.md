@@ -10,6 +10,7 @@ Use `kicad-cli` for checks and exports.
 
 - Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
 - The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, `kicad`, and `kipy-api` on PATH. Call them by name.
+  On macOS, Linux x64, and Windows x64 it also adds `kicad-route`.
 - `kipy-api <module> [name ...]` lists the installed kipy's classes, signatures, and enums.
 - KiCad's symbol, footprint, and 3D model libraries are in `$SPROCKET_KICAD_LIBRARIES`.
 
@@ -39,6 +40,18 @@ Use `kicad-cli` for checks and exports.
 Before laying out a board, ask the user which manufacturer and service tier they will order from, and read its capabilities page.
 Write its minimums with `board.set_design_rules()`, which saves them to Board Setup → Constraints in the `.kicad_pro`.
 Keep net class widths and clearances above them.
+
+## Routing
+
+Route the board with `kicad-route`, which runs [KiCadRoutingTools](https://github.com/drandyhaas/KiCadRoutingTools)' `route.py` (`kicad-route --help` lists its options):
+
+```bash
+kicad-route proj/board.kicad_pcb proj/board_routed.kicad_pcb --nets "*" "!GND" --escalation off
+```
+
+- It reads clearances and widths from the `.kicad_pro` named like the input board. Without one it routes at 0.25 mm clearance.
+- Leave the nets of planes and pours, like `GND`, to their zones.
+- It exits 0 even when nets fail. Run DRC with `--refill-zones` on the output, then reroute or fix every unconnected item.
 
 ## Designing the silkscreen
 

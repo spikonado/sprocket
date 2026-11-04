@@ -25,6 +25,7 @@ const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt")
 const KIPY_API: &str = include_str!("../../../tools/kicad/kipy-api.py");
 const KIPY_API_FILE: &str = "kipy-api.py";
 const LIBRARIES_FILE: &str = "libraries-dir";
+const ROUTING_TOOLS_DIR: &str = "routing-tools";
 /// KiCad doesn't read this name, so a KiCad started from an agent's shell keeps its own paths.
 const LIBRARIES_VARIABLE: &str = "SPROCKET_KICAD_LIBRARIES";
 const NAME: &str = "KiCad";
@@ -56,10 +57,13 @@ pub struct ConnectorStatus {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Release {
     version: String,
     platforms: BTreeMap<String, Asset>,
     kipy: Asset,
+    /// KiCadRoutingTools, which only some platforms have a router binary for.
+    routing_tools: BTreeMap<String, Asset>,
 }
 
 enum Activity {
@@ -245,6 +249,18 @@ impl KiCadConnector {
             .await?;
         }
         self.create_venv(staging).await?;
+        let route = match self.routing_tools_asset() {
+            Some(asset) => {
+                self.download_routing_tools(asset, staging).await?;
+                Some(
+                    version_dir
+                        .join(ROUTING_TOOLS_DIR)
+                        .join("py_router")
+                        .join("route.py"),
+                )
+            }
+            None => None,
+        };
         tokio::fs::write(staging.join(KIPY_API_FILE), KIPY_API).await?;
         write_launchers(
             &staging.join(LAUNCHER_DIR),
@@ -252,6 +268,7 @@ impl KiCadConnector {
                 &published_cli,
                 &venv_python(version_dir),
                 &version_dir.join(KIPY_API_FILE),
+                route.as_deref(),
             ),
         )
         .await?;
@@ -286,6 +303,24 @@ impl KiCadConnector {
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             fs::create_dir(&tree)?;
             unpack::unpack(&download, &tree).context("Couldn't unpack KiCad")?;
+            fs::remove_file(&download)?;
+            Ok(())
+        })
+        .await?
+    }
+
+    fn routing_tools_asset(&self) -> Option<&Asset> {
+        self.release.routing_tools.get(release_platform().ok()?)
+    }
+
+    async fn download_routing_tools(&self, asset: &Asset, staging: &Path) -> anyhow::Result<()> {
+        let download = staging.join(download_name(&asset.url));
+        download_atomic(&self.client, &asset.url, &asset.checksum, &download).await?;
+        let tree = staging.join(ROUTING_TOOLS_DIR);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            tar::Archive::new(flate2::read::GzDecoder::new(File::open(&download)?))
+                .unpack(&tree)
+                .context("Couldn't unpack KiCadRoutingTools")?;
             fs::remove_file(&download)?;
             Ok(())
         })
@@ -542,9 +577,14 @@ fn venv_python(dir: &Path) -> PathBuf {
 }
 
 /// `kicad-python` points kipy at this KiCad, since kipy would otherwise prefer a system
-/// install over `PATH`. Windows also gets `.cmd` launchers, while Git Bash, agents' usual
-/// shell there, only runs the `sh` ones.
-fn launchers(cli: &Path, python: &Path, kipy_api: &Path) -> Vec<(&'static str, String)> {
+/// install over `PATH`, and `kicad-route` does the same for KiCadRoutingTools. Windows also
+/// gets `.cmd` launchers, while Git Bash, agents' usual shell there, only runs the `sh` ones.
+fn launchers(
+    cli: &Path,
+    python: &Path,
+    kipy_api: &Path,
+    route: Option<&Path>,
+) -> Vec<(&'static str, String)> {
     let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', r"'\''"));
     let script = |body: String| format!("#!/bin/sh\n{body}\n");
     let gui = if cfg!(target_os = "macos") {
@@ -554,7 +594,7 @@ fn launchers(cli: &Path, python: &Path, kipy_api: &Path) -> Vec<(&'static str, S
         let executable = cli.with_file_name(format!("kicad{}", std::env::consts::EXE_SUFFIX));
         format!("exec {} \"$@\"", quote(executable.as_path()))
     };
-    let launchers = vec![
+    let mut launchers = vec![
         ("kicad", script(gui)),
         ("kicad-cli", script(format!("exec {} \"$@\"", quote(cli)))),
         (
@@ -570,22 +610,35 @@ fn launchers(cli: &Path, python: &Path, kipy_api: &Path) -> Vec<(&'static str, S
             script(format!("exec {} {} \"$@\"", quote(python), quote(kipy_api))),
         ),
     ];
+    if let Some(route) = route {
+        launchers.push((
+            "kicad-route",
+            script(format!(
+                "export KICAD_CLI={}\nexec {} {} \"$@\"",
+                quote(cli),
+                quote(python),
+                quote(route)
+            )),
+        ));
+    }
     #[cfg(windows)]
-    let launchers = launchers
-        .into_iter()
-        .chain(cmd_launchers(cli, python, kipy_api))
-        .collect();
+    launchers.extend(cmd_launchers(cli, python, kipy_api, route));
     launchers
 }
 
 #[cfg(windows)]
-fn cmd_launchers(cli: &Path, python: &Path, kipy_api: &Path) -> [(&'static str, String); 4] {
+fn cmd_launchers(
+    cli: &Path,
+    python: &Path,
+    kipy_api: &Path,
+    route: Option<&Path>,
+) -> Vec<(&'static str, String)> {
     let escape = |path: &Path| path.display().to_string().replace('%', "%%");
     let quote = |path: &Path| format!("\"{}\"", escape(path));
     let script = |setup: String, command: String| -> String {
         format!("@echo off\r\nsetlocal\r\n{setup}{command} %*\r\nexit /b %ERRORLEVEL%\r\n")
     };
-    [
+    let mut launchers = vec![
         (
             "kicad.cmd",
             script(String::new(), quote(&cli.with_file_name("kicad.exe"))),
@@ -605,7 +658,17 @@ fn cmd_launchers(cli: &Path, python: &Path, kipy_api: &Path) -> [(&'static str, 
                 format!("{} {}", quote(python), quote(kipy_api)),
             ),
         ),
-    ]
+    ];
+    if let Some(route) = route {
+        launchers.push((
+            "kicad-route.cmd",
+            script(
+                format!("set \"KICAD_CLI={}\"\r\n", escape(cli)),
+                format!("{} {}", quote(python), quote(route)),
+            ),
+        ));
+    }
+    launchers
 }
 
 async fn write_launchers(bin: &Path, launchers: Vec<(&'static str, String)>) -> io::Result<()> {

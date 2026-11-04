@@ -70,24 +70,25 @@ fn copies_only_missing_lib_tables() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn launchers_run_kicad_and_point_kipy_at_its_cli() {
+async fn launchers_run_kicad_and_point_kipy_and_the_router_at_its_cli() {
     let directory = tempfile::tempdir().unwrap();
     let tree = directory.path().join("it's here");
     fs::create_dir_all(&tree).unwrap();
-    let (cli, python, kipy_api) = (
+    let (cli, python, kipy_api, route) = (
         tree.join("kicad-cli"),
         tree.join("python"),
         tree.join("kipy-api.py"),
+        tree.join("route.py"),
     );
     for (program, body) in [
         (&cli, r#"printf '%s|' cli "$@""#),
-        (&python, r#"printf '%s|' "$KICAD_CLI_PATH" "$@""#),
+        (&python, r#"printf '%s|' "$KICAD_CLI_PATH$KICAD_CLI" "$@""#),
     ] {
         fs::write(program, format!("#!/bin/sh\n{body}\n")).unwrap();
         set_executable(program).unwrap();
     }
     let bin = directory.path().join("bin");
-    write_launchers(&bin, launchers(&cli, &python, &kipy_api))
+    write_launchers(&bin, launchers(&cli, &python, &kipy_api, Some(&route)))
         .await
         .unwrap();
 
@@ -103,5 +104,9 @@ async fn launchers_run_kicad_and_point_kipy_at_its_cli() {
     assert_eq!(
         output("kipy-api"),
         format!("|{}|a b|c|", kipy_api.display())
+    );
+    assert_eq!(
+        output("kicad-route"),
+        format!("{}|{}|a b|c|", cli.display(), route.display())
     );
 }

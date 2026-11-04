@@ -79,6 +79,7 @@
             minisign
             osslsigncode
             rcodesign
+            unzip
             uv
           ];
         };
