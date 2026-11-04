@@ -2,6 +2,9 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
+/** Released hosts mark automatic recovery only through this submission-ID prefix. */
+export const LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
+
 export async function automaticAgentContinuationEnabled(
 	db: DatabaseReader,
 	userId: string

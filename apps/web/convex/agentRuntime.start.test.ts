@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { api } from '@convex/_generated/api';
@@ -193,7 +194,7 @@ describe('agentRuntime.start', () => {
 				attemptSeq: 1,
 				executionSecret
 			})
-		).rejects.toMatchObject({ data: { code: 'RUN_NO_LONGER_ACTIVE' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,

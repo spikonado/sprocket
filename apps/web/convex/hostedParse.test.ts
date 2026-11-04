@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import type { WorkId } from '@convex-dev/workpool';
 import type { GenericDatabaseWriter, GenericDataModel, SystemDataModel } from 'convex/server';
@@ -206,7 +207,7 @@ describe('hostedParse', () => {
 				executionSecret: run.executionSecret,
 				jobId: run.jobId
 			})
-		).rejects.toMatchObject({ data: { code: 'RUN_NO_LONGER_ACTIVE' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 	});
 
 	it('rejects createUpload for non parse_file jobs', async () => {

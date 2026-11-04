@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
@@ -267,7 +268,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				attemptSeq: 1,
 				executionSecret
 			})
-		).rejects.toMatchObject({ data: { code: 'RUN_CANCELLED' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_CANCELLED });
 		await expect(
 			asUser.mutation(api.agentRuntime.beginToolJob, {
 				claimId: 'claim-cancel',
@@ -277,7 +278,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				payload: { cmd: 'true' },
 				executionSecret
 			})
-		).rejects.toMatchObject({ data: { code: 'RUN_CANCELLED' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_CANCELLED });
 
 		const runStatus = async () =>
 			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status);

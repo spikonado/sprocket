@@ -72,6 +72,18 @@ Released agents complete `ask_question` and `poll_question` jobs with `pending`,
 
 Released v0.4.x agents still start `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report` jobs. `beginToolJob` accepts their payloads and fails them with "Payments moved to Agentcard. Update Sprocket to buy things." Remove the retired payload validators from the job-start path and `PAYMENTS_MOVED_TO_AGENTCARD` once those agents age out. Stored jobs stay readable, see the permanent list.
 
+### Agent error text
+
+Production Convex delivers only a `ConvexError`'s `data`. Agents from v0.4.3 and earlier match executor errors by that text, and `SPROCKET_SUBMISSION_WAITING` must match exactly. So `agentError` throws the legacy message from `lib/agentErrorCodes.json` as string `data`. Current agents map that text back to its code in `sprocket-convex/src/decode.rs` and also accept `{ code, message }` data. Once those agents age out, throw `{ code, message }` and remove the message lookup.
+
+### Automatic recovery submission prefix
+
+Hosts from v0.4.3 and earlier mark automatic recovery only with an `automatic-recovery:` submission-ID prefix, so `createQueuedRunRecord` treats that prefix like `automaticRecovery: true`. Remove `LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX` once those hosts age out.
+
+### Fixed claim lease
+
+Agents from v0.4.3 and earlier ignore `leaseDurationMs`. They assume a 120 s lease and renew it every 40 s. Keep `RUN_CLAIM_LEASE_DURATION_MS` at 120 s until they age out.
+
 ## Convex data shims
 
 ### Usage-generation key
@@ -156,6 +168,12 @@ A server process started before an update returns HTTP 401 instead of 409 for CL
 ### Completion item metadata
 
 Transcripts from released clients lack `providerMetadata.rigNative` and `origin`. `transcript/history.rs` rebuilds native items from their older `providerMetadata` fields, and `assign_unidentified_legacy_history_origin` assigns the selected model's origin. A missing `reasoningIssuer` means `openai`. Keep these fallbacks until a versioned migration rewrites all stored local JSONL and Convex transcripts.
+
+## Launcher process shims
+
+### Restart exit code
+
+An npm launcher from v0.4.3 and earlier stays in memory across in-app updates and restarts only when its child exits with code 75. Current launchers restart whenever the restart file exists and pass the native exit code up, so the native server still exits with `RESTART_EXIT_CODE` after an accepted restart. Remove `ServerExit` and that code once launchers from v0.4.3 and earlier are outside the supported upgrade window.
 
 ## Permanent history formats
 

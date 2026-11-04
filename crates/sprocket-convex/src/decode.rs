@@ -1,6 +1,7 @@
 use anyhow::Context;
 use convex::{ConvexError, FunctionResult, Value};
 use serde::{Deserialize, de::Deserializer};
+use std::sync::LazyLock;
 
 /// Codes from `apps/web/convex/lib/agentErrorCodes.json`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -11,7 +12,31 @@ pub enum ConvexErrorCode {
     CompletionStreamSuperseded,
     SubmissionWaiting,
     SubmissionOwnedByAnotherExecutor,
+    SubmissionOwnedByAnotherRun,
     MachineNotActive,
+}
+
+/// Convex sends each code as its legacy string `data` while released agents
+/// that match that text are supported, so codes are looked up by message.
+static CODE_MESSAGES: LazyLock<Vec<(ConvexErrorCode, String)>> = LazyLock::new(|| {
+    let messages: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../apps/web/convex/lib/agentErrorCodes.json"
+    ))
+    .expect("agentErrorCodes.json is a JSON object");
+    messages
+        .into_iter()
+        .filter_map(|(code, message)| {
+            let code = serde_json::from_value(serde_json::Value::String(code)).ok()?;
+            Some((code, message.as_str()?.to_string()))
+        })
+        .collect()
+});
+
+fn code_for_message(message: &str) -> Option<ConvexErrorCode> {
+    CODE_MESSAGES
+        .iter()
+        .find(|(_, text)| text == message)
+        .map(|(code, _)| *code)
 }
 
 /// A Convex function failure. Its `Display` is the cleaned message.
@@ -71,11 +96,17 @@ fn decode<T: for<'de> Deserialize<'de>>(
                 format!("failed to decode response from {function}; payload: {json_value}")
             });
         }
-        FunctionResult::ErrorMessage(message) => (None, clean_function_error_message(&message)),
-        FunctionResult::ConvexError(error) => (
-            error_code(&error),
-            clean_function_error_message(convex_error_text(&error)),
-        ),
+        FunctionResult::ErrorMessage(message) => {
+            let message = clean_function_error_message(&message);
+            (code_for_message(&message), message)
+        }
+        FunctionResult::ConvexError(error) => {
+            let message = clean_function_error_message(convex_error_text(&error));
+            (
+                error_code(&error).or_else(|| code_for_message(&message)),
+                message,
+            )
+        }
     };
     let message = if labeled {
         format!("{function}: {message}")

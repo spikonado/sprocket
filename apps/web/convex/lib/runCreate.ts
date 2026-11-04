@@ -17,7 +17,8 @@ import { abandonRunRecord, finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import {
 	automaticAgentContinuationEnabled,
-	isAutomaticallyRecoverableRun
+	isAutomaticallyRecoverableRun,
+	LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX
 } from '@convex/lib/runRecovery';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
@@ -244,7 +245,10 @@ export async function createQueuedRunRecord(
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
 		parentPendingPrompt = parent.pendingPrompt;
-		const automaticRecovery = args.automaticRecovery === true;
+
+		const automaticRecovery =
+			args.automaticRecovery === true ||
+			args.submissionId.startsWith(LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX);
 
 		if (
 			automaticRecovery &&
@@ -409,10 +413,7 @@ async function reconcileExistingQueuedRun(
 		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches
 	) {
-		throw agentError(
-			'SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR',
-			'Submission belongs to a different or incomplete run.'
-		);
+		throw agentError('SUBMISSION_OWNED_BY_ANOTHER_RUN');
 	}
 
 	if (!isRunFinalStatus(existingRun.status)) {

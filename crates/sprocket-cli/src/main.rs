@@ -9,8 +9,8 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use sprocket_server::{
     INSTALLED_WEB_DIR, PairingProofRequest, PairingProofResponse, RunOptions, ServerConfig,
-    browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
-    verify_pairing_proof,
+    ServerExit, browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential,
+    run, verify_pairing_proof,
 };
 use sprocket_workspace::{SPROCKET_VERSION, resolve_workspace_root};
 use tracing_subscriber::EnvFilter;
@@ -18,6 +18,8 @@ use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
+/// Launchers from v0.4.3 and earlier restart only on this code.
+const RESTART_EXIT_CODE: u8 = 75;
 const RESTARTED_ENV: &str = "SPROCKET_RESTARTED";
 #[derive(Debug, Parser)]
 #[command(
@@ -180,14 +182,14 @@ fn serve_local(
     workspace_path: Option<String>,
     temporary: bool,
 ) -> anyhow::Result<u8> {
-    tokio::runtime::Builder::new_multi_thread()
+    let exit = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async move {
             if open_browser
                 && open_running_web_app(&server, workspace_path.as_deref()).await?
             {
-                return Ok(());
+                return Ok(ServerExit::Stopped);
             }
 
             if !server.api_only && server.resolve_static_dir().is_none() {
@@ -200,7 +202,7 @@ fn serve_local(
             if let Err(error) = init_analytics().await {
                 tracing::warn!("analytics disabled: {error:#}");
             }
-            let result = run(
+            let exit = run(
                 server,
                 RunOptions {
                     temporary,
@@ -211,9 +213,12 @@ fn serve_local(
             )
             .await;
             posthog_rs::shutdown().await;
-            result
+            exit
         })?;
-    Ok(0)
+    Ok(match exit {
+        ServerExit::Stopped => 0,
+        ServerExit::Restart => RESTART_EXIT_CODE,
+    })
 }
 
 async fn init_analytics() -> anyhow::Result<()> {

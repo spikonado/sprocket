@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import {
 	getRunExecutionState,
 	getRunWithExecution,
@@ -251,7 +252,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				...args,
 				executionSecret: 'replacement-secret'
 			})
-		).rejects.toMatchObject({ data: { code: 'SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR });
 		await expect(
 			t.mutation(api.agentRuntime.start, {
 				runId: created.runId,
@@ -333,7 +334,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		});
 		await expect(
 			insertQueuedRun(t, asUser, { ...args, executionSecret: 'winner-secret' })
-		).rejects.toMatchObject({ data: { code: 'SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR });
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
@@ -365,7 +366,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 
 		await expect(
 			insertQueuedRun(t, asUser, { ...args, executionSecret: 'winner-secret' })
-		).rejects.toMatchObject({ data: { code: 'SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR });
 
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
@@ -441,7 +442,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				fastMode: false,
 				executionSecret: 'intruder-secret'
 			})
-		).rejects.toMatchObject({ data: { code: 'SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR });
 	});
 
 	it('rejects a second run while the thread has an active run', async () => {

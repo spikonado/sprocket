@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import type { FunctionArgs } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -185,7 +186,7 @@ describe('subagents.createOrSend', () => {
 
 		expect(await prepare()).toBe(false);
 		await expect(t.mutation(api.subagents.createOrSend, followUpArgs)).rejects.toMatchObject({
-			data: { code: 'SUBMISSION_WAITING' }
+			data: agentErrorMessages.SUBMISSION_WAITING
 		});
 		expect(
 			await t.run((ctx) =>
@@ -924,7 +925,7 @@ describe('subagents transcript pages', () => {
 		).rejects.toThrow('Run not found.');
 		await expect(
 			t.mutation(api.subagents.transcriptPartsPage, { ...args, claimId: 'stale' })
-		).rejects.toMatchObject({ data: { code: 'RUN_NO_LONGER_ACTIVE' } });
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 		await expect(
 			t.mutation(api.subagents.transcriptPartsPage, { ...args, start: -1 })
 		).rejects.toThrow('Invalid transcript range.');
@@ -938,13 +939,13 @@ describe('subagents transcript pages', () => {
 			await ctx.db.patch('runExecutionStates', execution._id, { claimExpiresAt: Date.now() - 1 });
 		});
 		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toMatchObject({
-			data: { code: 'RUN_NO_LONGER_ACTIVE' }
+			data: agentErrorMessages.RUN_NO_LONGER_ACTIVE
 		});
 		await t.run((ctx) =>
 			ctx.db.patch('runs', caller.runId, { cancellationRequestedAt: Date.now() })
 		);
 		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toMatchObject({
-			data: { code: 'RUN_CANCELLED' }
+			data: agentErrorMessages.RUN_CANCELLED
 		});
 	});
 });

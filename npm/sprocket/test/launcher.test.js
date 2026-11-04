@@ -150,6 +150,8 @@ test('starts the updated launcher after the native server exits to restart', asy
 
 			if (invocations.length === 1) {
 				writeFileSync(options.env.SPROCKET_RESTART_FILE, updatedLauncher);
+
+				return successfulChild(75);
 			}
 
 			return successfulChild();
@@ -167,7 +169,7 @@ test('starts the updated launcher after the native server exits to restart', asy
 	assert.equal(existsSync(native.env.SPROCKET_RESTART_FILE), false);
 });
 
-test('a restarted launcher passes the next restart up to its parent', async (t) => {
+test('a restarted launcher passes the next restart and its exit code up to its parent', async (t) => {
 	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-test-'));
 	t.after(() => rmSync(directory, { recursive: true, force: true }));
 	const restartFile = path.join(directory, 'restart');
@@ -184,11 +186,12 @@ test('a restarted launcher passes the next restart up to its parent', async (t) 
 			invocations.push(options.env);
 			writeFileSync(options.env.SPROCKET_RESTART_FILE, '/opt/sprocket/bin/sprocket.js');
 
-			return successfulChild();
+			return successfulChild(75);
 		}
 	});
 
-	assert.equal(code, 0);
+	// Parent launchers from v0.4.3 and earlier restart only on exit code 75.
+	assert.equal(code, 75);
 	assert.equal(invocations.length, 1);
 	assert.equal(invocations[0].SPROCKET_RESTARTED, '1');
 	assert.equal(existsSync(restartFile), true);

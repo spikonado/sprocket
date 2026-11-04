@@ -131,6 +131,20 @@ describe('automatic run recovery', () => {
 		expect(manual.runId).not.toBe(runId);
 	});
 
+	it("treats a released host's prefixed submission ID as automatic recovery", async () => {
+		const { t, asUser, recoveryArgs, abandon } = await setup();
+		await abandon();
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+
+		await expect(
+			insertQueuedRun(t, asUser, {
+				...recoveryArgs,
+				automaticRecovery: undefined,
+				submissionId: 'automatic-recovery:recovery-next'
+			})
+		).rejects.toThrow('This run cannot recover automatically.');
+	});
+
 	it('recovers a lease failure reported by a released agent before the lifecycle deadline', async () => {
 		vi.useFakeTimers();
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();

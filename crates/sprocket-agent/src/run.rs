@@ -608,7 +608,13 @@ pub async fn finalize_failed_start(
     request: RunAgentRequest,
     startup_error: &anyhow::Error,
 ) -> anyhow::Result<()> {
-    if convex_error_code(startup_error) == Some(ConvexErrorCode::SubmissionOwnedByAnotherExecutor) {
+    if matches!(
+        convex_error_code(startup_error),
+        Some(
+            ConvexErrorCode::SubmissionOwnedByAnotherExecutor
+                | ConvexErrorCode::SubmissionOwnedByAnotherRun
+        )
+    ) {
         eprintln!(
             "sprocket-agent: submission {} already belongs to an active run; standing down",
             request.submission_id

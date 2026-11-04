@@ -83,14 +83,38 @@ fn coded_convex_errors_keep_their_code_and_message() {
 }
 
 #[test]
-fn every_convex_agent_error_code_decodes() {
+fn legacy_string_data_carries_its_code() {
+    let err = decode_function_result::<serde_json::Value>(
+        FunctionResult::ConvexError(ConvexError {
+            message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+            data: Value::String("SPROCKET_SUBMISSION_WAITING".to_string()),
+        }),
+        "agentRuntime:createGatewayRun",
+    )
+    .expect_err("should fail")
+    .context("create run");
+    assert_eq!(
+        convex_error_code(&err),
+        Some(ConvexErrorCode::SubmissionWaiting)
+    );
+    assert_eq!(err.root_cause().to_string(), "SPROCKET_SUBMISSION_WAITING");
+}
+
+#[test]
+fn every_convex_agent_error_message_maps_to_its_code() {
     let codes: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
         "../../../../apps/web/convex/lib/agentErrorCodes.json"
     ))
     .unwrap();
-    for code in codes.keys() {
-        serde_json::from_value::<ConvexErrorCode>(serde_json::Value::String(code.clone()))
-            .unwrap_or_else(|error| panic!("{code}: {error}"));
+    for (code, message) in codes {
+        let expected =
+            serde_json::from_value::<ConvexErrorCode>(serde_json::Value::String(code.clone()))
+                .unwrap_or_else(|error| panic!("{code}: {error}"));
+        assert_eq!(
+            code_for_message(message.as_str().unwrap()),
+            Some(expected),
+            "{code}"
+        );
     }
 }
 

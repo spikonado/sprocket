@@ -6,14 +6,13 @@ import type { Infer } from 'convex/values';
 
 export type AgentErrorCode = keyof typeof agentErrorMessages;
 
-export type AgentErrorData = { code: AgentErrorCode; message: string };
-
-/** The executor branches on `code`; `message` is for people. */
-export function agentError(
-	code: AgentErrorCode,
-	message: string = agentErrorMessages[code]
-): ConvexError<AgentErrorData> {
-	return new ConvexError({ code, message });
+/**
+ * Production only delivers `data`, and released agents match these exact
+ * strings in it, so `data` stays the legacy text. Current agents map it back
+ * to the code.
+ */
+export function agentError(code: AgentErrorCode): ConvexError<string> {
+	return new ConvexError(agentErrorMessages[code]);
 }
 
 export const RUN_NO_LONGER_ACTIVE = agentErrorMessages.RUN_NO_LONGER_ACTIVE;
