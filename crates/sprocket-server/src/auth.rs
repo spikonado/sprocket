@@ -410,7 +410,8 @@ fn load_or_create_pairing_credential(data_dir: &Path) -> anyhow::Result<String> 
     file.sync_all()?;
     drop(file);
 
-    let published = publish_exclusive_file(&tmp_path, &path);
+    // Unlike `rename`, `hard_link` never replaces an existing dest.
+    let published = fs::hard_link(&tmp_path, &path);
     let _ = fs::remove_file(&tmp_path);
 
     match published {
@@ -420,24 +421,6 @@ fn load_or_create_pairing_credential(data_dir: &Path) -> anyhow::Result<String> 
                 .ok_or_else(|| anyhow::anyhow!("pairing credential {} is invalid", path.display()))
         }
         Err(error) => Err(error.into()),
-    }
-}
-
-/// Publish `tmp_path` as `dest` only if `dest` does not already exist.
-///
-/// Unix `rename` replaces an existing dest, so first boot uses `hard_link`.
-/// Windows `rename` is exclusive and is the fallback when `hard_link` is unavailable.
-fn publish_exclusive_file(tmp_path: &Path, dest: &Path) -> std::io::Result<()> {
-    match fs::hard_link(tmp_path, dest) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => Err(error),
-        Err(error) => {
-            if cfg!(unix) {
-                Err(error)
-            } else {
-                fs::rename(tmp_path, dest)
-            }
-        }
     }
 }
 

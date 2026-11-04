@@ -1,13 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::sync::Mutex;
 
 use super::{FileContents, FileState, TrackedFile, apply_workspace_patch, display_path, restore};
 use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use crate::test_support::temp_workspace;
 use tempfile::tempdir;
-
-static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test]
 async fn replaces_file_with_240_character_name() {
@@ -634,39 +631,4 @@ async fn preserves_trailing_whitespace_in_fenced_patch() {
 
     assert_eq!(fs::read(root.join("spaced.txt")).unwrap(), b"final  \t\n");
     fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn expands_home_prefix_in_patch_paths() {
-    let _guard = HOME_ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let root = temp_workspace();
-    let home = temp_workspace();
-    let previous_home = std::env::var_os("HOME");
-    // SAFETY: serialized by HOME_ENV_LOCK for this test only.
-    unsafe {
-        std::env::set_var("HOME", &home);
-    }
-
-    let patch = "*** Begin Patch\n\
-            *** Add File: ~/from-home.txt\n\
-            +home-relative\n\
-            *** End Patch";
-    let result = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch).await;
-
-    match previous_home {
-        Some(value) => unsafe { std::env::set_var("HOME", value) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
-
-    result.expect("~/ paths should resolve under $HOME");
-    assert_eq!(
-        fs::read_to_string(home.join("from-home.txt")).unwrap(),
-        "home-relative\n"
-    );
-    assert!(!root.join("~/from-home.txt").exists());
-    assert!(!root.join("from-home.txt").exists());
-    fs::remove_dir_all(root).unwrap();
-    fs::remove_dir_all(home).unwrap();
 }

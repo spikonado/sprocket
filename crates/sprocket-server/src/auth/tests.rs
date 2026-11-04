@@ -47,22 +47,6 @@ fn reading_a_missing_pairing_credential_has_no_side_effects() {
 }
 
 #[test]
-fn exclusive_publish_does_not_replace_an_existing_credential() {
-    let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-link-{}", Uuid::new_v4()));
-    fs::create_dir_all(&temp_dir).unwrap();
-    let dest = temp_dir.join(PAIRING_CREDENTIAL_FILE);
-    fs::write(&dest, "winner\n").unwrap();
-    let tmp_path = temp_dir.join(format!("{PAIRING_CREDENTIAL_FILE}.loser.tmp"));
-    fs::write(&tmp_path, "loser\n").unwrap();
-
-    let error = publish_exclusive_file(&tmp_path, &dest).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::AlreadyExists);
-    assert_eq!(fs::read_to_string(&dest).unwrap(), "winner\n");
-
-    let _ = fs::remove_dir_all(temp_dir);
-}
-
-#[test]
 fn concurrent_first_load_shares_one_pairing_credential() {
     let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-race-{}", Uuid::new_v4()));
     let joiners: Vec<_> = (0..8)

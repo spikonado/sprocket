@@ -1,5 +1,5 @@
 import { Workpool, vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
@@ -10,7 +10,12 @@ import {
 	type MutationCtx
 } from '@convex/_generated/server';
 import { z } from 'zod';
-import { classifyBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
+import {
+	classifyBillingInterval,
+	dodoWebhookEnvelopeSchema,
+	readDodoEnvironment
+} from '@convex/lib/dodoProducts';
+import { vDodoWebhookRejected } from '@convex/lib/validators';
 
 // Dedicated pool so webhook processing never competes with web-search or
 // scrape work; bounded parallelism keeps projection writes predictable.
@@ -76,13 +81,6 @@ const subscriptionDataSchema = z.object({
 		.optional()
 });
 
-const eventEnvelopeSchema = z.object({
-	business_id: z.string().optional(),
-	type: z.string(),
-	timestamp: z.string().optional(),
-	data: z.unknown()
-});
-
 // Storage schema for compaction: identical allowlist to the strict
 // processing schema, but `status` is a plain string so an unrecognized
 // provider status stays durable and replayable after a repair that teaches
@@ -119,7 +117,7 @@ function backoffMs(attempts: number): number {
  * other provider extras never reach durable storage or logs.
  */
 function compactPayload(raw: string): string {
-	const envelope = eventEnvelopeSchema.parse(JSON.parse(raw));
+	const envelope = dodoWebhookEnvelopeSchema.parse(JSON.parse(raw));
 	const data = compactSubscriptionDataSchema.safeParse(envelope.data);
 
 	if (!data.success)
@@ -147,11 +145,17 @@ function compactPayload(raw: string): string {
 	});
 }
 
+const vIngestResult = v.union(
+	v.object({ kind: v.literal('stored'), duplicate: v.boolean() }),
+	vDodoWebhookRejected
+);
+
 /**
  * Durable ingestion entry point. The signature over the raw request body is
  * verified first; the verified event is then persisted and enqueued to the
  * workpool in one atomic mutation, so an acknowledged event is always
- * durably queued and a partial failure surfaces as a 500 for provider retry.
+ * durably queued. Requests Dodo got wrong come back as `rejected`; anything
+ * thrown is ours to fix or retry.
  */
 export const ingest = internalAction({
 	args: {
@@ -160,10 +164,10 @@ export const ingest = internalAction({
 		webhookSignature: v.string(),
 		webhookTimestamp: v.string()
 	},
-	returns: v.object({ stored: v.boolean(), duplicate: v.boolean() }),
-	handler: async (ctx, args): Promise<{ stored: boolean; duplicate: boolean }> => {
+	returns: vIngestResult,
+	handler: async (ctx, args): Promise<Infer<typeof vIngestResult>> => {
 		if (new TextEncoder().encode(args.body).length > MAX_PAYLOAD_BYTES) {
-			throw new Error('Dodo webhook payload exceeds the size limit.');
+			return { kind: 'rejected', reason: 'payload' };
 		}
 
 		const verified = await ctx.runAction(internal.pricing.verifyWebhookSignature, {
@@ -173,7 +177,9 @@ export const ingest = internalAction({
 			webhookTimestamp: args.webhookTimestamp
 		});
 
-		return await ctx.runMutation(internal.billingWebhook.recordEvent, {
+		if (verified.kind === 'rejected') return verified;
+
+		const { duplicate } = await ctx.runMutation(internal.billingWebhook.recordEvent, {
 			environment: verifiedEnvironment(),
 			webhookId: args.webhookId,
 			eventType: verified.eventType,
@@ -184,6 +190,8 @@ export const ingest = internalAction({
 			// recordEvent owns compaction at the persistence boundary.
 			payload: args.body
 		});
+
+		return { kind: 'stored', duplicate };
 	}
 });
 
@@ -281,7 +289,7 @@ async function applyEvent(
 	ctx: MutationCtx,
 	event: Doc<'dodoWebhookEvents'>
 ): Promise<{ outcome: LedgerOutcome; detail?: string }> {
-	const envelope = eventEnvelopeSchema.parse(JSON.parse(event.payload!));
+	const envelope = dodoWebhookEnvelopeSchema.parse(JSON.parse(event.payload!));
 
 	if (!SUPPORTED_SUBSCRIPTION_EVENTS.has(envelope.type)) {
 		// Includes subscription.paused/unpaused, payment.*, refund/dispute, and

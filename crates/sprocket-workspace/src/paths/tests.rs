@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn expand_home_with_replaces_a_leading_tilde() {
+    let home = Path::new("/home/me");
+    assert_eq!(expand_home_with("~", Some(home)), "/home/me");
+    assert_eq!(expand_home_with("~/robot", Some(home)), "/home/me/robot");
+    assert_eq!(expand_home_with(r"~\robot", Some(home)), r"/home/me\robot");
+    assert_eq!(expand_home_with("~robot", Some(home)), "~robot");
+    assert_eq!(expand_home_with("src/~/robot", Some(home)), "src/~/robot");
+    assert_eq!(expand_home_with("~/robot", None), "~/robot");
+}
+
+#[test]
 fn simplified_path_strips_windows_verbatim_prefixes() {
     assert_eq!(
         simplified_path_str(r"\\?\D:\projects\robot"),

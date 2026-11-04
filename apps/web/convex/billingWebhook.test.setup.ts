@@ -59,16 +59,16 @@ export async function sendSubscriptionWebhook(
 	return await sendRawWebhook(t, body);
 }
 
-/** Sign and POST a raw body, optionally with a tampered signature. */
+/** Sign and POST a raw body, optionally with a tampered signature or a different configured secret. */
 export async function sendRawWebhook(
 	t: ConvexTestInstance,
 	body: string,
-	options: { webhookId?: string; tamperSignature?: boolean } = {}
+	options: { webhookId?: string; tamperSignature?: boolean; configuredSecret?: string } = {}
 ) {
 	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
 	vi.stubEnv(
 		'DODO_PAYMENTS_WEBHOOK_SECRET',
-		`whsec_${Buffer.from(WEBHOOK_SECRET).toString('base64url')}`
+		options.configuredSecret ?? `whsec_${Buffer.from(WEBHOOK_SECRET).toString('base64url')}`
 	);
 
 	const webhookId = options.webhookId ?? `webhook_${crypto.randomUUID()}`;
