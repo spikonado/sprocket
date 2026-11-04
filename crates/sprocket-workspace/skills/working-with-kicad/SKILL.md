@@ -39,6 +39,11 @@ Use `kicad-cli` for checks and exports.
 - Limit the silkscreen to footprint outlines, polarity marks, short connector pin labels, and the project's logo if it has one.
   Board documentation goes in the project's docs.
 
+## 3D models
+
+Give every component's footprint a 3D model whose file exists, so the 3D render shows each component's body.
+When KiCad's libraries lack one, download the part's STEP model from its manufacturer or distributor, save it in the project, and reference it as `${KIPRJMOD}/…`.
+
 ## Checks
 
 Run ERC and DRC after each save and fix every finding:
