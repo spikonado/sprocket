@@ -44,8 +44,7 @@ use self::pull_requests::{LinkPrsTool, PollPrTool};
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
 use self::subagents::{
-    ControlSubagentTool, ListSubagentModelsTool, ListSubagentsTool, PollSubagentTool,
-    SpawnSubagentTool,
+    ControlSubagentTool, ListSubagentsTool, PollSubagentTool, SpawnSubagentTool,
 };
 use self::web::{ScrapeUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
@@ -58,7 +57,6 @@ pub(crate) struct AgentToolSet {
     pub(crate) control_cmd: ControlCmdTool,
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
-    pub(crate) list_subagent_models: ListSubagentModelsTool,
     pub(crate) list_subagents: ListSubagentsTool,
     pub(crate) list_connectors: ListConnectorsTool,
     pub(crate) parse_file: ParseFileTool,
@@ -166,6 +164,7 @@ pub(crate) fn agent_tools(
     skills: Arc<[WorkspaceSkill]>,
     command_sessions: CommandSessionManager,
     command_cursors: CommandCursors,
+    subagent_models: Arc<crate::catalog::SubagentModelChoices>,
     subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     installed_connectors: crate::InstalledConnectors,
     max_yield_ms: u64,
@@ -189,6 +188,7 @@ pub(crate) fn agent_tools(
         question_polls: questions::QuestionPolls::default(),
         checkouts: payments::Checkouts::default(),
         subagent_polls: subagents::SubagentPolls::default(),
+        subagent_models,
         subagent_launcher,
     };
     AgentToolSet {
@@ -200,7 +200,6 @@ pub(crate) fn agent_tools(
         control_subagent: ControlSubagentTool {
             context: context.clone(),
         },
-        list_subagent_models: ListSubagentModelsTool(context.clone()),
         list_subagents: ListSubagentsTool {
             context: context.clone(),
         },

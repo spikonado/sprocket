@@ -555,11 +555,14 @@ export const threadMonitorInfo = mutation({
 		transcript: vTranscriptStateResult,
 		lastError: v.optional(v.string()),
 		active: v.boolean(),
-		pendingQuestions: v.array(vAgentQuestionSnapshot)
+		pendingQuestions: v.array(vAgentQuestionSnapshot),
+		runId: v.optional(v.id('runs')),
+		callerPromptRunIds: v.array(v.id('runs'))
 	}),
 	handler: async (ctx, args) => {
 		try {
-			const thread = await requireDescendantThread(ctx, args);
+			const callerRun = await requireLiveCallerRun(ctx, args);
+			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 			const pending = await actionablePendingQuestionsForThread(ctx.db, thread._id);
 			const latest = await monitoredRun(ctx.db, thread._id, args.targetRunId);
 			const transcript = await transcriptStateResult(ctx, thread._id, thread);
@@ -570,10 +573,45 @@ export const threadMonitorInfo = mutation({
 				status: latest?.status ?? thread.status,
 				lastError: latest?.lastError,
 				active: (latest !== null && !isRunFinalStatus(latest.status)) || pending.length > 0,
-				pendingQuestions
+				pendingQuestions,
+				runId: latest?._id,
+				callerPromptRunIds: await runsSentFromThread(ctx.db, thread._id, callerRun.threadId)
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
 	}
 });
+
+/** Matches the Rust agent's `subagent:{callerRunId}:{toolJobId}` child submission IDs. */
+const SUBAGENT_SUBMISSION = /^subagent:([^:]+):/;
+
+async function runsSentFromThread(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>,
+	senderThreadId: Id<'threadRecords'>
+) {
+	const runs = await db
+		.query('runs')
+		.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+		.collect();
+
+	const senderInThread = new Map<string, boolean>();
+	const sent: Id<'runs'>[] = [];
+
+	for (const run of runs) {
+		const senderRunId = SUBAGENT_SUBMISSION.exec(run.submissionId)?.[1];
+
+		if (senderRunId === undefined) continue;
+
+		if (!senderInThread.has(senderRunId)) {
+			const id = db.normalizeId('runs', senderRunId);
+			const sender = id ? await db.get('runs', id) : null;
+			senderInThread.set(senderRunId, sender?.threadId === senderThreadId);
+		}
+
+		if (senderInThread.get(senderRunId)) sent.push(run._id);
+	}
+
+	return sent;
+}

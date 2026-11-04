@@ -744,7 +744,7 @@ const vSubagentMonitorEntry = v.union(
 export const vSubagentActionResult = v.object({
 	status: vRunStatus,
 	lastError: v.optional(v.union(v.string(), v.null())),
-	pendingQuestions: v.array(vSubagentPendingQuestion)
+	pendingQuestions: v.optional(v.array(vSubagentPendingQuestion))
 });
 
 export const vSubagentSnapshotResult = vSubagentActionResult.extend({
@@ -753,9 +753,16 @@ export const vSubagentSnapshotResult = vSubagentActionResult.extend({
 	hasMore: v.boolean()
 });
 
+const vSubagentResultSettings = v.object({
+	model: v.string(),
+	reasoning: vReasoningEffort,
+	fast: v.optional(v.boolean()),
+	completionProvider: v.optional(vCompletionProvider)
+});
+
 const vSpawnSubagentFields = {
 	threadId: v.id('threadRecords'),
-	settings: vSubagentSettings
+	settings: vSubagentResultSettings
 };
 
 export const vSpawnSubagentResult = v.union(
@@ -782,11 +789,11 @@ export const vListSubagentsResult = v.object({
 			title: v.optional(v.union(v.string(), v.null())),
 			status: vRunStatus,
 			lastError: v.optional(v.union(v.string(), v.null())),
-			settings: vSubagentSettings
+			settings: vSubagentResultSettings
 		})
 	),
 	nextCursor: v.union(v.string(), v.null()),
-	hasMore: v.boolean()
+	hasMore: v.optional(v.boolean())
 });
 
 export const vListModelsResult = v.object({

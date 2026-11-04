@@ -105,6 +105,34 @@ impl CatalogModel {
     }
 }
 
+pub(crate) struct SubagentModelChoices {
+    pub(crate) model_ids: Vec<String>,
+    pub(crate) reasoning_efforts: Vec<String>,
+}
+
+impl SubagentModelChoices {
+    fn from_catalog(catalog: &GatewaySprocketCatalog) -> Self {
+        let mut reasoning_efforts: Vec<String> = Vec::new();
+        for effort in catalog
+            .models
+            .iter()
+            .flat_map(|model| &model.reasoning_efforts)
+        {
+            if !reasoning_efforts.contains(effort) {
+                reasoning_efforts.push(effort.clone());
+            }
+        }
+        Self {
+            model_ids: catalog
+                .models
+                .iter()
+                .map(|model| model.id.clone())
+                .collect(),
+            reasoning_efforts,
+        }
+    }
+}
+
 async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatalog> {
     let url = format!("{}/models", gateway_api_v1_url(gateway_url));
     let response = catalog_client(gateway_url)?
@@ -184,6 +212,7 @@ pub(crate) async fn catalog_models_for_run(
 ) -> anyhow::Result<(
     CatalogModelCapabilities,
     anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>>,
+    SubagentModelChoices,
 )> {
     let catalog = fetch_catalog(gateway_url).await?;
     let selected = select_catalog_model(&catalog, &run.selected_model)?;
@@ -193,7 +222,11 @@ pub(crate) async fn catalog_models_for_run(
         }
         None => Ok(None),
     };
-    Ok((selected, handoff))
+    Ok((
+        selected,
+        handoff,
+        SubagentModelChoices::from_catalog(&catalog),
+    ))
 }
 
 fn select_handoff_model(

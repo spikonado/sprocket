@@ -18,7 +18,7 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
-use crate::catalog::model_catalog;
+use crate::catalog::{SubagentModelChoices, model_catalog};
 use crate::convex::{MutationFailure, RuntimeClient};
 use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
@@ -60,9 +60,6 @@ pub(crate) struct PollSubagentTool {
 pub(crate) struct ListSubagentsTool {
     pub(super) context: AgentToolContext,
 }
-
-#[derive(Clone)]
-pub(crate) struct ListSubagentModelsTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Default)]
 pub(super) struct SubagentPolls {
@@ -109,6 +106,7 @@ pub(crate) struct SpawnSubagentArgs {
     pub(crate) model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<String>,
+    /// Use the fast service tier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fast: Option<bool>,
     /// Maximum time to wait for completion before returning the tool call.
@@ -130,8 +128,7 @@ pub(crate) struct PollSubagentArgs {
     /// Descendant thread to observe.
     #[serde(rename = "threadId")]
     pub(crate) thread_id: String,
-    /// Opaque cursor from a previous poll response. Omit to start at the
-    /// beginning. Reads are non-destructive.
+    /// nextCursor from a previous poll.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cursor: Option<String>,
     /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
@@ -166,6 +163,7 @@ pub(crate) struct ControlSubagentArgs {
     pub(crate) model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<String>,
+    /// Use the fast service tier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fast: Option<bool>,
     /// Maximum execution runtime for send. Without a limit, the subagent runs until it completes or is stopped.
@@ -207,25 +205,18 @@ pub(crate) struct ListSubagentsArgs {
     pub(crate) cursor: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ListSubagentModelsArgs {}
-
-#[derive(Serialize)]
-struct SubagentModels {
-    models: Vec<SubagentModel>,
+fn set_model_choices(schema: &mut serde_json::Value, choices: &SubagentModelChoices) {
+    schema["properties"]["model"] = json!({ "type": "string", "enum": choices.model_ids });
+    schema["properties"]["reasoning"] =
+        json!({ "type": "string", "enum": choices.reasoning_efforts });
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SubagentModel {
-    id: String,
-    reasoning_efforts: Vec<String>,
-    default_reasoning_effort: String,
-    service_tiers: Vec<String>,
-}
-
-fn spawn_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
+fn spawn_subagent_parameters(
+    max_yield_ms: u64,
+    choices: &SubagentModelChoices,
+) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
+    set_model_choices(&mut schema, choices);
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
         max_yield_ms,
@@ -244,8 +235,12 @@ fn poll_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
     schema
 }
 
-fn control_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
+fn control_subagent_parameters(
+    max_yield_ms: u64,
+    choices: &SubagentModelChoices,
+) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ControlSubagentArgs));
+    set_model_choices(&mut schema, choices);
     schema["properties"]["action"] = json!({
         "type": "string",
         "enum": ["send", "stop", "answer_question"]
@@ -259,48 +254,12 @@ fn control_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
         "Maximum time to wait for completion before returning the tool call.",
     );
     schema["anyOf"] = json!([
+        { "properties": { "action": { "enum": ["send"] } }, "required": ["prompt"] },
+        { "properties": { "action": { "enum": ["stop"] } } },
         {
-            "properties": {
-                "action": { "type": "string", "enum": ["send"] },
-                "prompt": { "type": "string", "minLength": 1 }
-            },
-            "required": ["prompt"],
-            "not": { "anyOf": [
-                { "required": ["questionId"] },
-                { "required": ["optionId"] },
-                { "required": ["text"] }
-            ] }
-        },
-        {
-            "properties": { "action": { "type": "string", "enum": ["stop"] } },
-            "not": { "anyOf": [
-                { "required": ["questionId"] },
-                { "required": ["optionId"] },
-                { "required": ["text"] },
-                { "required": ["prompt"] },
-                { "required": ["model"] },
-                { "required": ["reasoning"] },
-                { "required": ["fast"] },
-                { "required": ["timeoutMs"] }
-            ] }
-        },
-        {
-            "properties": {
-                "action": { "type": "string", "enum": ["answer_question"] },
-                "questionId": { "type": "string", "minLength": 1 }
-            },
+            "properties": { "action": { "enum": ["answer_question"] } },
             "required": ["questionId"],
-            "not": { "anyOf": [
-                { "required": ["prompt"] },
-                { "required": ["model"] },
-                { "required": ["reasoning"] },
-                { "required": ["fast"] },
-                { "required": ["timeoutMs"] }
-            ] },
-            "anyOf": [
-                { "properties": { "optionId": { "type": "string", "minLength": 1 } }, "required": ["optionId"] },
-                { "properties": { "text": { "type": "string", "minLength": 1 } }, "required": ["text"] }
-            ]
+            "anyOf": [{ "required": ["optionId"] }, { "required": ["text"] }]
         }
     ]);
     schema
@@ -382,7 +341,7 @@ impl rig::tool::Tool for SpawnSubagentTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        spawn_subagent_parameters(self.context.max_yield_ms)
+        spawn_subagent_parameters(self.context.max_yield_ms, &self.context.subagent_models)
     }
 
     async fn call(
@@ -549,6 +508,7 @@ async fn run_subagent(
     let mut result = action_settlement_result(
         context,
         &created.thread_id,
+        Some(&created.run_id),
         YieldMode::Action.normalize(args.yield_time_ms, context.max_yield_ms),
         &cancellation,
     )
@@ -600,7 +560,7 @@ impl rig::tool::Tool for PollSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        String::new()
+        "Read a subagent's status and its prompts, replies, and patches.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -646,7 +606,12 @@ impl PollSubagentTool {
                         &args.thread_id,
                         || fetch_monitor_info(&self.context, &args.thread_id, None),
                         |info| {
-                            read_transcript_snapshot(&self.context, info, args.cursor.as_deref())
+                            read_transcript_snapshot(
+                                &self.context,
+                                info,
+                                args.cursor.as_deref(),
+                                None,
+                            )
                         },
                     )
                     .await;
@@ -654,7 +619,7 @@ impl PollSubagentTool {
             let info =
                 wait_for_settlement(&self.context, &args.thread_id, yield_time_ms, &cancellation)
                     .await?;
-            read_transcript_snapshot(&self.context, info, args.cursor.as_deref()).await
+            read_transcript_snapshot(&self.context, info, args.cursor.as_deref(), None).await
         })
         .await
     }
@@ -667,12 +632,12 @@ impl rig::tool::Tool for ControlSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Send a follow-up, stop a subagent and its entire descendant tree, or answer a question on an existing subagent. Stop the current run or wait for it to finish before sending another message."
+        "Send a follow-up, stop a subagent and its entire descendant tree, or answer a question on an existing subagent."
             .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        control_subagent_parameters(self.context.max_yield_ms)
+        control_subagent_parameters(self.context.max_yield_ms, &self.context.subagent_models)
     }
 
     async fn call(
@@ -766,6 +731,7 @@ impl ControlSubagentTool {
             }
         };
 
+        let mut continued_run_id = None;
         if matches!(args.action, SubagentControlAction::AnswerQuestion) {
             let (submission_id, child_execution_secret) = child_credentials(&self.context, &job_id);
             let recovered = cancelled_read(&cancellation, async {
@@ -821,15 +787,18 @@ impl ControlSubagentTool {
                 }
                 _ => None,
             };
-            if let Some(queued) = queued.filter(|queued| queued.status == "queued") {
-                launch_queued_child(
-                    require_launcher(&self.context)?,
-                    &self.context,
-                    &queued,
-                    &submission_id,
-                    &child_execution_secret,
-                )
-                .await?;
+            if let Some(queued) = queued {
+                if queued.status == "queued" {
+                    launch_queued_child(
+                        require_launcher(&self.context)?,
+                        &self.context,
+                        &queued,
+                        &submission_id,
+                        &child_execution_secret,
+                    )
+                    .await?;
+                }
+                continued_run_id = Some(queued.run_id);
             }
         }
 
@@ -851,13 +820,16 @@ impl ControlSubagentTool {
                 fetch_monitor_info(&self.context, &args.thread_id, stopped_run_id),
             )
             .await?;
-            subagent_action_result(info, yield_time_ms, &cancellation, |info| {
-                read_transcript_snapshot(&self.context, info, None)
-            })
-            .await?
+            subagent_metadata(&info)
         } else {
-            action_settlement_result(&self.context, &args.thread_id, yield_time_ms, &cancellation)
-                .await?
+            action_settlement_result(
+                &self.context,
+                &args.thread_id,
+                continued_run_id.as_deref(),
+                yield_time_ms,
+                &cancellation,
+            )
+            .await?
         };
         if let Some(answer) = response.answer {
             result["answer"] = serde_json::to_value(answer).map_err(|e| tool_error(e.into()))?;
@@ -963,52 +935,6 @@ impl rig::tool::Tool for ListSubagentsTool {
                 }
             },
         )
-        .await
-    }
-}
-
-impl rig::tool::Tool for ListSubagentModelsTool {
-    const NAME: &'static str = "list_subagent_models";
-    type Error = ToolExecutionError;
-    type Args = ListSubagentModelsArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        String::new()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ListSubagentModelsArgs))
-    }
-
-    async fn call(
-        &self,
-        _context: &mut rig::tool::ToolContext,
-        _args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
-        execute_tool_job_with_id(&self.0, Self::NAME, json!({}), |cancellation, _job_id| {
-            let context = self.0.clone();
-            async move {
-                cancelled_read(&cancellation, async {
-                    let catalog = model_catalog(&context.gateway_url)
-                        .await
-                        .map_err(tool_error)?;
-                    let models = catalog
-                        .models
-                        .into_iter()
-                        .map(|model| SubagentModel {
-                            id: model.id,
-                            reasoning_efforts: model.reasoning_efforts,
-                            default_reasoning_effort: model.default_reasoning_effort,
-                            service_tiers: model.service_tiers,
-                        })
-                        .collect();
-                    serde_json::to_value(SubagentModels { models })
-                        .map_err(|e| tool_error(e.into()))
-                })
-                .await
-            }
-        })
         .await
     }
 }
@@ -1121,7 +1047,6 @@ fn list_page_response(page: &SubagentListPage) -> serde_json::Value {
         "nextCursor": if page.is_done { serde_json::Value::Null } else {
             serde_json::Value::String(page.continue_cursor.clone())
         },
-        "hasMore": !page.is_done,
     })
 }
 
@@ -1256,11 +1181,14 @@ where
 }
 
 fn subagent_metadata(info: &SubagentMonitorInfo) -> serde_json::Value {
-    json!({
-        "status": info.status,
-        "lastError": info.last_error,
-        "pendingQuestions": info.pending_questions,
-    })
+    let mut metadata = json!({ "status": info.status });
+    if let Some(last_error) = &info.last_error {
+        metadata["lastError"] = json!(last_error);
+    }
+    if !info.pending_questions.is_empty() {
+        metadata["pendingQuestions"] = json!(info.pending_questions);
+    }
+    metadata
 }
 
 async fn subagent_action_result<F, Fut>(
@@ -1282,12 +1210,14 @@ where
 async fn action_settlement_result(
     context: &AgentToolContext,
     thread_id: &str,
+    run_id: Option<&str>,
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let info = wait_for_settlement(context, thread_id, yield_time_ms, cancellation).await?;
     subagent_action_result(info, yield_time_ms, cancellation, |info| {
-        read_transcript_snapshot(context, info, None)
+        let run_id = run_id.map(str::to_owned).or_else(|| info.run_id.clone());
+        read_transcript_snapshot(context, info, None, run_id)
     })
     .await
 }
@@ -1296,6 +1226,7 @@ async fn read_transcript_snapshot(
     context: &AgentToolContext,
     info: SubagentMonitorInfo,
     cursor: Option<&str>,
+    run_id: Option<String>,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let store = context
         .transcript_store
@@ -1305,6 +1236,10 @@ async fn read_transcript_snapshot(
     let transcript = &info.transcript;
     let user_id = &context.user_id;
     let thread_id = &transcript.thread_id;
+    let filter = sprocket_transcript::monitor::MonitorFilter {
+        run_id,
+        hidden_prompt_runs: info.caller_prompt_run_ids.clone(),
+    };
     sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
         .await
         .map_err(tool_error)?;
@@ -1314,6 +1249,7 @@ async fn read_transcript_snapshot(
         thread_id,
         cursor,
         transcript.total_parts,
+        &filter,
         |start, end, order| async move {
             let mut fields = thread_args(context, thread_id);
             fields.insert("start".into(), Value::Float64(f64::from(start)));

@@ -102,6 +102,7 @@ fn page(
         replica,
         "thread",
         cursor.map(parse_cursor).transpose()?,
+        &MonitorFilter::default(),
         max_chars,
     )
 }
@@ -929,10 +930,16 @@ fn malformed_and_foreign_cursors_fail_explicitly() {
     .unwrap();
     assert_eq!(malformed, MonitorReadError::MalformedCursor);
 
-    let foreign = read_page(&replica, "other-thread", parse_cursor(&cursor).ok(), 1000)
-        .unwrap_err()
-        .downcast::<MonitorReadError>()
-        .unwrap();
+    let foreign = read_page(
+        &replica,
+        "other-thread",
+        parse_cursor(&cursor).ok(),
+        &MonitorFilter::default(),
+        1000,
+    )
+    .unwrap_err()
+    .downcast::<MonitorReadError>()
+    .unwrap();
     assert_eq!(foreign, MonitorReadError::WrongThread);
 }
 
@@ -951,11 +958,63 @@ fn rebuilt_replica_invalidates_cursor() {
     let (_dir, _replica, cursor) = replica_with_cursor();
     let (_rebuild_dir, mut fresh) = open_replica();
     fresh.save_parts("thread", &[prompt_part(0, "x")]).unwrap();
-    let reset = read_page(&fresh, "thread", parse_cursor(&cursor).ok(), 1000)
-        .unwrap_err()
-        .downcast::<MonitorReadError>()
-        .unwrap();
+    let reset = read_page(
+        &fresh,
+        "thread",
+        parse_cursor(&cursor).ok(),
+        &MonitorFilter::default(),
+        1000,
+    )
+    .unwrap_err()
+    .downcast::<MonitorReadError>()
+    .unwrap();
     assert_eq!(reset, MonitorReadError::MonitorCursorReset);
+}
+
+#[test]
+fn filters_keep_one_run_and_hide_its_sender_prompts() {
+    let (_dir, mut replica) = open_replica();
+    let in_run = |mut part: TranscriptPart, run: &str| {
+        part.run_id = run.into();
+        part.source_key = format!("{}:{run}", part.source_key);
+        part
+    };
+    replica
+        .save_parts(
+            "thread",
+            &[
+                in_run(prompt_part(0, "old task"), "old"),
+                completion_part_in_run(1, "old", vec![json!({"type":"text","text":"old reply"})]),
+                in_run(prompt_part(2, "new task"), "new"),
+                completion_part_in_run(3, "new", vec![json!({"type":"text","text":"new reply"})]),
+            ],
+        )
+        .unwrap();
+    let read = |filter: MonitorFilter| {
+        texts(
+            &read_page(&replica, "thread", None, &filter, MONITOR_PAGE_CHAR_LIMIT)
+                .unwrap()
+                .entries,
+        )
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>()
+    };
+    let hidden_prompt_runs = BTreeSet::from(["new".to_string()]);
+    assert_eq!(
+        read(MonitorFilter {
+            run_id: None,
+            hidden_prompt_runs: hidden_prompt_runs.clone(),
+        }),
+        ["old task", "old reply", "new reply"]
+    );
+    assert_eq!(
+        read(MonitorFilter {
+            run_id: Some("new".into()),
+            hidden_prompt_runs,
+        }),
+        ["new reply"]
+    );
 }
 
 #[test]

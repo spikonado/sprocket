@@ -593,11 +593,14 @@ describe('subagents.createOrSend', () => {
 describe('subagent tool job results', () => {
 	it.each([
 		'spawn',
+		'released spawn',
 		'legacy follow-up',
 		'send',
 		'send with options',
 		'stop',
 		'poll',
+		'list',
+		'released list',
 		'list models',
 		'released list models'
 	] as const)(
@@ -609,11 +612,9 @@ describe('subagent tool job results', () => {
 
 			const followUp = { threadId: child.threadId, prompt: 'Follow-up task', yieldTimeMs: 0 };
 
-			const metadata = {
-				status: 'running' as const,
-				lastError: null,
-				pendingQuestions: []
-			};
+			const metadata = { status: 'running' as const };
+
+			const releasedMetadata = { ...metadata, lastError: null, pendingQuestions: [] };
 
 			const snapshot = {
 				...metadata,
@@ -622,7 +623,19 @@ describe('subagent tool job results', () => {
 				hasMore: false
 			};
 
-			const sendResult = { ...metadata, threadId: child.threadId, settings: child.settings };
+			const settings = { model: child.settings.model, reasoning: child.settings.reasoning };
+
+			const sendResult = { ...metadata, threadId: child.threadId, settings };
+
+			const listChild = {
+				threadId: child.threadId,
+				parentThreadId: caller.threadId,
+				status: 'running' as const
+			};
+
+			const children = [{ ...listChild, settings }];
+
+			const releasedChildren = [{ ...listChild, lastError: null, settings: child.settings }];
 
 			const model = {
 				id: 'gpt-5.6-sol',
@@ -642,6 +655,11 @@ describe('subagent tool job results', () => {
 					kind: 'spawn_subagent',
 					payload: { prompt: 'Delegate work', yieldTimeMs: 0 },
 					result: sendResult
+				},
+				'released spawn': {
+					kind: 'spawn_subagent',
+					payload: { prompt: 'Delegate work', yieldTimeMs: 0 },
+					result: { ...releasedMetadata, threadId: child.threadId, settings: child.settings }
 				},
 				'legacy follow-up': { kind: 'spawn_subagent', payload: followUp, result: sendResult },
 				send: {
@@ -671,6 +689,20 @@ describe('subagent tool job results', () => {
 					kind: 'poll_subagent',
 					payload: { threadId: child.threadId, yieldTimeMs: 0 },
 					result: snapshot
+				},
+				list: {
+					kind: 'list_subagents',
+					payload: {},
+					result: { children, nextCursor: null }
+				},
+				'released list': {
+					kind: 'list_subagents',
+					payload: {},
+					result: {
+						children: releasedChildren,
+						nextCursor: null,
+						hasMore: false
+					}
 				},
 				'list models': {
 					kind: 'list_subagent_models',
@@ -718,6 +750,40 @@ describe('subagent tool job results', () => {
 			});
 		}
 	);
+});
+
+describe('subagent monitor info', () => {
+	it('reports the latest run and the runs the caller thread sent', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+
+		const child = await t.mutation(
+			api.subagents.createOrSend,
+			createArgs(caller, { submissionId: `subagent:${caller.runId}:job-1` })
+		);
+
+		const userRunId = await t.run((ctx) =>
+			ctx.db.insert('runs', {
+				threadId: child.threadId,
+				userId: 'user_alice',
+				submissionId: 'user-follow-up',
+				status: 'completed',
+				executionSecretHash: 'user-follow-up-secret',
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				fastMode: false
+			})
+		);
+
+		expect(
+			await t.mutation(api.subagents.threadMonitorInfo, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId
+			})
+		).toMatchObject({ runId: userRunId, callerPromptRunIds: [child.runId] });
+	});
 });
 
 describe('subagents transcript pages', () => {
