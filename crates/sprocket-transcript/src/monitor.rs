@@ -119,8 +119,9 @@ where
     store
         .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
         .await?;
+    let mut cursor = cursor.map(str::to_owned);
     loop {
-        let parsed_cursor = cursor.map(parse_cursor).transpose()?;
+        let parsed_cursor = cursor.as_deref().map(parse_cursor).transpose()?;
         let thread_id = thread.to_owned();
         let filter = filter.clone();
         let (page, prefix) = store
@@ -140,6 +141,7 @@ where
         if !page.entries.is_empty() || !page.has_more || prefix >= total {
             return Ok(page);
         }
+        cursor = Some(page.next_cursor);
         store
             .download_parts_page(user, thread, prefix, total, DownloadOrder::Asc, &mut fetch)
             .await?;
