@@ -17,7 +17,6 @@ pub(crate) fn find_project_root(cwd: &Path) -> PathBuf {
     }
 }
 
-/// Discover the git repository that owns `cwd`, using the process temp root as a ceiling.
 pub(crate) fn discover_repository(cwd: &Path) -> Option<gix::Repository> {
     let mut options = gix::discover::upwards::Options::default();
     options.match_ceiling_dir_or_error = false;

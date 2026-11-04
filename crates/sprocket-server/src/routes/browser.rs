@@ -21,8 +21,6 @@ use crate::routes::api_error::{ApiError, no_store};
 const DASHBOARD_PATH: &str = "/api/browser/dashboard/";
 const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
-/// Hides the dashboard's non-Chrome browsers and AI chat. `tools/agent-browser/update-release.mjs`
-/// refuses a pin whose bundle no longer contains every pattern.
 static DASHBOARD_PATCHES: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
     serde_json::from_str(include_str!(
         "../../../../tools/agent-browser/dashboard-patches.json"

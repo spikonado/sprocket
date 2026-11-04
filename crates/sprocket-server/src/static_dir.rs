@@ -1,21 +1,13 @@
 use std::path::{Path, PathBuf};
 
-/// Relative path from the install prefix where the built web app lives.
 pub const INSTALLED_WEB_DIR: &str = "share/sprocket/web";
 
-/// Compile-time override for packagers, e.g.
-/// `SPROCKET_SHARE_DIR=/usr/share/sprocket/web cargo build --release`.
 const COMPILE_TIME_SHARE_DIR: Option<&str> = option_env!("SPROCKET_SHARE_DIR");
 
 pub fn is_valid_static_dir(path: &Path) -> bool {
     path.join("index.html").is_file()
 }
 
-/// Resolve the web app directory using, in order:
-/// 1. Explicit override (`--static-dir` / `SPROCKET_STATIC_DIR`)
-/// 2. Compile-time `SPROCKET_SHARE_DIR`
-/// 3. Installed layout next to the running binary
-/// 4. Local development layout when running from a checkout
 pub fn resolve_static_dir(override_path: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(path) = override_path.filter(|path| is_valid_static_dir(path)) {
         return Some(path);

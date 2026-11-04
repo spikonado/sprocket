@@ -67,7 +67,6 @@ fn resolve_static_file(dir: &Path, path: &str) -> Option<PathBuf> {
         return Some(dir.join("index.html"));
     }
 
-    // Only Normal components: reject `..`, absolute/prefix segments, and `.`.
     let relative = Path::new(clean);
     if !relative
         .components()

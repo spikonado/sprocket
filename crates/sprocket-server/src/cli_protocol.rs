@@ -113,7 +113,6 @@ pub struct CliModelsResponse {
 pub struct RunStarted {
     pub run_id: String,
     pub thread_id: String,
-    /// Model settings the server resolved for this run.
     pub settings: CliRunSettings,
     /// The run was stopped before it began.
     pub stopped: bool,

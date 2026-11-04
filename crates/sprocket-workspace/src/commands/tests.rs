@@ -12,8 +12,6 @@ use crate::default_command_shell;
 use crate::test_support::temp_workspace;
 use tokio::sync::{Mutex, mpsc, watch};
 
-/// Mirrors the agent, which resumes each read from the previous result's
-/// `nextOffset`. Session IDs are unique, so tests share one map.
 static CURSORS: std::sync::Mutex<BTreeMap<String, u64>> = std::sync::Mutex::new(BTreeMap::new());
 
 fn cursor(id: &str) -> u64 {
@@ -56,7 +54,6 @@ impl StubSession {
         self.completion.send(Some(completed_ok())).unwrap();
     }
 
-    /// Saves the completed result as the supervisor does, then reports completion.
     async fn archive(&self) {
         let preview = self.output.lock().await.full_preview();
         let mut history = self.history.clone();
@@ -1109,7 +1106,6 @@ async fn cancelled_observation_preserves_command_for_a_later_run() {
     assert_eq!(running[0].workdir, root.to_string_lossy());
     assert!(running[0].started_at > 0);
 
-    // A fresh run cancellation token can still observe the command's result.
     fs::write(root.join("release"), "").unwrap();
     let finished = poll(&sessions, session_id, 5_000).await;
     assert!(finished.success);
@@ -1124,7 +1120,6 @@ async fn cancelled_exec_keeps_the_started_command_discoverable() {
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let cancellation = WorkspaceCancellation::new();
     let cancel = async {
-        // Observe registration instead of relying on process startup timing.
         tokio::time::timeout(Duration::from_secs(2), async {
             while sessions.running_commands().await.is_empty() {
                 tokio::task::yield_now().await;

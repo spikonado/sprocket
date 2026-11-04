@@ -619,7 +619,6 @@ async fn applies_begin_patch_inside_markdown_fence() {
 #[tokio::test]
 async fn preserves_trailing_whitespace_in_fenced_patch() {
     let root = temp_workspace();
-    // The last line ends with two spaces and a tab; it must survive fence stripping.
     let patch = "```diff\n\
             *** Add File: spaced.txt\n\
             +final  \t\n\

@@ -4,24 +4,13 @@ use gix::bstr::{BStr, ByteSlice};
 
 use crate::project_root::discover_repository;
 
-/// Identity and display name for the git repository that owns a workspace directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitRepositoryIdentity {
-    /// Stable key used to match the same repository across directory moves/clones.
-    /// Prefer a normalized `origin` remote; fall back to the workspace directory name.
     pub repository_key: String,
-    /// Machine-local identity used to distinguish unrelated paths with the same name.
     pub attachment_key: String,
-    /// Short label for UI grouping (repo name or directory name).
     pub display_name: String,
 }
 
-/// Resolve the repository identity for an attached workspace directory.
-///
-/// Discovers the enclosing git repository with `gix` (including linked worktrees),
-/// stopping at the process temp root so ephemeral paths do not inherit ambient
-/// git metadata. Reads `remote.origin.url` when present; otherwise falls back to
-/// the workspace directory name.
 pub fn resolve_git_repository_identity(workspace_root: &Path) -> GitRepositoryIdentity {
     let repository = discover_repository(workspace_root);
     let directory_name = repository
@@ -92,7 +81,6 @@ fn local_directory_attachment_key(workspace_root: &Path) -> String {
     format!("directory:{}", root.to_string_lossy())
 }
 
-/// Build a stable repository key from a parsed git remote URL.
 fn repository_key_from_url(url: &gix::Url) -> Option<String> {
     let path = path_for_repository_key(url.path.as_bstr())?;
 

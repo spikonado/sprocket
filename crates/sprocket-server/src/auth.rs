@@ -57,14 +57,10 @@ pub fn desktop_login_callback_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/api/auth/desktop-login/callback")
 }
 
-/// Hosts that can accept connections to the dedicated 127.0.0.1 callback URL.
 pub fn host_supports_loopback_desktop_login(host: &str) -> bool {
     matches!(host.trim(), "127.0.0.1" | "0.0.0.0")
 }
 
-/// Whether the TCP peer may complete the unauthenticated desktop login callback.
-///
-/// Uses the real socket peer address from Axum `ConnectInfo`, never request headers.
 pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> bool {
     peer.ip().is_loopback()
 }
@@ -140,7 +136,6 @@ pub fn sign_pairing_proof(credential: &str, message: &str) -> anyhow::Result<Vec
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
-/// Constant-time HMAC-SHA256 verification of a pairing proof.
 pub fn verify_pairing_proof(credential: &str, message: &str, proof: &[u8]) -> bool {
     let Ok(mut mac) = HmacSha256::new_from_slice(credential.as_bytes()) else {
         return false;

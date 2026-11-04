@@ -24,12 +24,10 @@ pub struct Check {
     pub outcome: CheckOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// Branch protection must see it pass before the PR can merge.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
 }
 
-/// A comment, review, or inline review comment.
 #[derive(Clone, Debug, Serialize)]
 pub struct Remark {
     #[serde(skip)]
@@ -67,8 +65,6 @@ pub enum Change {
     NewComments,
 }
 
-/// What an agent already knows about a PR. It travels as the poll cursor, so
-/// no watch state lives on the machine.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Seen {
@@ -84,8 +80,6 @@ pub struct Seen {
 }
 
 impl Seen {
-    /// A first look knows the PR's remarks but none of its check results, so
-    /// failed or finished checks are news right away.
     pub fn first_look(activity: &Activity) -> Self {
         let (remarks_through, remark_ids) = seen_through(None, &[], &activity.remarks);
         Self {

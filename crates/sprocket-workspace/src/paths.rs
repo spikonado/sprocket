@@ -32,7 +32,6 @@ pub fn home_dir() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
 }
 
-/// Resolves `path` to an existing directory; relative paths start at `base`.
 pub fn resolve_directory(base: &Path, path: &str) -> Result<PathBuf> {
     let expanded = PathBuf::from(expand_home(path.trim()));
     let candidate = if expanded.is_absolute() {
@@ -88,7 +87,6 @@ pub(crate) fn normalize_path(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
-/// Canonicalizes the deepest existing ancestor and re-appends the missing tail.
 pub(crate) fn canonicalize_with_missing_tail(path: &Path) -> Result<PathBuf> {
     let mut existing_ancestor = path;
     let mut suffix = Vec::new();

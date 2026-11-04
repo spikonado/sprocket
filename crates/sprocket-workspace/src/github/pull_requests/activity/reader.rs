@@ -8,8 +8,6 @@ use crate::github::{GitHubApi, GitHubError};
 
 const QUERIES: &str = include_str!("queries.graphql");
 
-/// Reads one PR's activity, skipping full reads while a cheap fingerprint
-/// says nothing changed.
 pub struct ActivityReader {
     api: GitHubApi,
     label: String,
@@ -143,8 +141,6 @@ impl ActivityReader {
                 .query("PullRequestStatus", json!({ "after": cursor }))
                 .await?;
             let page = self.pull_request(next.repository)?;
-            // Each page names the head it read, so a push mid-walk fails rather
-            // than mixing two commits' checks.
             if page.head_ref_oid != pr.head_ref_oid {
                 return Err(anyhow::anyhow!(
                     "{} got a new commit while its checks were read. Poll again.",
@@ -407,7 +403,6 @@ struct ContextsRollup {
 }
 
 impl Nodes<ContextsCommitNode> {
-    /// Adds the page's checks and returns the next page's cursor.
     fn read_contexts(&self, checks: &mut Vec<Check>) -> Option<String> {
         let page = &self
             .nodes
@@ -479,7 +474,6 @@ struct ActivityData {
     repository: Option<Repo<ActivityPullRequest>>,
 }
 
-/// Each connection is absent once it has no more pages to read.
 #[derive(Deserialize)]
 struct ActivityPullRequest {
     comments: Option<Page<CommentNode>>,
@@ -514,7 +508,6 @@ struct ThreadCommentsNode {
     comments: Page<CommentNode>,
 }
 
-/// A PR comment or a review thread comment.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommentNode {
@@ -556,8 +549,6 @@ struct ReviewNode {
 }
 
 impl ReviewNode {
-    /// The review's own verdict and summary. Its inline comments come with
-    /// the review threads.
     fn remark(&self) -> Option<Remark> {
         let submitted_at = self.submitted_at.as_ref()?;
         let verdict = match self.state.as_str() {

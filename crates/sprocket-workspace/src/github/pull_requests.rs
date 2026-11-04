@@ -8,7 +8,6 @@ use super::{GitHubApi, GitHubError, is_valid_host};
 
 pub mod activity;
 
-/// t3code's batch size: one GraphQL request answers this many aliased lookups.
 const PULL_REQUESTS_PER_REQUEST: usize = 25;
 
 const FIRST_PAUSE: Duration = Duration::from_secs(2 * 60);
@@ -42,16 +41,12 @@ pub struct PullRequestStatus {
     pub title: String,
 }
 
-/// What GitHub answered. PRs it could not find are left out; hosts that could
-/// not answer at all are listed with why.
 #[derive(Debug, Default)]
 pub struct FetchedStates {
     pub states: Vec<PullRequestStatus>,
     pub failures: Vec<(String, GitHubError)>,
 }
 
-/// A `host/owner/name` repository. A host that doesn't speak GitHub's API
-/// fails at `GitHubApi::connect`, since no GitHub credential exists for it.
 #[derive(Debug, PartialEq, Eq)]
 struct Repository<'a> {
     host: &'a str,
@@ -128,7 +123,6 @@ impl HostPauses {
     }
 }
 
-/// Reads the states of many PRs with one GraphQL request per host and batch.
 pub async fn fetch_states(user_id: &str, pull_requests: &[PullRequestRef]) -> FetchedStates {
     fetch_by_host(user_id, pull_requests, None).await
 }
@@ -171,7 +165,6 @@ async fn fetch_by_host(
     fetched
 }
 
-/// Stops at the first failed batch, keeping the states read before it.
 async fn fetch_host(
     user_id: &str,
     host: &str,
@@ -233,8 +226,6 @@ async fn fetch_batch(
         .collect())
 }
 
-/// Each lookup goes under its own alias with typed variables, so repository
-/// names never become query text.
 fn batch_query(batch: &[(&PullRequestRef, Repository<'_>)]) -> (String, serde_json::Value) {
     let mut parameters = Vec::with_capacity(batch.len());
     let mut fields = Vec::with_capacity(batch.len());

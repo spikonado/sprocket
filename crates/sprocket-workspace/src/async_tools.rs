@@ -1,5 +1,3 @@
-//! Cooldown for immediate observations of pending asynchronous resources.
-
 use std::time::Duration;
 
 use tokio::time::Instant;

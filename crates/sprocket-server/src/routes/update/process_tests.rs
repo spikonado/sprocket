@@ -45,7 +45,6 @@ fn write_helper(dir: &Path, body: &str) -> Arc<PackageUpdateManager> {
     )
 }
 
-/// Install helper that blocks until `finish_install` creates the `finish` file.
 const GATED_INSTALL_HELPER: &str = r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
 while [ ! -f "$(dirname "$0")/finish" ]; do sleep 0.02; done
 echo '{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":null,"method":"package"}'"#;

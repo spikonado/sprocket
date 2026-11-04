@@ -66,8 +66,6 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchSection>> {
         .lines()
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>();
-    // Whitespace after `*** End Patch` is padding; without it, a trailing " "
-    // line is blank context.
     let keep = match lines.iter().rposition(|line| !line.trim().is_empty()) {
         Some(last) if lines[last].trim() == END_PATCH => last + 1,
         _ => lines
@@ -228,13 +226,10 @@ fn is_section_header(line: &str) -> bool {
 }
 
 fn is_file_header(line: &str) -> bool {
-    // Do not trim leading whitespace: indented markers are valid context/content
-    // lines (e.g. documentation that quotes apply_patch examples).
     let line = line.trim_end();
     line == END_PATCH || is_section_header(line)
 }
 
-/// `@@ -n,m +p,q @@` / `@@ -n +p @@` (optional function suffix), not Begin Patch anchors.
 fn is_unified_style_hunk_header(line: &str) -> bool {
     let Some(rest) = line.strip_prefix("@@ ") else {
         return false;
@@ -340,7 +335,6 @@ fn ensure_previous_chunk_has_lines(chunks: &[UpdateChunk], index: usize) -> Resu
     Ok(())
 }
 
-/// Strip a single surrounding markdown code fence (` ``` ` / ` ```diff `) when present.
 fn strip_surrounding_markdown_fence(patch: &str) -> &str {
     let trimmed = patch.trim();
     let Some(after_open) = trimmed.strip_prefix("```") else {
@@ -362,7 +356,6 @@ fn strip_surrounding_markdown_fence(patch: &str) -> &str {
     }
 }
 
-/// A located hunk: replace `old_len` lines at `start` with `new_lines`.
 struct Replacement {
     start: usize,
     old_len: usize,
@@ -641,8 +634,6 @@ fn mismatch_error(
     )
 }
 
-/// The window of `pattern.len()` lines sharing the most non-blank lines with
-/// `pattern`, ignoring indentation.
 fn closest_region(lines: &[String], pattern: &[&String]) -> Option<(usize, usize)> {
     let wanted = pattern
         .iter()

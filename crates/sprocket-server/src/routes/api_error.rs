@@ -81,7 +81,6 @@ impl From<LaunchError> for ApiError {
     }
 }
 
-/// Attach `cache-control: no-store` to a response carrying sensitive payloads.
 pub(crate) fn no_store(response: impl IntoResponse) -> Response {
     let mut response = response.into_response();
     response.headers_mut().insert(
