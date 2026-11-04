@@ -81,16 +81,14 @@ pub struct RunAgentRequest {
     pub automatic_recovery: bool,
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
-    pub installed_connectors: InstalledConnectors,
+    pub installed_connectors: Vec<InstalledConnector>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct InstalledConnector {
     pub name: &'static str,
     pub version: String,
 }
-
-pub type InstalledConnectors = Arc<dyn Fn() -> Vec<InstalledConnector> + Send + Sync>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

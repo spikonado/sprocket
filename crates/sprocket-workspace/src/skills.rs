@@ -162,8 +162,6 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
     };
 
     Ok(ReadSkillContent {
-        name: skill.name.clone(),
-        description: skill.description.clone(),
         content: body.to_string(),
         dir,
     })
@@ -171,8 +169,6 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSkillContent {
-    pub name: String,
-    pub description: String,
     pub content: String,
     pub dir: Option<String>,
 }

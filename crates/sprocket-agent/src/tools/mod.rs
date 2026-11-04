@@ -1,7 +1,6 @@
 mod artifacts;
 mod async_tools;
 mod commands;
-mod connectors;
 mod context;
 mod convert;
 mod cwd;
@@ -32,7 +31,6 @@ use self::artifacts::{BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, S
 pub(crate) use self::async_tools::max_yield_ms;
 pub(crate) use self::commands::CommandCursors;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
-use self::connectors::ListConnectorsTool;
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
 pub(crate) use self::image_urls::ConvexImageUrls;
@@ -58,7 +56,6 @@ pub(crate) struct AgentToolSet {
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
     pub(crate) list_subagents: ListSubagentsTool,
-    pub(crate) list_connectors: ListConnectorsTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
@@ -166,7 +163,6 @@ pub(crate) fn agent_tools(
     command_cursors: CommandCursors,
     subagent_models: Arc<crate::catalog::SubagentModelChoices>,
     subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
-    installed_connectors: crate::InstalledConnectors,
     max_yield_ms: u64,
 ) -> AgentToolSet {
     let context = AgentToolContext {
@@ -202,10 +198,6 @@ pub(crate) fn agent_tools(
         },
         list_subagents: ListSubagentsTool {
             context: context.clone(),
-        },
-        list_connectors: ListConnectorsTool {
-            context: context.clone(),
-            installed_connectors,
         },
         parse_file: ParseFileTool(context.clone()),
         poll_cmd: PollCmdTool(context.clone()),

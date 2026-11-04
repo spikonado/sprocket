@@ -650,8 +650,8 @@ const vHistoricalBrowserObserveResult = v.object({
 });
 
 export const vReadSkillResult = v.object({
-	name: v.string(),
-	description: v.string(),
+	name: v.optional(v.string()),
+	description: v.optional(v.string()),
 	content: v.string(),
 	dir: v.optional(v.string()),
 	truncated: v.optional(v.boolean())
@@ -947,7 +947,6 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('bind_artifact'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
-	v.literal('list_connectors'),
 	v.literal('list_subagent_models'),
 	v.literal('list_subagents'),
 	v.literal('edit_artifact'),
@@ -969,7 +968,8 @@ export const vExecutorJobKind = v.union(
 	v.literal('browser_screenshot'),
 	v.literal('browser_observe'),
 	v.literal('browser_act'),
-	v.literal('browser_extract')
+	v.literal('browser_extract'),
+	v.literal('list_connectors')
 );
 
 export const vStoredExecutorJobKind = v.union(

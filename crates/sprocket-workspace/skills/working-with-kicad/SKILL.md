@@ -8,7 +8,7 @@ Use `kicad-cli` for checks and exports.
 
 ## Set up the connector
 
-- Check if KiCad is listed in `list_connectors`. If it isn't, ask the user to install it in Settings -> Connectors.
+- Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
 - The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, `kicad`, and `kipy-api` on PATH. Call them by name.
 - `kipy-api <module> [name ...]` lists the installed kipy's classes, signatures, and enums.
 - KiCad's symbol, footprint, and 3D model libraries are in `$SPROCKET_KICAD_LIBRARIES`.

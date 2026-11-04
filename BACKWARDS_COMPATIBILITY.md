@@ -187,10 +187,11 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `spawn_subagent` calls with `threadId`, from before follow-ups moved to `control_subagent`.
 - Retired tool names `exec_command`, `control_command`, `poll_command`, `write_stdin` and `await_question`, their historical `yieldTimeMs` values, and question text, options and poll IDs in results.
 - The optional `workdir` on `vExecCommandPayload`, shown as `(cwd …)` in the UI and ignored on replay.
-- Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, and `screenshot_url`.
+- Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, `screenshot_url`, and `list_connectors`.
 - Scope and thread metadata on artifact tool payloads and results.
 - `add_artifact` and `edit_artifact` jobs, from before `bind_artifact` replaced them, and the `repositoryKey`, `type`, `contentType`, `title`, `revision` and `updatedAt` fields on artifact tool results.
 - `parse_file` URL sources and legacy command results.
+- `name` and `description` on `read_skill` results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `merchant` on `card_checkout` results, and `{ recorded: true }` `report_order` results.
 - `eventsPath` on command tool results, which released servers still send.

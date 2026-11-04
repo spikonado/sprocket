@@ -146,10 +146,7 @@ fn read_skill_returns_complete_large_builtin_body() {
     }];
 
     let value = resolve_read_skill(&skills, "demo").expect("should resolve");
-    assert_eq!(value["name"], "demo");
-    assert_eq!(value["description"], "Demo skill");
-    assert_eq!(value["content"], body);
-    assert!(value.get("dir").is_none());
+    assert_eq!(value, serde_json::json!({ "content": body }));
 }
 
 #[test]

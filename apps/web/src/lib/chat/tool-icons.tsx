@@ -13,7 +13,6 @@ import {
 	Hourglass,
 	ListChecks,
 	NotebookPen,
-	Plug,
 	Receipt,
 	ScrollText,
 	Save,
@@ -77,8 +76,6 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'link_prs':
 		case 'poll_pr':
 			return GitPullRequest;
-		case 'list_connectors':
-			return Plug;
 		case 'edit_artifact':
 		case 'list_artifacts':
 		case 'update_artifact':
