@@ -734,7 +734,7 @@ function ThreadTreeRow({
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
-	const status = inboxRunStatus(thread);
+	const status = inboxRunStatus(thread, summary?.waitingForInput === true);
 	const descendantCount = summary?.descendantCount ?? 0;
 	const workingCount = summary?.workingDescendantCount ?? 0;
 
@@ -751,7 +751,10 @@ function ThreadTreeRow({
 	return (
 		<div className="inbox-tree-node">
 			<div
-				className={cn('inbox-row', { 'inbox-row-selected': selected })}
+				className={cn('inbox-row', {
+					'inbox-row-selected': selected,
+					'inbox-row-needs-input': status?.className === 'inbox-needs-input'
+				})}
 				style={indentStyle}
 				draggable={mutationsEnabled && !busy && !renaming && isRoot}
 				onDragStart={(event) => onDragStart(thread, event)}
@@ -886,7 +889,12 @@ function ThreadTreeRow({
 	);
 }
 
-function inboxRunStatus(thread: Thread): { label: string; className: string } | null {
+function inboxRunStatus(
+	thread: Thread,
+	waitingForInput: boolean
+): { label: string; className: string } | null {
+	if (waitingForInput) return { label: 'Needs input', className: 'inbox-needs-input' };
+
 	if (thread.status === 'queued') return { label: 'Starting', className: 'inbox-working' };
 
 	if (thread.status === 'running') return { label: 'Working', className: 'inbox-working' };

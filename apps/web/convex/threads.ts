@@ -182,7 +182,8 @@ const vSubtreeSummary = v.object({
 	descendantCount: v.number(),
 	descendantStatusCounts: vDescendantStatusCounts,
 	anyActive: v.boolean(),
-	descendantsActive: v.boolean()
+	descendantsActive: v.boolean(),
+	waitingForInput: v.boolean()
 });
 
 export const subtreeSummaryForThread = query({
