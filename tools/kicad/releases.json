@@ -1,36 +1,58 @@
 {
-	"version": "10.99.0-6189-g113c71d59d",
-	"commit": "113c71d59d",
+	"version": "10.99.0-6283-g4c23271608",
+	"commit": "4c23271608",
 	"platforms": {
 		"darwin-arm64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6189-g113c71d59d/kicad-unified-universal-20261031-0512-113c71d59d.dmg",
-			"bytes": 1131534919,
-			"sha256": "325071bf87cfa9598753dcb1d64787aad505cde806d0448182fffb6943a0e956"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-unified-universal-20261104-0411-4c23271608.dmg",
+			"bytes": 1131701878,
+			"sha256": "dbae7e74ffe91935d590f5d106dfd0a0b697aedac19bfde0ac79a07577ec1a2d"
 		},
 		"darwin-x64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6189-g113c71d59d/kicad-unified-universal-20261031-0512-113c71d59d.dmg",
-			"bytes": 1131534919,
-			"sha256": "325071bf87cfa9598753dcb1d64787aad505cde806d0448182fffb6943a0e956"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-unified-universal-20261104-0411-4c23271608.dmg",
+			"bytes": 1131701878,
+			"sha256": "dbae7e74ffe91935d590f5d106dfd0a0b697aedac19bfde0ac79a07577ec1a2d"
 		},
 		"linux-x64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6189-g113c71d59d/kicad-nightly-10.99.0.6189.g113c71d59d-x86_64.AppImage",
-			"bytes": 501375849,
-			"sha256": "4f15e9e11a577550631be5151114011e93a28f704fee6f566537caa21ebfff8d"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-nightly-10.99.0.6283.g4c23271608-x86_64.AppImage",
+			"bytes": 496747185,
+			"sha256": "fb635ea61919eec4d37879875be1c2ea812f767f986586be2f744e15df392fcd"
 		},
 		"win32-arm64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6189-g113c71d59d/kicad-nightly-10.99.0.6189.g113c71d59d-arm64.exe",
-			"bytes": 894224760,
-			"sha256": "b6b2591e5bd9ab5a31101e8fccf49bde28c415ab5c52eaeabc59dc451dcb92e0"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-nightly-10.99.0.6283.g4c23271608-arm64.exe",
+			"bytes": 897290872,
+			"sha256": "b6d34389b60be5ae6f8f387613e2b792b4f11a890d3ff09a4002acf4013bfdab"
 		},
 		"win32-x64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6189-g113c71d59d/kicad-nightly-10.99.0.6189.g113c71d59d-x86_64.exe",
-			"bytes": 898647368,
-			"sha256": "40fa9b543bd7ed844dff819eea48327fff8ec72a2d7fb0486b6b6aead20ae4ed"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-nightly-10.99.0.6283.g4c23271608-x86_64.exe",
+			"bytes": 902176000,
+			"sha256": "5025e0ffe7a6f1bb635a52995fd23ab24999f6484f234629f5777069091f1156"
 		}
 	},
 	"kipy": {
-		"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6189-g113c71d59d/kicad_python-0.9.0.dev0-py3-none-any.whl",
+		"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad_python-0.9.0.dev0-py3-none-any.whl",
 		"bytes": 339288,
-		"sha256": "84e61e3ea241fbc59e74d5a157f5899a1c77878560a494471f056ec7d651b6d2"
+		"sha256": "3015028a8ffb6c9a470ea6cc06f3bc37de7ecaa92012c35ee5ab9960db94618c"
+	},
+	"routingTools": {
+		"darwin-arm64": {
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-routing-tools-0.23.8-darwin-arm64.tar.gz",
+			"bytes": 13225712,
+			"sha256": "9d2166080c2c72963b87b91d887ff4aa4b6b3b35c1948c7bc408f5b9c78ce887"
+		},
+		"darwin-x64": {
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-routing-tools-0.23.8-darwin-x64.tar.gz",
+			"bytes": 13271189,
+			"sha256": "d1be9f5979730bb84daf1271faa901394bcfe21ac859295ce4cdbdec2541531e"
+		},
+		"linux-x64": {
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-routing-tools-0.23.8-linux-x64.tar.gz",
+			"bytes": 13293934,
+			"sha256": "f17fe1be1d25bdb00d17354a411c1221c2af79b6d8f0f38fcf9e7e9be77f8320"
+		},
+		"win32-x64": {
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-10.99.0-6283-g4c23271608/kicad-routing-tools-0.23.8-win32-x64.tar.gz",
+			"bytes": 13189674,
+			"sha256": "d241eb3add200ead69b01f39b0faf3b9513687a50ee5f8b838ee48a39b8e3acc"
+		}
 	}
 }

@@ -62,8 +62,12 @@ source commit.
 The same release holds a wheel of
 [kicad-python](https://gitlab.com/kicad/code/kicad-python), licensed under
 [MIT](https://gitlab.com/kicad/code/kicad-python/-/blob/main/LICENSE), built
-with `tools/kicad/kipy-cli-env.patch`. Its Python dependencies keep their own
-licenses. The KiCad version, file sizes, and SHA256 checksums are recorded in
+with `tools/kicad/kipy-cli-env.patch`, and per-platform archives of
+[KiCadRoutingTools](https://github.com/drandyhaas/KiCadRoutingTools), licensed
+under [MIT](https://github.com/drandyhaas/KiCadRoutingTools/blob/main/LICENSE),
+with `tools/kicad/routing-tools-transform-pose.patch` applied and its example
+boards removed. Their Python dependencies keep their own licenses. The KiCad
+version, file sizes, and SHA256 checksums are recorded in
 `tools/kicad/releases.json`, and the dependencies' hashes in
 `tools/kicad/requirements.txt`.
 
