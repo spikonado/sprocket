@@ -5,15 +5,25 @@ use sprocket_workspace::{
 };
 
 use super::{WorkspaceContext, unseen};
+use crate::InstalledConnector;
 
-fn context(instructions: &[WorkspaceInstruction], skills: &[WorkspaceSkill]) -> WorkspaceContext {
+fn context_with_connectors(
+    instructions: &[WorkspaceInstruction],
+    skills: &[WorkspaceSkill],
+    connectors: &[InstalledConnector],
+) -> WorkspaceContext {
     WorkspaceContext::new(
         instructions,
         skills,
+        connectors,
         "thread-id",
         Path::new("/data/transcripts/user/thread-id"),
         Path::new("/tmp/project"),
     )
+}
+
+fn context(instructions: &[WorkspaceInstruction], skills: &[WorkspaceSkill]) -> WorkspaceContext {
+    context_with_connectors(instructions, skills, &[])
 }
 
 fn instructions_text(instructions: &[WorkspaceInstruction], skills: &[WorkspaceSkill]) -> String {
@@ -46,6 +56,25 @@ fn renders_skills_for_model_invocation() {
 
     let text = instructions_text(&[], &[skill("deploy", "Deploy production", true)]);
     assert!(text.contains("No skills are installed."));
+}
+
+#[test]
+fn renders_installed_connectors() {
+    let kicad = InstalledConnector {
+        name: "KiCad",
+        version: "10.0.1".to_string(),
+    };
+    let [instructions, _] =
+        context_with_connectors(&[], &[], &[kicad]).prompts(Path::new("/tmp/project"));
+    assert!(
+        instructions
+            .text
+            .contains("## Installed connectors\n\n- KiCad 10.0.1\n\n")
+    );
+
+    assert!(instructions_text(&[], &[]).contains(
+        "## Installed connectors\n\nNo connectors are installed. The user installs connectors in Settings → Connectors.\n\n"
+    ));
 }
 
 #[test]

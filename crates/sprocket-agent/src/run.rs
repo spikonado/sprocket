@@ -940,6 +940,7 @@ pub async fn run_agent(
         let workspace_context = WorkspaceContext::new(
             &workspace_instructions,
             &skills,
+            &(request.installed_connectors)(),
             &context.run.thread_id,
             &transcript_dir,
             &workspace_root,
@@ -1082,7 +1083,6 @@ pub async fn run_agent(
                     subagent_models: Arc::new(subagent_models),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
-                    installed_connectors: request.installed_connectors.clone(),
                     share_conversation_content: context.share_conversation_content,
                 },
             )

@@ -130,7 +130,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) subagent_models: Arc<crate::catalog::SubagentModelChoices>,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
-    pub(crate) installed_connectors: crate::InstalledConnectors,
     pub(crate) share_conversation_content: bool,
 }
 
@@ -546,7 +545,6 @@ async fn run_with_completion_model(
         request.command_cursors.clone(),
         request.subagent_models.clone(),
         request.subagent_launcher.clone(),
-        request.installed_connectors.clone(),
         target.max_yield_ms(request.usage_pricing.cache_write_ttl.as_deref()),
     );
     let cwd = tools.cwd.clone();
@@ -571,7 +569,6 @@ async fn run_with_completion_model(
         .tool(tools.control_subagent)
         .tool(tools.poll_subagent)
         .tool(tools.list_subagents)
-        .tool(tools.list_connectors)
         .tool(tools.set_cwd);
     let agent = if offer_github_tools {
         agent.tool(tools.link_prs).tool(tools.poll_pr)

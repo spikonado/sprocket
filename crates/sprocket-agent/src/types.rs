@@ -84,7 +84,7 @@ pub struct RunAgentRequest {
     pub installed_connectors: InstalledConnectors,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct InstalledConnector {
     pub name: &'static str,
     pub version: String,
