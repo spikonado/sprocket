@@ -1,12 +1,5 @@
 import { v, type Infer } from 'convex/values';
 import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
-import { vBillingInterval } from '@convex/lib/validators';
-
-export const vTierPrice = v.object({
-	tierId: v.string(),
-	interval: vBillingInterval,
-	price: vDodoPublicPrice
-});
 
 export const vPublicPricingPlan = v.object({
 	id: v.string(),

@@ -1200,7 +1200,7 @@ describe('subagents.control', () => {
 
 				await ctx.db.patch('threadRecords', child.threadId, {
 					contextSummary: 'Prior delegated work',
-					contextSummaryThroughPartNumber: 0
+					contextSummaryPartCount: 1
 				});
 
 				return state!;

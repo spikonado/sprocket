@@ -58,21 +58,23 @@ export async function throughPartNumberForHandoff(
 	return await lastTranscriptPartNumber(ctx, args.threadId);
 }
 
-export function existingThroughPartNumber(thread: Doc<'threadRecords'>): number | undefined {
-	const cutoff = thread.contextSummaryThroughPartNumber;
+export function existingContextSummaryPartCount(thread: Doc<'threadRecords'>): number | undefined {
+	const legacyThrough = thread.contextSummaryThroughPartNumber;
 
-	if (thread.contextSummary !== undefined && cutoff === undefined) {
+	const partCount =
+		thread.contextSummaryPartCount ?? (legacyThrough === undefined ? undefined : legacyThrough + 1);
+
+	if (thread.contextSummary !== undefined && partCount === undefined) {
 		throw new Error('Conversation context is missing its history cutoff.');
 	}
 
-	return cutoff;
+	return partCount;
 }
 
 export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null): number {
 	if (!thread) return 0;
-	const throughPartNumber = existingThroughPartNumber(thread);
 
-	return throughPartNumber === undefined ? 0 : throughPartNumber + 1;
+	return existingContextSummaryPartCount(thread) ?? 0;
 }
 
 export async function getProviderHandoff(

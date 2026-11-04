@@ -100,6 +100,14 @@ Tool parts written by the August 2026 transcript migration, with `migrated-tool:
 
 Older `artifacts` rows carry `type`, so the schema keeps it optional. `migrations:removeArtifactTypes` deletes it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove `type` from the schema and remove the migration.
 
+### Pricing cache keys
+
+Older `dodoPricingCache` rows carry a `cacheKey` that nothing reads, so the schema keeps it optional. `migrations:dropPricingCacheKeys` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
+
+### Context summary part counts
+
+Older threads store the context summary cutoff as `contextSummaryThroughPartNumber`, the inclusive last covered part with `-1` for an empty prefix. When `contextSummaryPartCount` is missing, `existingContextSummaryPartCount` uses that value plus one. `migrations:countContextSummaryParts` rewrites those rows, and the Convex Production workflow runs it after each deploy. Once it reports done on production, remove the old field, the fallback and the migration.
+
 ### Retired Prava mandate rows
 
 `mandates` and `mandateCharges` are untyped tables kept only so the schema accepts their old rows. Remove both tables after `bunx convex run payments:deleteRetiredMandates` has emptied them on each deployment, and remove that mutation with them. Delete the unmounted `actionRetrier` component's data on each deployment at the same time.

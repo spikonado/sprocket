@@ -3,7 +3,7 @@ import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import { internalMutation, internalQuery } from '@convex/_generated/server';
 import type { DataModel } from '@convex/_generated/dataModel';
 import { vDodoPublicPrice, type DodoPublicPrice } from '@convex/lib/dodoProducts';
-import { vTierPrice, vTierPricingConfig } from '@convex/lib/pricingValidators';
+import { vTierPricingConfig } from '@convex/lib/pricingValidators';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 
 // Durable global bound on concurrent refreshes per provider environment,
@@ -39,46 +39,15 @@ export async function lookupTierForProduct(
 	return assignments[0]?.tierId ?? null;
 }
 
-export const getCachedTierPrices = internalQuery({
-	args: { cacheKey: v.string(), now: v.number() },
-	returns: v.union(v.array(vTierPrice), v.null()),
-	handler: async (ctx, { cacheKey, now }) => {
-		const cached = await ctx.db
-			.query('dodoPricingCache')
-			.withIndex('by_cacheKey', (query) => query.eq('cacheKey', cacheKey))
-			.unique();
-
-		return cached && cached.expiresAt > now ? cached.tierPrices : null;
-	}
-});
-
-export const cacheTierPrices = internalMutation({
-	args: { cacheKey: v.string(), tierPrices: v.array(vTierPrice), expiresAt: v.number() },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const cached = await ctx.db
-			.query('dodoPricingCache')
-			.withIndex('by_cacheKey', (query) => query.eq('cacheKey', args.cacheKey))
-			.unique();
-
-		if (cached) await ctx.db.replace('dodoPricingCache', cached._id, args);
-		else await ctx.db.insert('dodoPricingCache', args);
-
-		return null;
-	}
-});
-
 export const getProductPricesForEnvironment = internalQuery({
 	args: {
 		environment: v.string(),
-		// Legacy aggregate cache key; rows under it predate per-product entries.
-		cacheKey: v.string(),
 		productIds: v.array(v.string()),
 		now: v.number()
 	},
 	returns: v.array(
 		v.object({
-			productId: v.union(v.string(), v.null()),
+			productId: v.string(),
 			price: v.union(vDodoPublicPrice, v.null()),
 			expiresAt: v.number(),
 			refreshFailed: v.boolean(),
@@ -87,26 +56,9 @@ export const getProductPricesForEnvironment = internalQuery({
 			leaseActive: v.boolean()
 		})
 	),
-	handler: async (ctx, { environment, cacheKey, productIds, now }) => {
-		// The legacy aggregate row was keyed to a specific product set; serve it
-		// only when the current catalog maps to exactly that set, so an old
-		// snapshot never misattributes prices after a remap.
-		let expectedLegacyIds: Set<string> | null = null;
-
-		if (cacheKey.startsWith(`${environment}:`)) {
-			expectedLegacyIds = new Set(
-				cacheKey
-					.slice(environment.length + 1)
-					.split('|')
-					.map((part) => part.split(':')[2])
-					.filter((id) => id !== undefined && id.length > 0)
-			);
-		}
-
-		const requestIds = new Set(productIds);
-
+	handler: async (ctx, { environment, productIds, now }) => {
 		const rows: Array<{
-			productId: string | null;
+			productId: string;
 			price: DodoPublicPrice | null;
 			expiresAt: number;
 			refreshFailed: boolean;
@@ -115,7 +67,7 @@ export const getProductPricesForEnvironment = internalQuery({
 			leaseActive: boolean;
 		}> = [];
 
-		for (const productId of requestIds) {
+		for (const productId of new Set(productIds)) {
 			const cached = await ctx.db
 				.query('dodoPricingCache')
 				.withIndex('by_environment_and_productId', (query) =>
@@ -133,35 +85,6 @@ export const getProductPricesForEnvironment = internalQuery({
 					validatedAt: cached.validatedAt ?? null,
 					leaseActive: cached.leaseExpiresAt !== undefined && cached.leaseExpiresAt > now
 				});
-			}
-		}
-
-		// Legacy aggregate row: serves prices for products without a per-product
-		// row while unexpired; per-product rows always win for products they cover.
-		if (
-			expectedLegacyIds !== null &&
-			expectedLegacyIds.size === requestIds.size &&
-			[...requestIds].every((id) => expectedLegacyIds.has(id))
-		) {
-			const legacy = await ctx.db
-				.query('dodoPricingCache')
-				.withIndex('by_cacheKey', (query) => query.eq('cacheKey', cacheKey))
-				.unique();
-
-			if (legacy && legacy.expiresAt > now && legacy.tierPrices) {
-				for (const tierPrice of legacy.tierPrices) {
-					if (rows.some((row) => row.productId === tierPrice.price.productId)) continue;
-
-					rows.push({
-						productId: tierPrice.price.productId,
-						price: tierPrice.price,
-						expiresAt: legacy.expiresAt,
-						refreshFailed: false,
-						retryAt: null,
-						validatedAt: legacy.validatedAt ?? legacy.expiresAt,
-						leaseActive: false
-					});
-				}
 			}
 		}
 
@@ -226,7 +149,6 @@ export const acquireProductRefreshLease = internalMutation({
 		}
 
 		await ctx.db.insert('dodoPricingCache', {
-			cacheKey: `${args.environment}:${args.productId}`,
 			environment: args.environment,
 			productId: args.productId,
 			expiresAt: 0,
@@ -275,7 +197,7 @@ export const cacheProductPrice = internalMutation({
 				!args.refreshFailed && args.price
 					? args.now
 					: preserveStale
-						? (cached.validatedAt ?? cached.expiresAt)
+						? cached.validatedAt
 						: undefined,
 			leaseOwner: undefined,
 			leaseExpiresAt: undefined
