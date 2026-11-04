@@ -3,12 +3,13 @@ import {
 	internalMutation,
 	mutation,
 	query,
-	type MutationCtx
+	type MutationCtx,
+	type QueryCtx
 } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer, type ObjectType } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
@@ -264,63 +265,71 @@ export const issueGatewayCredential = mutation({
 	}
 });
 
+const startArgs = {
+	claimId: v.string(),
+	runId: v.id('runs'),
+	executionSecret: v.string()
+};
+
+export async function startHandler(ctx: MutationCtx, args: ObjectType<typeof startArgs>) {
+	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+	const now = Date.now();
+
+	if (!canStartRunWithClaim(run, args.claimId, now)) {
+		return { claimed: false };
+	}
+
+	const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
+
+	const nextClaimExpiresAt = claimExpiresAt(now);
+
+	const claimPatch: RunClaimPatch = {
+		claimId: args.claimId,
+		claimExpiresAt: nextClaimExpiresAt
+	};
+
+	if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
+	await patchRunExecution(ctx, run._id, claimPatch);
+	await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
+
+	return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
+}
+
 export const start = mutation({
-	args: {
-		claimId: v.string(),
-		runId: v.id('runs'),
-		executionSecret: v.string()
-	},
+	args: startArgs,
 	returns: v.object({
 		claimed: v.boolean(),
 		claimExpiresAt: v.optional(v.number())
 	}),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const now = Date.now();
-
-		if (!canStartRunWithClaim(run, args.claimId, now)) {
-			return { claimed: false };
-		}
-
-		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
-
-		const nextClaimExpiresAt = claimExpiresAt(now);
-
-		const claimPatch: RunClaimPatch = {
-			claimId: args.claimId,
-			claimExpiresAt: nextClaimExpiresAt
-		};
-
-		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
-		await patchRunExecution(ctx, run._id, claimPatch);
-		await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
-
-		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
-	}
+	handler: startHandler
 });
 
+const renewClaimArgs = {
+	claimId: v.string(),
+	runId: v.id('runs'),
+	executionSecret: v.string()
+};
+
+export async function renewClaimHandler(ctx: MutationCtx, args: ObjectType<typeof renewClaimArgs>) {
+	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+		return { renewed: false };
+	}
+
+	const nextClaimExpiresAt = claimExpiresAt(Date.now());
+	await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
+
+	return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
+}
+
 export const renewClaim = mutation({
-	args: {
-		claimId: v.string(),
-		runId: v.id('runs'),
-		executionSecret: v.string()
-	},
+	args: renewClaimArgs,
 	returns: v.object({
 		renewed: v.boolean(),
 		claimExpiresAt: v.optional(v.number())
 	}),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-			return { renewed: false };
-		}
-
-		const nextClaimExpiresAt = claimExpiresAt(Date.now());
-		await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
-
-		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
-	}
+	handler: renewClaimHandler
 });
 
 function getContextResult(args: {
@@ -365,53 +374,61 @@ function getContextResult(args: {
 	return result;
 }
 
-export const getContext = query({
-	args: {
-		runId: v.id('runs'),
-		executionSecret: v.string()
-	},
-	returns: vGetContextResult,
-	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
-		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
-		const thread = await ctx.db.get('threadRecords', run.threadId);
-		const parentThreadId = thread?.parentThreadId;
-		const providerHandoff = await getProviderHandoff(ctx, run, thread);
-		const preferences = await getUiPreferences(ctx.db, run.userId);
+const getContextArgs = {
+	runId: v.id('runs'),
+	executionSecret: v.string()
+};
 
-		if (!promptPart?.prompt && !run.pendingPrompt && !run.continuationOfRunId) {
-			throw new Error('Run does not contain a user prompt.');
-		}
+export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof getContextArgs>) {
+	const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+	const contextTokens = await getThreadContextTokens(ctx, run.threadId);
+	const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+	const thread = await ctx.db.get('threadRecords', run.threadId);
+	const parentThreadId = thread?.parentThreadId;
+	const providerHandoff = await getProviderHandoff(ctx, run, thread);
+	const preferences = await getUiPreferences(ctx.db, run.userId);
 
-		return getContextResult({
-			run,
-			parentThreadId,
-			prompt: promptPart?.prompt?.text ?? '',
-			pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
-			contextTokens,
-			providerHandoff,
-			providerPreferences: {
-				enabledProviders: enabledProviders(preferences?.providerOrder),
-				restrictSubagentsToProvider: false
-			},
-			cwd: thread?.cwd,
-			shareConversationContent: preferences?.shareConversationContent ?? true
-		});
+	if (!promptPart?.prompt && !run.pendingPrompt && !run.continuationOfRunId) {
+		throw new Error('Run does not contain a user prompt.');
 	}
+
+	return getContextResult({
+		run,
+		parentThreadId,
+		prompt: promptPart?.prompt?.text ?? '',
+		pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
+		contextTokens,
+		providerHandoff,
+		providerPreferences: {
+			enabledProviders: enabledProviders(preferences?.providerOrder),
+			restrictSubagentsToProvider: false
+		},
+		cwd: thread?.cwd,
+		shareConversationContent: preferences?.shareConversationContent ?? true
+	});
+}
+
+export const getContext = query({
+	args: getContextArgs,
+	returns: vGetContextResult,
+	handler: getContextHandler
 });
 
-export const isFinished = query({
-	args: {
-		runId: v.id('runs'),
-		executionSecret: v.string()
-	},
-	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+const isFinishedArgs = {
+	runId: v.id('runs'),
+	executionSecret: v.string()
+};
 
-		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
-	}
+export async function isFinishedHandler(ctx: QueryCtx, args: ObjectType<typeof isFinishedArgs>) {
+	const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
+	return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
+}
+
+export const isFinished = query({
+	args: isFinishedArgs,
+	returns: v.boolean(),
+	handler: isFinishedHandler
 });
 
 export const completionActor = query({
@@ -673,29 +690,36 @@ export const fallBackToProvider = mutation({
 	}
 });
 
-export const registerCompletionAttempt = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		attemptSeq: v.number(),
-		supersededStreamIds: v.optional(v.array(v.string())),
-		executionSecret: v.string()
-	},
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run);
+const registerCompletionAttemptArgs = {
+	runId: v.id('runs'),
+	claimId: v.string(),
+	attemptSeq: v.number(),
+	supersededStreamIds: v.optional(v.array(v.string())),
+	executionSecret: v.string()
+};
 
-		if (!isRunClaimLeaseActive(run, Date.now())) {
-			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-		}
+export async function registerCompletionAttemptHandler(
+	ctx: MutationCtx,
+	args: ObjectType<typeof registerCompletionAttemptArgs>
+) {
+	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+	assertRunAcceptsModelCompletion(run);
 
-		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
-		}
-
-		await patchRunExecution(ctx, run._id, { completionAttemptSeq: args.attemptSeq });
+	if (!isRunClaimLeaseActive(run, Date.now())) {
+		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
+
+	if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+		throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+	}
+
+	await patchRunExecution(ctx, run._id, { completionAttemptSeq: args.attemptSeq });
+}
+
+export const registerCompletionAttempt = mutation({
+	args: registerCompletionAttemptArgs,
+	returns: v.null(),
+	handler: registerCompletionAttemptHandler
 });
 
 export const finalizeCompletionCall = mutation({
@@ -1000,75 +1024,82 @@ export const finalizeClaimFailure = mutation({
 	}
 });
 
+const beginToolJobArgs = {
+	claimId: v.string(),
+	runId: v.id('runs'),
+	kind: vCurrentExecutorJobKind,
+	callId: v.optional(v.string()),
+	toolInvocationId: v.string(),
+	sectionKey: v.string(),
+	sectionOrdinal: v.number(),
+	attemptSeq: v.number(),
+	streamId: v.string(),
+	payload: vCurrentExecutorJobPayload,
+	executionSecret: v.string()
+};
+
+export async function beginToolJobHandler(
+	ctx: MutationCtx,
+	args: ObjectType<typeof beginToolJobArgs>
+) {
+	try {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		assertRunAcceptsModelCompletion(run);
+
+		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		}
+
+		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+		}
+
+		if (retiredMandateToolKinds.has(args.kind)) {
+			throw new Error(PAYMENTS_MOVED_TO_AGENTCARD);
+		}
+
+		if (paymentToolJobKinds.has(args.kind)) {
+			const thread = await ctx.db.get('threadRecords', run.threadId);
+
+			if (thread?.parentThreadId !== undefined) {
+				throw new Error('Payment tools are not available to subagents.');
+			}
+		}
+
+		if (
+			!isExpectedSectionKey(
+				run._id,
+				args.claimId,
+				args.attemptSeq,
+				args.sectionKey,
+				args.sectionOrdinal
+			)
+		) {
+			throw new Error('Invalid section identity.');
+		}
+
+		return await beginExecutorJob(ctx, {
+			run,
+			claimId: args.claimId,
+			kind: args.kind,
+			payload: args.payload,
+			callId: args.callId,
+			toolInvocationId: args.toolInvocationId,
+			sectionKey: args.sectionKey,
+			sectionOrdinal: args.sectionOrdinal,
+			attemptSeq: args.attemptSeq,
+			streamId: args.streamId
+		});
+	} catch (error) {
+		throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+	}
+}
+
 export const beginToolJob = mutation({
-	args: {
-		claimId: v.string(),
-		runId: v.id('runs'),
-		kind: vCurrentExecutorJobKind,
-		callId: v.optional(v.string()),
-		toolInvocationId: v.string(),
-		sectionKey: v.string(),
-		sectionOrdinal: v.number(),
-		attemptSeq: v.number(),
-		streamId: v.string(),
-		payload: vCurrentExecutorJobPayload,
-		executionSecret: v.string()
-	},
+	args: beginToolJobArgs,
 	returns: v.object({
 		jobId: v.id('executorJobs'),
 		sequence: v.number()
 	}),
-	handler: async (ctx, args) => {
-		try {
-			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-			assertRunAcceptsModelCompletion(run);
-
-			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-			}
-
-			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
-			}
-
-			if (retiredMandateToolKinds.has(args.kind)) {
-				throw new Error(PAYMENTS_MOVED_TO_AGENTCARD);
-			}
-
-			if (paymentToolJobKinds.has(args.kind)) {
-				const thread = await ctx.db.get('threadRecords', run.threadId);
-
-				if (thread?.parentThreadId !== undefined) {
-					throw new Error('Payment tools are not available to subagents.');
-				}
-			}
-
-			if (
-				!isExpectedSectionKey(
-					run._id,
-					args.claimId,
-					args.attemptSeq,
-					args.sectionKey,
-					args.sectionOrdinal
-				)
-			) {
-				throw new Error('Invalid section identity.');
-			}
-
-			return await beginExecutorJob(ctx, {
-				run,
-				claimId: args.claimId,
-				kind: args.kind,
-				payload: args.payload,
-				callId: args.callId,
-				toolInvocationId: args.toolInvocationId,
-				sectionKey: args.sectionKey,
-				sectionOrdinal: args.sectionOrdinal,
-				attemptSeq: args.attemptSeq,
-				streamId: args.streamId
-			});
-		} catch (error) {
-			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
-		}
-	}
+	handler: beginToolJobHandler
 });

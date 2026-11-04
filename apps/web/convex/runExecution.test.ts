@@ -1,25 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vCommandExecResult } from '@convex/lib/validators';
-import type {
-	FunctionArgs,
-	FunctionReference,
-	FunctionReturnType,
-	RegisteredMutation,
-	RegisteredQuery
-} from 'convex/server';
 import {
-	beginToolJob,
-	getContext,
-	isFinished,
-	registerCompletionAttempt,
-	renewClaim,
-	start
+	beginToolJobHandler,
+	getContextHandler,
+	isFinishedHandler,
+	registerCompletionAttemptHandler,
+	renewClaimHandler,
+	startHandler
 } from '@convex/agentRuntime';
-import { selectedThreadLifecycle } from '@convex/chat';
-import { complete, fail, getJob } from '@convex/executor';
+import { selectedThreadLifecycleHandler } from '@convex/chat';
+import { completeHandler, failHandler, getJobHandler } from '@convex/executor';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { registerChildThread } from '@convex/lib/threadHierarchy';
 import {
@@ -28,23 +20,6 @@ import {
 	seedOwnedThread,
 	toolTranscriptAssignment
 } from './test.setup';
-
-function callHandler<Ref extends FunctionReference<'query' | 'mutation'>>(
-	_reference: Ref,
-	registered:
-		| RegisteredMutation<'public', FunctionArgs<Ref>, Promise<FunctionReturnType<Ref>>>
-		| RegisteredQuery<'public', FunctionArgs<Ref>, Promise<FunctionReturnType<Ref>>>,
-	ctx: MutationCtx,
-	args: FunctionArgs<Ref>
-): Promise<FunctionReturnType<Ref>> {
-	// Calling the runtime-only `_handler` inside t.run lets these tests spy on the transaction's db reads and writes.
-	// oxlint-disable-next-line typescript/consistent-type-assertions -- Convex's RegisteredMutation and RegisteredQuery types omit `_handler`.
-	const { _handler } = registered as typeof registered & {
-		_handler: (ctx: MutationCtx, args: FunctionArgs<Ref>) => Promise<FunctionReturnType<Ref>>;
-	};
-
-	return _handler(ctx, args);
-}
 
 async function startedRun(depth = 0) {
 	const t = initConvexTest();
@@ -234,23 +209,18 @@ describe('run execution state', () => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		await t.run(async (ctx) => {
 			const patch = vi.spyOn(ctx.db, 'patch');
-			await callHandler(api.agentRuntime.start, start, ctx, auth);
-			await callHandler(api.agentRuntime.renewClaim, renewClaim, ctx, auth);
-			await callHandler(
-				api.agentRuntime.registerCompletionAttempt,
-				registerCompletionAttempt,
-				ctx,
-				{ ...auth, attemptSeq: 1 }
-			);
+			await startHandler(ctx, auth);
+			await renewClaimHandler(ctx, auth);
+			await registerCompletionAttemptHandler(ctx, { ...auth, attemptSeq: 1 });
 
-			const first = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
+			const first = await beginToolJobHandler(ctx, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, 1, 1),
 				kind: 'exec_cmd',
 				payload: { cmd: 'true' }
 			});
 
-			const second = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
+			const second = await beginToolJobHandler(ctx, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, 2, 1),
 				kind: 'exec_cmd',
@@ -258,7 +228,7 @@ describe('run execution state', () => {
 			});
 
 			expect(
-				await callHandler(api.executor.complete, complete, ctx, {
+				await completeHandler(ctx, {
 					...auth,
 					jobId: first.jobId,
 					result: {
@@ -274,18 +244,13 @@ describe('run execution state', () => {
 			).toBe(true);
 			expect((await getRunWithExecution(ctx.db, auth.runId))?.activeJobId).toBe(second.jobId);
 			expect(
-				await callHandler(api.executor.fail, fail, ctx, {
+				await failHandler(ctx, {
 					...auth,
 					jobId: second.jobId,
 					error: 'failed'
 				})
 			).toBe(true);
-			await callHandler(
-				api.agentRuntime.registerCompletionAttempt,
-				registerCompletionAttempt,
-				ctx,
-				{ ...auth, attemptSeq: 2 }
-			);
+			await registerCompletionAttemptHandler(ctx, { ...auth, attemptSeq: 2 });
 			expect((await getRunWithExecution(ctx.db, auth.runId))?.activeJobId).toBeUndefined();
 			expect(
 				patch.mock.calls.some(([table]) => table === 'runs' || table === 'threadRecords')
@@ -322,8 +287,8 @@ describe('run execution state', () => {
 		await asUser.run(async (ctx) => {
 			const query = vi.spyOn(ctx.db, 'query');
 			const get = vi.spyOn(ctx.db, 'get');
-			expect(await callHandler(api.agentRuntime.isFinished, isFinished, ctx, auth)).toBe(false);
-			const context = await callHandler(api.agentRuntime.getContext, getContext, ctx, auth);
+			expect(await isFinishedHandler(ctx, auth)).toBe(false);
+			const context = await getContextHandler(ctx, auth);
 			expect(context.run._id).toBe(auth.runId);
 			expect(Object.keys(context.run).sort()).toEqual([
 				'_id',
@@ -339,14 +304,12 @@ describe('run execution state', () => {
 			]);
 			expect(
 				(
-					await callHandler(api.chat.selectedThreadLifecycle, selectedThreadLifecycle, ctx, {
+					await selectedThreadLifecycleHandler(ctx, {
 						threadId
 					})
 				).phase
 			).toBe('running');
-			expect(
-				(await callHandler(api.executor.getJob, getJob, ctx, { ...auth, jobId }))?.status
-			).toBe('claimed');
+			expect((await getJobHandler(ctx, { ...auth, jobId }))?.status).toBe('claimed');
 			expect(query.mock.calls.some(([table]) => table === 'runExecutionStates')).toBe(false);
 			expect(get.mock.calls.some(([table]) => table === 'runExecutionStates')).toBe(false);
 		});
