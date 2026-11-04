@@ -395,7 +395,7 @@ fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Val
     }
 }
 
-pub(crate) fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> InvalidToolCallAction {
+fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> InvalidToolCallAction {
     if let InvalidToolCallReason::MalformedArguments { error } = &context.reason {
         return InvalidToolCallAction::retry(format!(
             "Tool `{}` received malformed arguments: {error}. Submit valid JSON matching its schema.",

@@ -55,8 +55,6 @@ struct GatewayCatalogModel {
     label: String,
     provider: String,
     supports_images: bool,
-    #[serde(default)]
-    supports_required_tool_choice: bool,
     reasoning_efforts: Vec<String>,
     default_reasoning_effort: String,
     service_tiers: Vec<String>,
@@ -193,7 +191,6 @@ fn select_catalog_model(
             auto_handoff_token_limit: model.auto_handoff_token_limit,
         },
         supports_images: model.supports_images,
-        supports_required_tool_choice: model.supports_required_tool_choice,
         usage_pricing: UsagePricing {
             long_context_threshold_tokens: model
                 .direct_api_pricing
