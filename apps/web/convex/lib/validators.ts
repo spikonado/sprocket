@@ -650,8 +650,8 @@ const vHistoricalBrowserObserveResult = v.object({
 });
 
 export const vReadSkillResult = v.object({
-	name: v.string(),
-	description: v.string(),
+	name: v.optional(v.string()),
+	description: v.optional(v.string()),
 	content: v.string(),
 	dir: v.optional(v.string()),
 	truncated: v.optional(v.boolean())
