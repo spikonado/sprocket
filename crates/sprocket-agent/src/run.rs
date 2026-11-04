@@ -940,7 +940,7 @@ pub async fn run_agent(
         let workspace_context = WorkspaceContext::new(
             &workspace_instructions,
             &skills,
-            &(request.installed_connectors)(),
+            &request.installed_connectors,
             &context.run.thread_id,
             &transcript_dir,
             &workspace_root,
