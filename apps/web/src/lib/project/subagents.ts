@@ -34,11 +34,12 @@ export function subagentSummaryLabel(
 		return `${subagentCountLabel(workingCount)} · Working`;
 	}
 
-	if (descendantCount > 0 && !descendantsActive) {
-		return subagentCountLabel(descendantCount);
-	}
+	if (descendantCount === 0) return null;
 
-	return null;
+	// Active without working means a subagent is starting or waiting on a question.
+	if (descendantsActive) return `${subagentCountLabel(descendantCount)} · Waiting`;
+
+	return subagentCountLabel(descendantCount);
 }
 
 function subagentCountLabel(count: number): string {
