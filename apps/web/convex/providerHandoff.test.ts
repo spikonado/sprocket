@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
@@ -222,16 +223,18 @@ describe('provider handoff credential authorization', () => {
 
 			await expect(authorize(source)).resolves.toBeDefined();
 			await expect(authorize(target)).resolves.toBeDefined();
-			await expect(authorize(source, { ...args, claimId: 'stale' })).rejects.toThrow(
-				'Run is no longer active.'
-			);
+			await expect(authorize(source, { ...args, claimId: 'stale' })).rejects.toMatchObject({
+				data: agentErrorMessages.RUN_NO_LONGER_ACTIVE
+			});
 			await expect(authorize(source, { ...args, executionSecret: 'wrong' })).rejects.toThrow(
 				'Run not found.'
 			);
 			await t.run(async (ctx) => {
 				await ctx.db.patch('runs', run.runId, { cancellationRequestedAt: Date.now() });
 			});
-			await expect(authorize(source)).rejects.toThrow('Run is no longer active.');
+			await expect(authorize(source)).rejects.toMatchObject({
+				data: agentErrorMessages.RUN_NO_LONGER_ACTIVE
+			});
 			await t.run(async (ctx) => {
 				await ctx.db.patch('runs', run.runId, { cancellationRequestedAt: undefined });
 			});
@@ -250,7 +253,9 @@ describe('provider handoff credential authorization', () => {
 			await t.run(async (ctx) => {
 				await patchRunExecution(ctx, run.runId, { claimExpiresAt: Date.now() - 1 });
 			});
-			await expect(authorize(target)).rejects.toThrow('Run is no longer active.');
+			await expect(authorize(target)).rejects.toMatchObject({
+				data: agentErrorMessages.RUN_NO_LONGER_ACTIVE
+			});
 		}
 	);
 });

@@ -9,7 +9,7 @@ import {
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
-import { ConvexError, v, type Infer, type ObjectType } from 'convex/values';
+import { v, type Infer, type ObjectType } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
@@ -39,11 +39,10 @@ import {
 	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
-	COMPLETION_STREAM_SUPERSEDED,
 	LEGACY_RUN_ABANDONED_BY_AGENT,
 	PAYMENTS_MOVED_TO_AGENTCARD,
 	RUN_ABANDONED_BY_MACHINE,
-	RUN_NO_LONGER_ACTIVE,
+	agentError,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
@@ -69,7 +68,8 @@ import {
 	isClaimedRunStatus,
 	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive,
-	ownsActiveRunClaim
+	ownsActiveRunClaim,
+	RUN_CLAIM_LEASE_DURATION_MS
 } from '@convex/lib/runLease';
 import {
 	isRunFinalStatus,
@@ -159,6 +159,7 @@ export const insertGatewayRun = internalMutation({
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
+		automaticRecovery: v.optional(v.boolean()),
 		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreatedGatewayRun,
@@ -182,6 +183,7 @@ export const createGatewayRun = action({
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
+		automaticRecovery: v.optional(v.boolean()),
 		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreateGatewayRunResult,
@@ -214,6 +216,8 @@ export const createGatewayRun = action({
 		if (args.deferPrompt) request.deferPrompt = true;
 
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+
+		if (args.automaticRecovery) request.automaticRecovery = true;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
 
 		return {
@@ -241,7 +245,7 @@ export const issueGatewayCredential = mutation({
 			run.cancellationRequestedAt !== undefined ||
 			!ownsActiveRunClaim(run, args.claimId, Date.now())
 		) {
-			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 
 		if (
@@ -275,30 +279,28 @@ export async function startHandler(ctx: MutationCtx, args: ObjectType<typeof sta
 	const now = Date.now();
 
 	if (!canStartRunWithClaim(run, args.claimId, now)) {
-		return { claimed: false };
+		return { claimed: false, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS };
 	}
 
 	const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
 
-	const nextClaimExpiresAt = claimExpiresAt(now);
-
 	const claimPatch: RunClaimPatch = {
 		claimId: args.claimId,
-		claimExpiresAt: nextClaimExpiresAt
+		claimExpiresAt: claimExpiresAt(now)
 	};
 
 	if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
 	await patchRunExecution(ctx, run._id, claimPatch);
 	await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
 
-	return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
+	return { claimed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS };
 }
 
 export const start = mutation({
 	args: startArgs,
 	returns: v.object({
 		claimed: v.boolean(),
-		claimExpiresAt: v.optional(v.number())
+		leaseDurationMs: v.number()
 	}),
 	handler: startHandler
 });
@@ -313,20 +315,19 @@ export async function renewClaimHandler(ctx: MutationCtx, args: ObjectType<typeo
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
 	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-		return { renewed: false };
+		return { renewed: false, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS };
 	}
 
-	const nextClaimExpiresAt = claimExpiresAt(Date.now());
-	await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
+	await patchRunExecution(ctx, run._id, { claimExpiresAt: claimExpiresAt(Date.now()) });
 
-	return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
+	return { renewed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS };
 }
 
 export const renewClaim = mutation({
 	args: renewClaimArgs,
 	returns: v.object({
 		renewed: v.boolean(),
-		claimExpiresAt: v.optional(v.number())
+		leaseDurationMs: v.number()
 	}),
 	handler: renewClaimHandler
 });
@@ -704,11 +705,11 @@ export async function registerCompletionAttemptHandler(
 	assertRunAcceptsModelCompletion(run);
 
 	if (!isRunClaimLeaseActive(run, Date.now())) {
-		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		throw agentError('RUN_NO_LONGER_ACTIVE');
 	}
 
 	if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-		throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+		throw agentError('COMPLETION_STREAM_SUPERSEDED');
 	}
 
 	await patchRunExecution(ctx, run._id, { completionAttemptSeq: args.attemptSeq });
@@ -751,7 +752,7 @@ export const finalizeCompletionCall = mutation({
 		assertRunAcceptsModelCompletion(run);
 
 		if (!isRunClaimLeaseActive(run, Date.now())) {
-			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
@@ -1042,11 +1043,11 @@ export async function beginToolJobHandler(
 		assertRunAcceptsModelCompletion(run);
 
 		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+			throw agentError('COMPLETION_STREAM_SUPERSEDED');
 		}
 
 		if (retiredMandateToolKinds.has(args.kind)) {

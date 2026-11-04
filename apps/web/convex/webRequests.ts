@@ -1,5 +1,5 @@
 import { vOnCompleteArgs } from '@convex-dev/workpool';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { getRunWithExecution } from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -11,7 +11,7 @@ import {
 	type QueryCtx
 } from '@convex/_generated/server';
 import { getExecutionRun } from '@convex/lib/auth';
-import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { RUN_NO_LONGER_ACTIVE, agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { contextDevPool } from '@convex/lib/webPools';
 import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
@@ -77,7 +77,7 @@ async function activeRun(
 ) {
 	const run = await findActiveRun(ctx, request);
 
-	if (!run) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+	if (!run) throw agentError('RUN_NO_LONGER_ACTIVE');
 
 	return run;
 }

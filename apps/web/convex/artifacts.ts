@@ -7,7 +7,7 @@ import { MAX_FILE_NAME_LENGTH, vLegacyArtifactType } from '@convex/lib/validator
 import schema from '@convex/schema';
 import { registryState, bumpRegistry } from '@convex/lib/artifactRegistry';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 const MAX_TITLE_LENGTH = MAX_FILE_NAME_LENGTH;
 
@@ -84,7 +84,7 @@ async function requireActiveRun(
 	const run = await getExecutionRun(ctx, runId, executionSecret);
 
 	if (!ownsActiveRunClaim(run, claimId, Date.now())) {
-		throw new Error(RUN_NO_LONGER_ACTIVE);
+		throw agentError('RUN_NO_LONGER_ACTIVE');
 	}
 
 	return run;

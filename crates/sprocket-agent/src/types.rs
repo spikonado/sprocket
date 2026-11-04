@@ -78,6 +78,7 @@ pub struct RunAgentRequest {
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
+    pub automatic_recovery: bool,
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub installed_connectors: InstalledConnectors,
@@ -121,12 +122,16 @@ pub struct OpenAiCredential {
 #[serde(rename_all = "camelCase")]
 pub struct StartRunResponse {
     pub claimed: bool,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
+    pub lease_duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenewClaimResponse {
     pub renewed: bool,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
+    pub lease_duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

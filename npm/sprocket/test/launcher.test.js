@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureExecutable, launch, RESTART_EXIT_CODE, run } from '../lib/launcher.js';
+import { ensureExecutable, launch, run } from '../lib/launcher.js';
 import { nativePackage } from '../lib/native.js';
 
 function successfulChild(code = 0) {
@@ -151,7 +151,7 @@ test('starts the updated launcher after the native server exits to restart', asy
 			if (invocations.length === 1) {
 				writeFileSync(options.env.SPROCKET_RESTART_FILE, updatedLauncher);
 
-				return successfulChild(RESTART_EXIT_CODE);
+				return successfulChild(75);
 			}
 
 			return successfulChild();
@@ -169,27 +169,31 @@ test('starts the updated launcher after the native server exits to restart', asy
 	assert.equal(existsSync(native.env.SPROCKET_RESTART_FILE), false);
 });
 
-test('a restarted launcher passes the next restart up to its parent', async () => {
+test('a restarted launcher passes the next restart and its exit code up to its parent', async (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-test-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const restartFile = path.join(directory, 'restart');
 	const invocations = [];
 
 	const code = await launch(['--web'], {
 		env: {
-			SPROCKET_RESTART_FILE: '/tmp/sprocket-restart-parent',
+			SPROCKET_RESTART_FILE: restartFile,
 			SPROCKET_RESTARTED: '1'
 		},
 		resolveBinary: () => '/tmp/sprocket',
 		ensureExecutable: () => {},
 		spawn(binary, args, options) {
 			invocations.push(options.env);
+			writeFileSync(options.env.SPROCKET_RESTART_FILE, '/opt/sprocket/bin/sprocket.js');
 
-			return successfulChild(RESTART_EXIT_CODE);
+			return successfulChild(75);
 		}
 	});
 
-	assert.equal(code, RESTART_EXIT_CODE);
+	assert.equal(code, 75);
 	assert.equal(invocations.length, 1);
-	assert.equal(invocations[0].SPROCKET_RESTART_FILE, '/tmp/sprocket-restart-parent');
 	assert.equal(invocations[0].SPROCKET_RESTARTED, '1');
+	assert.equal(existsSync(restartFile), true);
 });
 
 test('update and upgrade help is delegated to the native CLI', async () => {

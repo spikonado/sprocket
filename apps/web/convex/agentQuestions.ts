@@ -20,7 +20,11 @@ import {
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
-import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import {
+	agentError,
+	assertRunAcceptsModelCompletion,
+	toAgentToolConvexError
+} from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
@@ -88,7 +92,7 @@ async function createQuestion(
 	assertRunAcceptsModelCompletion(run);
 
 	if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-		throw new Error('Run is no longer active.');
+		throw agentError('RUN_NO_LONGER_ACTIVE');
 	}
 
 	if (!run.activeJobId) {

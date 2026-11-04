@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
+import { DEV_API_PORT } from '../apps/desktop/local-config.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -72,7 +73,7 @@ const commands = desktop
 			'bun run --cwd apps/desktop dev'
 		]
 	: [
-			'cargo run -p sprocket-cli -- serve --port 7731 --api-only',
+			`cargo run -p sprocket-cli -- serve --port ${DEV_API_PORT} --api-only`,
 			'node scripts/wait-for-api.mjs && bun run --cwd apps/web dev'
 		];
 

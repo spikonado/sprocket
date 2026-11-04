@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { mutation } from '@convex/_generated/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { subtreeSummary } from '@convex/lib/threadHierarchy';
@@ -29,7 +29,8 @@ export const link = mutation({
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-			if (!ownsActiveRunClaim(run, args.claimId, Date.now())) throw new Error(RUN_NO_LONGER_ACTIVE);
+			if (!ownsActiveRunClaim(run, args.claimId, Date.now()))
+				throw agentError('RUN_NO_LONGER_ACTIVE');
 
 			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 			const byKey = new Map<string, LinkedPullRequest>();

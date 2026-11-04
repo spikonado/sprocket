@@ -13,9 +13,6 @@ import {
 	UPDATE_API_FILENAME
 } from './update.js';
 
-// Must match crates/sprocket-cli/src/main.rs.
-export const RESTART_EXIT_CODE = 75;
-
 export function resolveNativeBinary() {
 	const native = resolveNativePackage();
 	const version = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8')).version;
@@ -159,7 +156,7 @@ export async function launch(args, options = {}) {
 		});
 
 		if (ownsRestart) {
-			while (code === RESTART_EXIT_CODE) {
+			for (;;) {
 				const launcher = readRestartLauncher(env.SPROCKET_RESTART_FILE);
 
 				if (!launcher) break;

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { z } from 'zod';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api, internal } from './_generated/api';
@@ -141,7 +142,7 @@ describe('provider credentials', () => {
 				claimId,
 				executionSecret
 			})
-		).rejects.toThrow('Run is no longer active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', created.runId, { cancellationRequestedAt: undefined });
 		});
@@ -175,7 +176,7 @@ describe('provider credentials', () => {
 				claimId,
 				executionSecret
 			})
-		).rejects.toThrow('Run is no longer active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 	}, 30_000);
 
 	it('reports ChatGPT as disconnected while preserving the OpenAI configuration', async () => {

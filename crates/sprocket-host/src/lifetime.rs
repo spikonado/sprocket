@@ -41,6 +41,9 @@ impl HostLifetime {
 
     pub fn request_restart(&self) -> anyhow::Result<()> {
         let mut state = self.state.lock().unwrap();
+        if state.restart_requested {
+            return Ok(());
+        }
         anyhow::ensure!(
             state.accepting && !self.shutdown.is_cancelled(),
             "Sprocket is already shutting down."

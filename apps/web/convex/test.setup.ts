@@ -264,6 +264,7 @@ export async function insertQueuedRun(
 		fastMode?: boolean;
 		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
+		automaticRecovery?: boolean;
 		deferPrompt?: boolean;
 	}
 ) {
@@ -284,6 +285,8 @@ export async function insertQueuedRun(
 	};
 
 	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+
+	if (args.automaticRecovery) request.automaticRecovery = true;
 
 	if (args.deferPrompt) request.deferPrompt = true;
 

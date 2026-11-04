@@ -1,14 +1,14 @@
+import ports from './ports.json' with { type: 'json' };
+
 export const DEV_HOST = 'localhost';
 
 export const DEV_API_HOST = '127.0.0.1';
 
-// Must match the `serve --port` flag in scripts/run-dev.mjs.
-export const DEV_API_PORT = 7731;
+export const DEV_API_PORT = ports.devApi;
 
-export const WEB_DEV_PORT = 5173;
+export const WEB_DEV_PORT = ports.webDev;
 
-// Must match DEFAULT_PORT in crates/sprocket-server/src/config.rs.
-export const INSTALLED_APP_PORT = 17731;
+export const INSTALLED_APP_PORT = ports.installedApp;
 
 export const DEV_API_URL = `http://${DEV_API_HOST}:${DEV_API_PORT}`;
 

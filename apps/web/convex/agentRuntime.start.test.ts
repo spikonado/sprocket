@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
@@ -43,21 +45,30 @@ describe('agentRuntime.start', () => {
 		const executionSecret = 'start-claim-secret';
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-claim', executionSecret);
 
+		const expectLeaseSince = async (requestedAt: number) => {
+			const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
+
+			expect(run?.claimExpiresAt).toBeGreaterThanOrEqual(requestedAt + RUN_CLAIM_LEASE_DURATION_MS);
+			expect(run?.claimExpiresAt).toBeLessThanOrEqual(Date.now() + RUN_CLAIM_LEASE_DURATION_MS);
+
+			return run;
+		};
+
+		const claimRequestedAt = Date.now();
+
 		const claimed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
 			runId,
 			executionSecret
 		});
 
-		expect(claimed.claimed).toBe(true);
-		expect(claimed.claimExpiresAt).toBeTypeOf('number');
-
-		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
-		expect(run).toMatchObject({
+		expect(claimed).toEqual({ claimed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS });
+		expect(await expectLeaseSince(claimRequestedAt)).toMatchObject({
 			status: 'running',
-			claimId: 'claim-a',
-			claimExpiresAt: claimed.claimExpiresAt
+			claimId: 'claim-a'
 		});
+
+		const renewRequestedAt = Date.now();
 
 		const renewed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
@@ -65,11 +76,8 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 
-		expect(renewed.claimed).toBe(true);
-		expect(renewed.claimExpiresAt).toBeGreaterThanOrEqual(claimed.claimExpiresAt ?? 0);
-		expect(
-			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, runId))?.completionAttemptSeq)
-		).toBe(0);
+		expect(renewed).toEqual({ claimed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS });
+		expect((await expectLeaseSince(renewRequestedAt))?.completionAttemptSeq).toBe(0);
 	});
 
 	it('does not let an older run finalization overwrite the latest run status', async () => {
@@ -133,7 +141,7 @@ describe('agentRuntime.start', () => {
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 		await expect(
 			asUser.mutation(api.agentRuntime.start, { claimId: 'claim-b', runId, executionSecret })
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 	});
 
 	it('does not start a queued run after cancellation is requested', async () => {
@@ -150,7 +158,7 @@ describe('agentRuntime.start', () => {
 				runId,
 				executionSecret
 			})
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 		expect(await t.run(async (ctx) => ctx.db.get('runs', runId))).toMatchObject({
 			status: 'queued',
 			cancellationRequestedAt: expect.any(Number)
@@ -186,7 +194,7 @@ describe('agentRuntime.start', () => {
 				attemptSeq: 1,
 				executionSecret
 			})
-		).rejects.toThrow('Run is no longer active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,
@@ -229,7 +237,7 @@ describe('agentRuntime.start', () => {
 				runId,
 				executionSecret
 			})
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 		expect(await t.run(async (ctx) => getRunWithExecution(ctx.db, runId))).toMatchObject({
 			claimId: 'claim-a',
 			completionAttemptSeq: 4
@@ -259,7 +267,7 @@ describe('agentRuntime.start', () => {
 				runId,
 				executionSecret
 			})
-		).resolves.toEqual({ claimed: false });
+		).resolves.toMatchObject({ claimed: false });
 
 		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
 		expect(run).toMatchObject({

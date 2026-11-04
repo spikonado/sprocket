@@ -1,7 +1,10 @@
 import { ConvexError } from 'convex/values';
 import { z } from 'zod';
 
-const convexErrorData = z.string();
+const convexErrorData = z.union([
+	z.string(),
+	z.object({ message: z.string() }).transform(({ message }) => message)
+]);
 
 const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
 

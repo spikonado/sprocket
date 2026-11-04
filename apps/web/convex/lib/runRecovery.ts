@@ -2,7 +2,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
-export const AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
+export const LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
 
 export async function automaticAgentContinuationEnabled(
 	db: DatabaseReader,

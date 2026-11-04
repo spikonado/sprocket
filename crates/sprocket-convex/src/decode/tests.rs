@@ -60,6 +60,65 @@ fn convex_error_falls_back_to_message_when_data_is_not_a_string() {
 }
 
 #[test]
+fn coded_convex_errors_keep_their_code_and_message() {
+    let err = decode_labeled_function_result::<serde_json::Value>(
+        FunctionResult::ConvexError(ConvexError {
+            message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+            data: Value::Object(
+                [("code", "RUN_CANCELLED"), ("message", "Run is cancelled.")]
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.into()))
+                    .collect(),
+            ),
+        }),
+        "agentRuntime:registerCompletionAttempt",
+    )
+    .expect_err("should fail")
+    .context("model call failed");
+    assert_eq!(convex_error_code(&err), Some(ConvexErrorCode::RunCancelled));
+    assert_eq!(
+        format!("{err:#}"),
+        "model call failed: agentRuntime:registerCompletionAttempt: Run is cancelled."
+    );
+}
+
+#[test]
+fn legacy_string_data_carries_its_code() {
+    let err = decode_function_result::<serde_json::Value>(
+        FunctionResult::ConvexError(ConvexError {
+            message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+            data: Value::String("SPROCKET_SUBMISSION_WAITING".to_string()),
+        }),
+        "agentRuntime:createGatewayRun",
+    )
+    .expect_err("should fail")
+    .context("create run");
+    assert_eq!(
+        convex_error_code(&err),
+        Some(ConvexErrorCode::SubmissionWaiting)
+    );
+    assert_eq!(err.root_cause().to_string(), "SPROCKET_SUBMISSION_WAITING");
+}
+
+#[test]
+fn every_convex_agent_error_message_maps_to_its_code() {
+    let codes: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../../apps/web/convex/lib/agentErrorCodes.json"
+    ))
+    .unwrap();
+    for (code, message) in codes {
+        let expected =
+            serde_json::from_value::<ConvexErrorCode>(serde_json::Value::String(code.clone()))
+                .unwrap_or_else(|error| panic!("{code}: {error}"));
+        assert_eq!(
+            code_for_message(message.as_str().unwrap()),
+            Some(expected),
+            "{code}"
+        );
+    }
+}
+
+#[test]
 fn labeled_errors_include_the_function_path() {
     let err = decode_labeled_function_result::<serde_json::Value>(
         FunctionResult::ErrorMessage("Uncaught Error: boom".to_string()),

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { actionablePendingQuestionsForThread } from '@convex/lib/agentQuestions';
@@ -150,7 +151,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				);
 
 			expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
-			await expect(submit()).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
+			await expect(submit()).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_WAITING });
 			expect(
 				(await transcriptParts(t, threadId)).filter((part) => part.kind === 'prompt')
 			).toHaveLength(1);
@@ -341,7 +342,9 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		};
 
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
-		await expect(insertQueuedRun(t, asUser, args)).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
+		await expect(insertQueuedRun(t, asUser, args)).rejects.toMatchObject({
+			data: agentErrorMessages.SUBMISSION_WAITING
+		});
 		await finishDueScheduledFunctions(t);
 
 		const next = await insertQueuedRun(t, asUser, args);
@@ -410,7 +413,9 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		};
 
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
-		await expect(insertQueuedRun(t, asUser, args)).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
+		await expect(insertQueuedRun(t, asUser, args)).rejects.toMatchObject({
+			data: agentErrorMessages.SUBMISSION_WAITING
+		});
 		await finishDueScheduledFunctions(t);
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(true);
 
@@ -475,9 +480,9 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			};
 
 			expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
-			await expect(asUser.action(api.agentRuntime.createGatewayRun, nextRequest)).rejects.toThrow(
-				'SPROCKET_SUBMISSION_WAITING'
-			);
+			await expect(
+				asUser.action(api.agentRuntime.createGatewayRun, nextRequest)
+			).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_WAITING });
 			expect(
 				await t.run((ctx) =>
 					ctx.db
@@ -512,7 +517,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
 		await expect(
 			createQueuedRun(t, asUser, threadId, 'after-expiry', 'next-secret')
-		).rejects.toThrow('SPROCKET_SUBMISSION_WAITING');
+		).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_WAITING });
 		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({ status: 'failed' });
 
 		await finishDueScheduledFunctions(t);

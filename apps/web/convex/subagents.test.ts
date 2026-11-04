@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import type { FunctionArgs } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -6,7 +7,6 @@ import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
-import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import { getRunExecutionState } from '@convex/lib/runExecution';
 import {
 	abandonRun,
@@ -185,9 +185,9 @@ describe('subagents.createOrSend', () => {
 			});
 
 		expect(await prepare()).toBe(false);
-		await expect(t.mutation(api.subagents.createOrSend, followUpArgs)).rejects.toThrow(
-			'SPROCKET_SUBMISSION_WAITING'
-		);
+		await expect(t.mutation(api.subagents.createOrSend, followUpArgs)).rejects.toMatchObject({
+			data: agentErrorMessages.SUBMISSION_WAITING
+		});
 		expect(
 			await t.run((ctx) =>
 				ctx.db
@@ -991,7 +991,7 @@ describe('subagents transcript pages', () => {
 		).rejects.toThrow('Run not found.');
 		await expect(
 			t.mutation(api.subagents.transcriptPartsPage, { ...args, claimId: 'stale' })
-		).rejects.toThrow('Run is no longer active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 		await expect(
 			t.mutation(api.subagents.transcriptPartsPage, { ...args, start: -1 })
 		).rejects.toThrow('Invalid transcript range.');
@@ -1004,15 +1004,15 @@ describe('subagents transcript pages', () => {
 			if (!execution) throw new Error('Missing fixture execution.');
 			await ctx.db.patch('runExecutionStates', execution._id, { claimExpiresAt: Date.now() - 1 });
 		});
-		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toThrow(
-			'Run is no longer active.'
-		);
+		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toMatchObject({
+			data: agentErrorMessages.RUN_NO_LONGER_ACTIVE
+		});
 		await t.run((ctx) =>
 			ctx.db.patch('runs', caller.runId, { cancellationRequestedAt: Date.now() })
 		);
-		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toThrow(
-			'Run is cancelled.'
-		);
+		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toMatchObject({
+			data: agentErrorMessages.RUN_CANCELLED
+		});
 	});
 });
 
@@ -1608,11 +1608,12 @@ describe('subagents.control', () => {
 
 		const recovery = await insertQueuedRun(t, caller.asUser, {
 			threadId: child.threadId,
-			submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}stopped-tree`,
+			submissionId: 'recovery-stopped-tree',
 			executionSecret: 'recovery-secret',
 			prompt: '',
 			machineId: machine.machineId,
-			continuationOfRunId: child.runId
+			continuationOfRunId: child.runId,
+			automaticRecovery: true
 		});
 
 		const recoveryRun = await claimChildRun(t, recovery, 'recovery-secret');
@@ -1673,11 +1674,12 @@ describe('subagents.control', () => {
 		await expect(
 			insertQueuedRun(t, caller.asUser, {
 				threadId: child.threadId,
-				submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}stopped-child`,
+				submissionId: 'recovery-stopped-child',
 				executionSecret: 'recovery-secret',
 				prompt: '',
 				machineId: machine.machineId,
-				continuationOfRunId: child.runId
+				continuationOfRunId: child.runId,
+				automaticRecovery: true
 			})
 		).rejects.toThrow('This run cannot recover automatically.');
 	});
@@ -2292,11 +2294,12 @@ describe('subagents task deadline', () => {
 
 		const recovery = await insertQueuedRun(t, caller.asUser, {
 			threadId: child.threadId,
-			submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}timed-child`,
+			submissionId: 'recovery-timed-child',
 			executionSecret: 'recovery-secret',
 			prompt: '',
 			machineId: machine.machineId,
-			continuationOfRunId: child.runId
+			continuationOfRunId: child.runId,
+			automaticRecovery: true
 		});
 
 		await vi.advanceTimersByTimeAsync(30_001);

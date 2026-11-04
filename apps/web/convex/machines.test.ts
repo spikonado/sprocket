@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
@@ -70,7 +71,7 @@ describe('machines', () => {
 		for (const mutation of [api.machines.heartbeatProcess, api.machines.endProcess]) {
 			await expect(
 				asUser.mutation(mutation, { machineId: machine.machineId, processId: 'process-a' })
-			).rejects.toThrow('Machine is not active.');
+			).rejects.toMatchObject({ data: agentErrorMessages.MACHINE_NOT_ACTIVE });
 		}
 
 		await expect(
@@ -158,13 +159,13 @@ describe('machines', () => {
 				machineId: machine.machineId,
 				processId: 'process-a'
 			})
-		).rejects.toThrow('Machine is not active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.MACHINE_NOT_ACTIVE });
 		await expect(
 			asUser.mutation(api.machines.heartbeatProcess, {
 				machineId: machine.machineId,
 				processId: 'wrong'
 			})
-		).rejects.toThrow('Machine is not active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.MACHINE_NOT_ACTIVE });
 		await expect(
 			asUser.mutation(api.machines.heartbeatProcess, {
 				machineId: machine.machineId,
@@ -197,8 +198,8 @@ describe('machines', () => {
 			machineId: machine.machineId,
 			online: false
 		});
-		await expect(asUser.mutation(api.machines.heartbeatProcess, processArgs)).rejects.toThrow(
-			'Machine is not active.'
+		await expect(asUser.mutation(api.machines.heartbeatProcess, processArgs)).rejects.toMatchObject(
+			{ data: agentErrorMessages.MACHINE_NOT_ACTIVE }
 		);
 	});
 
@@ -211,7 +212,7 @@ describe('machines', () => {
 
 		await expect(
 			t.mutation(api.machines.heartbeat, { ...legacyArgs, credential: credentialHash })
-		).rejects.toThrow('Machine is not active.');
+		).rejects.toMatchObject({ data: agentErrorMessages.MACHINE_NOT_ACTIVE });
 		await expect(
 			t.mutation(api.machines.heartbeat, { ...legacyArgs, credential: 'credential-a' })
 		).resolves.toBeNull();

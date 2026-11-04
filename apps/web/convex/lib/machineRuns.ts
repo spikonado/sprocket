@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
-import { ConvexError } from 'convex/values';
+import { agentError } from '@convex/lib/agentErrors';
 
 export const MAX_ACTIVE_MACHINE_RUNS = 64;
 
@@ -34,7 +34,7 @@ export async function requireMachineProcess(
 	const machine = await getOwnedMachine(ctx, userId, machineId);
 
 	if (!machine || machine.lastSeenAt === undefined || machine.processId !== processId) {
-		throw new ConvexError('Machine is not active.');
+		throw agentError('MACHINE_NOT_ACTIVE');
 	}
 
 	return machine;

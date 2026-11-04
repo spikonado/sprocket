@@ -1,0 +1,9 @@
+{
+	"RUN_CANCELLED": "Run is cancelled.",
+	"RUN_NO_LONGER_ACTIVE": "Run is no longer active.",
+	"COMPLETION_STREAM_SUPERSEDED": "SPROCKET_COMPLETION_STREAM_SUPERSEDED",
+	"SUBMISSION_WAITING": "SPROCKET_SUBMISSION_WAITING",
+	"SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR": "Submission belongs to a different executor.",
+	"SUBMISSION_OWNED_BY_ANOTHER_RUN": "Submission belongs to a different or incomplete run.",
+	"MACHINE_NOT_ACTIVE": "Machine is not active."
+}

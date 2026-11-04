@@ -18,7 +18,6 @@ use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
-// Must match npm/sprocket/lib/launcher.js.
 const RESTART_EXIT_CODE: u8 = 75;
 const RESTARTED_ENV: &str = "SPROCKET_RESTARTED";
 #[derive(Debug, Parser)]

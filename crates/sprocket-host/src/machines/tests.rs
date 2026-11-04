@@ -277,9 +277,23 @@ fn terminal_heartbeat_errors_stop_retries() {
     assert!(is_terminal_heartbeat_error(&anyhow::Error::from(
         sprocket_convex::AuthSignedOut
     )));
-    assert!(is_terminal_heartbeat_error(&anyhow::anyhow!(
-        "machines:heartbeatProcess: Machine is not active."
-    )));
+    let machine_not_active = sprocket_convex::decode_labeled_function_result::<()>(
+        convex::FunctionResult::ConvexError(convex::ConvexError {
+            message: String::new(),
+            data: convex::Value::Object(
+                [
+                    ("code", "MACHINE_NOT_ACTIVE"),
+                    ("message", "Machine is not active."),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.into()))
+                .collect(),
+            ),
+        }),
+        "machines:heartbeatProcess",
+    )
+    .unwrap_err();
+    assert!(is_terminal_heartbeat_error(&machine_not_active));
     assert!(!is_terminal_heartbeat_error(&anyhow::anyhow!(
         "machine heartbeat timed out"
     )));

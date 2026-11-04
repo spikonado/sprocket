@@ -3,7 +3,7 @@ import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { getExecutionRun } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
+import { agentError } from '@convex/lib/agentErrors';
 import { getProviderHandoff } from '@convex/lib/contextHandoff';
 import {
 	credentialName,
@@ -101,7 +101,7 @@ export const authorizeOpenAiCredential = internalQuery({
 			run.cancellationRequestedAt !== undefined ||
 			!ownsActiveRunClaim(run, args.claimId, Date.now())
 		) {
-			throw new Error(RUN_NO_LONGER_ACTIVE);
+			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 
 		if (

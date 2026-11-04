@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::transcript_sink::{
     apply_completed_text, apply_completed_tool_call, durable_items_json, visible_live_parts,
 };
-use super::{ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error};
+use super::{ProviderErrorDisposition, RunNoLongerActive, classify_provider_error};
 use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 #[test]
@@ -230,24 +230,45 @@ fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
     assert!(call.native.as_ref().unwrap().item.get("secret").is_none());
 }
 
+fn coded_convex_error(code: &str) -> anyhow::Error {
+    let data = [("code", code), ("message", "Convex failure.")]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.into()))
+        .collect();
+    sprocket_convex::decode_function_result::<()>(
+        convex::FunctionResult::ConvexError(convex::ConvexError {
+            message: String::new(),
+            data: convex::Value::Object(data),
+        }),
+        "agentRuntime:registerCompletionAttempt",
+    )
+    .unwrap_err()
+    .context("completion provider failed")
+}
+
 #[test]
 fn classifies_superseded_completion_without_treating_it_as_failure() {
-    let error =
-        anyhow::anyhow!("completion provider failed: SPROCKET_COMPLETION_STREAM_SUPERSEDED");
-
     assert_eq!(
-        classify_provider_error(&error),
+        classify_provider_error(&coded_convex_error("COMPLETION_STREAM_SUPERSEDED")),
         ProviderErrorDisposition::Superseded
     );
 }
 
 #[test]
-fn classifies_stopped_workspace_tool_as_cancellation() {
-    let error = anyhow::anyhow!("tool execution failed: {RUN_NO_LONGER_ACTIVE}");
-
+fn classifies_ended_runs_as_cancellation() {
+    for error in [
+        coded_convex_error("RUN_CANCELLED"),
+        coded_convex_error("RUN_NO_LONGER_ACTIVE"),
+        anyhow::Error::new(RunNoLongerActive),
+    ] {
+        assert_eq!(
+            classify_provider_error(&error),
+            ProviderErrorDisposition::Cancelled
+        );
+    }
     assert_eq!(
-        classify_provider_error(&error),
-        ProviderErrorDisposition::Cancelled
+        classify_provider_error(&coded_convex_error("MACHINE_NOT_ACTIVE")),
+        ProviderErrorDisposition::Failed
     );
 }
 
