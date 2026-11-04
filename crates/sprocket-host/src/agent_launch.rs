@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 use crate::Host;
+use crate::run_recovery::RunOwner;
 
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -190,10 +191,14 @@ async fn launch_agent_inner(
         )
     });
     recovery.request.workspace_path = workspace_path.clone();
+    let owner = if output.is_some() {
+        RunOwner::Client
+    } else {
+        RunOwner::Host
+    };
     let (recovery_guard, saved) = host
         .run_recovery
-        // Caller-owned output is the CLI's result and cancellation lifetime.
-        .begin(recovery, output.is_some())
+        .begin(recovery, owner)
         .await
         .map_err(LaunchError::Internal)?;
     let request = RunAgentRequest {
@@ -335,22 +340,21 @@ async fn launch_agent_inner(
                     )
                 };
                 let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
-                // The launch succeeds once the run's prompt is in the transcript.
-                let (begun_sender, mut begun_receiver) = oneshot::channel();
-                let running = run_agent(run, sessions, live, transcript, begun_sender);
+                let (prompt_written_sender, mut prompt_written_receiver) = oneshot::channel();
+                let running = run_agent(run, sessions, live, transcript, prompt_written_sender);
                 tokio::pin!(running);
                 let result = tokio::select! {
                     biased;
-                    Ok(()) = &mut begun_receiver => {
+                    Ok(()) = &mut prompt_written_receiver => {
                         let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone(), false)));
                         running.await
                     }
                     result = &mut running => {
                         // The run can begin and end within one poll.
-                        let begun = begun_receiver.try_recv().is_ok();
+                        let prompt_written = prompt_written_receiver.try_recv().is_ok();
                         let started = match &result {
-                            Err(error) if !begun => Err(format!("{error:#}")),
-                            _ => Ok((run_id.clone(), thread_id.clone(), !begun)),
+                            Err(error) if !prompt_written => Err(format!("{error:#}")),
+                            _ => Ok((run_id.clone(), thread_id.clone(), !prompt_written)),
                         };
                         let _ = start_result_sender.send(started);
                         result

@@ -292,7 +292,7 @@ impl NativeAuthManager {
         let manager = Arc::clone(self);
         let code = code.to_string();
         let state = state.to_string();
-        tokio::spawn(async move { manager.complete_login_inner(&code, &state).await })
+        crate::run_to_completion(async move { manager.complete_login_inner(&code, &state).await })
             .await
             .context("native login task failed")?
     }
@@ -406,7 +406,7 @@ impl NativeAuthManager {
 
     pub async fn sign_out(self: &Arc<Self>) -> anyhow::Result<()> {
         let manager = Arc::clone(self);
-        tokio::spawn(async move { manager.sign_out_inner().await })
+        crate::run_to_completion(async move { manager.sign_out_inner().await })
             .await
             .context("native sign-out task failed")?
     }
@@ -463,7 +463,7 @@ impl NativeAuthManager {
         force_refresh: bool,
     ) -> anyhow::Result<Option<NativeBrowserSession>> {
         let manager = Arc::clone(self);
-        tokio::spawn(async move { manager.browser_session_inner(force_refresh).await })
+        crate::run_to_completion(async move { manager.browser_session_inner(force_refresh).await })
             .await
             .context("native session task failed")?
     }
@@ -509,9 +509,7 @@ impl NativeAuthManager {
     ) -> anyhow::Result<String> {
         let manager = Arc::clone(self);
         let expected_user_id = expected_user_id.to_string();
-        // A cancelled HTTP request or Convex refresh must not drop a rotated token
-        // or release the credential lock while a keyring write is still running.
-        tokio::spawn(async move {
+        crate::run_to_completion(async move {
             manager
                 .access_token_for_user_inner(force_refresh, &expected_user_id)
                 .await

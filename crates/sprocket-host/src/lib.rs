@@ -61,6 +61,13 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Runs `task` on its own Tokio task, so dropping the caller can't cancel it partway.
+pub(crate) async fn run_to_completion<T: Send + 'static>(
+    task: impl Future<Output = T> + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    tokio::spawn(task).await
+}
+
 pub struct HostConfig {
     pub data_dir: PathBuf,
     pub convex_deployment_url: String,

@@ -1,8 +1,12 @@
 use std::future::Future;
+use std::time::Duration;
 
 use serde::Serialize;
 
 use super::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptStore};
+
+// A failing user-authenticated watcher must not monopolize the shared download lock.
+const PAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,11 +56,9 @@ impl TranscriptStore {
             (first.min(last), first.max(last) + 1)
         });
         let remaining = if let Some((from, to)) = range {
-            // A failing user-authenticated watcher must not monopolize the shared download lock.
-            let fetched =
-                tokio::time::timeout(std::time::Duration::from_secs(30), fetch(from, to, order))
-                    .await
-                    .map_err(|_| anyhow::anyhow!("transcript page download timed out"))??;
+            let fetched = tokio::time::timeout(PAGE_DOWNLOAD_TIMEOUT, fetch(from, to, order))
+                .await
+                .map_err(|_| anyhow::anyhow!("transcript page download timed out"))??;
             anyhow::ensure!(
                 !fetched.is_empty() && fetched.len() <= (to - from) as usize,
                 "incomplete transcript download"

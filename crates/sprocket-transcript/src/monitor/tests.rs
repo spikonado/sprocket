@@ -1,7 +1,12 @@
 use serde_json::json;
 
 use super::*;
+use crate::sections::WorkPosition;
 use crate::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
+
+fn patch_id_at(part: u32, item: u32) -> String {
+    format!("patch-{}", WorkPosition { part, item }.sequence())
+}
 
 fn prompt_part(number: u32, text: &str) -> TranscriptPart {
     serde_json::from_value(json!({
@@ -368,8 +373,7 @@ fn late_patch_completion_blocks_until_result_lands() {
     let MonitorEntry::Patch { id, changes, .. } = &third.entries[0] else {
         panic!()
     };
-    // Canonical call sequence (part 0, item 0), not the result event part.
-    assert_eq!(id, "patch-0");
+    assert_eq!(id, &patch_id_at(0, 0));
     assert_eq!(changes[0].path, "made.txt");
     let fourth = page(&replica, Some(&third.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
     assert!(fourth.entries.is_empty());
@@ -400,8 +404,7 @@ fn patch_result_pairs_by_canonical_identity_without_started_event() {
     let MonitorEntry::Patch { id, ok, changes } = &page.entries[0] else {
         panic!()
     };
-    // Projects at the call's canonical position (part 1, item 0).
-    assert_eq!(id, &format!("patch-{}", POSITION_STRIDE));
+    assert_eq!(id, &patch_id_at(1, 0));
     assert!(ok);
     assert_eq!(changes[0].operation, "deleted");
 }
@@ -901,13 +904,20 @@ fn observers_are_independent_and_repeated_reads_are_stable() {
     assert_eq!(fresh.entries.len(), 2);
 }
 
-#[test]
-fn stale_and_foreign_cursors_fail_explicitly_and_reopen_resets() {
+fn replica_with_cursor() -> (tempfile::TempDir, WorkReplica, String) {
     let (dir, mut replica) = open_replica();
     replica
         .save_parts("thread", &[prompt_part(0, "x")])
         .unwrap();
-    let good = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
+    let cursor = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT)
+        .unwrap()
+        .next_cursor;
+    (dir, replica, cursor)
+}
+
+#[test]
+fn malformed_and_foreign_cursors_fail_explicitly() {
+    let (_dir, replica, cursor) = replica_with_cursor();
 
     let malformed = page(
         &replica,
@@ -919,29 +929,29 @@ fn stale_and_foreign_cursors_fail_explicitly_and_reopen_resets() {
     .unwrap();
     assert_eq!(malformed, MonitorReadError::MalformedCursor);
 
-    let foreign = read_page(
-        &replica,
-        "other-thread",
-        parse_cursor(&good.next_cursor).ok(),
-        1000,
-    )
-    .unwrap_err()
-    .downcast::<MonitorReadError>()
-    .unwrap();
+    let foreign = read_page(&replica, "other-thread", parse_cursor(&cursor).ok(), 1000)
+        .unwrap_err()
+        .downcast::<MonitorReadError>()
+        .unwrap();
     assert_eq!(foreign, MonitorReadError::WrongThread);
+}
 
-    // Reopening the replica (WAL checkpoint) keeps the cursor valid.
+#[test]
+fn cursor_survives_replica_reopen() {
+    let (dir, replica, cursor) = replica_with_cursor();
     drop(replica);
     let reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let continued = page(&reopened, Some(&good.next_cursor), 1000).unwrap();
+    let continued = page(&reopened, Some(&cursor), 1000).unwrap();
     assert!(continued.entries.is_empty());
     assert!(!continued.has_more);
+}
 
-    // A rebuilt replica (new replicaId) invalidates prior cursors.
-    let rebuild_dir = tempfile::tempdir().unwrap();
-    let mut fresh = WorkReplica::open(rebuild_dir.path().to_owned()).unwrap();
+#[test]
+fn rebuilt_replica_invalidates_cursor() {
+    let (_dir, _replica, cursor) = replica_with_cursor();
+    let (_rebuild_dir, mut fresh) = open_replica();
     fresh.save_parts("thread", &[prompt_part(0, "x")]).unwrap();
-    let reset = read_page(&fresh, "thread", parse_cursor(&good.next_cursor).ok(), 1000)
+    let reset = read_page(&fresh, "thread", parse_cursor(&cursor).ok(), 1000)
         .unwrap_err()
         .downcast::<MonitorReadError>()
         .unwrap();

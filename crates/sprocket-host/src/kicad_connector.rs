@@ -16,7 +16,7 @@ use tokio::process::Command;
 use crate::python_install::PythonTools;
 use crate::tool_install::{
     Asset, INSTALL_LOCK, acquire_lock, download_atomic, is_dir, is_version, large_download_client,
-    open_lock_file, platform, prune_versions, remove_version, set_executable,
+    open_lock_file, prune_versions, release_platform, remove_version, set_executable,
 };
 
 const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
@@ -250,7 +250,7 @@ impl KiCadConnector {
         let asset = self
             .release
             .platforms
-            .get(platform()?)
+            .get(release_platform()?)
             .context("KiCad has no build for this platform")?;
         ensure!(
             fs4::available_space(staging)? >= REQUIRED_FREE_BYTES,
