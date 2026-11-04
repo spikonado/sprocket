@@ -30,11 +30,24 @@ pub(crate) fn context_summary_text(summary: &str) -> String {
 }
 
 #[derive(Default)]
+enum HandoffPhase {
+    #[default]
+    Idle,
+    Requested(Vec<Message>),
+    Writing,
+    Written(String),
+}
+
+impl HandoffPhase {
+    fn is_writing(&self) -> bool {
+        matches!(self, Self::Writing | Self::Written(_))
+    }
+}
+
+#[derive(Default)]
 struct HandoffState {
     context_tokens: u64,
-    handoff_history: Option<Vec<Message>>,
-    writing: bool,
-    summary: Option<String>,
+    phase: HandoffPhase,
     calls: usize,
 }
 
@@ -44,17 +57,17 @@ impl HandoffState {
     }
 
     fn prepare(&mut self, event: CompletionCallEvent<'_>, limit: u64) -> CompletionCallAction {
-        if self.writing || !self.due(limit) {
+        if self.phase.is_writing() || !self.due(limit) {
             return CompletionCallAction::Continue;
         }
         let history = event.history.iter().map(|message| &**message);
         let history = history.chain([event.prompt]).cloned().collect();
-        self.handoff_history = Some(history);
+        self.phase = HandoffPhase::Requested(history);
         CompletionCallAction::stop(HANDOFF_REQUESTED)
     }
 
     fn submit(&mut self, document: String) -> Result<(), ToolExecutionError> {
-        if !self.writing || self.summary.is_some() {
+        if !matches!(self.phase, HandoffPhase::Writing) {
             return Err(ToolExecutionError::other("No context handoff is pending."));
         }
         if document.trim().is_empty() || document.len() > 256_000 {
@@ -62,7 +75,7 @@ impl HandoffState {
                 "The handoff document must contain 1 to 256000 bytes.",
             ));
         }
-        self.summary = Some(document);
+        self.phase = HandoffPhase::Written(document);
         Ok(())
     }
 }
@@ -97,21 +110,41 @@ impl ContextHandoffHook {
     }
 
     pub(crate) fn take_handoff_history(&self) -> Option<Vec<Message>> {
-        self.state.lock().ok()?.handoff_history.take()
+        let mut state = self.state.lock().ok()?;
+        match std::mem::take(&mut state.phase) {
+            HandoffPhase::Requested(history) => Some(history),
+            phase => {
+                state.phase = phase;
+                None
+            }
+        }
     }
 
     pub(crate) fn start_handoff(&self) {
         if let Ok(mut state) = self.state.lock() {
-            state.writing = true;
+            state.phase = HandoffPhase::Writing;
         }
     }
 
     pub(crate) fn is_writing(&self) -> bool {
-        self.state.lock().map(|state| state.writing).unwrap_or(true)
+        self.state
+            .lock()
+            .map(|state| state.phase.is_writing())
+            .unwrap_or(true)
     }
 
     pub(crate) fn take_summary(&self) -> Option<String> {
-        self.state.lock().ok()?.summary.take()
+        let mut state = self.state.lock().ok()?;
+        match std::mem::take(&mut state.phase) {
+            HandoffPhase::Written(summary) => {
+                state.phase = HandoffPhase::Writing;
+                Some(summary)
+            }
+            phase => {
+                state.phase = phase;
+                None
+            }
+        }
     }
 
     pub(crate) fn completion_calls(&self) -> usize {
@@ -145,7 +178,7 @@ impl AgentHook for ContextHandoffHook {
             && self
                 .state
                 .lock()
-                .is_ok_and(|state| state.writing && state.summary.is_some())
+                .is_ok_and(|state| matches!(state.phase, HandoffPhase::Written(_)))
         {
             return OutcomeAction::stop(HANDOFF_SUBMITTED);
         }

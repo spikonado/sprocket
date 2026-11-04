@@ -20,6 +20,7 @@ use super::{
     ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffTool,
     context_summary_text, handoff_prompt,
 };
+use crate::convex::ClaimStatus;
 use crate::openai::stateless_responses_model;
 use crate::provider::{resume_context_handoff, resume_without_provider_handoff};
 
@@ -691,7 +692,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
         Some(pending_prompt.clone()),
         async {
             *saved_summary.borrow_mut() = Some(summary.clone());
-            Ok(true)
+            Ok(ClaimStatus::Active)
         },
         async {
             assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
@@ -715,7 +716,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
         Some(pending_prompt),
         async {
             assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
-            Ok(true)
+            Ok(ClaimStatus::Active)
         },
         async { Ok(Some(target_model)) },
     )
@@ -835,7 +836,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
         pending_prompt,
         async {
             recorded.set(true);
-            Ok(true)
+            Ok(ClaimStatus::Active)
         },
         async {
             assert!(recorded.get(), "save the cutoff before switching models");

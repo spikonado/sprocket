@@ -445,21 +445,18 @@ where
     }
 }
 
-/// Runs `operation` while renewing the claim lease.
-///
-/// Renewals are anchored to the last successful renewal request start, so a
-/// slow renewal (reconnect, CPU starvation) cannot push the next one past
-/// the lease deadline. The server is the authority on lease ownership, so
-/// renewals are attempted even past the conservative local deadline estimate.
-///
-/// Only claim/lease failures are returned as `Err`; the operation's value
-/// (including its own errors) is wrapped in `Ok`.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+struct ClaimLeaseLost(anyhow::Error);
+
+/// Renewals continue past the local lease deadline estimate because the
+/// server decides lease ownership.
 async fn drive_claim_lease<R, RFut, F, T>(
     run_id: &str,
     lease_started_at: Instant,
     mut renew: R,
     operation: F,
-) -> anyhow::Result<T>
+) -> Result<T, ClaimLeaseLost>
 where
     R: FnMut(Instant) -> RFut,
     RFut: Future<Output = anyhow::Result<(bool, Instant)>>,
@@ -473,12 +470,16 @@ where
         tokio::select! {
             biased;
             _ = sleep_until(next_renewal_at) => {
-                match renew(lease_deadline).await? {
+                match renew(lease_deadline).await.map_err(ClaimLeaseLost)? {
                     (true, renewal_started_at) => {
                         lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
                         next_renewal_at = renewal_started_at + RUN_CLAIM_RENEW_INTERVAL;
                     }
-                    (false, _) => return Err(anyhow!("claim lease for run {run_id} was lost")),
+                    (false, _) => {
+                        return Err(ClaimLeaseLost(anyhow!(
+                            "claim lease for run {run_id} was lost"
+                        )));
+                    }
                 }
             }
             result = &mut operation => return Ok(result),
@@ -492,7 +493,7 @@ async fn run_with_claim_lease<F, T>(
     claim_id: &str,
     lease_started_at: Instant,
     operation: F,
-) -> anyhow::Result<T>
+) -> Result<T, ClaimLeaseLost>
 where
     F: Future<Output = T>,
 {
@@ -1073,7 +1074,7 @@ pub async fn run_agent(
     .await
     {
         Ok(result) => result,
-        Err(error) => {
+        Err(ClaimLeaseLost(error)) => {
             // The lease is gone, so the server's lifecycle check marks the run
             // abandoned. A renewal tick can also race the operation's own
             // finalization, which this acknowledges instead.

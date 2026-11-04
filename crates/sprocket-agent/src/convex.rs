@@ -115,6 +115,19 @@ pub(crate) enum MutationFailure {
     Functional(anyhow::Error),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(from = "bool")]
+pub(crate) enum ClaimStatus {
+    Active,
+    Lost,
+}
+
+impl From<bool> for ClaimStatus {
+    fn from(active: bool) -> Self {
+        if active { Self::Active } else { Self::Lost }
+    }
+}
+
 impl RuntimeClient {
     pub(crate) fn with_execution_secret(&self, execution_secret: String) -> Self {
         Self {
@@ -496,7 +509,7 @@ impl RuntimeClient {
         claim_id: &str,
         handoff: &ContextHandoffWrite<'_>,
         workspace_context: &[HiddenPrompt],
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ClaimStatus> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.extend(handoff.args()?);
         if !workspace_context.is_empty() {
@@ -510,14 +523,14 @@ impl RuntimeClient {
     }
 
     /// Writes the handoff, workspace context, and prompt the run's first model
-    /// call sees. Returns false when the run no longer owns this claim.
+    /// call sees.
     pub(crate) async fn begin_run(
         &self,
         run_id: &str,
         claim_id: &str,
         workspace_context: &[HiddenPrompt],
         handoff: Option<&ContextHandoffWrite<'_>>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ClaimStatus> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert(
             "workspaceContext".to_string(),
@@ -534,19 +547,18 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         claim_id: &str,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ClaimStatus> {
         let args = self.run_args_with_claim(run_id, claim_id);
         self.claim_mutation_with_retries("agentRuntime:omitReasoningReplay", args)
             .await
     }
 
-    /// Returns false when the run no longer owns this claim.
     pub(crate) async fn fall_back_to_provider(
         &self,
         run_id: &str,
         claim_id: &str,
         provider: CompletionProvider,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ClaimStatus> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("completionProvider".to_string(), provider.as_str().into());
         self.claim_mutation_with_retries("agentRuntime:fallBackToProvider", args)
@@ -557,10 +569,10 @@ impl RuntimeClient {
         &self,
         function: &str,
         args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ClaimStatus> {
         for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
             match self.mutation_checked(function, args.clone()).await {
-                Ok(active) => return Ok(active),
+                Ok(status) => return Ok(status),
                 Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
                     sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
                 }
