@@ -274,3 +274,6 @@ pub(super) fn build_shell_command(command: &str, shell: &str) -> Command {
     process.arg(command);
     process
 }
+
+#[cfg(test)]
+mod tests;
