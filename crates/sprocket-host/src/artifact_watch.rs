@@ -9,7 +9,7 @@ use sprocket_convex::{decode_labeled_function_result, deserialize_convex_u64};
 use sprocket_workspace::artifact_bindings::{
     ArtifactBindings, conflicting_binding_ids, content_hash,
 };
-use sprocket_workspace::{ArtifactContentType, read_artifact_file};
+use sprocket_workspace::read_artifact_file;
 use tokio::sync::broadcast;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
@@ -27,8 +27,6 @@ pub struct RemoteArtifact {
     pub user_id: String,
     pub repository_key: String,
     pub content: String,
-    #[serde(rename = "type")]
-    pub content_type: ArtifactContentType,
     pub title: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub revision: u64,

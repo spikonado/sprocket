@@ -8,7 +8,6 @@ import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
 	vAgentQuestionStatus,
-	vArtifactType,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
 	vCompletionProvider,
@@ -16,6 +15,7 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
+	vLegacyArtifactType,
 	vLinkedPullRequest,
 	vModelCallUsage,
 	vPurchaseStatus,
@@ -552,7 +552,8 @@ export default defineSchema({
 		repositoryKey: v.string(),
 		registrationId: v.string(),
 		content: v.string(),
-		type: vArtifactType,
+		// Dropped by migrations:removeArtifactTypes.
+		type: v.optional(vLegacyArtifactType),
 		title: v.string(),
 		revision: v.number(),
 		updatedAt: v.number()

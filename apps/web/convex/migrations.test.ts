@@ -54,3 +54,30 @@ test('run backfills tool invocation IDs from source keys', async () => {
 	expect(current?.tool?.toolInvocationId).toBe('invocation-1');
 	vi.useRealTimers();
 });
+
+test('run removes stored artifact types', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+
+	const artifactId = await t.run((ctx) =>
+		ctx.db.insert('artifacts', {
+			userId: 'user_alice',
+			scope: 'project',
+			repositoryKey: 'alpha',
+			registrationId: 'registration',
+			content: '<p>hi</p>',
+			type: 'html',
+			title: 'page.html',
+			revision: 1,
+			updatedAt: 1
+		})
+	);
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const artifact = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
+	expect(artifact).not.toHaveProperty('type');
+	expect(artifact?.title).toBe('page.html');
+	vi.useRealTimers();
+});

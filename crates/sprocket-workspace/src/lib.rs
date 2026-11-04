@@ -27,7 +27,7 @@ pub const SPROCKET_VERSION: &str = match option_env!("SPROCKET_VERSION") {
 };
 
 pub use agents::{WorkspaceInstruction, WorkspaceInstructionSource, load_workspace_instructions};
-pub use artifacts::{ArtifactContentType, ArtifactFile, MAX_ARTIFACT_BYTES, read_artifact_file};
+pub use artifacts::{ArtifactFile, MAX_ARTIFACT_BYTES, read_artifact_file};
 pub use browse::{
     FilesystemBrowseEntry, FilesystemBrowseResult, browse_filesystem,
     resolve_or_create_workspace_root,

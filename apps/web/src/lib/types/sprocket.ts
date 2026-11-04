@@ -6,7 +6,6 @@ import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
 	vRunStatus,
-	type ArtifactType,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
 	type LinkedPullRequest,
@@ -227,7 +226,6 @@ export type LocalArtifact = {
 	repositoryKey: string;
 	localPath?: string;
 	content: string;
-	type: ArtifactType;
 	title: string;
 	revision: number;
 	updatedAt: number;

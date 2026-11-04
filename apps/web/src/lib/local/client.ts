@@ -222,7 +222,6 @@ const localArtifactSchema = z.object({
 	repositoryKey: z.string(),
 	localPath: z.string().optional(),
 	content: z.string(),
-	type: z.enum(['markdown', 'html', 'react']),
 	title: z.string(),
 	revision: z.number(),
 	updatedAt: z.number(),

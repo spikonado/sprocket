@@ -187,8 +187,7 @@ fn mutation_args_from_payload_merges_run_claim() {
     let mutation_payload = serde_json::json!({
         "localPath": "doc.md",
         "content": "function App() { return null; }",
-        "title": "doc.md",
-        "contentType": "react"
+        "title": "doc.md"
     });
     let mutation_args = mutation_args_from_payload("run-1", "claim-1", &mutation_payload).unwrap();
     assert_eq!(mutation_args.get("localPath"), Some(&Value::from("doc.md")));

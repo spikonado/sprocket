@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,9 +19,6 @@ pub(crate) struct AddArtifactTool(pub(super) AgentToolContext);
 pub(crate) struct ListArtifactsTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct EditArtifactTool(pub(super) AgentToolContext);
-
-#[derive(Clone)]
 pub(crate) struct SaveArtifactTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
@@ -28,21 +27,26 @@ pub(crate) struct DeleteArtifactTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DeleteArtifactArgs {
+    /// From add_artifact or list_artifacts.
     pub(crate) artifact_id: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AddArtifactArgs {
-    /// Existing UTF-8 file. Relative paths resolve from the current working directory.
-    pub(crate) path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct EditArtifactArgs {
+pub(crate) struct AddArtifactArgs {
+    /// Existing UTF-8 file. Relative paths resolve from the current working directory.
+    pub(crate) path: String,
+    /// Rebind this existing artifact to the file instead of creating a new one. From add_artifact or list_artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) artifact_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SaveArtifactArgs {
+    /// From add_artifact or list_artifacts.
     pub(crate) artifact_id: String,
-    /// Absolute path, or a path relative to the current working directory.
+    /// Destination file that must not exist or must already have the same content. Relative paths resolve from the current working directory.
     pub(crate) path: String,
 }
 
@@ -53,19 +57,63 @@ pub(crate) struct ListArtifactsArgs {}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ArtifactPage {
-    page: Vec<serde_json::Value>,
+    page: Vec<ListedArtifact>,
     is_done: bool,
     continue_cursor: String,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     revision: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListedArtifact {
+    artifact_id: String,
+    title: String,
+    updated_at: serde_json::Value,
+}
+
+fn absolute_path(workspace_root: &Path, local_path: &str) -> String {
+    workspace_root
+        .join(local_path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn bound_artifact(
+    context: &AgentToolContext,
+    artifact_id: &str,
+    local_path: &str,
+) -> serde_json::Value {
+    json!({
+        "artifactId": artifact_id,
+        "path": absolute_path(&context.workspace_root, local_path),
+    })
+}
+
+fn artifact_summary(
+    artifact: ListedArtifact,
+    bindings: &[ArtifactBinding],
+    workspace_root: &Path,
+) -> serde_json::Value {
+    let mut summary = json!({
+        "artifactId": artifact.artifact_id,
+        "title": artifact.title,
+        "updatedAt": artifact.updated_at,
+    });
+    if let Some(binding) = bindings
+        .iter()
+        .find(|binding| binding.artifact_id.as_ref() == Some(&artifact.artifact_id))
+    {
+        summary["path"] = json!(absolute_path(workspace_root, &binding.local_path));
+    }
+    summary
+}
+
 async fn register_file(
     context: &AgentToolContext,
     cancellation: WorkspaceCancellation,
-    function: &str,
     path: &str,
-    mut fields: serde_json::Value,
+    artifact_id: Option<String>,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let path = &context.workspace_relative_path(path);
     let mut bindings = tokio::select! {
@@ -77,43 +125,44 @@ async fn register_file(
         _ = cancellation.cancelled() => return Err(cancelled_error()),
         result = read_artifact_file(&context.workspace_root, path) => result.map_err(tool_error)?,
     };
-    let (registration_id, existing_id, baseline) = if function == "artifacts:addArtifact" {
-        let path = bindings
-            .at_path(&context.workspace_root, &file.local_path)
-            .await
-            .map_err(tool_error)?
-            .map(|binding| binding.local_path)
-            .unwrap_or_else(|| file.local_path.clone());
-        let binding = bindings.reserve(path);
-        if binding.content_hash.is_empty() {
-            binding.content_hash = content_hash(&file.content);
+    let (registration_id, existing_id, baseline) = match artifact_id {
+        Some(id) => (String::new(), Some(id), content_hash(&file.content)),
+        None => {
+            let path = bindings
+                .at_path(&context.workspace_root, &file.local_path)
+                .await
+                .map_err(tool_error)?
+                .map(|binding| binding.local_path)
+                .unwrap_or_else(|| file.local_path.clone());
+            let binding = bindings.reserve(path);
+            if binding.content_hash.is_empty() {
+                binding.content_hash = content_hash(&file.content);
+            }
+            let identity = (
+                binding.registration_id.clone(),
+                binding.artifact_id.clone(),
+                binding.content_hash.clone(),
+            );
+            bindings.persist().await.map_err(tool_error)?;
+            identity
         }
-        let identity = (
-            binding.registration_id.clone(),
-            binding.artifact_id.clone(),
-            binding.content_hash.clone(),
-        );
-        bindings.persist().await.map_err(tool_error)?;
-        identity
-    } else {
-        (
-            String::new(),
-            fields["artifactId"].as_str().map(str::to_string),
-            content_hash(&file.content),
-        )
     };
-    let mut function = function;
-    let existing = if let Some(id) = &existing_id {
+    let (function, mut fields, existing) = if let Some(id) = &existing_id {
         let artifact = tokio::select! {
             _ = cancellation.cancelled() => return Err(cancelled_error()),
             result = get_artifact(context, id) => result?,
         };
-        fields = json!({"artifactId": id, "expectedRevision": artifact.revision});
-        function = "artifacts:editArtifact";
-        Some(artifact)
+        (
+            "artifacts:editArtifact",
+            json!({"artifactId": id, "expectedRevision": artifact.revision}),
+            Some(artifact),
+        )
     } else {
-        fields["registrationId"] = json!(registration_id);
-        None
+        (
+            "artifacts:addArtifact",
+            json!({"registrationId": registration_id}),
+            None,
+        )
     };
     let mut binding = ArtifactBinding {
         registration_id: existing
@@ -137,19 +186,17 @@ async fn register_file(
     }
     fields["content"] = json!(file.content);
     fields["title"] = json!(file.title);
-    fields["contentType"] = json!(file.content_type);
     let mutation_args = mutation_args_from_payload(&context.run_id, &context.claim_id, &fields)?;
     let result =
         run_convex_tool_mutation(&context.runtime, cancellation, function, mutation_args).await?;
-    binding.artifact_id = Some(
-        result["artifactId"]
-            .as_str()
-            .ok_or_else(|| tool_error(anyhow::anyhow!("Artifact response has no ID")))?
-            .to_string(),
-    );
+    let artifact_id = result["artifactId"]
+        .as_str()
+        .ok_or_else(|| tool_error(anyhow::anyhow!("Artifact response has no ID")))?
+        .to_string();
+    binding.artifact_id = Some(artifact_id.clone());
     bindings.bind(binding).map_err(tool_error)?;
     bindings.persist().await.map_err(tool_error)?;
-    Ok(artifact_summary(result))
+    Ok(bound_artifact(context, &artifact_id, &file.local_path))
 }
 
 #[derive(Deserialize)]
@@ -159,9 +206,6 @@ struct StoredArtifact {
     id: String,
     registration_id: String,
     content: String,
-    title: String,
-    #[serde(rename = "type")]
-    content_type: String,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     revision: u64,
 }
@@ -180,29 +224,6 @@ async fn get_artifact(
         .query_json("artifacts:getArtifactForRun", args)
         .await
         .map_err(tool_error)
-}
-
-fn artifact_summary(artifact: serde_json::Value) -> serde_json::Value {
-    let Some(fields) = artifact.as_object() else {
-        return artifact;
-    };
-    let mut summary = serde_json::Map::new();
-    if let Some(id) = fields.get("artifactId").or_else(|| fields.get("_id")) {
-        summary.insert("artifactId".to_string(), id.clone());
-    }
-    for key in [
-        "repositoryKey",
-        "title",
-        "type",
-        "contentType",
-        "revision",
-        "updatedAt",
-    ] {
-        if let Some(value) = fields.get(key) {
-            summary.insert(key.to_string(), value.clone());
-        }
-    }
-    serde_json::Value::Object(summary)
 }
 
 impl rig::tool::Tool for AddArtifactTool {
@@ -228,48 +249,7 @@ impl rig::tool::Tool for AddArtifactTool {
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
-            register_file(
-                &self.0,
-                cancellation,
-                "artifacts:addArtifact",
-                &args.path,
-                json!({}),
-            )
-            .await
-        })
-        .await
-    }
-}
-
-impl rig::tool::Tool for EditArtifactTool {
-    const NAME: &'static str = "edit_artifact";
-    type Error = ToolExecutionError;
-    type Args = EditArtifactArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Bind an artifact to a different existing file, such as after moving it. The file's content replaces the artifact's, and its filename becomes the title.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(EditArtifactArgs))
-    }
-
-    async fn call(
-        &self,
-        _context: &mut rig::tool::ToolContext,
-        args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
-        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
-            register_file(
-                &self.0,
-                cancellation,
-                "artifacts:editArtifact",
-                &args.path,
-                json!({"artifactId": args.artifact_id}),
-            )
-            .await
+            register_file(&self.0, cancellation, &args.path, args.artifact_id).await
         })
         .await
     }
@@ -278,15 +258,15 @@ impl rig::tool::Tool for EditArtifactTool {
 impl rig::tool::Tool for SaveArtifactTool {
     const NAME: &'static str = "save_artifact";
     type Error = ToolExecutionError;
-    type Args = EditArtifactArgs;
+    type Args = SaveArtifactArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write an artifact's content to a file and bind it so later edits sync. An existing file there must already have the same content.".into()
+        "Write an artifact's content to a file and bind it so later edits sync.".into()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(EditArtifactArgs))
+        json!(schemars::schema_for!(SaveArtifactArgs))
     }
 
     async fn call(
@@ -297,28 +277,37 @@ impl rig::tool::Tool for SaveArtifactTool {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
         let path = self.0.workspace_relative_path(&args.path);
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
-                let mut bindings = tokio::select! {
-                    _ = cancellation.cancelled() => return Err(cancelled_error()),
-                    result = self.0.artifact_bindings.lock() => result.map_err(tool_error)?,
-                };
-                let artifact = tokio::select! {
-                    _ = cancellation.cancelled() => return Err(cancelled_error()),
-                    result = get_artifact(&self.0, &args.artifact_id) => result?,
-                };
-                if cancellation.is_cancelled() { return Err(cancelled_error()); }
-                let mut binding = ArtifactBinding {
-                    registration_id: artifact.registration_id,
-                    artifact_id: Some(artifact.id.clone()),
-                    local_path: normalize_destination(&path).map_err(tool_error)?, content_hash: content_hash(&artifact.content),
-                };
-                bindings.validate_destination(&self.0.workspace_root, &binding).await.map_err(tool_error)?;
-                bindings.bind(binding.clone()).map_err(tool_error)?;
-                binding.local_path = save_new_file(&self.0.workspace_root, &path, &artifact.content).await.map_err(tool_error)?;
-                bindings.bind(binding).map_err(tool_error)?;
-                bindings.persist().await.map_err(tool_error)?;
-                Ok(json!({"artifactId": artifact.id, "revision": artifact.revision, "title": artifact.title,
-                    "contentType": artifact.content_type}))
-            }).await
+            let mut bindings = tokio::select! {
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                result = self.0.artifact_bindings.lock() => result.map_err(tool_error)?,
+            };
+            let artifact = tokio::select! {
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                result = get_artifact(&self.0, &args.artifact_id) => result?,
+            };
+            if cancellation.is_cancelled() {
+                return Err(cancelled_error());
+            }
+            let mut binding = ArtifactBinding {
+                registration_id: artifact.registration_id,
+                artifact_id: Some(artifact.id.clone()),
+                local_path: normalize_destination(&path).map_err(tool_error)?,
+                content_hash: content_hash(&artifact.content),
+            };
+            bindings
+                .validate_destination(&self.0.workspace_root, &binding)
+                .await
+                .map_err(tool_error)?;
+            bindings.bind(binding.clone()).map_err(tool_error)?;
+            binding.local_path = save_new_file(&self.0.workspace_root, &path, &artifact.content)
+                .await
+                .map_err(tool_error)?;
+            let output = bound_artifact(&self.0, &artifact.id, &binding.local_path);
+            bindings.bind(binding).map_err(tool_error)?;
+            bindings.persist().await.map_err(tool_error)?;
+            Ok(output)
+        })
+        .await
     }
 }
 
@@ -329,7 +318,7 @@ impl rig::tool::Tool for ListArtifactsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the current project's artifacts with their IDs and metadata, including ones with no file on this machine.".to_string()
+        "List the current project's artifacts, including ones with no file on this machine. Artifacts bound to a file on this machine include its absolute `path`.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -347,6 +336,11 @@ impl rig::tool::Tool for ListArtifactsTool {
             Self::NAME,
             payload,
             |cancellation| async move {
+                let bindings = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(cancelled_error()),
+                    result = self.0.artifact_bindings.snapshot() => result.map_err(tool_error)?,
+                };
                 for _ in 0..3 {
                     let mut cursor: Option<String> = None;
                     let mut revision = None;
@@ -360,7 +354,9 @@ impl rig::tool::Tool for ListArtifactsTool {
                         };
                         if revision.is_some_and(|revision| revision != page.revision) { break; }
                         revision = Some(page.revision);
-                        artifacts.extend(page.page.into_iter().map(artifact_summary));
+                        artifacts.extend(page.page.into_iter().map(|artifact| {
+                            artifact_summary(artifact, &bindings, &self.0.workspace_root)
+                        }));
                         if page.is_done { return Ok(json!({"artifacts": artifacts})); }
                         if cursor.as_ref() == Some(&page.continue_cursor) {
                             return Err(tool_error(anyhow::anyhow!("Artifact page cursor did not advance")));

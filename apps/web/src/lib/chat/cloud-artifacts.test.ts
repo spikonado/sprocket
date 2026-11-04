@@ -172,7 +172,6 @@ describe('cloud artifact subscriptions', () => {
 					repositoryKey: 'repo',
 					content: 'cloud',
 					title: 'Notes',
-					type: 'markdown',
 					revision: 1,
 					updatedAt: 1
 				}
@@ -200,7 +199,6 @@ describe('cloud artifact subscriptions', () => {
 					localPath: 'notes.md',
 					content: 'local edit',
 					title: 'Notes',
-					type: 'markdown',
 					revision: 1,
 					updatedAt: 1
 				}

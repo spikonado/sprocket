@@ -44,6 +44,10 @@ Released agents call `firecrawlRequests:start`, `getResult` and `dispose`. These
 
 Released servers require an integer `createdAt` on `artifacts:listArtifacts` rows, so the query fills it from the floored `_creationTime`. Remove that field once those servers age out.
 
+### Artifact types
+
+Released agents send `contentType` to `artifacts:addArtifact` and `artifacts:editArtifact`, which accept and ignore it. Released agents read `type` from `artifacts:getArtifactForRun`, and released servers read it from `artifacts:listArtifacts`, so `artifacts.ts` derives it from the title. Released agents also start `edit_artifact` jobs, so `vCurrentExecutorJobKind` keeps that kind. Once those clients age out, remove the argument and the derived `type` from the artifact functions, and move `edit_artifact` to `vStoredExecutorJobKind`. Stored `edit_artifact` jobs stay readable, see the permanent list.
+
 ### Machine credentials
 
 Released clients call `machines:tryRegister` with a `credentialHash`, then `machines:heartbeat` and `machines:end` anonymously with the matching `credential`. The hash is stored as their `processId`. Remove those three mutations once those clients age out.
@@ -87,6 +91,10 @@ The quota reader carries usage from old seven-day or thirty-day rate-limiter row
 ### Migrated tool parts without invocation IDs
 
 Tool parts written by the August 2026 transcript migration, with `migrated-tool:` source keys, lack `toolInvocationId`, so `vTranscriptToolBody` keeps it optional. `migrations:backfillToolInvocationIds` sets it to the source key, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, make the field required and remove the migration, its workflow step and the `migrations` component mount.
+
+### Stored artifact types
+
+Older `artifacts` rows carry `type`, so the schema keeps it optional. `migrations:removeArtifactTypes` deletes it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove `type` from the schema and remove the migration.
 
 ### Retired Prava mandate rows
 
@@ -146,6 +154,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - The optional `workdir` on `vExecCommandPayload`, shown as `(cwd …)` in the UI and ignored on replay.
 - Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, and `screenshot_url`.
 - Scope and thread metadata on artifact tool payloads and results.
+- `edit_artifact` jobs, from before `add_artifact` took an `artifactId`, and the `repositoryKey`, `type`, `contentType`, `title` and `revision` fields on artifact tool results.
 - `parse_file` URL sources and legacy command results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `eventsPath` on command tool results, which released servers still send.
