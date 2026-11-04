@@ -122,7 +122,6 @@ async fn reads_source_verbatim_with_one_get_and_no_markdown_probe() {
         .unwrap();
         assert_eq!(result["url"], url.as_str());
         assert_eq!(result["markdown"], body);
-        assert_eq!(result["images"], json!([]));
         let requests = server.await.unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with(&format!("GET {path} HTTP/1.1")));

@@ -115,6 +115,7 @@ export const vScrapeUrlPayload = v.object({
 
 export const vScreenshotUrlPayload = vScrapeUrlPayload.pick('url');
 
+/** Released agents may still send `numResults`; search ignores it. */
 export const vWebSearchPayload = v.object({
 	query: v.string(),
 	numResults: v.optional(v.number())
@@ -484,24 +485,23 @@ export const vPageOutline = v.object({
 	headings: v.array(v.object({ level: v.number(), text: v.string() }))
 });
 
-/** Stored scrape_url job result. Historical rows may include `summary`. */
+/** Stored scrape_url job result. Historical rows may include `summary` and `images`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
-	markdown: v.string(),
+	markdown: v.optional(v.string()),
+	savedTo: v.optional(v.string()),
 	summary: v.optional(v.string()),
 	outline: v.optional(vPageOutline),
 	highlights: v.optional(v.array(v.string())),
 	images: v.optional(v.array(v.string()))
 });
 
-/** webRequests scrape transport. Oversized pages return a temporary JSON download URL. */
+/** webRequests scrape transport. Oversized pages return a temporary markdown download URL. */
 export const vScrapeUrlTransport = v.union(
 	v.object({
 		url: v.string(),
 		markdown: v.string(),
-		outline: vPageOutline,
-		highlights: v.optional(v.array(v.string())),
-		images: v.array(v.string())
+		highlights: v.optional(v.array(v.string()))
 	}),
 	v.object({
 		url: v.string(),

@@ -106,7 +106,7 @@ function scrapeResponse(overrides: Partial<WebScrapeResponse> = {}): WebScrapeRe
 		cache_metadata: { age_ms: 0, status: 'miss' },
 		highlights: emptyOutput,
 		html: emptyOutput,
-		images: { data: [], requested: true, success: true },
+		images: emptyOutput,
 		json: emptyOutput,
 		markdown: { data: '# Page', requested: true, success: true },
 		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
@@ -128,6 +128,21 @@ function contextDevError(
 	headers: Record<string, string> = {}
 ) {
 	return APIError.generate(status, body, undefined, new Headers(headers));
+}
+
+async function scrapedOutline(t: ConvexTestInstance, metadata: WebScrapeResponse.Metadata) {
+	scrape.mockResolvedValue(
+		scrapeResponse({
+			markdown: { data: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1), requested: true, success: true },
+			metadata
+		})
+	);
+
+	const result = await scrapePage(t, { url: PAGE_URL });
+
+	if (!('outline' in result)) throw new Error('Expected a stored page transport.');
+
+	return result.outline;
 }
 
 function lastScrapeCall() {
@@ -231,7 +246,7 @@ describe('queued request job checks', () => {
 			claimId: job.claimId,
 			executionSecret: job.executionSecret,
 			jobId: job.jobId,
-			result: { url: PAGE_URL, markdown: 'done', outline: { headings: [] }, images: [] }
+			result: { url: PAGE_URL, markdown: 'done' }
 		});
 
 		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
@@ -258,7 +273,7 @@ describe('queued request job checks', () => {
 
 describe('context.dev scrape', () => {
 	it.each([{ url: PAGE_URL }, { url: PAGE_URL, query: '   ' }])(
-		'requests fresh main-content markdown and images without highlights for %j',
+		'requests fresh main-content markdown with images and no highlights for %j',
 		async (payload) => {
 			const t = initConvexTest();
 			scrape.mockResolvedValue(scrapeResponse());
@@ -268,7 +283,8 @@ describe('context.dev scrape', () => {
 			const { body, options } = lastScrapeCall();
 			expect(body).toEqual({
 				url: PAGE_URL,
-				formats: { markdown: true, images: true },
+				formats: { markdown: true },
+				markdownParams: { includeImages: true },
 				sharedParams: { mainContentOnly: true },
 				maxAgeMs: 0,
 				timeoutOpts: { milliseconds: SCRAPE_TIMEOUT_MS, behavior: 'fail' }
@@ -290,7 +306,7 @@ describe('context.dev scrape', () => {
 		const result = await scrapePage(t, { url: PAGE_URL, query: '  pricing  ' });
 
 		expect(lastScrapeCall().body).toMatchObject({
-			formats: { markdown: true, images: true, highlights: true },
+			formats: { markdown: true, highlights: true },
 			highlightsParams: { query: 'pricing', maxCharacters: HIGHLIGHTS_MAX_CHARS }
 		});
 		expect(result).toMatchObject({ highlights: ['Pricing starts at $5.'] });
@@ -316,63 +332,37 @@ describe('context.dev scrape', () => {
 		expect(result).not.toHaveProperty('highlights');
 	});
 
-	it('maps metadata to an outline and drops inline data: images', async () => {
+	it('maps metadata to an outline', async () => {
 		const t = initConvexTest();
 
-		scrape.mockResolvedValue(
-			scrapeResponse({
-				url: 'https://example.com/final',
-				markdown: { data: '# Docs', requested: true, success: true },
-				metadata: {
-					title: '  Docs  ',
-					description: '   ',
-					headings: [
-						{ level: 1, text: ' Docs ' },
-						{ level: 2, text: '   ' },
-						{ level: 2, text: 'Install' }
-					]
-				},
-				images: {
-					data: [
-						{ url: 'https://example.com/a.png', alt: null },
-						{ url: 'data:image/png;base64,AAAA', alt: null }
-					],
-					requested: true,
-					success: true
-				}
-			})
-		);
-
-		expect(await scrapePage(t, { url: PAGE_URL })).toEqual({
-			url: 'https://example.com/final',
-			markdown: '# Docs',
-			outline: {
-				title: 'Docs',
-				headings: [
-					{ level: 1, text: 'Docs' },
-					{ level: 2, text: 'Install' }
-				]
-			},
-			images: ['https://example.com/a.png']
+		const outline = await scrapedOutline(t, {
+			title: '  Docs  ',
+			description: '   ',
+			headings: [
+				{ level: 1, text: ' Docs ' },
+				{ level: 2, text: '   ' },
+				{ level: 2, text: 'Install' }
+			]
 		});
-		expect(await storageBlobs(t)).toEqual([]);
+
+		expect(outline).toEqual({
+			title: 'Docs',
+			headings: [
+				{ level: 1, text: 'Docs' },
+				{ level: 2, text: 'Install' }
+			]
+		});
 	});
 
 	it('bounds the outline of a page with long metadata and many long headings', async () => {
 		const t = initConvexTest();
 		const longText = 'h'.repeat(100_000);
 
-		scrape.mockResolvedValue(
-			scrapeResponse({
-				metadata: {
-					title: longText,
-					description: longText,
-					headings: Array.from({ length: 5_000 }, () => ({ level: 2, text: longText }))
-				}
-			})
-		);
-
-		const { outline } = await scrapePage(t, { url: PAGE_URL });
+		const outline = await scrapedOutline(t, {
+			title: longText,
+			description: longText,
+			headings: Array.from({ length: 5_000 }, () => ({ level: 2, text: longText }))
+		});
 
 		expect(outline.headings.length).toBeGreaterThan(0);
 		expect(JSON.stringify(outline).length).toBeLessThan(SCRAPE_INLINE_MAX_CHARS / 2);
@@ -382,9 +372,7 @@ describe('context.dev scrape', () => {
 		const t = initConvexTest();
 		const title = `${'a'.repeat(199)}😀`;
 
-		scrape.mockResolvedValue(scrapeResponse({ metadata: { title, headings: [] } }));
-
-		const { outline } = await scrapePage(t, { url: PAGE_URL });
+		const outline = await scrapedOutline(t, { title, headings: [] });
 
 		expect(outline.title).toBe('a'.repeat(199));
 	});
@@ -471,15 +459,10 @@ describe('context.dev scrape', () => {
 });
 
 describe('scrape transport size', () => {
-	function mockPage(page: Pick<ScrapedPage, 'markdown' | 'images' | 'highlights'>) {
+	function mockPage(page: Pick<ScrapedPage, 'markdown' | 'highlights'>) {
 		const response = scrapeResponse({
 			markdown: { data: page.markdown, requested: true, success: true },
-			metadata: {},
-			images: {
-				data: page.images.map((url) => ({ url, alt: null })),
-				requested: true,
-				success: true
-			}
+			metadata: {}
 		});
 
 		if (page.highlights) {
@@ -489,26 +472,28 @@ describe('scrape transport size', () => {
 		scrape.mockResolvedValue(response);
 	}
 
-	it('returns pages under the inline budget without storage', async () => {
+	it('returns the final URL and markdown at the inline budget without storage', async () => {
 		const t = initConvexTest();
-		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000);
-		mockPage({ markdown, images: ['https://example.com/a.png'] });
+		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS);
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				url: 'https://example.com/final',
+				markdown: { data: markdown, requested: true, success: true }
+			})
+		);
 
 		expect(await scrapePage(t, { url: PAGE_URL })).toEqual({
-			url: PAGE_URL,
-			markdown,
-			outline: { headings: [] },
-			images: ['https://example.com/a.png']
+			url: 'https://example.com/final',
+			markdown
 		});
 		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('stores the full page JSON and returns the outline, highlights, and scrapeUrl', async () => {
+	it('stores oversized markdown and returns the outline, highlights, and scrapeUrl', async () => {
 		const t = initConvexTest();
 		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
-		const images = ['https://example.com/a.png'];
 		const highlights = ['x marks the spot'];
-		mockPage({ markdown, images, highlights });
+		mockPage({ markdown, highlights });
 
 		const result = await scrapePage(t, { url: PAGE_URL, query: 'x' });
 
@@ -523,18 +508,12 @@ describe('scrape transport size', () => {
 		expect(blobs).toHaveLength(1);
 		const stored = await storedText(t, blobs[0]!._id);
 		expect(stored.url).toBe('scrapeUrl' in result ? result.scrapeUrl : undefined);
-		expect(JSON.parse(stored.text!)).toEqual({
-			url: PAGE_URL,
-			markdown,
-			outline: { headings: [] },
-			images,
-			highlights
-		});
+		expect(stored.text).toBe(markdown);
 	});
 
-	it('deletes stored page JSON after its TTL', async () => {
+	it('deletes stored markdown after its TTL', async () => {
 		const t = initConvexTest();
-		mockPage({ markdown: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1), images: [] });
+		mockPage({ markdown: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1) });
 
 		await scrapePage(t, { url: PAGE_URL });
 		expect(await storageBlobs(t)).toHaveLength(1);
@@ -547,7 +526,7 @@ describe('scrape transport size', () => {
 
 	it('rejects pages over the download limit without storing a blob', async () => {
 		const t = initConvexTest();
-		mockPage({ markdown: '\n'.repeat(32 * 1024 * 1024), images: [] });
+		mockPage({ markdown: 'x'.repeat(64 * 1024 * 1024 + 1) });
 
 		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(
 			'Scrape exceeds the 64 MiB download limit.'
@@ -557,16 +536,7 @@ describe('scrape transport size', () => {
 
 	it('accepts a page exactly at the download limit', async () => {
 		const t = initConvexTest();
-
-		const page: ScrapedPage = {
-			url: PAGE_URL,
-			markdown: '',
-			outline: { headings: [] },
-			images: []
-		};
-
-		page.markdown = 'x'.repeat(64 * 1024 * 1024 - JSON.stringify(page).length);
-		mockPage(page);
+		mockPage({ markdown: 'x'.repeat(64 * 1024 * 1024) });
 
 		expect(await scrapePage(t, { url: PAGE_URL })).toHaveProperty('scrapeUrl');
 		const blobs = await storageBlobs(t);

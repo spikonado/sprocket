@@ -197,7 +197,6 @@ async fn direct_markdown_is_read_with_a_single_get() {
                 .unwrap()
                 .ends_with("/docs/start.md?lang=en")
         );
-        assert_eq!(result["images"], json!([]));
         let requests = server.await.unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /docs/start.md?lang=en HTTP/1.1"));

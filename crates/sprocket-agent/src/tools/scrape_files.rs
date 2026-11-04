@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -6,10 +7,11 @@ use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncWriteExt;
 
 pub(super) const MAX_SCRAPE_BYTES: u64 = 64 * 1024 * 1024;
-const SCRAPE_INLINE_MAX_CHARS: usize = 40_000;
+const SCRAPE_INLINE_MAX_CHARS: usize = 20_000;
 
 pub(super) async fn localize_scrape(
     mut result: Value,
+    cache_dir: &Path,
     cancellation: &WorkspaceCancellation,
     saved_file: &mut Option<tempfile::NamedTempFile>,
 ) -> anyhow::Result<Value> {
@@ -20,41 +22,42 @@ pub(super) async fn localize_scrape(
             matches!(url.scheme(), "http" | "https"),
             "scrape download requires an http(s) URL"
         );
-        let temp = tempfile::Builder::new()
-            .prefix("sprocket-scrape-")
-            .suffix(".json")
-            .tempfile()?;
-        let temp = download_scrape(url, temp, cancellation).await?;
+        let temp = download_scrape(url, markdown_file(cache_dir).await?, cancellation).await?;
         record_saved_scrape(fields, temp, saved_file);
     } else {
-        anyhow::ensure!(
-            fields.get("markdown").is_some_and(Value::is_string),
-            "scrape response is missing markdown"
-        );
-        let archive = serde_json::to_string(fields)?;
-        if exceeds_inline_limit(&archive) {
-            let temp = save_temp("sprocket-scrape-", &archive, cancellation).await?;
+        let markdown = fields
+            .get("markdown")
+            .and_then(Value::as_str)
+            .context("scrape response is missing markdown")?;
+        if exceeds_inline_limit(markdown) {
+            let temp = save_markdown(cache_dir, markdown, cancellation).await?;
             record_saved_scrape(fields, temp, saved_file);
         }
     }
-    fields.remove("truncated");
     Ok(result)
 }
 
-/// Matches JSON.stringify(...).length in the backend, including surrogate pairs.
-fn exceeds_inline_limit(archive: &str) -> bool {
-    archive.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
+/// Counts UTF-16 units to match the backend's `markdown.length`.
+fn exceeds_inline_limit(markdown: &str) -> bool {
+    markdown.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
 }
 
-async fn save_temp(
-    prefix: &str,
+async fn markdown_file(cache_dir: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
+    tokio::fs::create_dir_all(cache_dir)
+        .await
+        .with_context(|| format!("failed to create {}", cache_dir.display()))?;
+    Ok(tempfile::Builder::new()
+        .prefix("")
+        .suffix(".md")
+        .tempfile_in(cache_dir)?)
+}
+
+async fn save_markdown(
+    cache_dir: &Path,
     contents: &str,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<tempfile::NamedTempFile> {
-    let temp = tempfile::Builder::new()
-        .prefix(prefix)
-        .suffix(".json")
-        .tempfile()?;
+    let temp = markdown_file(cache_dir).await?;
     let mut file = tokio::fs::File::from_std(temp.reopen()?);
     tokio::select! {
         biased;
@@ -72,12 +75,10 @@ fn record_saved_scrape(
     temp: tempfile::NamedTempFile,
     saved_file: &mut Option<tempfile::NamedTempFile>,
 ) {
+    fields.remove("markdown");
     fields.insert(
-        "markdown".into(),
-        Value::String(format!(
-            "The scrape was too large to directly output. Instead, it has been saved to {} for you to view.",
-            temp.path().display()
-        )),
+        "savedTo".into(),
+        Value::String(temp.path().display().to_string()),
     );
     *saved_file = Some(temp);
 }

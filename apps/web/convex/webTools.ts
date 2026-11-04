@@ -21,13 +21,9 @@ import type { Doc } from '@convex/_generated/dataModel';
 
 const exa = new ExaClient(components.exa);
 
-const DEFAULT_SEARCH_RESULTS = 5;
-
-const MAX_SEARCH_RESULTS = 10;
-
 const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
 
-export const SCRAPE_INLINE_MAX_CHARS = 40_000;
+export const SCRAPE_INLINE_MAX_CHARS = 20_000;
 
 export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
 
@@ -51,9 +47,7 @@ export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.
 
 const RAW_DOCUMENT_TOO_LARGE = 'Document exceeds the 50 MB raw fetch limit.';
 
-const SCRAPE_JSON_BLOB_TYPE = 'application/json; charset=utf-8';
-
-const CONVEX_ARRAY_MAX_LENGTH = 8_192;
+const SCRAPE_MARKDOWN_BLOB_TYPE = 'text/markdown; charset=utf-8';
 
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 
@@ -71,8 +65,6 @@ type PageOutline = Infer<typeof vPageOutline>;
 
 type ScrapeParams = Omit<WebScrapeParams, 'maxAgeMs' | 'timeoutOpts'>;
 
-type WebSearchJobArgs = { query: string; numResults?: number };
-
 type ScrapeJobArgs = { url: string; query?: string };
 
 export type ScrapedPage = {
@@ -80,7 +72,6 @@ export type ScrapedPage = {
 	markdown: string;
 	outline: PageOutline;
 	highlights?: string[];
-	images: string[];
 };
 
 export type RawDocument = {
@@ -273,7 +264,8 @@ async function fetchScrape(
 
 	const params: ScrapeParams = {
 		url: url.toString(),
-		formats: { markdown: true, images: true },
+		formats: { markdown: true },
+		markdownParams: { includeImages: true },
 		sharedParams: { mainContentOnly: true }
 	};
 
@@ -289,10 +281,7 @@ async function fetchScrape(
 	const page: ScrapedPage = {
 		url: response.url || url.toString(),
 		markdown: response.markdown.data ?? '',
-		outline: pageOutline(response.metadata),
-		images: (response.images.data ?? [])
-			.map((image) => image.url)
-			.filter((imageUrl) => !imageUrl.startsWith('data:'))
+		outline: pageOutline(response.metadata)
 	};
 
 	if (highlightsQuery && response.highlights.success && response.highlights.data) {
@@ -342,34 +331,26 @@ async function fetchRawDocument(
 	return raw;
 }
 
-function localInlineFits(page: ScrapedPage): boolean {
-	return (
-		page.images.length <= CONVEX_ARRAY_MAX_LENGTH &&
-		JSON.stringify(page).length <= SCRAPE_INLINE_MAX_CHARS
-	);
-}
-
 async function localScrapeTransport(
 	ctx: ActionCtx,
 	page: ScrapedPage
 ): Promise<Infer<typeof vScrapeUrlTransport>> {
-	if (localInlineFits(page)) {
-		return page;
-	}
-
-	const transport: Infer<typeof vScrapeUrlTransport> = {
-		url: page.url,
-		outline: page.outline,
-		scrapeUrl: await storeTemporaryScrape(ctx, page)
-	};
+	const transport: Infer<typeof vScrapeUrlTransport> =
+		page.markdown.length <= SCRAPE_INLINE_MAX_CHARS
+			? { url: page.url, markdown: page.markdown }
+			: {
+					url: page.url,
+					outline: page.outline,
+					scrapeUrl: await storeTemporaryScrape(ctx, page.markdown)
+				};
 
 	if (page.highlights) transport.highlights = page.highlights;
 
 	return transport;
 }
 
-async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<string> {
-	const blob = new Blob([JSON.stringify(page)], { type: SCRAPE_JSON_BLOB_TYPE });
+async function storeTemporaryScrape(ctx: ActionCtx, markdown: string): Promise<string> {
+	const blob = new Blob([markdown], { type: SCRAPE_MARKDOWN_BLOB_TYPE });
 
 	if (blob.size > SCRAPE_MAX_BYTES) {
 		throw new Error('Scrape exceeds the 64 MiB download limit.');
@@ -405,21 +386,13 @@ async function storeTemporaryBlob(ctx: ActionCtx, blob: Blob): Promise<string> {
 
 async function runSearch(
 	ctx: ActionCtx,
-	queryValue: string,
-	numResultsValue: number | undefined
+	queryValue: string
 ): Promise<Infer<typeof vWebSearchResult>> {
 	const query = queryValue.trim();
 
 	if (!query) {
 		throw new NonRetryableError('Search query cannot be empty.');
 	}
-
-	const requested =
-		numResultsValue !== undefined && Number.isFinite(numResultsValue)
-			? Math.floor(numResultsValue)
-			: DEFAULT_SEARCH_RESULTS;
-
-	const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
 
 	let response: Awaited<ReturnType<typeof exa.search>>;
 
@@ -430,7 +403,6 @@ async function runSearch(
 			exa.search(ctx, {
 				query,
 				type: 'auto',
-				numResults,
 				contents: { text: { maxCharacters: SEARCH_RESULT_TEXT_MAX_CHARS } }
 			})
 		);
@@ -471,14 +443,8 @@ const executeArgs = {
 	claimId: v.string()
 };
 
-function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
-	if (!('query' in payload) || payload.query === undefined) return { query: '' };
-
-	if (!('numResults' in payload) || payload.numResults === undefined) {
-		return { query: payload.query };
-	}
-
-	return { query: payload.query, numResults: payload.numResults };
+function webSearchQuery(payload: ExecutorJobPayload): string {
+	return 'query' in payload && payload.query !== undefined ? payload.query : '';
 }
 
 export const executeWebSearch = internalAction({
@@ -491,9 +457,7 @@ export const executeWebSearch = internalAction({
 			throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 		}
 
-		const search = webSearchFromPayload(job.payload);
-
-		return await runSearch(ctx, search.query, search.numResults);
+		return await runSearch(ctx, webSearchQuery(job.payload));
 	}
 });
 
