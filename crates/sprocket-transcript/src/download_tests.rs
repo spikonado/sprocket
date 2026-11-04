@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::sync::oneshot;
 
-use super::monitor::{MONITOR_PAGE_CHAR_LIMIT, MonitorEntry, download_monitor_page};
+use super::monitor::{MONITOR_PAGE_CHAR_LIMIT, MonitorEntry, MonitorFilter, download_monitor_page};
 use super::{DownloadOrder, TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptStore};
 
 fn prompt(number: u32, text: &str) -> TranscriptPart {
@@ -506,11 +506,19 @@ async fn stale_monitor_total_preserves_newer_cached_answers_and_known_history() 
             .await
             .unwrap();
 
-        let monitor = download_monitor_page(&store, "user", "thread", None, 1, |_, _, _| {
-            ready(Err(anyhow::anyhow!(
-                "cached monitor output triggered a fetch"
-            )))
-        })
+        let monitor = download_monitor_page(
+            &store,
+            "user",
+            "thread",
+            None,
+            1,
+            &MonitorFilter::default(),
+            |_, _, _| {
+                ready(Err(anyhow::anyhow!(
+                    "cached monitor output triggered a fetch"
+                )))
+            },
+        )
         .await
         .unwrap();
         assert_eq!(
@@ -545,11 +553,19 @@ async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_t
     let dir = tempfile::tempdir().unwrap();
     let store = TranscriptStore::new(dir.path().to_owned());
     let mut calls = Vec::new();
-    let first = download_monitor_page(&store, "user", "thread", None, 1000, |start, end, order| {
-        assert!(matches!(order, DownloadOrder::Asc));
-        calls.push((start, end));
-        ready(Ok((start..end).take(20).map(monitor_part).collect()))
-    })
+    let first = download_monitor_page(
+        &store,
+        "user",
+        "thread",
+        None,
+        1000,
+        &MonitorFilter::default(),
+        |start, end, order| {
+            assert!(matches!(order, DownloadOrder::Asc));
+            calls.push((start, end));
+            ready(Ok((start..end).take(20).map(monitor_part).collect()))
+        },
+    )
     .await
     .unwrap();
     assert_eq!(calls, vec![(0, TRANSCRIPT_CHUNK_SIZE)]);
@@ -568,6 +584,7 @@ async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_t
         "thread",
         Some(&first.next_cursor),
         1000,
+        &MonitorFilter::default(),
         |_, _, _| {
             ready(Err(anyhow::anyhow!(
                 "cached prompt continuation triggered a fetch"
@@ -585,6 +602,7 @@ async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_t
         "thread",
         Some(&second.next_cursor),
         1000,
+        &MonitorFilter::default(),
         |_, _, _| {
             ready(Err(anyhow::anyhow!(
                 "cached prompt suffix triggered a fetch"
@@ -607,6 +625,7 @@ async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_t
         "thread",
         Some(&third.next_cursor),
         1000,
+        &MonitorFilter::default(),
         |start, end, order| {
             assert!(matches!(order, DownloadOrder::Asc));
             calls.push((start, end));

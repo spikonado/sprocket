@@ -50,6 +50,22 @@ pub struct MonitorPage {
     pub has_more: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MonitorFilter {
+    /// Keeps only entries from this run.
+    pub run_id: Option<String>,
+    /// Runs whose prompts are omitted.
+    pub hidden_prompt_runs: BTreeSet<String>,
+}
+
+impl MonitorFilter {
+    fn keeps(&self, run: &str, entry: &MonitorEntry) -> bool {
+        self.run_id.as_deref().is_none_or(|run_id| run_id == run)
+            && !(matches!(entry, MonitorEntry::Prompt { .. })
+                && self.hidden_prompt_runs.contains(run))
+    }
+}
+
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MonitorReadError {
     #[error("monitor cursor is malformed")]
@@ -93,6 +109,7 @@ pub async fn download_monitor_page<F, Fut>(
     thread: &str,
     cursor: Option<&str>,
     total: u32,
+    filter: &MonitorFilter,
     mut fetch: F,
 ) -> anyhow::Result<MonitorPage>
 where
@@ -105,10 +122,17 @@ where
     loop {
         let parsed_cursor = cursor.map(parse_cursor).transpose()?;
         let thread_id = thread.to_owned();
+        let filter = filter.clone();
         let (page, prefix) = store
             .with_work_replica(user, thread, move |replica| {
                 Ok((
-                    read_page(replica, &thread_id, parsed_cursor, MONITOR_PAGE_CHAR_LIMIT)?,
+                    read_page(
+                        replica,
+                        &thread_id,
+                        parsed_cursor,
+                        &filter,
+                        MONITOR_PAGE_CHAR_LIMIT,
+                    )?,
                     replica.downloaded_prefix()?,
                 ))
             })
@@ -131,6 +155,7 @@ fn read_page(
     replica: &WorkReplica,
     thread_id: &str,
     cursor: Option<MonitorCursor>,
+    filter: &MonitorFilter,
     max_chars: usize,
 ) -> anyhow::Result<MonitorPage> {
     let replica_id: String = replica.state("replicaId")?.context("replica id missing")?;
@@ -180,7 +205,7 @@ fn read_page(
     let mut output: Vec<MonitorEntry> = Vec::new();
     let mut used = 0usize;
     let mut exhausted = true;
-    for (sequence, mut entry) in entries {
+    for (sequence, run, mut entry) in entries {
         let patch_identity = if matches!(entry, MonitorEntry::Patch { .. }) {
             let source = replica
                 .patch_sources(sequence, sequence + 1)?
@@ -202,6 +227,10 @@ fn read_page(
                 cursor.scanned = sequence + 1;
                 continue;
             }
+        }
+        if !filter.keeps(&run, &entry) {
+            cursor.scanned = sequence + 1;
+            continue;
         }
         if used == max_chars {
             exhausted = false;
@@ -435,35 +464,42 @@ impl WorkReplica {
         &self,
         after: u64,
         boundary: u64,
-    ) -> anyhow::Result<Vec<(u64, MonitorEntry)>> {
-        let mut entries: Vec<(u64, MonitorEntry)> = Vec::new();
+    ) -> anyhow::Result<Vec<(u64, String, MonitorEntry)>> {
+        let mut entries: Vec<(u64, String, MonitorEntry)> = Vec::new();
         let after_i = i64::try_from(after)?;
         let boundary_i = i64::try_from(boundary)?;
         let mut statement = self.db.prepare(
-            "SELECT id, sequence, kind, json_extract(body,'$.text') FROM rows
+            "SELECT id, sequence, kind, json_extract(body,'$.text'), json_extract(body,'$.runId') FROM rows
             WHERE sequence>=? AND sequence<? AND body IS NOT NULL AND kind IN ('prompt','text')
             ORDER BY sequence",
         )?;
-        let rows: Vec<(String, i64, String, Option<String>)> = statement
+        let rows: Vec<(String, i64, String, Option<String>, String)> = statement
             .query_map(rusqlite::params![after_i, boundary_i], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })?
             .collect::<Result<_, _>>()?;
-        for (id, sequence, kind, text) in rows {
+        for (id, sequence, kind, text, run) in rows {
             let text = text.unwrap_or_default();
-            if kind == "prompt" {
-                entries.push((u64::try_from(sequence)?, MonitorEntry::Prompt { id, text }));
+            let entry = if kind == "prompt" {
+                MonitorEntry::Prompt { id, text }
             } else {
-                entries.push((u64::try_from(sequence)?, MonitorEntry::Text { id, text }));
-            }
+                MonitorEntry::Text { id, text }
+            };
+            entries.push((u64::try_from(sequence)?, run, entry));
         }
 
         for source in self.patch_sources(after, boundary)? {
             if let Some(entry) = self.patch_outcome(&source)? {
-                entries.push((source.source.sequence(), entry));
+                entries.push((source.source.sequence(), source.run_id, entry));
             }
         }
-        entries.sort_by_key(|(sequence, _)| *sequence);
+        entries.sort_by_key(|(sequence, ..)| *sequence);
         Ok(entries)
     }
 }

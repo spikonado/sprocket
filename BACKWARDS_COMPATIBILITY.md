@@ -167,7 +167,8 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `createdAt` on stored `list_artifacts` results.
 - `summary` on `scrape_url` results, from before `outline` replaced it, and `images`, from before image references moved into the markdown.
 - `numResults` on `web_search` payloads, which released agents still send. Search ignores it.
-- `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on `list_subagent_models` results.
+- The retired `list_subagent_models` tool kind, including `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on its results.
+- `lastError: null`, empty `pendingQuestions`, `settings.fast: false` and `settings.completionProvider` on subagent tool results, and `hasMore` on `list_subagents` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.

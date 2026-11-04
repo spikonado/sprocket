@@ -38,8 +38,17 @@ pub fn resolve_settings(
         .as_deref()
         .or(saved.map(|saved| saved.model.as_str()))
         .unwrap_or(catalog.default_model_id.as_str());
-    let model =
-        find(model_id).with_context(|| format!("model {model_id} is not in the model catalog"))?;
+    let model = find(model_id).with_context(|| {
+        let ids: Vec<&str> = catalog
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect();
+        format!(
+            "model {model_id} is not in the model catalog; choose one of: {}",
+            ids.join(", ")
+        )
+    })?;
     let provider = providers
         .iter()
         .copied()
@@ -53,7 +62,8 @@ pub fn resolve_settings(
         Some(reasoning) => {
             anyhow::ensure!(
                 model.reasoning_efforts.contains(reasoning),
-                "reasoning level {reasoning} is unavailable for {model_id}"
+                "reasoning level {reasoning} is unavailable for {model_id}; choose one of: {}",
+                model.reasoning_efforts.join(", ")
             );
             reasoning
         }

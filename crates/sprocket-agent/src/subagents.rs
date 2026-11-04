@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -12,7 +13,9 @@ use crate::types::CompletionProvider;
 pub struct SubagentSettings {
     pub model: String,
     pub reasoning: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub fast: bool,
+    #[serde(skip_serializing)]
     pub completion_provider: CompletionProvider,
 }
 
@@ -63,7 +66,7 @@ pub struct SubagentChildSummary {
     #[serde(default)]
     pub title: Option<String>,
     pub status: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     pub parent_thread_id: String,
     pub settings: SubagentSettings,
@@ -109,6 +112,12 @@ pub struct SubagentMonitorInfo {
     pub active: bool,
     pub pending_questions: Vec<SubagentQuestion>,
     pub transcript: RemoteTranscriptState,
+    /// The latest run, or the requested target run.
+    #[serde(default)]
+    pub run_id: Option<String>,
+    /// Runs whose prompts the caller's thread sent.
+    #[serde(default)]
+    pub caller_prompt_run_ids: BTreeSet<String>,
 }
 
 pub struct SubagentLaunchRequest {

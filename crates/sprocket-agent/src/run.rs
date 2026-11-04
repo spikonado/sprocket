@@ -791,7 +791,7 @@ pub async fn run_agent(
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
     let cwd = restore_cwd(&workspace_root, context.cwd.as_deref());
 
-    let (capabilities, handoff_model) =
+    let (capabilities, handoff_model, subagent_models) =
         match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
             .await
         {
@@ -1058,6 +1058,7 @@ pub async fn run_agent(
                     defer_prompt_for_context_handoff: !continue_without_prompt,
                     omit_prior_reasoning,
                     gateway_url: gateway_url.clone(),
+                    subagent_models: Arc::new(subagent_models),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
                     installed_connectors: request.installed_connectors.clone(),

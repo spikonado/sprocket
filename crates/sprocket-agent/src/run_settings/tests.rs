@@ -123,7 +123,12 @@ fn unsupported_saved_settings_fall_back_quietly() {
 
 #[test]
 fn unsupported_explicit_choices_fail() {
-    assert!(resolve(&[Spikonado], None, model("missing")).is_err());
+    let missing = resolve(&[Spikonado], None, model("missing")).unwrap_err();
+    assert!(
+        missing
+            .to_string()
+            .ends_with("choose one of: default, pro, gpt")
+    );
     let unserved = resolve(&[Chatgpt], None, model("default")).unwrap_err();
     assert!(
         unserved
@@ -135,7 +140,12 @@ fn unsupported_explicit_choices_fail() {
         reasoning: Some("low".into()),
         ..Default::default()
     };
-    assert!(resolve(&[Spikonado], None, reasoning).is_err());
+    let reasoning = resolve(&[Spikonado], None, reasoning).unwrap_err();
+    assert!(
+        reasoning
+            .to_string()
+            .ends_with("choose one of: medium, high")
+    );
 
     let fast = |model: &str| SettingsOverrides {
         model: Some(model.into()),
