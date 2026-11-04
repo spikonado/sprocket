@@ -2,7 +2,10 @@ use std::path::{Component, Path, PathBuf};
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{HeaderValue, Request, StatusCode, header::CACHE_CONTROL};
+use axum::http::{
+    HeaderValue, Request, StatusCode,
+    header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL},
+};
 use axum::response::{IntoResponse, Response};
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
@@ -33,6 +36,8 @@ async fn serve_static_request(
 ) -> Response {
     let path = req.uri().path();
     let immutable = path.starts_with("/_app/immutable/");
+    // The KiCanvas frame has an opaque origin, which hides the bundle's errors unless it may read it.
+    let cross_origin = path.starts_with("/kicanvas/");
 
     let mut response = if path.starts_with("/_app/") {
         match assets.oneshot(req).await {
@@ -57,6 +62,11 @@ async fn serve_static_request(
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    if cross_origin {
+        response
+            .headers_mut()
+            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    }
     response
 }
 

@@ -20,6 +20,9 @@ git -C "$src" checkout --quiet "$commit"
 # sprocket-theme: styles the controls from the theme tokens kicanvas-viewer.html
 # gets from the app, and drops the preferences, keeping KiCad's colors and
 # mouse controls.
+# footprint-transform: KiCad 10.99 places footprints with
+# `(transform (translate x y) (rotate r) (scale sx sy))` instead of `(at x y r)`.
+# Scale isn't drawn, so a scaled footprint shows at its library size.
 git -C "$src" apply "$here"/*.patch
 (cd "$src" && npm ci --silent && node scripts/build.js)
 

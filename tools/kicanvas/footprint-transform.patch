@@ -1,0 +1,40 @@
+diff --git a/src/kicad/board.ts b/src/kicad/board.ts
+index 2d2d2c6..43e5a4c 100644
+--- a/src/kicad/board.ts
++++ b/src/kicad/board.ts
+@@ -821,7 +821,9 @@ type FootprintDrawings =
+     | SymbolProperty;
+
+ export class Footprint implements HasUniqueID {
+-    at: At;
++    at = new At();
++    // KiCad 10.99 places footprints with this instead of `at`.
++    transform?: { translate?: Vec2; rotate?: number };
+     reference: string;
+     value: string;
+     library_link: string;
+@@ -898,6 +900,12 @@ export class Footprint implements HasUniqueID {
+                 P.pair("sheetname", T.string),
+                 P.pair("sheetfile", T.string),
+                 P.item("at", At),
++                P.object(
++                    "transform",
++                    null,
++                    P.vec2("translate"),
++                    P.pair("rotate", T.number),
++                ),
+                 P.pair("descr", T.string),
+                 P.pair("tags", T.string),
+                 P.pair("path", T.string),
+@@ -938,6 +946,11 @@ export class Footprint implements HasUniqueID {
+             ),
+         );
+
++        if (this.transform) {
++            this.at.position = this.transform.translate ?? this.at.position;
++            this.at.rotation = this.transform.rotate ?? this.at.rotation;
++        }
++
+         for (const pad of this.pads) {
+             this.#pads_by_number.set(pad.number, pad);
+         }

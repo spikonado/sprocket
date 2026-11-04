@@ -3,7 +3,7 @@ import path from 'node:path';
 import posthog from '@posthog/rollup-plugin';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { searchForWorkspaceRoot } from 'vite';
+import { searchForWorkspaceRoot, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
@@ -20,6 +20,17 @@ const posthogSourceMaps =
 				})
 			]
 		: [];
+
+// Matches the Rust server: the KiCanvas frame's opaque origin hides the bundle's errors unless it may read it.
+const kicanvasCors: Plugin = {
+	name: 'kicanvas-cors',
+	configureServer(server) {
+		server.middlewares.use('/kicanvas/', (_req, res, next) => {
+			res.setHeader('Access-Control-Allow-Origin', '*');
+			next();
+		});
+	}
+};
 
 // Bun's global store keeps package files outside the repo, at `<store>/<entry>/node_modules/react`.
 const bunGlobalStore = path.resolve(
@@ -54,7 +65,7 @@ export default defineConfig({
 			}
 		}
 	},
-	plugins: [tailwindcss(), react(), ...posthogSourceMaps],
+	plugins: [tailwindcss(), react(), kicanvasCors, ...posthogSourceMaps],
 	test: {
 		// Component `/test` entrypoints use `import.meta.glob`; Vite must transform them.
 		server: {
