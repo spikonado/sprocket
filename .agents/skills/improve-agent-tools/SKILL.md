@@ -21,7 +21,7 @@ disable-model-invocation: true
 5. When a PR is ready, check its final schemas against the picks, since subagents put back text the user cut. Show the schemas to the user before you call the group done.
 6. Keep one table of every group, its PRs, and their state, and show it when asked.
 
-Use `$writing-for-agents` and `$unslop` for all text the model reads.
+Use `$writing-for-agents` for all text the model reads.
 
 ## What to cut
 
