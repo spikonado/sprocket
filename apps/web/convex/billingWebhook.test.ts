@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkId } from '@convex-dev/workpool';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { CLEANUP_BATCH_SIZE, MAX_ATTEMPTS } from './billingWebhook';
 import {
+	fixtureWorkId,
 	initConvexTest,
 	seedTiers,
 	tickPastLastCommit,
@@ -728,8 +728,7 @@ describe('durable webhook ingestion and projection', () => {
 		);
 
 		await t.mutation(internal.billingWebhook.completeProcessing, {
-			// SAFETY: deliberately fabricated branded id exercises the stale fence.
-			workId: 'work_stale_invented' as WorkId,
+			workId: fixtureWorkId('work_stale_invented'),
 			context: { eventId },
 			result: { kind: 'failed', error: 'stale' }
 		});

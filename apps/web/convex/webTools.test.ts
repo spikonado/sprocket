@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionTimeoutError, APIError } from 'context.dev';
-import { Web, type WebScrapeParams, type WebScrapeResponse } from 'context.dev/resources/web';
-import { isNonRetryableError, type WorkId } from '@convex-dev/workpool';
+import type { WebScrapeParams, WebScrapeResponse } from 'context.dev/resources/web';
+import { isNonRetryableError } from '@convex-dev/workpool';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -18,8 +18,11 @@ import {
 	type ScrapedPage
 } from '@convex/webTools';
 import {
+	contextDevScrapeResponse,
 	createQueuedRun,
+	fixtureWorkId,
 	initConvexTest,
+	mockContextDevScrape,
 	seedOwnedThread,
 	toolTranscriptAssignment,
 	type ConvexTestInstance
@@ -98,26 +101,8 @@ async function rawDocument(t: ConvexTestInstance, url = 'https://example.com/rep
 	return result;
 }
 
-const emptyOutput = { data: null, requested: false, success: null };
-
 function scrapeResponse(overrides: Partial<WebScrapeResponse> = {}): WebScrapeResponse {
-	return {
-		bytes: emptyOutput,
-		cache_metadata: { age_ms: 0, status: 'miss' },
-		highlights: emptyOutput,
-		html: emptyOutput,
-		images: emptyOutput,
-		json: emptyOutput,
-		markdown: { data: '# Page', requested: true, success: true },
-		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
-		parsed: { ...emptyOutput, type: 'custom' },
-		product: emptyOutput,
-		profile: null,
-		request_id: 'request-1',
-		screenshot: emptyOutput,
-		url: PAGE_URL,
-		...overrides
-	};
+	return contextDevScrapeResponse({ url: PAGE_URL, ...overrides });
 }
 
 type ContextDevErrorBody = { error_code?: string; message?: string };
@@ -170,8 +155,7 @@ beforeEach(() => {
 	vi.stubEnv('CONTEXT_DEV_API_KEY', 'context-dev-key');
 	vi.stubEnv('FIRECRAWL_API_KEY', 'firecrawl-key');
 	scrape.mockReset();
-	// SAFETY: webTools only awaits the scrape result, so a plain Promise stands in for APIPromise.
-	vi.spyOn(Web.prototype, 'scrape').mockImplementation(scrape as never);
+	mockContextDevScrape(scrape);
 });
 
 afterEach(() => {
@@ -217,8 +201,7 @@ describe('queued request job checks', () => {
 		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });
 
 		await t.run(async (ctx) => {
-			// SAFETY: the guard only checks that a cloud work id is present.
-			await ctx.db.patch('executorJobs', job.jobId, { cloudWorkId: 'cloud-work' as WorkId });
+			await ctx.db.patch('executorJobs', job.jobId, { cloudWorkId: fixtureWorkId('cloud-work') });
 		});
 
 		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);

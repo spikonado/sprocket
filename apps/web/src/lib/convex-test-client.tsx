@@ -37,16 +37,12 @@ type FixtureReader = {
 
 function fixtureReader<Value>(value: Value): FixtureReader {
 	const read = <Result,>(): Result => {
-		// SAFETY: registration and lookup use the same function name and return type.
+		// oxlint-disable-next-line typescript/consistent-type-assertions -- fixtures are keyed by function name, so TypeScript cannot tie the stored value to the reference that reads it.
 		return value as Value & Result;
 	};
 
 	return { read };
 }
-
-type ActionRunner = <Action extends ActionReference>(
-	args: FunctionArgs<Action>
-) => Promise<FunctionReturnType<Action>>;
 
 // Mirrors the PaginatedWatch interface convex/react declares internally.
 type PaginatedWatch<Item> = {
@@ -68,7 +64,7 @@ type PaginatedOptions = {
 export class ConvexTestClient extends ConvexReactClient {
 	#queryFixtures = new Map<string, FixtureReader>();
 	#paginatedFixtures = new Map<string, FixtureReader>();
-	#actionHandlers = new Map<string, ActionRunner>();
+	#actionHandlers = new Map<string, FixtureReader>();
 	#mutationFixtures = new Map<string, FixtureReader>();
 	#queryListeners = new Map<string, Set<() => void>>();
 
@@ -110,8 +106,7 @@ export class ConvexTestClient extends ConvexReactClient {
 		action: Action,
 		handler: (args: FunctionArgs<Action>) => Promise<FunctionReturnType<Action>>
 	): void {
-		// SAFETY: dispatch uses the same function name and argument/result contract registered here.
-		this.#actionHandlers.set(getFunctionName(action), handler as ActionRunner);
+		this.#actionHandlers.set(getFunctionName(action), fixtureReader(handler));
 	}
 
 	override watchQuery<Query extends QueryReference>(
@@ -189,11 +184,14 @@ export class ConvexTestClient extends ConvexReactClient {
 		...args: OptionalRestArgs<Action>
 	): Promise<FunctionReturnType<Action>> {
 		const name = getFunctionName(action);
-		const handler = this.#actionHandlers.get(name);
+
+		const handler = this.#actionHandlers
+			.get(name)
+			?.read<(args: FunctionArgs<Action>) => Promise<FunctionReturnType<Action>>>();
 
 		if (!handler) throw new Error(`No action fixture registered for ${name}`);
 
-		return handler<Action>(args[0] ?? {});
+		return handler(args[0] ?? {});
 	}
 
 	override setAuth(

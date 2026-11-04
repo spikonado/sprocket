@@ -2,11 +2,8 @@ import { v, type Infer } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
 import { reasoningEffortIds } from '@convex/lib/models';
 
-function literals<const TValues extends readonly string[]>(values: TValues) {
-	// SAFETY: map emits one v.literal per input string, matching TValues by index.
-	return values.map((value) => v.literal(value)) as {
-		[K in keyof TValues]: ReturnType<typeof v.literal<TValues[K]>>;
-	};
+function literals<const TValue extends string>(values: readonly TValue[]) {
+	return values.map((value) => v.literal(value));
 }
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));

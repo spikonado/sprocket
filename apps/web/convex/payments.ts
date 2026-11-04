@@ -1,4 +1,5 @@
 import { v, type Infer } from 'convex/values';
+import { z } from 'zod';
 import {
 	action,
 	internalAction,
@@ -17,12 +18,16 @@ import { vPurchaseStatus, vReportOrderResult, type PurchaseStatus } from '@conve
 import {
 	AgentcardError,
 	agentcardCredentials,
+	agentcardAuthorization,
 	agentcardRequest,
+	createdVaultSession,
 	exchangeAgentcardToken,
 	isCheckoutOrigin,
+	recognizers,
 	recognizes,
+	vaultCards,
+	vaultSession,
 	type AgentcardAuthorization,
-	type VaultSession,
 	type Recognizer
 } from '@convex/lib/payments/agentcard';
 
@@ -241,9 +246,10 @@ export const linkVaultSession = internalAction({
 	args: { vaultSessionId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const session = await agentcardRequest<VaultSession>(
+		const session = await agentcardRequest(
 			await agentcardToken(ctx),
-			`/api/v2/vault_sessions/${encodeURIComponent(args.vaultSessionId)}`
+			`/api/v2/vault_sessions/${encodeURIComponent(args.vaultSessionId)}`,
+			vaultSession
 		);
 
 		if (session.status === 'linked' && session.user_id && session.external_user_id) {
@@ -295,12 +301,7 @@ async function agentcardToken(ctx: ActionCtx): Promise<string> {
 }
 
 async function listRecognizers(token: string): Promise<Recognizer[]> {
-	const entries = await agentcardRequest<Recognizer[]>(
-		token,
-		'/api/v2/checkout/recognizers?modes=token'
-	);
-
-	return entries.map(({ psp, hosts, match }) => ({ psp, hosts, match }));
+	return await agentcardRequest(token, '/api/v2/checkout/recognizers?modes=token', recognizers);
 }
 
 async function withAgentToolErrors<T>(run: () => Promise<T>): Promise<T> {
@@ -422,9 +423,10 @@ export const checkoutCreate = action({
 			let authorization: AgentcardAuthorization;
 
 			try {
-				authorization = await agentcardRequest<AgentcardAuthorization>(
+				authorization = await agentcardRequest(
 					token,
 					'/api/v2/checkout/authorizations',
+					agentcardAuthorization,
 					{
 						method: 'POST',
 						body: {
@@ -501,9 +503,10 @@ export const checkoutPoll = action({
 			let authorization: AgentcardAuthorization;
 
 			try {
-				authorization = await agentcardRequest<AgentcardAuthorization>(
+				authorization = await agentcardRequest(
 					await agentcardToken(ctx),
-					`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}`
+					`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}`,
+					agentcardAuthorization
 				);
 			} catch (error) {
 				if (error instanceof AgentcardError && error.code === 'slow_down') {
@@ -569,6 +572,7 @@ export const checkoutCancel = action({
 				await agentcardRequest(
 					await agentcardToken(ctx),
 					`/api/v2/checkout/authorizations/${encodeURIComponent(purchase.authorizationId)}/cancel`,
+					z.unknown(),
 					{ method: 'POST', body: {} }
 				);
 			} catch (error) {
@@ -653,20 +657,13 @@ export const listMyCards = action({
 
 		if (!user) return [];
 
-		let cards: {
-			data: {
-				id: string;
-				brand: string;
-				last4: string;
-				expiry_month: number;
-				expiry_year: number;
-			}[];
-		};
+		let cards: z.infer<typeof vaultCards>;
 
 		try {
 			cards = await agentcardRequest(
 				await agentcardToken(ctx),
-				`/api/v2/vault_cards?user_id=${encodeURIComponent(user)}`
+				`/api/v2/vault_cards?user_id=${encodeURIComponent(user)}`,
+				vaultCards
 			);
 		} catch (error) {
 			if (isUnknownAgentcardUser(error)) return [];
@@ -694,9 +691,10 @@ export const createCardLink = action({
 			userId
 		});
 
-		const session = await agentcardRequest<{ url: string }>(
+		const session = await agentcardRequest(
 			await agentcardToken(ctx),
 			'/api/v2/vault_sessions',
+			createdVaultSession,
 			{
 				method: 'POST',
 				body: linked

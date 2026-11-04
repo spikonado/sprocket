@@ -159,9 +159,9 @@ describe('Firecrawl parse document contract', () => {
 		expect(parseFirecrawlParseDocument({ markdown: '# One' }, true)).toEqual({
 			error: 'Firecrawl parse did not return pages.'
 		});
-		// SAFETY: The API sends null for absent pages even though the SDK types say optional.
-		const withoutPages = { markdown: '# One', pages: null } as never;
-		expect(parseFirecrawlParseDocument(withoutPages)).toEqual({ markdown: '# One' });
+		expect(parseFirecrawlParseDocument({ markdown: '# One', pages: null })).toEqual({
+			markdown: '# One'
+		});
 	});
 });
 
@@ -429,9 +429,10 @@ describe('hostedParse', () => {
 
 			const [file, options] = parse.mock.calls[0]!;
 			expect(file).toMatchObject({ filename: 'report.pdf', contentType: 'application/pdf' });
-			// SAFETY: executeHostedParse uploads the stored bytes as a Uint8Array.
-			const uploaded = file.data as Uint8Array;
-			expect(new TextDecoder().decode(uploaded)).toBe('%PDF-1.4');
+
+			if (!(file.data instanceof Uint8Array)) throw new Error('Expected uploaded bytes.');
+
+			expect(new TextDecoder().decode(file.data)).toBe('%PDF-1.4');
 			expect(options).toMatchObject({
 				formats: ['markdown'],
 				parsers: [{ type: 'pdf', mode: 'auto' }]
@@ -507,9 +508,9 @@ describe('hostedParse', () => {
 			vi.fn(async () => new Response('%PDF-1.4'))
 		);
 
-		// SAFETY: The parse result is only read for `markdown` and the page fields set here.
-		const parsed = { markdown: '# Two\n\n# One', pages } as never;
-		const parse = vi.spyOn(Firecrawl.prototype, 'parse').mockResolvedValue(parsed);
+		const parse = vi
+			.spyOn(Firecrawl.prototype, 'parse')
+			.mockResolvedValue({ markdown: '# Two\n\n# One', pages });
 
 		const result = await t.action(internal.hostedParseActions.executeHostedParse, {
 			requestId: created.requestId,
