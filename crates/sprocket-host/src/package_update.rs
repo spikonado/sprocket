@@ -270,6 +270,12 @@ impl PackageUpdateManager {
             .map_err(|error| anyhow::anyhow!("Failed to prepare the restart: {error}"))
     }
 
+    pub async fn discard_restart(&self) {
+        if let Some(restart_file) = &self.restart_file {
+            let _ = tokio::fs::remove_file(restart_file).await;
+        }
+    }
+
     fn start_locked(
         self: &Arc<Self>,
         inner: &mut Inner,

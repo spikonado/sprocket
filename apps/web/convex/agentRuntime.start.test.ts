@@ -44,6 +44,17 @@ describe('agentRuntime.start', () => {
 		const executionSecret = 'start-claim-secret';
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-claim', executionSecret);
 
+		const expectLeaseSince = async (requestedAt: number) => {
+			const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
+
+			expect(run?.claimExpiresAt).toBeGreaterThanOrEqual(requestedAt + RUN_CLAIM_LEASE_DURATION_MS);
+			expect(run?.claimExpiresAt).toBeLessThanOrEqual(Date.now() + RUN_CLAIM_LEASE_DURATION_MS);
+
+			return run;
+		};
+
+		const claimRequestedAt = Date.now();
+
 		const claimed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
 			runId,
@@ -51,12 +62,12 @@ describe('agentRuntime.start', () => {
 		});
 
 		expect(claimed).toEqual({ claimed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS });
-
-		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
-		expect(run).toMatchObject({
+		expect(await expectLeaseSince(claimRequestedAt)).toMatchObject({
 			status: 'running',
 			claimId: 'claim-a'
 		});
+
+		const renewRequestedAt = Date.now();
 
 		const renewed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
@@ -64,10 +75,8 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 
-		expect(renewed.claimed).toBe(true);
-		expect(
-			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, runId))?.completionAttemptSeq)
-		).toBe(0);
+		expect(renewed).toEqual({ claimed: true, leaseDurationMs: RUN_CLAIM_LEASE_DURATION_MS });
+		expect((await expectLeaseSince(renewRequestedAt))?.completionAttemptSeq).toBe(0);
 	});
 
 	it('does not let an older run finalization overwrite the latest run status', async () => {

@@ -40,6 +40,8 @@ jobs:
               - crates/**
               - Cargo.toml
               - Cargo.lock
+              - apps/desktop/ports.json
+              - apps/web/convex/lib/agentErrorCodes.json
               - tools/agent-browser/*.json
               - tools/agent-desktop/*.json
               - tools/bun/*.json

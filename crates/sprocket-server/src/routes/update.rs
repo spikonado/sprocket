@@ -34,11 +34,10 @@ async fn restart(
         .prepare_restart()
         .await
         .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
-    state
-        .host
-        .lifetime
-        .request_restart()
-        .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
+    if let Err(error) = state.host.lifetime.request_restart() {
+        state.host.package_updates.discard_restart().await;
+        return Err(ApiError::with_status(StatusCode::CONFLICT, error));
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -112,11 +112,8 @@ fn install_request(
     request.body(Body::from(body)).unwrap()
 }
 
-#[tokio::test]
-async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_runs() {
-    let helper_dir = TempDir::new();
+async fn installed_update_manager(helper_dir: &TempDir) -> (Arc<PackageUpdateManager>, PathBuf) {
     let launcher = helper_dir.0.join("bin/sprocket.js");
-    let restart_file = helper_dir.0.join("restart");
     let payload = serde_json::json!({
         "status": "installed", "currentVersion": "1.0.0", "version": "1.1.0",
         "error": null, "restartLauncher": launcher,
@@ -127,7 +124,7 @@ async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_run
     let manager = PackageUpdateManager::with_helper_and_restart_file(
         PathBuf::from("/bin/sh"),
         script,
-        restart_file.clone(),
+        helper_dir.0.join("restart"),
     );
     manager.install().await;
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -139,22 +136,46 @@ async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_run
     })
     .await
     .unwrap();
+    (manager, launcher)
+}
+
+fn restart_request(session_token: &str) -> Request<Body> {
+    let mut request = install_request(Some(session_token), Some("http://127.0.0.1:7731"), "{}");
+    *request.uri_mut() = "/api/update/restart".parse().unwrap();
+    with_peer(request, loopback_peer())
+}
+
+#[tokio::test]
+async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_runs() {
+    let helper_dir = TempDir::new();
+    let (manager, launcher) = installed_update_manager(&helper_dir).await;
     let (state, session_token, _dir) = test_state(manager).await;
     let lifetime = Arc::clone(&state.host.lifetime);
-    let app = router(state);
-    let mut request = install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}");
-    *request.uri_mut() = "/api/update/restart".parse().unwrap();
-    let response = app
-        .oneshot(with_peer(request, loopback_peer()))
+    let response = router(state)
+        .oneshot(restart_request(&session_token))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(lifetime.shutdown.is_cancelled());
     assert!(lifetime.run_guard().is_err());
     assert_eq!(
-        fs::read_to_string(restart_file).unwrap(),
+        fs::read_to_string(helper_dir.0.join("restart")).unwrap(),
         launcher.to_str().unwrap()
     );
+}
+
+#[tokio::test]
+async fn restart_rejected_during_shutdown_leaves_no_restart_file() {
+    let helper_dir = TempDir::new();
+    let (manager, _) = installed_update_manager(&helper_dir).await;
+    let (state, session_token, _dir) = test_state(manager).await;
+    state.host.lifetime.shutdown.cancel();
+    let response = router(state)
+        .oneshot(restart_request(&session_token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(!helper_dir.0.join("restart").exists());
 }
 
 #[tokio::test]
