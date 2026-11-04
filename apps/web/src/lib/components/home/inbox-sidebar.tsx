@@ -3,6 +3,7 @@ import {
 	Check,
 	ChevronDown,
 	ChevronRight,
+	CircleQuestionMark,
 	Copy,
 	FolderInput,
 	FolderPlus,
@@ -734,7 +735,8 @@ function ThreadTreeRow({
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
-	const status = inboxRunStatus(thread, summary?.waitingForInput === true);
+	const needsInput = summary?.waitingForInput === true;
+	const status = inboxRunStatus(thread, needsInput);
 	const descendantCount = summary?.descendantCount ?? 0;
 	const workingCount = summary?.workingDescendantCount ?? 0;
 
@@ -764,7 +766,10 @@ function ThreadTreeRow({
 					<span className="inbox-row-meta">
 						<span className="truncate">{projectName}</span>
 						{status && (
-							<span className={cn('inbox-status shrink-0', status.className)}>{status.label}</span>
+							<span className={cn('inbox-status shrink-0', status.className)}>
+								{needsInput && <CircleQuestionMark size={12} aria-hidden="true" />}
+								{status.label}
+							</span>
 						)}
 					</span>
 					{/* The title button's overlay makes the whole row clickable while the PR button stays outside it. */}

@@ -532,22 +532,11 @@
 	gap: 4px;
 	padding: 1px 7px;
 	border-radius: 999px;
-	background: var(--needs-input);
-	color: var(--needs-input-foreground);
+	background: var(--needs-input-soft);
+	color: var(--needs-input);
 }
 
-.inbox-needs-input::before {
-	display: grid;
-	place-items: center;
-	width: 11px;
-	height: 11px;
-	border-radius: 50%;
-	background: var(--needs-input-foreground);
-	color: var(--needs-input);
-	content: '?';
-	font-size: 9px;
-	font-weight: 700;
-	line-height: 1;
+.inbox-needs-input svg {
 	animation: inbox-needs-input-pulse 1.2s ease-in-out infinite alternate;
 }
 
@@ -558,7 +547,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.inbox-needs-input::before {
+	.inbox-needs-input svg {
 		animation: none;
 	}
 }
