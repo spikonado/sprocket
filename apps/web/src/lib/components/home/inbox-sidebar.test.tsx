@@ -447,6 +447,20 @@ it.each([
 	}
 );
 
+it('shows Needs input instead of Working while a question waits for an answer', async () => {
+	treeSummaries.set('thread', {
+		descendantCount: 0,
+		anyActive: true,
+		descendantsActive: false,
+		waitingForInput: true,
+		workingDescendantCount: 0,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+	});
+	await render([thread(false, 'running')]);
+
+	expect(document.querySelector('.inbox-row-meta .inbox-status')?.textContent).toBe('Needs input');
+});
+
 it('keeps the selected project filter styled for all projects and a single project', async () => {
 	const input = props([thread()]);
 	const view = renderView(<Harness {...input} />);
@@ -694,6 +708,7 @@ it('expands subagents from the status text without selecting the thread', async 
 		descendantCount: 5,
 		anyActive: true,
 		descendantsActive: true,
+		waitingForInput: false,
 		workingDescendantCount: 5,
 		descendantStatusCounts: { queued: 0, running: 5, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -755,6 +770,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 		descendantCount: 9,
 		anyActive: true,
 		descendantsActive: true,
+		waitingForInput: false,
 		workingDescendantCount: 2,
 		descendantStatusCounts: { queued: 0, running: 2, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -788,6 +804,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 		descendantCount: 9,
 		anyActive: true,
 		descendantsActive: true,
+		waitingForInput: false,
 		workingDescendantCount: 3,
 		descendantStatusCounts: { queued: 0, running: 3, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -804,6 +821,7 @@ it('hides starting counts while still letting starting-only trees expand', async
 		descendantCount: 2,
 		anyActive: true,
 		descendantsActive: true,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -842,6 +860,7 @@ it('shows only counted working descendants during backfill', async () => {
 		descendantCount: 5,
 		anyActive: true,
 		descendantsActive: true,
+		waitingForInput: false,
 		workingDescendantCount: 1,
 		descendantStatusCounts: { queued: 0, running: 1, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -856,6 +875,7 @@ it('uses singular for one subagent and omits the row without descendants', async
 		descendantCount: 1,
 		anyActive: false,
 		descendantsActive: false,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -871,6 +891,7 @@ it('uses singular for one subagent and omits the row without descendants', async
 		descendantCount: 0,
 		anyActive: false,
 		descendantsActive: false,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -894,6 +915,7 @@ it('renders and selects nested children with increasing indentation', async () =
 		descendantCount: 2,
 		anyActive: false,
 		descendantsActive: false,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -901,6 +923,7 @@ it('renders and selects nested children with increasing indentation', async () =
 		descendantCount: 1,
 		anyActive: false,
 		descendantsActive: false,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -952,6 +975,7 @@ it('collapses an expanded branch through the expansion control', async () => {
 		descendantCount: 1,
 		anyActive: false,
 		descendantsActive: false,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -978,6 +1002,7 @@ it('hides settle and unsettle controls for child threads', async () => {
 		descendantCount: 1,
 		anyActive: false,
 		descendantsActive: false,
+		waitingForInput: false,
 		workingDescendantCount: 0,
 		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
@@ -1040,6 +1065,7 @@ it.each([
 				descendantCount,
 				anyActive: true,
 				descendantsActive,
+				waitingForInput: false,
 				workingDescendantCount: descendantsActive ? descendantCount : 0,
 				descendantStatusCounts: {
 					queued: 0,

@@ -3,6 +3,7 @@ import {
 	Check,
 	ChevronDown,
 	ChevronRight,
+	CircleQuestionMark,
 	Copy,
 	FolderInput,
 	FolderPlus,
@@ -734,7 +735,8 @@ function ThreadTreeRow({
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
-	const status = inboxRunStatus(thread);
+	const needsInput = summary?.waitingForInput === true;
+	const status = inboxRunStatus(thread, needsInput);
 	const descendantCount = summary?.descendantCount ?? 0;
 	const workingCount = summary?.workingDescendantCount ?? 0;
 
@@ -764,7 +766,10 @@ function ThreadTreeRow({
 					<span className="inbox-row-meta">
 						<span className="truncate">{projectName}</span>
 						{status && (
-							<span className={cn('inbox-status shrink-0', status.className)}>{status.label}</span>
+							<span className={cn('inbox-status shrink-0', status.className)}>
+								{needsInput && <CircleQuestionMark size={12} aria-hidden="true" />}
+								{status.label}
+							</span>
 						)}
 					</span>
 					{/* The title button's overlay makes the whole row clickable while the PR button stays outside it. */}
@@ -886,7 +891,12 @@ function ThreadTreeRow({
 	);
 }
 
-function inboxRunStatus(thread: Thread): { label: string; className: string } | null {
+function inboxRunStatus(
+	thread: Thread,
+	waitingForInput: boolean
+): { label: string; className: string } | null {
+	if (waitingForInput) return { label: 'Needs input', className: 'inbox-needs-input' };
+
 	if (thread.status === 'queued') return { label: 'Starting', className: 'inbox-working' };
 
 	if (thread.status === 'running') return { label: 'Working', className: 'inbox-working' };

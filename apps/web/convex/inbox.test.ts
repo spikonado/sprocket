@@ -142,8 +142,13 @@ describe('thread inbox', () => {
 			return run._id;
 		});
 
+		const waitingForInput = async () =>
+			(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).waitingForInput;
+
+		expect(await waitingForInput()).toBe(true);
 		await expect(asUser.mutation(api.threads.settle, { threadId })).rejects.toThrow('active work');
 		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+		expect(await waitingForInput()).toBe(false);
 		await asUser.mutation(api.threads.settle, { threadId });
 
 		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(

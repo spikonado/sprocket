@@ -526,6 +526,32 @@
 	font-weight: 500;
 }
 
+.inbox-needs-input {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 1px 7px;
+	border-radius: 999px;
+	background: var(--needs-input-soft);
+	color: var(--needs-input);
+}
+
+.inbox-needs-input svg {
+	animation: inbox-needs-input-pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes inbox-needs-input-pulse {
+	to {
+		opacity: 0.5;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.inbox-needs-input svg {
+		animation: none;
+	}
+}
+
 .inbox-load-more {
 	padding: 10px;
 	color: var(--muted-foreground);

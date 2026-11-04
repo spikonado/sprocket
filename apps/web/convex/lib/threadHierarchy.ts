@@ -5,19 +5,25 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 
-export async function threadOwnActivity(
-	db: DatabaseReader,
-	threadId: Id<'threadRecords'>
-): Promise<boolean> {
+async function latestRunActive(db: DatabaseReader, threadId: Id<'threadRecords'>) {
 	const latest = await db
 		.query('runs')
 		.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
 		.order('desc')
 		.first();
 
-	if (latest && !isRunFinalStatus(latest.status)) return true;
+	return latest !== null && !isRunFinalStatus(latest.status);
+}
 
+async function waitingForInput(db: DatabaseReader, threadId: Id<'threadRecords'>) {
 	return (await headActionablePendingQuestion(db, threadId)) !== null;
+}
+
+export async function threadOwnActivity(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>
+): Promise<boolean> {
+	return (await latestRunActive(db, threadId)) || (await waitingForInput(db, threadId));
 }
 
 async function ancestorThreads(
@@ -193,6 +199,7 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 	const state = await hierarchyState(db, thread._id);
 	const descendantsActive = (state?.activeDescendantCount ?? 0) > 0;
 	const workingCount = state?.workingDescendantCount ?? 0;
+	const ownWaitingForInput = await waitingForInput(db, thread._id);
 
 	return {
 		descendantCount: state?.descendantCount ?? 0,
@@ -204,8 +211,9 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 			failed: 0,
 			cancelled: 0
 		},
-		anyActive: descendantsActive || (await threadOwnActivity(db, thread._id)),
-		descendantsActive
+		anyActive: descendantsActive || ownWaitingForInput || (await latestRunActive(db, thread._id)),
+		descendantsActive,
+		waitingForInput: ownWaitingForInput
 	};
 }
 

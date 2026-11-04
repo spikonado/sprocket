@@ -61,7 +61,8 @@ describe('thread hierarchy', () => {
 			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: false,
-			descendantsActive: false
+			descendantsActive: false,
+			waitingForInput: false
 		});
 
 		const before = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
@@ -86,14 +87,16 @@ describe('thread hierarchy', () => {
 			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: true,
-			descendantsActive: true
+			descendantsActive: true,
+			waitingForInput: false
 		});
 		expect(await summary(t, children[0])).toEqual({
 			descendantCount: 1,
 			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
-			descendantsActive: true
+			descendantsActive: true,
+			waitingForInput: false
 		});
 		const after = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(after?.archivedAt).toBeUndefined();
@@ -296,7 +299,8 @@ describe('thread hierarchy', () => {
 			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 8, failed: 0, cancelled: 0 },
 			anyActive: false,
-			descendantsActive: false
+			descendantsActive: false,
+			waitingForInput: false
 		});
 		await expect(asUser.mutation(api.threads.settle, { threadId: children[0] })).rejects.toThrow(
 			/root/
@@ -323,7 +327,8 @@ describe('thread hierarchy', () => {
 			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
-			descendantsActive: false
+			descendantsActive: false,
+			waitingForInput: false
 		});
 	});
 
@@ -369,7 +374,8 @@ describe('thread hierarchy', () => {
 			workingDescendantCount: 1,
 			descendantStatusCounts: { queued: 0, running: 1, completed: 4, failed: 0, cancelled: 0 },
 			anyActive: true,
-			descendantsActive: true
+			descendantsActive: true,
+			waitingForInput: false
 		});
 		expect((await summary(t, queued)).workingDescendantCount).toBe(1);
 		expect((await summary(t, running)).workingDescendantCount).toBe(0);
@@ -406,7 +412,8 @@ describe('thread hierarchy', () => {
 			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 5, failed: 0, cancelled: 0 },
 			anyActive: false,
-			descendantsActive: false
+			descendantsActive: false,
+			waitingForInput: false
 		});
 
 		const beforeTerminalTransition = await t.run((ctx) =>
