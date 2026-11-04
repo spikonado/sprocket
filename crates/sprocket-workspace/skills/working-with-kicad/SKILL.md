@@ -34,6 +34,12 @@ Use `kicad-cli` for checks and exports.
   Add hidden `Digikey Part #`, `Mouser Part #`, `LCSC Part #`, and `JLCPCB Part #` fields for each distributor that stocks the part.
 - Move fields and symbols until no text overlaps another symbol, field, or label in the rendered schematic.
 
+## Manufacturer constraints
+
+Before laying out a board, ask the user which manufacturer and service tier they will order from, and read its capabilities page.
+Write its minimums with `board.set_design_rules()`, which saves them to Board Setup → Constraints in the `.kicad_pro`.
+Keep net class widths and clearances at or above them.
+
 ## Designing the silkscreen
 
 - Hide reference designators on the silkscreen.
