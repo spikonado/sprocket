@@ -5,6 +5,7 @@ use sprocket_workspace::WorkspaceCancellation;
 struct LifetimeState {
     active_runs: usize,
     accepting: bool,
+    restarting: bool,
 }
 
 pub struct HostLifetime {
@@ -19,6 +20,7 @@ impl HostLifetime {
             state: Mutex::new(LifetimeState {
                 active_runs: 0,
                 accepting: true,
+                restarting: false,
             }),
         })
     }
@@ -39,10 +41,14 @@ impl HostLifetime {
 
     pub fn request_restart(&self) -> anyhow::Result<()> {
         let mut state = self.state.lock().unwrap();
+        if state.restarting {
+            return Ok(());
+        }
         anyhow::ensure!(
             state.accepting && !self.shutdown.is_cancelled(),
             "Sprocket is already shutting down."
         );
+        state.restarting = true;
         state.accepting = false;
         self.shutdown.cancel();
         Ok(())
