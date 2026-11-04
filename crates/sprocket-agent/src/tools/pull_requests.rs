@@ -31,6 +31,7 @@ pub(crate) struct PollPrTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LinkPrsArgs {
+    #[schemars(length(min = 1))]
     pub(crate) pull_requests: Vec<LinkedPr>,
 }
 
@@ -49,7 +50,7 @@ impl rig::tool::Tool for LinkPrsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Link pull requests you are working on to this thread".to_string()
+        "Link pull requests you are working on to this thread.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -116,7 +117,7 @@ async fn link(
         .runtime
         .mutation_unit("pullRequests:link", args)
         .await?;
-    Ok(json!("Linked."))
+    Ok(json!({}))
 }
 
 /// GitHub matches repositories case-insensitively, so one spelling keeps
@@ -131,10 +132,10 @@ fn pull_request_ref(repository: &str, number: u32) -> PullRequestRef {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PollPrArgs {
-    /// Repository the PR was opened against, as `github.com/owner/name`.
+    /// Repository the PR was opened against, as `github.com/owner/name`. For GitHub Enterprise, use its host instead of `github.com`.
     repository: String,
     number: u32,
-    /// The `cursor` from your last poll of this PR, so only later news counts. Omit it on your first poll.
+    /// From your last poll_pr of this PR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cursor: Option<String>,
     #[serde(
@@ -222,19 +223,26 @@ fn poll_pr_output(activity: &Activity, report: &Report) -> anyhow::Result<serde_
             .checks
             .iter()
             .filter(move |check| check.outcome == outcome)
+            .collect::<Vec<_>>()
     };
     let mut output = json!({
         "changes": report.changes,
         "cursor": URL_SAFE_NO_PAD.encode(serde_json::to_vec(&report.next)?),
         "state": activity.state,
-        "headSha": activity.head_sha,
-        "conflicting": activity.conflicting,
-        "checks": {
-            "passed": checks(CheckOutcome::Passed).count(),
-            "pending": checks(CheckOutcome::Pending).collect::<Vec<_>>(),
-            "failed": checks(CheckOutcome::Failed).collect::<Vec<_>>(),
-        },
+        "checks": { "passed": checks(CheckOutcome::Passed).len() },
     });
+    if activity.conflicting == Some(true) {
+        output["conflicting"] = json!(true);
+    }
+    for (key, outcome) in [
+        ("pending", CheckOutcome::Pending),
+        ("failed", CheckOutcome::Failed),
+    ] {
+        let listed = checks(outcome);
+        if !listed.is_empty() {
+            output["checks"][key] = json!(listed);
+        }
+    }
     if !report.new_remarks.is_empty() {
         output["newComments"] = json!(
             report
