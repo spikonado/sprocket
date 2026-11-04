@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkId } from '@convex-dev/workpool';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { initConvexTest, tickPastLastCommit, type ConvexTestInstance } from './test.setup';
+import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
+import { CLEANUP_BATCH_SIZE, MAX_ATTEMPTS } from './billingWebhook';
+import {
+	initConvexTest,
+	seedTiers,
+	tickPastLastCommit,
+	type ConvexTestInstance
+} from './test.setup';
 import { drainWebhookJobs } from './billingWebhook.test.setup';
-
-const UNITS_PER_DOLLAR = 1_000_000_000;
 
 const HOUR = 60 * 60 * 1_000;
 
@@ -16,29 +21,6 @@ const userId = 'user_webhook';
 const termStart = Date.UTC(2026, 0, 15, 12);
 
 const termEnd = Date.UTC(2026, 1, 15, 12);
-
-async function seedTiers(t: ConvexTestInstance): Promise<void> {
-	await t.run(async (ctx) => {
-		await ctx.db.insert('tiers', {
-			tierId: 'free',
-			label: 'Free',
-			monthly: 15 * UNITS_PER_DOLLAR
-		});
-		await ctx.db.insert('tiers', {
-			tierId: 'pro',
-			label: 'Pro',
-			monthlyProductId: 'prod_pro',
-			annualProductId: 'prod_pro_annual',
-			monthly: 75 * UNITS_PER_DOLLAR
-		});
-		await ctx.db.insert('tiers', {
-			tierId: 'max',
-			label: 'Max',
-			monthlyProductId: 'prod_max',
-			monthly: 500 * UNITS_PER_DOLLAR
-		});
-	});
-}
 
 type SubscriptionDataOverrides = {
 	subscription_id?: string;
@@ -396,7 +378,7 @@ describe('durable webhook ingestion and projection', () => {
 			ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				monthly: 75 * UNITS_PER_DOLLAR,
+				monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthlyProductId: 'prod_team'
 			})
 		);
@@ -681,9 +663,7 @@ describe('durable webhook ingestion and projection', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 
-		// A zero-length term makes the projection upsert throw after validation.
-		// Modify the data field (next_billing_date), not the envelope.
-		const broken = subscriptionData({
+		const zeroLengthTerm = subscriptionData({
 			previous_billing_date: new Date(termStart).toISOString(),
 			next_billing_date: new Date(termStart).toISOString()
 		});
@@ -693,10 +673,10 @@ describe('durable webhook ingestion and projection', () => {
 			eventType: 'subscription.active',
 			eventAt: termStart,
 			subscriptionId: 'sub_1',
-			payload: envelope('subscription.active', termStart, broken)
+			payload: envelope('subscription.active', termStart, zeroLengthTerm)
 		});
 
-		for (let attempt = 1; attempt <= 5; attempt++) {
+		for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 			await expect(t.mutation(internal.billingWebhook.processEvent, { eventId })).rejects.toThrow(
 				'positive duration'
 			);
@@ -712,7 +692,7 @@ describe('durable webhook ingestion and projection', () => {
 			const event = await requireEvent(t, eventId);
 			expect(event.attempts).toBe(attempt);
 
-			if (attempt < 5) {
+			if (attempt < MAX_ATTEMPTS) {
 				expect(event.outcome).toBe('pending');
 				expect(event.nextAttemptAt).toBeGreaterThan(Date.now());
 				expect(event.outcomeDetail).toBe('Processing failed; retry scheduled.');
@@ -898,8 +878,7 @@ describe('durable webhook ingestion and projection', () => {
 		const now = Date.now();
 		const agedReceivedAt = now - 20 * DAY;
 
-		// 55 fresh rows fill more than the first cleanup batch (50).
-		for (let index = 0; index < 55; index++) {
+		for (let index = 0; index < CLEANUP_BATCH_SIZE + 5; index++) {
 			await recordEvent(t, {
 				webhookId: `wh_fresh_${index}`,
 				eventType: 'subscription.active',
@@ -909,9 +888,7 @@ describe('durable webhook ingestion and projection', () => {
 			});
 		}
 
-		// One aged row (past the dedup horizon) lands AFTER the fresh rows in
-		// ingestion order, so the first batch of 50 never reaches it.
-		const oldId = await recordEvent(t, {
+		const agedTailId = await recordEvent(t, {
 			webhookId: 'wh_cursor_old',
 			eventType: 'subscription.active',
 			eventAt: termStart,
@@ -919,18 +896,17 @@ describe('durable webhook ingestion and projection', () => {
 			payload: envelope('subscription.active', termStart, subscriptionData())
 		});
 
-		await t.run((ctx) => ctx.db.patch('dodoWebhookEvents', oldId, { receivedAt: agedReceivedAt }));
+		await t.run((ctx) =>
+			ctx.db.patch('dodoWebhookEvents', agedTailId, { receivedAt: agedReceivedAt })
+		);
 
-		// First run scans the 50 fresh rows, skips them (all fresh), and advances
-		// the cursor past them without touching the aged tail row (seq 55, beyond
-		// the first batch of seq 0-49).
 		tickPastLastCommit();
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});
-		expect(await readEvent(t, oldId)).not.toBeNull();
+		expect(await readEvent(t, agedTailId)).not.toBeNull();
 
 		await vi.advanceTimersByTimeAsync(1_000);
 		await t.finishInProgressScheduledFunctions();
-		expect(await readEvent(t, oldId)).toBeNull();
+		expect(await readEvent(t, agedTailId)).toBeNull();
 
 		vi.setSystemTime(now + 15 * DAY);
 		await t.mutation(internal.billingWebhook.cleanupEvents, {});

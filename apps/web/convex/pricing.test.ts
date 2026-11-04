@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
+import {
+	DODO_FETCH_BUDGET_PER_OPERATION,
+	DODO_FETCH_CONCURRENCY,
+	DODO_PRICE_TRANSIENT_RETRY_MS
+} from './pricing';
 import { initConvexTest } from './test.setup';
 
 const ENV_KEYS = ['DODO_PAYMENTS_API_KEY', 'DODO_PAYMENTS_ENVIRONMENT'] as const;
@@ -72,8 +77,7 @@ describe('public pricing catalog', () => {
 
 			if (failure === 'request') {
 				recovered = true;
-				// Advance past the 30s transient backoff so the lease allows a retry.
-				vi.setSystemTime(Date.now() + 31_000);
+				vi.setSystemTime(Date.now() + DODO_PRICE_TRANSIENT_RETRY_MS + 1_000);
 				const recoveredCatalog = await t.action(api.pricing.getPublicCatalog, {});
 
 				expect(
@@ -210,7 +214,6 @@ describe('public pricing catalog', () => {
 				annualProductId: 'prod_team_annual'
 			});
 
-			// Write the legacy aggregate row directly to simulate old data.
 			const tierPrices = [
 				{
 					tierId: 'team',
@@ -399,10 +402,8 @@ describe('public pricing catalog', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const t = initConvexTest();
 
-		// 12 distinct cold products; the per-operation fetch budget (8) means
-		// at most 8 provider fetches happen, and the other 4 stay unfetched.
 		await t.run(async (ctx) => {
-			for (let i = 0; i < 12; i++) {
+			for (let i = 0; i < DODO_FETCH_BUDGET_PER_OPERATION + 4; i++) {
 				await ctx.db.insert('tiers', {
 					tierId: `tier_${i}`,
 					label: `Tier ${i}`,
@@ -451,7 +452,7 @@ describe('public pricing catalog', () => {
 		const pendingCatalog = t.action(api.pricing.getPublicCatalog, {});
 
 		await vi.waitFor(() => {
-			expect(activeFetches).toBe(4);
+			expect(activeFetches).toBe(DODO_FETCH_CONCURRENCY);
 		});
 
 		while (gates.size > 0) {
@@ -464,14 +465,14 @@ describe('public pricing catalog', () => {
 			gates.get(openGate)?.();
 			gates.delete(openGate);
 
-			if (fetchedBeforeRelease < 8) {
+			if (fetchedBeforeRelease < DODO_FETCH_BUDGET_PER_OPERATION) {
 				await vi.waitFor(() => {
 					expect(fetched.length).toBe(fetchedBeforeRelease + 1);
 					expect(activeFetches).toBe(inFlightBeforeRelease);
 				});
 			} else {
 				await vi.waitFor(() => {
-					expect(fetched.length).toBe(8);
+					expect(fetched.length).toBe(DODO_FETCH_BUDGET_PER_OPERATION);
 					expect(activeFetches).toBe(inFlightBeforeRelease - 1);
 				});
 			}
@@ -479,11 +480,11 @@ describe('public pricing catalog', () => {
 
 		const catalog = await pendingCatalog;
 
-		expect(fetched.length).toBe(8);
-		expect(maxActiveFetches).toBe(4);
+		expect(fetched.length).toBe(DODO_FETCH_BUDGET_PER_OPERATION);
+		expect(maxActiveFetches).toBe(DODO_FETCH_CONCURRENCY);
 
 		const withPrices = catalog.plans.filter((plan) => plan.prices.monthly !== null);
-		expect(withPrices.length).toBe(8);
+		expect(withPrices.length).toBe(DODO_FETCH_BUDGET_PER_OPERATION);
 	});
 
 	it('enforces the durable global refresh budget across instances', async () => {

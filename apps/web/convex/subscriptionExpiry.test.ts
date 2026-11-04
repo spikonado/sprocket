@@ -3,7 +3,7 @@ import { api, internal } from '@convex/_generated/api';
 import type { FunctionArgs } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
-import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
+import { initConvexTest, insertUser, seedTiers, type ConvexTestInstance } from './test.setup';
 
 const now = Date.UTC(2026, 5, 15, 12);
 
@@ -30,18 +30,6 @@ function paidSubscription(
 		cancelAtNextBillingDate: false,
 		...overrides
 	};
-}
-
-async function seedTiers(t: ConvexTestInstance): Promise<void> {
-	await t.run(async (ctx) => {
-		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 15 });
-		await ctx.db.insert('tiers', {
-			tierId: 'pro',
-			label: 'Pro',
-			monthly: 75,
-			monthlyProductId: 'prod_pro'
-		});
-	});
 }
 
 function readSubscription(t: ConvexTestInstance) {

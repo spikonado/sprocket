@@ -13,6 +13,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import type { FunctionArgs } from 'convex/server';
 import { abandonRunRecord } from '@convex/lib/runFinalize';
 import { getRunWithExecution } from '@convex/lib/runExecution';
+import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import schema from './schema';
 
 export const modules = import.meta.glob([
@@ -59,6 +60,29 @@ export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: s
 		tokenIdentifier: subject,
 		email: `${subject}@example.com`,
 		dodoCustomerId
+	});
+}
+
+export async function seedTiers(t: ConvexTestInstance): Promise<void> {
+	await t.run(async (ctx) => {
+		await ctx.db.insert('tiers', {
+			tierId: 'free',
+			label: 'Free',
+			monthly: 15 * MODEL_USAGE_UNITS_PER_DOLLAR
+		});
+		await ctx.db.insert('tiers', {
+			tierId: 'pro',
+			label: 'Pro',
+			monthlyProductId: 'prod_pro',
+			annualProductId: 'prod_pro_annual',
+			monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR
+		});
+		await ctx.db.insert('tiers', {
+			tierId: 'max',
+			label: 'Max',
+			monthlyProductId: 'prod_max',
+			monthly: 500 * MODEL_USAGE_UNITS_PER_DOLLAR
+		});
 	});
 }
 

@@ -508,8 +508,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			status: 'failed',
 			lastError: 'The machine stopped responding before this run finished.'
 		});
-		// Aborted terminal text is not preserved: only runs and transcript
-		// parts written by completed model calls hold response content.
 	});
 
 	it('rejects a new submission while the latest run holds an active claim', async () => {

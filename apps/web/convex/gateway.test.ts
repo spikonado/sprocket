@@ -1,39 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
-import type { ConvexTestInstance } from './test.setup';
+import { createQueuedRun, initConvexTest, seedOwnedThread, seedTiers } from './test.setup';
 
 const gatewayUrl = 'https://preview.gateway.example';
 
 const tokenSecret = 'test-gateway-token-secret';
-
-const UNITS_PER_DOLLAR = 1_000_000_000;
-
-async function seedTiers(t: ConvexTestInstance): Promise<void> {
-	await t.run(async (ctx) => {
-		const tiers = [
-			{
-				tierId: 'free',
-				label: 'Free',
-				monthly: 15 * UNITS_PER_DOLLAR
-			},
-			{
-				tierId: 'pro',
-				label: 'Pro',
-				monthly: 75 * UNITS_PER_DOLLAR
-			},
-			{
-				tierId: 'max',
-				label: 'Max',
-				monthly: 500 * UNITS_PER_DOLLAR
-			}
-		];
-
-		for (const tier of tiers) {
-			await ctx.db.insert('tiers', tier);
-		}
-	});
-}
 
 describe('gateway quota', () => {
 	beforeEach(() => {

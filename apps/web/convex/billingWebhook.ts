@@ -31,7 +31,7 @@ const PAYLOAD_RETENTION_MS = 48 * 60 * 60 * 1_000;
 
 const MAX_PAYLOAD_BYTES = 256 * 1_024;
 
-const MAX_ATTEMPTS = 5;
+export const MAX_ATTEMPTS = 5;
 
 const BASE_BACKOFF_MS = 30 * 1_000;
 
@@ -39,7 +39,7 @@ const MAX_BACKOFF_MS = 10 * 60 * 1_000;
 
 const RETRY_BATCH_SIZE = 10;
 
-const CLEANUP_BATCH_SIZE = 50;
+export const CLEANUP_BATCH_SIZE = 50;
 
 const subscriptionDataSchema = z.object({
 	payload_type: z.literal('Subscription'),
