@@ -1139,7 +1139,7 @@ impl ChatGptCredentials for UserCredentials {
         let service = Arc::clone(&self.service);
         let user = self.user.clone();
         Box::pin(async move {
-            tokio::spawn(async move { service.access(&user).await })
+            crate::run_to_completion(async move { service.access(&user).await })
                 .await
                 .context("ChatGPT refresh task stopped.")?
         })

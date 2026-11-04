@@ -21,7 +21,7 @@ async fn installs_the_pinned_version_into_bin_and_prunes_others() {
     let releases = serde_json::json!({
         "version": "1.0.0",
         "platforms": {
-            platform().unwrap(): {
+            release_platform().unwrap(): {
                 "url": url,
                 "bytes": payload.len(),
                 "sha256": hex::encode(Sha256::digest(payload)),

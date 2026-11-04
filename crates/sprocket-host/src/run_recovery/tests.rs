@@ -31,8 +31,8 @@ async fn reload_preserves_capability_and_budget_but_releases_live_reservations()
     let next = record()
         .continuation("failed".into(), "thread".into())
         .unwrap();
-    let (_guard, _) = store.begin(next.clone(), false).await.unwrap();
-    assert!(store.track(next.key(), true).is_none());
+    let (_guard, _) = store.begin(next.clone(), RunOwner::Host).await.unwrap();
+    assert!(store.reserve_exclusive(next.key()).is_none());
     let reloaded = RunRecovery::load(directory.path()).unwrap();
     let saved = reloaded
         .saved("alice", &next.request.submission_id)
@@ -52,7 +52,7 @@ async fn reload_preserves_capability_and_budget_but_releases_live_reservations()
     assert_eq!(saved.request.workspace_path, "/work");
     assert_eq!(saved.request.reasoning_effort, "high");
     assert!(saved.request.fast_mode);
-    assert!(reloaded.track(next.key(), true).is_some());
+    assert!(reloaded.reserve_exclusive(next.key()).is_some());
 }
 
 #[tokio::test]
@@ -68,8 +68,8 @@ async fn overlapping_submissions_launch_with_the_persisted_capability() {
         second.request.execution_secret = supplied_secrets.then(|| "second".into());
         second.recoveries = 0;
         let (first_launch, second_launch) = tokio::join!(
-            store.begin(first.clone(), false),
-            store.begin(second, false)
+            store.begin(first.clone(), RunOwner::Host),
+            store.begin(second, RunOwner::Host)
         );
         let (first_guard, first_saved) = first_launch.unwrap();
         let (second_guard, second_saved) = second_launch.unwrap();
@@ -89,23 +89,26 @@ async fn overlapping_submissions_launch_with_the_persisted_capability() {
         );
         assert_eq!(first_saved.recoveries, persisted.recoveries);
         assert_eq!(second_saved.recoveries, persisted.recoveries);
-        assert!(store.track(first.key(), true).is_none());
+        assert!(store.reserve_exclusive(first.key()).is_none());
         drop(first_guard);
-        assert!(store.track(first.key(), true).is_none());
+        assert!(store.reserve_exclusive(first.key()).is_none());
         drop(second_guard);
-        assert!(store.track(first.key(), true).is_some());
+        assert!(store.reserve_exclusive(first.key()).is_some());
     }
 }
 
 #[tokio::test]
-async fn client_bound_runs_never_enter_the_recovery_journal() {
+async fn client_owned_runs_never_enter_the_recovery_journal() {
     let directory = tempfile::tempdir().unwrap();
     let store = RunRecovery::load(directory.path()).unwrap();
     let mut candidate = record();
     candidate.workspace_access = WorkspaceAccess::RunDirectory;
     candidate.allow_interaction = false;
     candidate.request.execution_secret = None;
-    let (guard, prepared) = store.begin(candidate.clone(), true).await.unwrap();
+    let (guard, prepared) = store
+        .begin(candidate.clone(), RunOwner::Client)
+        .await
+        .unwrap();
     assert!(guard.is_none());
     assert!(prepared.request.execution_secret.is_some());
     assert!(store.records.lock().await.is_empty());
@@ -120,7 +123,7 @@ async fn client_bound_runs_never_enter_the_recovery_journal() {
             .is_empty()
     );
     candidate.allow_interaction = true;
-    let (guard, _) = store.begin(candidate, false).await.unwrap();
+    let (guard, _) = store.begin(candidate, RunOwner::Host).await.unwrap();
     assert!(guard.is_some());
     assert_eq!(store.records.lock().await.len(), 1);
 }
@@ -132,9 +135,9 @@ async fn dropping_a_caller_does_not_interrupt_the_disk_and_memory_commit() {
     let held = store.records.lock().await;
     let writer = tokio::spawn({
         let store = Arc::clone(&store);
-        async move { store.begin(record(), false).await }
+        async move { store.begin(record(), RunOwner::Host).await }
     });
-    // Let begin reserve its submission and enqueue the detached update
+    // Let begin reserve its submission and enqueue the detached insert
     // behind our held lock before cancelling the requesting task.
     tokio::task::yield_now().await;
     tokio::task::yield_now().await;
@@ -158,7 +161,7 @@ async fn replacement_is_durable_and_recovery_is_bounded() {
     let directory = tempfile::tempdir().unwrap();
     let store = RunRecovery::load(directory.path()).unwrap();
     let original = record();
-    drop(store.begin(original.clone(), false).await.unwrap());
+    drop(store.begin(original.clone(), RunOwner::Host).await.unwrap());
     let mut next = original.clone();
     for _ in 0..MAX_RECOVERIES {
         next = next.continuation("failed".into(), "thread".into()).unwrap();

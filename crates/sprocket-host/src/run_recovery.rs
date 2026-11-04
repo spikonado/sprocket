@@ -97,6 +97,14 @@ impl Drop for ActiveRun {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RunOwner {
+    /// The CLI awaits the run's result and controls its cancellation, so a
+    /// recovered continuation could not stand in for it.
+    Client,
+    Host,
+}
+
 impl RunRecovery {
     pub fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
         let path = data_dir.join("run-recovery.json");
@@ -115,45 +123,60 @@ impl RunRecovery {
         }))
     }
 
-    // The guard outlives the detached executor. Duplicate HTTP submissions may
-    // reconcile the same run; Convex still allows only one executor claim.
     pub async fn begin(
         self: &Arc<Self>,
         mut record: RecoveryRecord,
-        client_bound: bool,
+        owner: RunOwner,
     ) -> anyhow::Result<(Option<ActiveRun>, RecoveryRecord)> {
-        // CLI runs report a final result to their client and use that client's
-        // cancellation token. A detached continuation would lose both, so
-        // these runs must never enter the persistent recovery journal.
-        if client_bound {
+        if owner == RunOwner::Client {
             record
                 .request
                 .execution_secret
                 .get_or_insert_with(new_execution_secret);
             return Ok((None, record));
         }
-        let key = record.key();
-        let guard = self
-            .track(key.clone(), false)
-            .expect("shared run reservation");
-        // A caller retry must retain the original capability and retry budget.
-        let saved = self
-            .update(key, Some(record), true)
-            .await?
-            .expect("begin saves a recovery record");
+        let guard = self.share(record.key());
+        let saved = self.insert_if_absent(record).await?;
         Ok((Some(guard), saved))
     }
 
-    fn track(&self, key: String, exclusive: bool) -> Option<ActiveRun> {
+    fn share(&self, key: String) -> ActiveRun {
+        *self.active.lock().unwrap().entry(key.clone()).or_default() += 1;
+        ActiveRun {
+            key,
+            active: Arc::clone(&self.active),
+        }
+    }
+
+    fn reserve_exclusive(&self, key: String) -> Option<ActiveRun> {
         let mut active = self.active.lock().unwrap();
-        if exclusive && active.contains_key(&key) {
+        if active.contains_key(&key) {
             return None;
         }
-        *active.entry(key.clone()).or_default() += 1;
+        active.insert(key.clone(), 1);
         Some(ActiveRun {
             key,
             active: Arc::clone(&self.active),
         })
+    }
+
+    async fn insert_if_absent(
+        self: &Arc<Self>,
+        record: RecoveryRecord,
+    ) -> anyhow::Result<RecoveryRecord> {
+        let store = Arc::clone(self);
+        crate::run_to_completion(async move {
+            let mut records = store.records.lock().await;
+            if let Some(saved) = records.get(&record.key()) {
+                return anyhow::Ok(saved.clone());
+            }
+            let mut next = records.clone();
+            let saved = insert_with_capability(&mut next, record)?;
+            store.persist(&next).await?;
+            *records = next;
+            anyhow::Ok(saved)
+        })
+        .await?
     }
 
     async fn replace(
@@ -161,46 +184,18 @@ impl RunRecovery {
         key: &str,
         replacement: Option<RecoveryRecord>,
     ) -> anyhow::Result<()> {
-        self.update(key.to_string(), replacement, false)
-            .await
-            .map(|_| ())
-    }
-
-    async fn update(
-        self: &Arc<Self>,
-        key: String,
-        replacement: Option<RecoveryRecord>,
-        only_if_absent: bool,
-    ) -> anyhow::Result<Option<RecoveryRecord>> {
         let store = Arc::clone(self);
-        // Keep the lock through both the disk write and memory commit even if
-        // the requesting HTTP handler or recovery worker is dropped.
-        tokio::spawn(async move {
+        let key = key.to_string();
+        crate::run_to_completion(async move {
             let mut records = store.records.lock().await;
-            if only_if_absent && let Some(saved) = records.get(&key) {
-                return anyhow::Ok(Some(saved.clone()));
-            }
             let mut next = records.clone();
-            if !only_if_absent {
-                next.remove(&key);
+            next.remove(&key);
+            if let Some(record) = replacement {
+                insert_with_capability(&mut next, record)?;
             }
-            let saved = if let Some(mut record) = replacement {
-                if !next.contains_key(&record.key()) && next.len() >= MAX_RECORDS {
-                    anyhow::bail!("Too many runs awaiting recovery.");
-                }
-                // Select the capability while holding the journal lock, and
-                // return this same persisted value to every overlapping launch.
-                record
-                    .request
-                    .execution_secret
-                    .get_or_insert_with(new_execution_secret);
-                Some(next.entry(record.key()).or_insert(record).clone())
-            } else {
-                None
-            };
             store.persist(&next).await?;
             *records = next;
-            anyhow::Ok(saved)
+            anyhow::Ok(())
         })
         .await?
     }
@@ -211,6 +206,20 @@ impl RunRecovery {
         tokio::task::spawn_blocking(move || crate::profile::write_private_file(&path, &bytes))
             .await?
     }
+}
+
+fn insert_with_capability(
+    records: &mut BTreeMap<String, RecoveryRecord>,
+    mut record: RecoveryRecord,
+) -> anyhow::Result<RecoveryRecord> {
+    if !records.contains_key(&record.key()) && records.len() >= MAX_RECORDS {
+        anyhow::bail!("Too many runs awaiting recovery.");
+    }
+    record
+        .request
+        .execution_secret
+        .get_or_insert_with(new_execution_secret);
+    Ok(records.entry(record.key()).or_insert(record).clone())
 }
 
 #[derive(Deserialize)]
@@ -229,7 +238,7 @@ enum RecoveryState {
 
 async fn recover_one(host: &Host, record: RecoveryRecord) -> anyhow::Result<()> {
     let key = record.key();
-    let Some(reservation) = host.run_recovery.track(key.clone(), true) else {
+    let Some(reservation) = host.run_recovery.reserve_exclusive(key.clone()) else {
         return Ok(());
     };
     if crate::now_ms().saturating_sub(record.created_at) >= MAX_AGE_MS {

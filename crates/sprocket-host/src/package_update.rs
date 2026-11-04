@@ -207,8 +207,7 @@ impl PackageUpdateManager {
         wait_for_snapshot(&mut wait.clone()).await
     }
 
-    /// Yields the current snapshot, then every change. While the stream is
-    /// held, it re-runs the freshness check that `status` performs.
+    /// While the stream is held, it re-runs the freshness check that `status` performs.
     pub fn watch(self: &Arc<Self>) -> BoxStream<'static, PackageUpdateSnapshot> {
         let mut changes = self.changes.subscribe();
         changes.mark_changed();
@@ -457,11 +456,17 @@ struct UpdateProcessGroup(Option<u32>);
 impl Drop for UpdateProcessGroup {
     fn drop(&mut self) {
         if let Some(pid) = self.0 {
-            // SAFETY: the update helper owns this group; canceling its task must also stop its children.
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
+            kill_process_group(pid);
         }
+    }
+}
+
+#[cfg(unix)]
+fn kill_process_group(leader: u32) {
+    // SAFETY: kill has no memory preconditions. spawn_helper makes the helper
+    // lead its own group, so this reaches only the helper and its children.
+    unsafe {
+        libc::kill(-(leader as i32), libc::SIGKILL);
     }
 }
 
@@ -513,10 +518,7 @@ fn spawn_helper(
 async fn kill_helper(child: &mut tokio::process::Child, pid: Option<u32>) {
     #[cfg(unix)]
     if let Some(pid) = pid {
-        // SAFETY: spawn_helper makes the child the leader of its own process group.
-        unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
-        }
+        kill_process_group(pid);
     }
     #[cfg(windows)]
     if let (Some(pid), Some(system_root)) = (pid, std::env::var_os("SystemRoot")) {

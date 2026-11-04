@@ -18,8 +18,7 @@ pub(crate) const INSTALL_LOCK: &str = "install.lock";
 const LEASE_LOCK: &str = "in-use.lock";
 const TOMBSTONE_SUFFIX: &str = ".removing";
 
-/// Unpacks the verified download at the first path into the empty directory at the second.
-pub(crate) type Unpack = fn(&Path, &Path) -> anyhow::Result<()>;
+pub(crate) type Unpack = fn(verified_download: &Path, empty_dir: &Path) -> anyhow::Result<()>;
 
 pub(crate) struct PinnedTool {
     name: &'static str,
@@ -80,7 +79,7 @@ impl PinnedTool {
         let asset = self
             .release
             .platforms
-            .get(platform()?)
+            .get(release_platform()?)
             .with_context(|| format!("missing pinned {name} release"))?;
         let version_dir = self.version_dir();
         tokio::fs::create_dir_all(&version_dir).await?;
@@ -112,8 +111,7 @@ impl PinnedTool {
     }
 }
 
-/// The platform keys of every `releases.json`.
-pub(crate) fn platform() -> anyhow::Result<&'static str> {
+pub(crate) fn release_platform() -> anyhow::Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("darwin-arm64"),
         ("macos", "x86_64") => Ok("darwin-x64"),

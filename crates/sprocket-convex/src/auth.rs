@@ -14,8 +14,7 @@ use tokio::task::JoinHandle;
 use crate::{AuthSignedOut, AuthTokenFetcher};
 
 const REFRESH_LEEWAY_SECS: u64 = 10;
-/// Matches Convex JS: tokens shorter than this cannot be rescheduled.
-const MIN_TOKEN_LIFETIME_SECS: u64 = 2;
+const MIN_SCHEDULABLE_TOKEN_LIFETIME_SECS: u64 = 2;
 /// Matches Convex JS `MAXIMUM_REFRESH_DELAY` (setTimeout's 32-bit cap).
 const MAXIMUM_REFRESH_DELAY: Duration = Duration::from_secs(20 * 24 * 60 * 60);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -332,7 +331,7 @@ fn refresh_delay_for_token(token: &str, now: SystemTime) -> Option<Duration> {
 
 fn refresh_delay(lifetime: JwtLifetime, now: SystemTime) -> Option<Duration> {
     let full_secs = lifetime.exp.saturating_sub(lifetime.iat);
-    if full_secs <= MIN_TOKEN_LIFETIME_SECS {
+    if full_secs <= MIN_SCHEDULABLE_TOKEN_LIFETIME_SECS {
         return None;
     }
     let now_secs = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
