@@ -25,7 +25,7 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	list_subagents: { verb: 'listed', noun: 'subagent group' },
 	list_subagent_models: { verb: 'listed', noun: 'model group' },
 	ask_question: { verb: 'asked', noun: 'question' },
-	add_artifact: { verb: 'created', noun: 'artifact' },
+	add_artifact: { verb: 'added', noun: 'artifact' },
 	edit_artifact: { verb: 'updated', noun: 'artifact' },
 	save_artifact: { verb: 'saved', noun: 'artifact' },
 	delete_artifact: { verb: 'deleted', noun: 'artifact' },

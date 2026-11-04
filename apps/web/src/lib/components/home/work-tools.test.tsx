@@ -125,7 +125,7 @@ describe('tool rows', () => {
 			'$agent-browser',
 			'https://react.dev',
 			'React reference',
-			'Created Artifact:notes.md',
+			'Added Artifact:notes.md',
 			'Updated Artifact:notes.md',
 			'Saved Artifact:notes.md',
 			'Deleted Artifact:notes.md',

@@ -392,7 +392,7 @@ describe('transcript viewport paging', () => {
 				expect(viewport.textContent).toContain(`file-${index}.txt`);
 			}
 
-			expect(viewport.textContent).toContain('Created Artifact:notes.md');
+			expect(viewport.textContent).toContain('Added Artifact:notes.md');
 			expect(viewport.textContent).toContain('Listed Artifacts');
 			expect(viewport.textContent).toContain('Updated Artifact:notes.md');
 			click(within(viewport).getByRole('button', { name: 'Reasoned' }));

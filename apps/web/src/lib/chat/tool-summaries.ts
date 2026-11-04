@@ -45,6 +45,7 @@ export function toolItemLabel(toolKey: string): string | undefined {
 		case 'check_docs':
 			return 'Checked Docs';
 		case 'add_artifact':
+			return 'Added Artifact';
 		case 'create_artifact':
 			return 'Created Artifact';
 		case 'edit_artifact':
