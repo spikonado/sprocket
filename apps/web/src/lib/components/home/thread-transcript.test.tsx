@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { render, within } from '@testing-library/react';
-import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import type {
 	TranscriptMessage,
@@ -10,6 +9,7 @@ import type {
 	LiveTranscriptMessage
 } from '$lib/types/sprocket';
 import ThreadTranscript from './thread-transcript';
+import { fixtureId } from '$lib/convex-test-client';
 
 type Props = React.ComponentProps<typeof ThreadTranscript>;
 
@@ -18,10 +18,8 @@ let resize: () => void;
 function message(number: number): TranscriptDisplayRow {
 	return {
 		id: `prompt:${number}`,
-		// SAFETY: Fixture IDs never leave the mounted component.
-		threadId: 'thread' as Id<'threadRecords'>,
-		// SAFETY: Fixture IDs never leave the mounted component.
-		runId: `run-${number}` as Id<'runs'>,
+		threadId: fixtureId<'threadRecords'>('thread'),
+		runId: fixtureId<'runs'>(`run-${number}`),
 		kind: 'prompt',
 		text: `Message ${number}`,
 		attachments: [],
@@ -84,7 +82,6 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 	];
 
 	let scrollTop = 0;
-	// jsdom has no layout. Model fixed-height rows while exercising the real DOM and effects.
 	Object.defineProperties(viewport, {
 		clientHeight: { configurable: true, get: () => viewportHeight },
 		scrollHeight: {
@@ -171,8 +168,7 @@ describe('transcript viewport paging', () => {
 			...message(1),
 			attachments: [
 				{
-					// SAFETY: Fixture IDs never leave the mounted component.
-					storageId: 'file' as Id<'_storage'>,
+					storageId: fixtureId<'_storage'>('file'),
 					name: 'notes.txt',
 					mediaType: 'text/plain',
 					size: 10

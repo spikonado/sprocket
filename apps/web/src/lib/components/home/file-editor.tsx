@@ -22,7 +22,6 @@ type Props = {
 	file: WorkspaceFileTarget;
 	/** Read on mount; changes are reported through `onDraftChange`. */
 	draft: FileDraft | undefined;
-	/** Follows outside edits while the tab is visible. */
 	active: boolean;
 	onDraftChange: (draft: FileDraft | undefined) => void;
 };

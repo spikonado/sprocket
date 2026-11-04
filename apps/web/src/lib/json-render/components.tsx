@@ -2,7 +2,6 @@ import type { BaseComponentProps } from '@json-render/react';
 import { createContext, useContext, type ReactNode } from 'react';
 import { cn } from '$lib/utils';
 
-/** True while rendering a spec whose root element is a Card. */
 export const FlatRootCard = createContext(false);
 
 const CARD_WIDTHS = {
@@ -19,7 +18,6 @@ type CardProps = BaseComponentProps<{
 	centered: boolean | null;
 }>;
 
-// The root card sits flat on the thread like an HTML visual's page; nested cards are boxes.
 export function Card({ props, children }: CardProps) {
 	const flat = useContext(FlatRootCard);
 
@@ -115,7 +113,6 @@ type StackProps = BaseComponentProps<{
 	justify: keyof typeof STACK_JUSTIFIES | null;
 }>;
 
-// Unlike shadcn's, a vertical stack stretches its children to the message width by default.
 export function Stack({ props, children }: StackProps) {
 	const horizontal = props.direction === 'horizontal';
 
@@ -259,7 +256,6 @@ export function LineGraph({ props }: ChartProps) {
 	const range = Math.max(...values) - min || 1;
 	const columnWidth = LINE_WIDTH / Math.max(1, data.length);
 
-	// Each point sits at its column's center, so the label grid below lines up with it.
 	const points = data.map((point, index) => ({
 		x: (index + 0.5) * columnWidth,
 		y: LINE_PADDING + (1 - (point.value - min) / range) * (CHART_HEIGHT - LINE_PADDING * 2)

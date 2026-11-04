@@ -7,7 +7,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
 import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
-import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import { stubWebSocket } from '$lib/local/socket-test-support';
 import type {
@@ -62,8 +62,7 @@ function projectAttachment(
 
 function threadRecord(id: string, repositoryKey: string, title: string): Doc<'threadRecords'> {
 	return {
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		_id: id as Id<'threadRecords'>,
+		_id: fixtureId<'threadRecords'>(id),
 		_creationTime: 1,
 		userId: 'user-a',
 		status: 'completed',
@@ -194,7 +193,6 @@ async function renderApp(client: ConvexTestClient, runtime: AppRuntime): Promise
 				<App config={testConfig} runtime={runtime} />
 			</ConvexTestProvider>
 		);
-		// Let the boot promise chain settle inside act so every state update is covered.
 		await new Promise((resolve) => setTimeout(resolve, 0));
 	});
 }
@@ -381,8 +379,7 @@ it('removes a project without waiting for uploads and restores the draft text wh
 
 	await act(async () => {
 		upload.resolve({
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			storageId: 'late-upload' as Id<'_storage'>,
+			storageId: fixtureId<'_storage'>('late-upload'),
 			name: 'notes.txt',
 			mediaType: 'text/plain',
 			size: 5,
@@ -438,8 +435,7 @@ it('deletes an attached project artifact through the local server and keeps fail
 	const client = createConvexFixtures();
 
 	const artifact: FunctionReturnType<typeof api.artifacts.listArtifacts>['page'][number] = {
-		// SAFETY: this fixture ID is only compared as an opaque Convex document ID.
-		_id: 'artifact-a' as Id<'artifacts'>,
+		_id: fixtureId<'artifacts'>('artifact-a'),
 		_creationTime: 1,
 		userId: 'user-a',
 		repositoryKey: 'repo-alpha',
@@ -599,10 +595,8 @@ it('refreshes message recency after a successful send even when another project 
 	await act(async () => {
 		sent = true;
 		launch.resolve({
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			runId: 'run-new' as Id<'runs'>,
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			threadId: 'thread-new' as Id<'threadRecords'>,
+			runId: fixtureId<'runs'>('run-new'),
+			threadId: fixtureId<'threadRecords'>('thread-new'),
 			stopped: false
 		});
 	});
@@ -670,7 +664,6 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	await projectTrigger('Alpha');
 	await waitFor(() => expect(listCalls).toBe(3));
 
-	// Opening Beta starts a verification whose refresh stays in flight.
 	await openProjectFromHeading('Alpha', 'Beta');
 	await projectTrigger('Beta');
 	await waitFor(() => expect(listCalls).toBe(4));
@@ -680,8 +673,6 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	});
 	await waitFor(() => expect(listCalls).toBe(5));
 
-	// Move on to Gamma while Beta's refresh is still loading, then let that
-	// refresh finish with a list that no longer has Beta.
 	await openProjectFromHeading('Beta', 'Gamma');
 	await projectTrigger('Gamma');
 	await waitFor(() => expect(listCalls).toBe(6));
@@ -699,8 +690,7 @@ it('keeps a saved theme until the preference subscription advances', async () =>
 	const save = Promise.withResolvers<null>();
 
 	const preferences: Doc<'uiPreferences'> = {
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		_id: 'preferences-a' as Id<'uiPreferences'>,
+		_id: fixtureId<'uiPreferences'>('preferences-a'),
 		_creationTime: 1,
 		userId: 'user-a',
 		theme: 'light'
@@ -731,8 +721,7 @@ it('applies a remote theme update received while a local theme save is pending',
 	const save = Promise.withResolvers<null>();
 
 	const preferences: Doc<'uiPreferences'> = {
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		_id: 'preferences-a' as Id<'uiPreferences'>,
+		_id: fixtureId<'uiPreferences'>('preferences-a'),
 		_creationTime: 1,
 		userId: 'user-a',
 		theme: 'light'
@@ -764,10 +753,8 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	const staleRefresh = Promise.withResolvers<ProjectAttachment[]>();
 
 	const runAgent = vi.fn(async () => ({
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		runId: 'run-new' as Id<'runs'>,
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		threadId: 'thread-new' as Id<'threadRecords'>,
+		runId: fixtureId<'runs'>('run-new'),
+		threadId: fixtureId<'threadRecords'>('thread-new'),
 		stopped: false
 	}));
 
@@ -829,10 +816,8 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Existing robot work');
-	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
-	const priorRunId = 'prior-run' as Id<'runs'>;
-	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
-	const nextRunId = 'run-new' as Id<'runs'>;
+	const priorRunId = fixtureId<'runs'>('prior-run');
+	const nextRunId = fixtureId<'runs'>('run-new');
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
 	client.registerQuery(api.threads.getByThreadId, thread);
@@ -952,8 +937,7 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 	fireEvent.click(screen.getByText('Other work'));
 	await act(async () => {
 		launch.resolve({
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			runId: 'run-new' as Id<'runs'>,
+			runId: fixtureId<'runs'>('run-new'),
 			threadId: thread._id,
 			stopped: false
 		});
@@ -967,8 +951,7 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
 			threadId: thread._id,
 			phase: 'running',
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
+			run: { runId: fixtureId<'runs'>('run-new'), startedAt: 1 }
 		});
 	});
 	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
@@ -984,8 +967,7 @@ it('collapses a pending question once its run has finished', async () => {
 	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.agentQuestions.headPendingForThread, {
 		threadId: thread._id,
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		questionId: 'question-1' as Id<'agentQuestions'>,
+		questionId: fixtureId<'agentQuestions'>('question-1'),
 		question: 'Which board should I target?',
 		options: [{ id: 'option-a', label: 'Option A' }],
 		status: 'pending',
@@ -994,8 +976,7 @@ it('collapses a pending question once its run has finished', async () => {
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'waiting_for_input',
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		run: { runId: 'run-1' as Id<'runs'>, startedAt: 1, completedAt: 2 }
+		run: { runId: fixtureId<'runs'>('run-1'), startedAt: 1, completedAt: 2 }
 	});
 
 	await renderApp(
@@ -1018,8 +999,7 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 
 	const question: AgentQuestionSnapshot = {
 		threadId: thread._id,
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		questionId: 'question-1' as Id<'agentQuestions'>,
+		questionId: fixtureId<'agentQuestions'>('question-1'),
 		question: 'Which board should I target?',
 		options: [{ id: 'option-a', label: 'Option A' }],
 		status: 'pending',
@@ -1027,8 +1007,7 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 		timeoutAt: 1_000_000
 	};
 
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	const runId = 'run-1' as Id<'runs'>;
+	const runId = fixtureId<'runs'>('run-1');
 
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
@@ -1088,8 +1067,7 @@ it.each([
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
 			threadId: thread._id,
 			phase: 'running',
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			run: { runId: 'run-1' as Id<'runs'>, startedAt: 1 }
+			run: { runId: fixtureId<'runs'>('run-1'), startedAt: 1 }
 		});
 	});
 	const stop = await screen.findByRole('button', { name: 'Stop generation' });
@@ -1113,8 +1091,7 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'failed',
-		// SAFETY: the fixture only compares run ids as opaque Convex document ids.
-		run: { runId: 'run-1' as Id<'runs'>, startedAt: 1, lastError: error }
+		run: { runId: fixtureId<'runs'>('run-1'), startedAt: 1, lastError: error }
 	});
 	await renderApp(
 		client,
@@ -1135,8 +1112,7 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
 			threadId: thread._id,
 			phase: 'running',
-			// SAFETY: the fixture only compares run ids as opaque Convex document ids.
-			run: { runId: 'run-2' as Id<'runs'>, startedAt: Date.now() }
+			run: { runId: fixtureId<'runs'>('run-2'), startedAt: Date.now() }
 		});
 	});
 	expect(within(composer).getByRole('button', { name: 'Stop generation' })).toBeTruthy();
@@ -1204,8 +1180,7 @@ it('renders remote history progressively and allows sending while older parts lo
 	const recent: TranscriptDisplayRow = {
 		id: 'text-40-0',
 		threadId: thread._id,
-		// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
-		runId: 'prior-run' as Id<'runs'>,
+		runId: fixtureId<'runs'>('prior-run'),
 		sequence: 40,
 		kind: 'text',
 		text: 'The latest robot update',
@@ -1284,10 +1259,8 @@ it('renders remote history progressively and allows sending while older parts lo
 it('launches the continuation prompt after an agent question is answered', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	const questionId = 'question-1' as Id<'agentQuestions'>;
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	const continuationRunId = 'run-1' as Id<'runs'>;
+	const questionId = fixtureId<'agentQuestions'>('question-1');
+	const continuationRunId = fixtureId<'runs'>('run-1');
 
 	const question: AgentQuestionSnapshot = {
 		threadId: thread._id,
@@ -1300,8 +1273,7 @@ it('launches the continuation prompt after an agent question is answered', async
 	};
 
 	const runAgent = vi.fn(async () => ({
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		runId: 'run-2' as Id<'runs'>,
+		runId: fixtureId<'runs'>('run-2'),
 		threadId: thread._id,
 		stopped: false
 	}));
@@ -1358,8 +1330,7 @@ it('launches a continuation answered before leaving the thread when returning to
 
 	const question: AgentQuestionSnapshot = {
 		threadId: thread._id,
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		questionId: 'question-1' as Id<'agentQuestions'>,
+		questionId: fixtureId<'agentQuestions'>('question-1'),
 		question: 'Which board should I target?',
 		options: [{ id: 'option-a', label: 'Option A' }],
 		status: 'pending',
@@ -1367,8 +1338,7 @@ it('launches a continuation answered before leaving the thread when returning to
 		timeoutAt: 1_000_000
 	};
 
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	const continuationRunId = 'run-1' as Id<'runs'>;
+	const continuationRunId = fixtureId<'runs'>('run-1');
 
 	const answer = Promise.withResolvers<{
 		question: AgentQuestionSnapshot;

@@ -19,12 +19,6 @@ const CLOSED_REFRESH_INTERVAL_MS = 15 * 60_000;
 
 const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
 
-/**
- * Keeps linked PR states and titles of the threads on screen fresh. Each list of shown rows
- * registers itself; a thread is read when it first appears, and every shown
- * thread is read on `refreshShown`. Closed PRs rarely reopen, so `refreshShown`
- * includes them only every 15 minutes, and merged PRs are never read again.
- */
 export class PullRequestRefresher {
 	readonly #sync: PullRequestStateSync;
 	readonly #lists = new Map<string, readonly Thread[]>();
@@ -101,10 +95,6 @@ export class PullRequestRefresher {
 	}
 }
 
-/**
- * One refresher per sync source, re-reading every shown thread each minute
- * while the page is visible, and on return once a minute has passed.
- */
 export function usePullRequestRefresher(
 	sync: PullRequestStateSync | null
 ): PullRequestRefresher | null {
@@ -141,7 +131,6 @@ export function usePullRequestRefresher(
 	return refresher;
 }
 
-/** Registers rows on screen with the refresher while it is set. */
 export function useShownPullRequests(
 	refresher: PullRequestRefresher | null,
 	rows: readonly Thread[]

@@ -41,7 +41,6 @@ type Props = {
 	/** A linked folder to reveal; a `workspacePath` outside both roots becomes the tree root. */
 	location?: WorkspaceFileTarget;
 	onLocationChange: (location: WorkspaceFileTarget | undefined) => void;
-	/** Follows outside changes only while the tab is active. */
 	active: boolean;
 	onOpenFile: (file: WorkspaceFileTarget) => void;
 	onRenamed: (workspacePath: string, from: string, to: string) => void;
@@ -119,9 +118,7 @@ export default function FilesView({
 	const shown = useRef<Shown | null>(null);
 	const forceReset = useRef(false);
 	const mutations = useRef(0);
-	/** The newest listing, held while an optimistic tree edit is in flight. */
 	const unapplied = useRef<{ path: string; listing: WorkspaceFilesResult } | null>(null);
-	/** A placeholder row for a new file or folder that is waiting for its name. */
 	const pendingCreate = useRef<{ path: string; editing: boolean } | null>(null);
 	const searchInput = useRef<HTMLInputElement>(null);
 	const visible = usePageVisible();
@@ -658,7 +655,6 @@ export default function FilesView({
 
 const MENU_MARGIN = 8;
 
-/** Keeps the menu inside the viewport, flipping above the anchor when it would overflow below. */
 function placeMenu(menu: HTMLDivElement, anchor: ContextMenuOpenContext['anchorRect']) {
 	const { width, height } = menu.getBoundingClientRect();
 	const below = anchor.bottom + height + MENU_MARGIN <= window.innerHeight;

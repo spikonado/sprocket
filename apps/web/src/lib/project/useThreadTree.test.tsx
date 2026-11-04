@@ -6,6 +6,7 @@ import {
 	useRevealPaginatedThread,
 	type ThreadChildrenData
 } from '$lib/project/useThreadTree';
+import { fixtureId } from '$lib/convex-test-client';
 
 type RevealPage = Pick<ThreadChildrenData, 'loading' | 'canLoadMore' | 'error' | 'loadMore'> & {
 	rows: { _id: Id<'threadRecords'> }[];
@@ -17,10 +18,7 @@ beforeEach(() => {
 	localStorage.clear();
 });
 
-function id(value: string) {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'threadRecords'>;
-}
+const id = fixtureId<'threadRecords'>;
 
 it('loads successive pages until the selected branch becomes visible', () => {
 	const loadMore = vi.fn();
@@ -107,8 +105,7 @@ it('collapses a whole branch through the known tree', () => {
 
 it('reveals ancestors and keeps expansion storage scoped per signed-in user', () => {
 	const { result, rerender } = renderHook(({ user }) => useExpandedThreads(user), {
-		// SAFETY: fixture strings are only compared as opaque user keys.
-		initialProps: { user: 'alice' as string | null }
+		initialProps: { user: 'alice' }
 	});
 
 	act(() => result.current.revealAncestors([id('root'), id('child')]));

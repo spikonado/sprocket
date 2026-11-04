@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import {
 	buildDesktopProjectAttachmentsByPath,
 	compareProjectRecency,
@@ -9,21 +8,13 @@ import {
 	upsertDesktopProjectAttachment
 } from '$lib/home/desktop';
 import type { LocalApi, ProjectAttachment } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
-function storageId(value: string): Id<'_storage'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'_storage'>;
-}
+const storageId = fixtureId<'_storage'>;
 
-function threadRecordId(value: string): Id<'threadRecords'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'threadRecords'>;
-}
+const threadRecordId = fixtureId<'threadRecords'>;
 
-function runId(value: string): Id<'runs'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'runs'>;
-}
+const runId = fixtureId<'runs'>;
 
 function unusedDesktopCall(): Promise<never> {
 	return Promise.reject(new Error('unused desktop API method'));

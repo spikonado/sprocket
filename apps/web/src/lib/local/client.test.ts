@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import type { ChatGptStatus } from '$lib/types/sprocket';
 import {
 	createLocalClient,
@@ -8,21 +7,13 @@ import {
 	workspaceLaunchHash
 } from '$lib/local/client';
 import { stubWebSocket } from '$lib/local/socket-test-support';
+import { fixtureId } from '$lib/convex-test-client';
 
-function threadRecordId(value: string): Id<'threadRecords'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'threadRecords'>;
-}
+const threadRecordId = fixtureId<'threadRecords'>;
 
-function storageId(value: string): Id<'_storage'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'_storage'>;
-}
+const storageId = fixtureId<'_storage'>;
 
-function runId(value: string): Id<'runs'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'runs'>;
-}
+const runId = fixtureId<'runs'>;
 
 afterEach(() => {
 	vi.unstubAllGlobals();

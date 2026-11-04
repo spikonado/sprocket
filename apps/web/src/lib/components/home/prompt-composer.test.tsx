@@ -4,7 +4,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
-import type { TranscriptScopeRequest, WorkspaceSearchResult } from '$lib/types/sprocket';
+import type { WorkspaceSearchResult } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
 const modelCatalog: ModelCatalog = {
 	defaultModelId: 'model-one',
@@ -163,8 +164,7 @@ describe('PromptComposer running commands', () => {
 					}),
 					terminateCommand: vi.fn()
 				},
-				// SAFETY: fixture strings are only compared as opaque Convex document ids.
-				scope: { userId: 'user', threadId: 'thread' as TranscriptScopeRequest['threadId'] }
+				scope: { userId: 'user', threadId: fixtureId<'threadRecords'>('thread') }
 			},
 			onContinueWorking: vi.fn()
 		});

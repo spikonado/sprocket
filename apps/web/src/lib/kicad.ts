@@ -18,10 +18,6 @@ function normalize(path: string) {
 	return parts.join('/');
 }
 
-/**
- * Reads what KiCanvas needs to show `path`: a project brings its root schematic and board, and
- * schematics bring their sheets. Names are relative to `path`'s folder, as KiCad links sheets.
- */
 export async function readKicadSources(
 	path: string,
 	read: (path: string) => Promise<string>

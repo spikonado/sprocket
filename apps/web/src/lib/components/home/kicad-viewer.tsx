@@ -89,7 +89,6 @@ function createFrame(container: HTMLElement, title: string) {
 	return frame;
 }
 
-/** Reloads when any file the project read changes, keeping the user's page and camera. */
 export default function KicadViewer({
 	api,
 	file,
@@ -169,7 +168,6 @@ export default function KicadViewer({
 
 				if (parse.type !== 'parsed') throw frameFailure(parse, malformedFile);
 
-				// Read after the parse, since the user may have moved around the shown frame meanwhile.
 				const view = shown ? await currentView(shown, signal) : null;
 				const outcome = nextFrameMessage(frame, signal);
 				frame.contentWindow?.postMessage({ type: 'show', view }, '*');

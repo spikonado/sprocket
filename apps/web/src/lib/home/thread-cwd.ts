@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { LocalResponseError } from '$lib/local/transport';
 import type { LocalApi } from '$lib/types/sprocket';
 
-/** Drops a saved thread cwd that no longer exists, like the agent does when its next run starts. */
 export function useExistingThreadCwd(
 	api: Pick<LocalApi, 'resolveWorkspacePath'> | null,
 	cwd: string | undefined,

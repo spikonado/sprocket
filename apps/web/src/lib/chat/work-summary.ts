@@ -9,7 +9,6 @@ type SummarizedToolName = Exclude<
 	`poll_${string}` | `mandate_${string}`
 >;
 
-// Typed against the current tool list so a new tool fails typechecking until it has an entry here.
 const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	read_skill: { verb: 'read', noun: 'skill' },
 	exec_cmd: { verb: 'ran', noun: 'command' },
@@ -81,7 +80,6 @@ export function mergeWorkToolCounts(
 	return counts;
 }
 
-/** Returns undefined when the work made no tool calls, so it holds only reasoning. */
 export function workSummary(counts: Record<string, number>): string | undefined {
 	const remaining = new Map<string, number>();
 	let hasPolls = false;

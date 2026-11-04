@@ -1,6 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import {
 	TranscriptReplica,
 	useTranscriptReplica,
@@ -13,16 +12,11 @@ import type {
 	TranscriptDisplayRow,
 	TranscriptWatchEvent
 } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
-function threadId(value: string): Id<'threadRecords'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'threadRecords'>;
-}
+const threadId = fixtureId<'threadRecords'>;
 
-function runId(value: string): Id<'runs'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'runs'>;
-}
+const runId = fixtureId<'runs'>;
 
 function displayRow(sequence: number): TranscriptDisplayRow {
 	return {
@@ -42,7 +36,6 @@ function createFakeApi() {
 	const liveEvents: Array<(event: LiveCompletionWatchEvent) => void> = [];
 
 	const api: TranscriptReplicaApi = {
-		// Never resolves: the replica stays in its initial loading window.
 		fetchTranscriptDisplay: () => new Promise<TranscriptDisplayPage>(() => {}),
 		watchTranscript: async (_request, handlers) => {
 			displayEvents.push(handlers.onEvent);

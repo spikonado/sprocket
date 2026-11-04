@@ -1,14 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import PurchaseApprovals from './purchase-approvals';
+import { fixtureId } from '$lib/convex-test-client';
 
 function purchase(id: string) {
 	return {
-		// SAFETY: opaque ids for rendering only.
-		_id: id as Id<'purchases'>,
-		// SAFETY: opaque ids for rendering only.
-		threadId: 'thread' as Id<'threadRecords'>,
+		_id: fixtureId<'purchases'>(id),
+		threadId: fixtureId<'threadRecords'>('thread'),
 		merchant: 'shop.example.com',
 		amount: 2306,
 		currency: 'usd',

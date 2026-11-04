@@ -13,7 +13,6 @@ export default function JsonRenderView({
 	fallback
 }: {
 	source: string;
-	/** Shown while the spec has no root element yet, or when it fails to render. */
 	fallback: ReactNode;
 }) {
 	const spec = useMemo(() => parseJsonRenderSpec(source), [source]);

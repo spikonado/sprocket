@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { INBOX_STATES } from '@convex/lib/inboxState';
-import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import type { LinkedPullRequest } from '@convex/lib/validators';
 import InboxSidebar, { type SidebarChildrenResolver } from './inbox-sidebar';
 import type {
@@ -61,9 +61,8 @@ afterEach(() => {
 type ThreadStatus = Thread['status'];
 
 function thread(settled = false, status: ThreadStatus = 'completed') {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	const record: Thread = {
-		_id: 'thread' as Id<'threadRecords'>,
+		_id: fixtureId<'threadRecords'>('thread'),
 		_creationTime: 1,
 		userId: 'alice',
 		repositoryKey: 'repo',
@@ -397,10 +396,9 @@ it('names repositories in the PR dashboard only when they differ', async () => {
 it('keeps thread rows styled when selection moves by click and keyboard', async () => {
 	const first = thread();
 
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	const second = {
 		...thread(),
-		_id: 'second-thread' as Id<'threadRecords'>,
+		_id: fixtureId<'threadRecords'>('second-thread'),
 		title: 'Second thread'
 	};
 
@@ -685,11 +683,9 @@ it('shows a failed settle', async () => {
 function childThread(id: string, title: string, status: ThreadStatus = 'completed'): Thread {
 	return {
 		...thread(false, status),
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		_id: id as Id<'threadRecords'>,
+		_id: fixtureId<'threadRecords'>(id),
 		title,
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		parentThreadId: 'thread' as Id<'threadRecords'>
+		parentThreadId: fixtureId<'threadRecords'>('thread')
 	};
 }
 
@@ -891,8 +887,7 @@ it('renders and selects nested children with increasing indentation', async () =
 
 	const grandchild = {
 		...childThread('grandchild', 'Grandchild thread'),
-		// SAFETY: fixture strings are only compared as opaque Convex document ids.
-		parentThreadId: 'child' as Id<'threadRecords'>
+		parentThreadId: fixtureId<'threadRecords'>('child')
 	};
 
 	treeSummaries.set('thread', {

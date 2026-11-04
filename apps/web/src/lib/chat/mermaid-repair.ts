@@ -1,4 +1,3 @@
-// Agents write prose labels that Mermaid parses as syntax; these escape it as Mermaid entity codes.
 export function repairMermaidSource(source: string, diagramType: string) {
 	if (diagramType.startsWith('flowchart')) return escapeFlowchartEdgeDashes(source);
 

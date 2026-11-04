@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import {
 	useRevealInboxThread,
 	useThreadInbox,
@@ -8,11 +8,11 @@ import {
 	type InboxQueryResult,
 	type InboxSectionData
 } from '$lib/project/inbox';
+import { fixtureId } from '$lib/convex-test-client';
 
 function threadRecord(): Doc<'threadRecords'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return {
-		_id: 'thread-1' as Id<'threadRecords'>,
+		_id: fixtureId<'threadRecords'>('thread-1'),
 		_creationTime: 1,
 		userId: 'user-a',
 		repositoryKey: 'alpha',

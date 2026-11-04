@@ -5,15 +5,13 @@ import type {
 	TranscriptDisplayPage,
 	TranscriptDisplayRow
 } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
 function row(sequence: number, revision = sequence): TranscriptDisplayRow {
 	return {
-		// SAFETY: fixture IDs stay within the in-memory pager.
-		id: `row-${sequence}` as TranscriptDisplayRow['id'],
-		// SAFETY: fixture IDs stay within the in-memory pager.
-		threadId: 'thread' as TranscriptDisplayRow['threadId'],
-		// SAFETY: fixture IDs stay within the in-memory pager.
-		runId: 'run' as TranscriptDisplayRow['runId'],
+		id: `row-${sequence}`,
+		threadId: fixtureId<'threadRecords'>('thread'),
+		runId: fixtureId<'runs'>('run'),
 		sequence,
 		kind: 'work',
 		closed: true,

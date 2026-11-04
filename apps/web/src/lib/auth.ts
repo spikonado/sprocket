@@ -42,7 +42,6 @@ export const convexAuthLoading = selectStore(
 
 export const convexAuthRetryVersion = createStore(0);
 
-/** UI-only: stays true until Convex confirms or rejects the post-retry token. */
 export const convexAuthRetryPending = createStore(false);
 
 type AuthClient = Pick<
@@ -1059,12 +1058,9 @@ export function cancelDesktopSignIn() {
 				body: JSON.stringify({ loginId: cancelledAttempt.loginId })
 			});
 		})
-		.catch(() => {
-			// Best-effort server cleanup; local UI already cancelled.
-		});
+		.catch(() => {});
 }
 
-/** Clears open-browser failure chrome while desktop sign-in polling continues. */
 export function clearDesktopSignInOpenError() {
 	authState.update((current) => {
 		if (!current.isWaitingForBrowserSignIn || current.error === null) {

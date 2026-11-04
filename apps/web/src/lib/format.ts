@@ -1,4 +1,3 @@
-/** Compact human duration for countdowns; rounds up so "0m" never shows. */
 export function formatRemainingDuration(remainingMs: number): string {
 	const milliseconds = Math.max(0, remainingMs);
 	const hours = Math.ceil(milliseconds / 3_600_000);
@@ -17,7 +16,6 @@ export function formatRemainingDuration(remainingMs: number): string {
 	return `${Math.max(1, Math.ceil(milliseconds / 60_000))}m`;
 }
 
-/** Ticking-countdown precision: seconds show below a minute, minutes below an hour. */
 export function formatCountdownDuration(remainingMs: number): string {
 	const totalSeconds = Math.max(0, Math.floor(remainingMs / 1_000));
 	const days = Math.floor(totalSeconds / 86_400);
@@ -42,7 +40,6 @@ function currencyFormat(currency: string) {
 	}
 }
 
-/** "$23.06" from a major-unit decimal string such as "23.06". */
 export function formatMajorAmount(amount: string, currency: string): string {
 	const value = Number(amount);
 	const format = currencyFormat(currency);
@@ -52,7 +49,6 @@ export function formatMajorAmount(amount: string, currency: string): string {
 		: `${amount} ${currency.toUpperCase()}`;
 }
 
-/** "$23.06" from minor units such as 2306 cents. */
 export function formatMinorAmount(amount: number, currency: string): string {
 	const format = currencyFormat(currency);
 

@@ -1,12 +1,13 @@
 import { renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import type { LinkedPullRequest } from '@convex/lib/validators';
 import {
 	PullRequestRefresher,
 	type PullRequestStateSync,
 	usePullRequestRefresher
 } from '$lib/project/pullRequestRefresh';
+import { fixtureId } from '$lib/convex-test-client';
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -21,9 +22,8 @@ const pr = (
 ) => ({ repository, number, state, title });
 
 function thread(id: string, pullRequests: LinkedPullRequest[]): Doc<'threadRecords'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return {
-		_id: id as Id<'threadRecords'>,
+		_id: fixtureId<'threadRecords'>(id),
 		_creationTime: 1,
 		userId: 'user-a',
 		repositoryKey: 'github.com/acme/widgets',

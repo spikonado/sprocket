@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RunningCommands from './running-commands';
 import type { CommandApi } from '$lib/home/running-commands';
 import type { RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
 const command: RunningCommand = {
 	sessionId: '1',
@@ -12,8 +13,7 @@ const command: RunningCommand = {
 };
 
 function scope(thread: string): TranscriptScopeRequest {
-	// SAFETY: test IDs are opaque strings and never sent to Convex.
-	return { userId: 'user', threadId: thread as TranscriptScopeRequest['threadId'] };
+	return { userId: 'user', threadId: fixtureId<'threadRecords'>(thread) };
 }
 
 type Watch = {
@@ -22,7 +22,6 @@ type Watch = {
 	fail: (error: Error) => void;
 };
 
-/** Each watch emits `initial` once it starts; tests drive later updates through `watches`. */
 function commandApi(
 	initial: RunningCommand[] | null,
 	terminateCommand: CommandApi['terminateCommand'] = vi.fn()

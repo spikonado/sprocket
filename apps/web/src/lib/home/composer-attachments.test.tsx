@@ -1,17 +1,14 @@
 import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Id } from '@convex/_generated/dataModel';
 import {
 	useComposerAttachments,
 	type ComposerAttachmentApi,
 	type ComposerAttachmentContext
 } from '$lib/home/composer-attachments';
 import type { TranscriptUploadResult } from '$lib/types/sprocket';
+import { fixtureId } from '$lib/convex-test-client';
 
-function storageId(value: string): Id<'_storage'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'_storage'>;
-}
+const storageId = fixtureId<'_storage'>;
 
 function uploadResult(storage: string): TranscriptUploadResult {
 	return {

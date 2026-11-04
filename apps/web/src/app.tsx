@@ -669,7 +669,6 @@ export default function App({
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
-	// Phones have no room beside the thread, so the side panel always covers it.
 	const phoneViewport = viewportWidth > 0 && viewportWidth < 768;
 	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
 	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
@@ -724,10 +723,8 @@ export default function App({
 
 		const preferences = uiPreferencesQuery.data;
 
-		// Wait for Convex before applying a workspace theme (boot script stays light for entry).
 		if (preferences === undefined) return;
 
-		// Ignore preference snapshots while a theme save is in flight.
 		if (pendingTheme !== null) return;
 
 		if (preferences === lastAppliedThemePreferences.current) return;
@@ -1310,7 +1307,6 @@ export default function App({
 			const scope = getComposerScope(currentThreadIdRef.current, workspacePath);
 			const latestPrompt = promptRef.current;
 
-			// Clearing discards unfinished uploads once they complete.
 			const finishedAttachments = composerAttachments
 				.snapshot()
 				.filter((attachment) => attachment.status !== 'uploading');
@@ -2255,7 +2251,6 @@ export default function App({
 		}
 	}
 
-	// Reset per-user state when the signed-in user changes.
 	const resetForSignedInUser = useEffectEvent((userId: string | null) => {
 		const previousUserId = selectionUserId;
 		const previousThreadId = currentThreadId;
@@ -2441,8 +2436,6 @@ export default function App({
 		bumpSubmissionTracking
 	]);
 
-	// Auto-submit only fires once per restored continuation: the flag is cleared
-	// before the submission starts.
 	const submitRestoredContinuation = useEffectEvent(() => {
 		void submitPrompt();
 	});
@@ -2582,8 +2575,6 @@ export default function App({
 		}
 	}, [currentThreadId, runState, pendingAgentLaunches]);
 
-	// Boot sequence: viewport tracking, model catalog, hash/bridge workspace
-	// launches, and the local server connection. Runs exactly once per mount.
 	const boot = useEffectEvent(() => {
 		const bridge = window.sprocketDesktopBridge;
 

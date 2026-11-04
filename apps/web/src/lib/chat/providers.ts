@@ -7,7 +7,6 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	chatgpt: 'ChatGPT Subscription'
 };
 
-/** Applies a new order of the shown providers, keeping hidden ones in their slots. */
 export function reorderShownProviders(
 	order: readonly ProviderOrderEntry[],
 	shownOrder: readonly CompletionProvider[]

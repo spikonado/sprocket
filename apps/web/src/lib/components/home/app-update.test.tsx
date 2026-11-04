@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
-import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import type { Doc } from '@convex/_generated/dataModel';
+import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import { stubWebSocket } from '$lib/local/socket-test-support';
 import type { UpdateState } from '$lib/updates';
 import AppUpdate from './app-update';
@@ -32,8 +32,7 @@ function mount(automaticAgentContinuation?: boolean, loading = false) {
 			automaticAgentContinuation === undefined
 				? null
 				: {
-						// SAFETY: this fixture id is only used by the in-memory Convex client.
-						_id: 'preferences-test' as Id<'uiPreferences'>,
+						_id: fixtureId<'uiPreferences'>('preferences-test'),
 						_creationTime: 1,
 						userId: 'user-test',
 						theme: 'light',

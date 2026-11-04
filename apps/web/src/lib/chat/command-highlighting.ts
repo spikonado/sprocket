@@ -52,7 +52,6 @@ function inlineScript(command: string, from: number): Range | undefined {
 	return { start, end: command.length };
 }
 
-/** Finds `python3 -c '…'` arguments and `python3 <<EOF` heredoc bodies inside a shell command. */
 export function pythonScriptRanges(command: string): Range[] {
 	const ranges: Range[] = [];
 	let position = 0;
@@ -83,7 +82,6 @@ function paint(
 	}
 }
 
-/** Highlights a command as Bash, with embedded Python scripts highlighted as Python. */
 export async function highlightCommand(
 	command: string,
 	highlight: Highlight

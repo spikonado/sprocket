@@ -58,7 +58,6 @@ class LocalSocket {
 
 	constructor(private readonly url: string) {}
 
-	/** Resolves when `signal` aborts or the server ends the topic. Events that fail `schema` end it with an error. */
 	subscribe<T>(
 		topic: LocalTopic,
 		schema: z.ZodType<T>,
@@ -143,7 +142,6 @@ class LocalSocket {
 		for (const id of this.#subscriptions.keys()) this.#end(id, false, lost);
 	}
 
-	/** The socket keeps the cookie from its upgrade, so a new session needs a new socket. */
 	#reconnectWithFreshCookie() {
 		const socket = this.#socket;
 
