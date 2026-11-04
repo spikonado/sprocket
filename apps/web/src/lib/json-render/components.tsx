@@ -1,7 +1,7 @@
 import type { BaseComponentProps } from '@json-render/react';
+import DOMPurify from 'isomorphic-dompurify';
 import { createContext, useContext, type ReactNode } from 'react';
 import { cn } from '$lib/utils';
-import { safeExternalHref } from './href';
 
 export const FlatRootCard = createContext(false);
 
@@ -179,9 +179,9 @@ type LinkProps = BaseComponentProps<{ label: string; href: string | null }>;
 
 // The shadcn link navigates the app itself, so this one opens a new tab instead.
 export function Link({ props, on }: LinkProps) {
-	const href = safeExternalHref(props.href);
+	const { href } = props;
 
-	if (!href) {
+	if (!href || !DOMPurify.isValidAttribute('a', 'href', href)) {
 		return <span className="font-medium">{props.label}</span>;
 	}
 
