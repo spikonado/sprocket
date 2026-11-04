@@ -140,7 +140,6 @@ export const vLegacyArtifactType = v.union(
 	v.literal('react')
 );
 
-// Historical stored artifacts and tool results retain thread scope until migrated.
 export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
 
 // Released agents still start add_artifact jobs with this payload.
@@ -154,7 +153,6 @@ export const vEditArtifactPayload = v.object({
 	artifactId: v.string()
 });
 
-// Stored leftover executorJobs from create_artifact / update_artifact.
 export const vCreateArtifactPayload = v.object({
 	title: v.string(),
 	contentType: vLegacyArtifactType,
@@ -253,14 +251,11 @@ const vHistoricalBrowserActPayload = v.object({
 	startUrl: v.optional(v.string())
 });
 
-// Stored executorJobs payloads from the retired Firecrawl browser tools.
 const vBrowserInteractPayload = v.object({
 	command: v.string(),
 	enforce_saving: v.optional(v.boolean())
 });
 
-// Retired Prava mandate tools. Released agents still send these kinds, which
-// beginToolJob rejects, and stored jobs keep them as history.
 const vMandateFrequency = v.union(
 	...literals(['one_time', 'weekly', 'monthly', 'yearly'] as const)
 );
@@ -489,7 +484,6 @@ export const vPageOutline = v.object({
 	headings: v.array(v.object({ level: v.number(), text: v.string() }))
 });
 
-/** Stored scrape_url job result. Historical rows may include `summary` and `images`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.optional(v.string()),
@@ -537,7 +531,6 @@ export const vWebSearchResult = v.object({
 	)
 });
 
-// Stored results of the retired Prava mandate tools.
 const vMandateSetupResult = v.object({
 	mandateId: v.string(),
 	approvalUrl: v.string(),
@@ -820,7 +813,6 @@ export const vArtifactResult = v.object({
 	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),
 	contentType: v.optional(vLegacyArtifactType),
-	// Stored leftover create_artifact / update_artifact job results.
 	version: v.optional(v.number())
 });
 

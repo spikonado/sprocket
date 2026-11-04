@@ -177,7 +177,6 @@ export const createOrSend = mutation({
 		fast: v.boolean(),
 		completionProvider: v.optional(vCompletionProvider),
 		timeoutMs: v.optional(v.number()),
-		/** The run writes its prompt part in beginRun. Released agents omit it. */
 		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreatedSubagentRun,

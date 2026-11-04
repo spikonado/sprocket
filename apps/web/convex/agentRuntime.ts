@@ -182,7 +182,6 @@ export const createGatewayRun = action({
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
-		/** The run writes its prompt part in beginRun. Released clients omit it. */
 		deferPrompt: v.optional(v.boolean())
 	},
 	returns: vCreateGatewayRunResult,
@@ -542,9 +541,7 @@ export const saveContextHandoff = mutation({
 		claimId: v.string(),
 		executionSecret: v.string(),
 		...vHandoffSummary,
-		/** Sent by released agents; true places the cutoff before the run's prompt. */
 		beforePrompt: v.optional(v.boolean()),
-		/** Sent by released agents; ignored. */
 		processedTokens: v.optional(v.number()),
 		/** Shown after the summary; parts before the cutoff no longer reach the model. */
 		workspaceContext: v.optional(v.array(vHiddenPrompt))
@@ -623,7 +620,6 @@ export const omitReasoningReplay = mutation({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string(),
-		/** Sent by released agents; true places the cutoff before the run's prompt. */
 		beforePrompt: v.optional(v.boolean())
 	},
 	returns: v.boolean(),
@@ -741,7 +737,6 @@ export const finalizeCompletionCall = mutation({
 		usage: v.optional(
 			v.object({
 				contextTokens: v.number(),
-				/** Sent by released agents; ignored. */
 				processedTokens: v.optional(v.number()),
 				call: v.optional(vModelCallUsage)
 			})
@@ -977,9 +972,7 @@ export const finalizeFailedStart = mutation({
 	args: {
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
-		/** Sent by released agents; ignored. */
 		prompt: v.optional(v.string()),
-		/** Sent by released agents; ignored. */
 		storageIds: v.optional(v.array(v.id('_storage'))),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
