@@ -31,6 +31,7 @@ function renderMath(token: Tokens.Generic) {
 	return katex.renderToString(token.text, {
 		displayMode: token.displayMode,
 		throwOnError: false,
+		strict: false,
 		trust: false,
 		maxSize: 20,
 		maxExpand: 1000
