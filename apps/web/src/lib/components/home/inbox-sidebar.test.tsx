@@ -816,7 +816,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 	).toEqual(['3 subagents · Working']);
 });
 
-it('hides starting counts while still letting starting-only trees expand', async () => {
+it('shows active trees without working subagents as waiting', async () => {
 	treeSummaries.set('thread', {
 		descendantCount: 2,
 		anyActive: true,
@@ -835,9 +835,13 @@ it('hides starting counts while still letting starting-only trees expand', async
 	const view = renderView(<Harness {...input} />);
 	await flush();
 
-	const expansion = view.getByRole('button', { name: 'Expand subagents of Thread' });
-	expect(document.querySelectorAll('.inbox-row-subagents')).toHaveLength(0);
-	expect(document.body.textContent).not.toContain('Starting');
+	const expansion = view.getByRole('button', {
+		name: 'Expand subagents of Thread: 2 subagents · Waiting'
+	});
+
+	expect(
+		[...document.querySelectorAll('.inbox-row-subagents')].map((row) => row.textContent)
+	).toEqual(['2 subagents · Waiting']);
 	expect(document.querySelector('.inbox-children')).toBeNull();
 
 	act(() => {
