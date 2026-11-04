@@ -74,7 +74,11 @@ async fn launchers_run_kicad_and_point_kipy_at_its_cli() {
     let directory = tempfile::tempdir().unwrap();
     let tree = directory.path().join("it's here");
     fs::create_dir_all(&tree).unwrap();
-    let (cli, python) = (tree.join("kicad-cli"), tree.join("python"));
+    let (cli, python, kipy_api) = (
+        tree.join("kicad-cli"),
+        tree.join("python"),
+        tree.join("kipy-api.py"),
+    );
     for (program, body) in [
         (&cli, r#"printf '%s|' cli "$@""#),
         (&python, r#"printf '%s|' "$KICAD_CLI_PATH" "$@""#),
@@ -83,7 +87,7 @@ async fn launchers_run_kicad_and_point_kipy_at_its_cli() {
         set_executable(program).unwrap();
     }
     let bin = directory.path().join("bin");
-    write_launchers(&bin, launchers(&cli, &python))
+    write_launchers(&bin, launchers(&cli, &python, &kipy_api))
         .await
         .unwrap();
 
@@ -96,4 +100,8 @@ async fn launchers_run_kicad_and_point_kipy_at_its_cli() {
     };
     assert_eq!(output("kicad-cli"), "cli|a b|c|");
     assert_eq!(output("kicad-python"), format!("{}|a b|c|", cli.display()));
+    assert_eq!(
+        output("kipy-api"),
+        format!("|{}|a b|c|", kipy_api.display())
+    );
 }

@@ -1,6 +1,7 @@
 mod unpack;
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,11 @@ use crate::tool_install::{
 
 const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
 const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt");
+const KIPY_API: &str = include_str!("../../../tools/kicad/kipy-api.py");
+const KIPY_API_FILE: &str = "kipy-api.py";
+const LIBRARIES_FILE: &str = "libraries-dir";
+/// KiCad doesn't read this name, so a KiCad started from an agent's shell keeps its own paths.
+const LIBRARIES_VARIABLE: &str = "SPROCKET_KICAD_LIBRARIES";
 const NAME: &str = "KiCad";
 const STAGING_PREFIX: &str = ".staging-";
 const LAUNCHER_DIR: &str = "bin";
@@ -166,6 +172,12 @@ impl KiCadConnector {
         self.root.join(LAUNCHER_DIR)
     }
 
+    pub(crate) fn environment(&self) -> Option<(OsString, OsString)> {
+        let dir = installed_version(&self.root, &self.release.version)?;
+        let libraries = fs::read_to_string(self.root.join(dir).join(LIBRARIES_FILE)).ok()?;
+        Some((LIBRARIES_VARIABLE.into(), libraries.trim().into()))
+    }
+
     fn activity(&self) -> MutexGuard<'_, Activity> {
         self.activity.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -225,10 +237,22 @@ impl KiCadConnector {
         if user_kicad.is_some() {
             tokio::fs::write(staging.join(USER_KICAD_VERSION_FILE), &version).await?;
         }
+        if let Some(libraries) = libraries_dir(&published_cli) {
+            tokio::fs::write(
+                staging.join(LIBRARIES_FILE),
+                libraries.display().to_string(),
+            )
+            .await?;
+        }
         self.create_venv(staging).await?;
+        tokio::fs::write(staging.join(KIPY_API_FILE), KIPY_API).await?;
         write_launchers(
             &staging.join(LAUNCHER_DIR),
-            launchers(&published_cli, &venv_python(version_dir)),
+            launchers(
+                &published_cli,
+                &venv_python(version_dir),
+                &version_dir.join(KIPY_API_FILE),
+            ),
         )
         .await?;
         let config_dir = kicad_config_dir(
@@ -520,7 +544,7 @@ fn venv_python(dir: &Path) -> PathBuf {
 /// `kicad-python` points kipy at this KiCad, since kipy would otherwise prefer a system
 /// install over `PATH`. Windows also gets `.cmd` launchers, while Git Bash, agents' usual
 /// shell there, only runs the `sh` ones.
-fn launchers(cli: &Path, python: &Path) -> Vec<(&'static str, String)> {
+fn launchers(cli: &Path, python: &Path, kipy_api: &Path) -> Vec<(&'static str, String)> {
     let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', r"'\''"));
     let script = |body: String| format!("#!/bin/sh\n{body}\n");
     let gui = if cfg!(target_os = "macos") {
@@ -541,35 +565,44 @@ fn launchers(cli: &Path, python: &Path) -> Vec<(&'static str, String)> {
                 quote(python)
             )),
         ),
+        (
+            "kipy-api",
+            script(format!("exec {} {} \"$@\"", quote(python), quote(kipy_api))),
+        ),
     ];
     #[cfg(windows)]
     let launchers = launchers
         .into_iter()
-        .chain(cmd_launchers(cli, python))
+        .chain(cmd_launchers(cli, python, kipy_api))
         .collect();
     launchers
 }
 
 #[cfg(windows)]
-fn cmd_launchers(cli: &Path, python: &Path) -> [(&'static str, String); 3] {
+fn cmd_launchers(cli: &Path, python: &Path, kipy_api: &Path) -> [(&'static str, String); 4] {
     let escape = |path: &Path| path.display().to_string().replace('%', "%%");
-    let script = |setup: String, program: &Path| -> String {
-        format!(
-            "@echo off\r\nsetlocal\r\n{setup}\"{}\" %*\r\nexit /b %ERRORLEVEL%\r\n",
-            escape(program)
-        )
+    let quote = |path: &Path| format!("\"{}\"", escape(path));
+    let script = |setup: String, command: String| -> String {
+        format!("@echo off\r\nsetlocal\r\n{setup}{command} %*\r\nexit /b %ERRORLEVEL%\r\n")
     };
     [
         (
             "kicad.cmd",
-            script(String::new(), cli.with_file_name("kicad.exe").as_path()),
+            script(String::new(), quote(&cli.with_file_name("kicad.exe"))),
         ),
-        ("kicad-cli.cmd", script(String::new(), cli)),
+        ("kicad-cli.cmd", script(String::new(), quote(cli))),
         (
             "kicad-python.cmd",
             script(
                 format!("set \"KICAD_CLI_PATH={}\"\r\n", escape(cli)),
-                python,
+                quote(python),
+            ),
+        ),
+        (
+            "kipy-api.cmd",
+            script(
+                String::new(),
+                format!("{} {}", quote(python), quote(kipy_api)),
             ),
         ),
     ]
@@ -609,13 +642,17 @@ fn kicad_config_dir((major, minor): (u32, u32)) -> anyhow::Result<PathBuf> {
     Ok(base.join("kicad").join(version))
 }
 
-fn template_dir(cli: &Path) -> Option<PathBuf> {
+fn libraries_dir(cli: &Path) -> Option<PathBuf> {
     let prefix = cli.parent()?.parent()?;
-    let dir = if cfg!(target_os = "macos") {
-        prefix.join("SharedSupport/template")
+    Some(if cfg!(target_os = "macos") {
+        prefix.join("SharedSupport")
     } else {
-        prefix.join("share/kicad/template")
-    };
+        prefix.join("share/kicad")
+    })
+}
+
+fn template_dir(cli: &Path) -> Option<PathBuf> {
+    let dir = libraries_dir(cli)?.join("template");
     dir.is_dir().then_some(dir)
 }
 
