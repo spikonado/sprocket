@@ -198,10 +198,16 @@ export const answer = mutation({
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const result = await answerPendingQuestion(ctx, args);
+		const { question } = result;
 
 		return {
-			question: toAgentQuestionSnapshot(result.question),
-			continuation: result.kind === 'answered' ? result.continuation : undefined
+			question: toAgentQuestionSnapshot(question),
+			continuation:
+				result.kind === 'answered'
+					? result.continuation
+					: question.continuationClaim
+						? undefined
+						: await questionContinuation(ctx, question)
 		};
 	}
 });
@@ -299,7 +305,9 @@ export const skip = mutation({
 			throw new Error('Question not found.');
 		}
 
-		if (question.status === 'skipped') return {};
+		if (question.status === 'skipped') {
+			return { continuation: await questionContinuation(ctx, question) };
+		}
 
 		await assertHeadPendingQuestion(ctx, question);
 		const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
