@@ -17,7 +17,6 @@ impl HiddenPrompt {
     }
 }
 
-/// The workspace context read from this machine, rendered for any cwd.
 pub(crate) struct WorkspaceContext {
     instructions: String,
     location: String,

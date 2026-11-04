@@ -44,7 +44,6 @@ pub struct CreateSubagentRunResponse {
     pub run_id: String,
     pub status: String,
     pub settings: SubagentSettings,
-    /// Previous child run for follow-up/continuation launches; none for a new child.
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
 }
@@ -112,21 +111,17 @@ pub struct SubagentMonitorInfo {
     pub transcript: RemoteTranscriptState,
 }
 
-/// Inputs to attach a native execution to a child run committed by createOrSend.
 pub struct SubagentLaunchRequest {
     pub user_id: String,
     pub thread_id: String,
-    /// Idempotency key of the durable child run.
     pub submission_id: String,
     /// Child execution secret; never the parent run's secret.
     pub execution_secret: String,
-    /// Caller workspace root; the child runs in the same workspace.
     pub workspace_path: String,
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
     pub fast_mode: bool,
-    /// Previous child run on follow-up/continuation; none for a new child.
     pub continuation_of_run_id: Option<String>,
 }
 
@@ -140,8 +135,6 @@ impl std::fmt::Debug for SubagentLaunchRequest {
     }
 }
 
-/// Server-owned launch hook for agent tools. The agent crate does not depend
-/// on the server crate.
 pub trait SubagentLauncher: Send + Sync {
     fn launch(
         &self,

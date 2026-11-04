@@ -44,7 +44,7 @@ const START_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 /// Must match the createGatewayRun conflict ConvexErrors in
-/// apps/web/convex/agentRuntime.ts ("Submission belongs to a different ...").
+/// apps/web/convex/lib/runCreate.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
 const CONTINUE_PROMPT: &str = "continue";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
@@ -110,8 +110,6 @@ impl RunFinalStatus {
     }
 }
 
-/// Restores the thread's saved cwd, falling back to the workspace root when it
-/// is gone, e.g. a deleted worktree or a thread resumed on another machine.
 fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
     saved
         .and_then(|saved| {
@@ -125,7 +123,6 @@ fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
-/// Depends only on the model, so it stays the same across runs and machines.
 fn base_instructions(model_label: &str, model_id: &str) -> String {
     SYSTEM_PROMPT_TEMPLATE.trim_end().replace(
         MODEL_IDENTITY_PLACEHOLDER,
@@ -221,7 +218,6 @@ async fn abort_after_claim(
     claim_id: &str,
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
-    // After claim (including mid-run lease loss); not the pre-start phrasing.
     let text = format!("Run aborted: {error:#}");
     match finalize_claim_failure(runtime, run_id, claim_id, &error, &text).await {
         Ok(()) => Err(error),
@@ -413,8 +409,6 @@ async fn renew_claim_once(
     Ok((renewed, request_started_at))
 }
 
-/// Retries transient renewal failures while the lease window can still fit
-/// another attempt.
 async fn renew_claim_with<F, Fut>(
     run_id: &str,
     lease_deadline: Instant,
@@ -599,8 +593,6 @@ pub async fn finalize_failed_start(
     request: RunAgentRequest,
     startup_error: String,
 ) -> anyhow::Result<()> {
-    // createGatewayRun rejected the duplicate submission: a racing launch owns
-    // the run, so this executor's cleanup has nothing to terminalize.
     if submission_owned_by_another_executor(&startup_error) {
         eprintln!(
             "sprocket-agent: submission {} already belongs to an active run; standing down",
@@ -706,7 +698,6 @@ async fn load_prior_history(
         },
     )
     .await?;
-    // A run that has not begun answers its pending prompt, not a transcript part.
     let current_prompt = match context.pending_prompt.clone() {
         Some(mut prompt) => {
             cache_attachments(store, user_id, thread_id, &mut prompt, |_| async {

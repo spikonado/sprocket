@@ -12,9 +12,6 @@ use crate::hooks::ToolInvocationAssignment;
 
 pub(super) const GET_JOB_FUNCTION: &str = "executor:getJob";
 
-/// Runs a tool's work as a Convex action, aborting the wait when the run is
-/// cancelled. The action itself keeps running server-side; its job record is
-/// reconciled by the normal completion flow.
 pub(super) async fn run_convex_tool_action(
     runtime: &RuntimeClient,
     cancellation: WorkspaceCancellation,
@@ -30,8 +27,6 @@ pub(super) async fn run_convex_tool_action(
     }
 }
 
-/// Runs a tool's work as a Convex mutation. Cancellation only aborts the wait;
-/// the mutation still commits server-side if it already started.
 pub(super) async fn run_convex_tool_mutation(
     runtime: &RuntimeClient,
     cancellation: WorkspaceCancellation,
@@ -47,7 +42,6 @@ pub(super) async fn run_convex_tool_mutation(
     }
 }
 
-/// Merge run claim fields with a serialized tool-args object for a Convex call.
 pub(super) fn mutation_args_from_payload(
     run_id: &str,
     claim_id: &str,
@@ -221,7 +215,6 @@ pub(super) async fn execute_cloud_tool_job(
     }
 }
 
-/// Adapts typed tool arguments and results to the persisted job lifecycle.
 pub(super) async fn execute_serialized_tool_job<A, O, F, Fut>(
     context: &AgentToolContext,
     kind: &str,
@@ -379,9 +372,6 @@ where
                 "sprocket-agent: failed tool {} for run {}: {}",
                 kind, context.run_id, error
             );
-            // Terminal runs already cancel claimed jobs via
-            // cancelExecutorJobsForTerminalRun and Workpool cancel in
-            // finalizeRunRecord.
             if error.kind() == ToolErrorKind::Cancelled {
                 return Err(error);
             }

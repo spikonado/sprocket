@@ -29,9 +29,6 @@ fn media_box(size: i64) -> Object {
     Object::Array([0, 0, size, size].map(Object::Integer).to_vec())
 }
 
-/// Pages sit in groups of ten and inherit MediaBox, Resources, and Rotate
-/// from the root, except page 57, which sets its own MediaBox and links to
-/// page 56.
 fn pdf_document(page_count: usize) -> Document {
     let mut document = Document::with_version("1.4");
     let root = document.new_object_id();

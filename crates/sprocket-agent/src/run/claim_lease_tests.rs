@@ -9,8 +9,6 @@ use super::{
     RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
 };
 
-/// Regression: a starved renewal tick (CPU saturation, slow reconnect)
-/// must not fail an otherwise healthy run.
 #[tokio::test(start_paused = true)]
 async fn scheduling_stall_after_a_successful_renewal_does_not_fail_the_run() {
     let renewals = AtomicUsize::new(0);
@@ -37,8 +35,6 @@ async fn scheduling_stall_after_a_successful_renewal_does_not_fail_the_run() {
     assert!(renewals.load(Ordering::SeqCst) >= 2);
 }
 
-/// The local deadline is only an estimate; a renewal tick pushed past it
-/// must still be attempted.
 #[tokio::test(start_paused = true)]
 async fn renewal_is_attempted_after_the_estimated_lease_deadline() {
     let renewals = AtomicUsize::new(0);
@@ -79,8 +75,6 @@ async fn renewal_failures_retry_until_the_lease_window_closes() {
     .await;
     let error = result.unwrap_err().to_string();
     assert!(error.contains("initial attempt failed"), "{error}");
-    // Keeps renewing while another attempt can still land before the
-    // lease deadline, then stops.
     assert!(attempts.load(Ordering::SeqCst) >= 3);
     assert!(
         Instant::now()

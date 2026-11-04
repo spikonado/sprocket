@@ -95,8 +95,6 @@ pub(crate) struct AgentProvider {
 
 pub(crate) struct AgentProviderRequest {
     pub(crate) allow_interaction: bool,
-    /// The run's thread is a child: question tools stay available, payment
-    /// tools disappear, delegation tools stay.
     pub(crate) is_child: bool,
     pub(crate) cancellation: sprocket_workspace::WorkspaceCancellation,
     pub(crate) command_sessions: CommandSessionManager,
@@ -120,14 +118,11 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
     pub(crate) usage_pricing: UsagePricing,
-    /// The provider-switch handoff model's pricing; the handoff runs on that model.
     pub(crate) handoff_usage_pricing: UsagePricing,
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
-    /// The run answers a user prompt, so a handoff that is due goes before it.
     pub(crate) defer_prompt_for_context_handoff: bool,
-    /// The previous provider could not write a handoff. Continue without reasoning replay.
     pub(crate) omit_prior_reasoning: bool,
     pub(crate) gateway_url: String,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
@@ -136,7 +131,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) share_conversation_content: bool,
 }
 
-/// What the run writes before its first model call.
 pub(crate) struct RunBegin {
     pub(crate) workspace_context: Vec<HiddenPrompt>,
     pub(crate) begun: tokio::sync::oneshot::Sender<()>,
@@ -275,7 +269,6 @@ impl AgentProvider {
         }
     }
 
-    /// Builds the active provider's model, falling back past providers that cannot start.
     async fn start_model(
         &mut self,
         runtime: &RuntimeClient,

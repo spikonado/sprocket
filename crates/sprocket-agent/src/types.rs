@@ -21,12 +21,10 @@ pub enum CompletionProvider {
 }
 
 impl CompletionProvider {
-    /// BYOK/BYOS providers only serve models whose catalog vendor is OpenAI.
     pub fn serves_vendor(self, vendor: &str) -> bool {
         self == Self::Spikonado || vendor == "openai"
     }
 
-    /// Only the gateway has a fast tier; other providers run fast requests at standard speed.
     pub(crate) fn serves_fast_mode(self) -> bool {
         self == Self::Spikonado
     }
@@ -51,7 +49,6 @@ pub struct ChatGptAccess {
     pub expires_at: u64,
 }
 
-/// The user-scoped local ChatGPT credential service handle supplied with a run.
 pub trait ChatGptCredentials: Send + Sync {
     /// Session generation, not the saved-account selector ID. Switches and reconnects must change it.
     fn connection(&self) -> tokio::sync::watch::Receiver<Option<String>>;
@@ -81,10 +78,7 @@ pub struct RunAgentRequest {
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
-    /// Server-owned native subagent launch service. The HTTP executor installs
-    /// it; without it the delegation tools fail closed.
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
-    /// Transcript store backing local monitor reads for descendant threads.
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub installed_connectors: InstalledConnectors,
 }
@@ -95,7 +89,6 @@ pub struct InstalledConnector {
     pub version: String,
 }
 
-/// Reads the connectors installed on the run's machine each time it is called.
 pub type InstalledConnectors = Arc<dyn Fn() -> Vec<InstalledConnector> + Send + Sync>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -141,7 +134,6 @@ pub struct RenewClaimResponse {
 pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub prompt: String,
-    /// Set until the run begins.
     #[serde(
         default,
         deserialize_with = "sprocket_transcript::deserialize_remote_prompt"
@@ -153,7 +145,6 @@ pub struct RunContextResponse {
     pub provider_handoff: Option<ProviderHandoff>,
     #[serde(default)]
     pub provider_preferences: ProviderPreferences,
-    /// Absent until the thread first calls set_cwd.
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -196,7 +187,6 @@ pub struct ContextBudget {
     pub auto_handoff_token_limit: u64,
 }
 
-/// Live catalog fields for the selected model. Fetched once with the budget.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogModelCapabilities {
     pub label: String,
@@ -207,10 +197,8 @@ pub struct CatalogModelCapabilities {
     pub usage_pricing: UsagePricing,
 }
 
-/// Catalog facts recorded with each call, so its tokens can be priced later even after they change.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UsagePricing {
-    /// Input size above which the direct provider API charges long-context rates.
     pub long_context_threshold_tokens: Option<u64>,
     /// The cache lifetime the gateway's requests write at.
     pub cache_write_ttl: Option<String>,
@@ -304,9 +292,6 @@ pub struct RunSnapshot {
     pub started_at: u64,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
-    /// Immediate parent thread when this run's thread is a subagent. Drives
-    /// payment-tool exclusion and child question availability; absent for
-    /// roots and for threads recorded before the hierarchy existed.
     #[serde(default)]
     pub parent_thread_id: Option<String>,
 }
@@ -509,8 +494,6 @@ pub(crate) fn deserialize_agent_history(
         .collect()
 }
 
-/// Call only for legacy history whose provenance is unavailable. Known origins,
-/// including a previous model's origin, must never be replaced by the selected model.
 pub(crate) fn assign_unidentified_legacy_history_origin(history: &mut [Message], origin: &Origin) {
     for message in history {
         if let Message::Assistant(assistant) = message

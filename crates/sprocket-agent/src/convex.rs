@@ -553,7 +553,6 @@ impl RuntimeClient {
             .await
     }
 
-    /// Retries transport failures of a mutation that reports whether the claim is still active.
     async fn claim_mutation_with_retries(
         &self,
         function: &str,

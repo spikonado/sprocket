@@ -1026,7 +1026,6 @@ fn require_launcher(
         .ok_or_else(|| tool_failure("subagent execution is unavailable in this environment"))
 }
 
-/// Provider identity never comes from a tool argument.
 async fn enabled_providers(
     context: &AgentToolContext,
 ) -> Result<Vec<CompletionProvider>, ToolExecutionError> {
@@ -1222,7 +1221,6 @@ where
     .await
 }
 
-/// Returns when the subagent goes idle or asks a question, or at `deadline`.
 async fn wait_for_settlement_using<S>(
     updates: &mut S,
     deadline: Instant,

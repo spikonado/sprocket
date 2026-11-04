@@ -18,7 +18,6 @@ pub(super) fn cancelled_error() -> ToolExecutionError {
     ToolExecutionError::cancelled("Tool execution was cancelled.")
 }
 
-/// The thread's current working directory, shared by every tool in a run.
 #[derive(Clone)]
 pub(crate) struct WorkingDirectory(Arc<RwLock<PathBuf>>);
 
@@ -75,8 +74,6 @@ impl AgentToolContext {
     }
 }
 
-/// Rebases a relative path onto the cwd, keeping it relative to the
-/// workspace root when it stays inside so stored paths remain portable.
 fn rebase_onto_cwd(workspace_root: &Path, cwd: &Path, path: &str) -> String {
     if cwd == workspace_root || Path::new(path).is_absolute() {
         return path.to_string();

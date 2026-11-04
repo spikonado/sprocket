@@ -3,7 +3,6 @@ use anyhow::Context;
 use crate::catalog::ModelCatalog;
 use crate::types::CompletionProvider;
 
-/// A thread's saved model, reasoning, and fast mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSettings {
     pub model: String,
@@ -26,9 +25,6 @@ pub struct ResolvedSettings {
     pub provider: CompletionProvider,
 }
 
-/// Saved settings the model no longer supports fall back quietly; unsupported overrides are
-/// errors. The run starts on the first of `providers` serving the model, and run-start
-/// failover moves past providers that can't start.
 pub fn resolve_settings(
     catalog: &ModelCatalog,
     providers: &[CompletionProvider],

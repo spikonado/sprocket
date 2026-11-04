@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use crate::types::{CompletionProvider, UsagePricing};
 
-/// The provider, model and pricing facts a completion call ran under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UsageSource {
     pub(crate) provider: CompletionProvider,
@@ -12,7 +11,6 @@ pub(crate) struct UsageSource {
     pub(crate) pricing: UsagePricing,
 }
 
-/// One completion call's tokens, in the shape `agentRuntime` records.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelCallUsage {
@@ -29,7 +27,6 @@ pub(crate) struct ModelCallUsage {
 }
 
 impl UsageSource {
-    /// None when the provider reported no token counts.
     pub(crate) fn call_usage(&self, usage: Usage) -> Option<ModelCallUsage> {
         if usage.input_tokens.is_none() && usage.output_tokens.is_none() {
             return None;

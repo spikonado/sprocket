@@ -1,5 +1,3 @@
-//! Shared local image/document conversion used by parse_file, scrape_url, and GitHub fetches.
-
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -156,7 +154,6 @@ pub(super) struct ModelImage {
     pub height: u32,
 }
 
-/// Downscales and re-encodes images the provider would reject; others pass through untouched.
 pub(super) fn fit_image_for_model(bytes: Vec<u8>) -> anyhow::Result<ModelImage> {
     let (media_type, width, height) = decode_image_info(&bytes)?;
     if width <= MAX_MODEL_IMAGE_EDGE
@@ -444,8 +441,6 @@ pub(super) struct ReplayedImage {
     pub(super) image: ModelImage,
     /// Hex sha256 of the bytes the model receives.
     pub(super) sha256: String,
-    /// Only downloaded images show their path; parse_file's cache holds a
-    /// downscaled copy of a file the model already has a path to.
     show_path: bool,
 }
 
@@ -626,9 +621,6 @@ async fn replay_image_reference(output: &serde_json::Value) -> anyhow::Result<Re
     .await
 }
 
-/// Rebuilds the model input of a `parse_file` result or an `outputType:
-/// "image"` result from the local cache. Missing cache is an error so history
-/// hydration can fall back to text.
 pub(super) async fn replay_local_tool_output(
     output: &serde_json::Value,
 ) -> anyhow::Result<ReplayedOutput> {
