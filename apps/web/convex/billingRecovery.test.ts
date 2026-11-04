@@ -211,7 +211,6 @@ describe('checkout attempt recovery', () => {
 			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
 		).rejects.toThrow('could not be confirmed');
 
-		// Ambiguous retry pacing: an immediate retry is told to wait.
 		await expect(
 			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
 		).rejects.toThrow('still confirming');
@@ -324,7 +323,6 @@ describe('checkout attempt recovery', () => {
 		expect(checkout.checkout_url).toBe('https://checkout.example/cks_unpaid');
 		expect(createCalls).toBe(1);
 
-		// Past the local TTL the stored checkout URL is still the resume point.
 		vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1_000);
 
 		const status = await owner.action(api.billing.getCheckoutStatus, {
@@ -491,7 +489,6 @@ describe('getCheckoutStatus', () => {
 			owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_old' })
 		).resolves.toMatchObject({ status: 'awaiting_payment', mode: 'test', sessionId: 'cks_old' });
 
-		// Local expiry is not provider expiry: the attached session is queried.
 		expect(
 			requests.filter((request) => new URL(request.url).pathname.startsWith('/checkouts/'))
 		).toHaveLength(1);
@@ -617,7 +614,6 @@ describe('getCheckoutStatus', () => {
 		const t = initConvexTest();
 		await seedProTier(t);
 
-		// Neither the replay nor the fallback session readback resolves.
 		stubDodo({
 			onCreateSession: () => new Response(null, { status: 500 }),
 			onSessionStatus: () => new Response(null, { status: 500 })

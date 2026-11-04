@@ -14,7 +14,6 @@ export async function analyticsId(id: string): Promise<string> {
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** Conversation events go to a hashed id with no person profile, so they never link to a user. */
 export async function captureAnonymous(
 	ctx: Parameters<typeof posthog.capture>[0],
 	args: { distinctId: string; event: string; properties: CaptureProperties }

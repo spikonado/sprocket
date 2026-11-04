@@ -199,7 +199,6 @@ describe('Dodo subscription persistence', () => {
 
 		expect(replaced.attemptId).not.toBe(first.attemptId);
 
-		// The superseded monthly attempt is retained with its session reference.
 		await expect(
 			t.query(internal.billing.lookupCheckoutAttempt, {
 				userId: 'user_checkout',
@@ -247,7 +246,6 @@ describe('Dodo subscription persistence', () => {
 
 		if (otherTier.kind !== 'create') throw new Error('Expected a fresh reservation.');
 
-		// The annual attempt was also retained, so two superseded attempts exist.
 		await expect(
 			t.query(internal.billing.lookupCheckoutAttempt, {
 				userId: 'user_checkout',
@@ -303,8 +301,6 @@ describe('Dodo subscription persistence', () => {
 	it('does not invent a provider key for a legacy ambiguous row without one', async () => {
 		const t = initConvexTest();
 
-		// A retained ambiguous row that predates persisted keys and frozen
-		// requests must fail closed instead of minting or guessing a key.
 		await t.run(async (ctx) => {
 			await ctx.db.insert('billingCheckoutAttempts', {
 				userId: 'user_legacy',
@@ -370,7 +366,6 @@ describe('Dodo subscription persistence', () => {
 			productId: 'prod_annual'
 		});
 
-		// The expired attempt moved to the retained history table.
 		await expect(
 			t.query(internal.billing.lookupCheckoutAttempt, {
 				userId: 'user_checkout',

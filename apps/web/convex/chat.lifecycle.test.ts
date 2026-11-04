@@ -253,8 +253,6 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 		expect(await asUser.query(api.chat.selectedThreadLifecycle, { threadId })).toMatchObject({
 			phase: 'cancellation_requested'
 		});
-		// The executor observes the request immediately so it can stop its current
-		// model or tool operation and acknowledge the cancellation.
 		expect(
 			await asUser.query(api.agentRuntime.isFinished, {
 				runId: created.runId,

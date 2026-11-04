@@ -12,7 +12,6 @@ export const defaultProviderOrder: readonly ProviderOrderEntry[] = completionPro
 	(provider) => ({ provider, enabled: true })
 );
 
-/** Saved order with any provider missing from it appended, enabled, in default order. */
 export function resolveProviderOrder(
 	saved: readonly ProviderOrderEntry[] | undefined
 ): ProviderOrderEntry[] {

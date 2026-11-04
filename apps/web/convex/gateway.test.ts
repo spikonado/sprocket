@@ -9,7 +9,6 @@ const tokenSecret = 'test-gateway-token-secret';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
 
-/** Operator-managed tiers; quota checks throw when the table is empty. */
 async function seedTiers(t: ConvexTestInstance): Promise<void> {
 	await t.run(async (ctx) => {
 		const tiers = [

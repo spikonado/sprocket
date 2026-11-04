@@ -328,8 +328,6 @@ describe('checkout selection changes', () => {
 	it('freezes one create request and idempotency key across concurrent ambiguous retries', async () => {
 		const { t, owner } = await billingFixture();
 
-		// Fail the first provider create so the attempt turns ambiguous, then
-		// hold the replay requests so two retries overlap at the freeze.
 		let createCalls = 0;
 		let release: (() => void) | undefined;
 
@@ -368,15 +366,11 @@ describe('checkout selection changes', () => {
 
 		const fulfilled = results.filter((result) => result.status === 'fulfilled');
 
-		// Both concurrent retries may succeed on the same replayed session;
-		// the guarantee under test is one frozen key/body, not a single winner.
 		expect(fulfilled.length).toBeGreaterThanOrEqual(1);
 		expect(fulfilled[0]!.value.checkout_url).toBe('https://checkout.example/cks_frozen');
 
 		const replays = requests.filter((request) => new URL(request.url).pathname === '/checkouts');
 
-		// The original failed create plus one replay: concurrent retries share
-		// the first frozen key instead of each sending their own body.
 		expect(replays.length).toBeGreaterThanOrEqual(2);
 		const replayBodies = await Promise.all(replays.map((request) => request.json()));
 		const replayKeys = replays.map((request) => request.headers.get('Idempotency-Key'));
@@ -430,9 +424,6 @@ describe('checkout selection changes', () => {
 
 		if (!ambiguous?.idempotencyKey) throw new Error('Missing ambiguous attempt key.');
 
-		// Retain the ambiguous attempt (the state a selection switch produces)
-		// by moving it to the attempts table, then resume it with its original
-		// key from the retained table.
 		await t.run(async (ctx) => {
 			const session = await ctx.db
 				.query('billingCheckoutSessions')

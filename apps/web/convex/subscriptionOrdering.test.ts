@@ -100,7 +100,6 @@ describe('subscription projection ordering', () => {
 	afterEach(() => vi.useRealTimers());
 
 	it('equal-time conflicting product/term/status/schedule deliveries converge in both orders', async () => {
-		// Equal eventAt, opposite tie-break positions on every field.
 		const winner = webhookArgs({
 			dodoProductId: 'prod_pro',
 			status: 'on_hold',
@@ -156,8 +155,6 @@ describe('subscription projection ordering', () => {
 		const initial = await t.mutation(internal.billing.upsertDodoSubscription, webhookArgs());
 		expect(initial.outcome).toBe('applied');
 
-		// Same effective state at a newer provider event time: watermarks
-		// advance, generation does not.
 		const renew = await t.mutation(
 			internal.billing.upsertDodoSubscription,
 			webhookArgs({ eventAt: now + 5_000 })
@@ -172,8 +169,6 @@ describe('subscription projection ordering', () => {
 			quotaGeneration: 1
 		});
 
-		// A contrary payload stamped between the two is now fenced on every
-		// fence: older status/product/term and a losing schedule flag.
 		const stale = await t.mutation(
 			internal.billing.upsertDodoSubscription,
 			webhookArgs({
@@ -205,7 +200,6 @@ describe('subscription projection ordering', () => {
 		const before = (await readSubscription(t))!;
 		expect(before.quotaGeneration).toBe(1);
 
-		// The reconciliation observation sees the plan change first.
 		const observedAt = now + 60_000;
 
 		const observation = await observe(t, before, {
@@ -223,15 +217,11 @@ describe('subscription projection ordering', () => {
 			quotaGeneration: 2,
 			quotaTransitionAt: observedAt,
 			observedAt,
-			// Provider watermarks keep the webhook event time; the observation
-			// never stamps its retrieval time into them.
 			eventAt: now,
 			payloadEventAt: now,
 			termEventAt: now
 		});
 
-		// The delayed webhook carrying the same plan change must not mint a
-		// second generation: the transition identity is already recorded.
 		const delayed = await t.mutation(
 			internal.billing.upsertDodoSubscription,
 			webhookArgs({
@@ -248,8 +238,6 @@ describe('subscription projection ordering', () => {
 			tier: 'max',
 			quotaGeneration: 2,
 			quotaTransitionAt: observedAt,
-			// The delayed legitimate webhook still advances the provider
-			// watermarks to its own event time.
 			eventAt: now + 1_000,
 			payloadEventAt: now + 1_000,
 			termEventAt: now + 1_000
@@ -280,14 +268,11 @@ describe('subscription projection ordering', () => {
 			providerStatus: 'on_hold',
 			accessPhase: 'none',
 			terminalConfirmed: false,
-			// A status-only observation keeps the confirmed term untouched.
 			billingPeriodStart: termStart,
 			billingPeriodEnd: termEnd
 		});
 		expect(held.accessEndsAt).toBeUndefined();
 
-		// No provider terminal event arrived, so a competing purchase is still
-		// fenced out even though access has ended.
 		const purchase = await t.mutation(
 			internal.billing.upsertDodoSubscription,
 			webhookArgs({

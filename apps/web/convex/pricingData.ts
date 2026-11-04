@@ -10,10 +10,6 @@ import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 // enforced inside the lease transaction so it holds across action instances.
 const DODO_MAX_ACTIVE_REFRESH_LEASES = 8;
 
-/**
- * Dodo products must be assigned to exactly one tier interval. Returns the
- * owning tier id, or null when unassigned; multiple assignments fail fast.
- */
 export async function lookupTierForProduct(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	productId: string,
@@ -173,12 +169,6 @@ export const getProductPricesForEnvironment = internalQuery({
 	}
 });
 
-/**
- * Claims the refresh lease for one product; false when another instance holds
- * it, the row is fresh, or a negative-cache/backoff deadline is still pending.
- * The backoff recheck happens here, inside the transaction, so the action's
- * earlier snapshot cannot race a fresh negative entry.
- */
 export const acquireProductRefreshLease = internalMutation({
 	args: {
 		environment: v.string(),
@@ -199,8 +189,6 @@ export const acquireProductRefreshLease = internalMutation({
 		if (cached) {
 			const leased = cached.leaseExpiresAt !== undefined && cached.leaseExpiresAt > args.now;
 
-			// A live lease from another owner means a refresh is already running.
-			// A fresh non-failed row also needs no refresh.
 			if (leased && cached.leaseOwner !== args.leaseOwner) return false;
 
 			if (!cached.refreshFailed && cached.expiresAt > args.now) return false;
@@ -219,10 +207,6 @@ export const acquireProductRefreshLease = internalMutation({
 			}
 		}
 
-		// Durable global budget: count live leases environment-wide and refuse
-		// the claim once the cap is reached, regardless of which instance owns
-		// them. This is the last check so budget contention loses to every
-		// cheaper per-row reason to refuse.
 		const activeLeases = await ctx.db
 			.query('dodoPricingCache')
 			.withIndex('by_environment_and_leaseExpiresAt', (q) =>
@@ -254,7 +238,6 @@ export const acquireProductRefreshLease = internalMutation({
 	}
 });
 
-/** Writes a single product outcome (positive or negative) and releases the lease. */
 export const cacheProductPrice = internalMutation({
 	args: {
 		environment: v.string(),
@@ -275,8 +258,6 @@ export const cacheProductPrice = internalMutation({
 			)
 			.unique();
 
-		// Only the lease holder may write; an expired lease means another
-		// instance recovered the refresh and owns the row now.
 		if (!cached || cached.leaseOwner !== args.leaseOwner) return null;
 
 		// A transient failure keeps the last confirmed price for bounded stale
@@ -369,19 +350,6 @@ async function lookupTierRow(
 	if (rows.length > 1) throw new Error(`Duplicate tiers rows for tier "${tierId}".`);
 
 	return rows[0] ?? null;
-}
-
-/** Mapped product for a tier/interval without the uniqueness gate; internal use. */
-export async function getTierProductId(
-	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
-	tierId: string,
-	interval: 'monthly' | 'annual'
-): Promise<string | null> {
-	const tier = await lookupTierRow(ctx, tierId);
-
-	if (!tier) return null;
-
-	return interval === 'monthly' ? (tier.monthlyProductId ?? null) : (tier.annualProductId ?? null);
 }
 
 export const getTierForProduct = internalQuery({

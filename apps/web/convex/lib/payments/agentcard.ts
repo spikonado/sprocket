@@ -195,7 +195,6 @@ const webhookEvent = z.object({
 		.default({})
 });
 
-/** The update a verified webhook body asks for, or null for events Sprocket ignores. */
 export function parseAgentcardWebhook(body: string): AgentcardWebhook | null {
 	const event = parseJson(webhookEvent, body);
 

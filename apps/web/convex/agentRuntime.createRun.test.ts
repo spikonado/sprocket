@@ -430,8 +430,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			executionSecret: 'owner-secret'
 		});
 
-		// The executor matches on this exact text when standing down a racing
-		// launch, so it must survive production error masking.
 		await expect(
 			insertQueuedRun(t, asUser, {
 				submissionId: 'sub-owned',

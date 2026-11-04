@@ -45,9 +45,6 @@ export function billingWindow(
 			throw new Error('Monthly subscription is missing its Dodo billing dates.');
 		}
 
-		// Renewal-processing grace keeps the window frozen at the confirmed
-		// term end, so usage keeps charging to the preserved bucket instead of
-		// opening a new empty window or dropping to the free monthly window.
 		return { start: subscription.billingPeriodStart, end: subscription.billingPeriodEnd };
 	}
 

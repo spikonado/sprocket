@@ -7,7 +7,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const PAGE_SIZE = 100;
 
-// Thread records can hold large context summaries, so thread pages are also bounded by bytes read.
 const THREAD_PAGE_MAX_BYTES = 4_000_000;
 
 const vPage = { dayStart: v.number(), cursor: v.union(v.string(), v.null()) };
@@ -74,7 +73,6 @@ export const sendDailyTokenUsage = internalMutation({
 	}
 });
 
-// A user's threads can span pages, so each page sends its own count and PostHog sums them.
 export const sendDailyThreadsCreated = internalMutation({
 	args: vPage,
 	returns: v.null(),

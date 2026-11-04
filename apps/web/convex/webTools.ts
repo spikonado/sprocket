@@ -37,7 +37,6 @@ export const SCRAPE_TIMEOUT_MS = 60_000;
 /** The SDK must outwait the API deadline so the API reports the timeout. */
 const SDK_TIMEOUT_MARGIN_MS = 10_000;
 
-/** Time a queued request keeps for storing and publishing its result. */
 const REQUEST_PUBLISH_MARGIN_MS = 30_000;
 
 export const HIGHLIGHTS_MAX_CHARS = 10_000;
@@ -84,7 +83,6 @@ export type ScrapedPage = {
 	images: string[];
 };
 
-/** `documentUrl` is a temporary storage URL for the unparsed document bytes. */
 export type RawDocument = {
 	url: string;
 	documentUrl: string;
@@ -304,10 +302,6 @@ async function fetchScrape(
 	return page;
 }
 
-/**
- * Fetches unparsed bytes for local parsing when the agent cannot reach the
- * document itself.
- */
 async function fetchRawDocument(
 	ctx: ActionCtx,
 	urlValue: string,

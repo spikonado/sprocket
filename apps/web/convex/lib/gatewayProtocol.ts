@@ -8,7 +8,6 @@ export const GATEWAY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000 + GATEWAY_TOKEN_PRIOR_WO
 
 export const GATEWAY_TOKEN_PREFIX = 'sgt1';
 
-/** Public Responses API and catalog routes live under this prefix on the AI gateway origin. */
 export const GATEWAY_API_PREFIX = '/api';
 
 export const CATALOG_UNAVAILABLE_MESSAGE = 'Model catalog is unavailable.';

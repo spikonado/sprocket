@@ -312,7 +312,6 @@ export const renewClaim = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		// Only active leases renew; expired workers must start/takeover again.
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			return { renewed: false };
 		}
@@ -634,7 +633,6 @@ export const omitReasoningReplay = mutation({
 	}
 });
 
-/** Moves the run to another provider after the active one failed. */
 export const fallBackToProvider = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -988,7 +986,6 @@ export const finalizeClaimFailure = mutation({
 	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		// Released agents still report claim lease loss through this mutation.
 		const abandoned = args.lastError === LEGACY_RUN_ABANDONED_BY_AGENT;
 
 		const accepted =

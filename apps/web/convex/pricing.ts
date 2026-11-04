@@ -23,14 +23,10 @@ import { vBillingInterval, vDodoWebhookRejected } from '@convex/lib/validators';
 
 const DODO_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
 
-// Negative cache for definitively invalid/missing/ambiguous products.
 const DODO_PRICE_NEGATIVE_TTL_MS = 30 * 60 * 1_000;
 
-// Stale display bound: past fresh expiry, a cached price may display for at
-// most this long while refreshes fail; older rows are hidden until refreshed.
 const DODO_PRICE_STALE_MAX_MS = 30 * 60 * 1_000;
 
-// Transient failures retry quickly but stay off the hot path.
 const DODO_PRICE_TRANSIENT_RETRY_MS = 30 * 1_000;
 
 const DODO_PRICE_LEASE_MS = 30 * 1_000;
@@ -341,8 +337,6 @@ export const getPublicCatalog = action({
 
 			if (confirmedAt + DODO_PRICE_STALE_MAX_MS <= now) continue;
 
-			// Validate cached prices against the current mapping: a remapped or
-			// ambiguous product must not misattribute a stale price.
 			if (
 				ambiguousProducts.has(row.productId) ||
 				!matchesBillingInterval(
@@ -374,10 +368,6 @@ export const getPublicCatalog = action({
 			const queue = [...needsRefresh].slice(0, DODO_FETCH_BUDGET_PER_OPERATION);
 			const client = createDodoClient();
 
-			// Fixed worker pool: each worker pops the queue and claims its lease
-			// immediately before fetching, so queued products never hold leases
-			// (or count against the durable global budget) while they wait. The
-			// queue cap bounds both claim attempts and fetches per operation.
 			const workers = Array.from(
 				{ length: Math.min(DODO_FETCH_CONCURRENCY, queue.length) },
 				async () => {
@@ -458,11 +448,6 @@ export const getPublicCatalog = action({
 	}
 });
 
-/**
- * Authoritative subscription lookup for reconciliation. Returns the raw
- * provider state needed to rebuild the local projection; callers treat this
- * as an observation, not a synthetic event.
- */
 export const retrieveSubscription = internalAction({
 	args: { dodoSubscriptionId: v.string() },
 	returns: v.object({
@@ -518,13 +503,6 @@ const webhookSecret = (): string => {
 	return secret.trim();
 };
 
-/**
- * Verify a Dodo webhook's Standard Webhooks signature over the raw request
- * body and return the event identity used for the durable ledger, or why the
- * request was rejected. Throws only on our own misconfiguration. Uses the maintained
- * `standardwebhooks` verifier directly rather than the SDK's rigid typed
- * event unwrap so unknown event types stay durable. Must run in node.
- */
 export const verifyWebhookSignature = internalAction({
 	args: {
 		body: v.string(),

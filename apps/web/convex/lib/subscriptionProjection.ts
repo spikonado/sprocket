@@ -36,8 +36,6 @@ export function statusRank(status: string): number {
 		case 'active':
 			return 2;
 		default:
-			// Provider statuses without a stored convergence rank (pending,
-			// paused) never outrank a recognized one.
 			return 0;
 	}
 }
@@ -52,36 +50,6 @@ export function normalizedTerminalOrHold(status: string): boolean {
 	);
 }
 
-/**
- * Total order over same-subscription payloads: event time first, then status
- * rank, then product id, then scheduled-change target. Equal-time deliveries
- * converge deterministically regardless of arrival order.
- */
-export function comparePayloads(
-	a: {
-		eventAt: number;
-		status: string;
-		dodoProductId: string;
-		scheduledChange?: ScheduledChange | null;
-	},
-	b: {
-		eventAt: number;
-		status: string;
-		dodoProductId: string;
-		scheduledChange?: ScheduledChange | null;
-	}
-): number {
-	if (a.eventAt !== b.eventAt) return a.eventAt - b.eventAt;
-
-	const rank = statusRank(a.status) - statusRank(b.status);
-
-	if (rank !== 0) return rank;
-
-	if (a.dodoProductId !== b.dodoProductId) return a.dodoProductId < b.dodoProductId ? -1 : 1;
-
-	return compareScheduledChanges(a.scheduledChange ?? null, b.scheduledChange ?? null);
-}
-
 // Ordering position against a stored watermark. Observations order at their
 // retrieval time (`observedAt`) instead of their provenance `eventAt`;
 // `observedAt` is never written into a watermark, so it cannot fence out a
@@ -92,8 +60,6 @@ function orderAt(payload: { eventAt: number; observedAt?: number }): number {
 
 type ScheduledChange = { id: string; productId: string; effectiveAt: number };
 
-// A pending scheduled change outranks none (it is the newer provider state);
-// two pending changes order by effective time, then target product, then id.
 function compareScheduledChanges(a: ScheduledChange | null, b: ScheduledChange | null): number {
 	if (!a && !b) return 0;
 
@@ -108,9 +74,6 @@ function compareScheduledChanges(a: ScheduledChange | null, b: ScheduledChange |
 	return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-// Tier resolution priority: checkout reservation, then current tier when the
-// product is unchanged, then the configured mapping for the payload product.
-// A changed product never trusts the old signed metadata tier id.
 export function resolveEffectiveTier(args: {
 	existing: Doc<'subscriptions'> | null;
 	payload: SubscriptionPayload;
@@ -128,7 +91,6 @@ export function resolveEffectiveTier(args: {
 		existing?.dodoSubscriptionId === payload.dodoSubscriptionId &&
 		existing.dodoProductId === payload.dodoProductId;
 
-	// Preserve the purchased tier across operator product remaps.
 	if (unchangedProduct) return { tier: existing.tier, unresolved: false };
 
 	if (checkoutTier) return { tier: checkoutTier, unresolved: false };
@@ -156,7 +118,6 @@ export function isStalePayload({ existing, payload }: TransitionFences): boolean
 	const watermark = existing.payloadEventAt ?? existing.eventAt;
 	const position = orderAt(payload);
 
-	// Older than the watermark is always stale.
 	if (position < watermark) return true;
 
 	if (position > watermark) return false;
@@ -191,8 +152,6 @@ export function isStaleStatus({ existing, payload }: TransitionFences): boolean 
 	return statusRank(payload.status) < statusRank(existing.providerStatus ?? existing.status);
 }
 
-// Term fence on its own watermark so a historical failure cannot override a
-// newer confirmed term.
 export function isStaleTerm(
 	existing: Doc<'subscriptions'> | null,
 	payload: SubscriptionPayload
@@ -270,16 +229,11 @@ function access(accessPhase: AccessPhase, accessEndsAt: number | undefined): Acc
 	return { accessPhase, accessEndsAt };
 }
 
-// Materialized access phase/deadline so reactive queries update and
-// enforcement has a wall-clock fence.
 export function computeAccess(subscription: SubscriptionAccessSource, now: number) {
 	if (subscription.status !== 'active') return access('none', undefined);
 
-	// Operator grants have no provider clock.
 	if (!subscription.dodoSubscriptionId) return access('paid', undefined);
 
-	// A Dodo-linked row without a confirmed term fails closed: there is no
-	// term boundary to grant or bound paid access with.
 	if (!Number.isFinite(subscription.billingPeriodEnd)) {
 		return access('none', undefined);
 	}
@@ -296,8 +250,6 @@ export function computeAccess(subscription: SubscriptionAccessSource, now: numbe
 	if (now < termEnd) return access('paid', termEnd);
 
 	if (subscription.cancelAtNextBillingDate) {
-		// Keep the materialized deadline at the confirmed term end so a new
-		// purchase after authoritative termination can advance it.
 		return access('none', termEnd);
 	}
 
@@ -308,11 +260,6 @@ export function computeAccess(subscription: SubscriptionAccessSource, now: numbe
 	return access('none', graceEnd);
 }
 
-/**
- * Whether an incoming payload actually transitions the projection. Compared
- * against the stored effective projection, so a redelivery that reorders
- * scheduled change/cancel flags alone still advances the payload watermark.
- */
 export function projectionMatches(
 	existing: Doc<'subscriptions'>,
 	projected: {

@@ -353,7 +353,6 @@ export async function questionContinuation(
 			: []
 	);
 
-	// Skipping every question of a finished run leaves nothing to continue with.
 	if (answered.length === 0) return undefined;
 
 	return { runId: continuationOfRunId, prompt: formatQuestionContinuationPrompt(answered) };
@@ -452,9 +451,6 @@ export const headPendingForThread = query({
 	}
 });
 
-/** Cancel a thread's pending questions. Called synchronously from the manual
- * cancellation path so stopped threads reject answers immediately, before the
- * run reaches its eventual cancelled terminal state. */
 export async function cancelPendingQuestionsForThread(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>

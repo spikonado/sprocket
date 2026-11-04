@@ -21,7 +21,6 @@ const ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const MAX_TOOL_IMAGES_PER_CALL = 100;
 
-/** Above the agent's 3.75 MB model image ceiling. */
 const MAX_TOOL_IMAGE_BYTES = 5_000_000;
 
 const TOOL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);

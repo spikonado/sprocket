@@ -26,8 +26,6 @@ import {
 	type Recognizer
 } from '@convex/lib/payments/agentcard';
 
-/** Agentcard answers `connection_not_found` for a user it doesn't know in this
- * mode, which means the same as an empty vault. */
 function isUnknownAgentcardUser<Caught>(error: Caught) {
 	return error instanceof AgentcardError && error.code === 'connection_not_found';
 }
@@ -66,8 +64,6 @@ function purchaseView(purchase: Doc<'purchases'>): Infer<typeof vPurchase> {
 	};
 }
 
-/** Statuses only move forward: a late or replayed update never reopens an
- * approval or undoes a settlement. */
 function nextPurchaseStatus(current: PurchaseStatus, incoming: PurchaseStatus): PurchaseStatus {
 	if (current === 'settled' || current === 'cancelled' || incoming === 'awaiting_approval') {
 		return current;
@@ -75,10 +71,6 @@ function nextPurchaseStatus(current: PurchaseStatus, incoming: PurchaseStatus): 
 
 	return incoming;
 }
-
-// ---------------------------------------------------------------------------
-// Internal state
-// ---------------------------------------------------------------------------
 
 export const paymentActor = internalQuery({
 	// Cancelling often happens because the run just ended, so it skips the lease check.
@@ -245,8 +237,6 @@ export const saveAgentcardUser = internalMutation({
 	}
 });
 
-/** Reads the linked session instead of trusting the webhook body: the session
- * is the documented source of `external_user_id`, which is the Sprocket user. */
 export const linkVaultSession = internalAction({
 	args: { vaultSessionId: v.string() },
 	returns: v.null(),
@@ -267,8 +257,6 @@ export const linkVaultSession = internalAction({
 	}
 });
 
-/** One-off cleanup of retired Prava rows. Run once per deployment with
- * `bunx convex run payments:deleteRetiredMandates`. */
 export const deleteRetiredMandates = internalMutation({
 	args: {},
 	returns: v.null(),
@@ -287,10 +275,6 @@ export const deleteRetiredMandates = internalMutation({
 		return null;
 	}
 });
-
-// ---------------------------------------------------------------------------
-// Agentcard access
-// ---------------------------------------------------------------------------
 
 async function agentcardToken(ctx: ActionCtx): Promise<string> {
 	const credentials = agentcardCredentials();
@@ -354,10 +338,6 @@ async function requirePurchase(
 
 	return purchase;
 }
-
-// ---------------------------------------------------------------------------
-// Agent tools (card_checkout, poll_checkout and report_order)
-// ---------------------------------------------------------------------------
 
 export const checkoutRecognizers = action({
 	args: runAuth,
@@ -608,7 +588,6 @@ export const checkoutCancel = action({
 		})
 });
 
-/** Links are rendered in Settings → Payments, so only https pages are kept. */
 function httpsLink(link: string | undefined, name: string): string | undefined {
 	if (link === undefined) return undefined;
 
@@ -653,10 +632,6 @@ export const reportOrder = action({
 			return { recorded: true as const };
 		})
 });
-
-// ---------------------------------------------------------------------------
-// Settings and thread UI (signed-in user)
-// ---------------------------------------------------------------------------
 
 const vSavedCards = v.array(
 	v.object({
@@ -724,7 +699,6 @@ export const createCardLink = action({
 			'/api/v2/vault_sessions',
 			{
 				method: 'POST',
-				// A linked user only needs to add a card, not repeat sign-up.
 				body: linked
 					? { external_user_id: userId, approval_mode: 'customer', steps: ['card'] }
 					: { external_user_id: userId, approval_mode: 'customer' }

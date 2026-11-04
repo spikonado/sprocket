@@ -11,7 +11,6 @@ export type DirectApiPricing = {
 	longContext: { inputMultiplier: number; outputMultiplier: number } | null;
 };
 
-/** Ids are opaque so gateway catalogs can add models. */
 export type CatalogModel = {
 	id: string;
 	label: string;
@@ -26,7 +25,6 @@ export type CatalogModel = {
 	directApiPricing?: DirectApiPricing | null;
 };
 
-/** UI catalog mapped from `sprocket` on `GET /api/v1/models`. */
 export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;

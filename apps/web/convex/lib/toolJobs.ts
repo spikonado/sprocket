@@ -1,6 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import type { WorkId } from '@convex-dev/workpool';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
 import { sameValue } from '@convex/lib/transcriptParts';
@@ -19,10 +18,9 @@ export async function cancelCloudToolJob(
 	if (!job.cloudWorkId || isSettledExecutorJobStatus(job.status)) return;
 
 	try {
-		// SAFETY: cloudWorkId is the WorkId returned by enqueueAction.
 		await (job.kind === 'web_search' ? webSearchWorkpool : firecrawlPool).cancel(
 			ctx,
-			job.cloudWorkId as WorkId
+			job.cloudWorkId
 		);
 	} catch {
 		// Best-effort; callbacks are fenced on job/claim state.

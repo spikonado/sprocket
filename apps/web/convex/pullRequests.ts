@@ -17,7 +17,6 @@ const pullRequestKey = (pr: { repository: string; number: number }) =>
 const allMerged = (pullRequests: LinkedPullRequest[]) =>
 	pullRequests.length > 0 && pullRequests.every((pr) => pr.state === 'merged');
 
-/** Adds PRs the agent linked, with the states it read from GitHub on the user's machine. */
 export const link = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -54,7 +53,6 @@ export const link = mutation({
 	}
 });
 
-/** Records what the user's machine read from GitHub for PRs already linked to their threads. */
 export const updateStates = mutation({
 	args: {
 		updates: v.array(
@@ -94,7 +92,6 @@ export const updateStates = mutation({
 
 			if (!changed) continue;
 
-			// Only the merge itself settles, so a thread the user unsettles afterwards stays put.
 			const justMerged = allMerged(pullRequests) && !allMerged(linked);
 
 			const settle =

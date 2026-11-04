@@ -197,7 +197,6 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 	return {
 		descendantCount: state?.descendantCount ?? 0,
 		workingDescendantCount: workingCount,
-		// Released inbox clients combine all non-running descendants into Completed.
 		descendantStatusCounts: {
 			queued: 0,
 			running: workingCount,

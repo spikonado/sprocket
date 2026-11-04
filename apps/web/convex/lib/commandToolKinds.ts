@@ -8,7 +8,6 @@ const SESSION_COMMAND_KINDS = new Set([
 	'write_stdin'
 ]);
 
-/** Includes current tool names and aliases retained in stored transcripts. */
 export function isExecCommandToolKind(kind: string): boolean {
 	return EXEC_COMMAND_KINDS.has(kind);
 }

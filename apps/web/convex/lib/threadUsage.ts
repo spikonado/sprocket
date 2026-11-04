@@ -14,7 +14,6 @@ async function getUsageRow(
 		.unique();
 }
 
-/** Latest provider-reported context size. */
 export async function getThreadContextTokens(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>

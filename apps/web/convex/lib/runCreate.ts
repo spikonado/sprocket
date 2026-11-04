@@ -63,7 +63,6 @@ export type QueuedRunRequest = {
 	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
 	taskDeadlineAt?: number;
-	/** The run writes its prompt part when it begins. Released clients omit it. */
 	deferPrompt?: boolean;
 };
 

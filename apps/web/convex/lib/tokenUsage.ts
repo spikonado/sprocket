@@ -146,7 +146,6 @@ async function addToUserBucket(
 	}
 }
 
-/** Records one completion call once per `eventId`; retries leave every total unchanged. */
 export async function recordModelCallUsage(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>,

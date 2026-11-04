@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionTimeoutError, APIError } from 'context.dev';
 import { Web, type WebScrapeParams, type WebScrapeResponse } from 'context.dev/resources/web';
-import { isNonRetryableError } from '@convex-dev/workpool';
+import { isNonRetryableError, type WorkId } from '@convex-dev/workpool';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -202,7 +202,8 @@ describe('queued request job checks', () => {
 		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });
 
 		await t.run(async (ctx) => {
-			await ctx.db.patch('executorJobs', job.jobId, { cloudWorkId: 'cloud-work' });
+			// SAFETY: the guard only checks that a cloud work id is present.
+			await ctx.db.patch('executorJobs', job.jobId, { cloudWorkId: 'cloud-work' as WorkId });
 		});
 
 		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);

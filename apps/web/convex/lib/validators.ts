@@ -30,7 +30,6 @@ export const vTokenCounts = v.object({
 
 export type TokenCounts = Infer<typeof vTokenCounts>;
 
-/** The fields that pick a call's totals row. `cacheWriteTtl` is null when the catalog didn't say; it keys the write price. */
 const usageKeyFields = {
 	provider: vCompletionProvider,
 	model: v.string(),
@@ -49,7 +48,6 @@ export const vModelCallUsage = v.object({
 
 export type ModelCallUsage = Infer<typeof vModelCallUsage>;
 
-/** Totals for one usage key, with long-context calls kept apart for pricing. */
 export const vTokenUsageTotals = v.object({
 	...usageKeyFields,
 	calls: v.number(),
@@ -59,7 +57,6 @@ export const vTokenUsageTotals = v.object({
 
 export type TokenUsageTotals = Infer<typeof vTokenUsageTotals>;
 
-/** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();
 
 export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'));
@@ -82,7 +79,6 @@ export const vSubscriptionStatus = v.union(
 	v.literal('failed')
 );
 
-// Neutral provider-backed attempt status; never asserts entitlement by itself.
 export const vCheckoutAttemptStatus = v.union(
 	v.literal('awaiting_payment'),
 	v.literal('pending'),
@@ -105,7 +101,6 @@ export const vApplyPatchPayload = v.object({
 
 export const vExecCommandPayload = v.object({
 	cmd: v.string(),
-	// Historical jobs only; exec_cmd now runs in the thread's cwd.
 	workdir: v.optional(v.string()),
 	shell: v.optional(v.string()),
 	timeoutMs: v.optional(v.number()),
@@ -118,7 +113,6 @@ export const vScrapeUrlPayload = v.object({
 	query: v.optional(v.string())
 });
 
-/** screenshot_url job payload. */
 export const vScreenshotUrlPayload = vScrapeUrlPayload.pick('url');
 
 export const vWebSearchPayload = v.object({
@@ -497,7 +491,6 @@ export const vScrapeUrlResult = v.object({
 	summary: v.optional(v.string()),
 	outline: v.optional(vPageOutline),
 	highlights: v.optional(v.array(v.string())),
-	// Agents omit it when they download an oversized scrape.
 	images: v.optional(v.array(v.string()))
 });
 
@@ -808,14 +801,12 @@ export const vListArtifactsResult = v.object({
 	artifacts: v.array(
 		v.object({
 			artifactId: v.string(),
-			// Released tools include scope/thread metadata; current results omit it.
 			scope: v.optional(vArtifactScope),
 			repositoryKey: v.string(),
 			threadId: v.optional(v.id('threadRecords')),
 			type: vArtifactType,
 			title: v.string(),
 			revision: v.number(),
-			// Released list tools and stored results include it; current results omit it.
 			createdAt: v.optional(v.number()),
 			updatedAt: v.number()
 		})
@@ -1025,7 +1016,6 @@ export const vAssistantToolResultErrorStatus = v.union(
 	...literals(assistantToolResultErrorStatuses)
 );
 
-/** Persisted tool-result error output. */
 export const vAssistantToolResultErrorOutput = v.object({
 	error: v.string(),
 	status: vAssistantToolResultErrorStatus
@@ -1076,7 +1066,6 @@ export const vTranscriptCompletionItem = v.union(
 	vAssistantToolCallPart
 );
 
-/** Prompts the agent writes for the model; the UI does not show them. */
 export const vHiddenPromptKind = v.union(
 	v.literal('instructions'),
 	v.literal('environment'),

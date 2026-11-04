@@ -5,7 +5,6 @@ import { initConvexTest } from './test.setup';
 
 type VaultEntry = { id: string; name: string; value: string; metadata: { version_id: string } };
 
-/** An in-memory WorkOS Vault that enforces `version_check` like the real one. */
 function stubVault(): Map<string, VaultEntry> {
 	const entries = new Map<string, VaultEntry>();
 	let versions = 0;

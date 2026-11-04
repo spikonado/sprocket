@@ -1,4 +1,3 @@
-// A longer lease gives disconnected executors time to reconnect before takeover.
 export const RUN_CLAIM_LEASE_DURATION_MS = 120_000;
 
 export const RUN_QUEUED_STARTUP_DEADLINE_MS = 45_000;
@@ -50,8 +49,6 @@ export function claimExpiresAt(now: number): number {
 	return now + RUN_CLAIM_LEASE_DURATION_MS;
 }
 
-// Registering a completion attempt requires a strictly newer sequence than the
-// current one; ownership checks afterwards require exactly the current one.
 export function canRegisterCompletionAttempt(
 	run: CompletionAttemptRun,
 	claimId: string,

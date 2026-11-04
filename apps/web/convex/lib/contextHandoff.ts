@@ -4,7 +4,6 @@ import type { Infer } from 'convex/values';
 import type { vProviderHandoff } from '@convex/lib/docs';
 import { getPromptPart, getTranscriptState } from '@convex/lib/transcriptParts';
 
-/** Inclusive last covered part when a handoff covers no transcript prefix. */
 export const EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER = -1;
 
 export function contextHandoffKey(runId: Id<'runs'>, claimId: string, attemptSeq: number): string {
@@ -39,7 +38,6 @@ async function lastTranscriptPartNumber(
 	return state.totalParts - 1;
 }
 
-/** Inclusive last transcript part covered by a durable handoff. */
 export async function throughPartNumberForHandoff(
 	ctx: QueryCtx | MutationCtx,
 	args: { threadId: Id<'threadRecords'>; runId: Id<'runs'>; beforePrompt: boolean }
@@ -77,7 +75,6 @@ export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null)
 	return throughPartNumber === undefined ? 0 : throughPartNumber + 1;
 }
 
-// Model IDs are opaque. The local runner resolves vendor changes from the live catalog.
 export async function getProviderHandoff(
 	ctx: QueryCtx | MutationCtx,
 	run: Doc<'runs'>,

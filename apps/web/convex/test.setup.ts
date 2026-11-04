@@ -15,10 +15,6 @@ import { abandonRunRecord } from '@convex/lib/runFinalize';
 import { getRunWithExecution } from '@convex/lib/runExecution';
 import schema from './schema';
 
-/**
- * Convex function modules for `convex-test`.
- * `_generated` must be included; tests/configs/declarations stay out.
- */
 export const modules = import.meta.glob([
 	'./**/*.ts',
 	'./**/*.js',
@@ -90,9 +86,7 @@ export const emptyCompletionAssignments = {
 	sections: []
 };
 
-/** Fresh mock backend with our schema, functions, and registered components. */
 export function initConvexTest(): ConvexTestInstance {
-	// Match deployed Convex read/write limits so oversized transactions fail here.
 	const t = convexTest({ schema, modules, transactionLimits: true });
 	// SAFETY: each component test helper types registerComponent against its own
 	// TestConvex variance; the convex-test backend object is the same instance.

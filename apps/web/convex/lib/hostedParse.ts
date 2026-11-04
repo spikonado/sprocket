@@ -45,7 +45,6 @@ export const vHostedParseClientStatus = v.union(
 
 const FIRECRAWL_PDF_PARSER = { type: 'pdf', mode: 'auto' } as const;
 
-/** `pages` adds per-page markdown to the response at no extra cost. */
 export function firecrawlParseOptions(pages: boolean) {
 	return {
 		formats: ['markdown' as const],
@@ -94,7 +93,6 @@ function utf8Bytes(text: string): number {
 	return new TextEncoder().encode(text).byteLength;
 }
 
-/** Validates the document returned by the Firecrawl SDK's `parse`. */
 export function parseFirecrawlParseDocument(
 	document: Document,
 	pages = false

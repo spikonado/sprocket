@@ -161,7 +161,6 @@ describe('automatic run recovery', () => {
 			threadId
 		});
 
-		// Refresh presence after advancing past the machine heartbeat window.
 		await asUser.mutation(api.machines.heartbeatProcess, {
 			machineId: queryArgs.machineId,
 			processId: 'machine-process'

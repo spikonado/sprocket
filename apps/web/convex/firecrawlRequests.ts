@@ -9,8 +9,6 @@ import {
 	vRequestResult
 } from '@convex/webRequests';
 
-// Released agents still call these names; see "Firecrawl request endpoints" in BACKWARDS_COMPATIBILITY.md.
-
 export const start = mutation({
 	args: {
 		runId: v.id('runs'),

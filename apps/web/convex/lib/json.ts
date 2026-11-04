@@ -51,11 +51,6 @@ const vJsonPrimitive = v.union(v.string(), v.number(), v.boolean(), v.null());
 /** Convex validators cannot be recursive, so JSON is unrolled to a fixed depth. */
 const JSON_VALIDATOR_DEPTH = 8;
 
-/**
- * Validator for arbitrary JSON values. Payloads nested deeper than
- * JSON_VALIDATOR_DEPTH are rejected at validate time (the former v.any()
- * accepted them); tool inputs/outputs and provider metadata are far shallower.
- */
 function jsonValidator(depth: number): Validator<JsonValue, 'required', string> {
 	if (depth === 0) {
 		// SAFETY: the depth-0 validator only accepts JSON primitives, which are JsonValue members.

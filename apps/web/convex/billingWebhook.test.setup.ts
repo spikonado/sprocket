@@ -59,7 +59,6 @@ export async function sendSubscriptionWebhook(
 	return await sendRawWebhook(t, body);
 }
 
-/** Sign and POST a raw body, optionally with a tampered signature or a different configured secret. */
 export async function sendRawWebhook(
 	t: ConvexTestInstance,
 	body: string,
