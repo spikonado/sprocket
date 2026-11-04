@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import {
 	attachmentMediaType,
@@ -9,6 +9,7 @@ import {
 } from '$lib/chat/attachments';
 import { useStore, type Store } from '$lib/store';
 import type { LocalApi } from '$lib/types/sprocket';
+import { useLatest } from '$lib/use-latest';
 
 export type ComposerAttachmentApi = Pick<
 	LocalApi,
@@ -189,11 +190,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 export function useComposerAttachments(
 	dependencies: Omit<Dependencies, 'getContext'> & { context: ComposerAttachmentContext }
 ) {
-	// Uploads keep their instance but read context and callbacks from the latest commit.
-	const dependenciesRef = useRef(dependencies);
-	useLayoutEffect(() => {
-		dependenciesRef.current = dependencies;
-	}, [dependencies]);
+	const dependenciesRef = useLatest(dependencies);
 
 	const [attachments] = useState(
 		() =>

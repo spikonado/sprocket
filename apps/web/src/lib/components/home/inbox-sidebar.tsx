@@ -28,6 +28,8 @@ import { isRootThread, subagentSummaryLabel } from '$lib/project/subagents';
 import type { UseExpandedThreads, ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
 import { useThreadTreeSummary } from '$lib/project/useThreadTree';
 import { cn } from '$lib/utils';
+import { readStorage, writeStorage } from '$lib/storage';
+import { useLatest } from '$lib/use-latest';
 import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
 import AppUpdate from './app-update';
@@ -144,7 +146,7 @@ export default function InboxSidebar({
 	const menuTriggerRef = useRef<HTMLElement | null>(null);
 	const renameInputRef = useRef<HTMLInputElement | null>(null);
 	const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
-	const onSettledOpenChangeRef = useRef(onSettledOpenChange);
+	const onSettledOpenChangeRef = useLatest(onSettledOpenChange);
 
 	const closeMenu = useCallback(() => {
 		const trigger = menuTriggerRef.current;
@@ -185,20 +187,12 @@ export default function InboxSidebar({
 	});
 
 	useEffect(() => {
-		onSettledOpenChangeRef.current = onSettledOpenChange;
-	});
+		const savedSettledOpen = readStorage(SETTLED_INBOX_OPEN_KEY);
 
-	useEffect(() => {
-		try {
-			const savedSettledOpen = localStorage.getItem(SETTLED_INBOX_OPEN_KEY);
-
-			if (savedSettledOpen !== null) {
-				onSettledOpenChangeRef.current(savedSettledOpen === 'true');
-			}
-		} catch {
-			// Browsers can deny storage access while still allowing the app to run.
+		if (savedSettledOpen !== null) {
+			onSettledOpenChangeRef.current(savedSettledOpen === 'true');
 		}
-	}, []);
+	}, [onSettledOpenChangeRef]);
 
 	useEffect(() => {
 		if (!renameThread || !renameInputRef.current) return;
@@ -245,12 +239,7 @@ export default function InboxSidebar({
 	function toggleSettled() {
 		const next = !settledOpen;
 		onSettledOpenChange(next);
-
-		try {
-			localStorage.setItem(SETTLED_INBOX_OPEN_KEY, String(next));
-		} catch {
-			// The collapsed state still works for this session without storage.
-		}
+		writeStorage(SETTLED_INBOX_OPEN_KEY, String(next));
 	}
 
 	function beginRename(thread: Thread) {

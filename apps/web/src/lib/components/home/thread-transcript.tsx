@@ -407,7 +407,7 @@ export default function ThreadTranscript({
 		};
 	}, [viewport]);
 
-	// Anchor capture must read the DOM before this render commits, matching `$effect.pre`.
+	// Captured during render because the scroll anchor must be read from the DOM before it commits.
 	const renderedMessagesRef = useRef(messages);
 	const renderedActionsRef = useRef(actions);
 	const anchorRef = useRef<ScrollAnchor | null>(null);

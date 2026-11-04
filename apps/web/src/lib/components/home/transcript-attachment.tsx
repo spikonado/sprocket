@@ -1,5 +1,5 @@
 import { FileText } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
 	isPreviewableImageMediaType,
 	revokeAttachmentPreview,
@@ -8,6 +8,7 @@ import {
 } from '$lib/chat/attachments';
 import type { ViewerImage } from '$lib/components/image-viewer';
 import type { MessageAttachment } from '$lib/types/sprocket';
+import { useLatest } from '$lib/use-latest';
 
 type Props = {
 	attachment: MessageAttachment;
@@ -23,10 +24,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 	const [loadFailed, setLoadFailed] = useState(false);
 	const [downloadPending, setDownloadPending] = useState(false);
 	const downloadGeneration = useRef(0);
-	const loadAttachmentRef = useRef(loadAttachment);
-	useLayoutEffect(() => {
-		loadAttachmentRef.current = loadAttachment;
-	}, [loadAttachment]);
+	const loadAttachmentRef = useLatest(loadAttachment);
 
 	const url = ownedUrl ?? attachment.url ?? null;
 	const previewable = isPreviewableImageMediaType(attachment.mediaType);
@@ -73,7 +71,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		return () => {
 			cancelled = true;
 		};
-	}, [attachment.storageId, attachment.mediaType, attachment.url]);
+	}, [attachment.storageId, attachment.mediaType, attachment.url, loadAttachmentRef]);
 
 	useEffect(() => {
 		return () => {

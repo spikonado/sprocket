@@ -1,9 +1,10 @@
 import { X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import LazyJsonRender from '$lib/components/lazy-json-render';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
+import { useLatest } from '$lib/use-latest';
 
 type Props = {
 	artifact: ArtifactEntry;
@@ -20,10 +21,7 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	/** Shown only when the Fullscreen API is unavailable or rejects (iframe Escape cannot reach us). */
 	const [showFallbackClose, setShowFallbackClose] = useState(false);
-	const onCloseRef = useRef(onClose);
-	useLayoutEffect(() => {
-		onCloseRef.current = onClose;
-	}, [onClose]);
+	const onCloseRef = useLatest(onClose);
 
 	useEffect(() => {
 		const el = rootRef.current;
@@ -107,7 +105,7 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 				if (focusTarget?.isConnected) focusTarget.focus();
 			});
 		};
-	}, []);
+	}, [onCloseRef]);
 
 	return (
 		<div

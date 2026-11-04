@@ -1,5 +1,6 @@
 import { Check, Copy, Download, LoaderCircle, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLatest } from '$lib/use-latest';
 
 export type ViewerImage = {
 	url: string;
@@ -115,10 +116,7 @@ export default function ImageViewer({
 	const [downloadError, setDownloadError] = useState<string | null>(null);
 	const copiedTimeoutRef = useRef<number | null>(null);
 	const generationRef = useRef(0);
-	const onCloseRef = useRef(onClose);
-	useLayoutEffect(() => {
-		onCloseRef.current = onClose;
-	}, [onClose]);
+	const onCloseRef = useLatest(onClose);
 
 	useEffect(() => {
 		generationRef.current += 1;
@@ -213,7 +211,7 @@ export default function ImageViewer({
 				previouslyFocused.focus();
 			}
 		};
-	}, [image]);
+	}, [image, onCloseRef]);
 
 	async function copyImage(current: ViewerImage) {
 		if (copying) {
