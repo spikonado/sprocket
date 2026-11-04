@@ -41,7 +41,7 @@ Use `kicad-cli` for checks and exports.
 
 ## 3D models
 
-Give every footprint a 3D model whose file exists, so the 3D render shows each part's body.
+Give every component's footprint a 3D model whose file exists, so the 3D render shows each component's body.
 When KiCad's libraries lack one, download the part's STEP model from its manufacturer or distributor, save it in the project, and reference it as `${KIPRJMOD}/…`.
 
 ## Checks
