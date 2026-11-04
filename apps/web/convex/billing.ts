@@ -261,8 +261,6 @@ export const checkout = action({
 			throw new Error('The previous checkout attempt failed. Start checkout again.');
 		}
 
-		// Legacy ambiguous rows (no key, no frozen body) cannot be replayed
-		// byte-identically and fail closed.
 		if (
 			reserved.outcome === 'create_ambiguous' &&
 			(!reserved.createRequest || !reserved.idempotencyKey)
@@ -1392,7 +1390,6 @@ export async function applyDodoSubscriptionProjection(
 
 	const isPlanChange = previousTier !== undefined && previousTier !== tier;
 
-	// Released meters still key on quotaResetAt; the counter deduplicates transitions.
 	const priorGeneration = existing?.quotaGeneration ?? existing?.quotaResetAt;
 	const transitionAt = payload.observedAt ?? payload.eventAt;
 
@@ -1538,7 +1535,6 @@ export async function applyDodoSubscriptionProjection(
 		cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
 		quotaGeneration: resets.generation ?? existing?.quotaGeneration,
 		quotaTransitionAt: resets.transitionAt ?? existing?.quotaTransitionAt,
-		// Released readers key buckets here; equal-time changes advance it by 1ms.
 		quotaResetAt: resets.resetAt,
 		terminalConfirmed,
 		dodoSubscriptionId: payload.dodoSubscriptionId,

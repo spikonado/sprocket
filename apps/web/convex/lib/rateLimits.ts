@@ -34,14 +34,9 @@ const STORAGE_PERIOD = 365 * DAY;
 
 type MeterWindowSubscription = BillingWindowSubscription & {
 	quotaGeneration?: number;
-	// Legacy usage-generation key (an event timestamp) written before the
-	// monotonic generation existed.
 	quotaResetAt?: number;
 };
 
-// The window key's usage generation. Rows written by the current projection
-// carry the monotonic counter; pre-migration rows fall back to the legacy
-// timestamp key so their buckets stay consistent until backfilled.
 function quotaGenerationOf(subscription: MeterWindowSubscription | null): number | undefined {
 	return subscription?.quotaResetAt ?? subscription?.quotaGeneration;
 }
