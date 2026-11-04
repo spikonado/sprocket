@@ -290,7 +290,6 @@ fn discovers_large_frontmatter_and_returns_complete_file_content() {
     assert_eq!(loaded.skills[0].description, description);
 
     let content = read_skill_content(&loaded.skills[0]).expect("read");
-    assert_eq!(content.description, description);
     assert_eq!(content.content, body);
 
     fs::remove_dir_all(root).ok();
@@ -306,8 +305,6 @@ fn read_skill_content_strips_frontmatter_and_returns_dir() {
     let loaded = load_workspace_skills(&root, &[], &[]);
     let skill = loaded.skills.iter().find(|s| s.name == "demo").unwrap();
     let content = read_skill_content(skill).expect("read");
-    assert_eq!(content.name, "demo");
-    assert_eq!(content.description, "A demo skill");
     assert_eq!(content.content, "# Instructions\n\nGo.\n");
     assert_eq!(
         content.dir.as_deref(),

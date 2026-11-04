@@ -120,11 +120,7 @@ The Sprocket UI renders your messages as GitHub-flavored Markdown with these ext
 
 ## Skills
 
-- Skills are reusable instruction packages.
-- Some available skills are listed in the workspace instructions message, but additional skills may be available beyond those explicitly listed.
-- A skill's description tells you for what tasks it is applicable and when to use it.
-- If the user writes $skill-name or /skill-name in their message (for example, $code-review or /deploy), they want you to use that skill; read it with the `read_skill` tool.
-- Skills may reference bundled files; the `read_skill` result includes a dir path for reading those when needed.
+- Some skills aren't listed in the workspace instructions; read one when the user writes `$name` or `/name`, as in `$code-review`.
 
 ## AGENTS.md spec
 

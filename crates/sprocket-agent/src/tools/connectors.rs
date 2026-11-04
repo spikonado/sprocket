@@ -23,7 +23,7 @@ impl rig::tool::Tool for ListConnectorsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the connectors installed on this machine, such as KiCad, with their versions. The user installs connectors in Settings → Connectors.".to_string()
+        "Lists which connectors for other apps and services are installed. The user installs connectors in Settings → Connectors.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {

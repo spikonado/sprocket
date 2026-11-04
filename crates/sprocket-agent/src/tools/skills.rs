@@ -16,6 +16,7 @@ pub(crate) struct ReadSkillTool {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ReadSkillArgs {
     pub(crate) name: String,
 }
@@ -27,7 +28,7 @@ impl rig::tool::Tool for ReadSkillTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        String::new()
+        "Read a skill's instructions.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -74,11 +75,7 @@ pub(super) fn resolve_read_skill(
     };
 
     let content = read_skill_content(skill).map_err(|e| tool_error(anyhow::Error::msg(e)))?;
-    let mut value = json!({
-        "name": content.name,
-        "description": content.description,
-        "content": content.content,
-    });
+    let mut value = json!({ "content": content.content });
     if let Some(dir) = content.dir {
         value["dir"] = json!(dir);
     }
