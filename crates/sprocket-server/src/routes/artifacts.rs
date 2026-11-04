@@ -14,6 +14,7 @@ use tokio::time::timeout;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
+use crate::routes::events::Authorized;
 use crate::routes::session::{AuthorizedJson, UserScoped};
 use sprocket_host::artifact_watch::{ArtifactWatchEvent, is_native_account_revoked};
 
@@ -105,11 +106,11 @@ async fn delete_handler(
     }
 }
 
-/// Callers must authorize `payload.user_id` first.
 pub(crate) async fn watch_events(
     state: &AppState,
-    payload: ArtifactWatchRequest,
+    request: Authorized<ArtifactWatchRequest>,
 ) -> Result<BoxStream<'static, ArtifactWatchEvent>, ApiError> {
+    let payload = request.into_inner();
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     if repository_key.is_empty() || workspace_path.is_empty() {

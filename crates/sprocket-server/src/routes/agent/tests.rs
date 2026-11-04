@@ -98,8 +98,10 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
     );
     let mut commands = command_events(
         &state,
-        serde_json::from_value(serde_json::json!({ "userId": "user", "threadId": "thread" }))
-            .unwrap(),
+        Authorized::assume(
+            serde_json::from_value(serde_json::json!({ "userId": "user", "threadId": "thread" }))
+                .unwrap(),
+        ),
     );
     let listed = commands.next().await.unwrap();
     assert_eq!(listed[0].session_id, session_id);

@@ -14,6 +14,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
+use crate::routes::events::Authorized;
 use crate::routes::session::{AuthorizedJson, UserScoped};
 use sprocket_host::transcript_watch::TranscriptWatchEvent;
 
@@ -239,11 +240,11 @@ async fn display_details_handler(
         .map_err(ApiError::internal)
 }
 
-/// Callers must authorize `payload.user_id` first.
 pub(crate) async fn watch_events(
     state: &AppState,
-    payload: TranscriptScope,
+    scope: Authorized<TranscriptScope>,
 ) -> BoxStream<'static, TranscriptWatchEvent> {
+    let payload = scope.into_inner();
     let session = state
         .host
         .transcript_watchers

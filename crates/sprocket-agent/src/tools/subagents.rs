@@ -91,17 +91,13 @@ impl SubagentPolls {
             .clone();
         let mut cooldown = poll.lock().await;
         let info = fetch().await?;
-        let active = info.active;
-        if active {
-            cooldown
-                .check()
-                .map_err(|error| tool_failure(error.message("Subagent is still active.")))?;
-        }
-        let result = read(info).await?;
-        if active {
-            cooldown.record_success();
-        }
-        Ok(result)
+        cooldown
+            .observe(
+                info.active,
+                |error| tool_failure(error.message("Subagent is still active.")),
+                read(info),
+            )
+            .await
     }
 }
 

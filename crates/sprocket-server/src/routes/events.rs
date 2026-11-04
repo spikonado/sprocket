@@ -238,19 +238,38 @@ fn error_message(id: u64, error: &ApiError) -> ServerMessage {
     }
 }
 
-async fn authorize(state: &AppState, headers: &HeaderMap, topic: &Topic) -> Result<(), ApiError> {
+pub(crate) struct Authorized<T>(T);
+
+impl<T> Authorized<T> {
+    pub(crate) fn into_inner(self) -> T {
+        self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn assume(value: T) -> Self {
+        Self(value)
+    }
+}
+
+async fn authorize(
+    state: &AppState,
+    headers: &HeaderMap,
+    topic: Topic,
+) -> Result<Authorized<Topic>, ApiError> {
     let jar = CookieJar::from_headers(headers);
     if let Some(user_id) = topic.user_id() {
-        return state.require_session_user(headers, &jar, user_id).await;
+        state.require_session_user(headers, &jar, user_id).await?;
+        return Ok(Authorized(topic));
     }
-    match topic {
+    match &topic {
         Topic::AuthChanges => auth::authorize_session_changes(state, headers, &jar).await,
         Topic::BrowserStatus => browser::user(state, headers, &jar).await.map(drop),
         _ => require_session(&state.auth, headers, &jar)
             .await
             .map(drop)
             .map_err(|_| ApiError::authentication_required()),
-    }
+    }?;
+    Ok(Authorized(topic))
 }
 
 pub(crate) async fn open(
@@ -258,13 +277,15 @@ pub(crate) async fn open(
     headers: &HeaderMap,
     topic: Topic,
 ) -> Result<BoxStream<'static, serde_json::Value>, ApiError> {
-    authorize(state, headers, &topic).await?;
+    let Authorized(topic) = authorize(state, headers, topic).await?;
     Ok(match topic {
-        Topic::Transcript(scope) => json(transcript::watch_events(state, scope).await),
-        Topic::LiveCompletion(request) => json(agent::live_events(state, request)),
-        Topic::Artifacts(request) => json(artifacts::watch_events(state, request).await?),
-        Topic::Commands(request) => json(agent::command_events(state, request)),
-        Topic::AuthChanges => json(auth::session_change_events(state)?),
+        Topic::Transcript(scope) => json(transcript::watch_events(state, Authorized(scope)).await),
+        Topic::LiveCompletion(request) => json(agent::live_events(state, Authorized(request))),
+        Topic::Artifacts(request) => {
+            json(artifacts::watch_events(state, Authorized(request)).await?)
+        }
+        Topic::Commands(request) => json(agent::command_events(state, Authorized(request))),
+        Topic::AuthChanges => json(auth::session_change_events(state, Authorized(()))?),
         Topic::BrowserStatus => json(state.host.browsers.status_events()),
         Topic::PackageUpdate => json(state.host.package_updates.watch()),
         Topic::WorkspaceFiles(request) => json(workspace::file_list_events(state, request)),

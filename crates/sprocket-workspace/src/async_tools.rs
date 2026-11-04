@@ -1,21 +1,34 @@
+use std::future::Future;
 use std::time::Duration;
 
 use tokio::time::Instant;
 
 const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(10);
 
-/// Tracks successful immediate observations of a pending resource.
-///
-/// Keep this state under the resource's observation lock. Check completion first,
-/// then check the cooldown before consuming pending output, and record success
-/// only after the observation succeeds. Completed and waiting reads bypass it.
 #[derive(Debug, Default)]
 pub struct ZeroPollCooldown {
     last_success: Option<Instant>,
 }
 
 impl ZeroPollCooldown {
-    pub fn check(&self) -> Result<(), ZeroPollCooldownError> {
+    /// Runs `read`, rejecting it while `pending` reads are on cooldown. Only a
+    /// successful pending read starts the cooldown.
+    pub async fn observe<T, E>(
+        &mut self,
+        pending: bool,
+        on_cooldown: impl FnOnce(ZeroPollCooldownError) -> E,
+        read: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
+        if !pending {
+            return read.await;
+        }
+        self.check().map_err(on_cooldown)?;
+        let value = read.await?;
+        self.last_success = Some(Instant::now());
+        Ok(value)
+    }
+
+    fn check(&self) -> Result<(), ZeroPollCooldownError> {
         if let Some(last_success) = self.last_success {
             let elapsed = last_success.elapsed();
             if elapsed < ZERO_POLL_COOLDOWN {
@@ -27,10 +40,6 @@ impl ZeroPollCooldown {
             }
         }
         Ok(())
-    }
-
-    pub fn record_success(&mut self) {
-        self.last_success = Some(Instant::now());
     }
 }
 

@@ -16,6 +16,7 @@ use tokio::sync::broadcast;
 use crate::AppState;
 use crate::cli_protocol::{CliRunSettings, RunStarted};
 use crate::routes::api_error::ApiError;
+use crate::routes::events::Authorized;
 use crate::routes::run_settings;
 use crate::routes::session::{AuthorizedJson, UserScoped};
 
@@ -58,11 +59,11 @@ impl UserScoped for TerminateCommandRequest {
     }
 }
 
-/// Callers must authorize `payload.user_id` first.
 pub(crate) fn command_events(
     state: &AppState,
-    payload: CommandsRequest,
+    request: Authorized<CommandsRequest>,
 ) -> BoxStream<'static, Vec<RunningCommand>> {
+    let payload = request.into_inner();
     let sessions = Arc::clone(&state.host.command_sessions);
     let changes = sessions.subscribe_changes();
     unfold(
@@ -181,11 +182,11 @@ struct LiveStream {
     thread_id: String,
 }
 
-/// Callers must authorize `payload.user_id` first.
 pub(crate) fn live_events(
     state: &AppState,
-    payload: LiveCompletionWatchRequest,
+    request: Authorized<LiveCompletionWatchRequest>,
 ) -> BoxStream<'static, LiveCompletionWatchEvent> {
+    let payload = request.into_inner();
     let hub = Arc::clone(&state.host.live_completions);
     let subscription = hub.subscribe(&payload.thread_id);
     let snapshot = snapshot_event(subscription.snapshot);

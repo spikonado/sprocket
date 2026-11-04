@@ -49,7 +49,7 @@ struct FileSnapshot {
 }
 
 pub fn read_workspace_file(root: &Path, path: &str) -> Result<WorkspaceFileContent> {
-    let file_path = resolve_entry(root, path, true)?;
+    let file_path = resolve_entry(root, path, FinalLink::Follow)?;
     let snapshot = read_snapshot(&file_path, path)?;
     let (content, unsupported) = match snapshot.bytes {
         None => (None, Some(UnsupportedFile::TooLarge)),
@@ -73,7 +73,7 @@ pub struct WorkspaceText {
 }
 
 pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
-    let file_path = resolve_entry(root, path, true)?;
+    let file_path = resolve_entry(root, path, FinalLink::Follow)?;
     let file = File::open(&file_path).map_err(|error| entry_error(error, path, "open"))?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {
@@ -97,7 +97,7 @@ pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
 }
 
 pub fn workspace_entry_kind(root: &Path, path: &str) -> Result<WorkspaceEntryKind> {
-    let entry = resolve_entry(root, path, true)?;
+    let entry = resolve_entry(root, path, FinalLink::Follow)?;
     let metadata = fs::metadata(&entry).map_err(|error| entry_error(error, path, "inspect"))?;
     Ok(if metadata.is_dir() {
         WorkspaceEntryKind::Directory
@@ -116,7 +116,7 @@ pub fn write_workspace_file(
     if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
         bail!("file content exceeds the 2 MiB editor limit");
     }
-    let file_path = resolve_entry(root, path, true)?;
+    let file_path = resolve_entry(root, path, FinalLink::Follow)?;
     // Callers run on blocking threads; `blocking_lock` panics inside an async context.
     let _write_guard = crate::patch::PATCH_LOCK.blocking_lock();
     let existing = match fs::metadata(&file_path) {
@@ -173,7 +173,7 @@ pub fn write_workspace_file(
 }
 
 pub fn create_workspace_entry(root: &Path, path: &str, directory: bool) -> Result<()> {
-    let entry = resolve_entry(root, path, false)?;
+    let entry = resolve_entry(root, path, FinalLink::AsEntry)?;
     if let Some(parent) = entry.parent() {
         fs::create_dir_all(parent).with_context(|| format!("failed to create parent of {path}"))?;
     }
@@ -190,8 +190,8 @@ pub fn create_workspace_entry(root: &Path, path: &str, directory: bool) -> Resul
 }
 
 pub fn rename_workspace_entry(root: &Path, from: &str, to: &str) -> Result<()> {
-    let source = resolve_entry(root, from, false)?;
-    let destination = resolve_entry(root, to, false)?;
+    let source = resolve_entry(root, from, FinalLink::AsEntry)?;
+    let destination = resolve_entry(root, to, FinalLink::AsEntry)?;
     fs::symlink_metadata(&source).map_err(|error| entry_error(error, from, "rename"))?;
     if destination.starts_with(&source) {
         bail!("cannot move {from} into itself");
@@ -206,7 +206,7 @@ pub fn rename_workspace_entry(root: &Path, from: &str, to: &str) -> Result<()> {
 }
 
 pub fn delete_workspace_entry(root: &Path, path: &str) -> Result<()> {
-    let entry = resolve_entry(root, path, false)?;
+    let entry = resolve_entry(root, path, FinalLink::AsEntry)?;
     let metadata =
         fs::symlink_metadata(&entry).map_err(|error| entry_error(error, path, "delete"))?;
     if metadata.is_dir() {
@@ -217,9 +217,12 @@ pub fn delete_workspace_entry(root: &Path, path: &str) -> Result<()> {
     .with_context(|| format!("failed to delete {path}"))
 }
 
-/// Confines `path` to `root` and rejects the root itself. Without
-/// `follow_final_link`, a trailing symlink is renamed or deleted as the link.
-fn resolve_entry(root: &Path, path: &str, follow_final_link: bool) -> Result<PathBuf> {
+enum FinalLink {
+    Follow,
+    AsEntry,
+}
+
+fn resolve_entry(root: &Path, path: &str, final_link: FinalLink) -> Result<PathBuf> {
     let root = root
         .canonicalize()
         .with_context(|| format!("failed to resolve workspace {}", root.display()))?;
@@ -235,10 +238,9 @@ fn resolve_entry(root: &Path, path: &str, follow_final_link: bool) -> Result<Pat
         bail!("path escapes the workspace: {path}");
     };
     let entry = canonicalize_with_missing_tail(parent)?.join(name);
-    let resolved = if follow_final_link {
-        canonicalize_with_missing_tail(&entry)?
-    } else {
-        entry
+    let resolved = match final_link {
+        FinalLink::Follow => canonicalize_with_missing_tail(&entry)?,
+        FinalLink::AsEntry => entry,
     };
     if resolved == root || !resolved.starts_with(&root) {
         bail!("path escapes the workspace: {path}");

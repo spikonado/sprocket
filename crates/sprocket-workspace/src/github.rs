@@ -272,7 +272,7 @@ async fn credential(user_id: &str, host: &str) -> Result<(String, CredentialSour
             return Err(GitHubError::Disabled(host.to_string()));
         }
     }
-    if let Some(token) = saved_tokens::load(user_id, false).await.tokens.remove(host) {
+    if let Some(token) = saved_tokens::load(user_id).await.tokens.remove(host) {
         return Ok((token, CredentialSource::Settings));
     }
     if let Some(token) = env_token(host, |name| std::env::var(name).ok()) {
@@ -350,7 +350,10 @@ fn gh_command(args: &[&str]) -> Command {
         command.env_remove(name);
     }
     #[cfg(windows)]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     command
 }
 
