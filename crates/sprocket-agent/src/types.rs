@@ -193,7 +193,6 @@ pub struct CatalogModelCapabilities {
     pub vendor: String,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
-    pub supports_required_tool_choice: bool,
     pub usage_pricing: UsagePricing,
 }
 

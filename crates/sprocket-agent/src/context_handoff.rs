@@ -2,18 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
-    OutcomeEvent, StepEventKind, ToolCallDelta,
+    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, StepEventKind,
 };
 use rig::completion::{Message, Usage};
 use rig::message::AssistantContent;
-use rig::tool::{Tool, ToolExecutionError};
-use schemars::JsonSchema;
-use serde::Deserialize;
 
-pub(crate) const HANDOFF_PROMPT: &str = "Your context is filled up; write a handoff document (to the `handoff_context` tool) summarising the current conversation so a fresh agent can continue the work. Don't talk about the handoff document itself. Include the user's last request, your decisions and the reasoning behind them, and a summary of the work you have completed. Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead. Redact any sensitive information, such as API keys, passwords, or personally identifiable information.";
+pub(crate) const HANDOFF_PROMPT: &str = "Your context is filled up; reply with only a handoff document summarising the current conversation so a fresh agent can continue the work. Do not call any tools. Don't talk about the handoff document itself. Include the user's last request, your decisions and the reasoning behind them, and a summary of the work you have completed. Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead. Redact any sensitive information, such as API keys, passwords, or personally identifiable information.";
 pub(crate) const HANDOFF_SUBMITTED: &str = "SPROCKET_CONTEXT_HANDOFF_SUBMITTED";
 const HANDOFF_REQUESTED: &str = "SPROCKET_CONTEXT_HANDOFF_REQUESTED";
+const MAX_DOCUMENT_BYTES: usize = 256_000;
 const MAX_COMPLETION_CALLS: usize = 1_000;
 
 /// User role because the handoff can follow an assistant reply, and Anthropic
@@ -66,18 +63,43 @@ impl HandoffState {
         CompletionCallAction::stop(HANDOFF_REQUESTED)
     }
 
-    fn submit(&mut self, document: String) -> Result<(), ToolExecutionError> {
-        if !matches!(self.phase, HandoffPhase::Writing) {
-            return Err(ToolExecutionError::other("No context handoff is pending."));
+    fn finish_turn(&mut self, event: &ModelTurnFinished<'_>) -> ModelTurnAction {
+        if !self.phase.is_writing() {
+            return ModelTurnAction::Continue;
         }
-        if document.trim().is_empty() || document.len() > 256_000 {
-            return Err(ToolExecutionError::other(
-                "The handoff document must contain 1 to 256000 bytes.",
-            ));
+        match handoff_document(event) {
+            Ok(document) => {
+                self.phase = HandoffPhase::Written(document);
+                ModelTurnAction::stop(HANDOFF_SUBMITTED)
+            }
+            Err(reason) => ModelTurnAction::stop(reason),
         }
-        self.phase = HandoffPhase::Written(document);
-        Ok(())
     }
+}
+
+fn handoff_document(event: &ModelTurnFinished<'_>) -> Result<String, &'static str> {
+    if event
+        .finish_reason
+        .is_some_and(|reason| reason.truncated_output())
+    {
+        return Err("Context handoff failed: the handoff document was cut off.");
+    }
+    let mut document = String::new();
+    for content in event.content {
+        match content {
+            AssistantContent::Text(text) => document.push_str(&text.text),
+            AssistantContent::ToolCall(_) => {
+                return Err(
+                    "Context handoff failed: the agent called a tool instead of replying with the handoff document.",
+                );
+            }
+            _ => {}
+        }
+    }
+    if document.trim().is_empty() || document.len() > MAX_DOCUMENT_BYTES {
+        return Err("Context handoff failed: the handoff document must contain 1 to 256000 bytes.");
+    }
+    Ok(document)
 }
 
 #[derive(Clone)]
@@ -101,12 +123,6 @@ impl ContextHandoffHook {
         self.state
             .lock()
             .is_ok_and(|state| state.due(self.token_limit))
-    }
-
-    pub(crate) fn tool(&self) -> HandoffTool {
-        HandoffTool {
-            state: self.state.clone(),
-        }
     }
 
     pub(crate) fn take_handoff_history(&self) -> Option<Vec<Message>> {
@@ -173,42 +189,13 @@ impl ContextHandoffHook {
 }
 
 impl AgentHook for ContextHandoffHook {
-    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
-        if event.tool_name() == Some(HandoffTool::NAME)
-            && self
-                .state
-                .lock()
-                .is_ok_and(|state| matches!(state.phase, HandoffPhase::Written(_)))
-        {
-            return OutcomeAction::stop(HANDOFF_SUBMITTED);
-        }
-        OutcomeAction::Proceed
-    }
-
-    async fn on_tool_call_delta(
-        &self,
-        _context: &HookContext,
-        event: ToolCallDelta<'_>,
-    ) -> ObservationAction {
-        if event.tool_name == HandoffTool::NAME && !self.is_writing() {
-            return ObservationAction::stop("No context handoff is pending.");
-        }
-        ObservationAction::Continue
-    }
-
     async fn on_invalid_tool_call(
         &self,
         _context: &HookContext,
-        event: &InvalidToolCallContext,
+        _event: &InvalidToolCallContext,
     ) -> Option<InvalidToolCallAction> {
-        // Rig skips delta and turn validation after name repair.
-        (self.is_writing()
-            || event.tool_name == HandoffTool::NAME
-            || matches!(
-                crate::hooks::resolve_invalid_tool_call(event),
-                InvalidToolCallAction::Repair { tool_name } if tool_name == HandoffTool::NAME
-            ))
-        .then(InvalidToolCallAction::fail)
+        // A repaired call skips on_model_turn_finished, which rejects handoff tool calls.
+        self.is_writing().then(InvalidToolCallAction::fail)
     }
 
     async fn on_completion_call(
@@ -238,27 +225,10 @@ impl AgentHook for ContextHandoffHook {
         _context: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
-        let mut calls = event.content.iter().filter_map(|content| match content {
-            AssistantContent::ToolCall(call) => Some(call),
-            _ => None,
-        });
-        if self.is_writing() {
-            if event
-                .finish_reason
-                .is_some_and(|reason| reason.truncated_output())
-                || !calls
-                    .next()
-                    .is_some_and(|call| call.function.name == HandoffTool::NAME)
-                || calls.next().is_some()
-            {
-                return ModelTurnAction::stop(
-                    "Context handoff failed: the agent must submit one complete handoff document.",
-                );
-            }
-        } else if calls.any(|call| call.function.name == HandoffTool::NAME) {
-            return ModelTurnAction::stop("No context handoff is pending.");
+        match self.state.lock() {
+            Ok(mut state) => state.finish_turn(&event),
+            Err(_) => ModelTurnAction::stop("Context handoff state is unavailable."),
         }
-        ModelTurnAction::Continue
     }
 
     fn observes(&self, kind: StepEventKind) -> bool {
@@ -267,8 +237,6 @@ impl AgentHook for ContextHandoffHook {
             StepEventKind::CompletionCall
                 | StepEventKind::ModelTurnFinished
                 | StepEventKind::InvalidToolCall
-                | StepEventKind::ToolCallDelta
-                | StepEventKind::ToolDispatch
         )
     }
 }
@@ -281,43 +249,6 @@ fn context_tokens(usage: Usage) -> Option<u64> {
             .zip(usage.output_tokens)
             .map(|(input, output)| input.saturating_add(output))
     })
-}
-
-#[derive(Clone)]
-pub(crate) struct HandoffTool {
-    state: Arc<Mutex<HandoffState>>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub(crate) struct HandoffArgs {
-    document: String,
-}
-
-impl Tool for HandoffTool {
-    const NAME: &'static str = "handoff_context";
-    type Error = ToolExecutionError;
-    type Args = HandoffArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Submit the handoff document for a fresh agent to continue this conversation. Only use this tool when explicitly asked to write a context handoff document; never initiate a handoff yourself.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        serde_json::json!(schemars::schema_for!(HandoffArgs))
-    }
-
-    async fn call(
-        &self,
-        _context: &mut rig::tool::ToolContext,
-        args: HandoffArgs,
-    ) -> Result<Self::Output, Self::Error> {
-        self.state
-            .lock()
-            .map_err(|_| ToolExecutionError::other("Context handoff state is unavailable."))?
-            .submit(args.document)?;
-        Ok(serde_json::json!({ "accepted": true }))
-    }
 }
 
 #[cfg(test)]

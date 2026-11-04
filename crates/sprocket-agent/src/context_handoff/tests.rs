@@ -94,14 +94,3 @@ fn does_not_estimate_tokens_from_large_messages() {
     ));
     assert!(matches!(state.phase, HandoffPhase::Idle));
 }
-
-#[test]
-fn handoff_submission_requires_a_pending_request_and_nonempty_document() {
-    let mut state = HandoffState::default();
-    assert!(state.submit("handoff".into()).is_err());
-    state.phase = HandoffPhase::Writing;
-    assert!(state.submit("  ".into()).is_err());
-    assert!(state.submit("handoff".into()).is_ok());
-    assert!(state.submit("duplicate".into()).is_err());
-    assert!(matches!(&state.phase, HandoffPhase::Written(summary) if summary == "handoff"));
-}

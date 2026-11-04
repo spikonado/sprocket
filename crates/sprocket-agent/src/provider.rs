@@ -569,8 +569,7 @@ async fn run_with_completion_model(
         .tool(tools.list_subagents)
         .tool(tools.list_subagent_models)
         .tool(tools.list_connectors)
-        .tool(tools.set_cwd)
-        .tool(context_handoff_hook.tool());
+        .tool(tools.set_cwd);
     let agent = if offer_github_tools {
         agent.tool(tools.link_prs).tool(tools.poll_pr)
     } else {
@@ -1005,11 +1004,11 @@ async fn run_with_completion_model(
                             Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
                                 if context_handoff_hook.is_writing() {
                                     if provider_switch.is_some() {
-                                        continue_without_handoff!(stream, 'generations, 'agent_run, "no valid document was submitted");
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, "the agent called a tool");
                                     }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
-                                        error: anyhow!("Context handoff failed: no valid document was submitted."),
+                                        error: anyhow!("Context handoff failed: the agent called a tool."),
                                     };
                                 }
                                 if let Err(error) = transcript.begin_next_turn_after_tools().await {

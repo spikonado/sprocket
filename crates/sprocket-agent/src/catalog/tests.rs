@@ -15,7 +15,6 @@ fn catalog_payload() -> GatewayModelsResponse {
                     "defaultReasoningEffort": "high",
                     "serviceTiers": ["standard", "fast"],
                     "supportsImages": true,
-                    "supportsRequiredToolChoice": true,
                     "contextWindowTokens": 100000,
                     "autoCompactTokenLimit": 80000,
                     "cacheWriteTtl": "30m",
@@ -54,7 +53,6 @@ fn reports_selected_model_metadata_from_one_payload() {
     let vision =
         select_catalog_model(&catalog_payload().sprocket, "vision-model").expect("vision model");
     assert!(vision.supports_images);
-    assert!(vision.supports_required_tool_choice);
     assert_eq!(vision.label, "Vision Model");
     assert_eq!(vision.vendor, "openai");
     assert_eq!(vision.context_budget.context_window_tokens, 100_000);
@@ -71,7 +69,6 @@ fn reports_selected_model_metadata_from_one_payload() {
         .expect("long-context model");
     assert!(!long_context.supports_images);
     assert_eq!(long_context.vendor, "other");
-    assert!(!long_context.supports_required_tool_choice);
     assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     assert_eq!(long_context.usage_pricing, UsagePricing::default());
 }

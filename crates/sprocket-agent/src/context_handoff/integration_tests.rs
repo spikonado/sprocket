@@ -12,13 +12,12 @@ use rig::message::{
     ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use rig::providers::openai;
-use rig::streaming::{Item, StreamEvent};
-use rig::tool::{DynamicTool, Tool, ToolOutput};
+use rig::tool::{DynamicTool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffTool,
-    context_summary_text, handoff_prompt,
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, context_summary_text,
+    handoff_prompt,
 };
 use crate::convex::ClaimStatus;
 use crate::openai::stateless_responses_model;
@@ -30,8 +29,7 @@ const DEFERRED_PROMPT: &str = "Keep going on the arm firmware. Do not summarise 
 const TOOL_RESULT: &str = "pending-tool-result:/workspace";
 const FIRST_SUMMARY: &str = "first-handoff-document";
 const SECOND_SUMMARY: &str = "second-handoff-document";
-const HANDOFF_FAILED: &str =
-    "Context handoff failed: the agent must submit one complete handoff document.";
+const HANDOFF_FAILED: &str = "Context handoff failed";
 const DRIVE_TIMEOUT: Duration = Duration::from_secs(12);
 const OVER_LIMIT: u64 = 100;
 
@@ -39,7 +37,7 @@ const OVER_LIMIT: u64 = 100;
 enum DriveEnd {
     HandoffNeeded,
     Submitted(String),
-    MissingDocument,
+    ToolExecuted,
     Stopped(String),
     Finished(String),
 }
@@ -132,17 +130,15 @@ fn tool_call_sse(
     .concat()
 }
 
-fn two_tool_calls_sse() -> String {
-    let first = function_call_item(
-        "call_a",
-        HandoffTool::NAME,
-        &json!({ "document": FIRST_SUMMARY }).to_string(),
-    );
-    let second = function_call_item(
-        "call_b",
-        HandoffTool::NAME,
-        &json!({ "document": SECOND_SUMMARY }).to_string(),
-    );
+fn text_and_tool_call_sse(tool_name: &str) -> String {
+    let message = json!({
+        "type": "message",
+        "id": "msg_1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{ "type": "output_text", "text": FIRST_SUMMARY }]
+    });
+    let call = function_call_item("call_exec", tool_name, &json!({ "cmd": "pwd" }).to_string());
     [
         sse(json!({
             "type": "response.created",
@@ -150,37 +146,31 @@ fn two_tool_calls_sse() -> String {
             "response": response_json("in_progress", vec![], 10, 10),
         })),
         sse(json!({
-            "type": "response.output_item.added",
-            "item_id": "fc_call_a",
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
             "output_index": 0,
+            "content_index": 0,
             "sequence_number": 1,
-            "item": first.clone(),
+            "delta": FIRST_SUMMARY,
+        })),
+        sse(json!({
+            "type": "response.output_item.added",
+            "item_id": "fc_call_exec",
+            "output_index": 1,
+            "sequence_number": 2,
+            "item": call.clone(),
         })),
         sse(json!({
             "type": "response.output_item.done",
-            "item_id": "fc_call_a",
-            "output_index": 0,
-            "sequence_number": 2,
-            "item": first.clone(),
-        })),
-        sse(json!({
-            "type": "response.output_item.added",
-            "item_id": "fc_call_b",
+            "item_id": "fc_call_exec",
             "output_index": 1,
             "sequence_number": 3,
-            "item": second.clone(),
-        })),
-        sse(json!({
-            "type": "response.output_item.done",
-            "item_id": "fc_call_b",
-            "output_index": 1,
-            "sequence_number": 4,
-            "item": second.clone(),
+            "item": call.clone(),
         })),
         sse(json!({
             "type": "response.completed",
-            "sequence_number": 5,
-            "response": response_json("completed", vec![first, second], 10, 10),
+            "sequence_number": 4,
+            "response": response_json("completed", vec![message, call], 10, 10),
         })),
     ]
     .concat()
@@ -249,13 +239,7 @@ fn truncated_handoff_sse() -> String {
 }
 
 fn handoff_document_sse(document: &str) -> String {
-    tool_call_sse(
-        "call_handoff",
-        HandoffTool::NAME,
-        json!({ "document": document }),
-        12,
-        8,
-    )
+    text_sse(document, 12, 8)
 }
 
 fn exec_command_sse(input_tokens: u64, output_tokens: u64) -> String {
@@ -367,7 +351,7 @@ fn stub_tool() -> DynamicTool {
     )
 }
 
-fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
+fn test_agent(base_url: &str) -> rig::Agent {
     let model = stateless_responses_model(
         openai::OpenAIConfig::new("test-key")
             .with_base_url(base_url)
@@ -375,7 +359,6 @@ fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
         MODEL,
     );
     rig::AgentBuilder::new(model)
-        .tool(hook.tool())
         .dynamic_tool(stub_tool())
         .build()
 }
@@ -436,8 +419,8 @@ fn assert_handoff_request(request: &JsonValue) {
     assert_eq!(last["role"], "user");
     let tools = advertised_tools(request);
     assert!(
-        tools.contains(&HandoffTool::NAME.to_string()) && tools.contains(&"exec_cmd".to_string()),
-        "handoff completion must advertise the handoff and ordinary tools, got {tools:?}"
+        tools.contains(&"exec_cmd".to_string()),
+        "handoff completion must keep advertising the ordinary tools, got {tools:?}"
     );
 }
 
@@ -491,7 +474,7 @@ async fn drive(
                     hook.record_usage(call.usage);
                 }
                 Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. }) if hook.is_writing() => {
-                    return DriveEnd::MissingDocument;
+                    return DriveEnd::ToolExecuted;
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(response)) => {
                     final_text = response.output().to_string();
@@ -524,61 +507,10 @@ fn take_handoff(hook: &ContextHandoffHook) -> Vec<Message> {
 }
 
 #[tokio::test]
-async fn unsolicited_handoff_is_not_executed_or_emitted_as_a_tool_call() {
-    assert_unsolicited_handoff_rejected(handoff_document_sse(FIRST_SUMMARY)).await;
-}
-
-#[tokio::test]
-async fn unsolicited_handoff_name_repair_keeps_the_pending_request_gate() {
-    assert_unsolicited_handoff_rejected(
-        handoff_document_sse(FIRST_SUMMARY).replace("handoff_context", "handoff-context"),
-    )
-    .await;
-}
-
-async fn assert_unsolicited_handoff_rejected(body: String) {
-    let (base_url, server) = spawn_responses_sse(vec![body]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
-    tokio::time::timeout(DRIVE_TIMEOUT, async {
-        let mut stream = agent
-            .prompt("normal work")
-            .add_hook(hook.clone())
-            .add_hook(crate::hooks::AgentPromptHook::new(
-                crate::hooks::ToolCallTracker::new("test-run", "test-claim"),
-            ))
-            .max_invalid_tool_call_retries(0)
-            .stream();
-        let mut rejected = false;
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
-                    content: AssistantContent::ToolCall(_),
-                    ..
-                })))
-                | Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. }) => {
-                    panic!("a disallowed handoff must not become a visible or executed tool call");
-                }
-                Err(_) => {
-                    rejected = true;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        assert!(rejected);
-    })
-    .await
-    .expect("unsolicited handoff stream timed out");
-    assert!(hook.take_summary().is_none());
-    assert_eq!(server.join().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
+async fn accepted_handoff_ends_after_the_reply_without_a_followup_completion() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     hook.start_handoff();
     let mut stream = agent
         .prompt(handoff_prompt())
@@ -590,25 +522,11 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
         while let Some(item) = stream.next().await {
             match item {
                 Ok(MultiTurnStreamItem::CompletionCall(_)) => completion_calls += 1,
-                Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. })
-                | Ok(MultiTurnStreamItem::ToolResult { .. })
-                | Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                    panic!(
-                        "an accepted handoff must stop before committing or emitting its result"
-                    );
+                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                    panic!("an accepted handoff must stop instead of finishing the run");
                 }
-                Err(PromptError::Cancelled {
-                    reason,
-                    chat_history,
-                }) => {
+                Err(PromptError::Cancelled { reason, .. }) => {
                     assert_eq!(reason, HANDOFF_SUBMITTED);
-                    let [.., Message::Assistant(turn), closure] = chat_history.as_slice() else {
-                        panic!("cancelled history must end with the handoff turn and its closure");
-                    };
-                    assert_eq!(
-                        *closure,
-                        rig::conversation::pairing::close_pending(turn.tool_calls())
-                    );
                     stopped = true;
                 }
                 Err(error) => panic!("unexpected handoff error: {error}"),
@@ -641,7 +559,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let (new_url, new_server) =
         spawn_responses_sse(vec![text_sse("continued on the new provider", 4, 4)]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let mut agent = test_agent(&old_url, &hook);
+    let mut agent = test_agent(&old_url);
     let initial_context = Message::user(INITIAL_CONTEXT);
     let history = vec![
         initial_context.clone(),
@@ -748,7 +666,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     assert!(input_blob(&handoff).contains(OLD_CONTEXT));
     assert!(input_blob(&handoff).contains(HANDOFF_PROMPT));
     assert!(!input_blob(&handoff).contains(DEFERRED_PROMPT));
-    assert!(advertised_tools(&handoff).contains(&HandoffTool::NAME.to_string()));
+    assert!(advertised_tools(&handoff).contains(&"exec_cmd".to_string()));
 
     let resume = parse_request(&new_requests[0]);
     assert_eq!(resume["model"], TARGET_MODEL);
@@ -773,11 +691,11 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     const OLD_CALL_ID: &str = "call_old_provider_exec";
     const TARGET_MODEL: &str = "new-provider-model";
 
-    let (old_url, old_server) = spawn_responses_sse(vec![text_sse("no handoff document", 4, 4)]);
+    let (old_url, old_server) = spawn_responses_sse(vec![exec_command_sse(4, 4)]);
     let (new_url, new_server) =
         spawn_responses_sse(vec![text_sse("continued without a handoff", 4, 4)]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let mut agent = test_agent(&old_url, &hook);
+    let mut agent = test_agent(&old_url);
     let history = vec![
         Message::user(INITIAL_CONTEXT),
         Message::user(OLD_CONTEXT),
@@ -817,7 +735,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     let pending_prompt = Message::user(DEFERRED_PROMPT);
     hook.start_handoff();
     match drive(&agent, &hook, handoff_prompt(), history.clone()).await {
-        DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
+        DriveEnd::Stopped(reason) => assert!(reason.starts_with(HANDOFF_FAILED), "{reason}"),
         other => panic!("expected a handoff without a document, got {other:?}"),
     }
     let old_requests = old_server.join().expect("old provider mock thread");
@@ -878,8 +796,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
 
 #[tokio::test]
 async fn provider_switch_waits_for_a_durable_reasoning_cutoff() {
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let mut agent = test_agent("http://127.0.0.1:1", &hook);
+    let mut agent = test_agent("http://127.0.0.1:1");
     let error = resume_without_provider_handoff(
         &mut agent,
         vec![Message::user(OLD_CONTEXT)],
@@ -899,7 +816,7 @@ async fn over_budget_prompt_waits_for_the_handoff() {
         text_sse("continued from handoff", 4, 4),
     ]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     let history = vec![
         Message::user(OLD_CONTEXT),
         Message::assistant("The previous run's final answer."),
@@ -910,7 +827,7 @@ async fn over_budget_prompt_waits_for_the_handoff() {
     hook.start_handoff();
     match drive(&agent, &hook, handoff_prompt(), history).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
-        other => panic!("handoff tool should submit the document, got {other:?}"),
+        other => panic!("handoff reply should submit the document, got {other:?}"),
     }
 
     hook.restart();
@@ -953,10 +870,6 @@ async fn over_budget_prompt_waits_for_the_handoff() {
         resume_tools.contains(&"exec_cmd".to_string()),
         "fresh runner should advertise agent tools again, got {resume_tools:?}"
     );
-    assert!(
-        resume_tools.contains(&HandoffTool::NAME.to_string()),
-        "fresh runner must keep advertising the handoff tool, got {resume_tools:?}"
-    );
     assert_eq!(handoff["tools"], resume["tools"]);
     assert_eq!(handoff["tool_choice"], resume["tool_choice"]);
     assert_eq!(handoff["instructions"], resume["instructions"]);
@@ -969,7 +882,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
         handoff_document_sse(FIRST_SUMMARY),
     ]);
     let hook = ContextHandoffHook::new(50, 0);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     let history = vec![Message::user(OLD_CONTEXT)];
     let prompt = Message::user("run pwd");
 
@@ -996,7 +909,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
     hook.start_handoff();
     match drive(&agent, &hook, handoff_prompt(), history.clone()).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
-        other => panic!("handoff tool should submit the document, got {other:?}"),
+        other => panic!("handoff reply should submit the document, got {other:?}"),
     }
 
     let captured = server.join().expect("responses mock thread");
@@ -1011,10 +924,6 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
     assert!(
         tool_turn_tools.contains(&"exec_cmd".to_string()),
         "pre-handoff completion should advertise exec_cmd, got {tool_turn_tools:?}"
-    );
-    assert!(
-        tool_turn_tools.contains(&HandoffTool::NAME.to_string()),
-        "pre-handoff completion must advertise the handoff tool, got {tool_turn_tools:?}"
     );
 
     let handoff = parse_request(&captured[1]);
@@ -1040,7 +949,7 @@ async fn context_handoff_repeats_after_restart() {
         handoff_document_sse(SECOND_SUMMARY),
     ]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     let prompt = Message::user(DEFERRED_PROMPT);
 
     match drive(
@@ -1115,11 +1024,11 @@ async fn context_handoff_repeats_after_restart() {
 async fn empty_handoff_document_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse("   ")]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     hook.start_handoff();
 
     match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
-        DriveEnd::MissingDocument => {}
+        DriveEnd::Stopped(reason) => assert!(reason.starts_with(HANDOFF_FAILED), "{reason}"),
         other => panic!("whitespace-only document should not be accepted, got {other:?}"),
     }
     assert_eq!(hook.take_summary(), None);
@@ -1133,11 +1042,11 @@ async fn empty_handoff_document_is_rejected() {
 async fn truncated_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![truncated_handoff_sse()]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     hook.start_handoff();
 
     match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
-        DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
+        DriveEnd::Stopped(reason) => assert!(reason.starts_with(HANDOFF_FAILED), "{reason}"),
         other => panic!("truncated handoff should stop the turn, got {other:?}"),
     }
     assert_eq!(hook.take_summary(), None);
@@ -1145,44 +1054,14 @@ async fn truncated_handoff_turn_is_rejected() {
 }
 
 #[tokio::test]
-async fn text_only_handoff_turn_is_rejected() {
-    let (base_url, server) = spawn_responses_sse(vec![text_sse("I will summarise in prose", 8, 8)]);
+async fn handoff_turn_rejects_tool_calls() {
+    let (base_url, server) = spawn_responses_sse(vec![text_and_tool_call_sse("exec_cmd")]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     hook.start_handoff();
 
     match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
-        DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
-        other => panic!("a text-only handoff turn should fail, got {other:?}"),
-    }
-    assert_eq!(hook.take_summary(), None);
-    let _ = server.join().expect("responses mock thread");
-}
-
-#[tokio::test]
-async fn two_handoff_tool_calls_are_rejected() {
-    let (base_url, server) = spawn_responses_sse(vec![two_tool_calls_sse()]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
-    hook.start_handoff();
-
-    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
-        DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
-        other => panic!("two handoff tool calls should fail, got {other:?}"),
-    }
-    assert_eq!(hook.take_summary(), None);
-    let _ = server.join().expect("responses mock thread");
-}
-
-#[tokio::test]
-async fn handoff_turn_only_accepts_the_handoff_tool_even_with_other_tools_advertised() {
-    let (base_url, server) = spawn_responses_sse(vec![exec_command_sse(4, 4)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
-    let agent = test_agent(&base_url, &hook);
-    hook.start_handoff();
-
-    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
-        DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
+        DriveEnd::Stopped(reason) => assert!(reason.starts_with(HANDOFF_FAILED), "{reason}"),
         other => panic!("handoff turn must reject an ordinary tool call, got {other:?}"),
     }
     assert!(hook.take_summary().is_none());
@@ -1192,14 +1071,14 @@ async fn handoff_turn_only_accepts_the_handoff_tool_even_with_other_tools_advert
 }
 
 #[tokio::test]
-async fn handoff_typos_cannot_bypass_single_call_validation_through_repair() {
-    let body = two_tool_calls_sse().replace("handoff_context", "handoff-context");
+async fn repaired_tool_names_cannot_bypass_the_handoff_tool_call_check() {
+    let body = text_and_tool_call_sse("exec-cmd");
     let (base_url, server) = spawn_responses_sse(vec![body]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0);
     hook.start_handoff();
-    let agent = test_agent(&base_url, &hook);
+    let agent = test_agent(&base_url);
     let mut stream = agent
-        .prompt("write the handoff")
+        .prompt(handoff_prompt())
         .add_hook(hook.clone())
         .add_hook(crate::hooks::AgentPromptHook::new(
             crate::hooks::ToolCallTracker::new("run", "claim"),
@@ -1209,7 +1088,7 @@ async fn handoff_typos_cannot_bypass_single_call_validation_through_repair() {
     while let Some(item) = stream.next().await {
         match item {
             Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. }) => {
-                panic!("invalid handoff must not execute")
+                panic!("a handoff turn must not execute tools")
             }
             Err(_) => {
                 failed = true;
