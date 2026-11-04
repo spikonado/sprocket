@@ -14,11 +14,15 @@
 	</head>
 	<body>
 		<!-- In the body, since the bundle appends its font stylesheet to `document.body`. -->
-		<script src="/kicanvas/kicanvas.js"></script>
+		<!-- `crossorigin`, since this frame's origin is opaque and the browser hides errors from cross-origin scripts. -->
+		<script src="/kicanvas/kicanvas.js" crossorigin></script>
 		<script>
 			const reply = (message) => parent.postMessage(message, '*');
 			let embed = null;
 			let firstDraw = null;
+			let crash = null;
+			const crashed = new Promise((_, reject) => (crash = reject));
+			crashed.catch(() => {});
 
 			const appFor = (page) =>
 				embed.shadowRoot.querySelector(page.type === 'pcb' ? 'kc-board-app' : 'kc-schematic-app');
@@ -97,10 +101,9 @@
 				document.body.append(embed);
 			}
 
-			// Such as KiCanvas's renderer setup throwing when the browser has no WebGL2.
-			addEventListener('unhandledrejection', ({ reason }) =>
-				reply({ type: 'failed', error: reason instanceof Error ? reason.message : undefined })
-			);
+			// Such as KiCanvas's renderer setup throwing when the browser has no WebGL2, or its
+			// painter throwing on a board it can't read. KiCanvas then never draws the page.
+			addEventListener('unhandledrejection', ({ reason }) => crash(reason));
 
 			addEventListener('message', ({ source, data }) => {
 				if (source !== parent) return;
@@ -111,9 +114,10 @@
 				if (data?.type === 'sources') load(data.sources);
 
 				if (data?.type === 'show') {
-					show(data.view).then(
+					Promise.race([show(data.view), crashed]).then(
 						() => reply({ type: 'loaded' }),
-						() => reply({ type: 'failed' })
+						(reason) =>
+							reply({ type: 'failed', error: reason instanceof Error ? reason.message : undefined })
 					);
 				}
 

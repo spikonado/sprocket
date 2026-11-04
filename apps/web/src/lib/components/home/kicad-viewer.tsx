@@ -28,7 +28,11 @@ type FrameMessage = z.infer<typeof frameMessageSchema>;
 const malformedFile = 'KiCanvas could not read this file. It may be malformed.';
 
 function frameFailure(message: FrameMessage, fallback: string) {
-	return new Error(message.type === 'failed' && message.error ? message.error : fallback);
+	return new Error(
+		message.type === 'failed' && message.error
+			? `KiCanvas could not open this file: ${message.error}`
+			: fallback
+	);
 }
 
 function nextFrameMessage(frame: HTMLIFrameElement, signal: AbortSignal) {

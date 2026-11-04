@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceExt;
 
@@ -27,6 +27,8 @@ fn web_dist() -> tempfile::TempDir {
     std::fs::write(root.join("_app/version.json"), VERSION).unwrap();
     std::fs::write(root.join("_app/env.js"), ENV).unwrap();
     std::fs::write(root.join("_app/immutable/chunk.js"), CHUNK).unwrap();
+    std::fs::create_dir_all(root.join("kicanvas")).unwrap();
+    std::fs::write(root.join("kicanvas/kicanvas.js"), CHUNK).unwrap();
     dir
 }
 
@@ -124,6 +126,17 @@ async fn successful_static_responses_set_cache_control() {
             "{path}"
         );
     }
+}
+
+#[tokio::test]
+async fn kicanvas_files_allow_cross_origin_reads() {
+    let (_dir, app) = fixture();
+    let response = call(&app, get("/kicanvas/kicanvas.js")).await;
+
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static("*"))
+    );
 }
 
 #[tokio::test]
