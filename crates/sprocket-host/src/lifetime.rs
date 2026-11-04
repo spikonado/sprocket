@@ -8,7 +8,6 @@ struct LifetimeState {
     restart_requested: bool,
 }
 
-/// Tracks the work that keeps the host process alive and its shutdown signal.
 pub struct HostLifetime {
     pub shutdown: WorkspaceCancellation,
     state: Mutex<LifetimeState>,
@@ -40,7 +39,6 @@ impl HostLifetime {
         !self.state.lock().unwrap().accepting
     }
 
-    /// Stops accepting work and signals a shutdown that the launcher follows with a restart.
     pub fn request_restart(&self) -> anyhow::Result<()> {
         let mut state = self.state.lock().unwrap();
         anyhow::ensure!(
@@ -57,7 +55,6 @@ impl HostLifetime {
         self.state.lock().unwrap().restart_requested
     }
 
-    /// Stops accepting work and signals shutdown when no run holds a guard.
     pub fn stop_if_idle(&self) {
         let mut state = self.state.lock().unwrap();
         if state.active_runs == 0 {

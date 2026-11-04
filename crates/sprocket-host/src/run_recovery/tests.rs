@@ -66,7 +66,6 @@ async fn overlapping_submissions_launch_with_the_persisted_capability() {
         first.request.execution_secret = supplied_secrets.then(|| "first".into());
         let mut second = first.clone();
         second.request.execution_secret = supplied_secrets.then(|| "second".into());
-        // A retry must also preserve the original retry budget.
         second.recoveries = 0;
         let (first_launch, second_launch) = tokio::join!(
             store.begin(first.clone(), false),
@@ -120,8 +119,6 @@ async fn client_bound_runs_never_enter_the_recovery_journal() {
             .await
             .is_empty()
     );
-    // A native subagent uses the same workspace mode but has a durable
-    // cloud result, so it remains eligible for automatic recovery.
     candidate.allow_interaction = true;
     let (guard, _) = store.begin(candidate, false).await.unwrap();
     assert!(guard.is_some());

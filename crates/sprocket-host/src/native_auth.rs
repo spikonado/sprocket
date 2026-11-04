@@ -40,9 +40,7 @@ pub struct NativeAuthConfig {
     pub workos_client_id: String,
 }
 
-/// Browser sessions that are bound to the host's signed-in account.
 pub trait BrowserSessions: Send + Sync {
-    /// Unbinds every session that belongs to someone other than `user_id`.
     fn sync_with_owner<'a>(&'a self, user_id: Option<&'a str>)
     -> BoxFuture<'a, anyhow::Result<()>>;
 
@@ -101,7 +99,6 @@ pub enum NativeLoginStatus {
     Pending,
     Authenticated {
         user: NativeUser,
-        /// Where this process last saved the refresh token, if it has saved one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         credential_store: Option<CredentialStore>,
     },
@@ -416,7 +413,6 @@ impl NativeAuthManager {
 
     async fn sign_out_inner(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
-        // Stay signed in if deletion fails; otherwise a restart would revive the session.
         self.clear_refresh_token().await?;
         let login_generation = self.session.lock().await.login_generation.wrapping_add(1);
         let mut session = NativeSession::default();

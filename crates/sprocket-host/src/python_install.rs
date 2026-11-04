@@ -13,7 +13,6 @@ const PYTHON_VERSION: &str = "3.12";
 const PYTHON_INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UV_EXECUTABLES: [&str; 3] = ["uv", "uvx", "uvw"];
 
-/// Pinned uv plus a uv-managed Python, which agents get after the user's own on their `PATH`.
 pub(crate) struct PythonTools {
     uv: PinnedTool,
     python_dir: PathBuf,
@@ -91,7 +90,6 @@ impl PythonTools {
     }
 }
 
-/// Puts uv's executables from its release archive, a `.zip` on Windows, directly in `bin`.
 fn unpack(archive: &Path, bin: &Path) -> anyhow::Result<()> {
     if cfg!(windows) {
         unpack_zip(archive, bin)?;

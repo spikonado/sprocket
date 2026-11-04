@@ -145,7 +145,6 @@ impl From<RemotePrompt> for TranscriptPromptBody {
     }
 }
 
-/// Reads a prompt body from a Convex function result.
 pub fn deserialize_remote_prompt<'de, D>(
     deserializer: D,
 ) -> Result<Option<TranscriptPromptBody>, D::Error>

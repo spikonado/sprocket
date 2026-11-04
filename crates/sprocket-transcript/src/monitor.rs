@@ -50,8 +50,6 @@ pub struct MonitorPage {
     pub has_more: bool,
 }
 
-/// Cursor failures are explicit so callers restart from the beginning instead
-/// of silently dropping history.
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MonitorReadError {
     #[error("monitor cursor is malformed")]
@@ -470,7 +468,6 @@ impl WorkReplica {
     }
 }
 
-// Old results lack source paths; never reconstruct them from unexecuted input.
 fn patch_changes(output: Option<&JsonValue>) -> Vec<PatchChangeSummary> {
     let Some(output) = output else {
         return Vec::new();

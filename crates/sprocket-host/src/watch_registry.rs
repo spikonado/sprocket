@@ -22,15 +22,10 @@ struct Inner<K, E, S> {
     next_generation: u64,
 }
 
-/// A refcounted map of watch keys to a shared background task and broadcast
-/// channel. Always construct as an `Arc`; sessions hold one back so `close`
-/// works from `Drop` without a runtime.
 pub struct WatchRegistry<K: Eq + Hash, E, S = ()> {
     inner: Mutex<Inner<K, E, S>>,
 }
 
-/// Handle to one open watch. Dropping the last handle for a key aborts the
-/// background task.
 pub struct WatchSession<K: Eq + Hash, E, S = ()> {
     registry: Arc<WatchRegistry<K, E, S>>,
     key: K,
@@ -48,9 +43,6 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
         })
     }
 
-    /// Returns the open session plus the slot's shared state, creating both on
-    /// first open. `spawn` runs only when a new slot is inserted; it receives
-    /// the broadcast sender and the fresh state for the background task to own.
     pub fn open_with(
         self: &Arc<Self>,
         key: K,
@@ -101,8 +93,6 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
         (session, state)
     }
 
-    /// Sends to the open slot for `key`, if any. Lagged or absent receivers
-    /// are the caller's normal case, so delivery failures are ignored.
     pub fn send_to(&self, key: &K, event: E)
     where
         E: Clone,
@@ -113,9 +103,6 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
         }
     }
 
-    /// Drops the slot for `key` and aborts its task regardless of open
-    /// sessions. Sessions dropped afterwards see a generation mismatch and
-    /// leave any replacement slot alone.
     pub fn abort(&self, key: &K) {
         let mut inner = lock(&self.inner);
         if let Some(slot) = inner.slots.remove(key) {
@@ -147,7 +134,6 @@ impl<K: Eq + Hash, E, S> WatchSession<K, E, S> {
 
 impl<K: Eq + Hash, E, S> Drop for WatchSession<K, E, S> {
     fn drop(&mut self) {
-        // Sync close so shutdown / no-runtime drops still release the slot.
         self.registry.close(&self.key, self.generation);
     }
 }

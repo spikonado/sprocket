@@ -1,7 +1,3 @@
-//! The KiCad connector: a pinned KiCad build plus kipy, installed on request under
-//! `<data-dir>/connectors/kicad/<version>/`. Its launchers are copied into
-//! `<data-dir>/connectors/kicad/bin`, which stays on agents' `PATH` across installs.
-
 mod unpack;
 
 use std::collections::BTreeMap;
@@ -60,8 +56,6 @@ struct Release {
     kipy: Asset,
 }
 
-/// Only the outcome of this process's last install lives in memory; what's installed is
-/// whichever version directories exist.
 enum Activity {
     Idle,
     Installing,
@@ -106,7 +100,6 @@ impl KiCadConnector {
         };
         let (state, error) = match &*self.activity() {
             Activity::Installing => (ConnectorState::Installing, None),
-            // A failed update keeps the older version installed.
             Activity::Failed(error) if installed.is_some() => (idle_state, Some(error.clone())),
             Activity::Failed(error) => (ConnectorState::Failed, Some(error.clone())),
             Activity::Idle => (idle_state, None),
@@ -121,7 +114,6 @@ impl KiCadConnector {
         }
     }
 
-    /// Installs or updates to the pinned version in the background, unless already installing.
     pub fn install(self: &Arc<Self>) {
         {
             let mut activity = self.activity();
@@ -212,7 +204,6 @@ impl KiCadConnector {
         Ok(())
     }
 
-    /// Builds the version directory in `staging`, with paths that point at `version_dir`.
     async fn stage(&self, staging: &Path, version_dir: &Path) -> anyhow::Result<()> {
         self.python
             .ensure_installed()
@@ -323,7 +314,6 @@ impl KiCadConnector {
     }
 }
 
-/// The pinned version, or an older one an update hasn't replaced yet.
 fn installed_version(root: &Path, pinned: &str) -> Option<String> {
     if root.join(pinned).is_dir() {
         return Some(pinned.to_owned());
@@ -410,7 +400,6 @@ fn download_name(url: &str) -> &str {
     url.rsplit('/').next().unwrap_or(url)
 }
 
-/// A KiCad 11 or nightly the user installed, as long as it can serve kipy's API.
 async fn find_user_kicad(root: &Path) -> Option<PathBuf> {
     let name = format!("kicad-cli{}", std::env::consts::EXE_SUFFIX);
     let on_path = std::env::var_os("PATH")
@@ -495,7 +484,6 @@ async fn cli_version(cli: &Path) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Reads `10.99` out of versions like `10.99.0-6189-g113c71d59d` or `(9.0.2)`.
 fn major_minor(version: &str) -> Option<(u32, u32)> {
     let start = version.find(|character: char| character.is_ascii_digit())?;
     let mut parts = version[start..].split(|character: char| !character.is_ascii_digit());
@@ -621,7 +609,6 @@ fn kicad_config_dir((major, minor): (u32, u32)) -> anyhow::Result<PathBuf> {
     Ok(base.join("kicad").join(version))
 }
 
-/// Library table templates of the KiCad that `cli` belongs to.
 fn template_dir(cli: &Path) -> Option<PathBuf> {
     let prefix = cli.parent()?.parent()?;
     let dir = if cfg!(target_os = "macos") {

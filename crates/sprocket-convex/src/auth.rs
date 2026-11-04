@@ -13,7 +13,6 @@ use tokio::task::JoinHandle;
 
 use crate::{AuthSignedOut, AuthTokenFetcher};
 
-/// Matches Convex JS `authRefreshTokenLeewaySeconds` default.
 const REFRESH_LEEWAY_SECS: u64 = 10;
 /// Matches Convex JS: tokens shorter than this cannot be rescheduled.
 const MIN_TOKEN_LIFETIME_SECS: u64 = 2;
@@ -338,8 +337,6 @@ fn refresh_delay(lifetime: JwtLifetime, now: SystemTime) -> Option<Duration> {
     }
     let now_secs = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
     let remaining_secs = lifetime.exp.saturating_sub(now_secs);
-    // Fresh tokens: Convex JS uses `exp - iat` as validity starting now (clock-skew
-    // safe). Cached tokens: remaining wall time is shorter and must win.
     let validity_secs = full_secs.min(remaining_secs);
     let delay_secs = validity_secs.saturating_sub(REFRESH_LEEWAY_SECS);
     Some(Duration::from_secs(delay_secs).min(MAXIMUM_REFRESH_DELAY))

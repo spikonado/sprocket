@@ -14,7 +14,6 @@ pub struct TranscriptState {
     pub history_from_number: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
-    /// Inclusive transcript part through which reasoning replay is omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_stripped_through_part_number: Option<i64>,
     pub downloaded_ranges: Vec<DownloadedRange>,
@@ -170,7 +169,6 @@ pub struct TranscriptPromptBody {
     pub hidden: Option<HiddenPromptKind>,
 }
 
-/// A prompt the agent wrote for the model. The UI does not show it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenPromptKind {

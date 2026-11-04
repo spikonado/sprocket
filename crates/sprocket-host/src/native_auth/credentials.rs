@@ -14,7 +14,6 @@ pub(super) trait RefreshTokenStore: Send + Sync {
         anyhow::bail!("credential-store selection is unavailable")
     }
     fn load(&self) -> anyhow::Result<Option<String>>;
-    /// Returns the store that now holds the token.
     fn save(&self, refresh_token: &str) -> anyhow::Result<CredentialStore>;
     fn clear(&self) -> anyhow::Result<()>;
 }
@@ -191,7 +190,6 @@ impl RefreshTokenStore for ProfileCredentials {
         }
     }
 
-    // Sign-out fails instead of falling back: an unreachable keyring may still hold the token.
     fn clear(&self) -> anyhow::Result<()> {
         match self.selected()? {
             Some(CredentialStore::File) => self.clear_file(),

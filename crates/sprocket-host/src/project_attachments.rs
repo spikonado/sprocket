@@ -49,9 +49,7 @@ pub struct AttachProjectRequest {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspacePathResolution {
     pub workspace_path: String,
-    /// Short UI label for the repository (repo name or directory name).
     pub display_name: String,
-    /// Stable repository identity from git origin, or the directory name when unset.
     pub repository_key: String,
     pub attachment_key: String,
 }
@@ -246,7 +244,6 @@ impl ProjectAttachmentStore {
         Ok(attachment)
     }
 
-    /// Interrupted runs may resume in a folder the user removed, without listing it again.
     pub async fn recovered_run_workspace(
         &self,
         workspace_path: &str,
