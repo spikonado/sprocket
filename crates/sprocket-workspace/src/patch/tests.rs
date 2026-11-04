@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use super::{FileContents, FileState, TrackedFile, apply_workspace_patch, display_path, restore};
-use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
+use crate::cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use crate::test_support::temp_workspace;
 use tempfile::tempdir;
 
