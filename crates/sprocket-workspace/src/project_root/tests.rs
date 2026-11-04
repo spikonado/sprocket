@@ -19,7 +19,11 @@ fn relative_to_cwd(path: &Path) -> Option<PathBuf> {
 
 #[test]
 fn discovered_repository_paths_stay_absolute() {
-    let root = crate::test_support::temp_workspace_labeled("sprocket-git-repo-absolute-paths");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("sprocket-git-repo-absolute-paths");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
     gix::init(&root).expect("gix init");
     let cwd = relative_to_cwd(&root).expect("relative path from cwd");
     assert!(!cwd.is_absolute());
