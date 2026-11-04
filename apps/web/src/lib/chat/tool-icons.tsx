@@ -44,6 +44,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return ListChecks;
 		case 'check_docs':
 			return BookOpen;
+		case 'bind_artifact':
 		case 'add_artifact':
 		case 'create_artifact':
 			return FileCode;

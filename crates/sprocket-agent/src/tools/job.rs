@@ -104,7 +104,7 @@ pub(super) async fn begin_executor_job(
     );
     begin_args.insert("streamId".to_string(), assignment.stream_id.into());
     let mut stored_payload = payload.clone();
-    if matches!(kind, "add_artifact" | "save_artifact") {
+    if matches!(kind, "bind_artifact" | "save_artifact") {
         if let Some(fields) = stored_payload.as_object_mut() {
             fields.remove("path");
         }

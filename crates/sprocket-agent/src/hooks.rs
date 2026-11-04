@@ -9,9 +9,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
-    "add_artifact",
     "apply_patch",
     "ask_question",
+    "bind_artifact",
     "card_checkout",
     "control_cmd",
     "control_subagent",

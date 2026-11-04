@@ -325,9 +325,7 @@ export const listArtifactsForRun = query({
 	},
 	returns: v.object({
 		...pageFields,
-		page: v.array(
-			v.object({ artifactId: v.id('artifacts'), title: v.string(), updatedAt: v.number() })
-		)
+		page: v.array(v.object({ artifactId: v.id('artifacts'), title: v.string() }))
 	}),
 	handler: async (ctx, args) => {
 		try {
@@ -343,11 +341,7 @@ export const listArtifactsForRun = query({
 
 			return {
 				...result,
-				page: result.page.map(({ _id, title, updatedAt }) => ({
-					artifactId: _id,
-					title,
-					updatedAt
-				}))
+				page: result.page.map(({ _id, title }) => ({ artifactId: _id, title }))
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

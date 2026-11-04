@@ -13,7 +13,7 @@ use super::context::{AgentToolContext, cancelled_error, tool_error};
 use super::job::{execute_tool_job, mutation_args_from_payload, run_convex_tool_mutation};
 
 #[derive(Clone)]
-pub(crate) struct AddArtifactTool(pub(super) AgentToolContext);
+pub(crate) struct BindArtifactTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
 pub(crate) struct ListArtifactsTool(pub(super) AgentToolContext);
@@ -27,16 +27,14 @@ pub(crate) struct DeleteArtifactTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DeleteArtifactArgs {
-    /// From add_artifact or list_artifacts.
     pub(crate) artifact_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct AddArtifactArgs {
-    /// Existing UTF-8 file. Relative paths resolve from the current working directory.
+pub(crate) struct BindArtifactArgs {
     pub(crate) path: String,
-    /// Rebind this existing artifact to the file instead of creating a new one. From add_artifact or list_artifacts.
+    /// Existing artifact to rebind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) artifact_id: Option<String>,
 }
@@ -44,9 +42,7 @@ pub(crate) struct AddArtifactArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SaveArtifactArgs {
-    /// From add_artifact or list_artifacts.
     pub(crate) artifact_id: String,
-    /// Destination file that must not exist or must already have the same content. Relative paths resolve from the current working directory.
     pub(crate) path: String,
 }
 
@@ -69,7 +65,6 @@ struct ArtifactPage {
 struct ListedArtifact {
     artifact_id: String,
     title: String,
-    updated_at: serde_json::Value,
 }
 
 fn absolute_path(workspace_root: &Path, local_path: &str) -> String {
@@ -98,7 +93,6 @@ fn artifact_summary(
     let mut summary = json!({
         "artifactId": artifact.artifact_id,
         "title": artifact.title,
-        "updatedAt": artifact.updated_at,
     });
     if let Some(binding) = bindings
         .iter()
@@ -226,20 +220,20 @@ async fn get_artifact(
         .map_err(tool_error)
 }
 
-impl rig::tool::Tool for AddArtifactTool {
-    const NAME: &'static str = "add_artifact";
+impl rig::tool::Tool for BindArtifactTool {
+    const NAME: &'static str = "bind_artifact";
     type Error = ToolExecutionError;
-    type Args = AddArtifactArgs;
+    type Args = BindArtifactArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
         format!(
-            "Register an existing UTF-8 file, at most {MAX_ARTIFACT_BYTES} bytes, as an artifact of the current project and bind it so later edits sync."
+            "Bind a UTF-8 file of at most {MAX_ARTIFACT_BYTES} bytes to a new artifact, or to an existing one. Later edits to the file sync."
         )
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(AddArtifactArgs))
+        json!(schemars::schema_for!(BindArtifactArgs))
     }
 
     async fn call(
@@ -262,7 +256,7 @@ impl rig::tool::Tool for SaveArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write an artifact's content to a file and bind it so later edits sync.".into()
+        "Write an artifact's content to a new file and bind it.".into()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -318,7 +312,7 @@ impl rig::tool::Tool for ListArtifactsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the current project's artifacts, including ones with no file on this machine. Artifacts bound to a file on this machine include its absolute `path`.".to_string()
+        "List the project's artifacts. Ones bound on this machine include their `path`.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -377,7 +371,7 @@ impl rig::tool::Tool for DeleteArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Delete an artifact from the current project, along with its bound local files.".to_string()
+        "Delete an artifact and its bound local files.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {

@@ -232,12 +232,12 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow();
 	});
 
-	it('persists add, edit, save and list tool jobs', async () => {
+	it('persists bind, released add and edit, save and list tool jobs', async () => {
 		const { t, asUser, auth } = await seedActiveRun();
 		const artifact = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 
 		for (const [index, kind] of (
-			['add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
+			['bind_artifact', 'add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
 		).entries()) {
 			const payload = kind === 'list_artifacts' ? {} : { artifactId: artifact.artifactId };
 
@@ -263,7 +263,7 @@ describe('cloud artifacts', () => {
 		}
 
 		const jobs = await t.run(async (ctx) => ctx.db.query('executorJobs').collect());
-		expect(jobs).toHaveLength(4);
+		expect(jobs).toHaveLength(5);
 
 		for (const job of jobs) {
 			expect(job.status).toBe('completed');

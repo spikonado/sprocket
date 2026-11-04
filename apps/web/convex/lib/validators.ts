@@ -145,7 +145,8 @@ export const vLegacyArtifactType = v.union(
 // Historical stored artifacts and tool results retain thread scope until migrated.
 export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
 
-export const vAddArtifactPayload = v.object({
+// Released agents still start add_artifact jobs with this payload.
+export const vBindArtifactPayload = v.object({
 	artifactId: v.optional(v.string()),
 	scope: v.optional(vArtifactScope)
 });
@@ -414,7 +415,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
-	vAddArtifactPayload,
+	vBindArtifactPayload,
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
@@ -817,7 +818,7 @@ export const vListArtifactsResult = v.object({
 			title: v.string(),
 			revision: v.optional(v.number()),
 			createdAt: v.optional(v.number()),
-			updatedAt: v.number()
+			updatedAt: v.optional(v.number())
 		})
 	)
 });
@@ -924,6 +925,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('web_search'),
 	v.literal('control_cmd'),
 	v.literal('poll_cmd'),
+	v.literal('bind_artifact'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
 	v.literal('list_connectors'),

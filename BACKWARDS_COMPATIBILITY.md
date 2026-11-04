@@ -46,7 +46,7 @@ Released servers require an integer `createdAt` on `artifacts:listArtifacts` row
 
 ### Artifact types
 
-Released agents send `contentType` to `artifacts:addArtifact` and `artifacts:editArtifact`, which accept and ignore it. Released agents read `type` from `artifacts:getArtifactForRun`, and released servers read it from `artifacts:listArtifacts`, so `artifacts.ts` derives it from the title. Released agents also start `edit_artifact` jobs, so `vCurrentExecutorJobKind` keeps that kind. Once those clients age out, remove the argument and the derived `type` from the artifact functions, and move `edit_artifact` to `vStoredExecutorJobKind`. Stored `edit_artifact` jobs stay readable, see the permanent list.
+Released agents send `contentType` to `artifacts:addArtifact` and `artifacts:editArtifact`, which accept and ignore it. Released agents read `type` from `artifacts:getArtifactForRun`, and released servers read it from `artifacts:listArtifacts`, so `artifacts.ts` derives it from the title. Released agents also start `add_artifact` and `edit_artifact` jobs, so `vCurrentExecutorJobKind` keeps both kinds. Once those clients age out, remove the argument and the derived `type` from the artifact functions, and move both kinds to `vStoredExecutorJobKind`. Stored jobs of both kinds stay readable, see the permanent list.
 
 ### Machine credentials
 
@@ -154,7 +154,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - The optional `workdir` on `vExecCommandPayload`, shown as `(cwd …)` in the UI and ignored on replay.
 - Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, and `screenshot_url`.
 - Scope and thread metadata on artifact tool payloads and results.
-- `edit_artifact` jobs, from before `add_artifact` took an `artifactId`, and the `repositoryKey`, `type`, `contentType`, `title` and `revision` fields on artifact tool results.
+- `add_artifact` and `edit_artifact` jobs, from before `bind_artifact` replaced them, and the `repositoryKey`, `type`, `contentType`, `title`, `revision` and `updatedAt` fields on artifact tool results.
 - `parse_file` URL sources and legacy command results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `eventsPath` on command tool results, which released servers still send.

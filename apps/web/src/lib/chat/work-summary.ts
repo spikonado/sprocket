@@ -6,7 +6,7 @@ type Activity = { verb: string; noun: string; plural?: string };
 
 type SummarizedToolName = Exclude<
 	Infer<typeof vCurrentExecutorJobKind>,
-	`poll_${string}` | `mandate_${string}`
+	`poll_${string}` | `mandate_${string}` | 'add_artifact'
 >;
 
 const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
@@ -25,7 +25,7 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	list_subagents: { verb: 'listed', noun: 'subagent group' },
 	list_subagent_models: { verb: 'listed', noun: 'model group' },
 	ask_question: { verb: 'asked', noun: 'question' },
-	add_artifact: { verb: 'added', noun: 'artifact' },
+	bind_artifact: { verb: 'bound', noun: 'artifact' },
 	edit_artifact: { verb: 'updated', noun: 'artifact' },
 	save_artifact: { verb: 'saved', noun: 'artifact' },
 	delete_artifact: { verb: 'deleted', noun: 'artifact' },
@@ -41,7 +41,8 @@ const LEGACY_TOOL_NAMES = new Map<string, keyof typeof ACTIVITIES>([
 	['exec_command', 'exec_cmd'],
 	['control_command', 'control_cmd'],
 	['write_stdin', 'control_cmd'],
-	['create_artifact', 'add_artifact'],
+	['create_artifact', 'bind_artifact'],
+	['add_artifact', 'bind_artifact'],
 	['update_artifact', 'edit_artifact']
 ]);
 

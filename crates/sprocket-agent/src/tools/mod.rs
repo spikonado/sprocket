@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
-use self::artifacts::{AddArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool};
+use self::artifacts::{BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool};
 pub(crate) use self::async_tools::max_yield_ms;
 pub(crate) use self::commands::CommandCursors;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
@@ -68,7 +68,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) spawn_subagent: SpawnSubagentTool,
     pub(crate) poll_subagent: PollSubagentTool,
     pub(crate) web_search: WebSearchTool,
-    pub(crate) add_artifact: AddArtifactTool,
+    pub(crate) bind_artifact: BindArtifactTool,
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) save_artifact: SaveArtifactTool,
     pub(crate) delete_artifact: DeleteArtifactTool,
@@ -222,7 +222,7 @@ pub(crate) fn agent_tools(
             context: context.clone(),
         },
         web_search: WebSearchTool(context.clone()),
-        add_artifact: AddArtifactTool(context.clone()),
+        bind_artifact: BindArtifactTool(context.clone()),
         list_artifacts: ListArtifactsTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
         delete_artifact: DeleteArtifactTool(context.clone()),

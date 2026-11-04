@@ -34,7 +34,8 @@ impl rig::tool::Tool for ApplyPatchTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Create, update, delete, rename, or copy files. Paths resolve from the current working directory. A patch applies fully or not at all.".to_string()
+        "Create, update, delete, rename, or copy files. A patch applies fully or not at all."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {

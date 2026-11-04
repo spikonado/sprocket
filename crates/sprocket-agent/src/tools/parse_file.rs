@@ -28,7 +28,6 @@ pub(crate) struct ParseFileTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ParseFileArgs {
-    /// Relative or absolute path to the file
     pub path: String,
 }
 

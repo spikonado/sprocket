@@ -201,7 +201,7 @@ fn orphan_command_details_keep_input_with_legacy_null_fallback() {
 #[test]
 fn artifact_calls_and_results_appear_in_work_details() {
     for name in [
-        "add_artifact",
+        "bind_artifact",
         "list_artifacts",
         "edit_artifact",
         "save_artifact",
