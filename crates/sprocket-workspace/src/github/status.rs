@@ -36,7 +36,7 @@ pub async fn status(user_id: &str) -> GitHubStatus {
     let (cli_version, cli_hosts, saved) = tokio::join!(
         gh_output(&["--version"]),
         gh_output(&["auth", "status", "--json", "hosts"]),
-        saved_tokens::load(user_id, true)
+        saved_tokens::reload(user_id)
     );
     let settings = settings();
     let mut hosts = settings.disabled_hosts.clone();

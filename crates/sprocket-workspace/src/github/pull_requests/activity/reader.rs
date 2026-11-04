@@ -166,7 +166,6 @@ impl ActivityReader {
         ))
     }
 
-    /// Everyone's but the viewer's, oldest first.
     async fn remarks(&self, viewer: &str) -> Result<Vec<Remark>, GitHubError> {
         let mut remarks = Vec::new();
 

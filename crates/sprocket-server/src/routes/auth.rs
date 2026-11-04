@@ -15,6 +15,7 @@ use crate::auth::{
     peer_may_complete_desktop_login_callback, require_bootstrap_session,
 };
 use crate::routes::api_error::{ApiError, no_store};
+use crate::routes::events::Authorized;
 use crate::{AppState, PairingProofRequest, PairingProofResponse};
 use sprocket_host::native_auth::{
     CredentialStore, NativeLoginFlow, NativeLoginStart, NativeLoginStatus,
@@ -91,10 +92,10 @@ pub(crate) async fn authorize_session_changes(
 }
 
 /// Emits the current auth generation, then each change. Holding the stream keeps
-/// an idle CLI-started server running while a browser is open. Callers must run
-/// `authorize_session_changes` first.
+/// an idle CLI-started server running while a browser is open.
 pub(crate) fn session_change_events(
     state: &AppState,
+    _: Authorized<()>,
 ) -> Result<futures::stream::BoxStream<'static, u64>, ApiError> {
     let mut receiver = state.host.native_auth.subscribe_changes();
     receiver.mark_changed();

@@ -36,8 +36,15 @@ pub(super) struct Loaded {
     pub error: Option<String>,
 }
 
-/// `refresh` skips the cache, so a token saved on another machine shows up now.
-pub(super) async fn load(user_id: &str, refresh: bool) -> Loaded {
+pub(super) async fn load(user_id: &str) -> Loaded {
+    load_or_reload(user_id, false).await
+}
+
+pub(super) async fn reload(user_id: &str) -> Loaded {
+    load_or_reload(user_id, true).await
+}
+
+async fn load_or_reload(user_id: &str, reload: bool) -> Loaded {
     let Some(loader) = LOADER.get() else {
         return Loaded {
             tokens: SavedTokens::new(),
@@ -52,7 +59,7 @@ pub(super) async fn load(user_id: &str, refresh: bool) -> Loaded {
             .or_default(),
     );
     let mut entry = entry.lock().await;
-    if refresh || entry.next_load.is_none_or(|next| next <= Instant::now()) {
+    if reload || entry.next_load.is_none_or(|next| next <= Instant::now()) {
         match tokio::time::timeout(LOAD_TIMEOUT, loader(user_id.to_string())).await {
             Ok(Ok(tokens)) => {
                 entry.tokens = tokens;

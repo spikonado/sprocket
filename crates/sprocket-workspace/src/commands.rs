@@ -775,23 +775,19 @@ impl CommandSession {
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
-        if pending_zero_poll {
-            observation
-                .zero_poll_cooldown
-                .check()
-                .map_err(|error| anyhow!(error.message("Command is still running.")))?;
-        }
-        let unreturned = self
-            .read_output(
-                &preview.complete_log_path,
-                from_offset,
-                completion.is_some(),
-                mode,
+        let unreturned = observation
+            .zero_poll_cooldown
+            .observe(
+                pending_zero_poll,
+                |error| anyhow!(error.message("Command is still running.")),
+                self.read_output(
+                    &preview.complete_log_path,
+                    from_offset,
+                    completion.is_some(),
+                    mode,
+                ),
             )
             .await?;
-        if pending_zero_poll {
-            observation.zero_poll_cooldown.record_success();
-        }
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 

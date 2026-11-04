@@ -153,15 +153,13 @@ impl QuestionPolls {
             .clone();
         let mut cooldown = poll.lock().await;
         let snapshot = fetch().await?;
-        if snapshot.status != "pending" {
-            return question_result_from_snapshot(&snapshot);
-        }
-        cooldown.check().map_err(|error| {
-            tool_failure(error.message("Question is still awaiting an answer."))
-        })?;
-        let result = question_result_from_snapshot(&snapshot)?;
-        cooldown.record_success();
-        Ok(result)
+        cooldown
+            .observe(
+                snapshot.status == "pending",
+                |error| tool_failure(error.message("Question is still awaiting an answer.")),
+                async { question_result_from_snapshot(&snapshot) },
+            )
+            .await
     }
 }
 
