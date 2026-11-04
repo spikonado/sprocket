@@ -31,4 +31,3 @@ pub(crate) fn discover_repository(cwd: &Path) -> Option<gix::Repository> {
 
 #[cfg(test)]
 mod tests;
-

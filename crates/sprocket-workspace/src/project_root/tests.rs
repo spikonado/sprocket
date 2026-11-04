@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn relative_to_cwd(path: &Path) -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
+    let cwd = std::env::current_dir().ok()?.canonicalize().ok()?;
     let path = path.canonicalize().ok()?;
     let mut relative = PathBuf::new();
     let mut dir = cwd.as_path();
