@@ -38,7 +38,7 @@ Use `kicad-cli` for checks and exports.
 
 Before laying out a board, ask the user which manufacturer and service tier they will order from, and read its capabilities page.
 Write its minimums with `board.set_design_rules()`, which saves them to Board Setup → Constraints in the `.kicad_pro`.
-Keep net class widths and clearances at or above them.
+Keep net class widths and clearances above them.
 
 ## Designing the silkscreen
 
