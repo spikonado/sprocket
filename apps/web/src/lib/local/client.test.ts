@@ -276,8 +276,14 @@ describe('display transcript pages', () => {
 	});
 
 	it('requests cancellable section details and preserves item cursors', async () => {
+		const deepInput = { a: { b: { c: { d: { e: { f: { g: { h: { i: { j: 'deep' } } } } } } } } } };
+
 		const response = {
-			parts: [{ type: 'reasoning', id: 'reasoning-6', text: 'Checking the result' }],
+			parts: [
+				{ type: 'reasoning', id: 'reasoning-6', text: 'Checking the result' },
+				{ type: 'tool-call', callId: 'call-1', name: 'exec_cmd', input: deepInput },
+				{ type: 'tool-result', callId: 'call-1', name: 'exec_cmd', output: null }
+			],
 			indexing: false,
 			nextAfter: 10,
 			previousBefore: 6,
