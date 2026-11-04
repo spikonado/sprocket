@@ -31,15 +31,15 @@ Done when: the page shows the final total and a Pay / Place order button, and no
 
 Call `card_checkout` with the page's final total, its currency, and the Pay button's ref from `snapshot -i`. The tool clicks the button, and the user approves the purchase with their passkey.
 
-| status                             | your move                                                                                                                   |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| status                             | your move                                                                                                                  |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `awaiting_approval`                | Call `poll_checkout` until it changes. Don't end your turn or touch the checkout tab; ending the run cancels the purchase. |
-| `approved`                         | Go to step 4                                                                                                                |
-| `submitted_on_device`              | Tell the user to finish payment in the Agentcard popup, then go to step 4                                                   |
-| `card_required`                    | Ask the user to save a card (Save a card button or Settings → Payments), then call again                                    |
-| `declined`, `expired`, `cancelled` | Tell the user, with the `reason` if there is one; call again only if they ask                                               |
-| `no_payment_request`               | Check the page for errors or missing fields, fix them, then call again                                                      |
-| `outcome_unknown`                  | Stop. Tell the user to check their card and the store before anything else                                                  |
+| `approved`                         | Go to step 4                                                                                                               |
+| `submitted_on_device`              | Tell the user to finish payment in the Agentcard popup, then go to step 4                                                  |
+| `card_required`                    | Ask the user to save a card (Save a card button or Settings → Payments), then call again                                   |
+| `declined`, `expired`, `cancelled` | Tell the user, with the `reason` if there is one; call again only if they ask                                              |
+| `no_payment_request`               | Check the page for errors or missing fields, fix them, then call again                                                     |
+| `outcome_unknown`                  | Stop. Tell the user to check their card and the store before anything else                                                 |
 
 A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_unknown` can charge the user twice.
 

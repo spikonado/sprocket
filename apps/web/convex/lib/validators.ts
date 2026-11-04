@@ -605,7 +605,7 @@ export const vCardCheckoutResult = v.object({
 	reason: v.optional(v.string())
 });
 
-export const vReportOrderResult = v.object({});
+export const vReportOrderResult = v.record(v.string(), v.null());
 
 const vHistoricalReportOrderResult = v.object({ recorded: v.literal(true) });
 

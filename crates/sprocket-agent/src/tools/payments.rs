@@ -329,9 +329,7 @@ enum Outcome {
 #[derive(Clone)]
 enum CheckoutProgress {
     Starting,
-    AwaitingApproval {
-        purchase_id: String,
-    },
+    AwaitingApproval { purchase_id: String },
     Finished(Result<Value, String>),
 }
 
