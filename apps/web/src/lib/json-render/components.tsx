@@ -1,4 +1,5 @@
 import type { BaseComponentProps } from '@json-render/react';
+import DOMPurify from 'isomorphic-dompurify';
 import { createContext, useContext, type ReactNode } from 'react';
 import { cn } from '$lib/utils';
 
@@ -174,13 +175,19 @@ export function Alert({ props }: AlertProps) {
 	);
 }
 
-type LinkProps = BaseComponentProps<{ label: string; href: string }>;
+type LinkProps = BaseComponentProps<{ label: string; href: string | null }>;
 
 // The shadcn link navigates the app itself, so this one opens a new tab instead.
 export function Link({ props, on }: LinkProps) {
+	const { href } = props;
+
+	if (!href || !DOMPurify.isValidAttribute('a', 'href', href)) {
+		return <span className="font-medium">{props.label}</span>;
+	}
+
 	return (
 		<a
-			href={props.href}
+			href={href}
 			target="_blank"
 			rel="noopener noreferrer"
 			className="text-accent-strong font-medium underline-offset-4 hover:underline"
