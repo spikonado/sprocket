@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::apply_patch_format::{PatchSection, UpdateChunk, apply_update, parse_apply_patch};
-use crate::commands::WorkspaceCancellation;
+use crate::cancellation::WorkspaceCancellation;
 use crate::paths::{canonicalize_with_missing_tail, expand_home, normalize_path, simplified_path};
 
 /// Patches may target any absolute path and runs may start from different
@@ -87,7 +87,7 @@ pub async fn apply_workspace_patch(
         .with_context(|| format!("failed to resolve working directory {}", cwd.display()))?;
     let _patch_guard = tokio::select! {
         guard = PATCH_LOCK.lock() => guard,
-        _ = cancellation.cancelled() => return Err(crate::commands::WorkspaceOperationCancelled.into()),
+        _ = cancellation.cancelled() => return Err(crate::cancellation::WorkspaceOperationCancelled.into()),
     };
     cancellation.ensure_active()?;
 

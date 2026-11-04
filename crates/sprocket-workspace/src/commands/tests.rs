@@ -6,8 +6,10 @@ use std::time::Duration;
 
 use super::{
     CapturedOutput, CommandAction, CommandCompletion, CommandObservation, CommandOutput,
-    CommandSession, CommandSessionManager, ObservationMode, OutputChannel, WorkspaceCancellation,
+    CommandSession, CommandSessionManager, ObservationMode,
 };
+use crate::cancellation::WorkspaceCancellation;
+use crate::command_output::OutputChannel;
 use crate::default_command_shell;
 use crate::test_support::temp_workspace;
 use tokio::sync::{Mutex, mpsc, watch};

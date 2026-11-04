@@ -5,6 +5,7 @@ mod artifacts;
 pub mod async_tools;
 mod browse;
 mod builtin_skills;
+mod cancellation;
 mod command_history;
 mod command_output;
 mod command_shell;
@@ -33,12 +34,13 @@ pub use browse::{
     resolve_or_create_workspace_root,
 };
 pub use builtin_skills::BUILTIN_SKILLS;
+pub use cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
 pub use command_history::{CommandHistory, history_path};
 pub use command_output::CommandOutputLimits;
 pub use command_shell::default_command_shell;
 pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
-    RunningCommand, WorkspaceCancellation, WorkspaceOperationCancelled,
+    RunningCommand,
 };
 pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};
 pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};
