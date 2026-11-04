@@ -30,6 +30,8 @@ Use `kicad-cli` for checks and exports.
 ## Designing the schematic
 
 - Write values with units (`10 kΩ`, `1 µF`).
+- Give every placed part hidden `Manufacturer` and `MPN` fields and set `Datasheet` to the manufacturer's datasheet URL.
+  Add hidden `Digikey Part #`, `Mouser Part #`, `LCSC Part #`, and `JLCPCB Part #` fields for each distributor that stocks the part.
 - Move fields and symbols until no text overlaps another symbol, field, or label in the rendered schematic.
 
 ## Designing the silkscreen
