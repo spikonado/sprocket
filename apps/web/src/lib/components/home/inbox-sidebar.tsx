@@ -734,8 +734,7 @@ function ThreadTreeRow({
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
-	const needsInput = summary?.waitingForInput === true;
-	const status = inboxRunStatus(thread, needsInput);
+	const status = inboxRunStatus(thread, summary?.waitingForInput === true);
 	const descendantCount = summary?.descendantCount ?? 0;
 	const workingCount = summary?.workingDescendantCount ?? 0;
 
@@ -752,10 +751,7 @@ function ThreadTreeRow({
 	return (
 		<div className="inbox-tree-node">
 			<div
-				className={cn('inbox-row', {
-					'inbox-row-selected': selected,
-					'inbox-row-needs-input': needsInput
-				})}
+				className={cn('inbox-row', { 'inbox-row-selected': selected })}
 				style={indentStyle}
 				draggable={mutationsEnabled && !busy && !renaming && isRoot}
 				onDragStart={(event) => onDragStart(thread, event)}

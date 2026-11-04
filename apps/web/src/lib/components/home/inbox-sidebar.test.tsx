@@ -459,7 +459,6 @@ it('shows Needs input instead of Working while a question waits for an answer', 
 	await render([thread(false, 'running')]);
 
 	expect(document.querySelector('.inbox-row-meta .inbox-status')?.textContent).toBe('Needs input');
-	expect(document.querySelector('.inbox-row.inbox-row-needs-input')).toBeTruthy();
 });
 
 it('keeps the selected project filter styled for all projects and a single project', async () => {
