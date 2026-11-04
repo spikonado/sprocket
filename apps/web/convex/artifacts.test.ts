@@ -31,7 +31,6 @@ async function seedActiveRun(subject = 'user_alice', t = initConvexTest()) {
 const fields = {
 	registrationId: 'registration',
 	title: 'Notes',
-	contentType: 'markdown' as const,
 	content: 'initial'
 };
 
@@ -83,29 +82,42 @@ describe('cloud artifacts', () => {
 			...auth,
 			artifactId: created.artifactId,
 			expectedRevision: 1,
-			title: 'Edited',
-			contentType: 'html' as const,
+			title: 'Edited.html',
 			content: '<p>edited</p>'
 		};
 
 		await expect(asUser.mutation(api.artifacts.editArtifact, edit)).rejects.toThrow(/changed/i);
 
-		const updated = await asUser.mutation(api.artifacts.editArtifact, {
-			...edit,
-			expectedRevision: 2
-		});
-
-		expect(updated.revision).toBe(3);
+		expect(
+			await asUser.mutation(api.artifacts.editArtifact, { ...edit, expectedRevision: 2 })
+		).toEqual({ artifactId: created.artifactId });
 		const state = await asUser.query(api.artifacts.getArtifactState, { repositoryKey });
 		expect(state).toBe(3);
 		expect(
-			(
-				await asUser.query(api.artifacts.getArtifactForRun, {
-					...auth,
-					artifactId: created.artifactId
-				})
-			).content
-		).toBe('<p>edited</p>');
+			await asUser.query(api.artifacts.getArtifactForRun, {
+				...auth,
+				artifactId: created.artifactId
+			})
+		).toMatchObject({ content: '<p>edited</p>', revision: 3 });
+	});
+
+	it("accepts released clients' content types and derives the type they read from the title", async () => {
+		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
+
+		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, {
+			...auth,
+			...fields,
+			title: 'app.JSX',
+			contentType: 'markdown'
+		});
+
+		expect(await t.run((ctx) => ctx.db.get('artifacts', artifactId))).not.toHaveProperty('type');
+		expect(
+			await asUser.query(api.artifacts.getArtifactForRun, { ...auth, artifactId })
+		).toMatchObject({ type: 'react' });
+		expect((await asUser.query(api.artifacts.listArtifacts, { repositoryKey })).page).toEqual([
+			expect.objectContaining({ _id: artifactId, type: 'react' })
+		]);
 	});
 
 	it('allows project-wide access across threads', async () => {
@@ -116,7 +128,6 @@ describe('cloud artifacts', () => {
 			...fields
 		});
 
-		expect(created.scope).toBe('project');
 		const stored = await t.run((ctx) => ctx.db.get('artifacts', created.artifactId));
 		expect(stored?.scope).toBe('project');
 		expect(stored).not.toHaveProperty('threadId');
@@ -221,17 +232,14 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow();
 	});
 
-	it('persists path-free add, edit, save and list tool jobs', async () => {
+	it('persists bind, released add and edit, save and list tool jobs', async () => {
 		const { t, asUser, auth } = await seedActiveRun();
 		const artifact = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 
 		for (const [index, kind] of (
-			['add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
+			['bind_artifact', 'add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
 		).entries()) {
-			const payload =
-				kind === 'add_artifact' || kind === 'list_artifacts'
-					? {}
-					: { artifactId: artifact.artifactId };
+			const payload = kind === 'list_artifacts' ? {} : { artifactId: artifact.artifactId };
 
 			const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				...auth,
@@ -244,14 +252,10 @@ describe('cloud artifacts', () => {
 				kind === 'list_artifacts'
 					? {
 							artifacts: (await asUser.query(api.artifacts.listArtifactsForRun, auth)).page.map(
-								({ scope, ...metadata }) => {
-									void scope;
-
-									return metadata;
-								}
+								(metadata) => ({ ...metadata, path: '/workspace/Notes' })
 							)
 						}
-					: artifact;
+					: { ...artifact, path: '/workspace/Notes' };
 
 			expect(
 				await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })
@@ -259,12 +263,11 @@ describe('cloud artifacts', () => {
 		}
 
 		const jobs = await t.run(async (ctx) => ctx.db.query('executorJobs').collect());
-		expect(jobs).toHaveLength(4);
+		expect(jobs).toHaveLength(5);
 
 		for (const job of jobs) {
 			expect(job.status).toBe('completed');
 			expect(job.payload).not.toHaveProperty('path');
-			expect(job.result).not.toHaveProperty('localPath');
 		}
 	});
 
@@ -331,8 +334,7 @@ describe('cloud artifacts', () => {
 				artifactId,
 				expectedRevision: 1,
 				content: 'stale edit',
-				title: 'Notes',
-				contentType: 'markdown'
+				title: 'Notes'
 			})
 		).rejects.toThrow(/not found/i);
 
@@ -438,7 +440,6 @@ describe('cloud artifacts', () => {
 					repositoryKey,
 					registrationId: `registration-${i}`,
 					content: 'x'.repeat(500_000),
-					type: 'markdown',
 					title: `Notes ${i}`,
 					revision: 1,
 					updatedAt: 1

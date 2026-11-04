@@ -137,15 +137,22 @@ export const vControlCommandPayload = v.object({
 
 export const vPollCommandPayload = vWriteStdinPayload.pick('sessionId', 'yieldTimeMs');
 
-export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
+export const vLegacyArtifactType = v.union(
+	v.literal('markdown'),
+	v.literal('html'),
+	v.literal('react')
+);
 
 // Historical stored artifacts and tool results retain thread scope until migrated.
 export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
 
-export const vAddArtifactPayload = v.object({
+// Released agents still start add_artifact jobs with this payload.
+export const vBindArtifactPayload = v.object({
+	artifactId: v.optional(v.string()),
 	scope: v.optional(vArtifactScope)
 });
 
+// Released agents still start edit_artifact jobs.
 export const vEditArtifactPayload = v.object({
 	artifactId: v.string()
 });
@@ -153,7 +160,7 @@ export const vEditArtifactPayload = v.object({
 // Stored leftover executorJobs from create_artifact / update_artifact.
 export const vCreateArtifactPayload = v.object({
 	title: v.string(),
-	contentType: vArtifactType,
+	contentType: vLegacyArtifactType,
 	content: v.string()
 });
 
@@ -409,7 +416,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
-	vAddArtifactPayload,
+	vBindArtifactPayload,
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
@@ -808,10 +815,12 @@ export const vListModelsResult = v.object({
 
 export const vArtifactResult = v.object({
 	artifactId: v.string(),
+	path: v.optional(v.string()),
+	// The remaining fields come from older results.
 	revision: v.optional(v.number()),
 	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),
-	contentType: v.optional(vArtifactType),
+	contentType: v.optional(vLegacyArtifactType),
 	// Stored leftover create_artifact / update_artifact job results.
 	version: v.optional(v.number())
 });
@@ -820,14 +829,15 @@ export const vListArtifactsResult = v.object({
 	artifacts: v.array(
 		v.object({
 			artifactId: v.string(),
+			path: v.optional(v.string()),
 			scope: v.optional(vArtifactScope),
-			repositoryKey: v.string(),
+			repositoryKey: v.optional(v.string()),
 			threadId: v.optional(v.id('threadRecords')),
-			type: vArtifactType,
+			type: v.optional(vLegacyArtifactType),
 			title: v.string(),
-			revision: v.number(),
+			revision: v.optional(v.number()),
 			createdAt: v.optional(v.number()),
-			updatedAt: v.number()
+			updatedAt: v.optional(v.number())
 		})
 	)
 });
@@ -934,6 +944,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('web_search'),
 	v.literal('control_cmd'),
 	v.literal('poll_cmd'),
+	v.literal('bind_artifact'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
 	v.literal('list_connectors'),
@@ -1139,7 +1150,5 @@ export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultEr
 export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
 
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
-
-export type ArtifactType = Infer<typeof vArtifactType>;
 
 export type ArtifactScope = Infer<typeof vArtifactScope>;

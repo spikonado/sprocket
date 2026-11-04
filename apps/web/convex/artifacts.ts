@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
-import { MAX_FILE_NAME_LENGTH, vArtifactType, vListArtifactsResult } from '@convex/lib/validators';
+import { MAX_FILE_NAME_LENGTH, vLegacyArtifactType } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import { registryState, bumpRegistry } from '@convex/lib/artifactRegistry';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
@@ -13,17 +13,23 @@ const MAX_TITLE_LENGTH = MAX_FILE_NAME_LENGTH;
 
 const MAX_ARTIFACT_CONTENT_BYTES = 500_000;
 
-const vArtifactMutationResult = v.object({
-	artifactId: v.id('artifacts'),
-	revision: v.number(),
-	title: v.string(),
-	contentType: vArtifactType,
-	scope: v.literal('project')
-});
+const vArtifactMutationResult = v.object({ artifactId: v.id('artifacts') });
 
-const vDeleteArtifactMutationResult = vArtifactMutationResult.pick('artifactId');
+// Released clients require `type` on stored artifacts and send `contentType`.
+const vProjectArtifact = schema.doc('artifacts').omit('type').extend({ type: vLegacyArtifactType });
 
-const vProjectArtifact = schema.doc('artifacts');
+function withLegacyType(artifact: Doc<'artifacts'>) {
+	const extension = /\.([^.]+)$/.exec(artifact.title)?.[1]?.toLowerCase();
+
+	const type =
+		extension === 'html' || extension === 'htm'
+			? ('html' as const)
+			: extension === 'jsx'
+				? ('react' as const)
+				: ('markdown' as const);
+
+	return { ...artifact, type };
+}
 
 function utf8ByteLength(value: string): number {
 	return new TextEncoder().encode(value).byteLength;
@@ -82,16 +88,6 @@ async function requireActiveRun(
 	}
 
 	return run;
-}
-
-function mutationResult(artifact: Doc<'artifacts'>) {
-	return {
-		artifactId: artifact._id,
-		revision: artifact.revision,
-		title: artifact.title,
-		contentType: artifact.type,
-		scope: 'project' as const
-	};
 }
 
 async function loadThreadForRun(ctx: QueryCtx | MutationCtx, run: Doc<'runs'>): Promise<string> {
@@ -181,35 +177,17 @@ async function writeArtifactFields(
 	fields: {
 		content: string;
 		title: string;
-		contentType: Doc<'artifacts'>['type'];
 	}
-): Promise<Doc<'artifacts'>> {
-	const unchanged =
-		artifact.content === fields.content &&
-		artifact.title === fields.title &&
-		artifact.type === fields.contentType;
+): Promise<void> {
+	if (artifact.content === fields.content && artifact.title === fields.title) return;
 
-	if (unchanged) return artifact;
-
-	const now = Date.now();
-	const revision = artifact.revision + 1;
 	await ctx.db.patch('artifacts', artifact._id, {
 		content: fields.content,
 		title: fields.title,
-		type: fields.contentType,
-		revision,
-		updatedAt: now
+		revision: artifact.revision + 1,
+		updatedAt: Date.now()
 	});
 	await bumpRegistry(ctx, artifact.userId, artifact.repositoryKey);
-
-	return {
-		...artifact,
-		content: fields.content,
-		title: fields.title,
-		type: fields.contentType,
-		revision,
-		updatedAt: now
-	};
 }
 
 export const addArtifact = mutation({
@@ -220,7 +198,7 @@ export const addArtifact = mutation({
 		registrationId: v.string(),
 		content: v.string(),
 		title: v.string(),
-		contentType: vArtifactType
+		contentType: v.optional(vLegacyArtifactType)
 	},
 	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
@@ -245,7 +223,7 @@ export const addArtifact = mutation({
 					throw new Error('Artifact not found.');
 				}
 
-				return mutationResult(existing);
+				return { artifactId: existing._id };
 			}
 
 			const record: Omit<Doc<'artifacts'>, '_id' | '_creationTime'> = {
@@ -254,7 +232,6 @@ export const addArtifact = mutation({
 				repositoryKey,
 				registrationId: args.registrationId,
 				content: args.content,
-				type: args.contentType,
 				title,
 				revision: 1,
 				updatedAt: Date.now()
@@ -262,13 +239,8 @@ export const addArtifact = mutation({
 
 			const artifactId = await ctx.db.insert('artifacts', record);
 			await bumpRegistry(ctx, run.userId, repositoryKey);
-			const created = await ctx.db.get('artifacts', artifactId);
 
-			if (!created) {
-				throw new Error('Failed to create the artifact.');
-			}
-
-			return mutationResult(created);
+			return { artifactId };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -284,7 +256,7 @@ export const editArtifact = mutation({
 		expectedRevision: v.number(),
 		content: v.string(),
 		title: v.string(),
-		contentType: vArtifactType
+		contentType: v.optional(vLegacyArtifactType)
 	},
 	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
@@ -304,13 +276,9 @@ export const editArtifact = mutation({
 			if (artifact.revision !== args.expectedRevision)
 				throw new Error('Artifact changed; reload it before editing.');
 
-			return mutationResult(
-				await writeArtifactFields(ctx, artifact, {
-					content: args.content,
-					title,
-					contentType: args.contentType
-				})
-			);
+			await writeArtifactFields(ctx, artifact, { content: args.content, title });
+
+			return { artifactId: artifact._id };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -319,7 +287,7 @@ export const editArtifact = mutation({
 
 export const deleteArtifact = mutation({
 	args: { artifactId: v.id('artifacts'), repositoryKey: v.string() },
-	returns: vDeleteArtifactMutationResult,
+	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
 		const userId = await getUserId(ctx);
@@ -335,7 +303,7 @@ export const deleteArtifactForRun = mutation({
 		executionSecret: v.string(),
 		artifactId: v.id('artifacts')
 	},
-	returns: vDeleteArtifactMutationResult,
+	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
@@ -357,11 +325,7 @@ export const listArtifactsForRun = query({
 	},
 	returns: v.object({
 		...pageFields,
-		page: v.array(
-			vListArtifactsResult.fields.artifacts.element.omit('threadId').extend({
-				scope: v.literal('project')
-			})
-		)
+		page: v.array(v.object({ artifactId: v.id('artifacts'), title: v.string() }))
 	}),
 	handler: async (ctx, args) => {
 		try {
@@ -377,16 +341,7 @@ export const listArtifactsForRun = query({
 
 			return {
 				...result,
-				page: result.page.map(
-					({ _id, _creationTime, content, userId, registrationId, ...metadata }) => {
-						void _creationTime;
-						void content;
-						void userId;
-						void registrationId;
-
-						return { artifactId: _id, ...metadata };
-					}
-				)
+				page: result.page.map(({ _id, title }) => ({ artifactId: _id, title }))
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -411,7 +366,7 @@ export const listArtifacts = query({
 		return {
 			...result,
 			page: result.page.map((artifact) => ({
-				...artifact,
+				...withLegacyType(artifact),
 				createdAt: Math.floor(artifact._creationTime)
 			}))
 		};
@@ -442,7 +397,9 @@ export const getArtifactForRun = query({
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
 			const repositoryKey = await loadThreadForRun(ctx, run);
 
-			return await requireAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey);
+			return withLegacyType(
+				await requireAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey)
+			);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -459,7 +416,9 @@ export const getArtifact = query({
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
 		const userId = await getUserId(ctx);
 
-		return await requireAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);
+		return withLegacyType(
+			await requireAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey)
+		);
 	}
 });
 
@@ -482,11 +441,7 @@ export const syncArtifact = mutation({
 			return false;
 		}
 
-		await writeArtifactFields(ctx, artifact, {
-			content: args.content,
-			title: artifact.title,
-			contentType: artifact.type
-		});
+		await writeArtifactFields(ctx, artifact, { content: args.content, title: artifact.title });
 
 		return true;
 	}

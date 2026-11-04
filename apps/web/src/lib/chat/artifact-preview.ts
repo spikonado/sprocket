@@ -1,11 +1,15 @@
-import type { ArtifactType } from '@convex/lib/validators';
+export type ArtifactPreviewType = 'markdown' | 'html' | 'react' | 'json-render';
 
-export type ArtifactPreviewType = ArtifactType | 'json-render';
+export function artifactPreviewType(title: string): ArtifactPreviewType {
+	const name = title.toLowerCase();
 
-const JSON_RENDER_FILE = /\.render\.json$/i;
+	if (name.endsWith('.render.json')) return 'json-render';
 
-export function artifactPreviewType(type: ArtifactType, title: string): ArtifactPreviewType {
-	return type === 'markdown' && JSON_RENDER_FILE.test(title) ? 'json-render' : type;
+	if (name.endsWith('.html') || name.endsWith('.htm')) return 'html';
+
+	if (name.endsWith('.jsx')) return 'react';
+
+	return 'markdown';
 }
 
 function escapeInlineScript(source: string): string {
@@ -106,7 +110,7 @@ export function buildArtifactPreviewDocument(
 	return null;
 }
 
-export type VisualKind = Exclude<ArtifactType, 'markdown'>;
+export type VisualKind = 'html' | 'react';
 
 export const VISUAL_HEIGHT_MESSAGE = 'sprocket-visual-height';
 

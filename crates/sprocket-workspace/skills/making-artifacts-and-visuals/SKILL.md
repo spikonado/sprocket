@@ -7,11 +7,14 @@ description: Use before making or changing an artifact or an `html-visual`, `jsx
 
 ## Artifacts
 
-1. Write the file as `.md`, `.html`, `.jsx` for React, or `.render.json` for json-render. Other text files render as Markdown. Artifact tools report a `.render.json` file's content type as `markdown`, and the UI still renders it as json-render.
-2. Register it with `add_artifact`.
-3. Revise it by editing the file.
+An artifact's title is its filename, and the UI picks the renderer from the title's extension: `.md` for Markdown, `.html` or `.htm` for HTML, `.jsx` for React, and `.render.json` for json-render. Any other file renders as Markdown.
 
-When the bound file goes missing, the artifact keeps its last content, and `save_artifact` writes it back. When both the file and the cloud copy changed, sync pauses. Compare the two versions, then resolve it with `edit_artifact` or by saving the cloud copy to a new path with `save_artifact`.
+1. Write the file.
+2. Bind it to a new artifact with `bind_artifact`.
+3. Revise it by editing the file.
+4. After moving or renaming the file, call `bind_artifact` with the new path and the artifact's `artifactId` so the artifact follows the file.
+
+When the bound file goes missing, the artifact keeps its last content, and `save_artifact` writes it back. When both the file and the cloud copy changed, sync pauses. Compare the two versions, then keep the file's version by calling `bind_artifact` with its path and the `artifactId`, or save the cloud copy to a new path with `save_artifact`.
 
 ## Visuals
 

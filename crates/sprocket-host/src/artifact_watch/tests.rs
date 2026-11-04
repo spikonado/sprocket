@@ -182,7 +182,6 @@ fn remote() -> RemoteArtifact {
         user_id: "alice".into(),
         repository_key: "repo".into(),
         content: "initial".into(),
-        content_type: ArtifactContentType::Markdown,
         title: "Notes".into(),
         revision: 1,
         updated_at: 1,

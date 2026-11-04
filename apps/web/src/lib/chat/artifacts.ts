@@ -34,7 +34,7 @@ export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
 	return {
 		key: artifact._id,
 		title: artifact.title,
-		artifactType: artifactPreviewType(artifact.type, artifact.title),
+		artifactType: artifactPreviewType(artifact.title),
 		content: artifact.content,
 		localPath: artifact.localPath,
 		localError: artifact.localError

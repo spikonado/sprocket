@@ -360,7 +360,7 @@ describe('partitionWorkSectionTools', () => {
 		'scrape_url',
 		'screenshot_url',
 		'web_search',
-		'add_artifact',
+		'bind_artifact',
 		'list_artifacts',
 		'edit_artifact',
 		'save_artifact',

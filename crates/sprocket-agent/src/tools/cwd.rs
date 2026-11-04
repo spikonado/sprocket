@@ -15,7 +15,6 @@ pub(crate) struct SetCwdTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SetCwdArgs {
-    /// Directory to switch to. Relative paths resolve from the current working directory.
     pub(crate) path: String,
 }
 
@@ -26,7 +25,7 @@ impl rig::tool::Tool for SetCwdTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Change the working directory that relative paths in every tool resolve from. It persists for the rest of this thread.".to_string()
+        "Change the working directory for the rest of this thread.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {

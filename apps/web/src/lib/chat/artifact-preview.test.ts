@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+	artifactPreviewType,
 	buildHtmlPreviewDocument,
 	buildReactPreviewDocument,
 	buildVisualDocument
 } from './artifact-preview';
 
 describe('artifact-preview', () => {
+	it('picks the renderer from the title extension', () => {
+		expect(
+			['notes.md', 'page.HTM', 'app.jsx', 'board.render.json', 'data.json', 'README'].map(
+				artifactPreviewType
+			)
+		).toEqual(['markdown', 'html', 'react', 'json-render', 'markdown', 'markdown']);
+	});
+
 	it('escapes script breakouts in react artifact source', () => {
 		const doc = buildReactPreviewDocument('const x = "</script><script>alert(1)</script>"; <!--');
 		expect(doc).not.toContain('</script><script>alert(1)</script>');

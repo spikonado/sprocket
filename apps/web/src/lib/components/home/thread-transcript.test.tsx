@@ -335,7 +335,7 @@ describe('transcript viewport paging', () => {
 					name: 'apply_patch',
 					input: { patch: `*** Begin Patch\n*** Add File: file-${index}.txt\n+text\n*** End Patch` }
 				})),
-				{ name: 'add_artifact', input: { path: 'notes.md' } },
+				{ name: 'bind_artifact', input: { path: 'notes.md' } },
 				{ name: 'list_artifacts', input: {} },
 				{ name: 'edit_artifact', input: { path: 'notes.md' } }
 			];
@@ -359,7 +359,7 @@ describe('transcript viewport paging', () => {
 								exec_cmd: 3,
 								read_skill: 3,
 								apply_patch: 3,
-								add_artifact: 1,
+								bind_artifact: 1,
 								list_artifacts: 1,
 								edit_artifact: 1
 							}
@@ -392,7 +392,7 @@ describe('transcript viewport paging', () => {
 				expect(viewport.textContent).toContain(`file-${index}.txt`);
 			}
 
-			expect(viewport.textContent).toContain('Created Artifact:notes.md');
+			expect(viewport.textContent).toContain('Bound Artifact:notes.md');
 			expect(viewport.textContent).toContain('Listed Artifacts');
 			expect(viewport.textContent).toContain('Updated Artifact:notes.md');
 			click(within(viewport).getByRole('button', { name: 'Reasoned' }));

@@ -1,25 +1,15 @@
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, bail};
-use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 pub const MAX_ARTIFACT_BYTES: usize = 500_000;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ArtifactContentType {
-    Markdown,
-    Html,
-    React,
-}
 
 #[derive(Clone, Debug)]
 pub struct ArtifactFile {
     pub local_path: String,
     pub content: String,
     pub title: String,
-    pub content_type: ArtifactContentType,
 }
 
 pub async fn read_artifact_file(workspace_root: &Path, path: &str) -> anyhow::Result<ArtifactFile> {
@@ -35,16 +25,6 @@ pub async fn read_artifact_file(workspace_root: &Path, path: &str) -> anyhow::Re
     if title.chars().count() > 200 {
         bail!("Artifact filename must not exceed 200 characters.");
     }
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let content_type = match extension.as_str() {
-        "html" | "htm" => ArtifactContentType::Html,
-        "jsx" => ArtifactContentType::React,
-        _ => ArtifactContentType::Markdown,
-    };
     // Keep symlinks and parent components intact so later reads follow the same
     // path after atomic saves or a symlink replacement.
     let requested: PathBuf = path
@@ -83,7 +63,6 @@ pub async fn read_artifact_file(workspace_root: &Path, path: &str) -> anyhow::Re
         local_path: local_path.to_string(),
         content,
         title,
-        content_type,
     })
 }
 

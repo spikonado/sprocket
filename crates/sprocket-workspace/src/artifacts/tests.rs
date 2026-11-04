@@ -20,15 +20,13 @@ async fn reads_relative_and_absolute_paths_and_empty_files() {
 
     let relative = read_artifact_file(&dir, "./preview.HTML").await.unwrap();
     assert_eq!(relative.local_path, "preview.HTML");
-    assert_eq!(relative.content_type, ArtifactContentType::Html);
 
     let nested = read_artifact_file(&dir, "nested/./app.jsx").await.unwrap();
     assert_eq!(nested.local_path, "nested/app.jsx");
-    assert_eq!(nested.content_type, ArtifactContentType::React);
+    assert_eq!(nested.title, "app.jsx");
 
     let exact = read_artifact_file(&dir, "notes.md").await.unwrap();
     assert_eq!(exact.content.len(), MAX_ARTIFACT_BYTES);
-    assert_eq!(exact.content_type, ArtifactContentType::Markdown);
 
     let inside_absolute = dir.join("preview.HTML");
     let inside = read_artifact_file(&dir, inside_absolute.to_str().unwrap())

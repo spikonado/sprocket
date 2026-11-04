@@ -14,4 +14,16 @@ export const backfillToolInvocationIds = migrations.define({
 	}
 });
 
-export const run = migrations.runner(internal.migrations.backfillToolInvocationIds);
+export const removeArtifactTypes = migrations.define({
+	table: 'artifacts',
+	migrateOne: (_ctx, artifact) => {
+		if (artifact.type === undefined) return;
+
+		return { type: undefined };
+	}
+});
+
+export const run = migrations.runner([
+	internal.migrations.backfillToolInvocationIds,
+	internal.migrations.removeArtifactTypes
+]);

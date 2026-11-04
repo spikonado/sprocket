@@ -388,7 +388,6 @@ describe('watchArtifacts', () => {
 		repositoryKey: 'repo-1',
 		localPath: 'docs/spec.md',
 		content: '# Spec',
-		type: 'markdown' as const,
 		title: 'Spec',
 		revision: 1,
 		updatedAt: 20

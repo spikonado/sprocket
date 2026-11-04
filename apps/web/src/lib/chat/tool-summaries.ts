@@ -44,7 +44,9 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Listed Subagent Models';
 		case 'check_docs':
 			return 'Checked Docs';
+		case 'bind_artifact':
 		case 'add_artifact':
+			return 'Bound Artifact';
 		case 'create_artifact':
 			return 'Created Artifact';
 		case 'edit_artifact':
@@ -114,6 +116,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return '';
 		case 'check_docs':
 			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
+		case 'bind_artifact':
 		case 'add_artifact':
 		case 'create_artifact':
 		case 'edit_artifact':
@@ -354,6 +357,7 @@ export function toolItemSummary(
 	}
 
 	if (
+		kind === 'bind_artifact' ||
 		kind === 'add_artifact' ||
 		kind === 'edit_artifact' ||
 		kind === 'save_artifact' ||
