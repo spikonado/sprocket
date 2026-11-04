@@ -37,8 +37,8 @@ function callHandler<Ref extends FunctionReference<'query' | 'mutation'>>(
 	ctx: MutationCtx,
 	args: FunctionArgs<Ref>
 ): Promise<FunctionReturnType<Ref>> {
-	// SAFETY: Convex retains _handler at runtime. Calling it inside t.run lets
-	// these tests inspect database dependencies on the actual transaction context.
+	// Calling the runtime-only `_handler` inside t.run lets these tests spy on the transaction's db reads and writes.
+	// oxlint-disable-next-line typescript/consistent-type-assertions -- Convex's RegisteredMutation and RegisteredQuery types omit `_handler`.
 	const { _handler } = registered as typeof registered & {
 		_handler: (ctx: MutationCtx, args: FunctionArgs<Ref>) => Promise<FunctionReturnType<Ref>>;
 	};

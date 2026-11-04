@@ -6,8 +6,10 @@ import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { REQUEST_TTL_MS } from '@convex/webRequests';
 import {
+	contextDevScrapeResponse,
 	createQueuedRun,
 	initConvexTest,
+	mockContextDevScrape,
 	seedOwnedThread,
 	toolTranscriptAssignment,
 	type ConvexTestInstance
@@ -65,18 +67,11 @@ async function storedResult(t: ConvexTestInstance, id: Id<'webRequests'>) {
 }
 
 function page(markdown: string): WebScrapeResponse {
-	// SAFETY: The scrape only reads these fields.
-	return {
+	return contextDevScrapeResponse({
 		url: 'https://example.com',
-		markdown: { success: true, data: markdown },
-		images: { success: true, data: [] },
+		markdown: { data: markdown, requested: true, success: true },
 		metadata: { headings: [] }
-	} as never;
-}
-
-function mockScrape(result: () => Promise<WebScrapeResponse>) {
-	// SAFETY: The SDK's APIPromise is only awaited.
-	return vi.spyOn(Web.prototype, 'scrape').mockImplementation(result as never);
+	});
 }
 
 beforeEach(() => {
@@ -95,7 +90,7 @@ describe('web request queue', () => {
 	it('uses storage for results, claims only once, and disposes both the row and blob', async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, scrapeJob);
-		const scrape = mockScrape(async () => page('# Page'));
+		const scrape = mockContextDevScrape(async () => page('# Page'));
 
 		const id = await startScrape(t, auth);
 		expect(await t.query(api.webRequests.getResult, resultArgs(auth, id))).toEqual({
@@ -117,7 +112,7 @@ describe('web request queue', () => {
 	it("authenticates all public operations and does not expose another run's result", async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, scrapeJob);
-		mockScrape(async () => page('# Page'));
+		mockContextDevScrape(async () => page('# Page'));
 		await expect(startScrape(t, { ...auth, executionSecret: 'wrong' })).rejects.toThrow(
 			'Run not found'
 		);
@@ -142,7 +137,7 @@ describe('web request queue', () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, scrapeJob);
 		const gate = Promise.withResolvers<WebScrapeResponse>();
-		const scrape = mockScrape(() => gate.promise);
+		const scrape = mockContextDevScrape(() => gate.promise);
 		const ids = [];
 
 		for (let i = 0; i < 2; i++) ids.push(await startScrape(t, auth));
@@ -163,7 +158,7 @@ describe('web request queue', () => {
 	it('cancels queued work before it reaches the provider', async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, scrapeJob);
-		const scrape = mockScrape(async () => page('# Page'));
+		const scrape = mockContextDevScrape(async () => page('# Page'));
 		const id = await startScrape(t, auth);
 		await t.mutation(internal.webRequests.cancelRun, { runId: auth.runId });
 		await vi.advanceTimersByTimeAsync(1_000);
@@ -177,7 +172,7 @@ describe('web request queue', () => {
 	it('rejects a stale claim before queued work reaches the provider', async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, scrapeJob);
-		const scrape = mockScrape(async () => page('# Page'));
+		const scrape = mockContextDevScrape(async () => page('# Page'));
 		const id = await startScrape(t, auth);
 		await t.run((ctx) => patchRunExecution(ctx, auth.runId, { claimId: 'replacement' }));
 		await vi.advanceTimersByTimeAsync(1_000);
@@ -194,7 +189,7 @@ describe('web request queue', () => {
 			const t = initConvexTest();
 			const auth = await fixture(t, scrapeJob);
 			const gate = Promise.withResolvers<WebScrapeResponse>();
-			const scrape = mockScrape(() => gate.promise);
+			const scrape = mockContextDevScrape(() => gate.promise);
 			const id = await startScrape(t, auth);
 			await vi.waitFor(() => expect(scrape).toHaveBeenCalledTimes(1));
 
@@ -245,7 +240,7 @@ describe('legacy firecrawlRequests endpoints', () => {
 	it('serve scrapes for released agents', async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, scrapeJob);
-		mockScrape(async () => page('# Legacy'));
+		mockContextDevScrape(async () => page('# Legacy'));
 		const legacy = { runId: auth.runId, executionSecret: auth.executionSecret };
 
 		const id = await t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'scrape' });

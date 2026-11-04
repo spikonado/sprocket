@@ -1,12 +1,6 @@
 import type { AssistantPart } from '@convex/lib/assistantParts';
 import { convexId } from '$lib/convex-id';
-import type {
-	ArtifactsWatchEvent,
-	LocalApi,
-	LiveCompletionOverlay,
-	LiveCompletionWatchEvent,
-	ProjectAttachment
-} from '$lib/types/sprocket';
+import type { ArtifactsWatchEvent, LocalApi, ProjectAttachment } from '$lib/types/sprocket';
 import { z } from 'zod';
 import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
@@ -187,8 +181,44 @@ const displayPageSchema = z.object({
 	moreChanges: z.boolean()
 });
 
+const assistantTimestampSchema = z.number().nullable().optional();
+
+const assistantTextFieldsSchema = z.object({
+	id: z.string(),
+	text: z.string(),
+	startedAt: assistantTimestampSchema,
+	completedAt: assistantTimestampSchema,
+	turnId: z.string().optional(),
+	providerMetadata: z.json().optional()
+});
+
+const assistantPartSchema: z.ZodType<AssistantPart> = z.discriminatedUnion('type', [
+	assistantTextFieldsSchema.extend({ type: z.literal('text') }),
+	assistantTextFieldsSchema.extend({ type: z.literal('reasoning') }),
+	z.object({
+		type: z.literal('tool-call'),
+		partId: z.string().optional(),
+		callId: z.string(),
+		name: z.string(),
+		input: z.json(),
+		turnId: z.string().optional(),
+		startedAt: assistantTimestampSchema,
+		completedAt: assistantTimestampSchema,
+		providerMetadata: z.json().optional()
+	}),
+	z.object({
+		type: z.literal('tool-result'),
+		callId: z.string(),
+		name: z.string().optional(),
+		completedAt: assistantTimestampSchema,
+		output: z.json()
+	})
+]);
+
+const assistantPartsSchema = z.array(assistantPartSchema);
+
 const displayDetailsSchema = z.object({
-	parts: z.array(z.unknown()),
+	parts: assistantPartsSchema,
 	indexing: z.boolean(),
 	nextAfter: z.int().nonnegative().optional(),
 	previousBefore: z.int().nonnegative().optional(),
@@ -208,7 +238,7 @@ const liveCompletionOverlaySchema = z.object({
 	runStatus: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
 	streamId: z.string().min(1),
 	text: z.string(),
-	parts: z.array(z.unknown())
+	parts: assistantPartsSchema
 });
 
 const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
@@ -281,26 +311,6 @@ function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
 	return attachment;
-}
-
-function parseLiveCompletionOverlay(
-	live: z.infer<typeof liveCompletionOverlaySchema>
-): LiveCompletionOverlay {
-	return {
-		...live,
-		// SAFETY: overlay parts match AssistantPart; the local event payload is produced by the hub.
-		parts: live.parts as AssistantPart[]
-	};
-}
-
-function parseLiveCompletionWatchEvent(
-	event: z.infer<typeof liveCompletionWatchEventSchema>
-): LiveCompletionWatchEvent {
-	if (event.eventType === 'updated') {
-		return { eventType: 'updated', live: parseLiveCompletionOverlay(event.live) };
-	}
-
-	return { eventType: 'cleared' };
 }
 
 function parseArtifactsWatchEvent(
@@ -562,14 +572,11 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				signal
 			}),
 		fetchTranscriptDisplayDetails: async (requestBody, signal) => {
-			const page = await request('/api/transcript/display-details', displayDetailsSchema, {
+			return await request('/api/transcript/display-details', displayDetailsSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody),
 				signal
 			});
-
-			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
-			return { ...page, parts: page.parts as AssistantPart[] };
 		},
 		watchTranscript: (requestBody, handlers) =>
 			socket.subscribe(
@@ -586,7 +593,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				liveCompletionWatchEventSchema.nullable().catch(null),
 				handlers.signal,
 				(event) => {
-					if (event) handlers.onEvent(parseLiveCompletionWatchEvent(event));
+					if (event) handlers.onEvent(event);
 				}
 			),
 		clearTranscriptReplica: async (requestBody) => {

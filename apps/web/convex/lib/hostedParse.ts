@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { z } from 'zod';
-import type { Document } from 'firecrawl';
+import type { Document, PdfPage } from 'firecrawl';
 import type { Id } from '@convex/_generated/dataModel';
 import type { QueryCtx, MutationCtx } from '@convex/_generated/server';
 import { MAX_FILE_NAME_LENGTH } from '@convex/lib/validators';
@@ -93,8 +93,11 @@ function utf8Bytes(text: string): number {
 	return new TextEncoder().encode(text).byteLength;
 }
 
+/** The parse API sends `pages: null` when pages were not requested, though the SDK types it as optional. */
+type FirecrawlParseDocument = Omit<Document, 'pages'> & { pages?: PdfPage[] | null };
+
 export function parseFirecrawlParseDocument(
-	document: Document,
+	document: FirecrawlParseDocument,
 	pages = false
 ): FirecrawlParseSuccess | FirecrawlParseFailure {
 	const parsed = firecrawlParseDocumentSchema.safeParse(document);

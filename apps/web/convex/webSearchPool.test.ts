@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
-import type { WorkId } from '@convex-dev/workpool';
 import { internal } from '@convex/_generated/api';
-import { initConvexTest, seedStartedWebJob } from './test.setup';
+import { fixtureWorkId, initConvexTest, seedStartedWebJob } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
 
@@ -47,8 +46,7 @@ describe('web search workpool fencing', () => {
 		});
 
 		await t.mutation(internal.webSearchPool.completeWebSearch, {
-			// SAFETY: completeWebSearch ignores workId and fences on job/claim state.
-			workId: 'work-ok' as WorkId,
+			workId: fixtureWorkId('work-ok'),
 			context: { jobId, runId, claimId },
 			result: { kind: 'success', returnValue: { results: [{ url: 'https://example.com' }] } }
 		});

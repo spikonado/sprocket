@@ -5,6 +5,11 @@ import migrationsTest from '@convex-dev/migrations/test';
 import exaTest from '@exalabs/convex-exa/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import posthogTest from '@posthog/convex/test';
+import { vWorkId, type WorkId } from '@convex-dev/workpool';
+import { ContextDev } from 'context.dev';
+import { APIPromise } from 'context.dev/core/api-promise';
+import { Web, type WebScrapeParams, type WebScrapeResponse } from 'context.dev/resources/web';
+import { parse } from 'convex-helpers/validators';
 import { convexTest, type TestConvex } from 'convex-test';
 import { vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
@@ -52,6 +57,58 @@ export async function finishDueScheduledFunctions(t: ConvexTestInstance) {
 	}
 
 	throw new Error('Due scheduled functions did not settle.');
+}
+
+export function fixtureWorkId(value: string): WorkId {
+	return parse(vWorkId, value);
+}
+
+const emptyScrapeOutput = { data: null, requested: false, success: null };
+
+export function contextDevScrapeResponse(
+	overrides: Partial<WebScrapeResponse> = {}
+): WebScrapeResponse {
+	return {
+		bytes: emptyScrapeOutput,
+		cache_metadata: { age_ms: 0, status: 'miss' },
+		highlights: emptyScrapeOutput,
+		html: emptyScrapeOutput,
+		images: { data: [], requested: true, success: true },
+		json: emptyScrapeOutput,
+		markdown: { data: '# Page', requested: true, success: true },
+		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
+		parsed: { ...emptyScrapeOutput, type: 'custom' },
+		product: emptyScrapeOutput,
+		profile: null,
+		request_id: 'request-1',
+		screenshot: emptyScrapeOutput,
+		url: 'https://example.com/page',
+		...overrides
+	};
+}
+
+function apiPromise<T>(result: Promise<T>): APIPromise<T> {
+	const props = result.then(() => ({
+		response: new Response(),
+		options: { method: 'post' as const, path: '/web/scrape' },
+		controller: new AbortController(),
+		requestLogID: 'test',
+		retryOfRequestLogID: undefined,
+		startTime: 0
+	}));
+
+	return new APIPromise(new ContextDev({ apiKey: 'test' }), props, () => result);
+}
+
+export function mockContextDevScrape(
+	scrape: (
+		body: WebScrapeParams,
+		options?: Parameters<Web['scrape']>[1]
+	) => Promise<WebScrapeResponse>
+) {
+	return vi
+		.spyOn(Web.prototype, 'scrape')
+		.mockImplementation((body, options) => apiPromise(scrape(body, options)));
 }
 
 export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: string) {
@@ -112,18 +169,15 @@ export const emptyCompletionAssignments = {
 
 export function initConvexTest(): ConvexTestInstance {
 	const t = convexTest({ schema, modules, transactionLimits: true });
-	// SAFETY: each component test helper types registerComponent against its own
-	// TestConvex variance; the convex-test backend object is the same instance.
-	const backend = t as never;
-	rateLimiterTest.register(backend);
-	migrationsTest.register(backend);
-	exaTest.register(backend);
-	workpoolTest.register(backend, 'webSearchWorkpool');
-	workpoolTest.register(backend, 'contextDevWorkpool');
-	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
-	workpoolTest.register(backend, 'billingWebhookWorkpool');
-	workpoolTest.register(backend, 'billingReconciliationWorkpool');
-	posthogTest.register(backend);
+	rateLimiterTest.register(t);
+	migrationsTest.register(t);
+	exaTest.register(t);
+	workpoolTest.register(t, 'webSearchWorkpool');
+	workpoolTest.register(t, 'contextDevWorkpool');
+	workpoolTest.register(t, 'firecrawlScrapeWorkpool');
+	workpoolTest.register(t, 'billingWebhookWorkpool');
+	workpoolTest.register(t, 'billingReconciliationWorkpool');
+	posthogTest.register(t);
 
 	return t;
 }

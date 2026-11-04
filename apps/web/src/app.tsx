@@ -19,6 +19,7 @@ import {
 import type { FunctionArgs, FunctionReference } from 'convex/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
+import { convexId } from '$lib/convex-id';
 import {
 	advanceConvexAuthRetryPending,
 	authState,
@@ -1033,9 +1034,8 @@ export default function App({
 						return;
 					}
 
-					// SAFETY: artifact IDs come from the authenticated artifact registry.
 					await deleteArtifactRecord({
-						artifactId: artifactId as Id<'artifacts'>,
+						artifactId: convexId<'artifacts'>().parse(artifactId),
 						repositoryKey: currentRepositoryKey
 					});
 				}

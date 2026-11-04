@@ -58,6 +58,8 @@ async function readError(response: Response): Promise<AgentcardError> {
 	);
 }
 
+const tokenResponse = z.object({ access_token: z.string(), expires_in: z.number() });
+
 export async function exchangeAgentcardToken(
 	credentials: AgentcardCredentials
 ): Promise<{ accessToken: string; expiresAt: number }> {
@@ -72,8 +74,7 @@ export async function exchangeAgentcardToken(
 
 	if (!response.ok) throw await readError(response);
 
-	// SAFETY: documented OAuth client-credentials response.
-	const body = (await response.json()) as { access_token: string; expires_in: number };
+	const body = tokenResponse.parse(await response.json());
 
 	return { accessToken: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 };
 }
@@ -81,6 +82,7 @@ export async function exchangeAgentcardToken(
 export async function agentcardRequest<T>(
 	accessToken: string,
 	path: string,
+	schema: z.ZodType<T>,
 	init?: { method?: string; body?: unknown }
 ): Promise<T> {
 	const headers = new Headers({ Authorization: `Bearer ${accessToken}` });
@@ -95,11 +97,14 @@ export async function agentcardRequest<T>(
 
 	if (!response.ok) throw await readError(response);
 
-	// SAFETY: unchecked decode of the trusted Agentcard response into its documented contract T.
-	return (await response.json()) as T;
+	return schema.parse(await response.json());
 }
 
-export type Recognizer = { psp: string; hosts: string[]; match: string };
+export const recognizers = z.array(
+	z.object({ psp: z.string(), hosts: z.array(z.string()), match: z.string() })
+);
+
+export type Recognizer = z.infer<typeof recognizers>[number];
 
 export function recognizes(recognizer: Recognizer, url: URL): boolean {
 	return (
@@ -112,23 +117,41 @@ export function isCheckoutOrigin(origin: string): boolean {
 	return /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(origin) && !origin.endsWith(':443');
 }
 
-export type VaultSession = {
-	status: 'pending' | 'linked' | 'expired';
-	user_id: string | null;
-	external_user_id?: string | null;
-};
+export const vaultSession = z.object({
+	status: z.enum(['pending', 'linked', 'expired']),
+	user_id: z.string().nullable(),
+	external_user_id: z.string().nullish()
+});
 
-export type AgentcardAuthorization = {
-	id: string;
-	status: 'awaiting_approval' | 'approved' | 'submitted_on_device' | 'declined' | 'expired';
-	amount: number | null;
-	currency: string | null;
-	approvalUrl?: string;
-	poll_interval_ms?: number;
-	reason?: string;
-	settlement?: { status?: string } | null;
-	response?: { status: number; headers: Record<string, string>; body: string };
-};
+export const createdVaultSession = z.object({ url: z.string() });
+
+export const vaultCards = z.object({
+	data: z.array(
+		z.object({
+			id: z.string(),
+			brand: z.string(),
+			last4: z.string(),
+			expiry_month: z.number(),
+			expiry_year: z.number()
+		})
+	)
+});
+
+export const agentcardAuthorization = z.object({
+	id: z.string(),
+	status: z.enum(['awaiting_approval', 'approved', 'submitted_on_device', 'declined', 'expired']),
+	amount: z.number().nullable(),
+	currency: z.string().nullable(),
+	approvalUrl: z.string().optional(),
+	poll_interval_ms: z.number().optional(),
+	reason: z.string().optional(),
+	settlement: z.object({ status: z.string().optional() }).nullish(),
+	response: z
+		.object({ status: z.number(), headers: z.record(z.string(), z.string()), body: z.string() })
+		.optional()
+});
+
+export type AgentcardAuthorization = z.infer<typeof agentcardAuthorization>;
 
 export async function verifyAgentcardSignature(
 	secret: string,

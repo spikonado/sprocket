@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import { parse } from 'convex-helpers/validators';
+import { v } from 'convex/values';
+import type { Doc } from '@convex/_generated/dataModel';
 import {
 	computeAccess,
 	identityTakeoverAllowed,
@@ -34,8 +36,7 @@ function payload(overrides: Partial<SubscriptionPayload> = {}): SubscriptionPayl
 
 function row(overrides: Partial<Doc<'subscriptions'>> = {}): Doc<'subscriptions'> {
 	return {
-		// SAFETY: pure projection fixtures never perform database id lookup.
-		_id: 'subscription_fixture' as Id<'subscriptions'>,
+		_id: parse(v.id('subscriptions'), 'subscription_fixture'),
 		_creationTime: T0,
 		userId: 'u1',
 		tier: 'pro',

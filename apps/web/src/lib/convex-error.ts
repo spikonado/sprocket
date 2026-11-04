@@ -1,4 +1,7 @@
 import { ConvexError } from 'convex/values';
+import { z } from 'zod';
+
+const convexErrorData = z.string();
 
 const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
 
@@ -20,9 +23,7 @@ function firstLineAfterPrefix(message: string, prefix: string): string | null {
 
 export function convexClientErrorMessage(error: Error): string | null {
 	if (error instanceof ConvexError) {
-		// SAFETY: this app throws ConvexError with a string payload.
-		const data = error.data as string;
-		const text = data.trim();
+		const text = convexErrorData.safeParse(error.data).data?.trim();
 
 		if (text) {
 			return text;
