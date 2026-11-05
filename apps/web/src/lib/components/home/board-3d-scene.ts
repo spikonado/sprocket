@@ -60,7 +60,9 @@ export function createBoardScene(container: HTMLElement) {
 
 	const fit = (root: Object3D) => {
 		const bounds = new Box3().setFromObject(root).getBoundingSphere(new Sphere());
-		const distance = bounds.radius / Math.sin((camera.fov * Math.PI) / 360);
+		const halfFov = (camera.fov * Math.PI) / 360;
+		const narrowerHalfFov = Math.min(halfFov, Math.atan(Math.tan(halfFov) * camera.aspect));
+		const distance = bounds.radius / Math.sin(narrowerHalfFov);
 
 		camera.near = distance / 100;
 		camera.far = distance * 100;

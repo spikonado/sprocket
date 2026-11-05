@@ -41,7 +41,14 @@ export default function Board3dViewer({
 	useEffect(() => {
 		const container = containerRef.current;
 
-		if (!shown || !container || exported.current === key) return;
+		if (!shown || !container) return;
+
+		// Such as an edit undone while its export ran, which brings back the shown board.
+		if (exported.current === key) {
+			setStatus({ kind: 'ready' });
+
+			return;
+		}
 
 		const controller = new AbortController();
 
