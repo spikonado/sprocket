@@ -9,7 +9,7 @@ import type {
 	RunState
 } from '$lib/types/sprocket';
 import { isRunFinalStatus } from '@convex/lib/validators';
-import type { SelectedThreadLifecycle } from '@convex/lib/runCancellation';
+import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
 import { areStorageIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
@@ -84,13 +84,14 @@ export function resolveSubmissionId(args: {
 
 export type RunResumeKind = 'crash' | 'failed' | 'cancelled';
 
-export function lifecycleResumeKind(lifecycle: SelectedThreadLifecycle): RunResumeKind | null {
-	if (lifecycle.run?.promptUnsent) return null;
+export function lifecycleResumeKind(
+	phase: SelectedThreadLifecyclePhase,
+	failureKind?: 'abandoned'
+): RunResumeKind | null {
+	if (phase === 'cancelled') return 'cancelled';
 
-	if (lifecycle.phase === 'cancelled') return 'cancelled';
-
-	if (lifecycle.phase === 'failed') {
-		return lifecycle.run?.failureKind === 'abandoned' ? 'crash' : 'failed';
+	if (phase === 'failed') {
+		return failureKind === 'abandoned' ? 'crash' : 'failed';
 	}
 
 	return null;

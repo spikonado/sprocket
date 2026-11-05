@@ -986,9 +986,12 @@ export default function App({
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 
 	const latestRunResumeKind =
-		hasPendingAgentLaunch || isRunInProgress || !currentLifecycle
+		hasPendingAgentLaunch || isRunInProgress
 			? null
-			: lifecycleResumeKind(currentLifecycle);
+			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.failureKind);
+
+	// A run that never sent its prompt has nothing to continue. The composer holds that prompt.
+	const canContinueWorking = latestRunResumeKind != null && !currentLifecycle?.run?.promptUnsent;
 
 	const isLatestRunReady = isLatestRunReadyForThread({
 		threadId: currentThreadId,
@@ -2063,7 +2066,7 @@ export default function App({
 
 	async function continueWorking() {
 		if (
-			!latestRunResumeKind ||
+			!canContinueWorking ||
 			!runState ||
 			!currentThreadId ||
 			!currentProjectPath ||
@@ -2843,7 +2846,7 @@ export default function App({
 										onFastModeChange={setFastMode}
 										pendingQuestion={pendingAgentQuestion}
 										runEnded={runEnded}
-										showContinueWorking={latestRunResumeKind != null}
+										showContinueWorking={canContinueWorking}
 										onContinueWorking={() => void continueWorking()}
 										runningCommands={
 											currentThreadId && signedInUserId && localApi && authReady
