@@ -35,7 +35,7 @@ export function resolveNativePackage(platform = process.platform, arch = process
 		}
 
 		throw new Error(
-			`The native package ${packageName} is missing. Reinstall @spikonado/sprocket ` +
+			`The native package ${packageName} is missing. Reinstall Sprocket ` +
 				'without omitting optional dependencies.',
 			{ cause: error }
 		);

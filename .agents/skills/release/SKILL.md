@@ -24,7 +24,7 @@ Write for users. Merge related PRs into one bullet that describes the change, fo
 ```markdown
 ## Use it now
 
-(install snippet copied from the previous release)
+(install snippet from README.md)
 
 ## What's changed
 

@@ -44,7 +44,7 @@ test(
 		const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-native-version-'));
 		t.after(() => rmSync(directory, { recursive: true, force: true }));
 		const [packageName, executable] = nativePackage();
-		const launcherDir = path.join(directory, 'node_modules', '@spikonado', 'sprocket');
+		const launcherDir = path.join(directory, 'node_modules', 'usesprocket');
 		const nativeDir = path.join(directory, 'node_modules', packageName);
 		cpSync(path.join(import.meta.dirname, '..', 'bin'), path.join(launcherDir, 'bin'), {
 			recursive: true
@@ -58,7 +58,7 @@ test(
 		);
 		writeFileSync(
 			path.join(launcherDir, 'package.json'),
-			JSON.stringify({ name: '@spikonado/sprocket', version: '1.0.0', type: 'module' })
+			JSON.stringify({ name: 'usesprocket', version: '1.0.0', type: 'module' })
 		);
 		mkdirSync(path.join(nativeDir, 'bin'), { recursive: true });
 		writeFileSync(path.join(nativeDir, 'bin', executable), '#!/bin/sh\necho native\n', {

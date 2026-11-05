@@ -97,11 +97,11 @@ describe('renderMarkdown', () => {
 	});
 
 	it('keeps same-marker fences nested inside a Markdown code block', () => {
-		const notes = '## Use it now\n\n```sh\nnpx @spikonado/sprocket\n```\n\n## Changes';
+		const notes = '## Use it now\n\n```sh\nnpx usesprocket\n```\n\n## Changes';
 
 		expect(renderMarkdown(`Notes:\n\n\`\`\`markdown\n${notes}\n\`\`\`\n\nDone.`)).toBe(
 			'<p>Notes:</p>\n' +
-				'<pre><code class="language-markdown">## Use it now\n\n```sh\nnpx @spikonado/sprocket\n```\n\n## Changes\n</code></pre>\n' +
+				'<pre><code class="language-markdown">## Use it now\n\n```sh\nnpx usesprocket\n```\n\n## Changes\n</code></pre>\n' +
 				'<p>Done.</p>\n'
 		);
 		expect(renderMarkdown('````markdown\n```sh\nnpx sprocket\n````\n\nDone.')).toContain(

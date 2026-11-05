@@ -7,8 +7,10 @@ import { EventEmitter } from 'node:events';
 import test from 'node:test';
 
 import {
+	LEGACY_PACKAGE_NAME,
 	PACKAGE_NAME,
 	RELAUNCH_MESSAGE,
+	RENAMED_MESSAGE,
 	UNSUPPORTED_MESSAGE,
 	channelManifestUrl,
 	channelUpdate,
@@ -41,7 +43,7 @@ const NPM_CLI = '/usr/bin/node_modules/npm/bin/npm-cli.js';
 
 const NPM_ROOT = '/usr/local/lib/node_modules';
 
-const NPM_PACKAGE = `${NPM_ROOT}/@spikonado/sprocket`;
+const NPM_PACKAGE = `${NPM_ROOT}/usesprocket`;
 
 function jsonResponse(body, status = 200) {
 	return {
@@ -145,6 +147,7 @@ function testHost(options = {}) {
 		platform: options.platform ?? 'linux',
 		execPath: options.execPath ?? '/usr/bin/node',
 		packageRoot: options.packageRoot ?? NPM_PACKAGE,
+		packageName: options.packageName ?? PACKAGE_NAME,
 		currentVersion: options.currentVersion ?? '0.3.4',
 		nativeVersion: () => options.nativeVersion ?? options.currentVersion ?? '0.3.4',
 		pid: options.pid ?? 1001,
@@ -195,6 +198,10 @@ function testHost(options = {}) {
 				}
 
 				return options.install ?? { status: 0, stdout: '', stderr: '' };
+			}
+
+			if (args.includes('uninstall') && args.includes('--global')) {
+				return { status: 0, stdout: '', stderr: '' };
 			}
 
 			if (args.at(-1) === '--version') {
@@ -287,7 +294,7 @@ test('detects a global npm install from the exact package path', async () => {
 
 test('does not treat a nested global dependency as this install', async () => {
 	const { host, commands } = testHost({
-		packageRoot: `${NPM_ROOT}/other-tool/node_modules/@spikonado/sprocket`
+		packageRoot: `${NPM_ROOT}/other-tool/node_modules/usesprocket`
 	});
 
 	const install = await detectInstall(host);
@@ -300,8 +307,8 @@ test('does not treat a nested global dependency as this install', async () => {
 
 test('does not treat a local or npx copy as updatable just because npm is on PATH', async () => {
 	for (const packageRoot of [
-		'/home/user/app/node_modules/@spikonado/sprocket',
-		'/home/user/.npm/_npx/a1b2/node_modules/@spikonado/sprocket'
+		'/home/user/app/node_modules/usesprocket',
+		'/home/user/.npm/_npx/a1b2/node_modules/usesprocket'
 	]) {
 		const { host, commands } = testHost({
 			packageRoot,
@@ -323,7 +330,7 @@ test('detects global bun, pnpm, and yarn installs from their own prefix queries'
 	const bun = await detectInstall(
 		testHost({
 			execPath: '/home/user/.bun/bin/bun',
-			packageRoot: '/home/user/.bun/install/global/node_modules/@spikonado/sprocket',
+			packageRoot: '/home/user/.bun/install/global/node_modules/usesprocket',
 			bunBin: '/home/user/.bun/bin',
 			isFile: () => false
 		}).host
@@ -333,9 +340,9 @@ test('detects global bun, pnpm, and yarn installs from their own prefix queries'
 	assert.equal(bun.manager, 'bun');
 
 	const physical =
-		'/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@spikonado+sprocket@0.3.4/node_modules/@spikonado/sprocket';
+		'/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/usesprocket@0.3.4/node_modules/usesprocket';
 
-	const logical = '/home/user/.local/share/pnpm/global/5/node_modules/@spikonado/sprocket';
+	const logical = '/home/user/.local/share/pnpm/global/5/node_modules/usesprocket';
 
 	const pnpm = await detectInstall(
 		testHost({
@@ -352,7 +359,7 @@ test('detects global bun, pnpm, and yarn installs from their own prefix queries'
 
 	const yarn = await detectInstall(
 		testHost({
-			packageRoot: '/home/user/.config/yarn/global/node_modules/@spikonado/sprocket',
+			packageRoot: '/home/user/.config/yarn/global/node_modules/usesprocket',
 			executables: { yarn: '/usr/bin/yarn' },
 			yarnDir: '/home/user/.config/yarn/global',
 			isFile: () => false
@@ -381,7 +388,7 @@ test('does not install with bun just because bun is on PATH for an npm global', 
 test('check reports unavailable, idle, and available without installing', async () => {
 	const unavailable = await checkForUpdate(
 		testHost({
-			packageRoot: '/tmp/project/node_modules/@spikonado/sprocket',
+			packageRoot: '/tmp/project/node_modules/usesprocket',
 			isFile: () => false
 		}).host
 	);
@@ -471,6 +478,59 @@ test('install returns installed with a relaunch message and keeps the running ve
 	assert.equal(payload.restartLauncher, path.resolve(NPM_PACKAGE, 'bin/sprocket.js'));
 });
 
+test('legacy installs switch to the renamed package at the same version', async () => {
+	const legacy = {
+		packageName: LEGACY_PACKAGE_NAME,
+		packageRoot: `${NPM_ROOT}/@spikonado/sprocket`,
+		manifest: versionDoc('0.3.4')
+	};
+
+	const check = await checkForUpdate(testHost(legacy).host);
+	assert.equal(check.status, 'available');
+	assert.equal(check.version, '0.3.4');
+	assert.equal(check.message, RENAMED_MESSAGE);
+
+	const { host, commands } = testHost(legacy);
+	const payload = await installUpdate(host);
+	assert.equal(payload.status, 'installed');
+	assert.equal(payload.restartLauncher, path.resolve(NPM_PACKAGE, 'bin/sprocket.js'));
+
+	const managerArgs = commands
+		.filter((command) => command.args.includes('--global'))
+		.map((command) => command.args.slice(1));
+
+	assert.deepEqual(managerArgs.slice(-2), [
+		['uninstall', '--global', LEGACY_PACKAGE_NAME],
+		['install', '--global', `${PACKAGE_NAME}@0.3.4`]
+	]);
+});
+
+test('a failed switch reinstalls the legacy package', async () => {
+	const { host, commands } = testHost({
+		packageName: LEGACY_PACKAGE_NAME,
+		packageRoot: `${NPM_ROOT}/@spikonado/sprocket`,
+		runCommand: (command, args) => {
+			if (args.includes(`${PACKAGE_NAME}@0.3.5`)) {
+				return { status: 1, stdout: '', stderr: 'npm ERR! network' };
+			}
+
+			if (args.includes('root')) return { status: 0, stdout: NPM_ROOT, stderr: '' };
+
+			return { status: args.includes('--global') ? 0 : 1, stdout: '', stderr: '' };
+		}
+	});
+
+	const payload = await installUpdate(host);
+	assert.equal(payload.status, 'error');
+	assert.match(payload.error, /network/);
+	assert.doesNotMatch(payload.error, /no longer installed/);
+	assert.deepEqual(commands.at(-1).args.slice(1), [
+		'install',
+		'--global',
+		`${LEGACY_PACKAGE_NAME}@0.3.4`
+	]);
+});
+
 test('install reports an error when the updated launcher cannot start', async () => {
 	const { host, commands } = testHost({
 		launcherCheck: { status: 1, stdout: '', stderr: 'sprocket: The native package is missing.' }
@@ -494,10 +554,7 @@ test('install API retains the stable pnpm launcher across package symlink replac
 	const globalRoot = path.join(directory, 'node_modules');
 	const logical = globalPackageDir(globalRoot);
 
-	const oldPackage = path.join(
-		globalRoot,
-		'.pnpm/@spikonado+sprocket@0.3.4/node_modules/@spikonado/sprocket'
-	);
+	const oldPackage = path.join(globalRoot, '.pnpm/usesprocket@0.3.4/node_modules/usesprocket');
 
 	const newPackage = oldPackage.replace('@0.3.4', '@0.3.5');
 	await fsPromises.mkdir(path.dirname(logical), { recursive: true });
@@ -811,14 +868,14 @@ test('lock identity follows the logical global package dir across pnpm versions'
 	const globalRoot = '/home/user/.local/share/pnpm/global/5/node_modules';
 
 	const host = testHost({
-		packageRoot: `${globalRoot}/.pnpm/@spikonado+sprocket@0.3.4/node_modules/@spikonado/sprocket`
+		packageRoot: `${globalRoot}/.pnpm/usesprocket@0.3.4/node_modules/usesprocket`
 	}).host;
 
 	const later = testHost({
-		packageRoot: `${globalRoot}/.pnpm/@spikonado+sprocket@0.3.5/node_modules/@spikonado/sprocket`
+		packageRoot: `${globalRoot}/.pnpm/usesprocket@0.3.5/node_modules/usesprocket`
 	}).host;
 
-	assert.equal(globalPackageDir(globalRoot), path.join(globalRoot, '@spikonado', 'sprocket'));
+	assert.equal(globalPackageDir(globalRoot), path.join(globalRoot, 'usesprocket'));
 	assert.equal(updateLockPath(host, globalRoot), updateLockPath(later, globalRoot));
 	assert.notEqual(updateLockPath(host, globalRoot), updateLockPath(host, NPM_ROOT));
 });
@@ -1054,11 +1111,11 @@ test('accepts HTTPS registry URLs and rejects insecure or malformed overrides', 
 	);
 	assert.equal(
 		channelManifestUrl('https://registry.npmjs.org', 'latest'),
-		'https://registry.npmjs.org/%40spikonado%2Fsprocket/latest'
+		'https://registry.npmjs.org/usesprocket/latest'
 	);
 	assert.equal(
 		channelManifestUrl('https://registry.npmjs.org', 'canary'),
-		'https://registry.npmjs.org/%40spikonado%2Fsprocket/canary'
+		'https://registry.npmjs.org/usesprocket/canary'
 	);
 });
 

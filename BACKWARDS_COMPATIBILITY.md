@@ -176,6 +176,10 @@ Transcripts from released clients lack `providerMetadata.rigNative` and `origin`
 
 ## Launcher process shims
 
+### Renamed npm package
+
+Released clients only update `@spikonado/sprocket`, so the release workflow also publishes each version under that name. A launcher running as `@spikonado/sprocket` offers its next update as `usesprocket`, uninstalls the old package, and reinstalls it if the new install fails. Once a stable release with this switch is on every dist-tag of `@spikonado/sprocket`, stop publishing it, then remove `LEGACY_PACKAGE_NAME` and its update path.
+
 ### Restart exit code
 
 An npm launcher from v0.4.3 and earlier stays in memory across in-app updates and restarts only when its child exits with code 75. Current launchers restart whenever the restart file exists and pass the native exit code up, so the native server still exits with `RESTART_EXIT_CODE` after an accepted restart. Remove `ServerExit` and that code once launchers from v0.4.3 and earlier are outside the supported upgrade window.
