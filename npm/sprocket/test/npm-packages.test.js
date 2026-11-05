@@ -52,7 +52,15 @@ test('assembles version-matched root and native packages', async () => {
 		);
 
 		assert.equal(rootManifest.version, '1.2.3');
+		assert.equal(rootManifest.name, 'usesprocket');
 		assert.equal(rootManifest.optionalDependencies['@spikonado/sprocket-linux-x64-gnu'], '1.2.3');
+
+		const legacyManifest = JSON.parse(
+			await readFile(path.join(output, 'legacy/package.json'), 'utf8')
+		);
+
+		assert.deepEqual(legacyManifest, { ...rootManifest, name: '@spikonado/sprocket' });
+		await access(path.join(output, 'legacy/web/index.html'));
 		assert(rootManifest.files.includes('THIRD_PARTY_NOTICES.md'));
 		await access(path.join(output, 'sprocket/web/index.html'));
 		await access(path.join(output, 'sprocket/targets.json'));

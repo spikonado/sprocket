@@ -17,7 +17,7 @@ Download the installer for your OS from the [latest release](https://github.com/
 With [Node.js](https://nodejs.org/) 20.11 or newer installed:
 
 ```sh
-npx @spikonado/sprocket
+npx usesprocket
 ```
 
 This opens Sprocket in your browser, or in the desktop app if it's installed. Sign in and choose a project folder to get started. Add `--web` to always use your browser.
@@ -25,7 +25,7 @@ This opens Sprocket in your browser, or in the desktop app if it's installed. Si
 ### CLI
 
 ```sh
-npm install -g @spikonado/sprocket
+npm install -g usesprocket
 sprocket
 ```
 

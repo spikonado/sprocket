@@ -9,6 +9,12 @@ const SOURCE_PACKAGE = path.join(ROOT, 'npm/sprocket');
 
 const TARGETS = JSON.parse(readFileSync(path.join(SOURCE_PACKAGE, 'targets.json'), 'utf8'));
 
+// Directory names must not contain '-', which the release workflow uses to find native packages.
+const ROOT_PACKAGES = [
+	{ directory: 'sprocket', name: 'usesprocket' },
+	{ directory: 'legacy', name: '@spikonado/sprocket' }
+];
+
 function argumentsFrom(argv) {
 	const values = new Map();
 
@@ -28,8 +34,8 @@ function argumentsFrom(argv) {
 	return values;
 }
 
-async function copyRootPackage(output, web, version) {
-	const destination = path.join(output, 'sprocket');
+async function copyRootPackage(output, web, version, { directory, name }) {
+	const destination = path.join(output, directory);
 	await mkdir(destination, { recursive: true });
 
 	for (const entry of ['bin', 'lib', 'targets.json']) {
@@ -46,6 +52,7 @@ async function copyRootPackage(output, web, version) {
 	await cp(web, path.join(destination, 'web'), { recursive: true });
 
 	const manifest = JSON.parse(await readFile(path.join(SOURCE_PACKAGE, 'package.json'), 'utf8'));
+	manifest.name = name;
 	manifest.version = version;
 	manifest.optionalDependencies = Object.fromEntries(
 		TARGETS.map((target) => [target.packageName, version])
@@ -110,12 +117,14 @@ async function main() {
 	const resolvedOutput = path.resolve(output);
 	await rm(resolvedOutput, { recursive: true, force: true });
 	await mkdir(resolvedOutput, { recursive: true });
-	await copyRootPackage(resolvedOutput, path.resolve(web), version);
-	await Promise.all(
-		TARGETS.map((target) =>
+	await Promise.all([
+		...ROOT_PACKAGES.map((rootPackage) =>
+			copyRootPackage(resolvedOutput, path.resolve(web), version, rootPackage)
+		),
+		...TARGETS.map((target) =>
 			copyPlatformPackage(resolvedOutput, path.resolve(artifacts), version, target)
 		)
-	);
+	]);
 }
 
 main().catch((error) => {

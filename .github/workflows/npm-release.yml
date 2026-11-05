@@ -290,7 +290,7 @@ jobs:
             echo "::error::$name@$VERSION is not on the registry after 15 minutes."
             exit 1
           done
-      - name: Publish root package last
+      - name: Publish root packages last
         if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
         env:
           NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
@@ -305,12 +305,15 @@ jobs:
             fi
           fi
 
-          name="$(node -p "require('./npm-dist/sprocket/package.json').name")"
-          if npm view "$name@$VERSION" version >/dev/null 2>&1; then
-            echo "$name@$VERSION is already published; skipping"
-          else
-            (
-              cd npm-dist/sprocket
-              npm publish --tag "$NPM_TAG"
-            )
-          fi
+          # The legacy package goes last because its installs migrate to the usesprocket version.
+          for package in npm-dist/sprocket npm-dist/legacy; do
+            name="$(node -p "require('./$package/package.json').name")"
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published; skipping"
+            else
+              (
+                cd "$package"
+                npm publish --tag "$NPM_TAG"
+              )
+            fi
+          done

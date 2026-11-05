@@ -6,13 +6,18 @@ import path from 'node:path';
 
 import { installedNativeVersion } from './native.js';
 
-export const PACKAGE_NAME = '@spikonado/sprocket';
+export const PACKAGE_NAME = 'usesprocket';
+
+// Global installs of the pre-rename package switch to PACKAGE_NAME on their next update.
+export const LEGACY_PACKAGE_NAME = '@spikonado/sprocket';
 
 export const UPDATE_API_FILENAME = 'update-api.js';
 
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 
 export const RELAUNCH_MESSAGE = 'Update installed. Restart Sprocket to use it.';
+
+export const RENAMED_MESSAGE = `Sprocket's npm package is now ${PACKAGE_NAME}. Updating switches to it.`;
 
 export const UNSUPPORTED_MESSAGE =
 	'This copy of Sprocket was not installed globally with npm, bun, pnpm, or yarn, so it cannot be updated in place.';
@@ -41,7 +46,8 @@ const MANAGERS = [
 	{
 		name: 'bun',
 		queryArgs: ['pm', 'bin', '--global'],
-		installArgs: (version) => ['add', '--global', packageSpec(version)],
+		installArgs: (spec) => ['add', '--global', spec],
+		removeArgs: (name) => ['remove', '--global', name],
 		globalRoot(queryStdout) {
 			const binDir = firstAbsolutePath(queryStdout);
 
@@ -51,7 +57,8 @@ const MANAGERS = [
 	{
 		name: 'pnpm',
 		queryArgs: ['root', '-g'],
-		installArgs: (version) => ['add', '--global', packageSpec(version)],
+		installArgs: (spec) => ['add', '--global', spec],
+		removeArgs: (name) => ['remove', '--global', name],
 		globalRoot(queryStdout) {
 			return firstAbsolutePath(queryStdout);
 		}
@@ -59,7 +66,8 @@ const MANAGERS = [
 	{
 		name: 'yarn',
 		queryArgs: ['global', 'dir'],
-		installArgs: (version) => ['global', 'add', packageSpec(version)],
+		installArgs: (spec) => ['global', 'add', spec],
+		removeArgs: (name) => ['global', 'remove', name],
 		globalRoot(queryStdout) {
 			const dir = firstAbsolutePath(queryStdout);
 
@@ -69,15 +77,16 @@ const MANAGERS = [
 	{
 		name: 'npm',
 		queryArgs: ['root', '-g'],
-		installArgs: (version) => ['install', '--global', packageSpec(version)],
+		installArgs: (spec) => ['install', '--global', spec],
+		removeArgs: (name) => ['uninstall', '--global', name],
 		globalRoot(queryStdout) {
 			return firstAbsolutePath(queryStdout);
 		}
 	}
 ];
 
-export function packageSpec(version) {
-	return `${PACKAGE_NAME}@${version}`;
+export function packageSpec(version, name = PACKAGE_NAME) {
+	return `${name}@${version}`;
 }
 
 export function asText(value) {
@@ -209,8 +218,8 @@ export function parseUpdateArgs(args) {
 	return { kind: 'run', check };
 }
 
-export function globalPackageDir(globalRoot) {
-	return path.join(globalRoot, '@spikonado', 'sprocket');
+export function globalPackageDir(globalRoot, name = PACKAGE_NAME) {
+	return path.join(globalRoot, ...name.split('/'));
 }
 
 export function isManagedUpdate(env = {}) {
@@ -477,6 +486,7 @@ export function createHost(overrides = {}) {
 		pid: overrides.pid ?? process.pid,
 		packageRoot,
 		currentVersion: overrides.currentVersion,
+		packageName: overrides.packageName,
 		nativeVersion: overrides.nativeVersion ?? installedNativeVersion,
 		tmpdir: overrides.tmpdir ?? (() => os.tmpdir()),
 		homedir: overrides.homedir ?? (() => os.homedir()),
@@ -497,7 +507,19 @@ export function createHost(overrides = {}) {
 		host.currentVersion = readCurrentVersion(host);
 	}
 
+	if (host.packageName === undefined) {
+		host.packageName = readManifest(host)?.name ?? PACKAGE_NAME;
+	}
+
 	return host;
+}
+
+function readManifest(host) {
+	try {
+		return JSON.parse(host.readFile(path.join(host.packageRoot, 'package.json'), 'utf8'));
+	} catch {
+		return null;
+	}
 }
 
 export function readCurrentVersion(host) {
@@ -507,13 +529,7 @@ export function readCurrentVersion(host) {
 		return configured;
 	}
 
-	try {
-		const manifest = JSON.parse(host.readFile(path.join(host.packageRoot, 'package.json'), 'utf8'));
-
-		return parseVersionField(manifest?.version);
-	} catch {
-		return '';
-	}
+	return parseVersionField(readManifest(host)?.version);
 }
 
 export async function detectInstall(host) {
@@ -532,14 +548,15 @@ export async function detectInstall(host) {
 			continue;
 		}
 
-		if (isExactGlobalPackage(packageRoot, globalRoot, host)) {
+		if (isExactGlobalPackage(packageRoot, globalPackageDir(globalRoot, host.packageName), host)) {
 			return {
 				supported: true,
 				manager: manager.name,
 				command: invocation.command,
 				argsPrefix: invocation.argsPrefix,
 				globalRoot,
-				installArgs: manager.installArgs
+				installArgs: manager.installArgs,
+				removeArgs: manager.removeArgs
 			};
 		}
 	}
@@ -561,6 +578,16 @@ export async function checkForUpdate(host) {
 
 	const channel = releaseChannel(currentVersion);
 	const registryVersion = await fetchChannelVersion(host, channel, currentVersion);
+
+	if (host.packageName === LEGACY_PACKAGE_NAME) {
+		return makePayload({
+			status: 'available',
+			currentVersion,
+			version: registryVersion,
+			message: RENAMED_MESSAGE
+		});
+	}
+
 	const decision = channelUpdate(currentVersion, registryVersion);
 
 	if (decision.status === 'available') {
@@ -625,41 +652,76 @@ export async function installUpdate(host) {
 
 			const restartLauncher = path.resolve(globalPackageDir(install.globalRoot), 'bin/sprocket.js');
 
-			const result = await host.runCommand(
-				install.command,
-				[...install.argsPrefix, ...install.installArgs(checked.version)],
-				{
+			const runManager = (args) =>
+				host.runCommand(install.command, [...install.argsPrefix, ...args], {
 					cwd: host.homedir(),
 					env: host.env,
 					platform: host.platform,
 					timeout: INSTALL_TIMEOUT_MS
-				}
-			);
+				});
 
-			if (result.timedOut || result.uncertain) {
+			const failure = (result, suffix = '') => {
+				if (result.timedOut || result.uncertain) {
+					return {
+						retainLock: true,
+						payload: makePayload({
+							status: 'error',
+							currentVersion,
+							version: checked.version,
+							error: timeoutRecoveryMessage(lockPath)
+						})
+					};
+				}
+
 				return {
-					retainLock: true,
 					payload: makePayload({
 						status: 'error',
 						currentVersion,
 						version: checked.version,
-						error: timeoutRecoveryMessage(lockPath)
+						error:
+							installFailureMessage(
+								`${result.stderr ?? ''}\n${result.stdout ?? ''}`,
+								host.platform
+							) + suffix
 					})
 				};
+			};
+
+			const succeeded = (result) =>
+				!result.timedOut && !result.uncertain && (result.status ?? 1) === 0;
+
+			const legacy = host.packageName === LEGACY_PACKAGE_NAME;
+
+			// Both packages own the `sprocket` bin, and npm refuses to overwrite another package's bin.
+			if (legacy) {
+				const removed = await runManager(install.removeArgs(LEGACY_PACKAGE_NAME));
+
+				if (!succeeded(removed)) {
+					return failure(removed);
+				}
 			}
 
-			if ((result.status ?? 1) !== 0) {
-				return {
-					payload: makePayload({
-						status: 'error',
-						currentVersion,
-						version: checked.version,
-						error: installFailureMessage(
-							`${result.stderr ?? ''}\n${result.stdout ?? ''}`,
-							host.platform
-						)
-					})
-				};
+			const result = await runManager(install.installArgs(packageSpec(checked.version)));
+
+			if (legacy && !result.timedOut && !result.uncertain && (result.status ?? 1) !== 0) {
+				const restored = await runManager(
+					install.installArgs(packageSpec(currentVersion, LEGACY_PACKAGE_NAME))
+				);
+
+				if (restored.timedOut || restored.uncertain) {
+					return failure(restored);
+				}
+
+				return failure(
+					result,
+					succeeded(restored)
+						? ''
+						: ` Sprocket is no longer installed; run \`${install.manager} ${install.installArgs(PACKAGE_NAME).join(' ')}\`.`
+				);
+			}
+
+			if (!succeeded(result)) {
+				return failure(result);
 			}
 
 			const launcherCheck = await host.runCommand(host.execPath, [restartLauncher, '--version'], {
@@ -844,6 +906,10 @@ function formatCli(payload, check) {
 			`Sprocket ${payload.version} is available (currently ${payload.currentVersion}).`
 		];
 
+		if (payload.message) {
+			lines.push(payload.message);
+		}
+
 		if (check) {
 			lines.push('Run `sprocket update` to install it.');
 		}
@@ -896,8 +962,7 @@ async function fetchChannelVersion(host, channel, currentVersion) {
 	return version;
 }
 
-function isExactGlobalPackage(packageRoot, globalRoot, host) {
-	const expected = globalPackageDir(globalRoot);
+function isExactGlobalPackage(packageRoot, expected, host) {
 	const actual = pathIdentities(host, packageRoot);
 
 	for (const candidate of pathIdentities(host, expected)) {

@@ -141,7 +141,7 @@ fn entry() -> anyhow::Result<u8> {
             serve_local(serve.server, serve.quiet, false, None, serve.cli_temporary)
         }
         Some(Commands::Update(_)) => {
-            anyhow::bail!("`sprocket update` requires the @spikonado/sprocket package launcher")
+            anyhow::bail!("`sprocket update` requires the usesprocket package launcher")
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
