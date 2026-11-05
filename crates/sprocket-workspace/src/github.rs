@@ -1,31 +1,18 @@
-use std::collections::{BTreeSet, HashMap};
-use std::process::Stdio;
-use std::sync::{LazyLock, Mutex, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use reqwest::{StatusCode, Url};
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use tokio::process::Command;
-
+mod credentials;
 pub mod pull_requests;
 pub mod saved_tokens;
 pub mod status;
 
-const PUBLIC_HOST: &str = "github.com";
-const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
-const MISSING_TOKEN_TTL: Duration = Duration::from_secs(10);
-const TOKEN_VARIABLES: [&str; 4] = [
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_ENTERPRISE_TOKEN",
-    "GITHUB_ENTERPRISE_TOKEN",
-];
+use std::collections::BTreeSet;
+use std::sync::{LazyLock, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-static TOKENS: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
-    LazyLock::new(Default::default);
+use reqwest::{StatusCode, Url};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
+const PUBLIC_HOST: &str = "github.com";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::default);
 
@@ -44,7 +31,7 @@ pub fn apply_settings(settings: GitHubSettings) {
     *SETTINGS
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
-    lock_tokens().clear();
+    credentials::clear_cache();
 }
 
 fn read_settings() -> std::sync::RwLockReadGuard<'static, GitHubSettings> {
@@ -103,8 +90,8 @@ pub struct GitHubApi {
 impl GitHubApi {
     pub async fn connect(user_id: &str, host: &str) -> Result<Self, GitHubError> {
         let host = host.trim().to_ascii_lowercase();
+        let credential = credentials::resolve(user_id, &host).await?;
         let graphql_url = graphql_url(&host)?;
-        let (token, source) = credential(user_id, &host).await?;
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .user_agent("Sprocket")
@@ -114,8 +101,8 @@ impl GitHubApi {
             http,
             host,
             graphql_url,
-            token,
-            source,
+            token: credential.token,
+            source: credential.source,
         })
     }
 
@@ -186,17 +173,13 @@ impl GitHubApi {
             });
         }
         if status == StatusCode::UNAUTHORIZED {
-            lock_tokens().remove(&self.host);
+            credentials::forget_cached(&self.host);
         }
         if !status.is_success() {
             return Err(GitHubError::Status(status));
         }
         answer.ok_or_else(|| anyhow::anyhow!("GitHub sent an unreadable GraphQL answer").into())
     }
-}
-
-fn is_github_dot_com(host: &str) -> bool {
-    host == PUBLIC_HOST || host.ends_with(".ghe.com")
 }
 
 /// GitHub's guidance: wait `retry-after` seconds, or until `x-ratelimit-reset`
@@ -263,98 +246,6 @@ fn graphql_url(host: &str) -> anyhow::Result<Url> {
         format!("https://{host}/api/graphql")
     };
     Ok(Url::parse(&url)?)
-}
-
-async fn credential(user_id: &str, host: &str) -> Result<(String, CredentialSource), GitHubError> {
-    {
-        let settings = read_settings();
-        if settings.disabled || settings.disabled_hosts.contains(host) {
-            return Err(GitHubError::Disabled(host.to_string()));
-        }
-    }
-    if let Some(token) = saved_tokens::load(user_id).await.tokens.remove(host) {
-        return Ok((token, CredentialSource::Settings));
-    }
-    if let Some(token) = env_token(host, |name| std::env::var(name).ok()) {
-        return Ok((token, CredentialSource::Environment));
-    }
-    cached_gh_token(host)
-        .await
-        .map(|token| (token, CredentialSource::GitHubCli))
-        .ok_or_else(|| GitHubError::NoCredential(host.to_string()))
-}
-
-async fn cached_gh_token(host: &str) -> Option<String> {
-    if let Some((token, expires)) = lock_tokens().get(host)
-        && *expires > Instant::now()
-    {
-        return token.clone();
-    }
-    let token = gh_auth_token(host).await;
-    let ttl = if token.is_some() {
-        TOKEN_TTL
-    } else {
-        MISSING_TOKEN_TTL
-    };
-    lock_tokens().insert(host.to_string(), (token.clone(), Instant::now() + ttl));
-    token
-}
-
-fn lock_tokens() -> std::sync::MutexGuard<'static, HashMap<String, (Option<String>, Instant)>> {
-    TOKENS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-fn env_token(host: &str, var: impl Fn(&str) -> Option<String>) -> Option<String> {
-    let read = |name: &str| {
-        var(name)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    };
-    if is_github_dot_com(host) {
-        return read("GH_TOKEN").or_else(|| read("GITHUB_TOKEN"));
-    }
-    if !read("GH_HOST").is_some_and(|configured| configured.eq_ignore_ascii_case(host)) {
-        return None;
-    }
-    read("GH_ENTERPRISE_TOKEN").or_else(|| read("GITHUB_ENTERPRISE_TOKEN"))
-}
-
-async fn gh_auth_token(host: &str) -> Option<String> {
-    let token = gh_output(&["auth", "token", "--hostname", host]).await?;
-    let token = token.trim().to_string();
-    (!token.is_empty()).then_some(token)
-}
-
-async fn gh_output(args: &[&str]) -> Option<String> {
-    let output = tokio::time::timeout(GH_AUTH_TIMEOUT, gh_command(args).output())
-        .await
-        .ok()?
-        .ok()?;
-    String::from_utf8(output.stdout).ok()
-}
-
-fn gh_command(args: &[&str]) -> Command {
-    let mut command = Command::new("gh");
-    command
-        .args(args)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env_remove("GH_DEBUG")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    // `gh` would otherwise hand any enterprise host the environment's token.
-    for name in TOKEN_VARIABLES {
-        command.env_remove(name);
-    }
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    command
 }
 
 #[cfg(test)]
