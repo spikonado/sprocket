@@ -376,6 +376,7 @@ fn answers_calls_whose_tools_never_settled_before_the_next_prompt() {
     assert_eq!(history.len(), 3);
     let interrupted = format!("{:?}", history[2]);
     assert!(interrupted.contains("ToolResult") && interrupted.contains("interrupted"));
+    assert!(interrupted.contains("may still be running"));
     deserialize_agent_history(history).expect("every call has a result");
 }
 

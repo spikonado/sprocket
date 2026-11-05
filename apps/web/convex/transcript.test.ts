@@ -523,7 +523,8 @@ describe('numbered transcript parts', () => {
 				status: 'cancelled',
 				output: {
 					status: 'cancelled',
-					error: expect.stringContaining('The run was stopped before this tool call finished.')
+					error:
+						'The run was stopped before this tool call finished. Only the wait for its result ended. Work it started, such as a command or subagent, may still be running, so check before assuming it stopped.'
 				}
 			}
 		});
