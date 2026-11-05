@@ -57,17 +57,33 @@ pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> 
 pub(crate) fn is_provider_failure(error: &PromptError) -> bool {
     match error {
         PromptError::Provider(_) => true,
-        PromptError::Report(report) => matches!(
-            report.kind,
-            ErrorKind::Http
-                | ErrorKind::Request
-                | ErrorKind::Response
-                | ErrorKind::Provider
-                | ErrorKind::ProviderResponse
-                | ErrorKind::Timeout
-        ),
+        PromptError::Report(report) => is_provider_kind(&report.kind),
         _ => false,
     }
+}
+
+pub(crate) fn is_provider_failure_cause(error: &(dyn std::error::Error + 'static)) -> bool {
+    if let Some(error) = error.downcast_ref::<PromptError>() {
+        is_provider_failure(error)
+    } else if error.is::<ProviderError>() {
+        true
+    } else {
+        error
+            .downcast_ref::<ErrorReport>()
+            .is_some_and(|report| is_provider_kind(&report.kind))
+    }
+}
+
+fn is_provider_kind(kind: &ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::Http
+            | ErrorKind::Request
+            | ErrorKind::Response
+            | ErrorKind::Provider
+            | ErrorKind::ProviderResponse
+            | ErrorKind::Timeout
+    )
 }
 
 impl StreamRecovery {

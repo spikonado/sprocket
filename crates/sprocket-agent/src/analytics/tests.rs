@@ -1,14 +1,17 @@
 use std::sync::Arc;
 
+use anyhow::anyhow;
+use rig::ProviderError;
 use rig::agent::CompletionCallEvent;
-use rig::completion::{Message, Usage};
+use rig::completion::{Message, PromptError, Usage};
 use rig::message::{AssistantContent, ToolName};
 use serde_json::json;
 
 use super::{
     GenerationCall, MAX_CONTENT_BYTES, analytics_id, bounded, generation_properties, input_delta,
-    tools_called,
+    is_reportable, tools_called,
 };
+use crate::chatgpt::ChatGptNotConnected;
 use crate::types::CompletionProvider;
 
 #[test]
@@ -97,4 +100,16 @@ fn analytics_id_matches_convex() {
         analytics_id("thread-1"),
         "4b0a5fefc328e6b9257bc535e3c5d26fec36b52f92e277618bf5b30fc3885e58"
     );
+}
+
+#[test]
+fn only_sprocket_failures_are_reportable() {
+    assert!(is_reportable(&anyhow!(
+        "Agent stream ended without a final response."
+    )));
+    assert!(!is_reportable(
+        &anyhow!(PromptError::Report(ProviderError::Truncated.report()))
+            .context("Context handoff failed.")
+    ));
+    assert!(!is_reportable(&anyhow::Error::new(ChatGptNotConnected)));
 }

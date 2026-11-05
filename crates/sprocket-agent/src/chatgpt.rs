@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use anyhow::Context;
 use bytes::Bytes;
 use futures::StreamExt;
 use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
@@ -32,6 +31,10 @@ struct SubscriptionUsageLimit {
     #[source]
     source: anyhow::Error,
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("ChatGPT is not connected. Connect in Settings.")]
+pub(crate) struct ChatGptNotConnected;
 
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     let usage_limit = error
@@ -76,7 +79,7 @@ impl PinnedConnection {
         let pinned = receiver
             .borrow_and_update()
             .clone()
-            .context("ChatGPT is not connected. Connect in Settings.")?;
+            .ok_or(ChatGptNotConnected)?;
         let mut connection = Self {
             receiver,
             pinned,
