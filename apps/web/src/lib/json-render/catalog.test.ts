@@ -3,7 +3,7 @@ import { expect, test } from 'vitest';
 import { jsonRenderCatalog } from './catalog';
 
 const SKILL_PATH = new URL(
-	'../../../../../crates/sprocket-workspace/skills/making-artifacts-and-visuals/SKILL.md',
+	'../../../../../crates/tinker-workspace/skills/making-artifacts-and-visuals/SKILL.md',
 	import.meta.url
 );
 
