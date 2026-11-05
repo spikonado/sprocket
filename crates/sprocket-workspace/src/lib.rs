@@ -54,5 +54,5 @@ pub use workspace_files::{
     MAX_EDITABLE_FILE_BYTES, UnsupportedFile, WorkspaceEntryKind, WorkspaceFileContent,
     WorkspaceFileWrite, WorkspaceText, create_workspace_entry, delete_workspace_entry,
     read_workspace_file, read_workspace_text, rename_workspace_entry, workspace_entry_kind,
-    write_workspace_file,
+    workspace_file_path, write_workspace_file,
 };

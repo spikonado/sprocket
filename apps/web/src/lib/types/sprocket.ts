@@ -383,6 +383,8 @@ export type LocalApi = {
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<{ content: string; version: string }>;
+	/** Exports a `.kicad_pcb` as binary glTF with KiCad's CLI, which takes seconds per board. */
+	exportBoard3d: (input: WorkspaceFileTarget, signal?: AbortSignal) => Promise<ArrayBuffer>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;

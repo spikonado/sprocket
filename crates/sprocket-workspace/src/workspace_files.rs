@@ -106,6 +106,18 @@ pub fn workspace_entry_kind(root: &Path, path: &str) -> Result<WorkspaceEntryKin
     })
 }
 
+/// The absolute path of a file inside the workspace, for tools that read it themselves.
+pub fn workspace_file_path(root: &Path, path: &str) -> Result<PathBuf> {
+    let entry = resolve_entry(root, path, FinalLink::Follow)?;
+    if !fs::metadata(&entry)
+        .map_err(|error| entry_error(error, path, "inspect"))?
+        .is_file()
+    {
+        bail!("{path} is not a file");
+    }
+    Ok(entry)
+}
+
 /// `expected_version: None` overwrites unconditionally.
 pub fn write_workspace_file(
     root: &Path,

@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { readVisualThemeCss } from '$lib/chat/artifact-preview';
+import Board3dViewer from '$lib/components/home/board-3d-viewer';
 import { readKicadSources } from '$lib/kicad';
 import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-type KicadViewerApi = Pick<LocalApi, 'readWorkspaceText' | 'watchWorkspaceFile'>;
+type KicadViewerApi = Pick<LocalApi, 'readWorkspaceText' | 'watchWorkspaceFile' | 'exportBoard3d'>;
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
+
+type Board = { path: string; version: string };
+
+const VIEWS = ['2D', '3D'] as const;
 
 /** Agents write a project's files one after another, so wait for the batch to land. */
 const RELOAD_DELAY_MS = 1_000;
@@ -107,6 +112,8 @@ export default function KicadViewer({
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [showing, setShowing] = useState(false);
 	const [watched, setWatched] = useState('');
+	const [board, setBoard] = useState<Board | null>(null);
+	const [view, setView] = useState<(typeof VIEWS)[number]>('2D');
 	const scheduleReload = useRef(() => {});
 	const versions = useRef(new Map<string, string | null>());
 
@@ -123,6 +130,8 @@ export default function KicadViewer({
 		versions.current = new Map();
 		setShowing(false);
 		setWatched('');
+		setBoard(null);
+		setView('2D');
 
 		const load = async () => {
 			attempt?.abort();
@@ -165,6 +174,16 @@ export default function KicadViewer({
 				if (sources.every(({ content }) => !content.trim())) {
 					throw new Error('This KiCad file is empty.');
 				}
+
+				const boardName = sources.find(({ name }) => name.endsWith('.kicad_pcb'))?.name;
+
+				const boardPath =
+					boardName && file.path.slice(0, file.path.lastIndexOf('/') + 1) + boardName;
+
+				// Set before KiCanvas parses, so 3D still works for a board KiCanvas can't draw.
+				setBoard(
+					boardPath ? { path: boardPath, version: versions.current.get(boardPath) ?? '' } : null
+				);
 
 				const parsed = nextFrameMessage(frame, signal);
 				frame.contentWindow?.postMessage({ type: 'sources', sources }, '*');
@@ -263,6 +282,38 @@ export default function KicadViewer({
 
 	return (
 		<div ref={containerRef} className="relative min-h-0 flex-1">
+			{board && api && (
+				<>
+					<Board3dViewer
+						api={api}
+						workspacePath={file.workspacePath}
+						path={board.path}
+						revision={board.version}
+						shown={view === '3D'}
+					/>
+					<div
+						role="group"
+						aria-label="Board view"
+						className="bg-muted absolute top-3 left-3 z-30 flex rounded-full p-0.5 text-xs font-medium shadow-sm"
+					>
+						{VIEWS.map((item) => (
+							<button
+								key={item}
+								type="button"
+								aria-pressed={view === item}
+								onClick={() => setView(item)}
+								className={`focus-visible:ring-ring rounded-full px-2.5 py-0.5 transition focus-visible:ring-2 focus-visible:outline-none ${
+									view === item
+										? 'bg-background text-foreground shadow-sm'
+										: 'text-muted-foreground hover:text-foreground'
+								}`}
+							>
+								{item}
+							</button>
+						))}
+					</div>
+				</>
+			)}
 			{status.kind !== 'ready' && (
 				<div
 					role={status.kind === 'error' ? 'alert' : 'status'}

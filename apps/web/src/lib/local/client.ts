@@ -497,6 +497,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				version: response.headers.get('x-file-version') ?? ''
 			};
 		},
+		exportBoard3d: async (input, signal) => {
+			const response = await transport.response('/api/workspace/file/board-3d', {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			return response.arrayBuffer();
+		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
 				method: 'POST',
