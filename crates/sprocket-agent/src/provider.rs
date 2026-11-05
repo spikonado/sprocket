@@ -228,6 +228,21 @@ impl AgentProvider {
             None => None,
         };
         drop(source);
+        // The handoff writes the prompt before the target model starts, so a
+        // target that cannot start (such as exhausted usage) skips the handoff.
+        let source_model = match source_model {
+            Some(Ok(model)) if self.completion_provider.serves_vendor(&self.model_vendor) => Some(
+                self.completion_model(
+                    &runtime,
+                    &request.run_id,
+                    &request.claim_id,
+                    &request.base_instructions,
+                )
+                .await
+                .map(|_| model),
+            ),
+            source_model => source_model,
+        };
         let (model, provider_switch) = match source_model {
             Some(Ok(model)) => (model, handoff),
             source_model => {
@@ -277,6 +292,7 @@ impl AgentProvider {
         claim_id: &str,
         base_instructions: &str,
     ) -> anyhow::Result<DynModel<Completion>> {
+        let mut usage_limit = None;
         loop {
             let error = if self.completion_provider.serves_vendor(&self.model_vendor) {
                 match self
@@ -294,7 +310,12 @@ impl AgentProvider {
                 )
             };
             if !self.fall_back(runtime, run_id, claim_id, &error).await? {
-                return Err(error);
+                return Err(usage_limit.unwrap_or(error));
+            }
+            if usage_limit.is_none()
+                && convex_error_code(&error) == Some(ConvexErrorCode::UsageLimitReached)
+            {
+                usage_limit = Some(error);
             }
         }
     }
