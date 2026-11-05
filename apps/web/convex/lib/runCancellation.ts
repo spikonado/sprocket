@@ -35,6 +35,7 @@ export const vSelectedThreadLifecycleRun = v.object({
 	completedAt: v.optional(v.number()),
 	lastError: v.optional(v.string()),
 	failureKind: v.optional(v.literal('abandoned')),
+	promptUnsent: v.optional(v.literal(true)),
 	executorFriendlyName: v.optional(v.string())
 });
 
@@ -127,6 +128,7 @@ export function projectSelectedThreadLifecycle(args: {
 		completedAt?: number;
 		lastError?: string;
 		failureKind?: Doc<'runs'>['failureKind'];
+		pendingPrompt?: Doc<'runs'>['pendingPrompt'];
 		cancellationRequestedAt?: number;
 	} | null;
 	waitingForInput: boolean;
@@ -157,6 +159,8 @@ export function projectSelectedThreadLifecycle(args: {
 	if (args.run.failureKind !== undefined) {
 		projected.failureKind = args.run.failureKind;
 	}
+
+	if (args.run.pendingPrompt !== undefined) projected.promptUnsent = true;
 
 	if (args.executorFriendlyName) {
 		projected.executorFriendlyName = args.executorFriendlyName;
