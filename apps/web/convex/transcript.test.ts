@@ -523,7 +523,7 @@ describe('numbered transcript parts', () => {
 				status: 'cancelled',
 				output: {
 					status: 'cancelled',
-					error: 'Run was stopped before executor job completed.'
+					error: expect.stringContaining('The run was stopped before this tool call finished.')
 				}
 			}
 		});

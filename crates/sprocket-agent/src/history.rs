@@ -171,7 +171,7 @@ fn answer_unsettled_calls(
             history.push(tool_result_text_message(
                 &call_id,
                 serde_json::json!({
-                    "error": "The run was interrupted before this tool call returned a result.",
+                    "error": "The run was interrupted before this tool call returned a result. Only the wait for its result ended. Work it started, such as a command or subagent, may still be running, so check before assuming it stopped.",
                     "status": "interrupted",
                 })
                 .to_string(),
