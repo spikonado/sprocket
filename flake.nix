@@ -68,7 +68,7 @@
         devShells.convex = pkgs.mkShell {
           packages = with pkgs; [
             bun
-            nodejs_24
+            nodejs_26
           ];
         };
 
@@ -93,7 +93,7 @@
               cargo
               cargo-edit
               gcc
-              nodejs_24
+              nodejs_26
               prek
               rustc
               rustfmt
