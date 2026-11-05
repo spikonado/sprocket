@@ -10,6 +10,7 @@ import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import { stubWebSocket } from '$lib/local/socket-test-support';
+import { LocalResponseError } from '$lib/local/transport';
 import type {
 	LocalApi,
 	ProjectAttachment,
@@ -899,6 +900,23 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
 	const group = screen.getByRole('group', { name: 'Message composer' });
 	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+});
+
+it('restores the prompt and shows the usage limit when the server refuses a launch', async () => {
+	const { launch, runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	await act(async () => {
+		launch.reject(new LocalResponseError('Usage limit reached. Try again in 3h 20m.', 429));
+	});
+	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
+	const alert = within(screen.getByRole('group', { name: 'Message composer' })).getByRole('alert');
+	expect(alert.textContent).toContain("You're out of usage");
+	expect(alert.textContent).toContain('Usage limit reached. Try again in 3h 20m.');
 });
 
 it('restores a failed send after the composer held other text', async () => {

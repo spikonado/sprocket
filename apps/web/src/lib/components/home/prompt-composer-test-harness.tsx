@@ -1,10 +1,10 @@
-import { useState, type ComponentProps } from 'react';
-import { PromptComposerView } from './prompt-composer';
+import { useState } from 'react';
+import PromptComposer, { type PromptComposerProps } from './prompt-composer';
 
 export default function PromptComposerTestHarness({
 	composerProps
 }: {
-	composerProps: ComponentProps<typeof PromptComposerView>;
+	composerProps: PromptComposerProps;
 }) {
 	const [prompt, setPrompt] = useState(composerProps.prompt ?? '');
 	const [selectedModel, setSelectedModel] = useState(composerProps.selectedModel);
@@ -20,7 +20,7 @@ export default function PromptComposerTestHarness({
 	);
 
 	return (
-		<PromptComposerView
+		<PromptComposer
 			{...composerProps}
 			prompt={prompt}
 			onPromptChange={(next) => {

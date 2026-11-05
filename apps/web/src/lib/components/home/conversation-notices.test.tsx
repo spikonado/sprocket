@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ComponentProps, ReactNode } from 'react';
 import ConversationNotices from './conversation-notices';
-import { PromptComposerView } from './prompt-composer';
+import PromptComposer from './prompt-composer';
+import { UsageLimitError } from '$lib/home/submission-tracker';
 
 const usageLimit =
 	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
@@ -23,9 +24,9 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 	);
 }
 
-function composer(children: ReactNode, exhausted = false) {
+function composer(children: ReactNode) {
 	return (
-		<PromptComposerView
+		<PromptComposer
 			notices={children}
 			attachments={[]}
 			onAttachFiles={vi.fn()}
@@ -37,7 +38,6 @@ function composer(children: ReactNode, exhausted = false) {
 			isWorking={false}
 			onSubmit={vi.fn()}
 			onCancel={vi.fn()}
-			usage={{ tier: 'pro', exhausted, resetsAt: null }}
 		/>
 	);
 }
@@ -106,18 +106,20 @@ describe('Conversation notices', () => {
 		}
 	});
 
-	it('shows run errors inside the composer using the same card as Sprocket usage limits', () => {
-		const view = render(composer(notices({ runError: usageLimit })));
+	it('shows run errors inside the composer', () => {
+		render(composer(notices({ runError: usageLimit })));
 		const group = screen.getByRole('group', { name: 'Message composer' });
 		const alert = within(group).getByRole('alert');
 		expect(alert.textContent).toContain(usageLimit);
 		expect(alert.textContent).toContain("Run couldn't continue");
-		const cardClass = alert.className;
+	});
 
-		view.rerender(composer(notices(), true));
-		const usageAlert = within(group).getByRole('alert');
-		expect(usageAlert.textContent).toContain("You're out of usage");
-		expect(usageAlert.className).toBe(cardClass);
+	it('shows a rejected launch as out of usage instead of the run failure', () => {
+		const message = 'Usage limit reached. Try again in 3h 20m.';
+		render(composer(notices({ error: new UsageLimitError(message), runError: message })));
+		const alert = screen.getByRole('alert');
+		expect(alert.textContent).toContain("You're out of usage");
+		expect(alert.textContent).toContain(message);
 	});
 
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {

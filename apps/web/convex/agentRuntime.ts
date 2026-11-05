@@ -9,13 +9,14 @@ import {
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
-import { v, type Infer, type ObjectType } from 'convex/values';
+import { ConvexError, v, type Infer, type ObjectType } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
+import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
@@ -254,6 +255,12 @@ export const issueGatewayCredential = mutation({
 				?.completionProvider !== 'spikonado'
 		) {
 			throw new Error('Run is not configured to use the Spikonado gateway.');
+		}
+
+		const quota = await gatewayQuotaStatus(ctx, run.userId);
+
+		if (quota.exhausted) {
+			throw new ConvexError({ code: 'USAGE_LIMIT_REACHED', message: quota.message });
 		}
 
 		const expiresAt = gatewayTokenExpiresAt();

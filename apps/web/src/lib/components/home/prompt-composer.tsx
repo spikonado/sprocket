@@ -1,8 +1,5 @@
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useConvexAuth, useQuery_experimental } from 'convex/react';
-import type { FunctionReturnType } from 'convex/server';
-import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { canSubmitQuestionAnswer, type AgentQuestionOption } from '@convex/lib/agentQuestions';
 import type { ComposerAttachment } from '$lib/chat/attachments';
@@ -15,14 +12,11 @@ import {
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import { formatCountdownDuration } from '$lib/format';
-import { useUsageTime } from '$lib/usage-time';
 import AgentQuestion from '$lib/components/home/agent-question';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
-import ComposerNotice from '$lib/components/home/composer-notice';
 import ThreadUsageButton from '$lib/components/home/thread-usage-button';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
@@ -76,15 +70,6 @@ export type PromptComposerProps = {
 	onSkipQuestion?: () => void;
 };
 
-export type ComposerUsage = Pick<
-	FunctionReturnType<typeof api.usage.getMyUsage>,
-	'tier' | 'exhausted' | 'resetsAt'
->;
-
-export type PromptComposerViewProps = PromptComposerProps & {
-	usage: ComposerUsage | undefined;
-};
-
 const COMPOSER_MIN_HEIGHT_PX = 68;
 
 const COMPOSER_MAX_HEIGHT_PX = 160;
@@ -99,7 +84,7 @@ const COMPOSER_SHELL_CLASS =
 const COMPOSER_INNER_CLASS =
 	'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
 
-export function PromptComposerView({
+export default function PromptComposer({
 	notices,
 	prompt = '',
 	onPromptChange,
@@ -130,21 +115,9 @@ export function PromptComposerView({
 	projectPaths = null,
 	onSubmit,
 	onCancel,
-	onSkipQuestion,
-	usage
-}: PromptComposerViewProps) {
-	const [now, setNow] = useState(() => Date.now());
+	onSkipQuestion
+}: PromptComposerProps) {
 	const continueWorkingVisible = showContinueWorking && Boolean(onContinueWorking);
-
-	useEffect(() => {
-		const interval = setInterval(() => {
-			setNow(Date.now());
-		}, 1_000);
-
-		return () => {
-			clearInterval(interval);
-		};
-	}, []);
 
 	const selectedCatalogModel =
 		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
@@ -170,31 +143,6 @@ export function PromptComposerView({
 
 	const answeringQuestion = pendingQuestion != null;
 	const composerLocked = (isRunning && !answeringQuestion) || isSubmitting;
-
-	const selectedModelUnmetered = selectedCatalogModel?.usagePolicy === 'unlimited';
-
-	// The cached result can outlive its own reset time because the query only
-	// re-runs when the limiter document changes, so expire it on the local clock.
-	const outOfUsage =
-		usage?.exhausted === true &&
-		(usage.resetsAt === null || usage.resetsAt > now) &&
-		!selectedModelUnmetered;
-
-	const unlimitedAlternativeLabel =
-		modelCatalog?.models.find((model) => model.usagePolicy === 'unlimited')?.label ?? null;
-
-	const composerNotice = (() => {
-		if (!outOfUsage || usage === undefined) return null;
-
-		const keepGoing =
-			unlimitedAlternativeLabel !== null
-				? `Switch to ${unlimitedAlternativeLabel} or upgrade your subscription to keep going.`
-				: 'Upgrade your subscription to keep going.';
-
-		if (usage.resetsAt === null) return keepGoing;
-
-		return `Your limit resets in ${formatCountdownDuration(usage.resetsAt - now)}. ${keepGoing}`;
-	})();
 
 	const hasMessageContent = Boolean(prompt.trim()) || attachments.length > 0;
 
@@ -707,9 +655,6 @@ export function PromptComposerView({
 									tabIndex={0}
 								>
 									{notices}
-									{composerNotice ? (
-										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
-									) : null}
 								</div>
 								{pendingQuestion ? (
 									<AgentQuestion
@@ -906,22 +851,5 @@ export function PromptComposerView({
 				</div>
 			) : null}
 		</>
-	);
-}
-
-export default function PromptComposer(props: PromptComposerProps) {
-	const convexAuth = useConvexAuth();
-	const usageTime = useUsageTime();
-
-	const usageQuery = useQuery_experimental({
-		query: api.usage.getMyUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now: usageTime } : 'skip'
-	});
-
-	return (
-		<PromptComposerView
-			{...props}
-			usage={usageQuery.status === 'success' ? usageQuery.data : undefined}
-		/>
 	);
 }

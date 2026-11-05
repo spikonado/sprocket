@@ -344,8 +344,10 @@ impl AgentProvider {
     ) -> anyhow::Result<DynModel<Completion>> {
         match self.completion_provider {
             CompletionProvider::Spikonado => {
+                let credential = runtime.issue_gateway_credential(run_id, claim_id).await?;
                 let completion_client = GatewayClient::new(
                     gateway_api_v1_url(&self.gateway_url),
+                    credential,
                     {
                         let runtime = runtime.clone();
                         let run_id = run_id.to_string();

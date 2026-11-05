@@ -72,6 +72,7 @@ impl From<LaunchError> for ApiError {
         let status = match &error {
             LaunchError::Rejected(_) => StatusCode::BAD_REQUEST,
             LaunchError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            LaunchError::UsageLimitReached(_) => StatusCode::TOO_MANY_REQUESTS,
             LaunchError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {

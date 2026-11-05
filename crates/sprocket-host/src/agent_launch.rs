@@ -6,6 +6,7 @@ use serde::Deserialize;
 use sprocket_agent::{
     CompletionProvider, RunAgentRequest, finalize_failed_start, run_agent, start_agent_run,
 };
+use sprocket_convex::{ConvexErrorCode, convex_error_code};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
@@ -67,19 +68,31 @@ pub struct LaunchedRun {
 pub enum LaunchError {
     Rejected(anyhow::Error),
     Unauthorized(anyhow::Error),
+    /// Every provider the run could use is out of usage. The prompt was never written.
+    UsageLimitReached(anyhow::Error),
     Internal(anyhow::Error),
 }
 
 impl std::fmt::Display for LaunchError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Rejected(error) | Self::Unauthorized(error) => write!(formatter, "{error}"),
+            Self::Rejected(error) | Self::Unauthorized(error) | Self::UsageLimitReached(error) => {
+                write!(formatter, "{error}")
+            }
             Self::Internal(error) => write!(formatter, "{error:#}"),
         }
     }
 }
 
 impl std::error::Error for LaunchError {}
+
+fn start_failure(error: &anyhow::Error) -> LaunchError {
+    if convex_error_code(error) == Some(ConvexErrorCode::UsageLimitReached) {
+        LaunchError::UsageLimitReached(anyhow!("{error}"))
+    } else {
+        LaunchError::Internal(anyhow!("failed to start agent run: {error:#}"))
+    }
+}
 
 pub async fn launch_agent(
     host: Host,
@@ -349,7 +362,7 @@ async fn launch_agent_inner(
                         // The run can begin and end within one poll.
                         let prompt_written = prompt_written_receiver.try_recv().is_ok();
                         let started = match &result {
-                            Err(error) if !prompt_written => Err(format!("{error:#}")),
+                            Err(error) if !prompt_written => Err(start_failure(error)),
                             _ => Ok((run_id.clone(), thread_id.clone(), !prompt_written)),
                         };
                         let _ = start_result_sender.send(started);
@@ -371,19 +384,18 @@ async fn launch_agent_inner(
                 }
             }
             Err(error) => {
-                let error = format!("{error:#}");
-                if start_result_sender.send(Err(error.clone())).is_err() {
+                if let Err(Err(error)) = start_result_sender.send(Err(start_failure(&error))) {
                     eprintln!("sprocket-server: detached agent launch failed: {error}");
                 }
             }
         }
     });
 
-    let (run_id, thread_id, stopped) = start_result_receiver
-        .await
-        .map_err(|_| anyhow!("agent launch task stopped unexpectedly"))
-        .and_then(|started| started.map_err(|error| anyhow!(error)))
-        .map_err(|error| LaunchError::Internal(error.context("failed to start agent run")))?;
+    let (run_id, thread_id, stopped) = start_result_receiver.await.map_err(|_| {
+        LaunchError::Internal(anyhow!(
+            "failed to start agent run: agent launch task stopped unexpectedly"
+        ))
+    })??;
     Ok(LaunchedRun {
         run_id,
         thread_id,

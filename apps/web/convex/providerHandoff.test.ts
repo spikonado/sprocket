@@ -8,6 +8,7 @@ import {
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
+	seedTiers,
 	type ConvexTestInstance
 } from './test.setup';
 
@@ -210,6 +211,7 @@ describe('provider handoff credential authorization', () => {
 		async ({ source, target }) => {
 			vi.stubEnv('MODEL_GATEWAY_TOKEN_SECRET', 'gateway-test-secret');
 			const t = initConvexTest();
+			await seedTiers(t);
 			const { threadId } = await seedOwnedThread(t);
 			await historicalRun(t, threadId, source);
 			const run = await currentRun(t, threadId, target);

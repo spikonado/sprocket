@@ -59,3 +59,32 @@ fn requires_fast_mode() {
     json["serviceTier"] = "fast".into();
     assert!(serde_json::from_value::<AgentLaunchRequest>(json).is_err());
 }
+
+#[test]
+fn exhausted_usage_fails_the_launch_with_the_plain_limit_message() {
+    let data = [
+        ("code", "USAGE_LIMIT_REACHED"),
+        ("message", "Usage limit reached. Try again in 3h 20m."),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_string(), value.into()))
+    .collect();
+    let error = sprocket_convex::decode_function_result::<()>(
+        convex::FunctionResult::ConvexError(convex::ConvexError {
+            message: String::new(),
+            data: convex::Value::Object(data),
+        }),
+        "agentRuntime:issueGatewayCredential",
+    )
+    .unwrap_err();
+    let failure = start_failure(&error);
+    assert!(matches!(failure, LaunchError::UsageLimitReached(_)));
+    assert_eq!(
+        failure.to_string(),
+        "Usage limit reached. Try again in 3h 20m."
+    );
+    assert_eq!(
+        start_failure(&anyhow!("boom")).to_string(),
+        "failed to start agent run: boom"
+    );
+}
