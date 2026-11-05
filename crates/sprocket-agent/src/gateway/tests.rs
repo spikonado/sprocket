@@ -92,7 +92,7 @@ async fn completion_and_stream_use_the_refreshed_credential() {
         captured
     });
     let issued = Arc::new(AtomicUsize::new(0));
-    let client = GatewayClient::new(base_url, {
+    let issue_credential = {
         let issued = issued.clone();
         move || {
             let number = issued.fetch_add(1, Ordering::SeqCst) + 1;
@@ -103,7 +103,9 @@ async fn completion_and_stream_use_the_refreshed_credential() {
                 })
             }
         }
-    });
+    };
+    let credential = issue_credential().await.unwrap();
+    let client = GatewayClient::new(base_url, credential, issue_credential);
     let model = client.completion_model("test-model", "Base instructions.");
     timeout(TEST_TIMEOUT, model.call(request()))
         .await
@@ -147,7 +149,7 @@ async fn completion_and_stream_use_the_refreshed_credential() {
 #[tokio::test(start_paused = true)]
 async fn concurrent_requests_reuse_the_cache_and_refresh_before_expiry() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new({
+    let auth = GatewayAuth::new(None, {
         let issued = issued.clone();
         move || {
             let issued = issued.clone();
@@ -185,7 +187,7 @@ async fn concurrent_requests_reuse_the_cache_and_refresh_before_expiry() {
 #[tokio::test]
 async fn failed_refresh_can_retry_without_using_the_stale_credential() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new({
+    let auth = GatewayAuth::new(None, {
         let issued = issued.clone();
         move || {
             let attempt = issued.fetch_add(1, Ordering::SeqCst);
@@ -210,7 +212,7 @@ async fn failed_refresh_can_retry_without_using_the_stale_credential() {
 #[tokio::test]
 async fn credentials_within_the_refresh_headroom_are_rejected() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new({
+    let auth = GatewayAuth::new(None, {
         let issued = issued.clone();
         move || {
             let issued = issued.clone();
@@ -237,7 +239,7 @@ async fn credentials_within_the_refresh_headroom_are_rejected() {
 #[tokio::test(start_paused = true)]
 async fn wall_clock_expired_cache_entry_is_not_reused() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new({
+    let auth = GatewayAuth::new(None, {
         let issued = issued.clone();
         move || {
             let issued = issued.clone();
@@ -258,7 +260,11 @@ async fn wall_clock_expired_cache_entry_is_not_reused() {
 
 #[tokio::test]
 async fn credential_failures_reach_both_inference_paths() {
-    let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), || async {
+    let expired = GatewayCredential {
+        token: "expired".into(),
+        expires_at: now_ms(),
+    };
+    let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), expired, || async {
         Err::<GatewayCredential, _>(anyhow::anyhow!("Run is no longer active."))
     });
     let model = client.completion_model("test-model", "Base instructions.");

@@ -23,6 +23,17 @@ struct CachedCredential {
     refresh_at: Instant,
 }
 
+impl CachedCredential {
+    fn fresh(credential: GatewayCredential) -> Option<Self> {
+        let remaining_ms = credential.expires_at.saturating_sub(now_ms());
+        (remaining_ms > REFRESH_HEADROOM_MS).then(|| Self {
+            token: credential.token,
+            expires_at: credential.expires_at,
+            refresh_at: Instant::now() + Duration::from_millis(remaining_ms - REFRESH_HEADROOM_MS),
+        })
+    }
+}
+
 #[derive(Clone)]
 struct GatewayAuth<F> {
     issue_credential: F,
@@ -34,10 +45,10 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<GatewayCredential>>,
 {
-    fn new(issue_credential: F) -> Self {
+    fn new(credential: Option<GatewayCredential>, issue_credential: F) -> Self {
         Self {
             issue_credential,
-            cached: Arc::default(),
+            cached: Arc::new(Mutex::new(credential.and_then(CachedCredential::fresh))),
         }
     }
 
@@ -52,18 +63,13 @@ where
         let credential = (self.issue_credential)()
             .await
             .map_err(|error| http_client::Error::Instance(error.into()))?;
-        let remaining_ms = credential.expires_at.saturating_sub(now_ms());
-        if remaining_ms <= REFRESH_HEADROOM_MS {
-            return Err(http_client::Error::Instance(
+        let fresh = CachedCredential::fresh(credential).ok_or_else(|| {
+            http_client::Error::Instance(
                 "Gateway returned a credential too close to expiry.".into(),
-            ));
-        }
-        let token = credential.token.clone();
-        *cached = Some(CachedCredential {
-            token: token.clone(),
-            expires_at: credential.expires_at,
-            refresh_at: Instant::now() + Duration::from_millis(remaining_ms - REFRESH_HEADROOM_MS),
-        });
+            )
+        })?;
+        let token = fresh.token.clone();
+        *cached = Some(fresh);
         Ok(token)
     }
 }
@@ -95,12 +101,18 @@ pub(crate) struct GatewayClient {
 }
 
 impl GatewayClient {
-    pub(crate) fn new<F, Fut>(base_url: String, issue_credential: F) -> Self
+    /// `credential` was issued before the run began, so an exhausted quota
+    /// fails the run before its prompt is written.
+    pub(crate) fn new<F, Fut>(
+        base_url: String,
+        credential: GatewayCredential,
+        issue_credential: F,
+    ) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
     {
-        let auth = GatewayAuth::new(issue_credential);
+        let auth = GatewayAuth::new(Some(credential), issue_credential);
         let http =
             DynHttpClient::new(ReqwestClient::from(reqwest::Client::new())).with_middleware(auth);
         Self { base_url, http }

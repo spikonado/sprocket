@@ -59,6 +59,47 @@ describe('gateway quota', () => {
 		);
 	}, 15_000);
 
+	it('refuses a credential once usage is exhausted', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		await t.run(async (ctx) => {
+			const free = await ctx.db
+				.query('tiers')
+				.withIndex('by_tierId', (q) => q.eq('tierId', 'free'))
+				.unique();
+
+			if (!free) throw new Error('Missing Free tier.');
+			await ctx.db.patch('tiers', free._id, { monthly: 0 });
+		});
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'gateway-secret';
+		const claimId = 'claim-gateway-exhausted';
+
+		const created = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'gateway-run-exhausted',
+			executionSecret
+		);
+
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId,
+			executionSecret
+		});
+
+		await expect(
+			t.mutation(api.agentRuntime.issueGatewayCredential, {
+				runId: created.runId,
+				claimId,
+				executionSecret
+			})
+		).rejects.toMatchObject({
+			data: { code: 'USAGE_LIMIT_REACHED', message: expect.stringMatching(/^Usage limit reached/) }
+		});
+	}, 15_000);
+
 	it('rejects invalid quota charges without touching usage', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);

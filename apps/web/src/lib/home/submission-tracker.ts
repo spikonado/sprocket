@@ -2,9 +2,22 @@ import { useMemo, useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import type { CatalogModelId } from '$lib/chat/model-catalog';
+import { LocalResponseError } from '$lib/local/transport';
+
+export class UsageLimitError {
+	constructor(readonly message: string) {}
+}
+
+export type ComposerError = string | UsageLimitError;
+
+export function launchError(error: Error): ComposerError {
+	return error instanceof LocalResponseError && error.status === 429
+		? new UsageLimitError(error.message)
+		: error.message;
+}
 
 type ComposerRecovery = {
-	message: string | null;
+	message: ComposerError | null;
 	prompt: string;
 	attachments?: ComposerAttachment[];
 	storageIds?: Id<'_storage'>[];

@@ -223,7 +223,7 @@ fn transient(error: &anyhow::Error) -> bool {
         .is_some_and(|error| error.is_timeout() || error.is_connect() || error.is_body())
         || error
             .downcast_ref::<HttpError>()
-            .is_some_and(|error| matches!(error.status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504))
+            .is_some_and(|error| matches!(error.status.as_u16(), 408 | 500 | 502 | 503 | 504))
 }
 
 fn validate_local_url(value: &str) -> anyhow::Result<()> {

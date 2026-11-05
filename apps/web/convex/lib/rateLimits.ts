@@ -177,7 +177,10 @@ async function checkMeterLimits(
 export async function gatewayQuotaStatus(
 	ctx: GenericMutationCtx<DataModel>,
 	userId: string
-): Promise<{ tier: SubscriptionTier; exhausted: boolean; message?: string }> {
+): Promise<
+	| { tier: SubscriptionTier; exhausted: false }
+	| { tier: SubscriptionTier; exhausted: true; message: string }
+> {
 	const now = Date.now();
 	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 	const limits = await resolveTierLimits(ctx, tier);

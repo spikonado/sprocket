@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import ComposerNotice from './composer-notice';
 import Button from '$lib/components/ui/button/button';
 import { CATALOG_UNAVAILABLE_MESSAGE } from '$lib/chat/model-catalog';
+import { UsageLimitError, type ComposerError } from '$lib/home/submission-tracker';
 
 type Props = {
-	error: string | null;
+	error: ComposerError | null;
 	runError: string | null;
 	reconnecting: boolean;
 	syncing: boolean;
@@ -22,14 +23,21 @@ export default function ConversationNotices({
 	catalogLoading,
 	onRetryCatalog
 }: Props) {
+	const errorMessage = error instanceof UsageLimitError ? error.message : error;
+
 	return (
 		<>
-			{error ? (
+			{error instanceof UsageLimitError ? (
+				<ComposerNotice title="You're out of usage">
+					{error.message} Upgrade your subscription or connect another provider in Settings to keep
+					going.
+				</ComposerNotice>
+			) : error ? (
 				<ComposerNotice title="Something went wrong" tone="error">
 					{error}
 				</ComposerNotice>
 			) : null}
-			{runError && runError !== error ? (
+			{runError && runError !== errorMessage ? (
 				<ComposerNotice title="Run couldn't continue">{runError}</ComposerNotice>
 			) : null}
 			{reconnecting ? (

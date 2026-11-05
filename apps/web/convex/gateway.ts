@@ -37,7 +37,7 @@ export const checkQuota = mutation({
 			exhausted: status.exhausted
 		};
 
-		if (status.message) {
+		if (status.exhausted) {
 			result.message = status.message;
 		}
 

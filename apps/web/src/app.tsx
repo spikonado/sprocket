@@ -86,7 +86,13 @@ import {
 	type MarkdownFileLinks
 } from '$lib/chat/markdown-file-links';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
-import { getComposerRecoveryKey, useSubmissionTracker } from '$lib/home/submission-tracker';
+import {
+	getComposerRecoveryKey,
+	launchError,
+	useSubmissionTracker,
+	UsageLimitError,
+	type ComposerError
+} from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
@@ -521,7 +527,7 @@ export default function App({
 	);
 
 	const [autoSubmitComposerContinuation, setAutoSubmitComposerContinuation] = useState(false);
-	const [currentError, setCurrentError] = useState<string | null>(null);
+	const [currentError, setCurrentError] = useState<ComposerError | null>(null);
 
 	const [pendingAgentLaunches, setPendingAgentLaunches] = useState<PendingAgentLaunches>({});
 	const [hasResolvedInitialSelection, setHasResolvedInitialSelection] = useState(false);
@@ -1814,7 +1820,7 @@ export default function App({
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 
-		const recoverSubmission = (message: string | null, submissionId?: string) => {
+		const recoverSubmission = (message: ComposerError | null, submissionId?: string) => {
 			submissions.storeRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
@@ -1949,7 +1955,7 @@ export default function App({
 					clearLaunch();
 					// The server answered, so any run it created has already failed.
 					recoverSubmission(
-						error instanceof Error ? error.message : 'Failed to start the local agent run.',
+						launchError(error),
 						error instanceof LocalResponseError ? crypto.randomUUID() : undefined
 					);
 				},
@@ -2107,7 +2113,7 @@ export default function App({
 
 					if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId)
 						return;
-					setCurrentError(error.message);
+					setCurrentError(launchError(error));
 				},
 				onStarted: () => {},
 				onStopped: () => {
@@ -2542,7 +2548,10 @@ export default function App({
 		return (
 			<CalmCentered
 				title="Connect to Sprocket"
-				description={currentError ?? 'Open Sprocket from the desktop app or CLI to continue.'}
+				description={
+					(currentError instanceof UsageLimitError ? currentError.message : currentError) ??
+					'Open Sprocket from the desktop app or CLI to continue.'
+				}
 			/>
 		);
 	}

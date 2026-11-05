@@ -3,7 +3,7 @@ import { act } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
-import type { PromptComposerViewProps } from './prompt-composer';
+import type { PromptComposerProps } from './prompt-composer';
 import type { WorkspaceSearchResult } from '$lib/types/sprocket';
 import { fixtureId } from '$lib/convex-test-client';
 
@@ -41,7 +41,7 @@ const skills = [
 	{ name: 'zap', description: 'Zap tooling', disableModelInvocation: true }
 ];
 
-function composerProps(overrides: Partial<PromptComposerViewProps> = {}): PromptComposerViewProps {
+function composerProps(overrides: Partial<PromptComposerProps> = {}): PromptComposerProps {
 	return {
 		attachments: [],
 		onAttachFiles: vi.fn(),
@@ -51,14 +51,13 @@ function composerProps(overrides: Partial<PromptComposerViewProps> = {}): Prompt
 		isStarting: false,
 		isRunning: false,
 		isWorking: false,
-		usage: undefined,
 		onSubmit: vi.fn(),
 		onCancel: vi.fn(),
 		...overrides
 	};
 }
 
-function renderComposer(overrides: Partial<PromptComposerViewProps> = {}) {
+function renderComposer(overrides: Partial<PromptComposerProps> = {}) {
 	const props = composerProps(overrides);
 	const view = render(<PromptComposerTestHarness composerProps={props} />);
 	const composer = document.querySelector<HTMLElement>('[aria-label="Message composer"]');
@@ -72,7 +71,7 @@ function renderComposer(overrides: Partial<PromptComposerViewProps> = {}) {
 		props,
 		composer,
 		textarea,
-		rerender: (next: PromptComposerViewProps) =>
+		rerender: (next: PromptComposerProps) =>
 			view.rerender(<PromptComposerTestHarness composerProps={next} />)
 	};
 }
@@ -247,7 +246,7 @@ describe('PromptComposer workspace path mentions', () => {
 		{ path: 'src/my components', kind: 'directory' as const }
 	];
 
-	function renderWithPathSearch(overrides: Partial<PromptComposerViewProps> = {}) {
+	function renderWithPathSearch(overrides: Partial<PromptComposerProps> = {}) {
 		return renderComposer({
 			projectPaths: {
 				workspacePath: '/workspace',
@@ -273,7 +272,6 @@ describe('PromptComposer workspace path mentions', () => {
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null },
 			projectPaths:
 				state === 'unavailable'
 					? null
@@ -397,8 +395,7 @@ describe('PromptComposer submission', () => {
 			modelCatalog,
 			selectedModel: 'model-one',
 			prompt: 'Hello',
-			onPromptChange: vi.fn(),
-			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+			onPromptChange: vi.fn()
 		});
 
 		const event = await pressKey(textarea, { key: 'Enter' });
@@ -435,8 +432,7 @@ describe('PromptComposer submission', () => {
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
-			prompt: 'Hello',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+			prompt: 'Hello'
 		});
 
 		await pressKey(textarea, { key: 'Enter' });
@@ -449,27 +445,11 @@ describe('PromptComposer submission', () => {
 		expect(props.onSubmit).toHaveBeenCalledOnce();
 	});
 
-	it('explains the limit when usage is exhausted and leaves sending to the server', async () => {
-		const { props, textarea } = renderComposer({
-			modelCatalog,
-			selectedModel: 'model-one',
-			prompt: 'Hello',
-			usage: { tier: 'pro', exhausted: true, resetsAt: null }
-		});
-
-		const alert = document.querySelector('[role="alert"]');
-		expect(alert?.textContent).toContain("You're out of usage");
-		expect(alert?.textContent).toContain('Upgrade your subscription to keep going.');
-		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).toHaveBeenCalledOnce();
-	});
-
 	it('allows retrying after a run failure', async () => {
 		const { props, composer, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
 			prompt: 'Try again',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null },
 			notices: <div role="alert">A previous run failed.</div>
 		});
 
@@ -548,8 +528,7 @@ describe('PromptComposer skill menu', () => {
 		const { textarea, props } = renderComposer({
 			projectSkills: { workspacePath: '/demo', load: async () => skills },
 			modelCatalog,
-			selectedModel: 'model-one',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+			selectedModel: 'model-one'
 		});
 
 		await typeInComposer(textarea, 'inspect /tmp');
@@ -915,70 +894,36 @@ describe('PromptComposer model selection', () => {
 		);
 	});
 
-	it.each(['free', 'go', 'budget', 'pro', 'enterprise', undefined])(
-		'selects every model and resets reasoning on tier %s',
-		async (tier) => {
-			const onSelectedModelChange = vi.fn();
-			const onSelectedReasoningEffortChange = vi.fn();
-			renderComposer({
-				modelCatalog,
-				selectedModel: 'model-one',
-				selectedReasoningEffort: 'medium',
-				usage: tier === undefined ? undefined : { tier, exhausted: false, resetsAt: null },
-				onSelectedModelChange,
-				onSelectedReasoningEffortChange
-			});
-
-			await click(screen.getByRole('button', { name: 'Select model' }));
-			await click(
-				within(screen.getByRole('dialog', { name: 'Model' })).getByRole('button', {
-					name: 'Model Two'
-				})
-			);
-
-			expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
-			expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
-		}
-	);
-
-	it('keeps the selected model when the subscription tier loads and changes', async () => {
+	it('selects another model and resets reasoning', async () => {
 		const onSelectedModelChange = vi.fn();
-
-		const { props, rerender, textarea } = renderComposer({
+		const onSelectedReasoningEffortChange = vi.fn();
+		renderComposer({
 			modelCatalog,
-			selectedModel: 'model-two',
-			selectedReasoningEffort: 'high',
-			prompt: 'Hello',
-			onSelectedModelChange
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange,
+			onSelectedReasoningEffortChange
 		});
 
-		await act(async () => {
-			rerender({ ...props, usage: { tier: 'free', exhausted: false, resetsAt: null } });
-		});
-		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onSubmit).toHaveBeenCalledOnce();
-		await act(async () => {
-			rerender({ ...props, usage: { tier: 'pro', exhausted: false, resetsAt: null } });
-		});
-		expect(document.querySelector('[aria-label="Select model"]')?.textContent).toContain(
-			'Model Two'
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		await click(
+			within(screen.getByRole('dialog', { name: 'Model' })).getByRole('button', {
+				name: 'Model Two'
+			})
 		);
-		expect(onSelectedModelChange).not.toHaveBeenCalled();
+
+		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
+		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
 	});
 });
 
 describe('PromptComposer Fast mode', () => {
-	it.each([
-		{ tier: 'free', usage: { tier: 'free', exhausted: false, resetsAt: null } },
-		{ tier: 'paid', usage: { tier: 'paid', exhausted: false, resetsAt: null } },
-		{ tier: 'loading', usage: undefined }
-	])('offers and toggles Fast for a supported model on $tier', async ({ usage }) => {
+	it('offers and toggles Fast for a supported model', async () => {
 		const onFastModeChange = vi.fn();
 		renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
 			selectedReasoningEffort: 'medium',
-			usage,
 			onFastModeChange
 		});
 
@@ -1012,27 +957,6 @@ describe('PromptComposer Fast mode', () => {
 		expect(onSelectedModelChange).not.toHaveBeenCalled();
 	});
 
-	it('keeps Fast on when the subscription tier loads and changes', async () => {
-		const onFastModeChange = vi.fn();
-
-		const { props, rerender } = renderComposer({
-			modelCatalog,
-			selectedModel: 'model-one',
-			selectedReasoningEffort: 'medium',
-			fastMode: true,
-			onFastModeChange
-		});
-
-		await act(async () => {
-			rerender({ ...props, usage: { tier: 'free', exhausted: false, resetsAt: null } });
-		});
-		await act(async () => {
-			rerender({ ...props, usage: { tier: 'pro', exhausted: false, resetsAt: null } });
-		});
-
-		expect(onFastModeChange).not.toHaveBeenCalledWith(false);
-	});
-
 	it('turns Fast off only when the model does not support it', async () => {
 		const onFastModeChange = vi.fn();
 		renderComposer({
@@ -1040,7 +964,6 @@ describe('PromptComposer Fast mode', () => {
 			selectedModel: 'model-two',
 			selectedReasoningEffort: 'high',
 			fastMode: true,
-			usage: { tier: 'pro', exhausted: false, resetsAt: null },
 			onFastModeChange
 		});
 
