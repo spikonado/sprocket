@@ -708,6 +708,10 @@ export async function installUpdate(host) {
 					install.installArgs(packageSpec(currentVersion, LEGACY_PACKAGE_NAME))
 				);
 
+				if (restored.timedOut || restored.uncertain) {
+					return failure(restored);
+				}
+
 				return failure(
 					result,
 					succeeded(restored)
