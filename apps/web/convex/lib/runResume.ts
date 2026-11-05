@@ -13,13 +13,17 @@ export function isContinuableRunStatus(
 }
 
 export function assertContinuableParent<
-	T extends { _id: Id<'runs'>; status: Doc<'runs'>['status'] }
+	T extends Pick<Doc<'runs'>, '_id' | 'status' | 'pendingPrompt'>
 >(latest: T | null, parentRunId: Id<'runs'>, recordsPrompt: boolean): T {
 	if (!latest || latest._id !== parentRunId) {
 		throw new ConvexError(ONLY_LATEST_RUN_CAN_CONTINUE);
 	}
 
-	if (!isContinuableRunStatus(latest.status, recordsPrompt)) {
+	// The client restores an unsent prompt to the composer, so continuing must not send it too.
+	if (
+		!isContinuableRunStatus(latest.status, recordsPrompt) ||
+		(!recordsPrompt && latest.pendingPrompt !== undefined)
+	) {
 		throw new ConvexError(RUN_CANNOT_CONTINUE);
 	}
 

@@ -240,11 +240,9 @@ export async function createQueuedRunRecord(
 	}
 
 	let taskDeadlineAt = args.taskDeadlineAt;
-	let parentPendingPrompt: Doc<'runs'>['pendingPrompt'];
 
 	if (continuationOfRunId) {
 		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
-		parentPendingPrompt = parent.pendingPrompt;
 
 		const automaticRecovery =
 			args.automaticRecovery === true ||
@@ -276,10 +274,9 @@ export async function createQueuedRunRecord(
 		throw agentError('SUBMISSION_WAITING');
 	}
 
-	// A parent that failed before it began never wrote its prompt.
 	const promptBody = recordsPrompt
 		? { text: prompt, imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds) }
-		: parentPendingPrompt;
+		: undefined;
 
 	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
 		threadId: threadRecord._id,

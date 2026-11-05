@@ -3,6 +3,7 @@ import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { RUN_CANNOT_CONTINUE } from '@convex/lib/runResume';
 import type { ModelCallUsage } from '@convex/lib/validators';
 import {
 	createQueuedRun,
@@ -793,18 +794,19 @@ describe('agentRuntime context accounting', () => {
 		expect(run).toMatchObject({ status: 'failed', pendingPrompt: { text: 'Lost before begin' } });
 		expect(thread?.archivedAt).toBeTypeOf('number');
 
-		const continuation = await insertQueuedRun(t, asUser, {
-			threadId,
-			submissionId: 'continue-never-began',
-			executionSecret,
-			prompt: '',
-			continuationOfRunId: runId,
-			deferPrompt: true
-		});
-
 		await expect(
-			asUser.query(api.agentRuntime.getContext, { runId: continuation.runId, executionSecret })
-		).resolves.toMatchObject({ pendingPrompt: { text: 'Lost before begin' } });
+			insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'continue-never-began',
+				executionSecret,
+				prompt: '',
+				continuationOfRunId: runId,
+				deferPrompt: true
+			})
+		).rejects.toThrow(RUN_CANNOT_CONTINUE);
+		await expect(
+			asUser.query(api.chat.selectedThreadLifecycle, { threadId })
+		).resolves.toMatchObject({ phase: 'failed', run: { promptUnsent: true } });
 	});
 
 	it('does not begin a run the user stopped', async () => {
