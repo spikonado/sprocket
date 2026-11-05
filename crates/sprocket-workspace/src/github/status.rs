@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
 use super::{
-    CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, gh_output, is_valid_host, saved_tokens,
-    settings,
+    CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, credentials, is_valid_host,
+    saved_tokens, settings,
 };
 
 const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -34,8 +34,8 @@ pub struct HostStatus {
 
 pub async fn status(user_id: &str) -> GitHubStatus {
     let (cli_version, cli_hosts, saved) = tokio::join!(
-        gh_output(&["--version"]),
-        gh_output(&["auth", "status", "--json", "hosts"]),
+        credentials::gh_output(&["--version"]),
+        credentials::gh_output(&["auth", "status", "--json", "hosts"]),
         saved_tokens::reload(user_id)
     );
     let settings = settings();
