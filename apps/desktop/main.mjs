@@ -20,14 +20,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
 
+// The rename to Tinker moved Electron's userData dir. Existing installs keep their local storage and single-instance lock there.
+if (app.isPackaged) {
+	const legacyUserDataDir = path.join(app.getPath('appData'), 'Sprocket');
+
+	if (!fs.existsSync(app.getPath('userData')) && fs.existsSync(legacyUserDataDir)) {
+		app.setPath('userData', legacyUserDataDir);
+	}
+}
+
 const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
 
-const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
+const serverPort = Number(process.env.TINKER_PORT ?? defaultServerPort);
 
 // Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
 const serverHost = '127.0.0.1';
 
-const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
+const devRendererUrl = process.env.TINKER_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
 
 const rendererUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
 
@@ -67,7 +76,7 @@ updates.subscribe((state) => {
 	}
 });
 
-const initialWorkspaceLaunch = app.commandLine.getSwitchValue('sprocket-workspace').trim() || null;
+const initialWorkspaceLaunch = app.commandLine.getSwitchValue('tinker-workspace').trim() || null;
 
 const pendingWorkspaceLaunches = initialWorkspaceLaunch ? [initialWorkspaceLaunch] : [];
 
@@ -119,28 +128,31 @@ function requireTrustedRenderer(event) {
 
 function getServerBinaryPath() {
 	if (isDevelopment) {
-		return path.resolve(__dirname, '../../target/debug/sprocket');
+		return path.resolve(__dirname, '../../target/debug/tinker');
 	}
 
-	const executableName = process.platform === 'win32' ? 'sprocket.exe' : 'sprocket';
+	const executableName = process.platform === 'win32' ? 'tinker.exe' : 'tinker';
 
 	return path.join(process.resourcesPath, 'server', executableName);
 }
 
+// Must match the Rust server's default data dir.
 function getDefaultDataDir() {
 	const home = process.env.HOME || process.env.USERPROFILE || '.';
+	const dataDir = path.join(home, '.tinker');
+	const legacyDataDir = path.join(home, '.sprocket');
 
-	return path.join(home, '.sprocket');
+	return !fs.existsSync(dataDir) && fs.existsSync(legacyDataDir) ? legacyDataDir : dataDir;
 }
 
 function getLocalDataDir() {
-	const configured = process.env.SPROCKET_DATA_DIR?.trim();
+	const configured = process.env.TINKER_DATA_DIR?.trim();
 
 	if (configured) {
 		return path.resolve(configured);
 	}
 
-	return isDevelopment ? path.resolve(__dirname, '../../.sprocket-dev') : getDefaultDataDir();
+	return isDevelopment ? path.resolve(__dirname, '../../.tinker-dev') : getDefaultDataDir();
 }
 
 async function attachToRunningServer(baseUrl, dataDir) {
@@ -169,11 +181,11 @@ async function attachToRunningServer(baseUrl, dataDir) {
 	const pairingProof = parsePairingProof(await response.json());
 
 	if (pairingProof === null || pairingProof.httpBaseUrl !== baseUrl) {
-		throw new Error(`The service at ${baseUrl} is not a compatible Sprocket server.`);
+		throw new Error(`The service at ${baseUrl} is not a compatible Tinker server.`);
 	}
 
 	if (!isDevelopment && !pairingProof.webUiEnabled) {
-		throw new Error(`The Sprocket server at ${baseUrl} is running in API-only mode.`);
+		throw new Error(`The Tinker server at ${baseUrl} is running in API-only mode.`);
 	}
 
 	let pairingCredential;
@@ -182,7 +194,7 @@ async function attachToRunningServer(baseUrl, dataDir) {
 		pairingCredential = fs.readFileSync(path.join(dataDir, 'pairing-credential'), 'utf8').trim();
 	} catch (error) {
 		throw new Error(
-			`The Sprocket server at ${baseUrl} uses a different data directory. Set SPROCKET_DATA_DIR to match it.`,
+			`The Tinker server at ${baseUrl} uses a different data directory. Set TINKER_DATA_DIR to match it.`,
 			{ cause: error }
 		);
 	}
@@ -200,7 +212,7 @@ async function attachToRunningServer(baseUrl, dataDir) {
 		!timingSafeEqual(receivedProof, expectedProof)
 	) {
 		throw new Error(
-			`The Sprocket server at ${baseUrl} uses a different data directory. Set SPROCKET_DATA_DIR to match it.`
+			`The Tinker server at ${baseUrl} uses a different data directory. Set TINKER_DATA_DIR to match it.`
 		);
 	}
 
@@ -243,18 +255,18 @@ async function startLocalServer() {
 
 	const serverEnv = {
 		...process.env,
-		SPROCKET_HOST: host,
-		SPROCKET_PORT: String(port),
-		SPROCKET_DATA_DIR: dataDir,
-		SPROCKET_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken
+		TINKER_HOST: host,
+		TINKER_PORT: String(port),
+		TINKER_DATA_DIR: dataDir,
+		TINKER_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken
 	};
 
-	delete serverEnv.SPROCKET_UPDATE_NODE;
-	delete serverEnv.SPROCKET_UPDATE_SCRIPT;
-	delete serverEnv.SPROCKET_UPDATE_MANAGED;
+	delete serverEnv.TINKER_UPDATE_NODE;
+	delete serverEnv.TINKER_UPDATE_SCRIPT;
+	delete serverEnv.TINKER_UPDATE_MANAGED;
 
 	if (staticDir) {
-		serverEnv.SPROCKET_STATIC_DIR = staticDir;
+		serverEnv.TINKER_STATIC_DIR = staticDir;
 	}
 
 	serverProcess = spawn(serverBinary, args, {
@@ -263,7 +275,7 @@ async function startLocalServer() {
 	});
 	serverProcess.once('error', (error) => {
 		if (!isQuitting) {
-			reportFatalError('Failed to start Sprocket server', error);
+			reportFatalError('Failed to start Tinker server', error);
 			app.quit();
 		}
 	});
@@ -271,7 +283,7 @@ async function startLocalServer() {
 	serverProcess.stdout?.on('data', (chunk) => {
 		const text = chunk.toString();
 		process.stdout.write(text);
-		const match = text.match(/SPROCKET_LISTENING=(.+)/);
+		const match = text.match(/TINKER_LISTENING=(.+)/);
 
 		if (match?.[1]) {
 			serverBaseUrl = match[1].trim();
@@ -287,9 +299,9 @@ async function startLocalServer() {
 
 	serverProcess.on('exit', async (code, signal) => {
 		if (signal) {
-			console.warn(`Sprocket local server exited via signal ${signal}`);
+			console.warn(`Tinker local server exited via signal ${signal}`);
 		} else if (code && code !== 0) {
-			console.error(`Sprocket local server exited with code ${code}`);
+			console.error(`Tinker local server exited with code ${code}`);
 		}
 
 		if (isQuitting) return;
@@ -307,7 +319,7 @@ async function startLocalServer() {
 			: `The local server exited with code ${code ?? 0}.`;
 
 		reportFatalError(
-			'Sprocket server stopped',
+			'Tinker server stopped',
 			new Error(`${exitReason}\n\n${serverStderrTail.trim()}`.trim())
 		);
 		app.quit();
@@ -318,7 +330,7 @@ async function startLocalServer() {
 
 	const bootstrapResponse = await fetch(`${serverBaseUrl}/api/auth/desktop-bootstrap`, {
 		headers: {
-			'x-sprocket-desktop-bootstrap-token': desktopBootstrapToken
+			'x-tinker-desktop-bootstrap-token': desktopBootstrapToken
 		},
 		signal: AbortSignal.timeout(10_000)
 	});
@@ -476,7 +488,7 @@ function createMainWindow() {
 	});
 
 	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
-		reportFatalError('Failed to load Sprocket', error);
+		reportFatalError('Failed to load Tinker', error);
 		app.quit();
 	});
 
@@ -519,7 +531,7 @@ function confirmDiscardUnsavedChanges() {
 	const choice = dialog.showMessageBoxSync(mainWindowRef, {
 		type: 'question',
 		buttons: ['Leave', 'Stay'],
-		title: 'Leave Sprocket?',
+		title: 'Leave Tinker?',
 		message: 'Changes you made may not be saved.',
 		defaultId: 0,
 		cancelId: 1
@@ -580,7 +592,7 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 				}
 			} catch (error) {
 				isQuitting = false;
-				reportFatalError('Failed to install Sprocket update', error);
+				reportFatalError('Failed to install Tinker update', error);
 			}
 		}
 
@@ -700,7 +712,7 @@ if (hasSingleInstanceLock) {
 	app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
 		queueWorkspaceLaunch(additionalData?.workspacePath);
 		void showDesktopApp().catch((error) => {
-			console.error('Failed to handle Sprocket launch request', error);
+			console.error('Failed to handle Tinker launch request', error);
 		});
 	});
 
@@ -715,13 +727,13 @@ if (hasSingleInstanceLock) {
 	void serverReadyPromise
 		.then(() => showDesktopApp())
 		.catch((error) => {
-			reportFatalError('Failed to start Sprocket', error);
+			reportFatalError('Failed to start Tinker', error);
 			app.quit();
 		});
 
 	app.on('activate', () => {
 		void showDesktopApp().catch((error) => {
-			console.error('Failed to show Sprocket desktop app', error);
+			console.error('Failed to show Tinker desktop app', error);
 		});
 	});
 }
@@ -753,7 +765,7 @@ app.on('before-quit', (event) => {
 			}
 		})
 		.catch((error) => {
-			reportFatalError('Failed to stop Sprocket server', error);
+			reportFatalError('Failed to stop Tinker server', error);
 			app.exit(1);
 		});
 });

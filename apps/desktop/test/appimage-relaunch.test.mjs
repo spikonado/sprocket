@@ -13,9 +13,9 @@ const testFile = fileURLToPath(import.meta.url);
 
 const relaunchArgs = ['renamed AppImage', '$(exit 47)', '"; exit 48; #'];
 
-const rolePrefix = '--sprocket-appimage-role=';
+const rolePrefix = '--tinker-appimage-role=';
 
-const originalPidPrefix = '--sprocket-original-pid=';
+const originalPidPrefix = '--tinker-original-pid=';
 
 function createTestUpdater(spawnLog) {
 	return createAppImageUpdater(

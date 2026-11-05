@@ -78,21 +78,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check native server
-        run: cargo check --locked -p sprocket-server
+        run: cargo check --locked -p tinker-server
       - name: Test native credential storage
-        run: cargo test --locked -p sprocket-host native_auth::credentials::tests
+        run: cargo test --locked -p tinker-host native_auth::credentials::tests
       - name: Test private file permissions
-        run: cargo test --locked -p sprocket-host profile::tests
+        run: cargo test --locked -p tinker-host profile::tests
       - name: Test workspace patch replacement
-        run: cargo test --locked -p sprocket-workspace patch::tests
+        run: cargo test --locked -p tinker-workspace patch::tests
       - name: Test workspace command shells
-        run: cargo test --locked -p sprocket-workspace command_shell
+        run: cargo test --locked -p tinker-workspace command_shell
       - name: Test failed command launch cleanup
-        run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
+        run: cargo test --locked -p tinker-workspace commands::tests::failed_process_launch
       - name: Test zombie process group cleanup
-        run: cargo test --locked -p sprocket-workspace commands::tests::stopping_a_process_group_of_only_zombies
+        run: cargo test --locked -p tinker-workspace commands::tests::stopping_a_process_group_of_only_zombies
       - name: Test pinned tool installs
-        run: cargo test --locked -p sprocket-host -- tool_install::tests python_install::tests
+        run: cargo test --locked -p tinker-host -- tool_install::tests python_install::tests
 
   web:
     needs: changes
@@ -105,15 +105,15 @@ jobs:
       - uses: ./.github/actions/setup-nix-shell
 
       - name: Bun install
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./tinker-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
 
       - name: Build web
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./tinker-shell -c bash -e {0}'
         run: bun run --cwd apps/web build
 
       - name: Bun test
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./tinker-shell -c bash -e {0}'
         run: bun run test
 
   rust:
@@ -130,12 +130,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cmd-format: nix develop ./sprocket-shell -c {0}
+          cmd-format: nix develop ./tinker-shell -c {0}
           # Cached build scripts embed Nix interpreter paths from flake.lock.
           prefix-key: v0-rust-${{ hashFiles('flake.lock') }}
 
       - name: Cargo test
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./tinker-shell -c bash -e {0}'
         run: cargo test --locked
 
   # The one check the ruleset requires. A skipped matrix job reports under its unexpanded name,

@@ -1,0 +1,58 @@
+mod agents;
+mod apply_patch_format;
+pub mod artifact_bindings;
+mod artifacts;
+pub mod async_tools;
+mod browse;
+mod builtin_skills;
+mod cancellation;
+mod command_history;
+mod command_output;
+mod command_shell;
+mod commands;
+mod git_repository;
+pub mod github;
+mod patch;
+mod paths;
+mod project_root;
+mod skill_name;
+mod skills;
+#[cfg(test)]
+mod test_support;
+mod workspace;
+mod workspace_files;
+
+pub const TINKER_VERSION: &str = match option_env!("TINKER_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+pub use agents::{WorkspaceInstruction, WorkspaceInstructionSource, load_workspace_instructions};
+pub use artifacts::{ArtifactFile, MAX_ARTIFACT_BYTES, read_artifact_file};
+pub use browse::{
+    FilesystemBrowseEntry, FilesystemBrowseResult, browse_filesystem,
+    resolve_or_create_workspace_root,
+};
+pub use builtin_skills::BUILTIN_SKILLS;
+pub use cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
+pub use command_history::{CommandHistory, history_path};
+pub use command_output::CommandOutputLimits;
+pub use command_shell::default_command_shell;
+pub use commands::{
+    CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
+    RunningCommand,
+};
+pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};
+pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};
+pub use paths::{home_dir, resolve_directory, simplified_path};
+pub use skills::{
+    SkillSource, WorkspaceSkill, WorkspaceSkills, default_user_skills_dirs, load_workspace_skills,
+    read_skill_content,
+};
+pub use workspace::resolve_workspace_root;
+pub use workspace_files::{
+    MAX_EDITABLE_FILE_BYTES, UnsupportedFile, WorkspaceEntryKind, WorkspaceFileContent,
+    WorkspaceFileWrite, WorkspaceText, create_workspace_entry, delete_workspace_entry,
+    read_workspace_file, read_workspace_text, rename_workspace_entry, workspace_entry_kind,
+    write_workspace_file,
+};

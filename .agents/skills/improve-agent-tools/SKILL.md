@@ -1,6 +1,6 @@
 ---
 name: improve-agent-tools
-description: Audit Sprocket's agent tools one group at a time and cut their descriptions, schemas, outputs, and mechanisms down to what the model needs.
+description: Audit Tinker's agent tools one group at a time and cut their descriptions, schemas, outputs, and mechanisms down to what the model needs.
 disable-model-invocation: true
 ---
 
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 ## Steps
 
-1. Map what the model reads about the tools: the tools in `crates/sprocket-agent/src/tools/`, their Convex jobs in `apps/web/convex/`, `crates/sprocket-agent/src/system_prompt.md`, `crates/sprocket-agent/src/workspace_context.rs`, and the bundled skills in `crates/sprocket-workspace/skills/`. Group related tools, such as commands, files, or web, and propose an order.
+1. Map what the model reads about the tools: the tools in `crates/tinker-agent/src/tools/`, their Convex jobs in `apps/web/convex/`, `crates/tinker-agent/src/system_prompt.md`, `crates/tinker-agent/src/workspace_context.rs`, and the bundled skills in `crates/tinker-workspace/skills/`. Group related tools, such as commands, files, or web, and propose an order.
 2. For each group, `git fetch` and read the code from the default branch on the remote. Tools change between groups, so re-read even code you saw earlier. Then show the user:
    - Each description and full input JSON schema, verbatim, as the model receives them after any patches the code applies.
    - The output. With no declared output schema, derive one from the serialized types or the backend that builds the result, and mark the fields that only sometimes appear.
@@ -60,4 +60,4 @@ Prefer deleting a mechanism to documenting it.
 
 ### Evidence from transcripts
 
-For tools that fail often, have a subagent study past transcripts in `~/.sprocket/transcripts/` and report, without opening a PR: call and failure counts, failure causes ranked by count, and fixes ranked by failures prevented. Prefer fixes that replace a mechanism over parser leniency, since each leniency adds a rule. Your own tool results in the audit thread count as evidence too.
+For tools that fail often, have a subagent study past transcripts in the data dir's `transcripts/` (`~/.tinker`, or `~/.sprocket` on older installs) and report, without opening a PR: call and failure counts, failure causes ranked by count, and fixes ranked by failures prevented. Prefer fixes that replace a mechanism over parser leniency, since each leniency adds a rule. Your own tool results in the audit thread count as evidence too.

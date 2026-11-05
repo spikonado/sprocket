@@ -1,0 +1,39 @@
+[
+	{
+		"id": "linux-x64-gnu",
+		"packageName": "usetinker-linux-x64-gnu",
+		"os": "linux",
+		"cpu": "x64",
+		"libc": "glibc",
+		"executable": "tinker"
+	},
+	{
+		"id": "linux-arm64-gnu",
+		"packageName": "usetinker-linux-arm64-gnu",
+		"os": "linux",
+		"cpu": "arm64",
+		"libc": "glibc",
+		"executable": "tinker"
+	},
+	{
+		"id": "darwin-x64",
+		"packageName": "usetinker-darwin-x64",
+		"os": "darwin",
+		"cpu": "x64",
+		"executable": "tinker"
+	},
+	{
+		"id": "darwin-arm64",
+		"packageName": "usetinker-darwin-arm64",
+		"os": "darwin",
+		"cpu": "arm64",
+		"executable": "tinker"
+	},
+	{
+		"id": "win32-x64-msvc",
+		"packageName": "usetinker-win32-x64-msvc",
+		"os": "win32",
+		"cpu": "x64",
+		"executable": "tinker.exe"
+	}
+]

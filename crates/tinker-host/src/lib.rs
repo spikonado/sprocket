@@ -1,0 +1,303 @@
+pub mod agent_launch;
+pub mod artifact_watch;
+pub mod browser;
+mod browser_install;
+mod bun_install;
+pub mod chatgpt_credentials;
+pub mod command_sessions;
+pub mod command_sync;
+mod desktop_install;
+pub mod github_settings;
+pub mod kicad_connector;
+pub mod lifetime;
+pub mod machine_identity;
+pub mod machines;
+pub mod native_auth;
+pub mod package_update;
+pub mod profile;
+pub mod project_attachments;
+mod python_install;
+pub mod run_recovery;
+mod subagent_launcher;
+mod tool_install;
+pub mod transcript_client;
+pub mod transcript_watch;
+mod watch_registry;
+mod work_sync;
+pub mod workspace_search;
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tinker_transcript::{LiveCompletionHub, TranscriptStore};
+use tokio::task::JoinHandle;
+
+use crate::artifact_watch::ArtifactWatchers;
+use crate::browser::BrowserManager;
+use crate::chatgpt_credentials::ChatGptService;
+use crate::command_sessions::ThreadCommandSessions;
+use crate::github_settings::GitHubSettingsStore;
+use crate::kicad_connector::KiCadConnector;
+use crate::lifetime::HostLifetime;
+use crate::machine_identity::MachineIdentity;
+use crate::machines::MachineManager;
+use crate::native_auth::{BrowserSessions, NativeAuthManager};
+use crate::package_update::PackageUpdateManager;
+use crate::project_attachments::ProjectAttachmentStore;
+use crate::python_install::PythonTools;
+use crate::run_recovery::RunRecovery;
+use crate::tool_install::{PinnedTool, append_path, prepend_path};
+use crate::transcript_client::UserConvexClient;
+use crate::transcript_watch::TranscriptWatchers;
+use crate::workspace_search::WorkspaceSearchIndex;
+
+pub fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Runs `task` on its own Tokio task, so dropping the caller can't cancel it partway.
+pub(crate) async fn run_to_completion<T: Send + 'static>(
+    task: impl Future<Output = T> + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    tokio::spawn(task).await
+}
+
+pub struct HostConfig {
+    pub data_dir: PathBuf,
+    pub convex_deployment_url: String,
+    pub native_login_callback_url: String,
+    pub browser_sessions: Option<Arc<dyn BrowserSessions>>,
+}
+
+#[derive(Clone)]
+pub struct Host {
+    pub lifetime: Arc<HostLifetime>,
+    pub native_auth: Arc<NativeAuthManager>,
+    pub chatgpt_credentials: Arc<ChatGptService>,
+    pub github_settings: Arc<GitHubSettingsStore>,
+    pub project_attachments: Arc<ProjectAttachmentStore>,
+    pub transcript: Arc<TranscriptStore>,
+    pub transcript_watchers: Arc<TranscriptWatchers>,
+    pub artifact_watchers: Arc<ArtifactWatchers>,
+    pub workspace_search: Arc<WorkspaceSearchIndex>,
+    pub machines: Arc<MachineManager>,
+    pub live_completions: Arc<LiveCompletionHub>,
+    pub command_sessions: Arc<ThreadCommandSessions>,
+    pub convex_deployment_url: String,
+    pub machine_identity: Arc<MachineIdentity>,
+    pub run_recovery: Arc<RunRecovery>,
+    pub package_updates: Arc<PackageUpdateManager>,
+    pub browsers: Arc<BrowserManager>,
+    pub kicad: Arc<KiCadConnector>,
+    bun: Arc<PinnedTool>,
+    desktop: Arc<PinnedTool>,
+    python: Arc<PythonTools>,
+}
+
+impl Host {
+    pub fn load(config: HostConfig) -> anyhow::Result<Self> {
+        let native_auth = NativeAuthManager::new(
+            config.convex_deployment_url.clone(),
+            config.native_login_callback_url,
+            &config.data_dir,
+            config.browser_sessions,
+        );
+        Self::assemble(
+            native_auth,
+            &config.data_dir,
+            config.convex_deployment_url,
+            ChatGptService::load_or_unavailable(&config.data_dir)?,
+            PackageUpdateManager::from_env(),
+        )
+    }
+
+    fn assemble(
+        native_auth: Arc<NativeAuthManager>,
+        data_dir: &Path,
+        convex_deployment_url: String,
+        chatgpt_credentials: Arc<ChatGptService>,
+        package_updates: Arc<PackageUpdateManager>,
+    ) -> anyhow::Result<Self> {
+        let machine_identity = Arc::new(MachineIdentity::load(data_dir)?);
+        github_settings::install_saved_tokens_loader(
+            convex_deployment_url.clone(),
+            Arc::clone(&native_auth),
+        );
+        let transcript = TranscriptStore::new(data_dir.join("transcripts"));
+        let python = Arc::new(PythonTools::new(data_dir)?);
+        Ok(Self {
+            lifetime: HostLifetime::new(),
+            chatgpt_credentials,
+            github_settings: GitHubSettingsStore::load(data_dir),
+            project_attachments: ProjectAttachmentStore::new(data_dir.to_path_buf()),
+            transcript_watchers: TranscriptWatchers::new(
+                convex_deployment_url.clone(),
+                Arc::clone(&transcript),
+                Arc::clone(&native_auth),
+            ),
+            artifact_watchers: ArtifactWatchers::new(
+                convex_deployment_url.clone(),
+                Arc::clone(&native_auth),
+                data_dir.join("artifact-bindings"),
+            ),
+            transcript,
+            workspace_search: Arc::new(WorkspaceSearchIndex::new()),
+            machines: MachineManager::new(
+                convex_deployment_url.clone(),
+                Arc::clone(&native_auth),
+                Arc::clone(&machine_identity),
+            ),
+            native_auth,
+            live_completions: Arc::new(LiveCompletionHub::new()),
+            command_sessions: Arc::new(ThreadCommandSessions::default()),
+            convex_deployment_url,
+            machine_identity,
+            run_recovery: RunRecovery::load(data_dir)?,
+            package_updates,
+            browsers: BrowserManager::new(data_dir.to_path_buf())?,
+            kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
+            bun: Arc::new(bun_install::installer(data_dir)?),
+            desktop: Arc::new(desktop_install::installer(data_dir)?),
+            python,
+        })
+    }
+
+    pub fn prepare_tools(&self) {
+        self.browsers.prepare_tools();
+        self.bun.prepare();
+        self.desktop.prepare();
+        self.python.prepare();
+        self.kicad.prepare();
+    }
+
+    /// The environment that gives agents their pinned tools. Runtimes go after the user's own
+    /// on the `PATH`, so projects keep the versions they expect.
+    pub fn tool_environment(&self) -> Vec<(OsString, OsString)> {
+        let mut environment = append_path(
+            prepend_path(
+                self.browsers.environment(),
+                [self.kicad.bin_dir(), self.desktop.bin_dir()],
+            ),
+            [self.bun.bin_dir()]
+                .into_iter()
+                .chain(self.python.bin_dirs()),
+        );
+        environment.extend(self.kicad.environment());
+        environment
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(
+        native_auth: Arc<NativeAuthManager>,
+        data_dir: &Path,
+        package_updates: Arc<PackageUpdateManager>,
+    ) -> Self {
+        Self::assemble(
+            native_auth,
+            data_dir,
+            "https://example.convex.cloud".to_string(),
+            ChatGptService::load_or_unavailable(data_dir).expect("ChatGPT credential service"),
+            package_updates,
+        )
+        .expect("test host")
+    }
+
+    pub async fn convex_client_for(&self, user_id: &str) -> anyhow::Result<UserConvexClient> {
+        UserConvexClient::connect_with_fetcher(
+            &self.convex_deployment_url,
+            self.native_auth
+                .auth_token_fetcher_for_user(user_id.to_string()),
+        )
+        .await
+    }
+
+    /// Ends machine presence first because ending it needs the native token.
+    /// The wait is bounded so a pending registration can't outlast the CLI's
+    /// logout timeout; presence then expires on its own.
+    pub async fn sign_out(&self) -> anyhow::Result<()> {
+        let _ = tokio::time::timeout(Duration::from_secs(10), self.machines.end_all()).await;
+        self.native_auth.sign_out().await
+    }
+
+    pub fn start(&self) -> HostTasks {
+        self.prepare_tools();
+        let transcript = Arc::clone(&self.transcript);
+        let attachment_cleanup = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
+                if let Err(error) = transcript.prune_pending_attachments(cutoff).await {
+                    eprintln!("tinker-server: failed to expire pending attachments: {error}");
+                }
+            }
+        });
+        let command_sessions = Arc::clone(&self.command_sessions);
+        let command_cleanup = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                command_sessions.prune().await;
+            }
+        });
+        HostTasks {
+            command_sync: command_sync::spawn(
+                Arc::clone(&self.transcript),
+                Arc::clone(&self.command_sessions),
+                Arc::clone(&self.native_auth),
+                self.convex_deployment_url.clone(),
+                self.machine_identity.installation_id.clone(),
+            ),
+            recovery: run_recovery::spawn(self.clone()),
+            host: self.clone(),
+            attachment_cleanup,
+            command_cleanup,
+        }
+    }
+}
+
+pub struct HostTasks {
+    host: Host,
+    attachment_cleanup: JoinHandle<()>,
+    command_cleanup: JoinHandle<()>,
+    command_sync: JoinHandle<()>,
+    recovery: JoinHandle<()>,
+}
+
+impl HostTasks {
+    pub async fn shutdown(self) {
+        let host = self.host;
+        for task in [self.attachment_cleanup, self.recovery, self.command_cleanup] {
+            task.abort();
+            let _ = task.await;
+        }
+        host.command_sessions.stop_all().await;
+        host.browsers.shutdown().await;
+        self.command_sync.abort();
+        let _ = self.command_sync.await;
+        if let Err(error) = tokio::time::timeout(
+            Duration::from_secs(10),
+            command_sync::flush(
+                &host.transcript,
+                &host.command_sessions,
+                &host.native_auth,
+                &host.convex_deployment_url,
+                &host.machine_identity.installation_id,
+            ),
+        )
+        .await
+        .unwrap_or_else(|error| Err(error.into()))
+        {
+            tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
+        }
+        host.machines.shutdown().await;
+    }
+}

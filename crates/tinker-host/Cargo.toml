@@ -1,0 +1,58 @@
+[package]
+name = "tinker-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow = "1.0.102"
+base64 = "0.23.0"
+clap = { version = "4.5.60", features = ["derive"] }
+convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
+fff-search = "0.11.0"
+flate2 = "1.1.10"
+fs4 = { version = "1.1.0", default-features = false }
+futures = "0.3.32"
+git2 = { version = "0.21.0", default-features = false }
+hex = "0.4.3"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+keyring = "4.2.0"
+reqwest = { version = "0.13.4", default-features = false, features = ["form", "rustls", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.11.0"
+tinker-agent = { path = "../tinker-agent" }
+tinker-convex = { path = "../tinker-convex" }
+tinker-transcript = { path = "../tinker-transcript" }
+tinker-workspace = { path = "../tinker-workspace" }
+tar = "0.4"
+tempfile = "3.27.0"
+tokio = { version = "1.52.1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing = "0.1.44"
+url = "2.5.8"
+uuid = { version = "1.21.0", features = ["v4"] }
+workos = "3.4.1"
+zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dwarfs = { version = "0.2.1", default-features = false, features = ["zstd"] }
+
+[target.'cfg(windows)'.dependencies]
+memmap2 = "0.9.12"
+nsis = "=0.6.0"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
+[dev-dependencies]
+axum = "0.8.8"
+gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
+tokio = { version = "1.52.1", features = ["test-util"] }

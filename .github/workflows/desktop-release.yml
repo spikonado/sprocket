@@ -49,7 +49,7 @@ jobs:
         env:
           POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
           POSTHOG_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
-          SPROCKET_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          TINKER_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: web
@@ -113,8 +113,8 @@ jobs:
       - name: Build Rust CLI
         shell: bash
         env:
-          SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
-        run: cargo build --locked --release -p sprocket-cli
+          TINKER_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo build --locked --release -p tinker-cli
       - name: Load optional Apple API key
         if: runner.os == 'macOS'
         shell: bash
@@ -194,7 +194,7 @@ jobs:
         with:
           name: desktop-${{ matrix.id }}
           path: |
-            apps/desktop/dist/sprocket-desktop-*
+            apps/desktop/dist/tinker-desktop-*
             apps/desktop/dist/*.yml
             apps/desktop/dist/*.blockmap
           if-no-files-found: error
@@ -224,7 +224,7 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, '-canary.') }}
           files: |
-            release-publish/sprocket-desktop-*
+            release-publish/tinker-desktop-*
             release-publish/*.yml
             release-publish/SHA256SUMS
           fail_on_unmatched_files: true

@@ -1,0 +1,258 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+
+pub const TRANSCRIPT_CHUNK_SIZE: u32 = 100;
+pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptState {
+    pub schema_version: u32,
+    pub user_id: String,
+    pub thread_id: String,
+    pub remote_total_parts: u32,
+    pub history_from_number: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_stripped_through_part_number: Option<i64>,
+    pub downloaded_ranges: Vec<DownloadedRange>,
+    pub stale: bool,
+}
+
+impl TranscriptState {
+    pub fn new(user_id: String, thread_id: String) -> Self {
+        Self {
+            schema_version: TRANSCRIPT_SCHEMA_VERSION,
+            user_id,
+            thread_id,
+            remote_total_parts: 0,
+            history_from_number: 0,
+            context_summary: None,
+            reasoning_stripped_through_part_number: None,
+            downloaded_ranges: Vec::new(),
+            stale: false,
+        }
+    }
+
+    pub fn covers(&self, number: u32) -> bool {
+        self.downloaded_ranges
+            .iter()
+            .any(|range| range.contains(number))
+    }
+
+    pub fn visible_end_exclusive(&self) -> u32 {
+        let local_end = self
+            .downloaded_ranges
+            .iter()
+            .map(|range| range.end.saturating_add(1))
+            .max()
+            .unwrap_or(0);
+        self.remote_total_parts.max(local_end)
+    }
+
+    pub fn missing_in(&self, start: u32, end_exclusive: u32) -> Vec<u32> {
+        (start..end_exclusive)
+            .filter(|number| !self.covers(*number))
+            .collect()
+    }
+
+    pub fn mark_downloaded(&mut self, numbers: &[u32]) {
+        for &number in numbers {
+            insert_number(&mut self.downloaded_ranges, number);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadedRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl DownloadedRange {
+    pub fn contains(self, number: u32) -> bool {
+        number >= self.start && number <= self.end
+    }
+}
+
+fn insert_number(ranges: &mut Vec<DownloadedRange>, number: u32) {
+    if ranges.iter().any(|range| range.contains(number)) {
+        return;
+    }
+    ranges.push(DownloadedRange {
+        start: number,
+        end: number,
+    });
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<DownloadedRange> = Vec::new();
+    for range in ranges.drain(..) {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end.saturating_add(1) => {
+                last.end = last.end.max(range.end);
+            }
+            _ => merged.push(range),
+        }
+    }
+    *ranges = merged;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPart {
+    pub number: u32,
+    pub source_key: String,
+    pub kind: TranscriptPartKind,
+    pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<TranscriptPromptBody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<TranscriptCompletionBody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<TranscriptToolBody>,
+    #[serde(default, skip_serializing_if = "WorkAssignment::is_empty")]
+    pub work: WorkAssignment,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkRange {
+    #[serde(deserialize_with = "tinker_convex::deserialize_convex_u32")]
+    pub start: u32,
+    #[serde(deserialize_with = "tinker_convex::deserialize_convex_u32")]
+    pub end: u32,
+    pub section_key: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkAssignment {
+    #[serde(default)]
+    pub ranges: Vec<WorkRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_invocations: Vec<WorkInvocation>,
+}
+
+impl WorkAssignment {
+    fn is_empty(&self) -> bool {
+        self.ranges.is_empty() && self.section_key.is_none() && self.tool_invocations.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkInvocation {
+    #[serde(deserialize_with = "tinker_convex::deserialize_convex_u32")]
+    pub item: u32,
+    pub tool_invocation_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TranscriptPartKind {
+    Prompt,
+    Completion,
+    Tool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPromptBody {
+    pub text: String,
+    pub image_uploads: Vec<TranscriptAttachmentMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<HiddenPromptKind>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HiddenPromptKind {
+    Instructions,
+    Environment,
+    Continuation,
+    /// Written by a newer version. Kept so its parts still parse.
+    #[serde(other)]
+    Other,
+}
+
+impl TranscriptPromptBody {
+    pub fn text_with_attachments(&self) -> String {
+        if self.image_uploads.is_empty() {
+            return self.text.clone();
+        }
+        let attachments = self
+            .image_uploads
+            .iter()
+            .map(|attachment| {
+                serde_json::json!({
+                    "name": attachment.name,
+                    "mediaType": attachment.media_type,
+                    "path": attachment.local_path,
+                })
+            })
+            .collect::<Vec<_>>();
+        format!(
+            "{}\n\nAttached files in the local transcript cache:\n{}",
+            self.text,
+            serde_json::json!(attachments)
+        )
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptAttachmentMeta {
+    pub name: String,
+    pub media_type: String,
+    pub size: u64,
+    pub storage_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptCompletionBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_id: Option<String>,
+    pub items: Vec<JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptToolBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_invocation_id: Option<String>,
+    pub call_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<JsonValue>,
+    pub status: String,
+}
+
+impl TranscriptPart {
+    pub fn without_ephemeral_urls(&self) -> Self {
+        let mut part = self.clone();
+        if let Some(prompt) = part.prompt.as_mut() {
+            for upload in &mut prompt.image_uploads {
+                upload.url = None;
+                upload.local_path = None;
+            }
+        }
+        part
+    }
+}
+
+#[cfg(test)]
+mod tests;

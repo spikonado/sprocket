@@ -4,7 +4,7 @@ export function createAppImageUpdater(AppImageUpdater) {
 			// appimage-run uses bwrap --die-with-parent. Keep its parent alive after Electron exits.
 			return super.spawnLog(
 				'/bin/sh',
-				['-c', '"$@" <&0 & child=$!; wait "$child"', 'sprocket-update-relaunch', command, ...args],
+				['-c', '"$@" <&0 & child=$!; wait "$child"', 'tinker-update-relaunch', command, ...args],
 				env,
 				stdio
 			);

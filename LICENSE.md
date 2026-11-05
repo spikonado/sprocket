@@ -108,5 +108,5 @@ specific language governing permissions and limitations under the License.
 
 ## Third-party material
 
-This license does not replace the licenses for third-party material included in Sprocket.
+This license does not replace the licenses for third-party material included in Tinker.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for those licenses and copyright notices.

@@ -1,7 +1,7 @@
 name: Setup Nix shell
 description: >-
-  Installs Nix and realises the sprocket-shell dev shell profile so later steps
-  can run `nix develop ./sprocket-shell`.
+  Installs Nix and realises the tinker-shell dev shell profile so later steps
+  can run `nix develop ./tinker-shell`.
 
 inputs:
   dev-shell:
@@ -19,4 +19,4 @@ runs:
 
     - name: Build shell environment
       shell: bash
-      run: nix develop ${{ inputs.dev-shell }} --profile sprocket-shell -c true
+      run: nix develop ${{ inputs.dev-shell }} --profile tinker-shell -c true

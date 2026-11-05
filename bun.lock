@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@sprocket/monorepo",
+      "name": "@tinker/monorepo",
       "devDependencies": {
         "@convex-dev/eslint-plugin": "5.0.1",
         "@mermaid-lint/cli": "0.53.1",
@@ -14,7 +14,7 @@
       },
     },
     "apps/desktop": {
-      "name": "@sprocket/desktop",
+      "name": "@tinker/desktop",
       "version": "0.0.0",
       "dependencies": {
         "electron-updater": "^6.8.9",
@@ -26,7 +26,7 @@
       },
     },
     "apps/web": {
-      "name": "@sprocket/web",
+      "name": "@tinker/web",
       "version": "0.0.0",
       "dependencies": {
         "@codemirror/language": "^6.13.1",
@@ -77,10 +77,10 @@
         "@edge-runtime/vm": "^5.0.0",
         "@posthog/cli": "^0.18.12",
         "@posthog/rollup-plugin": "^1.6.2",
-        "@sprocket/typescript-config": "workspace:*",
         "@tailwindcss/vite": "^4.2.4",
         "@testing-library/react": "^16.3.3",
         "@testing-library/user-event": "^14.6.7",
+        "@tinker/typescript-config": "workspace:*",
         "@types/node": "^26.0.0",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
@@ -95,7 +95,7 @@
       },
     },
     "packages/typescript-config": {
-      "name": "@sprocket/typescript-config",
+      "name": "@tinker/typescript-config",
       "version": "0.0.0",
     },
   },
@@ -722,12 +722,6 @@
 
     "@sindresorhus/is": ["@sindresorhus/is@4.6.0", "", {}, "sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw=="],
 
-    "@sprocket/desktop": ["@sprocket/desktop@workspace:apps/desktop"],
-
-    "@sprocket/typescript-config": ["@sprocket/typescript-config@workspace:packages/typescript-config"],
-
-    "@sprocket/web": ["@sprocket/web@workspace:apps/web"],
-
     "@stablelib/base64": ["@stablelib/base64@1.0.1", "", {}, "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="],
 
     "@szmarczak/http-timer": ["@szmarczak/http-timer@4.0.6", "", { "dependencies": { "defer-to-connect": "^2.0.0" } }, "sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w=="],
@@ -767,6 +761,12 @@
     "@testing-library/react": ["@testing-library/react@16.3.3", "", { "dependencies": { "@babel/runtime": "^7.12.5" }, "peerDependencies": { "@testing-library/dom": "^10.0.0", "@types/react": "^18.0.0 || ^19.0.0", "@types/react-dom": "^18.0.0 || ^19.0.0", "react": "^18.0.0 || ^19.0.0", "react-dom": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["@types/react", "@types/react-dom"] }, "sha512-Uo193NgQbPMz6lrrhtRQQFcMC6Re/ELLFbbuVL30WDlZxlpZf9/lMHTAVxPRLw1q1iu9OJmR1c2BLiENRstdBg=="],
 
     "@testing-library/user-event": ["@testing-library/user-event@14.6.8", "", { "peerDependencies": { "@testing-library/dom": ">=7.21.4" } }, "sha512-vgSSqnANMnkcYR/vUNDbwS7aM3OErRLNUG8vCVVlj4oc6cKffUrccX7UAS5AmJQQNZTSibi9z5GvvRZ0aYgUCQ=="],
+
+    "@tinker/desktop": ["@tinker/desktop@workspace:apps/desktop"],
+
+    "@tinker/typescript-config": ["@tinker/typescript-config@workspace:packages/typescript-config"],
+
+    "@tinker/web": ["@tinker/web@workspace:apps/web"],
 
     "@turbo/darwin-64": ["@turbo/darwin-64@2.11.10", "", { "os": "darwin", "cpu": "x64" }, "sha512-By4idRap5+nLnMuRzLB4qkOPRlvNdyY1ne4VJYDyUoUB11H94k7uif9mbe3JT8JSNXs1D68uMcBj6hJ/jMQRvA=="],
 

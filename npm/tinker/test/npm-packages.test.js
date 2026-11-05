@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict';
+import { constants, readFileSync } from 'node:fs';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import test from 'node:test';
+
+const ROOT = path.resolve(import.meta.dirname, '../../..');
+
+const TARGETS = JSON.parse(
+	readFileSync(path.join(import.meta.dirname, '../targets.json'), 'utf8')
+).map((target) => [target.id, target.executable]);
+
+test('assembles version-matched root, legacy, and native packages', async () => {
+	const temporary = await mkdtemp(path.join(tmpdir(), 'tinker-npm-'));
+	const artifacts = path.join(temporary, 'artifacts');
+	const web = path.join(temporary, 'web');
+	const output = path.join(temporary, 'output');
+
+	try {
+		await mkdir(web);
+		await writeFile(path.join(web, 'index.html'), 'test web app');
+		await Promise.all(
+			TARGETS.map(async ([target, executable]) => {
+				const directory = path.join(artifacts, target);
+				await mkdir(directory, { recursive: true });
+				await writeFile(path.join(directory, executable), 'test binary');
+			})
+		);
+
+		const result = spawnSync(
+			process.execPath,
+			[
+				path.join(ROOT, 'scripts/build-npm-packages.mjs'),
+				'--version',
+				'1.2.3',
+				'--artifacts',
+				artifacts,
+				'--web',
+				web,
+				'--output',
+				output
+			],
+			{ encoding: 'utf8' }
+		);
+
+		assert.equal(result.status, 0, result.stderr);
+
+		const rootManifest = JSON.parse(
+			await readFile(path.join(output, 'tinker/package.json'), 'utf8')
+		);
+
+		assert.equal(rootManifest.version, '1.2.3');
+		assert.equal(rootManifest.name, 'usetinker');
+		assert.deepEqual(rootManifest.bin, { tinker: 'bin/tinker.js' });
+		assert.equal(rootManifest.optionalDependencies['usetinker-linux-x64-gnu'], '1.2.3');
+		assert(rootManifest.files.includes('THIRD_PARTY_NOTICES.md'));
+		await access(path.join(output, 'tinker/web/index.html'));
+		await access(path.join(output, 'tinker/targets.json'));
+		assert.equal(
+			await readFile(path.join(output, 'tinker/LICENSE'), 'utf8'),
+			await readFile(path.join(ROOT, 'LICENSE.md'), 'utf8')
+		);
+		assert.equal(
+			await readFile(path.join(output, 'tinker/README.md'), 'utf8'),
+			await readFile(path.join(ROOT, 'README.md'), 'utf8')
+		);
+		assert.equal(
+			await readFile(path.join(output, 'tinker/THIRD_PARTY_NOTICES.md'), 'utf8'),
+			await readFile(path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8')
+		);
+
+		const legacyManifest = JSON.parse(
+			await readFile(path.join(output, 'sprocket/package.json'), 'utf8')
+		);
+
+		assert.equal(legacyManifest.name, '@spikonado/sprocket');
+		assert.equal(legacyManifest.version, '1.2.3');
+		assert.deepEqual(legacyManifest.bin, { sprocket: 'bin/sprocket.js' });
+		assert.deepEqual(legacyManifest.optionalDependencies, rootManifest.optionalDependencies);
+		await access(path.join(output, 'sprocket/bin/sprocket.js'), constants.X_OK);
+		await access(path.join(output, 'sprocket/web/index.html'));
+
+		const nativeManifest = JSON.parse(
+			await readFile(path.join(output, 'linux-x64-gnu/package.json'), 'utf8')
+		);
+
+		assert.equal(nativeManifest.name, 'usetinker-linux-x64-gnu');
+		assert.equal(nativeManifest.version, '1.2.3');
+		assert(nativeManifest.files.includes('THIRD_PARTY_NOTICES.md'));
+		assert.equal(
+			await readFile(path.join(output, 'linux-x64-gnu/LICENSE'), 'utf8'),
+			await readFile(path.join(ROOT, 'LICENSE.md'), 'utf8')
+		);
+		assert.equal(
+			await readFile(path.join(output, 'linux-x64-gnu/README.md'), 'utf8'),
+			await readFile(path.join(ROOT, 'README.md'), 'utf8')
+		);
+		assert.equal(
+			await readFile(path.join(output, 'linux-x64-gnu/THIRD_PARTY_NOTICES.md'), 'utf8'),
+			await readFile(path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8')
+		);
+
+		const sourceManifest = JSON.parse(
+			await readFile(path.join(ROOT, 'npm/tinker/package.json'), 'utf8')
+		);
+
+		assert.equal(rootManifest.engines.node, sourceManifest.engines.node);
+		await access(path.join(output, 'tinker/bin/tinker.js'), constants.X_OK);
+		await access(path.join(output, 'tinker/lib/update-api.js'));
+		await access(path.join(output, 'tinker/lib/update.js'));
+		await access(path.join(output, 'linux-x64-gnu/bin/tinker'), constants.X_OK);
+	} finally {
+		await rm(temporary, { recursive: true, force: true });
+	}
+});

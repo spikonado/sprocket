@@ -9227,192 +9227,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprocket-agent"
-version = "0.4.3"
-dependencies = [
- "anydoc",
- "anyhow",
- "base64 0.23.1",
- "bytes",
- "convex",
- "fancy-regex",
- "futures",
- "hex",
- "hmac 0.13.0",
- "http",
- "image",
- "lopdf 0.46.0",
- "pdf-inspector",
- "percent-encoding",
- "posthog-rs",
- "reqwest 0.13.5",
- "rig",
- "schemars 1.2.3",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "sprocket-convex",
- "sprocket-transcript",
- "sprocket-workspace",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "sprocket-cli"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "clap",
- "open",
- "posthog-rs",
- "reqwest 0.13.5",
- "serde",
- "serde_json",
- "sprocket-server",
- "sprocket-workspace",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "sprocket-convex"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "convex",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "sprocket-host"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.23.1",
- "clap",
- "convex",
- "dwarfs",
- "fff-search",
- "flate2",
- "fs4",
- "futures",
- "git2",
- "gix",
- "hex",
- "jsonwebtoken 11.1.0",
- "keyring",
- "libc",
- "memmap2",
- "nsis",
- "reqwest 0.13.5",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "sprocket-agent",
- "sprocket-convex",
- "sprocket-transcript",
- "sprocket-workspace",
- "tar",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
- "uuid",
- "windows-sys 0.61.2",
- "workos",
- "zip 9.3.0",
-]
-
-[[package]]
-name = "sprocket-server"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "axum",
- "axum-extra",
- "clap",
- "convex",
- "cookie",
- "dotenvy",
- "futures",
- "hmac 0.13.0",
- "keyring",
- "libc",
- "open",
- "reqwest 0.13.5",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "sprocket-agent",
- "sprocket-convex",
- "sprocket-host",
- "sprocket-transcript",
- "sprocket-workspace",
- "tempfile",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tower",
- "tower-http 0.7.1",
- "tracing",
- "url",
- "uuid",
- "workos",
-]
-
-[[package]]
-name = "sprocket-transcript"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "futures",
- "reqwest 0.13.5",
- "rusqlite",
- "serde",
- "serde_json",
- "sprocket-convex",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "sprocket-workspace"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "fs4",
- "gix",
- "hex",
- "libc",
- "reqwest 0.13.5",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2 0.11.1",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "sqlite-wasm-rs"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9781,6 +9595,192 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tinker-agent"
+version = "0.4.3"
+dependencies = [
+ "anydoc",
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "convex",
+ "fancy-regex",
+ "futures",
+ "hex",
+ "hmac 0.13.0",
+ "http",
+ "image",
+ "lopdf 0.46.0",
+ "pdf-inspector",
+ "percent-encoding",
+ "posthog-rs",
+ "reqwest 0.13.5",
+ "rig",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tinker-convex",
+ "tinker-transcript",
+ "tinker-workspace",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "tinker-cli"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "clap",
+ "open",
+ "posthog-rs",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tinker-server",
+ "tinker-workspace",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "tinker-convex"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "convex",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "tinker-host"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.23.1",
+ "clap",
+ "convex",
+ "dwarfs",
+ "fff-search",
+ "flate2",
+ "fs4",
+ "futures",
+ "git2",
+ "gix",
+ "hex",
+ "jsonwebtoken 11.1.0",
+ "keyring",
+ "libc",
+ "memmap2",
+ "nsis",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tempfile",
+ "tinker-agent",
+ "tinker-convex",
+ "tinker-transcript",
+ "tinker-workspace",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+ "workos",
+ "zip 9.3.0",
+]
+
+[[package]]
+name = "tinker-server"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-extra",
+ "clap",
+ "convex",
+ "cookie",
+ "dotenvy",
+ "futures",
+ "hmac 0.13.0",
+ "keyring",
+ "libc",
+ "open",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tinker-agent",
+ "tinker-convex",
+ "tinker-host",
+ "tinker-transcript",
+ "tinker-workspace",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "url",
+ "uuid",
+ "workos",
+]
+
+[[package]]
+name = "tinker-transcript"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "futures",
+ "reqwest 0.13.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tinker-convex",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "tinker-workspace"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "fs4",
+ "gix",
+ "hex",
+ "libc",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

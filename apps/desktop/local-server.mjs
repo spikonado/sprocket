@@ -27,5 +27,5 @@ export async function waitForServerReady(baseUrl, timeoutMs = 30_000, fetchImpl 
 		}
 	}
 
-	throw new Error('Timed out waiting for the Sprocket local server.');
+	throw new Error('Timed out waiting for the Tinker local server.');
 }

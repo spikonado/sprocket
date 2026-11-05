@@ -19,7 +19,7 @@ export type VaultObject = z.infer<typeof vaultObjectSchema>;
 function workosApiKey(): string {
 	const key = env.WORKOS_API_KEY?.trim();
 
-	if (!key) throw new Error('Provider settings are not configured on this Sprocket deployment.');
+	if (!key) throw new Error('Provider settings are not configured on this Tinker deployment.');
 
 	return key;
 }
@@ -28,7 +28,7 @@ function workosClientId(): string {
 	const clientId = env.WORKOS_CLIENT_ID?.trim();
 
 	if (!clientId) {
-		throw new Error('Provider settings are not configured on this Sprocket deployment.');
+		throw new Error('Provider settings are not configured on this Tinker deployment.');
 	}
 
 	return clientId;

@@ -1,0 +1,289 @@
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
+import {
+	chmodSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	statSync,
+	writeFileSync
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { ensureExecutable, launch, run } from '../lib/launcher.js';
+import { nativePackage } from '../lib/native.js';
+
+function successfulChild(code = 0) {
+	const child = new EventEmitter();
+	queueMicrotask(() => child.emit('close', code, null));
+
+	return child;
+}
+
+test('selects the native package for supported platforms', () => {
+	assert.deepEqual(nativePackage('linux', 'x64'), ['usetinker-linux-x64-gnu', 'tinker']);
+	assert.deepEqual(nativePackage('win32', 'x64'), ['usetinker-win32-x64-msvc', 'tinker.exe']);
+	assert.equal(nativePackage('freebsd', 'x64'), undefined);
+});
+
+test(
+	'starts the native binary only when its package matches the launcher version',
+	{ skip: process.platform === 'win32' },
+	(t) => {
+		const directory = mkdtempSync(path.join(tmpdir(), 'tinker-native-version-'));
+		t.after(() => rmSync(directory, { recursive: true, force: true }));
+		const [packageName, executable] = nativePackage();
+		const launcherDir = path.join(directory, 'node_modules', 'usetinker');
+		const nativeDir = path.join(directory, 'node_modules', packageName);
+		cpSync(path.join(import.meta.dirname, '..', 'bin'), path.join(launcherDir, 'bin'), {
+			recursive: true
+		});
+		cpSync(path.join(import.meta.dirname, '..', 'lib'), path.join(launcherDir, 'lib'), {
+			recursive: true
+		});
+		cpSync(
+			path.join(import.meta.dirname, '..', 'targets.json'),
+			path.join(launcherDir, 'targets.json')
+		);
+		writeFileSync(
+			path.join(launcherDir, 'package.json'),
+			JSON.stringify({ name: 'usetinker', version: '1.0.0', type: 'module' })
+		);
+		mkdirSync(path.join(nativeDir, 'bin'), { recursive: true });
+		writeFileSync(path.join(nativeDir, 'bin', executable), '#!/bin/sh\necho native\n', {
+			mode: 0o755
+		});
+
+		const launchWithNative = (version) => {
+			writeFileSync(
+				path.join(nativeDir, 'package.json'),
+				JSON.stringify({ name: packageName, version })
+			);
+
+			return spawnSync(process.execPath, [path.join(launcherDir, 'bin', 'tinker.js')], {
+				encoding: 'utf8'
+			});
+		};
+
+		const matching = launchWithNative('1.0.0');
+		assert.equal(matching.status, 0);
+		assert.equal(matching.stdout, 'native\n');
+
+		const mismatched = launchWithNative('0.9.0');
+		assert.equal(mismatched.status, 1);
+		assert.equal(mismatched.stdout, '');
+		assert.match(mismatched.stderr, /needs .*@1\.0\.0, but 0\.9\.0 is installed/);
+	}
+);
+
+test('restores execute bits on unix binaries', { skip: process.platform === 'win32' }, () => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'tinker-chmod-'));
+	const binary = path.join(directory, 'tinker');
+
+	try {
+		writeFileSync(binary, '#!/bin/sh\n');
+		chmodSync(binary, 0o644);
+		ensureExecutable(binary);
+		assert.equal(statSync(binary).mode & 0o111, 0o111);
+
+		chmodSync(binary, 0o555);
+		ensureExecutable(binary);
+		assert.equal(statSync(binary).mode & 0o111, 0o111);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test('overrides inherited update helper environment for the native child', async () => {
+	let invocation;
+	await launch(['--web'], {
+		env: {
+			TINKER_STATIC_DIR: '/tmp/web',
+			TINKER_UPDATE_NODE: '/evil/node',
+			TINKER_UPDATE_SCRIPT: '/evil/update-api.js',
+			TINKER_UPDATE_MANAGED: '1'
+		},
+		execPath: '/usr/bin/node',
+		libDir: '/pkg/lib',
+		resolveBinary: () => '/tmp/tinker',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocation = { binary, args, options };
+
+			return successfulChild();
+		}
+	});
+	assert.equal(invocation.options.env.TINKER_UPDATE_NODE, '/usr/bin/node');
+	assert.equal(
+		invocation.options.env.TINKER_UPDATE_SCRIPT,
+		path.resolve('/pkg/lib', 'update-api.js')
+	);
+	assert.equal(invocation.options.env.TINKER_STATIC_DIR, '/tmp/web');
+	assert.equal(Object.hasOwn(invocation.options.env, 'TINKER_UPDATE_MANAGED'), false);
+});
+
+test('starts the updated launcher after the native server exits to restart', async (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'tinker-restart-test-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const updatedLauncher = '/opt/usetinker/bin/tinker.js';
+	const invocations = [];
+
+	const code = await launch(['--web'], {
+		env: {},
+		execPath: '/usr/bin/node',
+		tmpdir: directory,
+		resolveBinary: () => '/tmp/tinker',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocations.push({ binary, args, env: options.env });
+
+			if (invocations.length === 1) {
+				writeFileSync(options.env.TINKER_RESTART_FILE, updatedLauncher);
+
+				return successfulChild(75);
+			}
+
+			return successfulChild();
+		}
+	});
+
+	assert.equal(code, 0);
+	const [native, restarted] = invocations;
+	assert.equal(native.binary, '/tmp/tinker');
+	assert.equal(path.dirname(native.env.TINKER_RESTART_FILE), directory);
+	assert.equal(restarted.binary, '/usr/bin/node');
+	assert.deepEqual(restarted.args, [updatedLauncher, '--web']);
+	assert.equal(restarted.env.TINKER_RESTART_FILE, native.env.TINKER_RESTART_FILE);
+	assert.equal(restarted.env.TINKER_RESTARTED, '1');
+	assert.equal(existsSync(native.env.TINKER_RESTART_FILE), false);
+});
+
+test('a restarted launcher passes the next restart and its exit code up to its parent', async (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'tinker-restart-test-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const restartFile = path.join(directory, 'restart');
+	const invocations = [];
+
+	const code = await launch(['--web'], {
+		env: {
+			TINKER_RESTART_FILE: restartFile,
+			TINKER_RESTARTED: '1'
+		},
+		resolveBinary: () => '/tmp/tinker',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocations.push(options.env);
+			writeFileSync(options.env.TINKER_RESTART_FILE, '/opt/usetinker/bin/tinker.js');
+
+			return successfulChild(75);
+		}
+	});
+
+	assert.equal(code, 75);
+	assert.equal(invocations.length, 1);
+	assert.equal(invocations[0].TINKER_RESTARTED, '1');
+	assert.equal(existsSync(restartFile), true);
+});
+
+test('update and upgrade help is delegated to the native CLI', async () => {
+	for (const args of [
+		['update', '--help'],
+		['upgrade', '-h']
+	]) {
+		let invocation;
+
+		const code = await launch(args, {
+			resolveBinary: () => '/tmp/tinker',
+			ensureExecutable: () => {},
+			spawn(binary, childArgs) {
+				invocation = { binary, args: childArgs };
+
+				return successfulChild();
+			}
+		});
+
+		assert.equal(code, 0);
+		assert.deepEqual(invocation, { binary: '/tmp/tinker', args });
+	}
+});
+
+test('returns the native child exit code and removes signal handlers', async () => {
+	const listeners = ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal));
+	assert.equal(await run(process.execPath, ['-e', 'process.exit(7)']), 7);
+	assert.deepEqual(
+		['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal)),
+		listeners
+	);
+});
+
+test('reports a failed native launch and removes signal handlers', async () => {
+	const listeners = ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal));
+	await assert.rejects(run(path.join(tmpdir(), 'tinker-missing', 'binary'), []), {
+		code: 'ENOENT'
+	});
+	assert.deepEqual(
+		['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal)),
+		listeners
+	);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+	for (const target of ['launcher', 'process group']) {
+		test(
+			`waits for native shutdown when ${signal} is sent to the ${target}`,
+			{ skip: process.platform === 'win32', timeout: 10_000 },
+			async (t) => {
+				const directory = mkdtempSync(path.join(tmpdir(), 'tinker-shutdown-'));
+				const completed = path.join(directory, 'completed');
+				t.after(() => rmSync(directory, { recursive: true, force: true }));
+
+				const launcher = spawn(
+					process.execPath,
+					[path.join(import.meta.dirname, 'launcher-shutdown-helper.mjs'), completed],
+					{ detached: true, stdio: ['ignore', 'pipe', 'inherit'] }
+				);
+
+				t.after(() => {
+					try {
+						process.kill(-launcher.pid, 'SIGKILL');
+					} catch (error) {
+						assert.equal(error.code, 'ESRCH');
+					}
+				});
+
+				let output = '';
+				launcher.stdout.setEncoding('utf8');
+
+				const ready = new Promise((resolve) => {
+					launcher.stdout.on('data', (data) => {
+						output += data;
+
+						if (output.includes('READY')) {
+							resolve();
+						}
+					});
+				});
+
+				const exited = once(launcher, 'exit');
+				const closed = once(launcher, 'close');
+
+				await Promise.race([
+					ready,
+					exited.then(() => assert.fail('launcher exited before startup'))
+				]);
+				process.kill(target === 'launcher' ? launcher.pid : -launcher.pid, signal);
+				const [code, exitSignal] = await exited;
+				assert.ok(existsSync(completed), 'native shutdown must complete before the launcher exits');
+				await closed;
+				assert.match(output, /SHUTDOWN_COMPLETED/);
+				assert.equal(code, null);
+				assert.equal(exitSignal, signal);
+			}
+		);
+	}
+}

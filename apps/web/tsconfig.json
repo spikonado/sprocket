@@ -1,5 +1,5 @@
 {
-	"extends": "@sprocket/typescript-config/react.json",
+	"extends": "@tinker/typescript-config/react.json",
 	"compilerOptions": {
 		"paths": {
 			"$lib/*": ["./src/lib/*"],

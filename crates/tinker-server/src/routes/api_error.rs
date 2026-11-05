@@ -1,0 +1,91 @@
+use axum::Json;
+use axum::http::StatusCode;
+use axum::http::header::CACHE_CONTROL;
+use axum::response::{IntoResponse, Response};
+use tinker_host::agent_launch::LaunchError;
+
+#[derive(Debug)]
+pub(crate) struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ApiError {}
+
+impl ApiError {
+    pub(crate) fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
+        Self {
+            status,
+            message: error.to_string(),
+        }
+    }
+
+    pub(crate) fn unauthorized(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::UNAUTHORIZED, error)
+    }
+
+    pub(crate) fn authentication_required() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: "authentication required".to_string(),
+        }
+    }
+
+    pub(crate) fn bad_request(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::BAD_REQUEST, error)
+    }
+
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub(crate) fn internal(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::INTERNAL_SERVER_ERROR, error)
+    }
+
+    pub(crate) fn internal_with(context: &str, error: anyhow::Error) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("{context}: {error:#}"),
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(serde_json::json!({ "error": self.message })),
+        )
+            .into_response()
+    }
+}
+
+impl From<LaunchError> for ApiError {
+    fn from(error: LaunchError) -> Self {
+        let status = match &error {
+            LaunchError::Rejected(_) => StatusCode::BAD_REQUEST,
+            LaunchError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            LaunchError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            message: error.to_string(),
+        }
+    }
+}
+
+pub(crate) fn no_store(response: impl IntoResponse) -> Response {
+    let mut response = response.into_response();
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}

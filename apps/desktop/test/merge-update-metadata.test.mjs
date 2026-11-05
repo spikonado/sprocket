@@ -22,18 +22,18 @@ function macManifest(arch, extras = {}) {
 		version,
 		files: [
 			{
-				url: `sprocket-desktop-${version}-mac-${arch}.zip`,
+				url: `tinker-desktop-${version}-mac-${arch}.zip`,
 				sha512: `${arch}-zip-sha`,
 				size: arch === 'arm64' ? 10 : 11,
 				blockMapSize: 2
 			},
 			{
-				url: `sprocket-desktop-${version}-mac-${arch}.dmg`,
+				url: `tinker-desktop-${version}-mac-${arch}.dmg`,
 				sha512: `${arch}-dmg-sha`,
 				size: arch === 'arm64' ? 20 : 21
 			}
 		],
-		path: `sprocket-desktop-${version}-mac-${arch}.zip`,
+		path: `tinker-desktop-${version}-mac-${arch}.zip`,
 		sha512: `${arch}-zip-sha`,
 		releaseDate: extras.releaseDate ?? '2026-09-07T00:00:00.000Z',
 		isAdminRightsRequired: extras.isAdminRightsRequired,
@@ -46,8 +46,8 @@ test('names GitHub channel files and keeps x64 out of arm64 hints', () => {
 	assert.equal(isUpdateMetadataName('latest-mac.yml'), true);
 	assert.equal(isUpdateMetadataName('canary-linux-arm64.yml'), true);
 	assert.equal(isUpdateMetadataName('builder-debug.yml'), false);
-	assert.deepEqual([...archHints('sprocket-desktop-1.2.3-mac-arm64.zip')], ['arm64']);
-	assert.deepEqual([...archHints('sprocket-desktop-1.2.3-mac-x64.zip')], ['x64']);
+	assert.deepEqual([...archHints('tinker-desktop-1.2.3-mac-arm64.zip')], ['arm64']);
+	assert.deepEqual([...archHints('tinker-desktop-1.2.3-mac-x64.zip')], ['x64']);
 });
 
 test('merges per-arch files and keeps extra update fields', () => {
@@ -77,10 +77,10 @@ test('merges per-arch files and keeps extra update fields', () => {
 	assert.equal(merged.stagingPercentage, 25);
 	assert.equal(merged.releaseNotes, 'signed builds');
 	assert.deepEqual(merged.files.map((file) => file.url).sort(), [
-		'sprocket-desktop-1.2.3-mac-arm64.dmg',
-		'sprocket-desktop-1.2.3-mac-arm64.zip',
-		'sprocket-desktop-1.2.3-mac-x64.dmg',
-		'sprocket-desktop-1.2.3-mac-x64.zip'
+		'tinker-desktop-1.2.3-mac-arm64.dmg',
+		'tinker-desktop-1.2.3-mac-arm64.zip',
+		'tinker-desktop-1.2.3-mac-x64.dmg',
+		'tinker-desktop-1.2.3-mac-x64.zip'
 	]);
 	assert.equal(merged.path.endsWith('.zip'), true);
 	assert.equal(merged.releaseDate, '2026-09-07T01:00:00.000Z');
@@ -141,7 +141,7 @@ test('refuses version, channel-field, and same-url checksum collisions', () => {
 });
 
 test('copies unique artifacts and merges colliding canary metadata', async () => {
-	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-desktop-meta-'));
+	const temporary = await mkdtemp(path.join(tmpdir(), 'tinker-desktop-meta-'));
 	const input = path.join(temporary, 'input');
 	const output = path.join(temporary, 'output');
 
@@ -150,15 +150,15 @@ test('copies unique artifacts and merges colliding canary metadata', async () =>
 		await mkdir(path.join(input, 'desktop-darwin-x64'), { recursive: true });
 		await mkdir(path.join(input, 'desktop-linux-x64'), { recursive: true });
 		await writeFile(
-			path.join(input, 'desktop-darwin-arm64/sprocket-desktop-1.2.3-mac-arm64.zip'),
+			path.join(input, 'desktop-darwin-arm64/tinker-desktop-1.2.3-mac-arm64.zip'),
 			'arm64-zip'
 		);
 		await writeFile(
-			path.join(input, 'desktop-darwin-x64/sprocket-desktop-1.2.3-mac-x64.zip'),
+			path.join(input, 'desktop-darwin-x64/tinker-desktop-1.2.3-mac-x64.zip'),
 			'x64-zip'
 		);
 		await writeFile(
-			path.join(input, 'desktop-linux-x64/sprocket-desktop-1.2.3-linux-x64.AppImage'),
+			path.join(input, 'desktop-linux-x64/tinker-desktop-1.2.3-linux-x64.AppImage'),
 			'linux'
 		);
 		await writeFile(
@@ -184,11 +184,11 @@ test('copies unique artifacts and merges colliding canary metadata', async () =>
 			true
 		);
 		assert.equal(
-			await readFile(path.join(output, 'sprocket-desktop-1.2.3-mac-arm64.zip'), 'utf8'),
+			await readFile(path.join(output, 'tinker-desktop-1.2.3-mac-arm64.zip'), 'utf8'),
 			'arm64-zip'
 		);
 		assert.equal(
-			await readFile(path.join(output, 'sprocket-desktop-1.2.3-mac-x64.zip'), 'utf8'),
+			await readFile(path.join(output, 'tinker-desktop-1.2.3-mac-x64.zip'), 'utf8'),
 			'x64-zip'
 		);
 		await assert.rejects(readFile(path.join(output, 'builder-debug.yml')));
@@ -198,17 +198,17 @@ test('copies unique artifacts and merges colliding canary metadata', async () =>
 });
 
 test('fails instead of overwriting colliding installers', async () => {
-	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-desktop-collide-'));
+	const temporary = await mkdtemp(path.join(tmpdir(), 'tinker-desktop-collide-'));
 
 	try {
 		const input = path.join(temporary, 'input');
 		await mkdir(path.join(input, 'a'), { recursive: true });
 		await mkdir(path.join(input, 'b'), { recursive: true });
-		await writeFile(path.join(input, 'a/sprocket-desktop-1.2.3-mac-x64.zip'), 'one');
-		await writeFile(path.join(input, 'b/sprocket-desktop-1.2.3-mac-x64.zip'), 'two');
+		await writeFile(path.join(input, 'a/tinker-desktop-1.2.3-mac-x64.zip'), 'one');
+		await writeFile(path.join(input, 'b/tinker-desktop-1.2.3-mac-x64.zip'), 'two');
 		await assert.rejects(
 			mergeUpdateMetadata(input, path.join(temporary, 'output')),
-			/Refusing to overwrite sprocket-desktop-1\.2\.3-mac-x64\.zip/
+			/Refusing to overwrite tinker-desktop-1\.2\.3-mac-x64\.zip/
 		);
 	} finally {
 		await rm(temporary, { recursive: true, force: true });
@@ -216,7 +216,7 @@ test('fails instead of overwriting colliding installers', async () => {
 });
 
 test('rejects a nonempty or overlapping output without deleting it', async () => {
-	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-desktop-output-'));
+	const temporary = await mkdtemp(path.join(tmpdir(), 'tinker-desktop-output-'));
 
 	try {
 		const input = path.join(temporary, 'input');

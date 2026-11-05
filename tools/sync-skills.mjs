@@ -34,7 +34,7 @@ for (const [name, { upstream, description }] of Object.entries(SKILLS)) {
 	}
 
 	await writeFile(
-		join(root, 'crates/sprocket-workspace/skills', name, 'SKILL.md'),
+		join(root, 'crates/tinker-workspace/skills', name, 'SKILL.md'),
 		`---\nname: ${name}\ndescription: ${description}\n---\n` +
 			(await response.text()).replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
 	);

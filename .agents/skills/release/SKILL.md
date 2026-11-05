@@ -11,7 +11,7 @@ The user names the new version. The previous version is the latest stable releas
 ## 1. Version bump PR
 
 1. Branch from the latest `origin/main` in a new worktree.
-2. Replace the previous version everywhere it names Sprocket's own version. `git log -i --grep='bump version'` finds past bump commits, and `git grep` for the previous version finds the current spots. In `Cargo.lock`, change only the `sprocket-*` packages. Other crates can share the version number. Bump the `-dev.` version in the npm release workflow too.
+2. Replace the previous version everywhere it names Tinker's own version. `git log -i --grep='bump version'` finds past bump commits, and `git grep` for the previous version finds the current spots. In `Cargo.lock`, change only the `tinker-*` packages. Other crates can share the version number. Bump the `-dev.` version in the npm release workflow too.
 3. Run `bun install --frozen-lockfile` if the worktree has no `node_modules`, then `prek run -a`.
 4. Open the PR titled `chore(release): Bump version to v<version>`. Use the body of the last bump PR as the template.
 

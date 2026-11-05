@@ -2,22 +2,22 @@
 
 ## Project overview
 
-- Sprocket is an agentic platform that streamlines hardware and software development.
+- Tinker is an agentic platform that streamlines hardware and software development.
 - The goal is to make the world's best platform for agents and humans to develop apps, robots, devices, and the systems that glue them together.
-- Sprocket should work across different hardware platforms, operating systems, and Sprocket's own cloud for hardware and software development.
-- Assume that Sprocket runs on a machine owned by a single user. Machine resources such as installed tools, browsers, daemons, and caches belong to the machine; user IDs are for auth checks.
+- Tinker should work across different hardware platforms, operating systems, and Tinker's own cloud for hardware and software development.
+- Assume that Tinker runs on a machine owned by a single user. Machine resources such as installed tools, browsers, daemons, and caches belong to the machine; user IDs are for auth checks.
 
 ### Crates
 
 Here's what each Rust crate is for; you may create more crates when needed.
 
-- `sprocket-agent`: model providers, the agent run loop, and agent tools.
-- `sprocket-cli`: the `sprocket` CLI, a client of the local server.
-- `sprocket-convex`: the Convex client.
-- `sprocket-host`: machine-side services such as credentials, command sessions, run recovery, sync, and updates.
-- `sprocket-server`: the HTTP server for the UI and CLI.
-- `sprocket-transcript`: transcript storage, sync, and downloads.
-- `sprocket-workspace`: local files, git, commands, patches, artifacts, and skills.
+- `tinker-agent`: model providers, the agent run loop, and agent tools.
+- `tinker-cli`: the `tinker` CLI, a client of the local server.
+- `tinker-convex`: the Convex client.
+- `tinker-host`: machine-side services such as credentials, command sessions, run recovery, sync, and updates.
+- `tinker-server`: the HTTP server for the UI and CLI.
+- `tinker-transcript`: transcript storage, sync, and downloads.
+- `tinker-workspace`: local files, git, commands, patches, artifacts, and skills.
 
 ## Available testing commands
 
@@ -49,7 +49,7 @@ Reliability comes from fewer moving parts. Add recovery, retries, validation, or
 ### Backwards compatibility
 
 - The Rust server, the UI, and the CLI ship as one version, so changes between them need no compatibility.
-- Ship breaking changes with backwards compatibility for the Convex API that released clients call, their sprocket data-dir, and data in the Convex deployment.
+- Ship breaking changes with backwards compatibility for the Convex API that released clients call, their tinker data-dir, and data in the Convex deployment.
 - Older PR builds/dev builds don't count as released clients for backwards compatibility.
 - A shim is temporary code with a removal gate. Record each shim in `BACKWARDS_COMPATIBILITY.md` with its gate, and add historical formats kept forever to its permanent list. Permanent defaults, SDK workarounds, and fields introduced by the current PR need no entry.
 - Include data migrations in the PR that introduces the breaking change instead of leaving debt behind.

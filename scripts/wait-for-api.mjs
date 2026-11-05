@@ -20,6 +20,6 @@ while (Date.now() - startedAt < timeoutMs) {
 	});
 }
 
-console.error(`Timed out waiting for the Sprocket API at ${DEV_API_URL}.`);
+console.error(`Timed out waiting for the Tinker API at ${DEV_API_URL}.`);
 
 process.exit(1);

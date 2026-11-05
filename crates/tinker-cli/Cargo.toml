@@ -1,0 +1,27 @@
+[package]
+name = "tinker-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tinker"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.5.60", features = ["derive", "env"] }
+open = "5.4.2"
+posthog-rs = "0.30.0"
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tinker-server = { path = "../tinker-server" }
+tinker-workspace = { path = "../tinker-workspace" }
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+uuid = { version = "1.21.0", features = ["v4"] }

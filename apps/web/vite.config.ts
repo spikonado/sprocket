@@ -7,7 +7,7 @@ import { searchForWorkspaceRoot, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
-const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, SPROCKET_RELEASE_VERSION } = process.env;
+const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, TINKER_RELEASE_VERSION } = process.env;
 
 const posthogSourceMaps =
 	POSTHOG_PERSONAL_API_KEY && POSTHOG_PROJECT_ID
@@ -16,7 +16,7 @@ const posthogSourceMaps =
 					personalApiKey: POSTHOG_PERSONAL_API_KEY,
 					projectId: POSTHOG_PROJECT_ID,
 					host: 'https://eu.i.posthog.com',
-					sourcemaps: { releaseName: 'sprocket-app', releaseVersion: SPROCKET_RELEASE_VERSION }
+					sourcemaps: { releaseName: 'sprocket-app', releaseVersion: TINKER_RELEASE_VERSION }
 				})
 			]
 		: [];

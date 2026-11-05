@@ -1,10 +1,10 @@
 {
-	"name": "@sprocket/desktop",
+	"name": "@tinker/desktop",
 	"version": "0.0.0",
 	"private": true,
 	"license": "FSL-1.1-ALv2",
 	"author": "Spikonado",
-	"description": "Sprocket desktop application",
+	"description": "Tinker desktop application",
 	"type": "module",
 	"main": "./main.mjs",
 	"desktopName": "com.spikonado.sprocket.desktop",
@@ -14,13 +14,13 @@
 		"directory": "apps/desktop"
 	},
 	"scripts": {
-		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
+		"dev": "cargo build -q -p tinker-cli && node ./launch.cjs",
 		"test": "bun test ./test/*.test.mjs"
 	},
 	"build": {
 		"appId": "com.spikonado.sprocket",
-		"productName": "Sprocket",
-		"executableName": "sprocket-desktop",
+		"productName": "Tinker",
+		"executableName": "tinker-desktop",
 		"icon": "../web/static/logo.svg",
 		"directories": {
 			"output": "dist"
@@ -42,8 +42,8 @@
 				"from": "../../target/release/",
 				"to": "server/",
 				"filter": [
-					"sprocket",
-					"sprocket.exe"
+					"tinker",
+					"tinker.exe"
 				]
 			},
 			{
@@ -77,7 +77,7 @@
 			],
 			"category": "Development",
 			"syncDesktopName": true,
-			"artifactName": "sprocket-desktop-${version}-${os}-${arch}.${ext}"
+			"artifactName": "tinker-desktop-${version}-${os}-${arch}.${ext}"
 		},
 		"mac": {
 			"target": [
@@ -86,14 +86,14 @@
 			],
 			"category": "public.app-category.developer-tools",
 			"forceCodeSigning": false,
-			"artifactName": "sprocket-desktop-${version}-${os}-${arch}.${ext}"
+			"artifactName": "tinker-desktop-${version}-${os}-${arch}.${ext}"
 		},
 		"win": {
 			"target": [
 				"nsis"
 			],
 			"forceCodeSigning": false,
-			"artifactName": "sprocket-desktop-${version}-${os}-${arch}.${ext}"
+			"artifactName": "tinker-desktop-${version}-${os}-${arch}.${ext}"
 		},
 		"nsis": {
 			"oneClick": false,

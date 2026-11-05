@@ -1,0 +1,80 @@
+use std::path::{Path, PathBuf};
+
+pub const INSTALLED_WEB_DIR: &str = "share/tinker/web";
+
+const COMPILE_TIME_SHARE_DIR: Option<&str> = option_env!("TINKER_SHARE_DIR");
+
+pub fn is_valid_static_dir(path: &Path) -> bool {
+    path.join("index.html").is_file()
+}
+
+pub fn resolve_static_dir(override_path: Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(path) = override_path.filter(|path| is_valid_static_dir(path)) {
+        return Some(path);
+    }
+
+    if let Some(path) = compile_time_share_dir().filter(|path| is_valid_static_dir(path)) {
+        return Some(path);
+    }
+
+    if let Some(path) = discover_installed_static_dir().filter(|path| is_valid_static_dir(path)) {
+        return Some(path);
+    }
+
+    discover_dev_static_dir().filter(|path| is_valid_static_dir(path))
+}
+
+fn compile_time_share_dir() -> Option<PathBuf> {
+    COMPILE_TIME_SHARE_DIR.map(PathBuf::from)
+}
+
+fn discover_installed_static_dir() -> Option<PathBuf> {
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+
+    for candidate in installed_static_candidates(&exe_dir) {
+        if candidate.is_dir() {
+            return candidate.canonicalize().ok();
+        }
+    }
+
+    None
+}
+
+fn installed_static_candidates(exe_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(prefix) = exe_dir.parent() {
+        candidates.push(prefix.join(INSTALLED_WEB_DIR));
+    }
+
+    candidates.push(exe_dir.join("web/dist"));
+    candidates
+}
+
+fn discover_dev_static_dir() -> Option<PathBuf> {
+    find_dev_static_dir_from(Path::new(".")).or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .and_then(|dir| find_dev_static_dir_from(&dir))
+    })
+}
+
+fn find_dev_static_dir_from(start: &Path) -> Option<PathBuf> {
+    let start = start.canonicalize().ok()?;
+
+    for offset in 0..=4 {
+        let mut root = start.clone();
+        for _ in 0..offset {
+            root = root.parent()?.to_path_buf();
+        }
+
+        for candidate in [root.join("apps/web/dist"), root.join("web/dist")] {
+            if candidate.is_dir() {
+                return candidate.canonicalize().ok();
+            }
+        }
+    }
+
+    None
+}

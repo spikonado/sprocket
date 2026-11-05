@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,11 +54,14 @@ if (envFile) {
 }
 
 if (dataDir) {
-	childEnv.SPROCKET_DATA_DIR = path.resolve(repositoryRoot, dataDir);
+	childEnv.TINKER_DATA_DIR = path.resolve(repositoryRoot, dataDir);
 } else if (mode === '--desktop') {
-	childEnv.SPROCKET_DATA_DIR = path.join(homedir(), '.sprocket');
+	const defaultDataDir = path.join(homedir(), '.tinker');
+	const legacyDataDir = path.join(homedir(), '.sprocket');
+	childEnv.TINKER_DATA_DIR =
+		!existsSync(defaultDataDir) && existsSync(legacyDataDir) ? legacyDataDir : defaultDataDir;
 } else {
-	delete childEnv.SPROCKET_DATA_DIR;
+	delete childEnv.TINKER_DATA_DIR;
 }
 
 const desktop = mode === '--desktop';
@@ -73,7 +76,7 @@ const commands = desktop
 			'bun run --cwd apps/desktop dev'
 		]
 	: [
-			`cargo run -p sprocket-cli -- serve --port ${DEV_API_PORT} --api-only`,
+			`cargo run -p tinker-cli -- serve --port ${DEV_API_PORT} --api-only`,
 			'node scripts/wait-for-api.mjs && bun run --cwd apps/web dev'
 		];
 

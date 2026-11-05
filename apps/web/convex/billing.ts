@@ -1221,7 +1221,7 @@ async function planSubscriptionProjection(
 			kind: 'rejected',
 			result: {
 				outcome: 'unresolved',
-				detail: `Dodo subscription ${args.dodoSubscriptionId} has no mapped Sprocket user.`
+				detail: `Dodo subscription ${args.dodoSubscriptionId} has no mapped Tinker user.`
 			}
 		};
 	}

@@ -15,7 +15,7 @@ export const RUN_NO_LONGER_ACTIVE = agentErrorMessages.RUN_NO_LONGER_ACTIVE;
 export const TOOL_NO_LONGER_SUPPORTED = 'This tool is no longer supported.';
 
 export const PAYMENTS_MOVED_TO_AGENTCARD =
-	'Payments moved to Agentcard. Update Sprocket to buy things.';
+	'Payments moved to Agentcard. Update Tinker to buy things.';
 
 export const RUN_ABANDONED_BY_MACHINE = 'The machine stopped responding before this run finished.';
 

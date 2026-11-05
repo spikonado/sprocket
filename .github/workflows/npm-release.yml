@@ -94,7 +94,7 @@ jobs:
         env:
           POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
           POSTHOG_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
-          SPROCKET_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          TINKER_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       - uses: actions/upload-artifact@v7
         with:
           name: web
@@ -109,23 +109,23 @@ jobs:
         include:
           - id: linux-x64-gnu
             runner: ubuntu-latest
-            executable: sprocket
+            executable: tinker
             rust-target: x86_64-unknown-linux-gnu
             glibc-version: '2.17'
           - id: linux-arm64-gnu
             runner: ubuntu-latest
-            executable: sprocket
+            executable: tinker
             rust-target: aarch64-unknown-linux-gnu
             glibc-version: '2.17'
           - id: darwin-x64
             runner: macos-15-intel
-            executable: sprocket
+            executable: tinker
           - id: darwin-arm64
             runner: macos-14
-            executable: sprocket
+            executable: tinker
           - id: win32-x64-msvc
             runner: windows-2022
-            executable: sprocket.exe
+            executable: tinker.exe
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -147,16 +147,16 @@ jobs:
         if: matrix.glibc-version
         shell: bash
         env:
-          SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
+          TINKER_VERSION: ${{ needs.prepare.outputs.version }}
         run: >-
-          cargo zigbuild --locked --release -p sprocket-cli
+          cargo zigbuild --locked --release -p tinker-cli
           --target "${{ matrix.rust-target }}.${{ matrix.glibc-version }}"
       - name: Build native CLI
         if: ${{ !matrix.glibc-version }}
         shell: bash
         env:
-          SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
-        run: cargo build --locked --release -p sprocket-cli
+          TINKER_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo build --locked --release -p tinker-cli
       - name: Stage native CLI
         shell: bash
         run: |
@@ -208,7 +208,7 @@ jobs:
               npm pack --dry-run
             )
           done
-          binaries="$(find npm-dist -type f \( -name sprocket -o -name sprocket.js \))"
+          binaries="$(find npm-dist -type f \( -name tinker -o -name tinker.js -o -name sprocket.js \))"
           test -n "$binaries"
           while IFS= read -r binary; do
             test -x "$binary"
@@ -242,7 +242,7 @@ jobs:
           path: npm-dist
       - name: Restore executable bits after artifact download
         run: >
-          find npm-dist -type f \( -name sprocket -o -name sprocket.js \)
+          find npm-dist -type f \( -name tinker -o -name tinker.js -o -name sprocket.js \)
           -exec chmod 755 {} +
       - id: freshness
         name: Skip stale main-branch builds
@@ -290,7 +290,7 @@ jobs:
             echo "::error::$name@$VERSION is not on the registry after 15 minutes."
             exit 1
           done
-      - name: Publish root package last
+      - name: Publish root packages last
         if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
         env:
           NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
@@ -305,12 +305,15 @@ jobs:
             fi
           fi
 
-          name="$(node -p "require('./npm-dist/sprocket/package.json').name")"
-          if npm view "$name@$VERSION" version >/dev/null 2>&1; then
-            echo "$name@$VERSION is already published; skipping"
-          else
-            (
-              cd npm-dist/sprocket
-              npm publish --tag "$NPM_TAG"
-            )
-          fi
+          # The legacy Sprocket package goes after Tinker because it updates to Tinker's release.
+          for package in npm-dist/tinker npm-dist/sprocket; do
+            name="$(node -p "require('./$package/package.json').name")"
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published; skipping"
+            else
+              (
+                cd "$package"
+                npm publish --tag "$NPM_TAG"
+              )
+            fi
+          done

@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs';
-import { chmod, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
-const SOURCE_PACKAGE = path.join(ROOT, 'npm/sprocket');
+const SOURCE_PACKAGE = path.join(ROOT, 'npm/tinker');
+
+// Released Sprocket clients only update `@spikonado/sprocket`; this copy moves them to `usetinker`.
+const LEGACY_PACKAGE = { directory: 'sprocket', name: '@spikonado/sprocket', command: 'sprocket' };
 
 const TARGETS = JSON.parse(readFileSync(path.join(SOURCE_PACKAGE, 'targets.json'), 'utf8'));
 
@@ -28,15 +31,27 @@ function argumentsFrom(argv) {
 	return values;
 }
 
-async function copyRootPackage(output, web, version) {
-	const destination = path.join(output, 'sprocket');
+async function copyRootPackage(output, web, version, legacy) {
+	const destination = path.join(output, legacy?.directory ?? 'tinker');
 	await mkdir(destination, { recursive: true });
 
 	for (const entry of ['bin', 'lib', 'targets.json']) {
 		await cp(path.join(SOURCE_PACKAGE, entry), path.join(destination, entry), { recursive: true });
 	}
 
-	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);
+	const manifest = JSON.parse(await readFile(path.join(SOURCE_PACKAGE, 'package.json'), 'utf8'));
+	let launcher = path.join(destination, 'bin', 'tinker.js');
+
+	if (legacy) {
+		const legacyLauncher = path.join(destination, 'bin', `${legacy.command}.js`);
+		await rename(launcher, legacyLauncher);
+		launcher = legacyLauncher;
+		manifest.name = legacy.name;
+		manifest.description = 'Sprocket is now Tinker. Install usetinker instead.';
+		manifest.bin = { [legacy.command]: `bin/${legacy.command}.js` };
+	}
+
+	await chmod(launcher, 0o755);
 	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
 	await cp(path.join(ROOT, 'README.md'), path.join(destination, 'README.md'));
 	await cp(
@@ -45,7 +60,6 @@ async function copyRootPackage(output, web, version) {
 	);
 	await cp(web, path.join(destination, 'web'), { recursive: true });
 
-	const manifest = JSON.parse(await readFile(path.join(SOURCE_PACKAGE, 'package.json'), 'utf8'));
 	manifest.version = version;
 	manifest.optionalDependencies = Object.fromEntries(
 		TARGETS.map((target) => [target.packageName, version])
@@ -73,7 +87,7 @@ async function copyPlatformPackage(output, artifacts, version, target) {
 	const manifest = {
 		name: target.packageName,
 		version,
-		description: `Sprocket native executable for ${target.os}/${target.cpu}`,
+		description: `Tinker native executable for ${target.os}/${target.cpu}`,
 		license: 'FSL-1.1-ALv2',
 		os: [target.os],
 		cpu: [target.cpu],
@@ -111,6 +125,7 @@ async function main() {
 	await rm(resolvedOutput, { recursive: true, force: true });
 	await mkdir(resolvedOutput, { recursive: true });
 	await copyRootPackage(resolvedOutput, path.resolve(web), version);
+	await copyRootPackage(resolvedOutput, path.resolve(web), version, LEGACY_PACKAGE);
 	await Promise.all(
 		TARGETS.map((target) =>
 			copyPlatformPackage(resolvedOutput, path.resolve(artifacts), version, target)

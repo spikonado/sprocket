@@ -1,0 +1,50 @@
+[package]
+name = "tinker-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.102"
+axum = { version = "0.8.8", features = ["macros", "ws"] }
+axum-extra = { version = "0.12.0", features = ["cookie"] }
+clap = { version = "4.5.60", features = ["derive", "env"] }
+cookie = { version = "0.18.1", features = ["percent-encode"] }
+hmac = "0.13.0"
+keyring = "4.2.0"
+open = "5.4.2"
+reqwest = { version = "0.13.4", default-features = false, features = ["form", "rustls", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.11.0"
+tinker-agent = { path = "../tinker-agent" }
+tinker-convex = { path = "../tinker-convex" }
+tinker-host = { path = "../tinker-host" }
+tinker-transcript = { path = "../tinker-transcript" }
+tinker-workspace = { path = "../tinker-workspace" }
+tokio = { version = "1.52.1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-tungstenite = "0.30.0"
+tempfile = "3.27.0"
+tower = "0.5.3"
+convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
+futures = "0.3.32"
+tower-http = { version = "0.7.0", features = ["fs", "trace"] }
+tracing = "0.1.44"
+url = "2.5.8"
+uuid = { version = "1.21.0", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
+
+[build-dependencies]
+dotenvy = "0.15.7"
+serde_json = "1.0.149"
+
+[dev-dependencies]
+tokio = { version = "1.52.1", features = ["test-util"] }
+tinker-host = { path = "../tinker-host", features = ["test-support"] }
+workos = "3.4.1"

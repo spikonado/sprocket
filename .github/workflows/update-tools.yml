@@ -21,7 +21,7 @@ jobs:
             label: Bun
           - tool: agent-browser
             label: agent-browser
-            note: ' Check the dashboard adapters in `crates/sprocket-server/src/routes/browser.rs` against the new release before merging: dashboard loading, dynamic chunks, session creation, and live input.'
+            note: ' Check the dashboard adapters in `crates/tinker-server/src/routes/browser.rs` against the new release before merging: dashboard loading, dynamic chunks, session creation, and live input.'
           - tool: agent-desktop
             label: agent-desktop
           - tool: uv
@@ -50,8 +50,8 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           paths=("tools/$TOOL/releases.json")
-          if [[ -d "crates/sprocket-workspace/skills/$TOOL" ]]; then
-            paths+=("crates/sprocket-workspace/skills/$TOOL/SKILL.md")
+          if [[ -d "crates/tinker-workspace/skills/$TOOL" ]]; then
+            paths+=("crates/tinker-workspace/skills/$TOOL/SKILL.md")
           fi
 
           if [[ -z "$(git status --porcelain -- "${paths[@]}")" ]]; then

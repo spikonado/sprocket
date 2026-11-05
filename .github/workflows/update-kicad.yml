@@ -28,7 +28,7 @@ jobs:
           dev-shell: '.#kicad'
 
       - name: Mirror and pin the newest KiCad nightly
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./tinker-shell -c bash -e {0}'
         run: bun tools/kicad/update-release.mjs
 
       - name: Create or update pull request

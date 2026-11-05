@@ -223,7 +223,7 @@ describe('Agentcard payments', () => {
 		).rejects.toThrow('not a recognized payment request');
 	});
 
-	it('links the Sprocket user named by a signed session_linked webhook', async () => {
+	it('links the Tinker user named by a signed session_linked webhook', async () => {
 		vi.stubEnv('AGENTCARD_WEBHOOK_SECRET', 'whsec');
 		const t = initConvexTest();
 		agentcardApi();

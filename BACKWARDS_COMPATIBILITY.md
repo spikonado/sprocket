@@ -70,11 +70,11 @@ Released agents complete `ask_question` and `poll_question` jobs with `pending`,
 
 ### Retired Prava mandate tools
 
-Released v0.4.x agents still start `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report` jobs. `beginToolJob` accepts their payloads and fails them with "Payments moved to Agentcard. Update Sprocket to buy things." Remove the retired payload validators from the job-start path and `PAYMENTS_MOVED_TO_AGENTCARD` once those agents age out. Stored jobs stay readable, see the permanent list.
+Released v0.4.x agents still start `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report` jobs. `beginToolJob` accepts their payloads and fails them with "Payments moved to Agentcard. Update Tinker to buy things." Remove the retired payload validators from the job-start path and `PAYMENTS_MOVED_TO_AGENTCARD` once those agents age out. Stored jobs stay readable, see the permanent list.
 
 ### Agent error text
 
-Production Convex delivers only a `ConvexError`'s `data`. Agents from v0.4.3 and earlier match executor errors by that text, and `SPROCKET_SUBMISSION_WAITING` must match exactly. So `agentError` throws the legacy message from `lib/agentErrorCodes.json` as string `data`. Current agents map that text back to its code in `sprocket-convex/src/decode.rs` and also accept `{ code, message }` data. Once those agents age out, throw `{ code, message }` and remove the message lookup.
+Production Convex delivers only a `ConvexError`'s `data`. Agents from v0.4.3 and earlier match executor errors by that text, and `SPROCKET_SUBMISSION_WAITING` must match exactly. So `agentError` throws the legacy message from `lib/agentErrorCodes.json` as string `data`. Current agents map that text back to its code in `tinker-convex/src/decode.rs` and also accept `{ code, message }` data. Once those agents age out, throw `{ code, message }` and remove the message lookup.
 
 ### Automatic recovery submission prefix
 
@@ -138,6 +138,14 @@ Each of these Convex variants goes once a full production scan confirms no retai
 
 ## Local data directory shims
 
+### Sprocket data and skill directories
+
+Profiles from before the rename stay in `~/.sprocket`, because moving them would break absolute paths inside, such as installed tools. The server (`data_dir_in_home` in `tinker-server/src/config.rs`), the desktop app (`getDefaultDataDir` in `apps/desktop/main.mjs`) and `scripts/run-dev.mjs` use `~/.tinker` when it exists, else `~/.sprocket` when it exists, else `~/.tinker`. Skills also load from `.sprocket/skills` in the home directory and in projects (`SKILL_DIRS` in `tinker-workspace/src/skills.rs`). Remove both once a release migrates `~/.sprocket` into `~/.tinker` and Sprocket releases are outside the supported upgrade window.
+
+### Sprocket desktop user data
+
+Renaming the desktop app moved Electron's user data directory from `<appData>/Sprocket` to `<appData>/Tinker`. Packaged apps keep using the old directory when only it exists, so local storage and the single-instance lock carry over. Remove that check in `apps/desktop/main.mjs` once desktop installs from before the rename are outside the supported upgrade window.
+
 ### Native credential store selection
 
 An absent `credentials/<account>/store.json` means automatic: keyring storage with file fallback. Released clients never wrote `"keyring"` when it was their default. Keep reading `"keyring"` and `"file"` while profiles from released clients are supported.
@@ -175,6 +183,10 @@ A server process started before an update returns HTTP 401 instead of 409 for CL
 Transcripts from released clients lack `providerMetadata.rigNative` and `origin`. `transcript/history.rs` rebuilds native items from their older `providerMetadata` fields, and `assign_unidentified_legacy_history_origin` assigns the selected model's origin. A missing `reasoningIssuer` means `openai`. Keep these fallbacks until a versioned migration rewrites all stored local JSONL and Convex transcripts.
 
 ## Launcher process shims
+
+### Sprocket npm package
+
+Released clients only check and install `@spikonado/sprocket` and restart into its `bin/sprocket.js`. So each npm release also publishes the Tinker build under that name, with a `sprocket` command. When that copy finds it is installed as `@spikonado/sprocket`, it always offers `usetinker` from its channel, installs it, removes `@spikonado/sprocket`, and restarts into `usetinker/bin/tinker.js`. Stop publishing the legacy package, and remove `LEGACY_PACKAGE_NAME` from `npm/tinker/lib/update.js` and `LEGACY_PACKAGE` from `scripts/build-npm-packages.mjs`, once Sprocket releases are outside the supported upgrade window.
 
 ### Restart exit code
 

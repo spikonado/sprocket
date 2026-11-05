@@ -19,7 +19,7 @@ test('server readiness times out when a health request never responds', async ()
 
 	await assert.rejects(
 		waitForServerReady('http://127.0.0.1:7731', 20, hangingFetch),
-		/Timed out waiting for the Sprocket local server/
+		/Timed out waiting for the Tinker local server/
 	);
 	assert.equal(requestAborted, true);
 });

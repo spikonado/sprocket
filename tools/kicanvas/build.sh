@@ -17,7 +17,7 @@ git -C "$src" checkout --quiet "$commit"
 # sheet shows the file's default references.
 # page-visibility: an app that finishes loading after the user switches to a page
 # in the other app shows itself anyway, so the board and schematic split the view.
-# sprocket-theme: styles the controls from the theme tokens kicanvas-viewer.html
+# tinker-theme: styles the controls from the theme tokens kicanvas-viewer.html
 # gets from the app, and drops the preferences, keeping KiCad's colors and
 # mouse controls.
 # footprint-transform: KiCad 10.99 places footprints with

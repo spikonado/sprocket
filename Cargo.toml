@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "crates/sprocket-convex",
-    "crates/sprocket-transcript",
-    "crates/sprocket-workspace",
-    "crates/sprocket-agent",
-    "crates/sprocket-host",
-    "crates/sprocket-server",
-    "crates/sprocket-cli",
+    "crates/tinker-convex",
+    "crates/tinker-transcript",
+    "crates/tinker-workspace",
+    "crates/tinker-agent",
+    "crates/tinker-host",
+    "crates/tinker-server",
+    "crates/tinker-cli",
 ]
 resolver = "3"
 

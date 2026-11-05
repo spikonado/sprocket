@@ -1,0 +1,154 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::Path;
+use std::thread;
+use std::time::Duration;
+
+use anyhow::Context;
+use uuid::Uuid;
+
+const INSTALLATION_IDENTITY_FILE: &str = "installation.json";
+const INSTALLATION_IDENTITY_VERSION: u32 = 1;
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredInstallationIdentity {
+    version: u32,
+    installation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    friendly_name: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct MachineIdentity {
+    pub installation_id: String,
+    pub process_id: String,
+    pub friendly_name: String,
+    pub platform: String,
+    pub platform_version: String,
+    pub architecture: String,
+    pub hostname: String,
+}
+
+impl MachineIdentity {
+    pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
+        let stored = load_or_create_installation_identity(data_dir)?;
+        let hostname = hostname();
+        Ok(Self {
+            installation_id: stored.installation_id,
+            process_id: Uuid::new_v4().to_string(),
+            friendly_name: stored.friendly_name.unwrap_or_else(|| hostname.clone()),
+            platform: normalized_platform().to_string(),
+            platform_version: platform_version(),
+            architecture: std::env::consts::ARCH.to_string(),
+            hostname,
+        })
+    }
+}
+
+fn load_or_create_installation_identity(
+    data_dir: &Path,
+) -> anyhow::Result<StoredInstallationIdentity> {
+    fs::create_dir_all(data_dir)
+        .with_context(|| format!("failed to create data directory {}", data_dir.display()))?;
+    let path = data_dir.join(INSTALLATION_IDENTITY_FILE);
+    if let Some(identity) = read_installation_identity(&path)? {
+        return Ok(identity);
+    }
+
+    let identity = StoredInstallationIdentity {
+        version: INSTALLATION_IDENTITY_VERSION,
+        installation_id: Uuid::new_v4().to_string(),
+        friendly_name: None,
+    };
+    let encoded = serde_json::to_vec_pretty(&identity)?;
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            file.write_all(&encoded).with_context(|| {
+                format!("failed to write installation identity {}", path.display())
+            })?;
+            writeln!(file)?;
+            file.sync_all().with_context(|| {
+                format!("failed to persist installation identity {}", path.display())
+            })?;
+            Ok(identity)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            for _ in 0..10 {
+                if let Some(identity) = read_installation_identity(&path)? {
+                    return Ok(identity);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(anyhow::anyhow!(
+                "installation identity {} is invalid",
+                path.display()
+            ))
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to create installation identity {}", path.display())),
+    }
+}
+
+fn read_installation_identity(path: &Path) -> anyhow::Result<Option<StoredInstallationIdentity>> {
+    let value = match fs::read(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let identity: StoredInstallationIdentity = match serde_json::from_slice(&value) {
+        Ok(identity) => identity,
+        Err(error) if error.is_eof() => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("invalid installation identity {}", path.display()));
+        }
+    };
+    if identity.version != INSTALLATION_IDENTITY_VERSION
+        || Uuid::parse_str(&identity.installation_id).is_err()
+    {
+        anyhow::bail!("unsupported installation identity {}", path.display());
+    }
+    Ok(Some(identity))
+}
+
+fn hostname() -> String {
+    ["HOSTNAME", "COMPUTERNAME"]
+        .into_iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "Tinker machine".to_string())
+}
+
+fn normalized_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    }
+}
+
+fn platform_version() -> String {
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "ver"])
+        .output();
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("uname").arg("-r").output();
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests;
