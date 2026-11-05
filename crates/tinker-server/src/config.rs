@@ -88,13 +88,13 @@ fn default_data_dir() -> PathBuf {
 }
 
 /// Profiles created before the rename to Tinker stay in `~/.sprocket`; nothing moves them.
+/// `~/.tinker` existing doesn't rule them out, since creating `~/.tinker/skills` makes it exist.
 fn data_dir_in_home(home: &Path) -> PathBuf {
-    let current = home.join(".tinker");
     let legacy = home.join(".sprocket");
-    if !current.exists() && legacy.exists() {
+    if legacy.exists() {
         legacy
     } else {
-        current
+        home.join(".tinker")
     }
 }
 

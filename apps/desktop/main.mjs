@@ -139,10 +139,9 @@ function getServerBinaryPath() {
 // Must match the Rust server's default data dir.
 function getDefaultDataDir() {
 	const home = process.env.HOME || process.env.USERPROFILE || '.';
-	const dataDir = path.join(home, '.tinker');
 	const legacyDataDir = path.join(home, '.sprocket');
 
-	return !fs.existsSync(dataDir) && fs.existsSync(legacyDataDir) ? legacyDataDir : dataDir;
+	return fs.existsSync(legacyDataDir) ? legacyDataDir : path.join(home, '.tinker');
 }
 
 function getLocalDataDir() {

@@ -56,10 +56,10 @@ if (envFile) {
 if (dataDir) {
 	childEnv.TINKER_DATA_DIR = path.resolve(repositoryRoot, dataDir);
 } else if (mode === '--desktop') {
-	const defaultDataDir = path.join(homedir(), '.tinker');
 	const legacyDataDir = path.join(homedir(), '.sprocket');
-	childEnv.TINKER_DATA_DIR =
-		!existsSync(defaultDataDir) && existsSync(legacyDataDir) ? legacyDataDir : defaultDataDir;
+	childEnv.TINKER_DATA_DIR = existsSync(legacyDataDir)
+		? legacyDataDir
+		: path.join(homedir(), '.tinker');
 } else {
 	delete childEnv.TINKER_DATA_DIR;
 }

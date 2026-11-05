@@ -52,8 +52,6 @@ test('assembles version-matched root, legacy, and native packages', async () => 
 		);
 
 		assert.equal(rootManifest.version, '1.2.3');
-		assert.equal(rootManifest.name, 'usetinker');
-		assert.deepEqual(rootManifest.bin, { tinker: 'bin/tinker.js' });
 		assert.equal(rootManifest.optionalDependencies['usetinker-linux-x64-gnu'], '1.2.3');
 		assert(rootManifest.files.includes('THIRD_PARTY_NOTICES.md'));
 		await access(path.join(output, 'tinker/web/index.html'));

@@ -140,7 +140,7 @@ Each of these Convex variants goes once a full production scan confirms no retai
 
 ### Sprocket data and skill directories
 
-Profiles from before the rename stay in `~/.sprocket`, because moving them would break absolute paths inside, such as installed tools. The server (`data_dir_in_home` in `tinker-server/src/config.rs`), the desktop app (`getDefaultDataDir` in `apps/desktop/main.mjs`) and `scripts/run-dev.mjs` use `~/.tinker` when it exists, else `~/.sprocket` when it exists, else `~/.tinker`. Skills also load from `.sprocket/skills` in the home directory and in projects (`SKILL_DIRS` in `tinker-workspace/src/skills.rs`). Remove both once a release migrates `~/.sprocket` into `~/.tinker` and Sprocket releases are outside the supported upgrade window.
+Profiles from before the rename stay in `~/.sprocket`, because moving them would break absolute paths inside, such as installed tools. The server (`data_dir_in_home` in `tinker-server/src/config.rs`), the desktop app (`getDefaultDataDir` in `apps/desktop/main.mjs`) and `scripts/run-dev.mjs` use `~/.sprocket` when it exists, else `~/.tinker`. Skills also load from `.sprocket/skills` in the home directory and in projects (`SKILL_DIRS` in `tinker-workspace/src/skills.rs`). Remove both once a release migrates `~/.sprocket` into `~/.tinker` and Sprocket releases are outside the supported upgrade window.
 
 ### Sprocket desktop user data
 
@@ -186,7 +186,7 @@ Transcripts from released clients lack `providerMetadata.rigNative` and `origin`
 
 ### Sprocket npm package
 
-Released clients only check and install `@spikonado/sprocket` and restart into its `bin/sprocket.js`. So each npm release also publishes the Tinker build under that name, with a `sprocket` command. When that copy finds it is installed as `@spikonado/sprocket`, it always offers `usetinker` from its channel, installs it, removes `@spikonado/sprocket`, and restarts into `usetinker/bin/tinker.js`. Stop publishing the legacy package, and remove `LEGACY_PACKAGE_NAME` from `npm/tinker/lib/update.js` and `LEGACY_PACKAGE` from `scripts/build-npm-packages.mjs`, once Sprocket releases are outside the supported upgrade window.
+Released clients only check and install `@spikonado/sprocket` and restart into its `bin/sprocket.js`. So each npm release also publishes the Tinker build under that name, with a `sprocket` command. When that copy finds it is installed as `@spikonado/sprocket`, it always offers `usetinker` from its channel, installs it, removes `@spikonado/sprocket`, and restarts into `usetinker/bin/tinker.js`. Once Sprocket releases are outside the supported upgrade window, remove `copyLegacyPackage` from `scripts/build-npm-packages.mjs`, the `npm-dist/sprocket` publish and `sprocket.js` matches from `.github/workflows/npm-release.yml`, and the `LEGACY_PACKAGE_NAME` handling from `npm/tinker/lib/update.js`.
 
 ### Restart exit code
 
