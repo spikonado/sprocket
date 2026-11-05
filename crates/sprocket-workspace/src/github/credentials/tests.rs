@@ -37,12 +37,10 @@ fn enterprise_token_only_reaches_the_configured_host() {
 fn gh_runs_without_prompts_or_inherited_tokens() {
     let command = gh_command(&["auth", "token", "--hostname", "ghe.example.com"]);
     let command = command.as_std();
-    assert_eq!(command.get_args().collect::<Vec<_>>(), [
-        "auth",
-        "token",
-        "--hostname",
-        "ghe.example.com"
-    ]);
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        ["auth", "token", "--hostname", "ghe.example.com"]
+    );
     let envs: HashMap<_, _> = command.get_envs().collect();
     assert_eq!(
         envs.get(OsStr::new("GH_PROMPT_DISABLED")),
