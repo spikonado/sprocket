@@ -26,7 +26,8 @@ function editorApi(onDisk: WorkspaceFileContent | null) {
 			await new Promise((resolve) => signal.addEventListener('abort', resolve));
 		}),
 		writeWorkspaceFile: vi.fn(),
-		readWorkspaceText: vi.fn()
+		readWorkspaceText: vi.fn(),
+		exportBoard3d: vi.fn()
 	};
 
 	return {

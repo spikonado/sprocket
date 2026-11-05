@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{DefaultBodyLimit, State};
+use axum::http::header;
 use axum::routing::{get, post};
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -23,7 +24,8 @@ use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceEntryKind,
     WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
     default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_file,
-    read_workspace_text, rename_workspace_entry, workspace_entry_kind, write_workspace_file,
+    read_workspace_text, rename_workspace_entry, workspace_entry_kind, workspace_file_path,
+    write_workspace_file,
 };
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
@@ -163,6 +165,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/file/create", post(create_entry))
         .route("/workspace/file/rename", post(rename_entry))
         .route("/workspace/file/delete", post(delete_entry))
+        .route("/workspace/file/board-3d", post(board_3d))
         .route("/workspace/image", get(image::local_image))
 }
 
@@ -291,6 +294,24 @@ async fn read_text(
     })
     .await?;
     Ok(([("x-file-version", text.version)], text.content))
+}
+
+async fn board_3d(
+    MachineSession: MachineSession,
+    State(state): State<AppState>,
+    Json(payload): Json<WorkspaceEntryRequest>,
+) -> Result<([(header::HeaderName, &'static str); 1], Vec<u8>), ApiError> {
+    let board = in_workspace(payload.workspace_path, move |root| {
+        workspace_file_path(root, &payload.path)
+    })
+    .await?;
+    let model = state
+        .host
+        .kicad
+        .export_board_glb(&board)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(([(header::CONTENT_TYPE, "model/gltf-binary")], model))
 }
 
 async fn write_file(

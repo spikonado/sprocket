@@ -78,6 +78,9 @@ pub struct KiCadConnector {
     python: Arc<PythonTools>,
     client: reqwest::Client,
     activity: Mutex<Activity>,
+    /// A board's export loads every component's STEP model, which takes seconds of CPU and
+    /// hundreds of MB, so boards export one at a time.
+    board_exports: tokio::sync::Semaphore,
 }
 
 impl KiCadConnector {
@@ -88,6 +91,7 @@ impl KiCadConnector {
             python,
             client: large_download_client()?,
             activity: Mutex::new(Activity::Idle),
+            board_exports: tokio::sync::Semaphore::new(1),
         })
     }
 
@@ -174,6 +178,42 @@ impl KiCadConnector {
 
     pub(crate) fn bin_dir(&self) -> PathBuf {
         self.root.join(LAUNCHER_DIR)
+    }
+
+    /// Exports `board` as binary glTF with its copper, mask, silkscreen and component models.
+    pub async fn export_board_glb(&self, board: &Path) -> anyhow::Result<Vec<u8>> {
+        let cli = self.bin_dir().join(format!(
+            "kicad-cli{}",
+            if cfg!(windows) { ".cmd" } else { "" }
+        ));
+        ensure!(
+            cli.is_file(),
+            "Install the KiCad connector in Settings to view boards in 3D."
+        );
+        let _permit = self.board_exports.acquire().await?;
+        let output = tempfile::Builder::new().suffix(".glb").tempfile()?;
+        run_checked(
+            "KiCad's 3D export",
+            Command::new(cli)
+                .args([
+                    "pcb",
+                    "export",
+                    "glb",
+                    "--force",
+                    // KiCad's libraries pair each VRML model with a STEP one, and glTF export reads only STEP.
+                    "--subst-models",
+                    "--include-tracks",
+                    "--include-pads",
+                    "--include-zones",
+                    "--include-silkscreen",
+                    "--include-soldermask",
+                    "--output",
+                ])
+                .arg(output.path())
+                .arg(board),
+        )
+        .await?;
+        Ok(tokio::fs::read(output.path()).await?)
     }
 
     pub(crate) fn environment(&self) -> Option<(OsString, OsString)> {
