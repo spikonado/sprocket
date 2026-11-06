@@ -4,6 +4,18 @@ import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
 import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
+export async function insertQueuedRun(
+	ctx: MutationCtx,
+	run: Omit<Doc<'runs'>, '_id' | '_creationTime' | 'status'>
+) {
+	return await changeThreadActivity(ctx, run.threadId, async () => {
+		const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
+		await ctx.db.patch('threadRecords', run.threadId, { status: 'queued' });
+
+		return runId;
+	});
+}
+
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
 	run: Pick<Doc<'runs'>, '_id' | 'threadId' | 'status'>,

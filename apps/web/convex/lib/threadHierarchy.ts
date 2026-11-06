@@ -141,7 +141,7 @@ async function applyAncestorCountChanges(
 		});
 	}
 
-	if (changes.active > 0) await unsettleRootOfThread(ctx, thread);
+	if (changes.active > 0) await unsettleRoot(ctx, thread);
 }
 
 export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
@@ -206,7 +206,20 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 	};
 }
 
-export async function unsettleRootOfThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+/** Returns false, leaving the thread unsettled, while its tree has active work. */
+export async function settleRoot(ctx: MutationCtx, root: Doc<'threadRecords'>): Promise<boolean> {
+	if (root.parentThreadId !== undefined) throw new Error('Only root threads can be settled.');
+
+	if (root.archivedAt !== undefined) return true;
+
+	if ((await subtreeSummary(ctx.db, root)).anyActive) return false;
+
+	await ctx.db.patch('threadRecords', root._id, { archivedAt: Date.now() });
+
+	return true;
+}
+
+export async function unsettleRoot(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
 	const root = await threadRoot(ctx.db, thread);
 
 	if (root.archivedAt !== undefined) {
