@@ -623,7 +623,7 @@ describe('hostedParse', () => {
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', inputId))).not.toBeNull();
 	});
 
-	it.each(['new-claim', 'settled-job', 'skipped-result'])(
+	it.each(['new-claim', 'settled-job', 'empty-result'])(
 		'discards %s results without leaving pending requests',
 		async (mode) => {
 			const t = initConvexTest();
@@ -642,8 +642,7 @@ describe('hostedParse', () => {
 				filename: 'input.pdf'
 			});
 
-			const resultId =
-				mode === 'skipped-result' ? undefined : await storeBlob(t, { bytes: 'late' });
+			const resultId = mode === 'empty-result' ? undefined : await storeBlob(t, { bytes: 'late' });
 
 			await t.run(async (ctx) => {
 				if (mode === 'new-claim')
@@ -663,7 +662,7 @@ describe('hostedParse', () => {
 				},
 				result: {
 					kind: 'success',
-					returnValue: resultId ? { resultStorageId: resultId } : { skipped: true }
+					returnValue: resultId ? { resultStorageId: resultId } : {}
 				}
 			});
 			const request = await t.run((ctx) => ctx.db.get('hostedParseRequests', created.requestId));

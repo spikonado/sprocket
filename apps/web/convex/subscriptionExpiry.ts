@@ -28,11 +28,6 @@ export async function scheduleSubscriptionExpiry(
 
 	const target = computeAccess(subscription, now);
 
-	const phaseCurrent = subscription.accessPhase === target.accessPhase;
-
-	const endsAtCurrent =
-		(subscription.accessEndsAt ?? undefined) === (target.accessEndsAt ?? undefined);
-
 	const needsCheck =
 		managed &&
 		subscription.status === 'active' &&
@@ -42,23 +37,6 @@ export async function scheduleSubscriptionExpiry(
 	const check = billingPeriodCheckId
 		? await ctx.db.system.get('_scheduled_functions', billingPeriodCheckId)
 		: null;
-
-	if (
-		needsCheck &&
-		check?.state.kind === 'pending' &&
-		check.scheduledTime === target.accessEndsAt &&
-		check.args[0]?.dodoSubscriptionId === dodoSubscriptionId &&
-		check.args[0]?.projectionRevision === (subscription.projectionRevision ?? 0)
-	) {
-		if (!phaseCurrent || !endsAtCurrent) {
-			await ctx.db.patch('subscriptions', subscription._id, {
-				accessPhase: target.accessPhase,
-				accessEndsAt: target.accessEndsAt
-			});
-		}
-
-		return;
-	}
 
 	if (check?.state.kind === 'pending') await ctx.scheduler.cancel(check._id);
 

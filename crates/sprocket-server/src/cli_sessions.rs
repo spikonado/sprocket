@@ -65,18 +65,10 @@ impl CliSessions {
             !self.host.is_stopping(),
             "server is shutting down; retry the command"
         );
-        if let Some(lease) = state.clients.get_mut(client_id) {
-            anyhow::ensure!(
-                lease.session.session_token == session_token,
-                "CLI client belongs to another session"
-            );
-            anyhow::ensure!(
-                lease.expires_at > Instant::now(),
-                "CLI client lease expired"
-            );
-            lease.expires_at = Instant::now() + CLIENT_GRACE;
-            return Ok(());
-        }
+        anyhow::ensure!(
+            !state.clients.contains_key(client_id),
+            "CLI client is already connected"
+        );
         anyhow::ensure!(state.clients.len() < 256, "too many CLI clients");
         state.used = true;
         state.clients.insert(
