@@ -364,6 +364,7 @@ export default function FilesView({
 		if (shown.current && shown.current.path !== workspacePath) {
 			model.resetPaths([]);
 			shown.current = null;
+			pendingCreate.current = null;
 		}
 
 		function showError(error: string) {

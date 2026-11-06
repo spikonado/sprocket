@@ -73,6 +73,17 @@ it('switches between the thread and project roots', async () => {
 	);
 });
 
+it('lists the new root when it switches while a new file is being named', async () => {
+	renderFiles(filesApi());
+	await waitFor(() => expect(row('README.md')).toBeTruthy());
+
+	fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Project' }));
+
+	await waitFor(() => expect(row('README.md')).toBeTruthy());
+	expect(screen.getByRole('button', { name: 'New file' })).toHaveProperty('disabled', false);
+});
+
 it('lists the project without a root switch when the thread runs in it', async () => {
 	const api = filesApi();
 	renderFiles(api, vi.fn(), '/repo');
