@@ -75,12 +75,23 @@ pub(crate) struct PollCheckoutArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum OrderOutcome {
+    /// The store confirmed the order.
+    Ordered,
+    /// The store showed that the payment failed, so nothing was bought.
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ReportOrderArgs {
     /// From card_checkout.
     purchase_id: String,
-    /// Order number shown by the store.
-    order_number: String,
+    outcome: OrderOutcome,
+    /// Order number shown by the store. Required when the outcome is ordered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    order_number: Option<String>,
     /// https link to the store's page for this order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     order_link: Option<String>,

@@ -45,6 +45,9 @@ A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_un
 
 ## 4. Confirm and report
 
-Wait for the store's confirmation page, then call `report_order`. Give the user the order number and any tracking link.
+`approved` only means the real card reached the processor. The store can still reject the payment, for example with a captcha or bank check that fails.
 
-Done when: `report_order` succeeded, or you told the user the store showed no confirmation.
+- When the store shows its confirmation page, call `report_order` with `outcome: "ordered"` and the order number. Give the user the order number and any tracking link.
+- When the store shows the payment failed, call `report_order` with `outcome: "failed"` and tell the user what the store said.
+
+Done when: `report_order` succeeded, or you told the user the store showed neither a confirmation nor a failure.
