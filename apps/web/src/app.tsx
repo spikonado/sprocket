@@ -284,12 +284,9 @@ export default function App({
 	const nativeAuthLoading = auth.nativeSession === 'loading';
 
 	const nativeAuthBlocked =
-		auth.nativeSession === 'missing' ||
-		auth.nativeSession === 'mismatch' ||
-		auth.nativeSession === 'unavailable';
+		auth.nativeSession === 'mismatch' || auth.nativeSession === 'unavailable';
 
-	const nativeSignInRequired =
-		auth.nativeSession === 'missing' || auth.nativeSession === 'mismatch';
+	const nativeSignInRequired = auth.nativeSession === 'mismatch';
 
 	const authReady =
 		auth.isReady &&
@@ -2427,7 +2424,6 @@ export default function App({
 				nextPendingAgentLaunches,
 				currentThreadId,
 				runState.runId,
-				undefined,
 				runState.startedAt
 			);
 		}

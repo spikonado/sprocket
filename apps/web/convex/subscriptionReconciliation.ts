@@ -21,7 +21,6 @@ const reconciliationWorkpool = new Workpool(components.billingReconciliationWork
 const vObservationOutcome = v.union(
 	v.literal('applied'),
 	v.literal('stale'),
-	v.literal('duplicate'),
 	v.literal('noop'),
 	v.literal('competing'),
 	v.literal('unresolved')

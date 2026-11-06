@@ -119,25 +119,6 @@ describe('project thread helpers', () => {
 		).toBeNull();
 	});
 
-	it('preserves a newly created thread id before the reactive list includes it', () => {
-		const existing = makeThreadSummary({
-			threadId: threadId('thread-record-old'),
-			lastMessageAt: 20
-		});
-
-		const pendingThreadId = threadId('thread-record-new');
-
-		expect(
-			resolveProjectThreadSelection({
-				threads: [existing],
-				currentThreadId: pendingThreadId,
-				currentWorkspacePath: '/workspaces/ws-1',
-				draftWorkspacePath: null,
-				pendingCreatedThreadId: pendingThreadId
-			})
-		).toBe(pendingThreadId);
-	});
-
 	it('preserves the selected thread while the cache fetches a record outside the recent list', () => {
 		const newest = makeThreadSummary({
 			threadId: threadId('thread-record-newest'),
@@ -151,8 +132,7 @@ describe('project thread helpers', () => {
 				threads: [newest],
 				currentThreadId: selected,
 				currentWorkspacePath: '/workspaces/ws-1',
-				draftWorkspacePath: null,
-				pendingCreatedThreadId: null
+				draftWorkspacePath: null
 			})
 		).toBe(selected);
 	});
@@ -219,14 +199,14 @@ describe('project thread helpers', () => {
 			isAgentLaunchPending(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1), threadA)
 		).toBe(true);
 
-		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadB, runB2, undefined, 10);
+		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadB, runB2, 10);
 		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadA, runA2);
 		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(false);
 	});
 
-	it('reconciles a retry when the existing run receives a new claim lease', () => {
+	it('reconciles a retry when the existing run restarts', () => {
 		const pendingLaunches = beginLaunch({}, threadA, 1, runA1, {
-			previousClaimExpiresAt: 50
+			previousStartedAt: 50
 		});
 
 		expect(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1, 50)).toBe(pendingLaunches);

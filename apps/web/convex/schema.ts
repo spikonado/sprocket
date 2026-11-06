@@ -80,7 +80,6 @@ export default defineSchema({
 				v.literal('reserved'),
 				v.literal('created'),
 				v.literal('create_ambiguous'),
-				v.literal('recovered'),
 				v.literal('paid'),
 				v.literal('failed')
 			)
@@ -224,7 +223,6 @@ export default defineSchema({
 		outcome: v.union(
 			v.literal('pending'),
 			v.literal('applied'),
-			v.literal('duplicate'),
 			v.literal('stale'),
 			v.literal('noop'),
 			v.literal('unsupported'),

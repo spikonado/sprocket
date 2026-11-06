@@ -16,7 +16,7 @@ type AuthStatus = {
 	isWaitingForBrowserSignIn: boolean;
 	browserSignInUrl: string | null;
 	user: AuthUser | null;
-	nativeSession: 'notRequired' | 'loading' | 'ready' | 'missing' | 'mismatch' | 'unavailable';
+	nativeSession: 'notRequired' | 'loading' | 'ready' | 'mismatch' | 'unavailable';
 	error: string | null;
 };
 
