@@ -134,8 +134,8 @@ it('keeps a failed save error after the file is read again', async () => {
 	expect(document.querySelector('[role="alert"]')?.textContent).toBe('Disk full');
 });
 
-it('offers the conflicting disk state after a save conflict and reloads it', async () => {
-	const { api, write } = editorApi(saved);
+it('offers a reload only once the conflicting disk state is read', async () => {
+	const { api, push } = editorApi(saved);
 	vi.mocked(api.writeWorkspaceFile)
 		.mockRejectedValueOnce(new Error('Disk full'))
 		.mockResolvedValueOnce({ status: 'conflict', version: 'v2' });
@@ -144,9 +144,10 @@ it('offers the conflicting disk state after a save conflict and reloads it', asy
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	editorView().dispatch({ changes: { from: 5, insert: '!' } });
 	await pressSave();
-	write({ ...saved, content: 'theirs', version: 'v2' });
 	await pressSave();
+	expect(document.body.textContent).not.toContain('changed on disk');
 
+	push({ kind: 'snapshot', ...saved, content: 'theirs', version: 'v2' });
 	act(() => document.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
 	expect(editorView().state.doc.toString()).toBe('theirs');
 	expect(document.querySelector('[role="alert"]')).toBeNull();
