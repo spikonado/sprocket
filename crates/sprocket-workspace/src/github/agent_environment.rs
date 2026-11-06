@@ -22,7 +22,12 @@ pub async fn agent_environment(user_id: &str) -> Vec<(String, String)> {
 async fn host_credentials(user_id: &str, deadline: Instant) -> Vec<(String, ResolvedCredential)> {
     let loading = tokio::spawn({
         let user_id = user_id.to_string();
-        async move { saved_tokens::load(&user_id).await.tokens }
+        async move {
+            saved_tokens::load(&user_id)
+                .await
+                .tokens
+                .unwrap_or_default()
+        }
     });
     let mut hosts: BTreeSet<String> = match timeout_at(deadline, loading).await {
         Ok(Ok(tokens)) => tokens.into_keys().collect(),
