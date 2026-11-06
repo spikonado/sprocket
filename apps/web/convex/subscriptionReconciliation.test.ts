@@ -187,6 +187,20 @@ describe('subscription reconciliation retrieval', () => {
 		});
 	});
 
+	it('keeps polling after a forced retrieval that finds the renewal still unpaid', async () => {
+		const t = initConvexTest();
+
+		const { subscriptionId, result } = await seedAndAct(t, {
+			previous_billing_date: new Date(termStart).toISOString(),
+			next_billing_date: new Date(termEnd).toISOString()
+		});
+
+		expect(result.outcome).toBe('deferred');
+		expect(
+			await t.query(internal.subscriptionReconciliation.getReconciliation, { subscriptionId })
+		).toMatchObject({ state: 'pending', attempt: 1 });
+	});
+
 	it('returns failed on an unsupported observed status without touching the row', async () => {
 		const t = initConvexTest();
 		const { result } = await seedAndAct(t, { status: 'paused' });

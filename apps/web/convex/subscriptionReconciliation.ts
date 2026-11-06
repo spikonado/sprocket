@@ -130,15 +130,9 @@ export const completeReconciliation = internalMutation({
 
 		if (!record || record.workId !== workId || record.state !== 'pending') return null;
 
-		const subscription = await ctx.db.get('subscriptions', context.subscriptionId);
-
 		const completed =
 			result.kind === 'success' &&
-			(result.returnValue.outcome === 'skipped' ||
-				(result.returnValue.outcome === 'observed' &&
-					(subscription?.dodoSubscriptionId !== record.dodoSubscriptionId ||
-						subscription.terminalConfirmed === true ||
-						subscription.accessPhase === 'paid')));
+			(result.returnValue.outcome === 'skipped' || result.returnValue.outcome === 'observed');
 
 		await ctx.db.patch('subscriptionReconciliations', record._id, {
 			state: completed ? 'completed' : 'exhausted',
@@ -350,10 +344,8 @@ export const reconcileSubscription = internalAction({
 			return { outcome: 'observed' };
 		}
 
-		// Forced single-shot retrievals never chain; grace/recovery polling
-		// chains and stops at access, termination, or the attempt bound.
-		if (args.force) return { outcome: 'observed' };
-
+		// Forced retrievals chain too: a forced job may have absorbed the
+		// grace or recovery poll that was queued while it was pending.
 		if (attempt + 1 >= attemptLimit)
 			return { outcome: 'failed', detail: 'Reconciliation exhausted its attempts.' };
 
