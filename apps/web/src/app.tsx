@@ -2073,7 +2073,6 @@ export default function App({
 		}
 
 		const threadId = currentThreadId;
-		const workspacePath = currentProjectPath;
 		const userId = signedInUserIdRef.current;
 
 		if (!userId) return;
@@ -2110,7 +2109,7 @@ export default function App({
 			reasoningEffort: selectedReasoningEffort,
 			fastMode,
 			submissionId: crypto.randomUUID(),
-			workspacePath,
+			workspacePath: currentProjectPath,
 			continuationOfRunId: previousRunId
 		});
 	}
