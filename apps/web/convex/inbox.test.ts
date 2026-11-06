@@ -87,6 +87,15 @@ describe('thread inbox', () => {
 		).toBeUndefined();
 	});
 
+	it('keeps the settle time when settling a settled thread again', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { archivedAt: 1 }));
+
+		await asUser.mutation(api.threads.settle, { threadId });
+		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBe(1);
+	});
+
 	it.each(['queued', 'running'] as const)('refuses to settle a %s thread', async (status) => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
