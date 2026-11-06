@@ -72,6 +72,10 @@ Released agents send each call's usage as `usage.call` on `agentRuntime.finalize
 
 Released agents complete `ask_question` and `poll_question` jobs with `pending`, `timedOut` and `skipped` booleans and `answer.optionLabel`, in place of `status`. `vPollQuestionResult` and `vAskQuestionResult` accept both shapes. Once those agents age out, migrate stored job results to `status`, drop `optionLabel` from them, and remove the boolean variants.
 
+### Question job IDs
+
+Released agents omit `jobId` from `agentQuestions:createWithOptionalExpiry`, so it falls back to the run's `activeJobId`. Make `jobId` required and drop the fallback once those agents age out.
+
 ### Retired Prava mandate tools
 
 Released v0.4.x agents still start `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report` jobs. `beginToolJob` accepts their payloads and fails them with "Payments moved to Agentcard. Update Sprocket to buy things." Remove the retired payload validators from the job-start path and `PAYMENTS_MOVED_TO_AGENTCARD` once those agents age out. Stored jobs stay readable, see the permanent list.

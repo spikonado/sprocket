@@ -34,7 +34,8 @@ async function startRun(
 		claimId,
 		executionSecret
 	});
-	await t.mutation(api.agentRuntime.beginToolJob, {
+
+	const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
 		runId: created.runId,
 		claimId,
 		...toolTranscriptAssignment(created.runId, claimId),
@@ -47,10 +48,38 @@ async function startRun(
 		executionSecret
 	});
 
-	return { asUser, executionSecret, claimId, runId: created.runId };
+	return { asUser, executionSecret, claimId, runId: created.runId, jobId };
 }
 
 describe('agentQuestions', () => {
+	it('attaches the question to the job the agent passes', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId, jobId } = await startRun(t, threadId);
+
+		await t.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			...toolTranscriptAssignment(runId, claimId, 2),
+			kind: 'ask_question',
+			payload: { question: 'other', options: [{ id: 'b', label: 'B' }] },
+			executionSecret
+		});
+
+		const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+			runId,
+			claimId,
+			jobId,
+			question: 'Which one?',
+			options: [{ id: 'a', label: 'A' }],
+			executionSecret
+		});
+
+		expect((await t.run((ctx) => ctx.db.get('agentQuestions', created.questionId)))?.jobId).toBe(
+			jobId
+		);
+	});
+
 	it('creates a question with agent_decide, enforces FIFO answers, and times out', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
