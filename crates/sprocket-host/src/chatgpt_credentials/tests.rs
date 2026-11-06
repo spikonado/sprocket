@@ -634,7 +634,6 @@ async fn access_refreshes_expired_tokens_and_persists_the_new_tuple() {
     let stored = stored_account(&fixture.service, "user-a", "connection-1").await;
     let stored_tokens = stored.tokens.unwrap();
     assert_eq!(stored_tokens.refresh_token, "refresh-new");
-    assert!(!stored_tokens.refresh_in_flight);
     assert!(stored_tokens.expires_at > now());
     let reloaded = ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
     assert_eq!(
@@ -683,10 +682,9 @@ async fn refresh_server_error_keeps_the_old_tuple_for_retry() {
         .unwrap()
         .to_string();
     assert!(error.contains("temporarily unavailable"), "{error}");
-    let stored = stored_account(&fixture.service, "user-a", "connection-1").await;
-    let tokens = stored.tokens.unwrap();
-    assert_eq!(tokens.access_token, "access-old");
-    assert!(!tokens.refresh_in_flight);
+    let reloaded = ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+    let stored = stored_account(&reloaded, "user-a", "connection-1").await;
+    assert_eq!(stored.tokens.unwrap().access_token, "access-old");
 }
 
 #[tokio::test]
@@ -1689,9 +1687,9 @@ async fn connection_failure_preserves_refresh_credentials_for_retry() {
             .to_string()
             .contains("connect")
     );
-    let stored = stored_account(&fixture.service, "user-a", "connection-1").await;
-    assert_eq!(stored.tokens.as_ref().unwrap().refresh_token, "refresh-old");
-    assert!(!stored.tokens.unwrap().refresh_in_flight);
+    let reloaded = ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+    let stored = stored_account(&reloaded, "user-a", "connection-1").await;
+    assert_eq!(stored.tokens.unwrap().refresh_token, "refresh-old");
 }
 
 #[tokio::test]
