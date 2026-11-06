@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::process::Command;
@@ -19,6 +21,13 @@ const TOKEN_VARIABLES: [&str; 4] = [
 
 static TOKENS: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
     LazyLock::new(Default::default);
+
+static PINNED_GH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Runs `gh` from `executable` once it's installed, instead of the one on the `PATH`.
+pub fn use_pinned_gh(executable: PathBuf) {
+    let _ = PINNED_GH.set(executable);
+}
 
 pub(super) struct ResolvedCredential {
     pub token: String,
@@ -117,7 +126,11 @@ async fn gh_auth_token(host: &str) -> Option<String> {
 }
 
 fn gh_command(args: &[&str]) -> Command {
-    let mut command = Command::new("gh");
+    let program = PINNED_GH
+        .get()
+        .filter(|executable| executable.is_file())
+        .map_or(OsStr::new("gh"), |executable| executable.as_os_str());
+    let mut command = Command::new(program);
     command
         .args(args)
         .env("GH_PROMPT_DISABLED", "1")

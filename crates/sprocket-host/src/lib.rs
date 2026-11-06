@@ -7,6 +7,7 @@ pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
+mod gh_install;
 pub mod github_settings;
 pub mod kicad_connector;
 pub mod lifetime;
@@ -97,6 +98,7 @@ pub struct Host {
     pub kicad: Arc<KiCadConnector>,
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
+    gh: Arc<PinnedTool>,
     python: Arc<PythonTools>,
 }
 
@@ -131,6 +133,8 @@ impl Host {
         );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         let python = Arc::new(PythonTools::new(data_dir)?);
+        let gh = Arc::new(gh_install::installer(data_dir)?);
+        sprocket_workspace::github::use_pinned_gh(gh_install::executable(&gh));
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
@@ -164,6 +168,7 @@ impl Host {
             kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
+            gh,
             python,
         })
     }
@@ -172,6 +177,7 @@ impl Host {
         self.browsers.prepare_tools();
         self.bun.prepare();
         self.desktop.prepare();
+        self.gh.prepare();
         self.python.prepare();
         self.kicad.prepare();
     }
@@ -182,7 +188,11 @@ impl Host {
         let mut environment = append_path(
             prepend_path(
                 self.browsers.environment(),
-                [self.kicad.bin_dir(), self.desktop.bin_dir()],
+                [
+                    self.kicad.bin_dir(),
+                    self.desktop.bin_dir(),
+                    self.gh.bin_dir(),
+                ],
             ),
             [self.bun.bin_dir()]
                 .into_iter()
