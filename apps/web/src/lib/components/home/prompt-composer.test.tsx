@@ -660,6 +660,24 @@ describe('PromptComposer skill menu', () => {
 		);
 		expect(screen.getAllByRole('option')).toHaveLength(1);
 	});
+
+	it('ignores a stale load for a project the user left and came back to', async () => {
+		const stale = Promise.withResolvers<typeof skills>();
+		const fresh = Promise.withResolvers<typeof skills>();
+		const load = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
+		const demo = { workspacePath: '/demo', load };
+		const { textarea, props, rerender } = renderComposer({ projectSkills: demo });
+
+		await typeInComposer(textarea, '$');
+		await act(async () =>
+			rerender({ ...props, projectSkills: { workspacePath: '/other', load: async () => [] } })
+		);
+		await act(async () => rerender({ ...props, projectSkills: demo }));
+		await act(async () => stale.reject(new Error('offline')));
+		await act(async () => fresh.resolve(skills));
+
+		expect(screen.getAllByRole('option')).toHaveLength(2);
+	});
 });
 
 describe('PromptComposer mobile selectors', () => {

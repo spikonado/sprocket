@@ -210,16 +210,16 @@ export default function PromptComposer({
 	}, []);
 
 	const loadSkills = useCallback(async () => {
-		const workspacePath = projectSkills?.workspacePath ?? null;
+		const loading: SkillsLoad = {
+			workspacePath: projectSkills?.workspacePath ?? null,
+			status: 'loading',
+			skills: []
+		};
 
 		const settle = (status: 'ready' | 'error', skills: SkillSummary[] = []) =>
-			setSkillsLoad((current) =>
-				current?.workspacePath === workspacePath && current.status === 'loading'
-					? { workspacePath, status, skills }
-					: current
-			);
+			setSkillsLoad((current) => (current === loading ? { ...loading, status, skills } : current));
 
-		setSkillsLoad({ workspacePath, status: 'loading', skills: [] });
+		setSkillsLoad(loading);
 
 		try {
 			settle('ready', projectSkills ? await projectSkills.load() : []);
