@@ -23,7 +23,7 @@ Use the reply text around the fence only for what the page doesn't show.
 An HTML or React visual's frame is transparent over the thread, as wide as the message column, and grows to fit the page up to 1600px.
 
 - Leave `html`, `body`, and the outermost element without a background, horizontal padding, border, or title.
-- Leave boxes without a background. Separate them with a `var(--border)` border, at least 16px of padding, and `var(--radius)` corners.
+- Leave boxes without a background or border. Separate them with at least 16px of gap.
 - Size from content and fixed pixel heights, since a `vh` or `height: 100%` size follows the frame.
 - Take every color from the `:root` tokens, which follow the user's light or dark theme live. Data series use `--chart-1` to `--chart-5`. Everything else uses `--background`, `--foreground`, `--surface`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--primary`, `--primary-foreground`, `--secondary`, `--secondary-foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`, `--accent-strong`, `--accent-soft`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, and `--ring`. Shape and type come from `--radius`, `--font-sans`, and `--font-mono`.
 
