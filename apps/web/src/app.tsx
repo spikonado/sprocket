@@ -164,7 +164,7 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
-const agentLaunchTimeoutMs = 30_000;
+const submissionPreparationTimeoutMs = 30_000;
 
 type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
@@ -1855,18 +1855,9 @@ export default function App({
 			}
 
 			recoverSubmission(submissionDelayMessage);
-			const pendingThreadId = launchedThreadId;
-			const pendingLaunchId = agentLaunchId;
-
-			if (pendingThreadId && pendingLaunchId !== null) {
-				setPendingAgentLaunches((launches) =>
-					clearPendingAgentLaunch(launches, pendingThreadId, pendingLaunchId)
-				);
-			}
-
 			submissions.finishSubmitting(submissionScope, submissionSequence);
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
-		}, agentLaunchTimeoutMs);
+		}, submissionPreparationTimeoutMs);
 
 		setPrompt('');
 		setCurrentError(null);
@@ -2082,10 +2073,9 @@ export default function App({
 		}
 
 		const threadId = currentThreadId;
-		const workspacePath = currentProjectPath;
 		const userId = signedInUserIdRef.current;
 
-		if (!workspacePath || !userId) return;
+		if (!userId) return;
 		const previousRunId = runState.runId;
 		const previousStartedAt = runState.startedAt;
 		const launchId = ++nextAgentLaunchId.current;
@@ -2098,45 +2088,30 @@ export default function App({
 
 		setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
 
-		try {
-			if (signedInUserIdRef.current !== userId) {
-				throw new Error('User session is not ready.');
-			}
-
-			await launchAgentRun({
-				userId,
-				localApi,
-				onError: (error) => {
-					setPendingAgentLaunches((launches) =>
-						clearPendingAgentLaunch(launches, threadId, launchId)
-					);
-
-					if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId)
-						return;
-					setCurrentError(launchError(error));
-				},
-				onStarted: () => {},
-				onStopped: () => {
-					setPendingAgentLaunches((launches) =>
-						clearPendingAgentLaunch(launches, threadId, launchId)
-					);
-				},
-				threadId,
-				prompt: '',
-				storageIds: [],
-				selectedModel,
-				reasoningEffort: selectedReasoningEffort,
-				fastMode,
-				submissionId: crypto.randomUUID(),
-				workspacePath,
-				continuationOfRunId: previousRunId
-			});
-		} catch (error) {
+		const clearLaunch = () =>
 			setPendingAgentLaunches((launches) => clearPendingAgentLaunch(launches, threadId, launchId));
 
-			if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId) return;
-			setCurrentError(error instanceof Error ? error.message : 'Failed to continue the run.');
-		}
+		await launchAgentRun({
+			userId,
+			localApi,
+			onError: (error) => {
+				clearLaunch();
+
+				if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId) return;
+				setCurrentError(launchError(error));
+			},
+			onStarted: () => {},
+			onStopped: clearLaunch,
+			threadId,
+			prompt: '',
+			storageIds: [],
+			selectedModel,
+			reasoningEffort: selectedReasoningEffort,
+			fastMode,
+			submissionId: crypto.randomUUID(),
+			workspacePath: currentProjectPath,
+			continuationOfRunId: previousRunId
+		});
 	}
 
 	const resetForSignedInUser = useEffectEvent((userId: string | null) => {

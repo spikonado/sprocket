@@ -17,6 +17,7 @@ const runId = fixtureId<'runs'>;
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
 
 describe('local session bootstrap', () => {
@@ -559,6 +560,33 @@ describe('transcript file upload', () => {
 				body: file
 			})
 		);
+	});
+});
+
+describe('agent launch', () => {
+	it('stops waiting for an agent launch the server never answers', async () => {
+		vi.spyOn(AbortSignal, 'timeout').mockReturnValue(
+			AbortSignal.abort(new DOMException('signal timed out', 'TimeoutError'))
+		);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init?: RequestInit) => {
+				throw init?.signal?.reason;
+			})
+		);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').runAgent({
+				userId: 'user-1',
+				prompt: 'Inspect src/lib.rs',
+				storageIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				fastMode: false,
+				submissionId: 'submission-1',
+				workspacePath: '/work'
+			})
+		).rejects.toThrow('The local server did not start the agent in time. Try again.');
 	});
 });
 
