@@ -634,6 +634,23 @@ it('holds off renaming until a title regeneration finishes', async () => {
 	expect(menuAction('Rename').disabled).toBe(false);
 });
 
+it('commits a rename once when Enter and blur both fire before it settles', async () => {
+	const input = props([thread()]);
+	input.onRename.mockReturnValue(new Promise<void>(() => {}));
+	renderView(<Harness {...input} />);
+	await flush();
+
+	fireEvent.doubleClick(document.querySelector('.inbox-row-open')!);
+	const renameInput = document.querySelector<HTMLInputElement>('[aria-label="Rename thread"]')!;
+	fireEvent.change(renameInput, { target: { value: 'Updated thread' } });
+	act(() => {
+		renameInput.closest('form')!.requestSubmit();
+		renameInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+	});
+
+	expect(input.onRename).toHaveBeenCalledOnce();
+});
+
 it('does not attach keyboard context-menu behavior to thread rows', async () => {
 	await render([thread()]);
 	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
