@@ -42,7 +42,7 @@ export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: numb
 	return run.claimId === claimId && isRunClaimLeaseActive(run, now);
 }
 
-/** Wind-down calls such as lease renewal and failure reports use `ownsActiveRunClaim` instead. */
+/** Wind-down calls such as lease renewal and tool results use `ownsActiveRunClaim` instead. */
 export function runAcceptsNewWork(run: ClaimableRun, claimId: string, now: number): boolean {
 	return run.cancellationRequestedAt === undefined && ownsActiveRunClaim(run, claimId, now);
 }

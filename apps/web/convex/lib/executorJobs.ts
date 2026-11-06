@@ -1,9 +1,9 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import { ownsActiveRunClaim, runAcceptsNewWork } from '@convex/lib/runLease';
+import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
-import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
+import type { ExecutorJobResult } from '@convex/lib/validators';
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
 
@@ -30,7 +30,7 @@ export async function applyExecutorJobSuccess(
 		return true;
 	}
 
-	if (!runAcceptsNewWork(args.run, args.claimId, Date.now())) return false;
+	if (!ownsActiveRunClaim(args.run, args.claimId, Date.now())) return false;
 
 	const settledJob = {
 		...args.job,
@@ -118,11 +118,7 @@ export async function applyExecutorJobFailure(
 		completedAt
 	});
 
-	if (
-		args.run.cancellationRequestedAt === undefined &&
-		!isRunFinalStatus(args.run.status) &&
-		args.run.activeJobId === args.job._id
-	) {
+	if (args.run.activeJobId === args.job._id) {
 		await patchRunExecution(ctx, args.run._id, { activeJobId: undefined });
 	}
 
