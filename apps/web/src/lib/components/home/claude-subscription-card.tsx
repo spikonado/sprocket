@@ -135,10 +135,10 @@ export default function ClaudeSubscriptionCard({
 			if (attempt !== attemptRef.current) return;
 			loginIdRef.current = null;
 			await saveClaudeToken({ token });
+			onTokenSavedChange(true);
 
 			if (attempt !== attemptRef.current) return;
 			trackLogin(null);
-			onTokenSavedChange(true);
 			localApi
 				.fetchClaudeCodeStatus(userId)
 				.then(onStatusChange)
