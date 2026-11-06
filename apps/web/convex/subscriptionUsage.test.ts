@@ -190,6 +190,23 @@ describe('subscription and usage backend', () => {
 		expect(nextMonth.exhausted).toBe(false);
 	});
 
+	it('shows free limits once the paid term and grace end, before the expiry check runs', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const now = Date.now();
+		const termEnd = now + 60_000;
+		await seedActiveSubscription(t, 'user_lagging_expiry', now, termEnd);
+
+		const usage = await t
+			.withIdentity({ subject: 'user_lagging_expiry' })
+			.query(api.usage.getMyUsage, { now: termEnd + 2 * 60 * 60 * 1_000 });
+
+		expect(usage).toMatchObject({
+			tier: 'free',
+			meters: [{ limit: 15 * MODEL_USAGE_UNITS_PER_DOLLAR }]
+		});
+	});
+
 	it('uses only active subscriptions and ignores stale rows', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
