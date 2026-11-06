@@ -12,6 +12,15 @@ Use `kicad-cli` for checks and exports.
 - The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, `kicad`, `kipy-api`, and `kicad-route` on PATH. Call them by name.
 - `kipy-api <module> [name ...]` lists the installed kipy's classes, signatures, and enums.
 - KiCad's symbol, footprint, and 3D model libraries are in `$SPROCKET_KICAD_LIBRARIES`.
+- KiCadRoutingTools is in `$SPROCKET_KICAD_ROUTING_TOOLS`. `kicad-route` runs its `py_router/route.py`.
+  Run its other scripts with `kicad-python "$SPROCKET_KICAD_ROUTING_TOOLS/<script>"` and read their `--help`:
+
+  | Script                                               | Use                                                                               |
+  | ---------------------------------------------------- | --------------------------------------------------------------------------------- |
+  | `py_router/route_planes.py`                          | GND stitching vias and board-edge via fences                                      |
+  | `py_router/route_diff.py`                            | Differential pairs, before single-ended routing                                   |
+  | `py_router/qfn_fanout.py`, `py_router/bga_fanout.py` | Escape routing for fine-pitch ICs                                                 |
+  | `py_router/check_weird.py`                           | Copper hygiene: removable segments, soft joints, dangling vias, narrow pad joints |
 
 ## Before editing
 
@@ -26,6 +35,9 @@ Use `kicad-cli` for checks and exports.
   Clearing it on a board footprint wipes its pads.
 - DRC reports `lib_footprint_mismatch` on rotated footprints: the `orientation` setter truncates rotated coordinates by 1 nm.
   Pass `orientation=` to `place_footprint_from_library` instead.
+- DRC reports hundreds of `connection_width` violations after a zone fill: a new `Zone()` has 0 clearance and 0 mm thermal spokes.
+  Set both, as in [Copper pours](#copper-pours).
+- KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
 
 ## Designing the schematic
 
@@ -40,19 +52,76 @@ Before laying out a board, ask the user which manufacturer and service tier they
 Write its minimums with `board.set_design_rules()`, which saves them to Board Setup → Constraints in the `.kicad_pro`.
 Keep net class widths and clearances above them.
 
+## Copper pours
+
+Before routing, give every copper layer a GND zone over the whole board at priority 0.
+Put pours of other nets, like power planes and switch nodes, above it at higher priorities, so GND fills the copper they leave.
+
+```python
+from kipy.board_types import Zone
+from kipy.proto.board import board_types_pb2 as bt
+
+zone = Zone()
+zone.net, zone.layers, zone.priority = gnd, [layer], 0
+zone.outline = board_outline  # PolygonWithHoles
+zone.clearance = clearance_nm
+zone.island_mode = bt.IRM_ALWAYS
+zone.proto.copper_settings.connection.zone_connection = bt.ZCS_FULL
+board.create_items([zone])
+```
+
 ## Routing
 
 - Route the board with `kicad-route`.
 - It reads clearances and widths from the `.kicad_pro`.
-- Leave the nets of planes and pours, like `GND`, to their zones.
+- It connects the pads of zone nets, like `GND`, to their pours, so draw the zones first.
 - It exits 0 even when nets fail. Run DRC with `--refill-zones` on the output, then reroute or fix every unconnected item.
 
-## Designing the silkscreen
+## Finishing the copper
+
+Once every net is routed, finish the copper in this order and run DRC with `--refill-zones` after each step:
+
+1. Run `kicad-route board.kicad_pcb clean.kicad_pcb --nets '*'` once more.
+   With nothing left to route, it removes dead ends and redundant or duplicate segments.
+   Then run `check_weird.py` on the result and fix what it reports.
+2. Stitch the GND pours together with vias on a grid and along the board edge.
+   Without `--skip-existing-zones`, `route_planes.py` replaces your GND zones with its own.
+
+   ```bash
+   kicad-python "$SPROCKET_KICAD_ROUTING_TOOLS/py_router/route_planes.py" clean.kicad_pcb stitched.kicad_pcb \
+     --nets GND GND GND GND --plane-layers F.Cu In1.Cu In2.Cu B.Cu \
+     --skip-existing-zones --stitch-vias --stitch-pitch 5 --stitch-edge-fence
+   ```
+
+3. Add teardrops to every pad and via.
+   KiCad builds the teardrop zones when `update_items` commits the change.
+   Pads change only through their footprint; `update_items` on pads from `get_pads()` does nothing.
+
+   ```python
+   from kipy.proto.board.board_types_pb2 import PadTeardropMode
+
+   vias, footprints = board.get_vias(), board.get_footprints()
+   for via in vias:
+       via.proto.teardrop.mode = PadTeardropMode.PTM_ENABLED
+   for footprint in footprints:
+       for pad in footprint.definition.pads:
+           pad.proto.teardrop.mode = PadTeardropMode.PTM_ENABLED
+   board.update_items([*vias, *footprints])
+   board.refill_zones()
+   ```
+
+   Teardrops go stale when copper moves, so add them as the last copper change.
+
+## Designing the silkscreen and fab layers
 
 - Hide reference designators on the silkscreen.
   Library footprints keep a `${REFERENCE}` text on the Fab layer for assembly.
 - Limit the silkscreen to footprint outlines, polarity marks, short connector pin labels, and the project's logo if it has one.
   Board documentation goes in the project's docs.
+- Hide the Value field of every footprint whose Value sits on `F.Fab` or `B.Fab`, so the fab layers show each part's outline and reference.
+  The BOM carries the values.
+- Render the fab layers with `kicad-cli pcb export png -l F.Fab,B.Fab --cl Edge.Cuts --black-and-white --bg-color -o fab/ board.kicad_pcb`.
+  Move or shrink each `${REFERENCE}` text until it sits inside its part's outline without overlapping another.
 
 ## 3D models
 

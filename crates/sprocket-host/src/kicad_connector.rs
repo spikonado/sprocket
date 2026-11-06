@@ -28,6 +28,7 @@ const LIBRARIES_FILE: &str = "libraries-dir";
 const ROUTING_TOOLS_DIR: &str = "routing-tools";
 /// KiCad doesn't read this name, so a KiCad started from an agent's shell keeps its own paths.
 const LIBRARIES_VARIABLE: &str = "SPROCKET_KICAD_LIBRARIES";
+const ROUTING_TOOLS_VARIABLE: &str = "SPROCKET_KICAD_ROUTING_TOOLS";
 const NAME: &str = "KiCad";
 const STAGING_PREFIX: &str = ".staging-";
 const LAUNCHER_DIR: &str = "bin";
@@ -216,10 +217,20 @@ impl KiCadConnector {
         Ok(tokio::fs::read(output.path()).await?)
     }
 
-    pub(crate) fn environment(&self) -> Option<(OsString, OsString)> {
-        let dir = installed_version(&self.root, &self.release.version)?;
-        let libraries = fs::read_to_string(self.root.join(dir).join(LIBRARIES_FILE)).ok()?;
-        Some((LIBRARIES_VARIABLE.into(), libraries.trim().into()))
+    pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {
+        let Some(dir) = installed_version(&self.root, &self.release.version) else {
+            return Vec::new();
+        };
+        let dir = self.root.join(dir);
+        let mut environment = Vec::new();
+        if let Ok(libraries) = fs::read_to_string(dir.join(LIBRARIES_FILE)) {
+            environment.push((LIBRARIES_VARIABLE.into(), libraries.trim().into()));
+        }
+        let routing_tools = dir.join(ROUTING_TOOLS_DIR);
+        if routing_tools.is_dir() {
+            environment.push((ROUTING_TOOLS_VARIABLE.into(), routing_tools.into()));
+        }
+        environment
     }
 
     fn activity(&self) -> MutexGuard<'_, Activity> {

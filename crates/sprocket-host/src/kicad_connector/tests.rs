@@ -12,12 +12,27 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     fs::create_dir_all(old.join("bin")).unwrap();
     fs::write(old.join("bin/kicad-cli"), "old launcher").unwrap();
     fs::write(old.join(USER_KICAD_VERSION_FILE), "11.0.1\n").unwrap();
+    fs::write(old.join(LIBRARIES_FILE), "/kicad/share\n").unwrap();
+    fs::create_dir_all(old.join(ROUTING_TOOLS_DIR)).unwrap();
     fs::create_dir_all(connector.root.join(".staging-interrupted")).unwrap();
 
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);
     assert!(status.update_available);
     assert_eq!(connector.installed().unwrap().version, "11.0.1");
+    assert_eq!(
+        connector.environment(),
+        vec![
+            (
+                OsString::from(LIBRARIES_VARIABLE),
+                OsString::from("/kicad/share")
+            ),
+            (
+                OsString::from(ROUTING_TOOLS_VARIABLE),
+                old.join(ROUTING_TOOLS_DIR).into_os_string()
+            ),
+        ]
+    );
 
     repair_unless_installing(&connector.root, &connector.release.version).unwrap();
     assert!(!connector.root.join(".staging-interrupted").exists());
