@@ -149,17 +149,6 @@ impl TranscriptStore {
         Ok(())
     }
 
-    pub async fn save_state(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        state: &TranscriptState,
-    ) -> anyhow::Result<()> {
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        self.write_state(user_id, thread_id, state).await
-    }
-
     pub async fn update_state<F>(
         &self,
         user_id: &str,

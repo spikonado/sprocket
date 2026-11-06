@@ -118,8 +118,6 @@ export type LiveCompletionOverlay = {
 
 export type TranscriptWatchEvent = {
 	eventType: string;
-	totalParts?: number;
-	stale: boolean;
 };
 
 export type LocalUserRequest = {

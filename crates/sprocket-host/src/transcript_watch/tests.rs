@@ -57,29 +57,6 @@ async fn last_close_cancels_the_watch_task() {
 }
 
 #[tokio::test]
-async fn local_updates_are_sent_to_open_sessions() {
-    let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
-    let store = TranscriptStore::new(dir.clone());
-    let watchers = TranscriptWatchers::with_starter(
-        "https://example.convex.cloud".into(),
-        store,
-        native_auth(),
-        Arc::new(|_start| tokio::spawn(std::future::pending())),
-    );
-    let mut session = watchers.open("user", "thread").await;
-
-    watchers
-        .notify_local_update("user", "thread", 4, true)
-        .await;
-
-    let event = session.receiver().recv().await.expect("local update");
-    assert_eq!(event.total_parts, Some(4));
-    assert!(event.stale);
-    drop(session);
-    let _ = tokio::fs::remove_dir_all(dir).await;
-}
-
-#[tokio::test]
 async fn closing_an_aborted_session_does_not_cancel_its_replacement() {
     let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
     let watchers = TranscriptWatchers::with_starter(
@@ -93,13 +70,14 @@ async fn closing_an_aborted_session_does_not_cancel_its_replacement() {
     let mut replacement = watchers.open("user", "thread").await;
     drop(old);
     assert_eq!(watchers.active_count(), 1);
-    watchers
-        .notify_local_update("user", "thread", 7, false)
-        .await;
-    assert_eq!(
-        replacement.receiver().recv().await.unwrap().total_parts,
-        Some(7)
+    watchers.registry.send_to(
+        &WatchKey {
+            user_id: "user".into(),
+            thread_id: "thread".into(),
+        },
+        TranscriptWatchEvent::UPDATED,
     );
+    assert!(replacement.receiver().recv().await.is_ok());
     drop(replacement);
     assert_eq!(watchers.active_count(), 0);
     let _ = tokio::fs::remove_dir_all(dir).await;

@@ -93,16 +93,6 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
         (session, state)
     }
 
-    pub fn send_to(&self, key: &K, event: E)
-    where
-        E: Clone,
-    {
-        let inner = lock(&self.inner);
-        if let Some(slot) = inner.slots.get(key) {
-            let _ = slot.events.send(event);
-        }
-    }
-
     pub fn abort(&self, key: &K) {
         let mut inner = lock(&self.inner);
         if let Some(slot) = inner.slots.remove(key) {

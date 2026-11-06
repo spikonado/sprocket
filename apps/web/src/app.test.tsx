@@ -1175,7 +1175,7 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	fireEvent.click(await screen.findByText('Other work'));
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 	await act(async () => {
-		watchers.get(thread._id)?.({ eventType: 'updated', stale: true });
+		watchers.get(thread._id)?.({ eventType: 'updated' });
 	});
 	expect(within(composer).queryByRole('status')).toBeNull();
 
@@ -1183,7 +1183,7 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	await within(composer).findByRole('status');
 	await act(async () => {
 		stale = false;
-		watchers.get(thread._id)?.({ eventType: 'updated', stale: false });
+		watchers.get(thread._id)?.({ eventType: 'updated' });
 	});
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 });
@@ -1269,7 +1269,7 @@ it('renders remote history progressively and allows sending while older parts lo
 	);
 	await act(async () => {
 		synced = true;
-		update?.({ eventType: 'updated', stale: false });
+		update?.({ eventType: 'updated' });
 	});
 	expect(await screen.findByText('An older robot update')).toBeTruthy();
 	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());

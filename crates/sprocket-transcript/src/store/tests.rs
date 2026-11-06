@@ -44,9 +44,11 @@ async fn independent_state_writers_do_not_share_temporary_files() {
     let writes = (0..32).map(|number| {
         let store = TranscriptStore::new(dir.path().to_path_buf());
         async move {
-            let mut state = TranscriptState::new("user".into(), "thread".into());
-            state.remote_total_parts = number;
-            store.save_state("user", "thread", &state).await
+            store
+                .update_state("user", "thread", |state| {
+                    state.remote_total_parts = number;
+                })
+                .await
         }
     });
     for result in futures::future::join_all(writes).await {
@@ -120,11 +122,7 @@ async fn appends_reads_and_clears_parts() {
         .await
         .unwrap();
     store
-        .save_state("user", "thread", &{
-            let mut state = store.load_state("user", "thread").await.unwrap();
-            state.remote_total_parts = 3;
-            state
-        })
+        .update_state("user", "thread", |state| state.remote_total_parts = 3)
         .await
         .unwrap();
     let parts = store.read_parts("user", "thread", &[1, 2]).await.unwrap();

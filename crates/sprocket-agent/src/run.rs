@@ -646,7 +646,7 @@ async fn load_prior_history(
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
-    let state = apply_remote_state(store, user_id, thread_id, &remote, false).await?;
+    let state = apply_remote_state(store, user_id, thread_id, &remote).await?;
     let (mut parts, current_run_had_context_handoff) = load_context_parts(
         store,
         user_id,
