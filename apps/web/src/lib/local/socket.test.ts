@@ -22,14 +22,14 @@ describe('local socket', () => {
 		const transcript = vi.fn();
 		const live = vi.fn();
 
-		const watching = socket.subscribe(
+		const watching = socket.subscribeOnce(
 			{ kind: 'transcript', params: scope },
 			staleSchema,
 			controller.signal,
 			transcript
 		);
 
-		void socket.subscribe(
+		void socket.subscribeOnce(
 			{ kind: 'liveCompletion', params: scope },
 			staleSchema,
 			controller.signal,
@@ -55,12 +55,13 @@ describe('local socket', () => {
 		]);
 	});
 
-	it('rejects server errors with their status and reconnects after a 401', async () => {
+	it('rejects server errors with their status and reconnects after a 401 with a backoff', async () => {
+		vi.useFakeTimers();
 		const sockets = stubWebSocket();
 		const socket = localSocket('http://127.0.0.1:7002');
 		const signal = new AbortController().signal;
-		const watching = socket.subscribe({ kind: 'authChanges' }, z.number(), signal, vi.fn());
-		const other = socket.subscribe({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
+		const watching = socket.subscribeOnce({ kind: 'authChanges' }, z.number(), signal, vi.fn());
+		const other = socket.subscribeOnce({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
 
 		sockets[0].open();
 		sockets[0].receive({ type: 'error', id: 1, status: 401, message: 'authentication required' });
@@ -69,7 +70,9 @@ describe('local socket', () => {
 		await expect(other).rejects.toThrow('Lost the live connection');
 		expect(sockets[0].readyState).toBe(WebSocket.CLOSED);
 
-		void socket.subscribe({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
+		void socket.subscribeOnce({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
+		expect(sockets).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(500);
 		expect(sockets).toHaveLength(2);
 	});
 
@@ -78,16 +81,46 @@ describe('local socket', () => {
 		const sockets = stubWebSocket();
 		const socket = localSocket('http://127.0.0.1:7003');
 		const signal = new AbortController().signal;
-		const watching = socket.subscribe({ kind: 'authChanges' }, z.number(), signal, vi.fn());
+		const watching = socket.subscribeOnce({ kind: 'authChanges' }, z.number(), signal, vi.fn());
 		sockets[0].open();
 		sockets[0].close();
 		await expect(watching).rejects.toThrow('Lost the live connection');
 
-		void socket.subscribe({ kind: 'authChanges' }, z.number(), signal, vi.fn());
+		void socket.subscribeOnce({ kind: 'authChanges' }, z.number(), signal, vi.fn());
 		expect(sockets).toHaveLength(1);
 		await vi.advanceTimersByTimeAsync(500);
 		expect(sockets).toHaveLength(2);
 		sockets[1].open();
 		expect(sockets[1].sent).toEqual([{ type: 'subscribe', id: 2, topic: { kind: 'authChanges' } }]);
+	});
+
+	it('keeps a subscription across drops and reports each one until aborted', async () => {
+		vi.useFakeTimers();
+		const sockets = stubWebSocket();
+		const socket = localSocket('http://127.0.0.1:7004');
+		const controller = new AbortController();
+		const onEvent = vi.fn();
+		const onError = vi.fn();
+
+		const watching = socket.subscribe({ kind: 'packageUpdate' }, z.json(), {
+			signal: controller.signal,
+			onEvent,
+			onError
+		});
+
+		sockets[0].open();
+		sockets[0].close();
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(onError).toHaveBeenCalledWith(
+			new Error('Lost the live connection to the Sprocket server.')
+		);
+		sockets[1].open();
+		sockets[1].receive({ type: 'event', id: 2, data: 'snapshot' });
+		expect(onEvent).toHaveBeenCalledWith('snapshot');
+
+		controller.abort();
+		await watching;
+		expect(sockets[1].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 2 });
+		expect(onError).toHaveBeenCalledOnce();
 	});
 });

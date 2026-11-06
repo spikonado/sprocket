@@ -23,7 +23,7 @@ const resolveLocalApiBaseUrl = vi.fn<AuthRuntime['resolveLocalApiBaseUrl']>();
 
 const watchAuthChanges = vi.fn<AuthRuntime['watchAuthChanges']>();
 
-function waitForAbort(_baseUrl: string, signal: AbortSignal) {
+function waitForAbort(_baseUrl: string, { signal }: { signal: AbortSignal }) {
 	return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
 }
 
@@ -122,15 +122,16 @@ describe('installed and hosted auth', () => {
 				jsonResponse(200, signedIn ? { accessToken: 'native-token', user: nativeUser } : null)
 		});
 		await initializeAuth(convexClient);
-		const [baseUrl, signal, onChange] = watchAuthChanges.mock.calls[0] ?? [];
+		const [baseUrl, handlers] = watchAuthChanges.mock.calls[0] ?? [];
 
-		if (!onChange || !signal) throw new Error('missing auth subscription');
+		if (!handlers) throw new Error('missing auth subscription');
+		const { signal, onEvent: onChange } = handlers;
 		expect(baseUrl).toBe('http://localhost:17731');
 		signedIn = true;
-		onChange();
+		onChange(1);
 		await vi.waitFor(() => expect(get(authState).user?.id).toBe(nativeUser.id));
 		signedIn = false;
-		onChange();
+		onChange(2);
 		await vi.waitFor(() => expect(get(authState).user).toBeNull());
 		expect(createAuthKitClient).not.toHaveBeenCalled();
 		resetAuthRuntime();
@@ -373,11 +374,11 @@ describe('installed and hosted auth', () => {
 			error: null
 		});
 		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual(['POST']);
-		expect(watchAuthChanges).toHaveBeenCalledWith(
-			'http://localhost:17731',
-			expect.any(AbortSignal),
-			expect.any(Function)
-		);
+		expect(watchAuthChanges).toHaveBeenCalledWith('http://localhost:17731', {
+			signal: expect.any(AbortSignal),
+			onEvent: expect.any(Function),
+			onError: expect.any(Function)
+		});
 	});
 
 	it('revokes only the browser session and can sign in again remotely', async () => {

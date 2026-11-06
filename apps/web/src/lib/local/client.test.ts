@@ -16,6 +16,7 @@ const storageId = fixtureId<'_storage'>;
 const runId = fixtureId<'runs'>;
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 });
@@ -412,10 +413,12 @@ describe('watchArtifacts', () => {
 		};
 
 		const onEvent = vi.fn();
+		const controller = new AbortController();
 
 		const watching = createLocalClient('http://127.0.0.1:7102').watchArtifacts(request, {
-			signal: new AbortController().signal,
-			onEvent
+			signal: controller.signal,
+			onEvent,
+			onError: vi.fn()
 		});
 
 		sockets[0].open();
@@ -423,18 +426,21 @@ describe('watchArtifacts', () => {
 			{ type: 'subscribe', id: 1, topic: { kind: 'artifacts', params: request } }
 		]);
 		sockets[0].receive({ type: 'event', id: 1, data: snapshot });
-		sockets[0].receive({ type: 'end', id: 1 });
+		controller.abort();
 		await watching;
 		expect(onEvent).toHaveBeenCalledWith(snapshot);
 	});
 
-	it('rejects malformed snapshots so callers can reconnect', async () => {
+	it('reports malformed snapshots and subscribes again', async () => {
+		vi.useFakeTimers();
 		const sockets = stubWebSocket();
 		const onEvent = vi.fn();
+		const onError = vi.fn();
 
-		const watching = createLocalClient('http://127.0.0.1:7103').watchArtifacts(request, {
+		void createLocalClient('http://127.0.0.1:7103').watchArtifacts(request, {
 			signal: new AbortController().signal,
-			onEvent
+			onEvent,
+			onError
 		});
 
 		sockets[0].open();
@@ -443,9 +449,16 @@ describe('watchArtifacts', () => {
 			id: 1,
 			data: { artifacts: [{ ...artifact, revision: 'invalid' }], stale: false }
 		});
-		await expect(watching).rejects.toThrow();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(onError).toHaveBeenCalledOnce();
 		expect(onEvent).not.toHaveBeenCalled();
 		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(sockets[0].sent.at(-1)).toEqual({
+			type: 'subscribe',
+			id: 2,
+			topic: { kind: 'artifacts', params: request }
+		});
 	});
 });
 
@@ -828,10 +841,12 @@ describe('running command controls', () => {
 		const api = createLocalClient('http://localhost:17731');
 		const scope = { userId: 'user', threadId: threadRecordId('thread') };
 		const onEvent = vi.fn();
+		const controller = new AbortController();
 
 		const watching = api.watchRunningCommands(scope, {
-			signal: new AbortController().signal,
-			onEvent
+			signal: controller.signal,
+			onEvent,
+			onError: vi.fn()
 		});
 
 		sockets[0].open();
@@ -839,7 +854,7 @@ describe('running command controls', () => {
 			{ type: 'subscribe', id: 1, topic: { kind: 'commands', params: scope } }
 		]);
 		sockets[0].receive({ type: 'event', id: 1, data: commands });
-		sockets[0].receive({ type: 'end', id: 1 });
+		controller.abort();
 		await watching;
 		expect(onEvent).toHaveBeenCalledWith(commands);
 		await expect(api.terminateCommand({ ...scope, sessionId: '7' })).resolves.toEqual({
