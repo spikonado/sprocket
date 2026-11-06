@@ -12,9 +12,19 @@ const MAX_STREAM_RECOVERIES: u32 = 3;
 const MAX_STREAM_TIMEOUT_RECOVERIES: u32 = 1;
 const GATEWAY_STREAM_TIMEOUT_CODE: &str = "gateway_stream_timeout";
 
+/// The agent hook that records each completion call's input.
 #[derive(Clone, Default)]
+pub(crate) struct CompletionInput(Arc<Mutex<Option<(Vec<Message>, Message)>>>);
+
+impl CompletionInput {
+    fn take(&self) -> Option<(Vec<Message>, Message)> {
+        self.0.lock().ok()?.take()
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct StreamRecovery {
-    input: Arc<Mutex<Option<(Vec<Message>, Message)>>>,
+    input: CompletionInput,
     recoveries: u32,
     timeout_recoveries: u32,
 }
@@ -87,8 +97,12 @@ fn is_provider_kind(kind: &ErrorKind) -> bool {
 }
 
 impl StreamRecovery {
+    pub(crate) fn hook(&self) -> CompletionInput {
+        self.input.clone()
+    }
+
     pub(crate) fn take_input(&self) -> Option<(Vec<Message>, Message)> {
-        self.input.lock().ok()?.take()
+        self.input.take()
     }
 
     pub(crate) fn resume(
@@ -102,7 +116,7 @@ impl StreamRecovery {
         if timed_out && self.timeout_recoveries >= MAX_STREAM_TIMEOUT_RECOVERIES {
             return None;
         }
-        let (history, prompt) = self.input.lock().ok()?.take()?;
+        let (history, prompt) = self.input.take()?;
         let delay = Duration::from_secs(1 << self.recoveries);
         self.recoveries += 1;
         self.timeout_recoveries += u32::from(timed_out);
@@ -110,7 +124,7 @@ impl StreamRecovery {
     }
 }
 
-impl AgentHook for StreamRecovery {
+impl AgentHook for CompletionInput {
     fn observes(&self, kind: StepEventKind) -> bool {
         kind == StepEventKind::CompletionCall
     }
@@ -120,7 +134,7 @@ impl AgentHook for StreamRecovery {
         _context: &HookContext,
         event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
-        match self.input.lock() {
+        match self.0.lock() {
             Ok(mut input) => {
                 let history = event.history.iter().map(|message| (**message).clone());
                 *input = Some((history.collect(), event.prompt.clone()));

@@ -817,7 +817,7 @@ async fn run_with_completion_model(
                 .add_hook(completion_origin.clone())
                 .add_hook(context_handoff_hook.clone())
                 .add_hook(prompt_hook.clone())
-                .add_hook(stream_recovery.clone())
+                .add_hook(stream_recovery.hook())
                 .add_hook(generation_tracker.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .stream();
