@@ -757,6 +757,38 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(false);
 	});
 
+	it('reports a run that ran out of usage before it began', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'usage-limit-secret';
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'usage-limit',
+			executionSecret,
+			prompt: 'Out of usage',
+			deferPrompt: true
+		});
+
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId: 'claim', executionSecret });
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			expectedClaimId: 'claim',
+			text: '',
+			status: 'failed',
+			lastError: 'Usage limit reached.',
+			failureKind: 'usage_limit',
+			executionSecret
+		});
+
+		await expect(
+			asUser.query(api.chat.selectedThreadLifecycle, { threadId })
+		).resolves.toMatchObject({
+			phase: 'failed',
+			run: { lastError: 'Usage limit reached.', failureKind: 'usage_limit', promptUnsent: true }
+		});
+	});
+
 	it('reports a committed begin when its retry follows a stop', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

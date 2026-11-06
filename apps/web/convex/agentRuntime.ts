@@ -958,6 +958,7 @@ export const finalizeExecutorRun = mutation({
 		text: v.optional(v.string()),
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string()),
+		failureKind: v.optional(v.literal('usage_limit')),
 		executionSecret: v.string()
 	},
 	returns: vExecutorFinalizationResult,

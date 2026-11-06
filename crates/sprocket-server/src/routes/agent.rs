@@ -159,7 +159,6 @@ pub(crate) async fn launch_run(
         run_id: launched.run_id,
         thread_id: launched.thread_id,
         settings,
-        stopped: launched.stopped,
     })
 }
 
