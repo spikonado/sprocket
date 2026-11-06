@@ -231,9 +231,7 @@ const displayDetailsSchema = z.object({
 });
 
 const transcriptWatchEventSchema = z.object({
-	eventType: z.string(),
-	totalParts: z.int().optional(),
-	stale: z.boolean()
+	eventType: z.string()
 });
 
 const liveCompletionOverlaySchema = z.object({

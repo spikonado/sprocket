@@ -12,9 +12,12 @@ use crate::watch_registry::{WatchRegistry, WatchSession};
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptWatchEvent {
     pub event_type: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_parts: Option<u32>,
-    pub stale: bool,
+}
+
+impl TranscriptWatchEvent {
+    pub const UPDATED: Self = Self {
+        event_type: "updated",
+    };
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -82,26 +85,6 @@ impl TranscriptWatchers {
         });
     }
 
-    pub async fn notify_local_update(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        total_parts: u32,
-        stale: bool,
-    ) {
-        self.registry.send_to(
-            &WatchKey {
-                user_id: user_id.to_string(),
-                thread_id: thread_id.to_string(),
-            },
-            TranscriptWatchEvent {
-                event_type: "updated",
-                total_parts: Some(total_parts),
-                stale,
-            },
-        );
-    }
-
     pub async fn open(self: &Arc<Self>, user_id: &str, thread_id: &str) -> TranscriptWatchSession {
         let key = WatchKey {
             user_id: user_id.to_string(),
@@ -142,24 +125,19 @@ fn spawn_convex_watch(start: WatchStart) -> JoinHandle<()> {
                         "transcript watch for {} failed; retrying: {error:#}",
                         start.thread_id
                     );
-                    let mut state = match start
+                    if let Err(error) = start
                         .store
-                        .load_state(&start.user_id, &start.thread_id)
+                        .update_state(&start.user_id, &start.thread_id, |state| {
+                            state.stale = true;
+                        })
                         .await
                     {
-                        Ok(state) => state,
-                        Err(_) => break,
-                    };
-                    state.stale = true;
-                    let _ = start
-                        .store
-                        .save_state(&start.user_id, &start.thread_id, &state)
-                        .await;
-                    let _ = start.events.send(TranscriptWatchEvent {
-                        event_type: "updated",
-                        total_parts: Some(state.remote_total_parts),
-                        stale: true,
-                    });
+                        tracing::warn!(
+                            "could not mark transcript {} stale: {error:#}",
+                            start.thread_id
+                        );
+                    }
+                    let _ = start.events.send(TranscriptWatchEvent::UPDATED);
                     retry_after_failure().await;
                 }
             }
@@ -180,12 +158,8 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
         Arc::clone(&start.store),
         start.user_id.clone(),
         start.thread_id.clone(),
-        |total| {
-            let _ = start.events.send(TranscriptWatchEvent {
-                event_type: "updated",
-                total_parts: Some(total),
-                stale: false,
-            });
+        || {
+            let _ = start.events.send(TranscriptWatchEvent::UPDATED);
         },
     )
     .await

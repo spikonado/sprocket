@@ -24,10 +24,11 @@ export class DisplayHistory {
 	loading = true;
 	loadingOlder = false;
 	windowVersion = 0;
-	stale = false;
 	syncing = false;
 	error: string | null = null;
 	private stopped = false;
+	private pageStale = false;
+	private watchLost = false;
 	private refreshing = false;
 	private refreshPending = false;
 	private olderPending = false;
@@ -45,9 +46,19 @@ export class DisplayHistory {
 		private changed: () => void
 	) {}
 
+	get stale() {
+		return this.pageStale || this.watchLost;
+	}
+
 	stop() {
 		this.stopped = true;
 		clearTimeout(this.retry);
+	}
+
+	setWatching(live: boolean) {
+		if (this.watchLost === !live) return;
+		this.watchLost = !live;
+		this.changed();
 	}
 
 	private retryRefresh(delay: number) {
@@ -122,6 +133,7 @@ export class DisplayHistory {
 				});
 
 				if (this.stopped) return;
+				this.pageStale = page.stale;
 
 				if (this.replicaId !== page.replicaId) {
 					if (this.replicaId !== undefined) this.windowVersion += 1;
@@ -138,7 +150,6 @@ export class DisplayHistory {
 				}
 
 				if (page.indexing) {
-					this.stale = page.stale;
 					this.syncing = page.syncing;
 					this.changed();
 					this.retryRefresh(500);
@@ -153,7 +164,6 @@ export class DisplayHistory {
 				}
 
 				if (page.revision < this.revision) {
-					this.stale = page.stale;
 					this.retryRefresh(500);
 					this.changed();
 					break;
@@ -204,7 +214,7 @@ export class DisplayHistory {
 			} while (this.refreshPending && !this.stopped);
 		} catch {
 			if (!this.stopped) {
-				this.stale = true;
+				this.pageStale = true;
 				this.loading = false;
 				this.error = this.messages.length ? null : 'Could not load conversation history.';
 				this.changed();
@@ -239,6 +249,7 @@ export class DisplayHistory {
 			const page = await this.fetchPage({ before, limit: 40, ...this.streamRequest() });
 
 			if (this.stopped || version !== this.windowVersion) return;
+			this.pageStale = page.stale;
 
 			if (this.replicaId !== page.replicaId) {
 				void this.refresh();
@@ -281,7 +292,7 @@ export class DisplayHistory {
 			else if (page.syncing) this.retryRefresh(500);
 		} catch {
 			if (!this.stopped && version === this.windowVersion) {
-				this.stale = true;
+				this.pageStale = true;
 				this.retryOlder(2_000);
 			}
 		} finally {
@@ -329,7 +340,6 @@ export class DisplayHistory {
 			messages.some((message, index) => message !== this.messages[index])
 		)
 			this.messages = messages;
-		this.stale = page.stale;
 		this.syncing = page.syncing;
 		this.revision = Math.max(this.revision, page.revision);
 

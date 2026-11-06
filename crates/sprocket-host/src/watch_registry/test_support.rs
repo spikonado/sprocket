@@ -13,4 +13,13 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
             .get(key)
             .map(|slot| slot.task.abort_handle())
     }
+
+    pub fn send_to(&self, key: &K, event: E)
+    where
+        E: Clone,
+    {
+        if let Some(slot) = lock(&self.inner).slots.get(key) {
+            let _ = slot.events.send(event);
+        }
+    }
 }

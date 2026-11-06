@@ -105,11 +105,63 @@ it('drops transcript events that arrive after the selected thread changed', asyn
 	replica.selectThread(threadId('thread-b'));
 	selected = threadId('thread-b');
 	await act(async () => {
-		displayEvents[0]({ eventType: 'replaced', stale: true });
+		displayEvents[0]({ eventType: 'replaced' });
 	});
 	expect(replica.stale).toBe(false);
 
 	stop();
+});
+
+it('stays stale after the watch drops until the watch delivers again', async () => {
+	vi.useFakeTimers();
+	const displayEvents: Array<(event: TranscriptWatchEvent) => void> = [];
+
+	const api: TranscriptReplicaApi = {
+		fetchTranscriptDisplay: async () => ({
+			replicaId: 'replica',
+			rows: [],
+			indexing: false,
+			syncing: false,
+			stale: false,
+			revision: 1,
+			persistedStreams: [],
+			changes: [],
+			changesCursor: { revision: 1, position: -1 },
+			moreChanges: false
+		}),
+		watchTranscript: async (_request, handlers) => {
+			displayEvents.push(handlers.onEvent);
+
+			if (displayEvents.length === 1) throw new Error('Lost the live connection.');
+			await new Promise(() => {});
+		},
+		watchLiveCompletion: () => new Promise(() => {})
+	};
+
+	const replica = new TranscriptReplica();
+	replica.selectThread(threadId('thread-a'));
+
+	const stop = replica.watchDisplay({
+		api,
+		userId: 'user-a',
+		threadId: threadId('thread-a'),
+		isCurrent: () => true
+	});
+
+	try {
+		await vi.advanceTimersByTimeAsync(0);
+		expect(replica.stale).toBe(true);
+		replica.syncOverlays([overlay('stream-1')]);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(replica.stale).toBe(true);
+		await vi.advanceTimersByTimeAsync(1_000);
+		displayEvents[1]({ eventType: 'updated' });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(replica.stale).toBe(false);
+	} finally {
+		stop();
+		vi.useRealTimers();
+	}
 });
 
 it('tracks and clears the live completion stream and notifies subscribers', async () => {

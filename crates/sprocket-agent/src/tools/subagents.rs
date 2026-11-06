@@ -1255,7 +1255,7 @@ async fn read_transcript_snapshot(
         run_id,
         hidden_prompt_runs: info.caller_prompt_run_ids.clone(),
     };
-    sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
+    sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript)
         .await
         .map_err(tool_error)?;
     let page = sprocket_transcript::monitor::download_monitor_page(

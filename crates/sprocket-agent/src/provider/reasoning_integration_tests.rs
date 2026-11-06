@@ -394,11 +394,14 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     let dir = tempfile::tempdir().expect("handoff replay cache directory");
     let store = TranscriptStore::new(dir.path().to_path_buf());
     store.append_parts("user", "thread", &parts).await.unwrap();
-    let mut state = store.load_state("user", "thread").await.unwrap();
-    state.context_summary = Some(SUMMARY.to_string());
-    state.history_from_number = 2;
-    state.remote_total_parts = 5;
-    store.save_state("user", "thread", &state).await.unwrap();
+    store
+        .update_state("user", "thread", |state| {
+            state.context_summary = Some(SUMMARY.to_string());
+            state.history_from_number = 2;
+            state.remote_total_parts = 5;
+        })
+        .await
+        .unwrap();
 
     let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
     let state = reloaded_store.load_state("user", "thread").await.unwrap();
