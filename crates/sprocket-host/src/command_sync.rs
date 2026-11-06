@@ -16,6 +16,7 @@ use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
 
 const CHUNK_BYTES: usize = 128 * 1024;
+const FLUSH_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 type IdleSessions = HashMap<PathBuf, u64>;
 
@@ -26,26 +27,37 @@ enum SyncOutcome {
     Pending,
 }
 
+/// Ordered so a directory pass reports the most urgent state of any record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RecordSync {
+    /// Nothing for this machine to upload now.
+    Settled,
+    /// Waiting for new output, or for a failed upload to be retried.
+    Waiting,
+    /// More log batches are ready to upload.
+    Uploading,
+}
+
 async fn sync_when_changed(
     idle: &mut IdleSessions,
     path: &Path,
     history: &CommandHistory,
     sync: impl Future<Output = Result<SyncOutcome>>,
-) -> Result<bool> {
+) -> Result<RecordSync> {
     let size = tokio::fs::metadata(&history.result.events_path)
         .await?
         .len();
     if history.result.running && idle.get(path) == Some(&size) {
-        return Ok(false);
+        return Ok(RecordSync::Waiting);
     }
     idle.remove(path);
     match sync.await? {
-        SyncOutcome::Completed => Ok(true),
+        SyncOutcome::Completed => Ok(RecordSync::Settled),
         SyncOutcome::RunningCaughtUp => {
             idle.insert(path.to_path_buf(), size);
-            Ok(false)
+            Ok(RecordSync::Waiting)
         }
-        SyncOutcome::Pending => Ok(false),
+        SyncOutcome::Pending => Ok(RecordSync::Uploading),
     }
 }
 
@@ -173,8 +185,13 @@ pub async fn flush(
     machine_id: &str,
 ) -> Result<()> {
     let mut idle = IdleSessions::new();
-    while !sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await? {}
-    Ok(())
+    loop {
+        match sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await? {
+            RecordSync::Settled => return Ok(()),
+            RecordSync::Uploading => {}
+            RecordSync::Waiting => tokio::time::sleep(FLUSH_RETRY_DELAY).await,
+        }
+    }
 }
 
 async fn sync_directory(
@@ -184,11 +201,13 @@ async fn sync_directory(
     deployment: &str,
     machine_id: &str,
     idle: &mut IdleSessions,
-) -> Result<bool> {
-    let mut complete = true;
+) -> Result<RecordSync> {
+    let mut pass = RecordSync::Settled;
     let mut users = match tokio::fs::read_dir(store.root()).await {
         Ok(users) => users,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RecordSync::Settled);
+        }
         Err(error) => return Err(error.into()),
     };
     while let Some(user) = users.next_entry().await? {
@@ -225,20 +244,18 @@ async fn sync_directory(
                 .await
                 .context("command sync timed out")
                 .and_then(|result| result);
-                match result {
-                    Ok(synced) => complete &= synced,
-                    Err(error) => {
-                        complete = false;
-                        tracing::warn!(
-                            "command record {} sync will retry: {error:#}",
-                            path.display()
-                        );
-                    }
-                }
+                let record = result.unwrap_or_else(|error| {
+                    tracing::warn!(
+                        "command record {} sync will retry: {error:#}",
+                        path.display()
+                    );
+                    RecordSync::Waiting
+                });
+                pass = pass.max(record);
             }
         }
     }
-    Ok(complete)
+    Ok(pass)
 }
 
 async fn sync_record(
@@ -250,17 +267,19 @@ async fn sync_record(
     machine_id: &str,
     client: &mut Option<UserConvexClient>,
     idle: &mut IdleSessions,
-) -> Result<bool> {
-    if tokio::fs::try_exists(path.with_extension("synced")).await? {
+) -> Result<RecordSync> {
+    let marker = path.with_extension("synced");
+    if tokio::fs::try_exists(&marker).await? {
         idle.remove(path);
-        return Ok(true);
+        return Ok(RecordSync::Settled);
     }
     let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
     if history.machine_id != machine_id || history.user_id.is_empty() {
-        return Ok(true);
+        tokio::fs::write(&marker, b"").await?;
+        return Ok(RecordSync::Settled);
     }
     if auth.require_user(&history.user_id).await.is_err() {
-        return Ok(true);
+        return Ok(RecordSync::Settled);
     }
     let session_id = path
         .file_stem()
@@ -271,7 +290,7 @@ async fn sync_record(
         Some(manager) => manager.history_snapshot(session_id, &mut history).await?,
         None => history.recover_if_running(directory, session_id).await?,
     }
-    let completed = sync_when_changed(idle, path, &history, async {
+    let sync = sync_when_changed(idle, path, &history, async {
         let client = match client {
             Some(client) => client,
             None => client.insert(
@@ -285,10 +304,10 @@ async fn sync_record(
         sync_session(client, session_id, &history).await
     })
     .await?;
-    if completed {
-        tokio::fs::write(path.with_extension("synced"), b"").await?;
+    if sync == RecordSync::Settled {
+        tokio::fs::write(&marker, b"").await?;
     }
-    Ok(completed)
+    Ok(sync)
 }
 
 #[derive(Deserialize)]

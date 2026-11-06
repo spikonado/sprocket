@@ -139,15 +139,16 @@ async fn idle_sessions_sync_again_for_events_and_completion() {
     let calls = AtomicUsize::new(0);
 
     for _ in 0..3 {
-        assert!(
-            !sync_when_changed(
+        assert_eq!(
+            sync_when_changed(
                 &mut idle,
                 &path,
                 &history,
                 acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
             )
             .await
-            .unwrap()
+            .unwrap(),
+            RecordSync::Waiting
         );
     }
     assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -170,7 +171,7 @@ async fn idle_sessions_sync_again_for_events_and_completion() {
     history.result.running = false;
     history.result.exit_code = Some(0);
     history.result.success = true;
-    assert!(
+    assert_eq!(
         sync_when_changed(
             &mut idle,
             &path,
@@ -178,7 +179,8 @@ async fn idle_sessions_sync_again_for_events_and_completion() {
             acknowledged_sync(&calls, SyncOutcome::Completed),
         )
         .await
-        .unwrap()
+        .unwrap(),
+        RecordSync::Settled
     );
     assert_eq!(calls.load(Ordering::Relaxed), 3);
     assert!(idle.is_empty());
@@ -234,7 +236,7 @@ async fn pending_batches_and_failed_uploads_retry_until_acknowledged() {
 }
 
 #[tokio::test]
-async fn malformed_record_remains_pending_for_retry() {
+async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
     let directory = tempfile::tempdir().unwrap();
     let store = TranscriptStore::new(directory.path().to_path_buf());
     let records = store
@@ -243,6 +245,10 @@ async fn malformed_record_remains_pending_for_retry() {
     tokio::fs::create_dir_all(&records).await.unwrap();
     let path = records.join(format!("{}.json", uuid::Uuid::new_v4()));
     tokio::fs::write(&path, b"interrupted write").await.unwrap();
+    let foreign = records.join(format!("{}.json", uuid::Uuid::new_v4()));
+    let mut history = running_history(directory.path()).await;
+    history.machine_id = "another machine".into();
+    history.save(&foreign).await.unwrap();
     let auth = NativeAuthManager::configured_for_test(
         crate::native_auth::NativeAuthConfig {
             workos_client_id: "test".into(),
@@ -250,8 +256,8 @@ async fn malformed_record_remains_pending_for_retry() {
         "http://localhost/callback".into(),
     );
     let registry = ThreadCommandSessions::default();
-    assert!(
-        !sync_directory(
+    assert_eq!(
+        sync_directory(
             &store,
             &registry,
             &auth,
@@ -260,10 +266,12 @@ async fn malformed_record_remains_pending_for_retry() {
             &mut IdleSessions::new(),
         )
         .await
-        .unwrap()
+        .unwrap(),
+        RecordSync::Waiting
     );
     assert_eq!(tokio::fs::read(&path).await.unwrap(), b"interrupted write");
     assert!(!path.with_extension("synced").exists());
+    assert!(foreign.with_extension("synced").exists());
 }
 
 #[tokio::test]
