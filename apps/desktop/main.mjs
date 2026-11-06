@@ -497,7 +497,7 @@ ipcMain.handle('sprocket:set-unsaved-changes', (event, value) => {
 function confirmDiscardUnsavedChanges() {
 	// Quitting and installing start only after the user already chose to discard.
 	if (
-		isStoppingServer() ||
+		phase !== 'running' ||
 		updates.getState().status === 'installing' ||
 		!hasUnsavedChanges ||
 		!mainWindowRef ||
