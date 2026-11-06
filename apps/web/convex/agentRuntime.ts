@@ -465,7 +465,6 @@ export const completionActor = query({
 const vHandoffSummary = {
 	summary: v.string(),
 	completionAttemptSeq: v.number(),
-	/** Sent by released agents; current agents call `recordModelCall`. */
 	handoffCalls: v.optional(v.array(vModelCallUsage))
 };
 
@@ -773,7 +772,6 @@ export const finalizeCompletionCall = mutation({
 			v.object({
 				contextTokens: v.number(),
 				processedTokens: v.optional(v.number()),
-				/** Sent by released agents; current agents call `recordModelCall`. */
 				call: v.optional(vModelCallUsage)
 			})
 		),

@@ -98,13 +98,9 @@ impl GenerationTracker {
         finish_reason: Option<&FinishReason>,
     ) {
         let call = GenerationCall {
-            provider: source.provider,
-            model: &source.model,
             usage,
             finish_reason,
-            error: None,
-            context_handoff,
-            provider_fallback: source.provider != self.initial_provider,
+            ..self.generation_call(source, context_handoff)
         };
         let mut state = self.state.lock().ok();
         let mut pending = state.as_mut().and_then(|state| {
@@ -135,15 +131,26 @@ impl GenerationTracker {
             return;
         };
         let call = GenerationCall {
+            error: Some(error.to_string()),
+            ..self.generation_call(source, context_handoff)
+        };
+        posthog_rs::capture(self.generation_event(&call, Some(&mut pending)));
+    }
+
+    fn generation_call<'a>(
+        &self,
+        source: &'a UsageSource,
+        context_handoff: bool,
+    ) -> GenerationCall<'a> {
+        GenerationCall {
             provider: source.provider,
             model: &source.model,
             usage: Usage::default(),
             finish_reason: None,
-            error: Some(error.to_string()),
+            error: None,
             context_handoff,
             provider_fallback: source.provider != self.initial_provider,
-        };
-        posthog_rs::capture(self.generation_event(&call, Some(&mut pending)));
+        }
     }
 
     fn generation_event(

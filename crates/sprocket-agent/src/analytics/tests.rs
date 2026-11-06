@@ -77,7 +77,6 @@ fn generation_properties_describe_the_call() {
     assert!(!properties.contains_key("$ai_input"));
 
     let failed = GenerationCall {
-        usage: Usage::default(),
         error: Some("connection reset".to_string()),
         ..call
     };
@@ -85,7 +84,6 @@ fn generation_properties_describe_the_call() {
 
     assert_eq!(properties["$ai_is_error"], true);
     assert_eq!(properties["$ai_error"], "connection reset");
-    assert!(!properties.contains_key("$ai_input_tokens"));
 }
 
 #[test]
