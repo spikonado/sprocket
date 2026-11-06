@@ -52,6 +52,27 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     assert!(!connector.bin_dir().exists());
 }
 
+#[tokio::test]
+async fn uninstall_keeps_an_install_queued_behind_its_lock() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let connector = connector(data_dir.path());
+    fs::create_dir_all(&connector.root).unwrap();
+    let held = acquire_lock(connector.root.join(INSTALL_LOCK))
+        .await
+        .unwrap();
+    let uninstall = connector.uninstall();
+    tokio::pin!(uninstall);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut uninstall)
+            .await
+            .is_err()
+    );
+    *connector.activity() = Activity::Installing;
+    drop(held);
+    uninstall.await.unwrap();
+    assert_eq!(connector.status().await.state, ConnectorState::Installing);
+}
+
 #[test]
 fn reads_kicad_versions() {
     assert_eq!(major_minor("10.99.0-6189-g113c71d59d"), Some((10, 99)));
