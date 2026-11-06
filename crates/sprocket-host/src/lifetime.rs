@@ -4,7 +4,6 @@ use sprocket_workspace::WorkspaceCancellation;
 
 struct LifetimeState {
     active_runs: usize,
-    accepting: bool,
     restart_requested: bool,
 }
 
@@ -19,7 +18,6 @@ impl HostLifetime {
             shutdown: WorkspaceCancellation::new(),
             state: Mutex::new(LifetimeState {
                 active_runs: 0,
-                accepting: true,
                 restart_requested: false,
             }),
         })
@@ -27,16 +25,13 @@ impl HostLifetime {
 
     pub fn run_guard(self: &Arc<Self>) -> anyhow::Result<RunGuard> {
         let mut state = self.state.lock().unwrap();
-        anyhow::ensure!(
-            state.accepting && !self.shutdown.is_cancelled(),
-            "server is shutting down"
-        );
+        anyhow::ensure!(!self.is_stopping(), "server is shutting down");
         state.active_runs += 1;
         Ok(RunGuard(Arc::clone(self)))
     }
 
     pub fn is_stopping(&self) -> bool {
-        !self.state.lock().unwrap().accepting
+        self.shutdown.is_cancelled()
     }
 
     pub fn request_restart(&self) -> anyhow::Result<()> {
@@ -44,12 +39,8 @@ impl HostLifetime {
         if state.restart_requested {
             return Ok(());
         }
-        anyhow::ensure!(
-            state.accepting && !self.shutdown.is_cancelled(),
-            "Sprocket is already shutting down."
-        );
+        anyhow::ensure!(!self.is_stopping(), "Sprocket is already shutting down.");
         state.restart_requested = true;
-        state.accepting = false;
         self.shutdown.cancel();
         Ok(())
     }
@@ -59,9 +50,8 @@ impl HostLifetime {
     }
 
     pub fn stop_if_idle(&self) {
-        let mut state = self.state.lock().unwrap();
+        let state = self.state.lock().unwrap();
         if state.active_runs == 0 {
-            state.accepting = false;
             self.shutdown.cancel();
         }
     }
