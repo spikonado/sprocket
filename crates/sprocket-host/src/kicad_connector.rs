@@ -267,6 +267,7 @@ impl KiCadConnector {
         }
         let (root, current) = (self.root.clone(), self.release.version.clone());
         tokio::task::spawn_blocking(move || -> io::Result<()> {
+            write_kicad_view(&root.join(&current))?;
             sync_launchers(&root, Some(&current))?;
             prune_versions(&root, &current);
             Ok(())
@@ -476,9 +477,7 @@ fn sync_launchers(root: &Path, version: Option<&str>) -> io::Result<()> {
         };
     };
     fs::create_dir_all(&target)?;
-    let version_dir = root.join(version);
-    write_kicad_view(&version_dir)?;
-    for entry in fs::read_dir(version_dir.join(LAUNCHER_DIR))? {
+    for entry in fs::read_dir(root.join(version).join(LAUNCHER_DIR))? {
         let entry = entry?;
         let temporary = target.join(format!(".{}.tmp", entry.file_name().to_string_lossy()));
         fs::copy(entry.path(), &temporary)?;
@@ -487,8 +486,9 @@ fn sync_launchers(root: &Path, version: Option<&str>) -> io::Result<()> {
     Ok(())
 }
 
-/// Written at every sync instead of at install, so existing installs and Sprocket updates get
-/// the current `kicad-view`.
+/// Written at every startup and install instead of at staging, so existing installs and
+/// Sprocket updates get the current `kicad-view`. Only the pinned version gets it, because
+/// `prepare` adds its packages only to the pinned venv.
 fn write_kicad_view(version_dir: &Path) -> io::Result<()> {
     let routing_tools = version_dir.join(ROUTING_TOOLS_DIR);
     if !routing_tools.is_dir() {
@@ -520,6 +520,7 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     match lock.try_lock() {
         Ok(()) => {
             remove_leftovers(root)?;
+            write_kicad_view(&root.join(pinned))?;
             sync_launchers(root, installed_version(root, pinned).as_deref())
         }
         Err(fs::TryLockError::WouldBlock) => Ok(()),

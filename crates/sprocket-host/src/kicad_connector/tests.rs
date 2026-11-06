@@ -45,7 +45,7 @@ fn reads_kicad_versions() {
 
 #[cfg(unix)]
 #[test]
-fn syncing_gives_an_existing_install_kicad_view() {
+fn repair_gives_an_existing_install_kicad_view() {
     let root = tempfile::tempdir().unwrap();
     let version = root.path().join("10.99.0-1-gabcdef");
     fs::create_dir_all(version.join(LAUNCHER_DIR)).unwrap();
@@ -59,7 +59,7 @@ fn syncing_gives_an_existing_install_kicad_view() {
     .unwrap();
     set_executable(&python).unwrap();
 
-    sync_launchers(root.path(), Some("10.99.0-1-gabcdef")).unwrap();
+    repair_unless_installing(root.path(), "10.99.0-1-gabcdef").unwrap();
 
     let output = std::process::Command::new(root.path().join("bin/kicad-view"))
         .arg("a b")
