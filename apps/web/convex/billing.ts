@@ -1094,7 +1094,6 @@ export const upsertDodoSubscription = internalMutation({
 		outcome: v.union(
 			v.literal('applied'),
 			v.literal('stale'),
-			v.literal('duplicate'),
 			v.literal('noop'),
 			v.literal('competing'),
 			v.literal('unresolved')
@@ -1121,7 +1120,7 @@ type DodoSubscriptionEventArgs = PayloadSource & {
 };
 
 export type ProjectionOutcome = {
-	outcome: 'applied' | 'stale' | 'duplicate' | 'noop' | 'competing' | 'unresolved';
+	outcome: 'applied' | 'stale' | 'noop' | 'competing' | 'unresolved';
 	detail?: string;
 };
 

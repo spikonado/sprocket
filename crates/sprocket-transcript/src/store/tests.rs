@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{TranscriptPartKind, TranscriptPromptBody};
+use crate::types::{DownloadedRange, TranscriptPartKind, TranscriptPromptBody};
 
 fn prompt(number: u32, text: &str) -> TranscriptPart {
     TranscriptPart {
@@ -80,7 +80,10 @@ async fn shared_store_preserves_concurrent_part_updates() {
     let parts = store.read_parts("user", "thread", &numbers).await.unwrap();
     assert_eq!(parts.len(), numbers.len());
     let state = store.load_state("user", "thread").await.unwrap();
-    assert!(numbers.iter().all(|number| state.covers(*number)));
+    assert_eq!(
+        state.downloaded_ranges,
+        vec![DownloadedRange { start: 0, end: 31 }]
+    );
 }
 
 #[tokio::test]
@@ -193,10 +196,6 @@ async fn recovers_a_torn_final_jsonl_line() {
     let parts = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0].number, 0);
-    assert_eq!(
-        store.missing_numbers("user", "thread", 0, 2).await.unwrap(),
-        vec![1]
-    );
     let _ = tokio::fs::remove_dir_all(dir).await;
 }
 

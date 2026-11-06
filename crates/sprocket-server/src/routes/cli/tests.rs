@@ -175,7 +175,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
 
 #[tokio::test]
 async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
-    let (_directory, state, token, _) = fixture().await;
+    let (_directory, state, _, _) = fixture().await;
     for (version, deployment, guidance) in [
         (
             "999.0.0",
@@ -208,8 +208,6 @@ async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
             ))
             .unwrap();
         let bootstrap = call(&state, "", "bootstrap", &request, "127.0.0.1:1000").await;
-        let connect = call(&state, &token, "connect", &request.client, "127.0.0.1:1000").await;
-        assert_eq!(bootstrap, connect);
         assert_eq!(bootstrap.0, StatusCode::CONFLICT);
         let error = bootstrap.1["error"].as_str().unwrap();
         assert!(error.contains(guidance), "{error}");
@@ -372,7 +370,7 @@ async fn cancellation_before_submission_is_cached_and_release_invalidates_pairin
 }
 
 #[tokio::test]
-async fn cli_control_requires_the_owning_local_session_and_matching_version() {
+async fn cli_control_requires_the_owning_local_session() {
     let (_directory, state, token, request) = fixture().await;
     let client_request = CliClientRequest {
         client_id: request.client_id.clone(),
@@ -396,22 +394,6 @@ async fn cli_control_requires_the_owning_local_session_and_matching_version() {
             &other_token,
             "cancel",
             &client_request,
-            "127.0.0.1:1000"
-        )
-        .await
-        .0,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        call(
-            &state,
-            &token,
-            "connect",
-            &CliConnectRequest {
-                client_id: request.client_id,
-                client_version: "999.0.0".into(),
-                deployment_url: state.host.convex_deployment_url.clone(),
-            },
             "127.0.0.1:1000"
         )
         .await

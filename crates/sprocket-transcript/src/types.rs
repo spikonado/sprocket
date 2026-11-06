@@ -35,28 +35,6 @@ impl TranscriptState {
         }
     }
 
-    pub fn covers(&self, number: u32) -> bool {
-        self.downloaded_ranges
-            .iter()
-            .any(|range| range.contains(number))
-    }
-
-    pub fn visible_end_exclusive(&self) -> u32 {
-        let local_end = self
-            .downloaded_ranges
-            .iter()
-            .map(|range| range.end.saturating_add(1))
-            .max()
-            .unwrap_or(0);
-        self.remote_total_parts.max(local_end)
-    }
-
-    pub fn missing_in(&self, start: u32, end_exclusive: u32) -> Vec<u32> {
-        (start..end_exclusive)
-            .filter(|number| !self.covers(*number))
-            .collect()
-    }
-
     pub fn mark_downloaded(&mut self, numbers: &[u32]) {
         for &number in numbers {
             insert_number(&mut self.downloaded_ranges, number);

@@ -10,6 +10,7 @@ mod openai;
 mod output;
 mod provider;
 mod reasoning;
+mod request_compression;
 mod run;
 mod run_settings;
 mod stream_recovery;

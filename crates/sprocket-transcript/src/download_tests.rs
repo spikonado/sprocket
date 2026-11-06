@@ -38,7 +38,12 @@ async fn assert_saved(store: &TranscriptStore, start: u32, end: u32) {
         numbers.iter().copied().map(part).collect::<Vec<_>>()
     );
     let state = store.load_state("user", "thread").await.unwrap();
-    assert!(numbers.iter().all(|&number| state.covers(number)));
+    assert!(numbers.iter().all(|&number| {
+        state
+            .downloaded_ranges
+            .iter()
+            .any(|range| range.contains(number))
+    }));
     store
         .with_work_replica("user", "thread", move |replica| {
             for number in numbers {
@@ -303,12 +308,12 @@ async fn foreground_demand_waits_for_the_current_background_page_only() {
         .unwrap();
     assert_saved(&store, 900, 940).await;
     assert_saved(&store, 0, 20).await;
-    assert_eq!(
+    assert!(
         store
-            .missing_numbers("user", "thread", 20, 900)
+            .read_parts("user", "thread", &(20..900).collect::<Vec<_>>())
             .await
-            .unwrap(),
-        (20..900).collect::<Vec<_>>()
+            .unwrap()
+            .is_empty()
     );
     assert!(!background.is_finished());
     background.abort();
@@ -657,11 +662,11 @@ async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_t
         })
         .await
         .unwrap();
-    assert_eq!(
+    assert!(
         store
-            .missing_numbers("user", "thread", 160, 1000)
+            .read_parts("user", "thread", &(160..1000).collect::<Vec<_>>())
             .await
-            .unwrap(),
-        (160..1000).collect::<Vec<_>>()
+            .unwrap()
+            .is_empty()
     );
 }

@@ -27,7 +27,6 @@ const executeArgs = {
 };
 
 const executeReturns = v.object({
-	skipped: v.optional(v.boolean()),
 	resultStorageId: v.optional(v.id('_storage'))
 });
 
@@ -39,7 +38,7 @@ export const executeHostedParse = internalAction({
 		const work = await ctx.runQuery(internal.hostedParse.getParseWork, args);
 
 		if (!work) {
-			return { skipped: true };
+			return {};
 		}
 
 		const pages = work.pages === true;

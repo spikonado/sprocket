@@ -40,8 +40,8 @@ export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: numb
 
 export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
 	// Requiring an active lease here would strand runs whose executor only
-	// reports the failure after expiry. A takeover changes claimId, so stale
-	// executors stay rejected.
+	// reports the failure after expiry. No other executor can claim the run
+	// meanwhile; an expired claim can only be abandoned.
 	return isClaimedRunStatus(run.status) && run.claimId === claimId;
 }
 

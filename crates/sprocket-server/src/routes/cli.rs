@@ -20,7 +20,6 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/cli/discovery", post(discovery))
         .route("/cli/bootstrap", post(bootstrap))
-        .route("/cli/connect", post(connect))
         .route("/cli/heartbeat", post(heartbeat))
         .route("/cli/release", post(release))
         .route("/cli/login", post(login))
@@ -116,21 +115,6 @@ pub(super) async fn client_session(
         .cli_sessions
         .client(client_id, &token)
         .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))
-}
-
-async fn connect(
-    State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    Json(request): Json<CliConnectRequest>,
-) -> Result<Json<bool>, ApiError> {
-    let token = session(&state, peer, &headers).await?;
-    require_compatible_client(&state, &request)?;
-    state
-        .cli_sessions
-        .connect(&request.client_id, &token)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(true))
 }
 
 fn require_compatible_client(
