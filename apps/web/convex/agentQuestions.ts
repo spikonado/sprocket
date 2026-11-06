@@ -23,6 +23,7 @@ import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/a
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { assertRunAcceptsWork } from '@convex/lib/runLease';
+import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
 import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
@@ -63,6 +64,7 @@ async function nextThreadSequence(
 type CreateQuestionArgs = {
 	runId: Id<'runs'>;
 	claimId: string;
+	jobId?: Id<'executorJobs'>;
 	question: string;
 	options: Infer<typeof vAskQuestionOption>[];
 	timeoutMs?: number | null;
@@ -83,9 +85,10 @@ async function createQuestion(
 ): Promise<CreatedQuestion> {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 	assertRunAcceptsWork(run, args.claimId, Date.now());
-	const jobId = run.activeJobId;
+	const jobId = args.jobId ?? run.activeJobId;
+	const job = jobId && (await ctx.db.get('executorJobs', jobId));
 
-	if (!jobId) {
+	if (!job || job.runId !== run._id || isSettledExecutorJobStatus(job.status)) {
 		throw new Error('Ask question requires an active tool job.');
 	}
 
@@ -101,7 +104,7 @@ async function createQuestion(
 		ctx.db.insert('agentQuestions', {
 			threadId: run.threadId,
 			runId: run._id,
-			jobId,
+			jobId: job._id,
 			question,
 			options,
 			status: timeoutMs === 0 ? 'timedOut' : 'pending',
@@ -149,6 +152,7 @@ const vCreatedQuestion = v.object({
 const vCreateQuestionArgs = {
 	runId: v.id('runs'),
 	claimId: v.string(),
+	jobId: v.optional(v.id('executorJobs')),
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
 	executionSecret: v.string()

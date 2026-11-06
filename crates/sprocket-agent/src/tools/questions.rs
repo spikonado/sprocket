@@ -15,7 +15,7 @@ use tokio::time::{Instant, sleep_until};
 
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
-use super::job::execute_serialized_tool_job;
+use super::job::{execute_serialized_tool_job, execute_tool_job_with_id};
 use crate::convex::RuntimeClient;
 
 pub(super) const MAX_QUESTION_CHARS: usize = 2000;
@@ -180,7 +180,8 @@ impl rig::tool::Tool for AskQuestionTool {
     ) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
         let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms);
-        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job_with_id(&self.0, Self::NAME, payload, |cancellation, job_id| {
             let runtime = self.0.runtime.clone();
             let run_id = self.0.run_id.clone();
             let claim_id = self.0.claim_id.clone();
@@ -190,7 +191,7 @@ impl rig::tool::Tool for AskQuestionTool {
                     _ = cancellation.cancelled() => Err(cancelled_error()),
                     result = async {
                         let created = create_agent_question(
-                            &runtime, &run_id, &claim_id, &prepared.question,
+                            &runtime, &run_id, &claim_id, &job_id, &prepared.question,
                             &prepared.options, args.timeout_ms,
                         ).await?;
                         let snapshot = fetch_question_snapshot(&runtime, &run_id, &created.question_id).await?;
@@ -323,6 +324,7 @@ async fn create_agent_question(
     runtime: &RuntimeClient,
     run_id: &str,
     claim_id: &str,
+    job_id: &str,
     question: &str,
     options: &[AskQuestionOption],
     timeout_ms: Option<u64>,
@@ -330,6 +332,7 @@ async fn create_agent_question(
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("claimId".to_string(), claim_id.to_string().into());
+    args.insert("jobId".to_string(), job_id.to_string().into());
     args.insert("question".to_string(), question.to_string().into());
     args.insert(
         "options".to_string(),
