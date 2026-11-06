@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sprocket_convex::RunStatus;
 use sprocket_transcript::RemoteTranscriptState;
 
 use crate::types::CompletionProvider;
@@ -45,7 +46,7 @@ pub struct SubagentThreadSnapshot {
 pub struct CreateSubagentRunResponse {
     pub thread_id: String,
     pub run_id: String,
-    pub status: String,
+    pub status: RunStatus,
     pub settings: SubagentSettings,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
@@ -65,7 +66,7 @@ pub struct SubagentChildSummary {
     pub thread_id: String,
     #[serde(default)]
     pub title: Option<String>,
-    pub status: String,
+    pub status: RunStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     pub parent_thread_id: String,
@@ -106,7 +107,7 @@ pub struct SubagentControlResponse {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentMonitorInfo {
-    pub status: String,
+    pub status: RunStatus,
     #[serde(default)]
     pub last_error: Option<String>,
     pub active: bool,

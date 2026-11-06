@@ -1,3 +1,7 @@
+import { agentError, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import type { vRunStatus } from '@convex/lib/validators';
+import type { Infer } from 'convex/values';
+
 export const RUN_CLAIM_LEASE_DURATION_MS = 120_000;
 
 export const RUN_QUEUED_STARTUP_DEADLINE_MS = 45_000;
@@ -38,10 +42,27 @@ export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: numb
 	return run.claimId === claimId && isRunClaimLeaseActive(run, now);
 }
 
+/** Wind-down calls such as lease renewal and failure reports use `ownsActiveRunClaim` instead. */
+export function runAcceptsNewWork(run: ClaimableRun, claimId: string, now: number): boolean {
+	return run.cancellationRequestedAt === undefined && ownsActiveRunClaim(run, claimId, now);
+}
+
+export function assertRunAcceptsWork(
+	run: ClaimableRun & { status: Infer<typeof vRunStatus> },
+	claimId: string,
+	now: number
+): void {
+	assertRunAcceptsModelCompletion(run);
+
+	if (!ownsActiveRunClaim(run, claimId, now)) {
+		throw agentError('RUN_NO_LONGER_ACTIVE');
+	}
+}
+
 export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
 	// Requiring an active lease here would strand runs whose executor only
-	// reports the failure after expiry. A takeover changes claimId, so stale
-	// executors stay rejected.
+	// reports the failure after expiry. No other executor can claim the run
+	// meanwhile; an expired claim can only be abandoned.
 	return isClaimedRunStatus(run.status) && run.claimId === claimId;
 }
 

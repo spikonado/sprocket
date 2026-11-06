@@ -96,7 +96,11 @@ fn control_fields_and_execution_options_are_action_specific() {
 
 fn monitor_info(active: bool) -> SubagentMonitorInfo {
     SubagentMonitorInfo {
-        status: if active { "running" } else { "completed" }.to_string(),
+        status: if active {
+            RunStatus::Running
+        } else {
+            RunStatus::Completed
+        },
         last_error: None,
         active,
         pending_questions: Vec::new(),
@@ -125,9 +129,9 @@ async fn immediate_actions_return_lifecycle_without_reading_transcripts() {
     assert_eq!(result, json!({"status": "running"}));
 }
 
-fn activity(status: &str, active: bool, has_pending_questions: bool) -> SubagentActivity {
+fn activity(status: RunStatus, active: bool, has_pending_questions: bool) -> SubagentActivity {
     SubagentActivity {
-        status: status.to_string(),
+        status,
         active,
         has_pending_questions,
     }
@@ -141,29 +145,39 @@ fn activity_updates(
 
 #[tokio::test(start_paused = true)]
 async fn stop_waits_for_the_target_run_to_finish_even_with_pending_questions() {
+    let deadline = Instant::now() + Duration::from_secs(10);
     let mut updates = activity_updates(vec![
-        activity("running", true, true),
-        activity("cancelled", true, true),
-        activity("running", true, false),
+        activity(RunStatus::Running, true, true),
+        activity(RunStatus::Cancelled, true, true),
+        activity(RunStatus::Running, true, false),
     ]);
-    wait_for_final_status(&mut updates, &WorkspaceCancellation::new())
-        .await
-        .unwrap();
-    assert_eq!(updates.next().await.unwrap().unwrap().status, "running");
+    wait_for_activity_using(
+        &mut updates,
+        deadline,
+        &WorkspaceCancellation::new(),
+        |activity| activity.status.is_final(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        updates.next().await.unwrap().unwrap().status,
+        RunStatus::Running
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
     let started = Instant::now();
     for last in [
-        activity("completed", false, false),
-        activity("running", true, true),
+        activity(RunStatus::Completed, false, false),
+        activity(RunStatus::Running, true, true),
     ] {
-        let mut updates = activity_updates(vec![activity("running", true, false), last]);
-        wait_for_settlement_using(
+        let mut updates = activity_updates(vec![activity(RunStatus::Running, true, false), last]);
+        wait_for_activity_using(
             &mut updates,
             started + Duration::from_secs(10),
             &WorkspaceCancellation::new(),
+            SubagentActivity::settled,
         )
         .await
         .unwrap();
@@ -172,12 +186,17 @@ async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn settlement_yields_at_the_deadline_while_the_subagent_works() {
+async fn activity_wait_yields_at_the_deadline_while_the_subagent_works() {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut updates = activity_updates(vec![activity("running", true, false)]);
-    wait_for_settlement_using(&mut updates, deadline, &WorkspaceCancellation::new())
-        .await
-        .unwrap();
+    let mut updates = activity_updates(vec![activity(RunStatus::Running, true, false)]);
+    wait_for_activity_using(
+        &mut updates,
+        deadline,
+        &WorkspaceCancellation::new(),
+        SubagentActivity::settled,
+    )
+    .await
+    .unwrap();
     assert_eq!(Instant::now(), deadline);
 }
 
@@ -187,16 +206,15 @@ async fn cancellation_aborts_a_stalled_activity_wait() {
     cancellation.cancel();
     let mut updates = activity_updates(Vec::new());
     let deadline = Instant::now() + Duration::from_secs(10);
-    for error in [
-        wait_for_settlement_using(&mut updates, deadline, &cancellation)
-            .await
-            .unwrap_err(),
-        wait_for_final_status(&mut updates, &cancellation)
-            .await
-            .unwrap_err(),
-    ] {
-        assert_eq!(error.kind(), rig::tool::ToolErrorKind::Cancelled);
-    }
+    let error = wait_for_activity_using(
+        &mut updates,
+        deadline,
+        &cancellation,
+        SubagentActivity::settled,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Cancelled);
 }
 
 #[tokio::test]

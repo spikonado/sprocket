@@ -12,6 +12,7 @@ use tokio::time::timeout;
 
 mod auth;
 mod decode;
+mod run_status;
 #[cfg(test)]
 mod tests;
 
@@ -20,6 +21,7 @@ pub use decode::{
     ConvexErrorCode, convex_error_code, decode_function_result, decode_labeled_function_result,
     deserialize_convex_u32, deserialize_convex_u64,
 };
+pub use run_status::RunStatus;
 
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 

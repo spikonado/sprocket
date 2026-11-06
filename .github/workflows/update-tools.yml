@@ -26,6 +26,8 @@ jobs:
             label: agent-desktop
           - tool: gh
             label: GitHub CLI
+          - tool: git
+            label: PortableGit
           - tool: uv
             label: uv
     concurrency:

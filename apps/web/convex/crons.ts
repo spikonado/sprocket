@@ -51,7 +51,7 @@ crons.interval(
 );
 
 crons.interval(
-	'compact terminal Dodo checkout history',
+	'prune expired Dodo checkout history',
 	{ hours: 24 },
 	internal.billing.cleanupCheckoutHistory,
 	{}

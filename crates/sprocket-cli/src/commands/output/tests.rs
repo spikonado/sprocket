@@ -3,7 +3,7 @@ use sprocket_server::cli_protocol::CliRunSettings;
 
 fn snapshot(parts: serde_json::Value) -> CliRunSnapshot {
     serde_json::from_value(serde_json::json!({
-        "runId": "run", "threadId": "thread", "status": "running",
+        "runId": "run", "threadId": "thread", "status": null,
         "error": null, "parts": parts, "hasMore": false, "executionFinished": false, "live": null,
         "revision": 1, "answer": "",
     }))

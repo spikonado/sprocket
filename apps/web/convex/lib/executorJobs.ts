@@ -1,6 +1,6 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { ownsActiveRunClaim, runAcceptsNewWork } from '@convex/lib/runLease';
 import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
@@ -30,13 +30,7 @@ export async function applyExecutorJobSuccess(
 		return true;
 	}
 
-	if (isRunFinalStatus(args.run.status) || args.run.cancellationRequestedAt !== undefined) {
-		return false;
-	}
-
-	if (!ownsActiveRunClaim(args.run, args.claimId, Date.now())) {
-		return false;
-	}
+	if (!runAcceptsNewWork(args.run, args.claimId, Date.now())) return false;
 
 	const settledJob = {
 		...args.job,
@@ -98,11 +92,11 @@ export async function applyExecutorJobFailure(
 		claimId: string;
 	}
 ): Promise<boolean> {
-	if (
-		args.job.status === 'cancelled' ||
-		args.job.status === 'completed' ||
-		args.job.status === 'failed'
-	) {
+	if (args.job.status === 'failed') {
+		return true;
+	}
+
+	if (args.job.status === 'cancelled' || args.job.status === 'completed') {
 		return false;
 	}
 

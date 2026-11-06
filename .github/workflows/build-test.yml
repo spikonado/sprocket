@@ -46,6 +46,7 @@ jobs:
               - tools/agent-desktop/*.json
               - tools/bun/*.json
               - tools/gh/*.json
+              - tools/git/*.json
               - tools/kicad/{releases.json,requirements.txt}
               - tools/uv/*.json
             web:
@@ -93,7 +94,7 @@ jobs:
       - name: Test zombie process group cleanup
         run: cargo test --locked -p sprocket-workspace commands::tests::stopping_a_process_group_of_only_zombies
       - name: Test pinned tool installs
-        run: cargo test --locked -p sprocket-host -- tool_install::tests python_install::tests gh_install::tests
+        run: cargo test --locked -p sprocket-host -- tool_install::tests python_install::tests gh_install::tests git_install::tests
 
   web:
     needs: changes

@@ -130,7 +130,6 @@ export function isLatestRunReadyForThread(args: {
 
 export type PendingAgentLaunch = {
 	launchId: number;
-	previousClaimExpiresAt?: number;
 	previousStartedAt?: number;
 	previousRunId: Id<'runs'> | null;
 };
@@ -172,14 +171,11 @@ export function clearPendingAgentLaunch(
 function hasAgentLaunchProgressed(
 	pendingLaunch: PendingAgentLaunch,
 	observedRunId: Id<'runs'> | null,
-	observedClaimExpiresAt?: number,
 	observedStartedAt?: number
 ): boolean {
 	return Boolean(
 		observedRunId &&
 		(observedRunId !== pendingLaunch.previousRunId ||
-			(observedClaimExpiresAt != null &&
-				observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt) ||
 			(observedStartedAt != null && observedStartedAt !== pendingLaunch.previousStartedAt))
 	);
 }
@@ -188,19 +184,13 @@ export function resolvePendingAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
 	observedRunId: Id<'runs'> | null,
-	observedClaimExpiresAt?: number,
 	observedStartedAt?: number
 ): PendingAgentLaunches {
 	const pendingLaunch = pendingLaunches[threadId];
 
 	if (
 		!pendingLaunch ||
-		!hasAgentLaunchProgressed(
-			pendingLaunch,
-			observedRunId,
-			observedClaimExpiresAt,
-			observedStartedAt
-		)
+		!hasAgentLaunchProgressed(pendingLaunch, observedRunId, observedStartedAt)
 	) {
 		return pendingLaunches;
 	}
@@ -213,7 +203,6 @@ export function resolveProjectThreadSelection(args: {
 	currentThreadId: Id<'threadRecords'> | null;
 	currentWorkspacePath: string | null;
 	draftWorkspacePath: string | null;
-	pendingCreatedThreadId?: Id<'threadRecords'> | null;
 }) {
 	const { threads, currentThreadId, currentWorkspacePath, draftWorkspacePath } = args;
 

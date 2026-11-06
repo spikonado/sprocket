@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('checkout history safety', () => {
-	it('counts locally expired provider links toward the history limit while resuming the current link', async () => {
+	it('counts expired provider links toward the history limit until cleanup prunes them', async () => {
 		const t = initConvexTest();
 
 		await t.run(async (ctx) => {
@@ -76,20 +76,45 @@ describe('checkout history safety', () => {
 				now
 			})
 		).resolves.toMatchObject({ kind: 'existing', attemptId: 'current' });
+
+		await t.mutation(internal.billing.cleanupCheckoutHistory, {
+			table: 'billingCheckoutAttempts'
+		});
+
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'owner',
+				tierId: 'pro',
+				interval: 'annual',
+				productId: 'prod_annual',
+				now
+			})
+		).resolves.toMatchObject({ kind: 'create' });
 	});
 
-	it('prunes only terminal or provably never-sent history and compacts recent terminal rows', async () => {
+	it('prunes old terminal history and dead links, keeps recent unresolved rows, and compacts recent terminal rows', async () => {
 		const t = initConvexTest();
+
+		const recent = { expiresAt: now - 2 * day };
 
 		await t.run(async (ctx) => {
 			const rows: Partial<Doc<'billingCheckoutAttempts'>>[] = [
 				{ attemptId: 'paid_old', outcome: 'paid', outcomeUpdatedAt: now - 31 * day },
 				{ attemptId: 'failed_old', outcome: 'failed', outcomeUpdatedAt: now - 31 * day },
 				{ attemptId: 'never_sent', outcome: 'reserved' },
-				{ attemptId: 'ambiguous', outcome: 'create_ambiguous', createRequest: createBody },
-				{ attemptId: 'payable', outcome: 'created', dodoSessionId: 'cks_payable' },
-				{ attemptId: 'legacy_unknown' },
+				{ attemptId: 'abandoned_old', outcome: 'created', dodoSessionId: 'cks_old' },
+				{ attemptId: 'ambiguous_old', outcome: 'create_ambiguous', createRequest: createBody },
+				{ attemptId: 'legacy_unknown_old' },
 				{
+					...recent,
+					attemptId: 'ambiguous',
+					outcome: 'create_ambiguous',
+					createRequest: createBody
+				},
+				{ ...recent, attemptId: 'payable', outcome: 'created', dodoSessionId: 'cks_payable' },
+				{ ...recent, attemptId: 'legacy_unknown' },
+				{
+					...recent,
 					attemptId: 'paid_recent',
 					outcome: 'paid',
 					outcomeUpdatedAt: now,
@@ -198,7 +223,8 @@ describe('checkout history safety', () => {
 			await ctx.db.insert('billingCheckoutAttempts', {
 				...attempt('payable'),
 				outcome: 'created',
-				dodoSessionId: 'cks_payable'
+				dodoSessionId: 'cks_payable',
+				expiresAt: now - day
 			});
 		});
 
