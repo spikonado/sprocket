@@ -330,13 +330,18 @@ export default function ProjectPicker({
 			});
 			onClose();
 		} catch (submitError) {
-			setError({
-				source: 'submit',
-				message:
-					submitError instanceof Error
-						? submitError.message
-						: 'Failed to open the selected project.'
-			});
+			// The path may have changed and failed to browse while this submit was pending.
+			setError((current) =>
+				current?.source === 'browse'
+					? current
+					: {
+							source: 'submit',
+							message:
+								submitError instanceof Error
+									? submitError.message
+									: 'Failed to open the selected project.'
+						}
+			);
 		} finally {
 			setIsSubmitting(false);
 		}
