@@ -606,6 +606,51 @@ it('reports a title regeneration failure in the sidebar', async () => {
 	expect(document.querySelector('.inbox-notice')?.textContent).toContain('Generation unavailable');
 });
 
+it('holds off renaming until a title regeneration finishes', async () => {
+	const input = props([thread()]);
+	let finish = () => {};
+
+	input.onRegenerateTitle.mockReturnValue(
+		new Promise<void>((resolve) => {
+			finish = resolve;
+		})
+	);
+	renderView(<Harness {...input} />);
+	await flush();
+
+	const menuAction = (label: string) => {
+		fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+
+		return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+			(button) => button.textContent?.trim() === label
+		)!;
+	};
+
+	fireEvent.click(menuAction('Regenerate thread title'));
+	await flush();
+	expect(menuAction('Rename').disabled).toBe(true);
+
+	await act(async () => finish());
+	expect(menuAction('Rename').disabled).toBe(false);
+});
+
+it('commits a rename once when Enter and blur both fire before it settles', async () => {
+	const input = props([thread()]);
+	input.onRename.mockReturnValue(new Promise<void>(() => {}));
+	renderView(<Harness {...input} />);
+	await flush();
+
+	fireEvent.dblClick(document.querySelector('.inbox-row-open')!);
+	const renameInput = document.querySelector<HTMLInputElement>('[aria-label="Rename thread"]')!;
+	fireEvent.change(renameInput, { target: { value: 'Updated thread' } });
+	act(() => {
+		renameInput.closest('form')!.requestSubmit();
+		renameInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+	});
+
+	expect(input.onRename).toHaveBeenCalledOnce();
+});
+
 it('does not attach keyboard context-menu behavior to thread rows', async () => {
 	await render([thread()]);
 	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
