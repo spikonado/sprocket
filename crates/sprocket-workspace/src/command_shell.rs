@@ -1,31 +1,39 @@
+use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::Result;
 
 pub fn default_command_shell() -> String {
+    default_shell_for(std::env::var_os("PATH").as_deref())
+}
+
+/// Finds the default shell on `path`, the `PATH` its commands will run with.
+pub(crate) fn default_shell_for(path: Option<&OsStr>) -> String {
     #[cfg(unix)]
     {
         let configured = std::env::var("SHELL").ok();
-        let path = std::env::var_os("PATH");
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-        unix::default_shell(configured.as_deref(), path.as_deref(), &cwd)
+        unix::default_shell(configured.as_deref(), path, &cwd)
     }
     #[cfg(windows)]
     {
-        windows::default_shell(std::env::var_os("PATH").as_deref())
+        windows::default_shell(path)
     }
 }
 
-pub(crate) fn resolve_command_shell(shell: &str, cwd: &Path) -> Result<String> {
+pub(crate) fn resolve_command_shell(
+    shell: &str,
+    cwd: &Path,
+    path: Option<&OsStr>,
+) -> Result<String> {
     #[cfg(unix)]
     {
-        unix::resolve_shell(shell, std::env::var_os("PATH").as_deref(), cwd)
-            .map(|path| path.to_string_lossy().into_owned())
+        unix::resolve_shell(shell, path, cwd).map(|path| path.to_string_lossy().into_owned())
     }
     #[cfg(windows)]
     {
         let _ = cwd;
-        windows::resolve_shell(shell, std::env::var_os("PATH").as_deref())
+        windows::resolve_shell(shell, path)
     }
 }
 

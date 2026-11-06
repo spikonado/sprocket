@@ -12,7 +12,7 @@ use crate::async_tools::ZeroPollCooldown;
 use crate::cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, UnreturnedOutput, read_log_from};
-use crate::command_shell::resolve_command_shell;
+use crate::command_shell::{default_shell_for, resolve_command_shell};
 use crate::paths::resolve_directory;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -249,6 +249,20 @@ impl CommandSessionManager {
         &self.environment
     }
 
+    /// The shell commands get when they name none, found on their own `PATH`, which
+    /// includes pinned tools such as Windows' Git Bash.
+    pub fn default_shell(&self) -> String {
+        default_shell_for(self.command_path().as_deref())
+    }
+
+    fn command_path(&self) -> Option<OsString> {
+        self.environment
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+            .map(|(_, path)| path.clone())
+            .or_else(|| std::env::var_os("PATH"))
+    }
+
     /// Gives each command git and `gh` access with this user's GitHub credentials.
     pub fn with_github_credentials(mut self, user_id: String) -> Self {
         self.github_user_id = Some(user_id);
@@ -273,7 +287,7 @@ impl CommandSessionManager {
         let max_output_chars = max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS);
 
         let cwd = resolve_directory(&self.workspace_root, workdir)?;
-        let shell = resolve_command_shell(shell, &cwd)?;
+        let shell = resolve_command_shell(shell, &cwd, self.command_path().as_deref())?;
         let github_environment = match &self.github_user_id {
             Some(user_id) => crate::github::agent_environment(user_id).await,
             None => Vec::new(),

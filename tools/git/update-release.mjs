@@ -1,22 +1,17 @@
-// Pins the latest stable MinGit release (or the Git for Windows tag passed as the first
-// argument, such as v2.56.0.windows.4) in releases.json.
-import { execFileSync } from 'node:child_process';
+// Pins the latest stable PortableGit release (or the Git for Windows tag passed as the first
+// argument, such as v2.56.0.windows.4) in releases.json. The host checks the archive holds
+// `cmd/git.exe` and `bin/bash.exe` when it unpacks it.
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPOSITORY = 'git-for-windows/git';
 
-// The BusyBox builds can't run the `!` credential helpers agents get.
 const TARGETS = {
-	'win32-arm64': /^MinGit-[\d.]+-arm64\.zip$/,
-	'win32-x64': /^MinGit-[\d.]+-64-bit\.zip$/
+	'win32-arm64': /^PortableGit-[\d.]+-arm64\.7z\.exe$/,
+	'win32-x64': /^PortableGit-[\d.]+-64-bit\.7z\.exe$/
 };
-
-// Git runs `!` helpers and hooks through MinGit's own `sh`.
-const REQUIRED_ENTRIES = ['cmd/git.exe', 'usr/bin/sh.exe'];
 
 const releasesPath = join(dirname(fileURLToPath(import.meta.url)), 'releases.json');
 
@@ -51,42 +46,26 @@ if (release.prerelease || release.draft) {
 
 const version = release.tag_name.replace(/^v/, '');
 
-const scratch = await mkdtemp(join(tmpdir(), 'mingit-release-'));
-
 const platforms = {};
 
-try {
-	for (const [platform, pattern] of Object.entries(TARGETS)) {
-		const published = release.assets.find((asset) => pattern.test(asset.name));
+for (const [platform, pattern] of Object.entries(TARGETS)) {
+	const published = release.assets.find((asset) => pattern.test(asset.name));
 
-		if (!published) {
-			throw new Error(`Git for Windows ${release.tag_name} has no asset matching ${pattern}`);
-		}
-
-		const url = published.browser_download_url;
-		const bytes = Buffer.from(await (await fetchOk(url)).arrayBuffer());
-		const sha256 = createHash('sha256').update(bytes).digest('hex');
-
-		if (bytes.length !== published.size || published.digest !== `sha256:${sha256}`) {
-			throw new Error(`Downloaded ${published.name} does not match the published size or digest`);
-		}
-
-		const archive = join(scratch, published.name);
-		await writeFile(archive, bytes);
-		const entries = execFileSync('unzip', ['-Z1', archive], { encoding: 'utf8' }).split('\n');
-
-		for (const required of REQUIRED_ENTRIES) {
-			if (!entries.includes(required)) {
-				throw new Error(`${published.name} has no ${required}`);
-			}
-		}
-
-		platforms[platform] = { url, bytes: bytes.length, sha256 };
+	if (!published) {
+		throw new Error(`Git for Windows ${release.tag_name} has no asset matching ${pattern}`);
 	}
-} finally {
-	await rm(scratch, { recursive: true, force: true });
+
+	const url = published.browser_download_url;
+	const bytes = Buffer.from(await (await fetchOk(url)).arrayBuffer());
+	const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+	if (bytes.length !== published.size || published.digest !== `sha256:${sha256}`) {
+		throw new Error(`Downloaded ${published.name} does not match the published size or digest`);
+	}
+
+	platforms[platform] = { url, bytes: bytes.length, sha256 };
 }
 
 await writeFile(releasesPath, `${JSON.stringify({ version, platforms }, null, '\t')}\n`);
 
-console.log(`Pinned MinGit ${version}.`);
+console.log(`Pinned PortableGit ${version}.`);

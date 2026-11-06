@@ -26,6 +26,7 @@ keyring = "4.2.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["form", "rustls", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["util"] }
 sha2 = "0.11.0"
 sprocket-agent = { path = "../sprocket-agent" }
 sprocket-convex = { path = "../sprocket-convex" }
@@ -55,4 +56,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [dev-dependencies]
 axum = "0.8.8"
 gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
+sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["compress", "util"] }
 tokio = { version = "1.52.1", features = ["test-util"] }

@@ -27,7 +27,7 @@ jobs:
           - tool: gh
             label: GitHub CLI
           - tool: git
-            label: MinGit
+            label: PortableGit
           - tool: uv
             label: uv
     concurrency:
