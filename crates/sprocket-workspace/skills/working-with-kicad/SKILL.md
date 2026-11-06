@@ -47,7 +47,7 @@ Use `kicad-cli` for checks and exports.
 
 - Write values with units, like `10 kΩ` or `1 µF`.
 - Give every placed part hidden `Manufacturer` and `MPN` fields and set `Datasheet` to the manufacturer's datasheet URL.
-  Add hidden `Digikey Part #`, `Mouser Part #`, `LCSC Part #`, and `JLCPCB Part #` fields for each distributor that stocks the part.
+  Add hidden `Digikey Part #`, `Mouser Part #`, `LCSC Part #`, and `JLCPCB Part #` fields if that distributor sells the part.
 - Move fields and symbols until no text overlaps another symbol, field, or label in the rendered schematic.
 
 ## Manufacturer constraints
