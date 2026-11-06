@@ -216,6 +216,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - The retired `list_subagent_models` tool kind, including `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on its results.
 - `lastError: null`, empty `pendingQuestions`, `settings.fast: false` and `settings.completionProvider` on subagent tool results, and `hasMore` on `list_subagents` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
+- `downloadedRanges` in local transcript `state.json` files, which readers ignore.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.
 - Local readers of `scrape_url` and `read_skill` `truncated`, `jobId` pairing and command parts without input.

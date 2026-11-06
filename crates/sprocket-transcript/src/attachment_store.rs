@@ -154,25 +154,13 @@ impl TranscriptStore {
                 );
                 Ok(Some(meta))
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let state = self.load_state(user_id, thread_id).await?;
-                let numbers = state
-                    .downloaded_ranges
-                    .iter()
-                    .flat_map(|range| range.start..=range.end)
-                    .collect::<Vec<_>>();
-                let meta = self
-                    .read_parts(user_id, thread_id, &numbers)
-                    .await?
-                    .into_iter()
-                    .filter_map(|part| part.prompt)
-                    .flat_map(|prompt| prompt.image_uploads)
-                    .find(|attachment| attachment.storage_id == storage_id);
-                match meta {
-                    Some(meta) => Ok(Some(meta)),
-                    None => Ok(None),
-                }
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(self
+                .read_all_parts(user_id, thread_id)
+                .await?
+                .into_iter()
+                .filter_map(|part| part.prompt)
+                .flat_map(|prompt| prompt.image_uploads)
+                .find(|attachment| attachment.storage_id == storage_id)),
             Err(error) => Err(error.into()),
         }
     }
