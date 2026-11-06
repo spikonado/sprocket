@@ -14,6 +14,20 @@ import ConfirmDialog from './confirm-dialog';
 // An error belongs to the update status it was raised from and hides once that status moves on.
 type FailedRequest = { error: string; status: UpdateState['status'] };
 
+type TrackedUpdate = { state: UpdateState; restartWhenReady: boolean };
+
+function withState(state: UpdateState | null) {
+	return (current: TrackedUpdate | null): TrackedUpdate | null =>
+		state && {
+			state,
+			restartWhenReady: current?.restartWhenReady === true && state.status !== 'error'
+		};
+}
+
+function withRestartWhenReady(restartWhenReady: boolean) {
+	return (current: TrackedUpdate | null) => current && { ...current, restartWhenReady };
+}
+
 export default function AppUpdate() {
 	const auth = useConvexAuth();
 
@@ -22,12 +36,12 @@ export default function AppUpdate() {
 		args: auth.isAuthenticated && !auth.isLoading ? {} : 'skip'
 	});
 
-	const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+	const [tracked, setTracked] = useState<TrackedUpdate | null>(null);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null);
 	const [busy, setBusy] = useState(false);
 	const revisionRef = useRef(0);
-	const restartWhenReadyRef = useRef(false);
+	const updateState = tracked?.state ?? null;
 	const label = updateState ? updateLabel(updateState) : null;
 
 	const requestError =
@@ -47,7 +61,7 @@ export default function AppUpdate() {
 
 		const onState = (next: UpdateState) => {
 			revisionRef.current += 1;
-			setUpdateState(next);
+			setTracked(withState(next));
 		};
 
 		if (updates) {
@@ -57,7 +71,7 @@ export default function AppUpdate() {
 			void updates.getState().then(
 				(next) => {
 					if (!watch.signal.aborted && revisionRef.current === startedRevision) {
-						setUpdateState(next);
+						setTracked(withState(next));
 					}
 				},
 				() => undefined
@@ -81,8 +95,7 @@ export default function AppUpdate() {
 	}, []);
 
 	useEffect(() => {
-		if (!restartReady || working || !continuesAgents || !restartWhenReadyRef.current) return;
-		restartWhenReadyRef.current = false;
+		if (!restartReady || working || !continuesAgents || !tracked?.restartWhenReady) return;
 		void update();
 	});
 
@@ -96,7 +109,7 @@ export default function AppUpdate() {
 		}
 
 		setConfirmRestart(false);
-		restartWhenReadyRef.current = !restartReady;
+		setTracked(withRestartWhenReady(!restartReady && continuesAgents));
 
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
@@ -110,17 +123,18 @@ export default function AppUpdate() {
 					? updates.install()
 					: updates.download());
 
-				if (revisionRef.current === startedRevision) setUpdateState(next);
+				if (revisionRef.current === startedRevision) setTracked(withState(next));
 			} else if (updateState.method === 'package') {
 				if (updateState.status === 'installed' && updateState.version) {
 					await restartPackageUpdate(updateState.version);
 				} else {
 					const next = await installPackageUpdate();
 
-					if (revisionRef.current === startedRevision) setUpdateState(next);
+					if (revisionRef.current === startedRevision) setTracked(withState(next));
 				}
 			}
 		} catch (error) {
+			setTracked(withRestartWhenReady(false));
 			setFailedRequest({
 				error: error instanceof Error ? error.message : String(error),
 				status: updateState.status
