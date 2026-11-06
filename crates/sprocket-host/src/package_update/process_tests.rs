@@ -279,7 +279,7 @@ async fn install_queued_behind_a_check_runs_only_when_an_update_is_available() {
             &format!(
                 r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
 if [ "$1" = check ]; then
-  sleep 0.3
+  while [ ! -e "$(dirname "$0")/release" ]; do sleep 0.02; done
   echo '{{"status":"{check_status}","currentVersion":"1.0.0","version":{version},"error":null,"method":"package"}}'
 else
   echo '{{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":null,"method":"package"}}'
@@ -291,8 +291,11 @@ fi"#
             let manager = Arc::clone(&manager);
             tokio::spawn(async move { manager.status().await })
         };
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        while !dir.path().join("calls").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         assert_eq!(manager.install().await.status, UpdateStatus::Installing);
+        fs::write(dir.path().join("release"), "").unwrap();
         check.await.unwrap();
         assert_eq!(wait_until_settled(&manager).await.status, settled);
         assert_eq!(fs::read_to_string(dir.path().join("calls")).unwrap(), calls);
