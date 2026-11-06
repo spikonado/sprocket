@@ -1,40 +1,52 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use tokio::time::{Instant, timeout_at};
+
 use super::credentials::{self, ResolvedCredential};
 use super::{CredentialSource, PUBLIC_HOST, is_valid_host, saved_tokens};
 
 /// Keeps an unreachable Convex or a hung `gh` from stalling every command; the
-/// lookup keeps running and fills the caches for the next one.
+/// lookups keep running and fill the caches for the next one.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Gives an agent's git and `gh` the credential Sprocket uses for each GitHub
 /// host, and makes them fail instead of waiting for a password.
 pub async fn agent_environment(user_id: &str) -> Vec<(String, String)> {
-    let user_id = user_id.to_string();
-    let resolving = tokio::spawn(async move { host_credentials(&user_id).await });
-    let credentials = tokio::time::timeout(RESOLVE_TIMEOUT, resolving)
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    let credentials = host_credentials(user_id, Instant::now() + RESOLVE_TIMEOUT).await;
     environment(&credentials, |name| std::env::var(name).ok())
 }
 
-/// Hosts without a saved token or `GH_HOST` are left to the user's git setup.
-async fn host_credentials(user_id: &str) -> Vec<(String, ResolvedCredential)> {
-    let mut hosts: BTreeSet<String> = saved_tokens::load(user_id)
-        .await
-        .tokens
-        .into_keys()
-        .collect();
+/// Hosts without a saved token or `GH_HOST` are left to the user's git setup,
+/// as are hosts whose lookup misses the deadline.
+async fn host_credentials(user_id: &str, deadline: Instant) -> Vec<(String, ResolvedCredential)> {
+    let loading = tokio::spawn({
+        let user_id = user_id.to_string();
+        async move { saved_tokens::load(&user_id).await.tokens }
+    });
+    let mut hosts: BTreeSet<String> = match timeout_at(deadline, loading).await {
+        Ok(Ok(tokens)) => tokens.into_keys().collect(),
+        _ => BTreeSet::new(),
+    };
     hosts.insert(PUBLIC_HOST.to_string());
     if let Ok(configured) = std::env::var("GH_HOST") {
         hosts.insert(configured.trim().to_ascii_lowercase());
     }
+    let lookups: Vec<_> = hosts
+        .into_iter()
+        .filter(|host| is_valid_host(host))
+        .map(|host| {
+            let user_id = user_id.to_string();
+            let lookup = tokio::spawn({
+                let host = host.clone();
+                async move { credentials::resolve(&user_id, &host).await }
+            });
+            (host, lookup)
+        })
+        .collect();
     let mut resolved = Vec::new();
-    for host in hosts.into_iter().filter(|host| is_valid_host(host)) {
-        if let Ok(credential) = credentials::resolve(user_id, &host).await {
+    for (host, lookup) in lookups {
+        if let Ok(Ok(Ok(credential))) = timeout_at(deadline, lookup).await {
             resolved.push((host, credential));
         }
     }
