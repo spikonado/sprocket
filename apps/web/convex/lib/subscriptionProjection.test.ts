@@ -167,6 +167,21 @@ describe('watermark advance', () => {
 		});
 		expect(advanceWatermarks(legacy, observation(T0 + 9_000), stale).termEventAt).toBe(T0 + 5_000);
 	});
+
+	it('starts a replacement subscription at its own event time', () => {
+		const replaced = row({ dodoSubscriptionId: 'sub_old', termEventAt: T0 + 5_000 });
+		const replacement = payload({ dodoSubscriptionId: 'sub_new', eventAt: T0 + 1_000 });
+
+		expect(isStaleTerm(replaced, replacement)).toBe(false);
+		expect(
+			advanceWatermarks(replaced, replacement, {
+				status: false,
+				payload: false,
+				term: false,
+				schedule: false
+			}).termEventAt
+		).toBe(T0 + 1_000);
+	});
 });
 
 describe('access policy', () => {
