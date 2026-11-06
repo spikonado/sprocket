@@ -23,7 +23,6 @@ pub(super) struct StdinRequest {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct CommandCompletion {
-    pub archived: bool,
     pub exit_code: Option<i32>,
     pub success: bool,
     pub timed_out: bool,
@@ -77,7 +76,7 @@ pub(super) async fn supervise_command(
                 capture_finished = true;
                 if let Err(error) = result.context("command output task failed").and_then(|result| result) {
                     let status = terminate_child(&mut child, process_id).await.ok();
-                    break (status, false, Some(format!("command output capture failed: {error:#}")));
+                    break (status, false, Some(format!("command was stopped because its output could not be captured: {error:#}")));
                 }
             },
             _ = controls.recv() => {
@@ -118,7 +117,6 @@ pub(super) async fn supervise_command(
         error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));
     }
     let mut completed = CommandCompletion {
-        archived: false,
         exit_code: status.as_ref().and_then(ExitStatus::code),
         success: status.is_some_and(|status| status.success()) && !timed_out && error.is_none(),
         timed_out,
@@ -126,16 +124,13 @@ pub(super) async fn supervise_command(
     };
     let (path, mut history) = history;
     history.result = completion_output(&completed, output.lock().await.full_preview());
-    match history.save(&path).await {
-        Ok(()) => completed.archived = true,
-        Err(error) => {
-            completed.success = false;
-            let message = format!("failed to save command result: {error:#}");
-            completed.error = Some(match completed.error {
-                Some(error) => format!("{error}; {message}"),
-                None => message,
-            });
-        }
+    if let Err(error) = history.save(&path).await {
+        completed.success = false;
+        let message = format!("failed to save command result: {error:#}");
+        completed.error = Some(match completed.error {
+            Some(error) => format!("{error}; {message}"),
+            None => message,
+        });
     }
     stdin_task.abort();
     let _ = stdin_task.await;

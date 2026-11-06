@@ -87,7 +87,6 @@ impl StubSession {
 
 fn completed_ok() -> CommandCompletion {
     CommandCompletion {
-        archived: true,
         exit_code: Some(0),
         success: true,
         timed_out: false,
@@ -614,7 +613,8 @@ async fn log_quota_terminates_capture_instead_of_reporting_success() {
     assert!(!output.result.success);
     assert!(!output.result.running);
     assert!(!output.result.timed_out);
-    assert!(output.result.error.unwrap().contains("log quota"));
+    let error = output.result.error.unwrap();
+    assert!(error.contains("command was stopped") && error.contains("log quota"));
     assert!(
         fs::read(output.result.complete_log_path)
             .unwrap()
@@ -1102,7 +1102,7 @@ async fn cancelled_exec_keeps_the_started_command_discoverable() {
 }
 
 #[tokio::test]
-async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
+async fn cleanup_releases_completed_handles_and_preserves_live_observations() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let running = stub_session(&root).await;
@@ -1129,6 +1129,15 @@ async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
         .lock()
         .await
         .insert(completed_id.clone(), completed.session);
+    let unsaved = stub_session(&root).await;
+    let unsaved_id = unsaved.session.id.clone();
+    unsaved.history.save(&unsaved.history_path).await.unwrap();
+    unsaved.complete();
+    sessions
+        .sessions
+        .lock()
+        .await
+        .insert(unsaved_id.clone(), unsaved.session);
     sessions.prune_completed().await;
     let retained = sessions.sessions.lock().await;
     assert_eq!(retained.len(), 2);
@@ -1136,6 +1145,13 @@ async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
     assert!(retained.contains_key(&observed_id));
     drop(retained);
     assert_eq!(poll(&sessions, &completed_id, 0).await.output, "unreturned");
+    assert!(
+        poll(&sessions, &unsaved_id, 0)
+            .await
+            .error
+            .unwrap()
+            .contains("interrupted")
+    );
     drop(observed);
     sessions.prune_completed().await;
     assert!(!sessions.sessions.lock().await.contains_key(&observed_id));
