@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
@@ -119,14 +119,17 @@ impl ContextHandoffHook {
         }
     }
 
+    /// Every update is one assignment, so a poisoned state is still consistent.
+    fn state(&self) -> MutexGuard<'_, HandoffState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub(crate) fn handoff_due(&self) -> bool {
-        self.state
-            .lock()
-            .is_ok_and(|state| state.due(self.token_limit))
+        self.state().due(self.token_limit)
     }
 
     pub(crate) fn take_handoff_history(&self) -> Option<Vec<Message>> {
-        let mut state = self.state.lock().ok()?;
+        let mut state = self.state();
         match std::mem::take(&mut state.phase) {
             HandoffPhase::Requested(history) => Some(history),
             phase => {
@@ -137,20 +140,15 @@ impl ContextHandoffHook {
     }
 
     pub(crate) fn start_handoff(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.phase = HandoffPhase::Writing;
-        }
+        self.state().phase = HandoffPhase::Writing;
     }
 
     pub(crate) fn is_writing(&self) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.phase.is_writing())
-            .unwrap_or(true)
+        self.state().phase.is_writing()
     }
 
     pub(crate) fn take_summary(&self) -> Option<String> {
-        let mut state = self.state.lock().ok()?;
+        let mut state = self.state();
         match std::mem::take(&mut state.phase) {
             HandoffPhase::Written(summary) => {
                 state.phase = HandoffPhase::Writing;
@@ -164,25 +162,22 @@ impl ContextHandoffHook {
     }
 
     pub(crate) fn completion_calls(&self) -> usize {
-        self.state.lock().map(|state| state.calls).unwrap_or(0)
+        self.state().calls
     }
 
     pub(crate) fn restart(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            let calls = state.calls;
-            *state = HandoffState {
-                calls,
-                ..Default::default()
-            };
-        }
+        let mut state = self.state();
+        let calls = state.calls;
+        *state = HandoffState {
+            calls,
+            ..Default::default()
+        };
     }
 
     pub(crate) fn record_usage(&self, usage: Usage) -> Option<u64> {
         let tokens = context_tokens(usage);
-        if let Some(tokens) = tokens
-            && let Ok(mut state) = self.state.lock()
-        {
-            state.context_tokens = tokens;
+        if let Some(tokens) = tokens {
+            self.state().context_tokens = tokens;
         }
         tokens
     }
@@ -203,21 +198,15 @@ impl AgentHook for ContextHandoffHook {
         _context: &HookContext,
         event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
-        match self.state.lock() {
-            Ok(mut state) => {
-                if state.calls >= MAX_COMPLETION_CALLS {
-                    return CompletionCallAction::stop(
-                        "The agent reached its completion call limit.",
-                    );
-                }
-                let action = state.prepare(event, self.token_limit);
-                if !matches!(action, CompletionCallAction::Stop(_)) {
-                    state.calls += 1;
-                }
-                action
-            }
-            Err(_) => CompletionCallAction::stop("Context handoff state is unavailable."),
+        let mut state = self.state();
+        if state.calls >= MAX_COMPLETION_CALLS {
+            return CompletionCallAction::stop("The agent reached its completion call limit.");
         }
+        let action = state.prepare(event, self.token_limit);
+        if !matches!(action, CompletionCallAction::Stop(_)) {
+            state.calls += 1;
+        }
+        action
     }
 
     async fn on_model_turn_finished(
@@ -225,10 +214,7 @@ impl AgentHook for ContextHandoffHook {
         _context: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
-        match self.state.lock() {
-            Ok(mut state) => state.finish_turn(&event),
-            Err(_) => ModelTurnAction::stop("Context handoff state is unavailable."),
-        }
+        self.state().finish_turn(&event)
     }
 
     fn observes(&self, kind: StepEventKind) -> bool {
