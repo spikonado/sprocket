@@ -24,8 +24,7 @@ import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import {
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange,
+	changeThreadActivity,
 	registerChildThread,
 	threadRoot,
 	unsettleRootOfThread
@@ -300,9 +299,13 @@ export async function createQueuedRunRecord(
 
 	if (promptBody && args.deferPrompt) runRecord.pendingPrompt = promptBody;
 
-	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
+	const runId = await changeThreadActivity(ctx, threadRecord._id, async () => {
+		const id = await ctx.db.insert('runs', runRecord);
+		await ctx.db.patch('threadRecords', threadRecord._id, { status: 'queued' });
 
-	const runId = await ctx.db.insert('runs', runRecord);
+		return id;
+	});
+
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 
 	if (taskDeadlineAt !== undefined) {
@@ -334,7 +337,6 @@ export async function createQueuedRunRecord(
 	}
 
 	const threadUpdates = {
-		status: 'queued' as const,
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
 		completionProvider,
@@ -355,7 +357,6 @@ export async function createQueuedRunRecord(
 	}
 
 	await unsettleRootOfThread(ctx, threadRecord);
-	await updateThreadHierarchyAfterChange(ctx, before);
 	await startRunLifecycle(ctx, runId);
 
 	return created;

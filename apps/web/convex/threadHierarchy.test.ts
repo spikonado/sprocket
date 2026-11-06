@@ -4,8 +4,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { FunctionReturnType } from 'convex/server';
 import {
 	assertDescendantThreadAccess,
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange,
+	changeThreadActivity,
 	registerChildThread,
 	subtreeSummary
 } from '@convex/lib/threadHierarchy';
@@ -67,20 +66,20 @@ describe('thread hierarchy', () => {
 
 		const before = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		await asUser.mutation(api.threads.settle, { threadId });
-		await t.run(async (ctx) => {
-			const activityBefore = await captureThreadActivityBeforeChange(ctx, grandchild);
-			await ctx.db.insert('runs', {
-				threadId: grandchild,
-				userId: 'user_alice',
-				submissionId: 'grandchild-start',
-				status: 'queued',
-				executionSecretHash: 'test-secret',
-				selectedModel: 'gpt-5.6-sol',
-				reasoningEffort: 'high',
-				fastMode: false
-			});
-			await updateThreadHierarchyAfterChange(ctx, activityBefore);
-		});
+		await t.run((ctx) =>
+			changeThreadActivity(ctx, grandchild, () =>
+				ctx.db.insert('runs', {
+					threadId: grandchild,
+					userId: 'user_alice',
+					submissionId: 'grandchild-start',
+					status: 'queued',
+					executionSecretHash: 'test-secret',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'high',
+					fastMode: false
+				})
+			)
+		);
 
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
@@ -146,7 +145,7 @@ describe('thread hierarchy', () => {
 			descendantsActive: false,
 			anyActive: true
 		});
-		await t.run((ctx) => captureThreadActivityBeforeChange(ctx, branch.threadId));
+		await t.run((ctx) => changeThreadActivity(ctx, branch.threadId, async () => {}));
 		expect((await summary(t, root.threadId)).workingDescendantCount).toBe(2);
 		expect(
 			await t.run((ctx) =>
@@ -168,52 +167,52 @@ describe('thread hierarchy', () => {
 				const root = await seedOwnedThread(t);
 				const leaf = await child(t, root.threadId, 'completed-child');
 
-				const olderRunId = await t.run(async (ctx) => {
-					const before = await captureThreadActivityBeforeChange(ctx, leaf);
-					const record = (await ctx.db.get('threadRecords', leaf))!;
+				const olderRunId = await t.run((ctx) =>
+					changeThreadActivity(ctx, leaf, async () => {
+						const record = (await ctx.db.get('threadRecords', leaf))!;
 
-					const run = {
-						threadId: leaf,
-						userId: record.userId,
-						submissionId: 'older-run',
-						executionSecretHash: 'fixture',
-						selectedModel: record.selectedModel,
-						reasoningEffort: record.reasoningEffort,
-						fastMode: record.fastMode
-					};
+						const run = {
+							threadId: leaf,
+							userId: record.userId,
+							submissionId: 'older-run',
+							executionSecretHash: 'fixture',
+							selectedModel: record.selectedModel,
+							reasoningEffort: record.reasoningEffort,
+							fastMode: record.fastMode
+						};
 
-					const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
-					await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
-					await ctx.db.insert('runs', {
-						...run,
-						submissionId: 'newer-run',
-						status: 'completed'
-					});
+						const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
+						await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+						await ctx.db.insert('runs', {
+							...run,
+							submissionId: 'newer-run',
+							status: 'completed'
+						});
 
-					const jobId = await ctx.db.insert('executorJobs', {
-						threadId: leaf,
-						runId,
-						kind: 'ask_question',
-						payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] },
-						status: 'completed',
-						enqueuedAt: Date.now(),
-						sequence: 0,
-						toolInvocationId: 'question-invocation'
-					});
+						const jobId = await ctx.db.insert('executorJobs', {
+							threadId: leaf,
+							runId,
+							kind: 'ask_question',
+							payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] },
+							status: 'completed',
+							enqueuedAt: Date.now(),
+							sequence: 0,
+							toolInvocationId: 'question-invocation'
+						});
 
-					await ctx.db.insert('agentQuestions', {
-						threadId: leaf,
-						runId,
-						jobId,
-						question: 'Continue?',
-						options: [{ id: 'yes', label: 'Yes' }],
-						status: 'pending',
-						sequence: 0
-					});
-					await updateThreadHierarchyAfterChange(ctx, before);
+						await ctx.db.insert('agentQuestions', {
+							threadId: leaf,
+							runId,
+							jobId,
+							question: 'Continue?',
+							options: [{ id: 'yes', label: 'Yes' }],
+							status: 'pending',
+							sequence: 0
+						});
 
-					return runId;
-				});
+						return runId;
+					})
+				);
 
 				expect(await summary(t, root.threadId)).toMatchObject({
 					workingDescendantCount: 0,
@@ -345,26 +344,26 @@ describe('thread hierarchy', () => {
 			const ids = [];
 
 			for (const id of [queued, running]) {
-				const activityBefore = await captureThreadActivityBeforeChange(ctx, id);
 				const thread = (await ctx.db.get('threadRecords', id))!;
 				ids.push(
-					await ctx.db.insert('runs', {
-						threadId: id,
-						userId: thread.userId,
-						submissionId: `fixture-${id}`,
-						status: thread.status,
-						executionSecretHash: 'fixture',
-						selectedModel: thread.selectedModel,
-						reasoningEffort: thread.reasoningEffort,
-						fastMode: thread.fastMode
-					})
+					await changeThreadActivity(ctx, id, () =>
+						ctx.db.insert('runs', {
+							threadId: id,
+							userId: thread.userId,
+							submissionId: `fixture-${id}`,
+							status: thread.status,
+							executionSecretHash: 'fixture',
+							selectedModel: thread.selectedModel,
+							reasoningEffort: thread.reasoningEffort,
+							fastMode: thread.fastMode
+						})
+					)
 				);
-				await updateThreadHierarchyAfterChange(ctx, activityBefore);
 			}
 
-			const activityBefore = await captureThreadActivityBeforeChange(ctx, threadId);
-			await ctx.db.patch('threadRecords', threadId, { status: 'failed' });
-			await updateThreadHierarchyAfterChange(ctx, activityBefore);
+			await changeThreadActivity(ctx, threadId, () =>
+				ctx.db.patch('threadRecords', threadId, { status: 'failed' })
+			);
 
 			return ids;
 		});
@@ -430,8 +429,8 @@ describe('thread hierarchy', () => {
 		const states = await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect());
 		await t.run(async (ctx) => {
 			for (const id of [threadId, queued, running]) {
-				await captureThreadActivityBeforeChange(ctx, id);
-				await captureThreadActivityBeforeChange(ctx, id);
+				await changeThreadActivity(ctx, id, async () => {});
+				await changeThreadActivity(ctx, id, async () => {});
 			}
 		});
 		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(states);

@@ -13,10 +13,7 @@ import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { cancelPendingQuestionsForThread } from '@convex/agentQuestions';
-import {
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange
-} from '@convex/lib/threadHierarchy';
+import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
 export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Promise<void> {
 	const run = await ctx.db.get('runs', runId);
@@ -89,7 +86,7 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			isAutomaticallyRecoverableRun(current, current.machineId)
 		) {
 			// A stopped abandoned run must stay terminal when its local agent returns.
-			await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
+			await markCancellationRequested(ctx, current);
 
 			return true;
 		}
@@ -101,14 +98,18 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 		return true;
 	}
 
-	const before = await captureThreadActivityBeforeChange(ctx, current.threadId);
-	await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
-	await updateThreadHierarchyAfterChange(ctx, before);
+	await markCancellationRequested(ctx, current);
 	await ctx.scheduler.runAfter(CANCELLATION_FORCE_AFTER_MS, internal.runLifecycle.forceCancelRun, {
 		runId: current._id
 	});
 
 	return true;
+}
+
+async function markCancellationRequested(ctx: MutationCtx, run: Doc<'runs'>) {
+	await changeThreadActivity(ctx, run.threadId, () =>
+		ctx.db.patch('runs', run._id, { cancellationRequestedAt: Date.now() })
+	);
 }
 
 export async function requestThreadTreeCancellation(
