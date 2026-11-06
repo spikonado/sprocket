@@ -52,10 +52,18 @@ export const backfillSubscriptionAccess = migrations.define({
 	}
 });
 
+export const dropQuestionAnsweredAt = migrations.define({
+	table: 'agentQuestions',
+	migrateOne: (_ctx, question) => {
+		if (question.answeredAt !== undefined) return { answeredAt: undefined };
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
 	internal.migrations.dropPricingCacheKeys,
 	internal.migrations.countContextSummaryParts,
-	internal.migrations.backfillSubscriptionAccess
+	internal.migrations.backfillSubscriptionAccess,
+	internal.migrations.dropQuestionAnsweredAt
 ]);
