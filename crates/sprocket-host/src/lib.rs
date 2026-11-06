@@ -161,7 +161,7 @@ impl Host {
             ),
             native_auth,
             live_completions: Arc::new(LiveCompletionHub::new()),
-            command_sessions: Arc::new(ThreadCommandSessions::default()),
+            command_sessions: Arc::new(ThreadCommandSessions::new()),
             convex_deployment_url,
             machine_identity,
             run_recovery: RunRecovery::load(data_dir)?,

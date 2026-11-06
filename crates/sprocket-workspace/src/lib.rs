@@ -6,6 +6,7 @@ pub mod async_tools;
 mod browse;
 mod builtin_skills;
 mod cancellation;
+mod command_container;
 mod command_history;
 mod command_output;
 mod command_shell;
@@ -35,6 +36,7 @@ pub use browse::{
 };
 pub use builtin_skills::BUILTIN_SKILLS;
 pub use cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
+pub use command_container::CommandContainer;
 pub use command_history::{CommandHistory, history_path};
 pub use command_output::CommandOutputLimits;
 pub use command_shell::default_command_shell;
