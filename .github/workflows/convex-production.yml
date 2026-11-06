@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: convex-production
+  # Builds that won't deploy get their own group so they can't replace a pending deploy.
+  group: convex-production-${{ github.event.workflow_run.conclusion == 'success' && 'deploy' || github.run_id }}
   cancel-in-progress: false
 
 jobs:

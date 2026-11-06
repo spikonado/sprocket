@@ -13,7 +13,6 @@ import {
 	X
 } from 'lucide-react';
 import type {
-	DragEvent as ReactDragEvent,
 	KeyboardEvent as ReactKeyboardEvent,
 	MouseEvent as ReactMouseEvent,
 	ReactElement,
@@ -80,8 +79,6 @@ type ThreadTreeRowProps = {
 	onCommitRename: () => Promise<void>;
 	onRenameTitleChange: (title: string) => void;
 	onChange: (thread: Thread, state: InboxState, subtreeActive: boolean) => Promise<void>;
-	onDragStart: (thread: Thread, event: ReactDragEvent) => void;
-	onDragEnd: () => void;
 };
 
 type InboxSidebarProps = {
@@ -137,7 +134,6 @@ export default function InboxSidebar({
 	resolveChildren,
 	readTreeSummary = useThreadTreeSummary
 }: InboxSidebarProps) {
-	const [dragging, setDragging] = useState<Thread | null>(null);
 	const [menu, setMenu] = useState<ThreadMenu | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -179,11 +175,6 @@ export default function InboxSidebar({
 
 	const menuSummary = readTreeSummary({
 		threadId: menuThread?._id ?? null,
-		enabled: mutationsEnabled
-	});
-
-	const draggingSummary = readTreeSummary({
-		threadId: dragging?._id ?? null,
 		enabled: mutationsEnabled
 	});
 
@@ -312,25 +303,6 @@ export default function InboxSidebar({
 		});
 	}
 
-	function canDrop(state: InboxState) {
-		return (
-			mutationsEnabled &&
-			!busy &&
-			dragging !== null &&
-			canChange(dragging, state, draggingSummary?.anyActive === true)
-		);
-	}
-
-	function dropThreads(event: ReactDragEvent, state: InboxState) {
-		event.preventDefault();
-
-		if (dragging && canDrop(state)) {
-			void change(dragging, state, draggingSummary?.anyActive === true);
-		}
-
-		setDragging(null);
-	}
-
 	function openMenu(event: ReactMouseEvent, thread: Thread) {
 		event.preventDefault();
 		const trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -372,8 +344,6 @@ export default function InboxSidebar({
 			onCommitRename={commitRename}
 			onRenameTitleChange={setRenameTitle}
 			onChange={change}
-			onDragStart={(dragged) => setDragging(dragged)}
-			onDragEnd={() => setDragging(null)}
 		/>
 	);
 
@@ -507,10 +477,6 @@ export default function InboxSidebar({
 					<section
 						key={section.state}
 						id={`inbox-${section.state}`}
-						onDragOver={(event) => {
-							if (canDrop(section.state)) event.preventDefault();
-						}}
-						onDrop={(event) => dropThreads(event, section.state)}
 						aria-label={labels[section.state]}
 					>
 						{section.state === 'settled' && (
@@ -701,9 +667,7 @@ function ThreadTreeRow({
 	onCancelRename,
 	onCommitRename,
 	onRenameTitleChange,
-	onChange,
-	onDragStart,
-	onDragEnd
+	onChange
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
@@ -727,9 +691,6 @@ function ThreadTreeRow({
 			<div
 				className={cn('inbox-row', { 'inbox-row-selected': selected })}
 				style={indentStyle}
-				draggable={mutationsEnabled && !busy && !renaming && isRoot}
-				onDragStart={(event) => onDragStart(thread, event)}
-				onDragEnd={onDragEnd}
 				onContextMenu={(event) => onOpenMenu(event, thread)}
 				role="group"
 				aria-label={thread.title ?? 'New thread'}
