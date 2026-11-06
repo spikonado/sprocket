@@ -32,8 +32,7 @@ function composer(children: ReactNode) {
 			onAttachFiles={vi.fn()}
 			onRemoveAttachment={vi.fn()}
 			canSend={true}
-			isSubmitting={false}
-			isStarting={false}
+			submitting={null}
 			isRunning={false}
 			isWorking={false}
 			onSubmit={vi.fn()}

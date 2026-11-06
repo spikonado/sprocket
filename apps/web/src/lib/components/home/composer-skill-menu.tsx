@@ -11,7 +11,7 @@ export default function ComposerSkillMenu({
 	onSelect
 }: {
 	prefix: '$' | '/';
-	loadState: 'idle' | 'loading' | 'ready' | 'error';
+	loadState: 'loading' | 'ready' | 'error';
 	skills: SkillSummary[];
 	highlightedIndex: number;
 	onRetry: () => void;
