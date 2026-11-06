@@ -102,8 +102,9 @@ jobs:
             published_sha="${published##*-dev.}"
             if [[ "$published_sha" =~ ^[0-9a-f]{40}$ ]]; then
               status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$published_sha...$SOURCE_SHA" --jq .status)"
-              if [[ "$status" == "behind" || "$status" == "identical" ]]; then
-                echo "Skipping $SOURCE_SHA because the dev release $published is the same or newer."
+              # Identical builds still run so a rerun can finish a partial publish.
+              if [[ "$status" == "behind" ]]; then
+                echo "Skipping $SOURCE_SHA because the dev release $published is newer."
                 release=false
               fi
             fi
