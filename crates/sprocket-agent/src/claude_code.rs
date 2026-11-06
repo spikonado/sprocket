@@ -1,6 +1,6 @@
 mod process;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
@@ -8,6 +8,7 @@ use std::time::Duration;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
+use rig::completion::Message;
 use rig::http_client::{self, HttpClientExt, Request, Response};
 use rig::operation::Completion;
 use rig::providers::anthropic::AnthropicConfig;
@@ -38,18 +39,27 @@ type Digest32 = [u8; 32];
 pub struct ClaudeCode {
     locator: Arc<dyn ClaudeCodeLocator>,
     config_dir: PathBuf,
-    sessions: Sessions,
 }
 
-/// The Claude Code session each thread's last cleanly finished run left, keyed by thread.
-type Sessions = Arc<Mutex<HashMap<String, SessionRecord>>>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SessionRecord {
+pub(crate) struct ResumePoint {
     session_id: String,
     model: String,
-    cwd: PathBuf,
-    messages: Vec<Digest32>,
+}
+
+/// The Claude Code session that wrote the history's latest reply, read from the response
+/// ID `stamp_session` gave it.
+pub(crate) fn resume_point(history: &[Message]) -> Option<ResumePoint> {
+    let origin = history.iter().rev().find_map(|message| match message {
+        Message::Assistant(assistant) => Some(assistant.origin.as_ref()),
+        _ => None,
+    })??;
+    let session_id = origin.response_id.as_deref()?;
+    uuid::Uuid::parse_str(session_id).ok()?;
+    Some(ResumePoint {
+        session_id: session_id.to_string(),
+        model: origin.model.clone(),
+    })
 }
 
 impl ClaudeCode {
@@ -57,7 +67,6 @@ impl ClaudeCode {
         Self {
             locator,
             config_dir,
-            sessions: Arc::default(),
         }
     }
 
@@ -66,8 +75,8 @@ impl ClaudeCode {
         token: String,
         model: &str,
         instructions: &str,
-        thread_id: &str,
         cwd: &Path,
+        resume: Option<ResumePoint>,
     ) -> anyhow::Result<DynModel<Completion>> {
         let executable = self.locator.executable().await?;
         let wire = AnthropicConfig::new("")
@@ -80,11 +89,7 @@ impl ClaudeCode {
             token,
             instructions: instructions.to_string(),
             cwd: cwd.to_path_buf(),
-            recorder: Arc::new(Recorder {
-                sessions: Arc::clone(&self.sessions),
-                thread_id: thread_id.to_string(),
-                pending: Mutex::default(),
-            }),
+            resume: Mutex::new(resume),
             state: Arc::default(),
         }));
         Ok(Model::new(wire, transport).erase())
@@ -128,47 +133,14 @@ pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Saves the session a run leaves when Claude Code finishes a turn cleanly, so the
-/// thread's next run resumes it instead of replaying the conversation.
-pub(crate) struct Recorder {
-    sessions: Sessions,
-    thread_id: String,
-    pending: Mutex<Option<SessionRecord>>,
-}
-
-impl Recorder {
-    fn expect(&self, record: Option<SessionRecord>) {
-        if let Ok(mut pending) = self.pending.lock() {
-            *pending = record;
-        }
-    }
-
-    fn take_saved(&self) -> Option<SessionRecord> {
-        self.sessions.lock().ok()?.remove(&self.thread_id)
-    }
-
-    pub(crate) fn finished_cleanly(&self) {
-        let Some(record) = self
-            .pending
-            .lock()
-            .ok()
-            .and_then(|mut pending| pending.take())
-        else {
-            return;
-        };
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.insert(self.thread_id.clone(), record);
-        }
-    }
-}
-
 struct Run {
     executable: PathBuf,
     config_dir: PathBuf,
     token: String,
     instructions: String,
     cwd: PathBuf,
-    recorder: Arc<Recorder>,
+    /// Taken by the run's first turn, the only one whose history ends at that reply.
+    resume: Mutex<Option<ResumePoint>>,
     state: Arc<tokio::sync::Mutex<RunState>>,
 }
 
@@ -326,12 +298,7 @@ enum Plan {
     Fresh,
 }
 
-fn plan(
-    turn: &Turn,
-    live: Option<&LiveSession>,
-    saved: Option<&SessionRecord>,
-    cwd: &Path,
-) -> Plan {
+fn plan(turn: &Turn, live: Option<&LiveSession>, resume: Option<&ResumePoint>) -> Plan {
     if let Some(live) = live.filter(|live| live.launch == turn.launch)
         && let Some(tail) = continuation(turn, &live.messages)
     {
@@ -343,15 +310,23 @@ fn plan(
             return planned;
         }
     }
-    if let Some(saved) = saved.filter(|saved| saved.model == turn.launch.model && saved.cwd == cwd)
-        && let Some(content) = continuation(turn, &saved.messages).and_then(new_user_content)
+    if let Some(resume) = resume.filter(|resume| resume.model == turn.launch.model)
+        && let Some(content) = after_last_reply(turn).and_then(new_user_content)
     {
         return Plan::Resume {
-            session_id: saved.session_id.clone(),
+            session_id: resume.session_id.clone(),
             content,
         };
     }
     Plan::Fresh
+}
+
+fn after_last_reply(turn: &Turn) -> Option<&[Value]> {
+    let reply = turn
+        .messages
+        .iter()
+        .rposition(|m| m["role"] == "assistant")?;
+    Some(&turn.messages[reply + 1..])
 }
 
 /// The user messages after the reply Claude Code wrote to `known`, when `turn` extends it.
@@ -671,12 +646,11 @@ impl TurnStream {
         mut state: OwnedMutexGuard<RunState>,
         turn: Turn,
     ) -> anyhow::Result<Self> {
-        let saved = run.recorder.take_saved();
+        let resume = run.resume.lock().ok().and_then(|mut resume| resume.take());
         let planned = plan(
             &turn,
             state.process.as_ref().and(state.live.as_ref()),
-            saved.as_ref(),
-            &run.cwd,
+            resume.as_ref(),
         );
         let resumed = matches!(planned, Plan::Resume { .. });
         match planned {
@@ -721,7 +695,7 @@ impl TurnStream {
             )?,
             Plan::Fresh => spawn_fresh(&run, &mut state, &turn)?,
         }
-        expect_turn(&run, &mut state, &turn);
+        expect_turn(&mut state, &turn);
         Ok(Self {
             run,
             state,
@@ -756,6 +730,7 @@ impl TurnStream {
                     self.started = true;
                     self.observe(&event);
                     unprefix_tool_names(&mut event);
+                    self.stamp_session(&mut event);
                     if event["type"] == "message_stop" {
                         self.finish();
                     }
@@ -810,6 +785,15 @@ impl TurnStream {
         }
     }
 
+    /// The transcript keeps the reply's response ID, so the session outlives this run and host.
+    fn stamp_session(&self, event: &mut Value) {
+        if event["type"] == "message_start"
+            && let Some(live) = &self.state.live
+        {
+            event["message"]["id"] = Value::String(live.id.clone());
+        }
+    }
+
     fn finish(&mut self) {
         self.finished = true;
         if self.stop_reason.as_deref() == Some("tool_use")
@@ -821,7 +805,6 @@ impl TurnStream {
 
     fn fail(&mut self, error: &Value) -> Bytes {
         self.finished = true;
-        self.run.recorder.expect(None);
         self.state.reset();
         sse(error)
     }
@@ -834,25 +817,18 @@ impl TurnStream {
         if let Err(error) = spawn_fresh(&self.run, &mut self.state, &self.turn) {
             return Some(self.fail(&error_event(ERROR_CODE, &format!("{error:#}"))));
         }
-        expect_turn(&self.run, &mut self.state, &self.turn);
+        expect_turn(&mut self.state, &self.turn);
         None
     }
 }
 
-/// Marks `turn` as sent, and as the session to save if Claude Code finishes it cleanly.
-fn expect_turn(run: &Run, state: &mut RunState, turn: &Turn) {
+fn expect_turn(state: &mut RunState, turn: &Turn) {
     let live = state
         .live
         .as_mut()
         .expect("a planned turn has a live session");
     live.messages = turn.hashes.clone();
     live.awaiting = Awaiting::TurnEnd;
-    run.recorder.expect(Some(SessionRecord {
-        session_id: live.id.clone(),
-        model: turn.launch.model.clone(),
-        cwd: run.cwd.clone(),
-        messages: turn.hashes.clone(),
-    }));
 }
 
 /// Starts a new session that replays the conversation from a checkpoint.
@@ -880,7 +856,6 @@ fn spawn(
         system_prompt: &turn.system_prompt,
         session,
         tools: turn.tools.clone(),
-        recorder: Arc::clone(&run.recorder),
     })?;
     process.send_user(content);
     state.process = Some(process);

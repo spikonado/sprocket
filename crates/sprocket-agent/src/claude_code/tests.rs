@@ -1,4 +1,5 @@
 use super::*;
+use rig::message::{AssistantContent, AssistantMessage, Origin};
 
 fn turn(messages: Value) -> Turn {
     let body = json!({
@@ -71,7 +72,7 @@ fn tool_results_answer_the_calls_claude_code_holds() {
         tool_result("toolu_1")
     ]));
 
-    let Plan::AnswerTools(results) = plan(&next, Some(&session), None, Path::new("/work")) else {
+    let Plan::AnswerTools(results) = plan(&next, Some(&session), None) else {
         panic!("expected tool answers");
     };
     assert_eq!(results.len(), 1);
@@ -90,34 +91,37 @@ fn a_finished_turn_continues_with_the_new_prompt() {
     let next = turn(json!([user("Hi"), reply, user("Thanks")]));
 
     assert_eq!(
-        plan(&next, Some(&session), None, Path::new("/work")),
+        plan(&next, Some(&session), None),
         Plan::Continue(vec![json!({ "type": "text", "text": "Thanks" })])
     );
 }
 
 #[test]
-fn a_saved_session_resumes_in_the_same_directory() {
-    let first = turn(json!([user("Hi")]));
-    let saved = SessionRecord {
-        session_id: "saved".to_string(),
-        model: "claude-opus-5-5".to_string(),
-        cwd: PathBuf::from("/work"),
-        messages: first.hashes.clone(),
+fn the_latest_reply_names_the_session_to_resume() {
+    const SESSION: &str = "6f1c2d3e-4b5a-4c6d-8e9f-0a1b2c3d4e5f";
+    let reply = |response_id: &str| {
+        let mut origin = Origin::new("anthropic", "anthropic", "claude-opus-5-5");
+        origin.response_id = Some(response_id.to_string());
+        Message::Assistant(
+            AssistantMessage::new(vec![AssistantContent::text("Hello")]).with_origin(origin),
+        )
     };
+    let resume = resume_point(&[reply("msg_old"), reply(SESSION), Message::user("Thanks")])
+        .expect("the latest reply names a session");
+    assert_eq!(resume_point(&[reply(SESSION), reply("msg_other")]), None);
+
     let reply = json!({ "role": "assistant", "content": [{ "type": "text", "text": "Hello" }] });
     let next = turn(json!([user("Hi"), reply, user("Thanks")]));
+    let after_tools = turn(json!([user("Hi"), tool_call("call"), tool_result("call")]));
 
     assert_eq!(
-        plan(&next, None, Some(&saved), Path::new("/work")),
+        plan(&next, None, Some(&resume)),
         Plan::Resume {
-            session_id: "saved".to_string(),
+            session_id: SESSION.to_string(),
             content: vec![json!({ "type": "text", "text": "Thanks" })],
         }
     );
-    assert_eq!(
-        plan(&next, None, Some(&saved), Path::new("/elsewhere")),
-        Plan::Fresh
-    );
+    assert_eq!(plan(&after_tools, None, Some(&resume)), Plan::Fresh);
 }
 
 #[test]
@@ -126,10 +130,7 @@ fn changed_history_starts_over_from_a_checkpoint() {
     let session = live(&first, Awaiting::TurnEnd);
     let summary = turn(json!([user("Summary of the work"), user("Keep going")]));
 
-    assert_eq!(
-        plan(&summary, Some(&session), None, Path::new("/work")),
-        Plan::Fresh
-    );
+    assert_eq!(plan(&summary, Some(&session), None), Plan::Fresh);
 }
 
 #[test]

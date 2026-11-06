@@ -13,8 +13,6 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::Recorder;
-
 const MCP_SERVER: &str = "sprocket";
 const STDERR_TAIL_BYTES: usize = 4096;
 const TURN_END_TIMEOUT: Duration = Duration::from_secs(30);
@@ -44,7 +42,6 @@ pub(super) struct Spawn<'a> {
     pub(super) system_prompt: &'a str,
     pub(super) session: SessionStart,
     pub(super) tools: Vec<Value>,
-    pub(super) recorder: Arc<Recorder>,
 }
 
 #[derive(Debug)]
@@ -69,8 +66,8 @@ pub(super) struct Process {
 }
 
 impl Drop for Process {
-    /// Closing stdin ends Claude Code after its current turn, so a `result` that is on its
-    /// way still saves the session. A process that doesn't exit in time is killed.
+    /// Closing stdin ends Claude Code after its current turn, so it still saves that turn to
+    /// the session. A process that doesn't exit in time is killed.
     fn drop(&mut self) {
         self.writer.abort();
         let (Some(child), Some(reader)) = (self.child.take(), self.reader.take()) else {
@@ -113,6 +110,15 @@ impl Process {
             .env("CLAUDE_CODE_OAUTH_TOKEN", spawn.token)
             .env("CLAUDE_CONFIG_DIR", spawn.config_dir)
             .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+            // Subscriptions meter Claude Code's default `sdk-cli` entrypoint about twice as
+            // heavily. Without the artifact flag, a custom entrypoint adds a per-session
+            // scratchpad line to every request, which breaks the prompt cache.
+            .env("CLAUDE_CODE_ENTRYPOINT", "sprocket")
+            .env("CLAUDE_CODE_DISABLE_ARTIFACT", "1")
+            // `--setting-sources=` still loads auto memory and managed CLAUDE.md files.
+            .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1")
+            .env("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "1")
+            .env("ENABLE_TOOL_SEARCH", "false")
             // Sprocket hands off context itself, and its tool outputs are already bounded.
             .env("DISABLE_AUTO_COMPACT", "1")
             .env("MAX_MCP_OUTPUT_TOKENS", "1000000");
@@ -131,7 +137,6 @@ impl Process {
             events: sender,
             calls: Arc::clone(&calls),
             tools: spawn.tools,
-            recorder: spawn.recorder,
         };
         let process = Self {
             child: Some(child),
@@ -335,19 +340,11 @@ fn mcp_reply(message: &Value, tools: &[Value]) -> McpReply {
     }
 }
 
-/// A clean end lets the thread's next run resume the session.
-fn ended_cleanly(result: &Value) -> bool {
-    result["is_error"] != true
-        && result["subtype"] == "success"
-        && result["stop_reason"] == "end_turn"
-}
-
 struct Output {
     input: mpsc::UnboundedSender<String>,
     events: mpsc::UnboundedSender<Event>,
     calls: Arc<Mutex<ToolCalls>>,
     tools: Vec<Value>,
-    recorder: Arc<Recorder>,
 }
 
 impl Output {
@@ -396,9 +393,6 @@ impl Output {
                     .send(Event::RateLimit(message["rate_limit_info"].take()));
             }
             "result" => {
-                if ended_cleanly(&message) {
-                    self.recorder.finished_cleanly();
-                }
                 let _ = self.events.send(Event::Result(message));
             }
             _ => {}

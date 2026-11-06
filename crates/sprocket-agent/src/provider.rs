@@ -23,7 +23,7 @@ use tokio::time::sleep;
 
 use self::transcript_sink::TranscriptSink;
 use crate::chatgpt::ChatGptClient;
-use crate::claude_code::ClaudeCode;
+use crate::claude_code::{ClaudeCode, ResumePoint, resume_point};
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
@@ -127,6 +127,7 @@ pub(crate) struct AgentProvider {
     chatgpt_client: Option<ChatGptClient>,
     chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     claude_code: ClaudeCode,
+    claude_resume: Option<ResumePoint>,
     cwd: PathBuf,
     provider_handoff: Option<ProviderHandoff>,
 }
@@ -229,6 +230,7 @@ impl AgentProvider {
             chatgpt_client,
             chatgpt_credentials,
             claude_code,
+            claude_resume: None,
             cwd,
             provider_handoff: context.provider_handoff.clone(),
         }
@@ -239,6 +241,7 @@ impl AgentProvider {
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
+        self.claude_resume = resume_point(&request.prior_history);
         let handoff = self.provider_handoff.take();
         let source = handoff.as_ref().map(|handoff| Self {
             completion_provider: handoff.completion_provider,
@@ -250,6 +253,7 @@ impl AgentProvider {
             chatgpt_client: self.chatgpt_client.clone(),
             chatgpt_credentials: self.chatgpt_credentials.clone(),
             claude_code: self.claude_code.clone(),
+            claude_resume: self.claude_resume.clone(),
             cwd: self.cwd.clone(),
             provider_handoff: None,
         });
@@ -457,8 +461,8 @@ impl AgentProvider {
                         credential.token,
                         &self.model,
                         base_instructions,
-                        &self.thread_id,
                         &self.cwd,
+                        self.claude_resume.clone(),
                     )
                     .await
             }
