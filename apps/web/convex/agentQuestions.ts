@@ -24,10 +24,7 @@ import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
-import {
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange
-} from '@convex/lib/threadHierarchy';
+import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
@@ -86,8 +83,9 @@ async function createQuestion(
 ): Promise<CreatedQuestion> {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 	assertRunAcceptsWork(run, args.claimId, Date.now());
+	const jobId = run.activeJobId;
 
-	if (!run.activeJobId) {
+	if (!jobId) {
 		throw new Error('Ask question requires an active tool job.');
 	}
 
@@ -99,25 +97,23 @@ async function createQuestion(
 	const timeoutAt = timeoutMs === undefined ? undefined : now + timeoutMs;
 	const sequence = await nextThreadSequence(ctx, run.threadId);
 
-	const before = await captureThreadActivityBeforeChange(ctx, run.threadId);
-
-	const questionId = await ctx.db.insert('agentQuestions', {
-		threadId: run.threadId,
-		runId: run._id,
-		jobId: run.activeJobId,
-		question,
-		options,
-		status: timeoutMs === 0 ? 'timedOut' : 'pending',
-		timeoutAt,
-		answeredAt: timeoutMs === 0 ? now : undefined,
-		sequence
-	});
+	const questionId = await changeThreadActivity(ctx, run.threadId, () =>
+		ctx.db.insert('agentQuestions', {
+			threadId: run.threadId,
+			runId: run._id,
+			jobId,
+			question,
+			options,
+			status: timeoutMs === 0 ? 'timedOut' : 'pending',
+			timeoutAt,
+			answeredAt: timeoutMs === 0 ? now : undefined,
+			sequence
+		})
+	);
 
 	if (timeoutAt !== undefined && timeoutMs !== 0) {
 		await scheduleDeadlineCheck(ctx, questionId, now, timeoutAt);
 	}
-
-	await updateThreadHierarchyAfterChange(ctx, before);
 
 	return {
 		questionId,
@@ -260,10 +256,9 @@ export async function answerPendingQuestion(
 			question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
 	} as const;
 
-	const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
-
-	await ctx.db.patch('agentQuestions', question._id, questionPatch);
-	await updateThreadHierarchyAfterChange(ctx, before);
+	await changeThreadActivity(ctx, args.threadId, () =>
+		ctx.db.patch('agentQuestions', question._id, questionPatch)
+	);
 
 	return {
 		kind: 'answered',
@@ -306,13 +301,12 @@ export const skip = mutation({
 		}
 
 		await assertHeadPendingQuestion(ctx, question);
-		const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
-
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'skipped',
-			answeredAt: Date.now()
-		});
-		await updateThreadHierarchyAfterChange(ctx, before);
+		await changeThreadActivity(ctx, args.threadId, () =>
+			ctx.db.patch('agentQuestions', question._id, {
+				status: 'skipped',
+				answeredAt: Date.now()
+			})
+		);
 
 		return { continuation: await questionContinuation(ctx, question) };
 	}
@@ -378,10 +372,12 @@ export const timeout = internalMutation({
 		const now = Date.now();
 
 		if (run?.status === 'cancelled') {
-			await ctx.db.patch('agentQuestions', question._id, {
-				status: 'cancelled',
-				answeredAt: run.completedAt ?? now
-			});
+			await changeThreadActivity(ctx, question.threadId, () =>
+				ctx.db.patch('agentQuestions', question._id, {
+					status: 'cancelled',
+					answeredAt: run.completedAt ?? now
+				})
+			);
 
 			return null;
 		}
@@ -406,13 +402,12 @@ export const timeout = internalMutation({
 			}
 		}
 
-		const before = await captureThreadActivityBeforeChange(ctx, question.threadId);
-
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: now
-		});
-		await updateThreadHierarchyAfterChange(ctx, before);
+		await changeThreadActivity(ctx, question.threadId, () =>
+			ctx.db.patch('agentQuestions', question._id, {
+				status: 'timedOut',
+				answeredAt: now
+			})
+		);
 
 		return null;
 	}
@@ -459,7 +454,6 @@ export async function cancelPendingQuestionsForThread(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
-	const before = await captureThreadActivityBeforeChange(ctx, threadId);
 	const now = Date.now();
 	let cancelledAny = false;
 
@@ -480,19 +474,19 @@ export async function cancelPendingQuestionsForThread(
 		}
 	}
 
-	for await (const question of ctx.db
-		.query('agentQuestions')
-		.withIndex('by_threadId_status_sequence', (query) =>
-			query.eq('threadId', threadId).eq('status', 'pending')
-		)) {
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'cancelled',
-			answeredAt: now
-		});
-		cancelledAny = true;
-	}
-
-	await updateThreadHierarchyAfterChange(ctx, before);
+	await changeThreadActivity(ctx, threadId, async () => {
+		for await (const question of ctx.db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (query) =>
+				query.eq('threadId', threadId).eq('status', 'pending')
+			)) {
+			await ctx.db.patch('agentQuestions', question._id, {
+				status: 'cancelled',
+				answeredAt: now
+			});
+			cancelledAny = true;
+		}
+	});
 
 	return cancelledAny;
 }
