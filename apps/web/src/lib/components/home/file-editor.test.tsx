@@ -13,6 +13,14 @@ function editorView() {
 	return EditorView.findFromDOM(document.querySelector<HTMLElement>('.cm-editor')!)!;
 }
 
+function pressSave() {
+	return act(async () => {
+		editorView().contentDOM.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true })
+		);
+	});
+}
+
 function editorApi(onDisk: WorkspaceFileContent | null) {
 	let push: (event: DiskEvent<WorkspaceFileContent>) => void = () => {};
 
@@ -120,12 +128,27 @@ it('keeps a failed save error after the file is read again', async () => {
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	editorView().dispatch({ changes: { from: 5, insert: '!' } });
-	await act(async () => {
-		editorView().contentDOM.dispatchEvent(
-			new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true })
-		);
-	});
+	await pressSave();
 
 	expect(api.watchWorkspaceFile).toHaveBeenCalledTimes(2);
 	expect(document.querySelector('[role="alert"]')?.textContent).toBe('Disk full');
+});
+
+it('offers a reload only once the conflicting disk state is read', async () => {
+	const { api, push } = editorApi(saved);
+	vi.mocked(api.writeWorkspaceFile)
+		.mockRejectedValueOnce(new Error('Disk full'))
+		.mockResolvedValueOnce({ status: 'conflict', version: 'v2' });
+	render(<FileEditor api={api} file={file} draft={undefined} active onDraftChange={vi.fn()} />);
+
+	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
+	editorView().dispatch({ changes: { from: 5, insert: '!' } });
+	await pressSave();
+	await pressSave();
+	expect(document.body.textContent).not.toContain('changed on disk');
+
+	push({ kind: 'snapshot', ...saved, content: 'theirs', version: 'v2' });
+	act(() => document.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+	expect(editorView().state.doc.toString()).toBe('theirs');
+	expect(document.querySelector('[role="alert"]')).toBeNull();
 });
