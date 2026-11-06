@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -112,16 +112,19 @@ impl PinnedConnection {
     }
 }
 
-type SharedConnection = Arc<tokio::sync::Mutex<PinnedConnection>>;
+type SharedConnection = Arc<Mutex<PinnedConnection>>;
+
+/// `check` only sets `valid` before it bails, so a poisoned connection is still consistent.
+fn lock_connection(connection: &SharedConnection) -> MutexGuard<'_, PinnedConnection> {
+    connection.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 fn stream_error(message: impl Into<String>) -> http_client::Error {
     http_client::Error::Instance(message.into().into())
 }
 
 fn check_connection(connection: &SharedConnection) -> http_client::Result<()> {
-    connection
-        .try_lock()
-        .map_err(|_| stream_error(CONNECTION_CHANGED))?
+    lock_connection(connection)
         .check()
         .map_err(|error| stream_error(error.to_string()))
 }
@@ -130,9 +133,9 @@ async fn access_token(
     credentials: &Arc<dyn ChatGptCredentials>,
     connection: &SharedConnection,
 ) -> anyhow::Result<String> {
-    connection.lock().await.check()?;
+    lock_connection(connection).check()?;
     let access = credentials.credential().await?;
-    let mut connection = connection.lock().await;
+    let mut connection = lock_connection(connection);
     connection.check()?;
     anyhow::ensure!(
         access.connection_id == connection.pinned,
@@ -157,7 +160,7 @@ impl ChatGptClient {
         let connection = PinnedConnection::pin(&*credentials)?;
         Ok(Self {
             credentials,
-            connection: Arc::new(tokio::sync::Mutex::new(connection)),
+            connection: Arc::new(Mutex::new(connection)),
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .retry(reqwest::retry::never())
@@ -400,12 +403,11 @@ struct SiwcStreamGuard<S> {
 
 impl<S> SiwcStreamGuard<S> {
     fn new(inner: S, connection: SharedConnection) -> Self {
-        let monitored = Arc::clone(&connection);
+        let (mut receiver, pinned) = {
+            let connection = lock_connection(&connection);
+            (connection.receiver.clone(), connection.pinned.clone())
+        };
         let connection_changed = Box::pin(async move {
-            let (mut receiver, pinned) = {
-                let connection = monitored.lock().await;
-                (connection.receiver.clone(), connection.pinned.clone())
-            };
             loop {
                 if receiver.borrow_and_update().as_deref() != Some(pinned.as_str()) {
                     return;
