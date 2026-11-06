@@ -145,6 +145,7 @@ export const agentcardAuthorization = z.object({
 	approvalUrl: z.string().optional(),
 	poll_interval_ms: z.number().optional(),
 	reason: z.string().optional(),
+	replay_attempted: z.boolean().nullish(),
 	settlement: z.object({ status: z.string().optional() }).nullish(),
 	response: z
 		.object({ status: z.number(), headers: z.record(z.string(), z.string()), body: z.string() })

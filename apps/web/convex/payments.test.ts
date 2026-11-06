@@ -15,7 +15,7 @@ const stripeTokens = {
 	body: 'card[number]=4242424242424242'
 };
 
-function agentcardApi() {
+function agentcardApi(readAuthorization: () => object = () => ({})) {
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input);
 
@@ -55,6 +55,15 @@ function agentcardApi() {
 
 		if (url.endsWith('/api/v2/checkout/authorizations/cauth_1/cancel')) {
 			return Response.json({ id: 'cauth_1', status: 'declined' });
+		}
+
+		if (url.endsWith('/api/v2/checkout/authorizations/cauth_1')) {
+			return Response.json({
+				id: 'cauth_1',
+				amount: 2306,
+				currency: 'usd',
+				...readAuthorization()
+			});
 		}
 
 		throw new Error(`Unexpected Agentcard call: ${url}`);
@@ -207,6 +216,37 @@ describe('Agentcard payments', () => {
 		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
 			expect.objectContaining({ status: 'cancelled' })
 		]);
+	});
+
+	it('reports an expiry after the device may have sent the card as an unknown outcome', async () => {
+		const t = initConvexTest();
+		let replayAttempted = false;
+		agentcardApi(() => ({ status: 'expired', replay_attempted: replayAttempted }));
+		const { auth } = await startRun(t, 'buyer');
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
+		});
+
+		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
+
+		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
+
+		const purchase = { ...auth, purchaseId: created.purchaseId };
+
+		expect(await t.action(api.payments.checkoutPoll, purchase)).toMatchObject({
+			status: 'expired'
+		});
+		expect(await t.action(api.payments.checkoutCancel, purchase)).toEqual({ status: 'expired' });
+
+		replayAttempted = true;
+
+		expect(await t.action(api.payments.checkoutPoll, purchase)).toMatchObject({
+			status: 'outcome_unknown'
+		});
+		expect(await t.action(api.payments.checkoutCancel, purchase)).toEqual({
+			status: 'outcome_unknown'
+		});
 	});
 
 	it('hides a purchase whose payment the store rejected until a charge settles', async () => {
