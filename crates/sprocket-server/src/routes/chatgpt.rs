@@ -140,12 +140,12 @@ async fn result(
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResult>, ApiError> {
     let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
-    state
-        .chatgpt_oauth
-        .poll(&session, &request.user_id, &request.state)
-        .await
-        .map(Json)
-        .ok_or_else(ApiError::authentication_required)
+    Ok(Json(
+        state
+            .chatgpt_oauth
+            .poll(&session, &request.user_id, &request.state)
+            .await,
+    ))
 }
 
 async fn cancel(
