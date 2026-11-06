@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { ChatGptBrowserLoginStart, ChatGptStatus, LocalApi } from '$lib/types/sprocket';
 
 type ProviderConfigurationChange = {
-	provider: 'openai';
+	provider: 'openai' | 'claude';
 	configured: boolean;
 };
 
@@ -18,10 +18,187 @@ type PendingBrowserLogin = {
 	login: ChatGptBrowserLoginStart;
 };
 
+function errorMessage(error: Error, fallback: string): string {
+	return convexClientErrorMessage(error) ?? fallback;
+}
+
+function SecretCredentialCard({
+	provider,
+	title,
+	children,
+	secretLabel,
+	secretNoun,
+	placeholder,
+	replacementPlaceholder,
+	connectLabel,
+	replaceLabel,
+	configured,
+	loading,
+	save,
+	remove,
+	onConfiguredChange
+}: {
+	provider: 'openai' | 'claude';
+	title: string;
+	children?: ReactNode;
+	secretLabel: string;
+	secretNoun: string;
+	placeholder: string;
+	replacementPlaceholder: string;
+	connectLabel: string;
+	replaceLabel: string;
+	configured: boolean;
+	loading: boolean;
+	save: (secret: string) => Promise<null>;
+	remove: () => Promise<null>;
+	onConfiguredChange: (configured: boolean) => void;
+}) {
+	const [secret, setSecret] = useState('');
+	const [showSecret, setShowSecret] = useState(false);
+	const [pending, setPending] = useState(false);
+	const [confirmRemove, setConfirmRemove] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [saved, setSaved] = useState(false);
+
+	async function saveSecret(event: FormEvent) {
+		event.preventDefault();
+
+		if (!secret.trim() || pending) return;
+		setPending(true);
+		setError(null);
+		setSaved(false);
+
+		try {
+			await save(secret);
+			setSecret('');
+			setShowSecret(false);
+			setSaved(true);
+			onConfiguredChange(true);
+		} catch (caught) {
+			setError(
+				errorMessage(
+					z.instanceof(Error).catch(new Error()).parse(caught),
+					`Couldn’t save the ${secretNoun}.`
+				)
+			);
+		} finally {
+			setPending(false);
+		}
+	}
+
+	async function removeSecret() {
+		if (pending) return;
+		setPending(true);
+		setError(null);
+		setSaved(false);
+
+		try {
+			await remove();
+			setConfirmRemove(false);
+			onConfiguredChange(false);
+		} catch (caught) {
+			setError(
+				errorMessage(
+					z.instanceof(Error).catch(new Error()).parse(caught),
+					`Couldn’t remove the ${secretNoun}.`
+				)
+			);
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<div className="border-border rounded-xl border p-5">
+			<div className="flex items-center gap-3">
+				<ProviderLogo provider={provider} className="size-5" />
+				<div className="min-w-0 flex-1">
+					<p className="text-foreground text-[15px] font-medium">{title}</p>
+					<p className="text-muted-foreground mt-0.5 text-[12px]">
+						{loading ? 'Checking configuration…' : configured ? 'Connected' : 'Not configured'}
+					</p>
+				</div>
+			</div>
+
+			{children}
+
+			<form className="mt-5 space-y-3" onSubmit={(event) => void saveSecret(event)}>
+				<label className="block space-y-1.5">
+					<span className="text-muted-foreground text-[12px]">{secretLabel}</span>
+					<div className="relative">
+						<input
+							type={showSecret ? 'text' : 'password'}
+							value={secret}
+							onChange={(event) => setSecret(event.currentTarget.value)}
+							autoComplete="off"
+							spellCheck={false}
+							placeholder={configured ? replacementPlaceholder : placeholder}
+							disabled={pending || loading}
+							className="border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-10 w-full rounded-lg border pr-10 pl-3 font-mono text-[13px] outline-none disabled:opacity-50"
+						/>
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center"
+							aria-label={showSecret ? `Hide ${secretLabel}` : `Show ${secretLabel}`}
+							disabled={pending || loading}
+							onClick={() => setShowSecret((visible) => !visible)}
+						>
+							{showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+						</button>
+					</div>
+				</label>
+
+				<div className="flex flex-wrap items-center gap-3">
+					<Button type="submit" disabled={pending || loading || !secret.trim()}>
+						{pending ? 'Saving…' : configured ? replaceLabel : connectLabel}
+					</Button>
+					{configured && !confirmRemove ? (
+						<Button
+							type="button"
+							variant="outline"
+							disabled={pending}
+							onclick={() => setConfirmRemove(true)}
+						>
+							Remove
+						</Button>
+					) : confirmRemove ? (
+						<>
+							<Button
+								type="button"
+								variant="outline"
+								disabled={pending}
+								onclick={() => void removeSecret()}
+							>
+								{pending ? 'Removing…' : 'Confirm removal'}
+							</Button>
+							<button
+								type="button"
+								className="text-muted-foreground hover:text-foreground text-[13px]"
+								disabled={pending}
+								onClick={() => setConfirmRemove(false)}
+							>
+								Cancel
+							</button>
+						</>
+					) : null}
+					{saved && <span className="text-muted-foreground text-[12px]">Saved</span>}
+				</div>
+			</form>
+
+			{error && (
+				<p className="text-destructive mt-4 text-sm" role="alert">
+					{error}
+				</p>
+			)}
+		</div>
+	);
+}
+
 export default function SettingsCredentials({
 	userId,
 	localApi,
 	openAiConfigured,
+	claudeConfigured,
 	chatGptStatus,
 	chatGptLoading,
 	chatGptStatusError,
@@ -33,6 +210,7 @@ export default function SettingsCredentials({
 	userId: string;
 	localApi: LocalApi | null;
 	openAiConfigured: boolean;
+	claudeConfigured: boolean;
 	chatGptStatus: ChatGptStatus | null;
 	chatGptLoading: boolean;
 	chatGptStatusError: string | null;
@@ -43,12 +221,8 @@ export default function SettingsCredentials({
 }) {
 	const saveOpenAiKey = useAction(api.providerCredentials.saveOpenAiKey);
 	const removeOpenAiKey = useAction(api.providerCredentials.removeOpenAiKey);
-	const [apiKey, setApiKey] = useState('');
-	const [showKey, setShowKey] = useState(false);
-	const [openAiPending, setOpenAiPending] = useState(false);
-	const [confirmOpenAiRemove, setConfirmOpenAiRemove] = useState(false);
-	const [openAiError, setOpenAiError] = useState<string | null>(null);
-	const [openAiSaved, setOpenAiSaved] = useState(false);
+	const saveClaudeToken = useAction(api.providerCredentials.saveClaudeToken);
+	const removeClaudeToken = useAction(api.providerCredentials.removeClaudeToken);
 	const [chatGptPending, setChatGptPending] = useState(false);
 	const [browserLoginActive, setBrowserLoginActive] = useState(false);
 	const [signOutWarning, setSignOutWarning] = useState<string | null>(null);
@@ -65,10 +239,6 @@ export default function SettingsCredentials({
 		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
 		setBrowserLoginActive(Boolean(next));
 	};
-
-	function errorMessage(error: Error, fallback: string): string {
-		return convexClientErrorMessage(error) ?? fallback;
-	}
 
 	function cancelLoginOnServer(pending: PendingBrowserLogin) {
 		localApi
@@ -331,54 +501,6 @@ export default function SettingsCredentials({
 		}
 	}
 
-	async function saveKey(event: FormEvent) {
-		event.preventDefault();
-
-		if (!apiKey.trim() || openAiPending) return;
-		setOpenAiPending(true);
-		setOpenAiError(null);
-		setOpenAiSaved(false);
-
-		try {
-			await saveOpenAiKey({ apiKey });
-			setApiKey('');
-			setShowKey(false);
-			setOpenAiSaved(true);
-			onConfigurationChange({ provider: 'openai', configured: true });
-		} catch (error) {
-			setOpenAiError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t save the OpenAI key.'
-				)
-			);
-		} finally {
-			setOpenAiPending(false);
-		}
-	}
-
-	async function removeKey() {
-		if (openAiPending) return;
-		setOpenAiPending(true);
-		setOpenAiError(null);
-		setOpenAiSaved(false);
-
-		try {
-			await removeOpenAiKey({});
-			setConfirmOpenAiRemove(false);
-			onConfigurationChange({ provider: 'openai', configured: false });
-		} catch (error) {
-			setOpenAiError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t remove the OpenAI key.'
-				)
-			);
-		} finally {
-			setOpenAiPending(false);
-		}
-	}
-
 	const chatGptStatusLine = chatGptLoading
 		? 'Checking connection…'
 		: chatGptStatusError
@@ -517,90 +639,46 @@ export default function SettingsCredentials({
 						)}
 					</div>
 
-					<div className="border-border rounded-xl border p-5">
-						<div className="flex items-center gap-3">
-							<ProviderLogo provider="openai" className="size-5" />
-							<div className="min-w-0 flex-1">
-								<p className="text-foreground text-[15px] font-medium">OpenAI API</p>
-								<p className="text-muted-foreground mt-0.5 text-[12px]">
-									{loading
-										? 'Checking configuration…'
-										: openAiConfigured
-											? 'Connected'
-											: 'Not configured'}
-								</p>
-							</div>
-						</div>
+					<SecretCredentialCard
+						provider="claude"
+						title="Claude Subscription"
+						secretLabel="Token"
+						secretNoun="Claude token"
+						placeholder="sk-ant-oat01-…"
+						replacementPlaceholder="Enter a replacement token"
+						connectLabel="Connect"
+						replaceLabel="Replace"
+						configured={claudeConfigured}
+						loading={loading}
+						save={(token) => saveClaudeToken({ token })}
+						remove={() => removeClaudeToken({})}
+						onConfiguredChange={(configured) =>
+							onConfigurationChange({ provider: 'claude', configured })
+						}
+					>
+						<p className="text-muted-foreground mt-4 text-[12px] leading-5">
+							Run <code className="font-mono">claude setup-token</code> in a terminal, then paste
+							the token. Usage counts against your Claude subscription.
+						</p>
+					</SecretCredentialCard>
 
-						<form className="mt-5 space-y-3" onSubmit={(event) => void saveKey(event)}>
-							<label className="block space-y-1.5">
-								<span className="text-muted-foreground text-[12px]">API key</span>
-								<div className="relative">
-									<input
-										type={showKey ? 'text' : 'password'}
-										value={apiKey}
-										onChange={(event) => setApiKey(event.currentTarget.value)}
-										autoComplete="off"
-										spellCheck={false}
-										placeholder={openAiConfigured ? 'Enter a replacement key' : 'sk-…'}
-										disabled={openAiPending || loading}
-										className="border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-10 w-full rounded-lg border pr-10 pl-3 font-mono text-[13px] outline-none disabled:opacity-50"
-									/>
-									<button
-										type="button"
-										className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center"
-										aria-label={showKey ? 'Hide API key' : 'Show API key'}
-										disabled={openAiPending || loading}
-										onClick={() => setShowKey((visible) => !visible)}
-									>
-										{showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-									</button>
-								</div>
-							</label>
-
-							<div className="flex flex-wrap items-center gap-3">
-								<Button type="submit" disabled={openAiPending || loading || !apiKey.trim()}>
-									{openAiPending ? 'Saving…' : openAiConfigured ? 'Replace key' : 'Connect API key'}
-								</Button>
-								{openAiConfigured && !confirmOpenAiRemove ? (
-									<Button
-										type="button"
-										variant="outline"
-										disabled={openAiPending}
-										onclick={() => setConfirmOpenAiRemove(true)}
-									>
-										Remove
-									</Button>
-								) : confirmOpenAiRemove ? (
-									<>
-										<Button
-											type="button"
-											variant="outline"
-											disabled={openAiPending}
-											onclick={() => void removeKey()}
-										>
-											{openAiPending ? 'Removing…' : 'Confirm removal'}
-										</Button>
-										<button
-											type="button"
-											className="text-muted-foreground hover:text-foreground text-[13px]"
-											disabled={openAiPending}
-											onClick={() => setConfirmOpenAiRemove(false)}
-										>
-											Cancel
-										</button>
-									</>
-								) : null}
-								{openAiSaved && <span className="text-muted-foreground text-[12px]">Saved</span>}
-							</div>
-						</form>
-
-						{openAiError && (
-							<p className="text-destructive mt-4 text-sm" role="alert">
-								{openAiError}
-							</p>
-						)}
-					</div>
+					<SecretCredentialCard
+						provider="openai"
+						title="OpenAI API"
+						secretLabel="API key"
+						secretNoun="OpenAI key"
+						placeholder="sk-…"
+						replacementPlaceholder="Enter a replacement key"
+						connectLabel="Connect API key"
+						replaceLabel="Replace key"
+						configured={openAiConfigured}
+						loading={loading}
+						save={(apiKey) => saveOpenAiKey({ apiKey })}
+						remove={() => removeOpenAiKey({})}
+						onConfiguredChange={(configured) =>
+							onConfigurationChange({ provider: 'openai', configured })
+						}
+					/>
 
 					{loadError && (
 						<p className="text-destructive text-sm" role="alert">

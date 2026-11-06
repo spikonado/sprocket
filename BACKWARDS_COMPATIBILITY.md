@@ -32,6 +32,10 @@ Released runners omit `completionProvider` from `subagents:createOrSend`, so cre
 
 Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
 
+### Enabled providers without Claude
+
+Released clients reject unknown completion providers, so `uiPreferences.getMyEnabledProviders` and `agentRuntime.getContext` leave `claude` out of enabled providers unless the caller passes `includeClaude: true`. Once those clients age out, always include `claude` and remove the argument.
+
 ### Descendant status counts
 
 `threads.subtreeSummaryForThread` still returns `descendantStatusCounts`, deriving `running` from `workingDescendantCount` and `completed` from the remaining total. Remove it once released inbox clients age out.

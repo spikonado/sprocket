@@ -16,7 +16,7 @@ use tokio::process::Command;
 
 use crate::python_install::PythonTools;
 use crate::tool_install::{
-    Asset, INSTALL_LOCK, acquire_lock, download_atomic, is_dir, is_version, large_download_client,
+    Asset, INSTALL_LOCK, acquire_lock, download_atomic, download_client, is_dir, is_version,
     open_lock_file, prune_versions, release_platform, remove_version, set_executable,
 };
 
@@ -89,7 +89,7 @@ impl KiCadConnector {
             root: data_dir.join("connectors").join("kicad"),
             release: serde_json::from_str(RELEASES)?,
             python,
-            client: large_download_client()?,
+            client: download_client()?,
             activity: Mutex::new(Activity::Idle),
             board_exports: tokio::sync::Semaphore::new(1),
         })

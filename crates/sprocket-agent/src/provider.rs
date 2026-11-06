@@ -23,6 +23,7 @@ use tokio::time::sleep;
 
 use self::transcript_sink::TranscriptSink;
 use crate::chatgpt::ChatGptClient;
+use crate::claude_code::ClaudeCode;
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
@@ -83,6 +84,10 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
     }
 }
 
+fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
+    crate::chatgpt::user_facing_error(crate::claude_code::user_facing_error(error))
+}
+
 pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     fallback_providers: VecDeque<CompletionProvider>,
@@ -92,6 +97,8 @@ pub(crate) struct AgentProvider {
     model_vendor: String,
     chatgpt_client: Option<ChatGptClient>,
     chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+    claude_code: Option<ClaudeCode>,
+    cwd: PathBuf,
     provider_handoff: Option<ProviderHandoff>,
 }
 
@@ -170,6 +177,8 @@ impl AgentProvider {
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
         chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+        claude_code: Option<ClaudeCode>,
+        cwd: PathBuf,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
         let fallback_providers = context
@@ -190,6 +199,8 @@ impl AgentProvider {
             model_vendor: model_vendor.to_string(),
             chatgpt_client,
             chatgpt_credentials,
+            claude_code,
+            cwd,
             provider_handoff: context.provider_handoff.clone(),
         }
     }
@@ -209,6 +220,8 @@ impl AgentProvider {
             model_vendor: String::new(),
             chatgpt_client: self.chatgpt_client.clone(),
             chatgpt_credentials: self.chatgpt_credentials.clone(),
+            claude_code: self.claude_code.clone(),
+            cwd: self.cwd.clone(),
             provider_handoff: None,
         });
         let source_model = match &source {
@@ -270,7 +283,7 @@ impl AgentProvider {
                     Err(error) => {
                         return AgentProviderResult::Failed {
                             text: String::new(),
-                            error: crate::chatgpt::user_facing_error(error),
+                            error: user_facing_error(error),
                         };
                     }
                 }
@@ -279,7 +292,7 @@ impl AgentProvider {
         match run_with_completion_model(model, runtime, request, self, provider_switch).await {
             AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
                 text,
-                error: crate::chatgpt::user_facing_error(error),
+                error: user_facing_error(error),
             },
             result => result,
         }
@@ -407,6 +420,21 @@ impl AgentProvider {
                     base_instructions,
                     &self.thread_id,
                 ))
+            }
+            CompletionProvider::Claude => {
+                let claude_code = self.claude_code.as_ref().ok_or_else(|| {
+                    anyhow!("Claude subscription runs require the local Claude Code service.")
+                })?;
+                let credential = runtime.issue_claude_credential(run_id, claim_id).await?;
+                claude_code
+                    .completion_model(
+                        credential.token,
+                        &self.model,
+                        base_instructions,
+                        &self.thread_id,
+                        &self.cwd,
+                    )
+                    .await
             }
         }
     }

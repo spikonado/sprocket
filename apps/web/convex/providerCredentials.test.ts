@@ -137,10 +137,11 @@ describe('provider credentials', () => {
 			await ctx.db.patch('runs', created.runId, { cancellationRequestedAt: Date.now() });
 		});
 		await expect(
-			t.query(internal.providerCredentials.authorizeOpenAiCredential, {
+			t.query(internal.providerCredentials.authorizeRunCredential, {
 				runId: created.runId,
 				claimId,
-				executionSecret
+				executionSecret,
+				provider: 'openai'
 			})
 		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
 		await t.run(async (ctx) => {
@@ -148,10 +149,11 @@ describe('provider credentials', () => {
 		});
 
 		await expect(
-			t.query(internal.providerCredentials.authorizeOpenAiCredential, {
+			t.query(internal.providerCredentials.authorizeRunCredential, {
 				runId: created.runId,
 				claimId,
-				executionSecret: 'wrong-secret'
+				executionSecret: 'wrong-secret',
+				provider: 'openai'
 			})
 		).rejects.toThrow('Run not found.');
 
@@ -159,24 +161,74 @@ describe('provider credentials', () => {
 			await ctx.db.patch('runs', created.runId, { completionProvider: 'spikonado' });
 		});
 		await expect(
-			t.query(internal.providerCredentials.authorizeOpenAiCredential, {
+			t.query(internal.providerCredentials.authorizeRunCredential, {
 				runId: created.runId,
 				claimId,
-				executionSecret
+				executionSecret,
+				provider: 'openai'
 			})
-		).rejects.toThrow('Run is not configured to use OpenAI directly.');
+		).rejects.toThrow('Run is not configured to use openai credentials.');
 
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', created.runId, { completionProvider: 'openai' });
 			await patchRunExecution(ctx, created.runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		await expect(
-			t.query(internal.providerCredentials.authorizeOpenAiCredential, {
+			t.query(internal.providerCredentials.authorizeRunCredential, {
 				runId: created.runId,
 				claimId,
-				executionSecret
+				executionSecret,
+				provider: 'openai'
 			})
 		).rejects.toMatchObject({ data: agentErrorMessages.RUN_NO_LONGER_ACTIVE });
+	}, 30_000);
+
+	it('stores a Claude token without calling Anthropic and issues it to Claude runs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'executor-secret';
+		const claimId = 'claim-claude';
+		stubVaultFetch(new Map());
+
+		await expect(
+			asUser.action(api.providerCredentials.saveClaudeToken, { token: 'sk-ant-api03-key' })
+		).rejects.toThrow('Enter a valid Claude token');
+		await asUser.action(api.providerCredentials.saveClaudeToken, {
+			token: ' sk-ant-oat01-token_A-1 '
+		});
+		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+			openai: false,
+			claude: true,
+			chatgpt: false,
+			chatgptModelIds: null
+		});
+
+		const created = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'claude-run',
+			executionSecret,
+			prompt: 'Use my subscription',
+			completionProvider: 'claude'
+		});
+
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId,
+			executionSecret
+		});
+		const run = { runId: created.runId, claimId, executionSecret };
+
+		await expect(t.action(api.providerCredentials.issueClaudeCredential, run)).resolves.toEqual({
+			token: 'sk-ant-oat01-token_A-1'
+		});
+		await expect(t.action(api.providerCredentials.issueOpenAiCredential, run)).rejects.toThrow(
+			'Run is not configured to use openai credentials.'
+		);
+
+		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
+		await expect(t.action(api.providerCredentials.issueClaudeCredential, run)).rejects.toThrow(
+			'Claude is no longer connected.'
+		);
 	}, 30_000);
 
 	it('reports ChatGPT as disconnected while preserving the OpenAI configuration', async () => {
@@ -185,6 +237,7 @@ describe('provider credentials', () => {
 		vi.stubGlobal('fetch', async () => new Response(null, { status: 404 }));
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: false,
+			claude: false,
 			chatgpt: false,
 			chatgptModelIds: null
 		});
@@ -193,6 +246,7 @@ describe('provider credentials', () => {
 		await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: 'sk-user' });
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: true,
+			claude: false,
 			chatgpt: false,
 			chatgptModelIds: null
 		});

@@ -90,12 +90,14 @@ export const getMine = query({
 });
 
 export const getMyEnabledProviders = query({
-	args: {},
+	args: { includeClaude: v.optional(v.boolean()) },
 	returns: v.array(vCompletionProvider),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
 
-		return enabledProviders(preferences?.providerOrder);
+		return enabledProviders(preferences?.providerOrder, {
+			includeClaude: args.includeClaude ?? false
+		});
 	}
 });
 

@@ -205,7 +205,8 @@ describe('provider handoff credential authorization', () => {
 
 	it.each([
 		{ source: 'spikonado', target: 'openai' },
-		{ source: 'openai', target: 'spikonado' }
+		{ source: 'openai', target: 'spikonado' },
+		{ source: 'claude', target: 'spikonado' }
 	] as const)(
 		'authorizes $source only until the handoff is saved, keeps $target authorized',
 		async ({ source, target }) => {
@@ -221,7 +222,10 @@ describe('provider handoff credential authorization', () => {
 			const authorize = (provider: Provider, credentials = args) =>
 				provider === 'spikonado'
 					? t.mutation(api.agentRuntime.issueGatewayCredential, credentials)
-					: t.query(internal.providerCredentials.authorizeOpenAiCredential, credentials);
+					: t.query(internal.providerCredentials.authorizeRunCredential, {
+							...credentials,
+							provider: provider === 'claude' ? 'claude' : 'openai'
+						});
 
 			await expect(authorize(source)).resolves.toBeDefined();
 			await expect(authorize(target)).resolves.toBeDefined();

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
@@ -18,11 +19,16 @@ pub enum CompletionProvider {
     Spikonado,
     Openai,
     Chatgpt,
+    Claude,
 }
 
 impl CompletionProvider {
     pub fn serves_vendor(self, vendor: &str) -> bool {
-        self == Self::Spikonado || vendor == "openai"
+        match self {
+            Self::Spikonado => true,
+            Self::Openai | Self::Chatgpt => vendor == "openai",
+            Self::Claude => vendor == "anthropic",
+        }
     }
 
     pub(crate) fn serves_fast_mode(self) -> bool {
@@ -34,6 +40,7 @@ impl CompletionProvider {
             Self::Spikonado => "spikonado",
             Self::Openai => "openai",
             Self::Chatgpt => "chatgpt",
+            Self::Claude => "claude",
         }
     }
 }
@@ -57,10 +64,17 @@ pub trait ChatGptCredentials: Send + Sync {
     fn credential(&self) -> BoxFuture<'_, anyhow::Result<ChatGptAccess>>;
 }
 
+pub trait ClaudeCodeInstall: Send + Sync {
+    /// Installs the pinned Claude Code on first use. The path stays valid while the host runs.
+    fn executable(&self) -> BoxFuture<'_, anyhow::Result<PathBuf>>;
+}
+
 #[derive(Clone)]
 pub struct RunAgentRequest {
     /// Local ChatGPT credential service handle. Required for ChatGPT runs.
     pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+    /// Required for Claude subscription runs.
+    pub claude_code: Option<crate::claude_code::ClaudeCode>,
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,
@@ -114,6 +128,11 @@ pub struct GatewayCredential {
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiCredential {
     pub api_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ClaudeCredential {
+    pub token: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -173,6 +173,7 @@ function createConvexFixtures(): ConvexTestClient {
 	client.registerQuery(api.artifacts.getArtifactState, 0);
 	client.registerAction(api.providerCredentials.getMyConfiguration, {
 		openai: false,
+		claude: false,
 		chatgpt: false,
 		chatgptModelIds: null
 	});

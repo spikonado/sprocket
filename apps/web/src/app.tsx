@@ -344,6 +344,7 @@ export default function App({
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const [catalogLoading, setCatalogLoading] = useState(true);
 	const [openAiConfigured, setOpenAiConfigured] = useState(false);
+	const [claudeConfigured, setClaudeConfigured] = useState(false);
 	const [chatGptConfigured, setChatGptConfigured] = useState(false);
 	const [chatGptStatus, setChatGptStatus] = useState<ChatGptStatus | null>(null);
 	const [chatGptStatusLoading, setChatGptStatusLoading] = useState(false);
@@ -355,9 +356,10 @@ export default function App({
 		() => [
 			'spikonado',
 			...(openAiConfigured ? (['openai'] as const) : []),
-			...(chatGptConfigured ? (['chatgpt'] as const) : [])
+			...(chatGptConfigured ? (['chatgpt'] as const) : []),
+			...(claudeConfigured ? (['claude'] as const) : [])
 		],
-		[openAiConfigured, chatGptConfigured]
+		[openAiConfigured, chatGptConfigured, claudeConfigured]
 	);
 
 	async function loadModelCatalog() {
@@ -393,6 +395,7 @@ export default function App({
 			)
 				return;
 			setOpenAiConfigured(configuration.openai);
+			setClaudeConfigured(configuration.claude);
 		} catch (error) {
 			if (
 				signedInUserIdRef.current !== userId ||
@@ -1423,10 +1426,15 @@ export default function App({
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	function handleProviderConfigurationChange(change: { provider: 'openai'; configured: boolean }) {
+	function handleProviderConfigurationChange(change: {
+		provider: 'openai' | 'claude';
+		configured: boolean;
+	}) {
 		providerConfigurationGeneration.current += 1;
 
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
+
+		if (change.provider === 'claude') setClaudeConfigured(change.configured);
 		setProviderConfigurationError(null);
 	}
 
@@ -2156,6 +2164,7 @@ export default function App({
 		ensureSubscriptionAttemptedFor.current = null;
 		providerConfigurationLoadedFor.current = null;
 		setOpenAiConfigured(false);
+		setClaudeConfigured(false);
 		setChatGptConfigured(false);
 		setChatGptStatus(null);
 		setChatGptStatusLoading(false);
@@ -2721,6 +2730,7 @@ export default function App({
 								userId={signedInUserId}
 								localApi={localApi}
 								openAiConfigured={openAiConfigured}
+								claudeConfigured={claudeConfigured}
 								chatGptStatus={chatGptStatus}
 								chatGptLoading={chatGptStatusLoading}
 								chatGptStatusError={chatGptStatusError}

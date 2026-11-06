@@ -11,7 +11,6 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 pub(crate) const INSTALL_LOCK: &str = "install.lock";
@@ -148,18 +147,13 @@ pub(crate) struct Checksum {
     pub sha256: String,
 }
 
-fn download_client() -> anyhow::Result<reqwest::Client> {
-    Ok(client_builder().timeout(DOWNLOAD_TIMEOUT).build()?)
-}
-
-pub(crate) fn large_download_client() -> anyhow::Result<reqwest::Client> {
-    Ok(client_builder().read_timeout(READ_TIMEOUT).build()?)
-}
-
-fn client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+/// Bounds stalls instead of total time, so large downloads finish on slow connections.
+pub(crate) fn download_client() -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
         .user_agent(concat!("sprocket/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(30))
+        .read_timeout(READ_TIMEOUT)
+        .build()?)
 }
 
 pub(crate) fn prepend_path(

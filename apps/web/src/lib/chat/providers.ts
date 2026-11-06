@@ -4,7 +4,8 @@ import type { CompletionProvider } from '@convex/lib/validators';
 export const completionProviderLabels: Record<CompletionProvider, string> = {
 	spikonado: 'Spikonado',
 	openai: 'OpenAI API',
-	chatgpt: 'ChatGPT Subscription'
+	chatgpt: 'ChatGPT Subscription',
+	claude: 'Claude Subscription'
 };
 
 export function reorderShownProviders(

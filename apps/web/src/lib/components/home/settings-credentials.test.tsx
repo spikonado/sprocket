@@ -115,6 +115,7 @@ function mount(
 				userId="user-a"
 				localApi={localApi}
 				openAiConfigured={openAiConfigured}
+				claudeConfigured={false}
 				chatGptStatus={status}
 				chatGptLoading={false}
 				chatGptStatusError={null}
@@ -153,6 +154,22 @@ it('saves an API key, clears the input, and reports the configured provider', as
 	);
 	expect(save).toHaveBeenCalledWith({ apiKey: 'sk-test-not-a-secret' });
 	expect(screen.getByLabelText('API key')).toHaveProperty('value', '');
+});
+
+it('saves a Claude token and reports the configured provider', async () => {
+	const client = new ConvexTestClient();
+	const save = vi.fn(async () => null);
+	client.handleAction(api.providerCredentials.saveClaudeToken, save);
+	const view = mount(client);
+	fireEvent.change(screen.getByLabelText('Token'), { target: { value: 'sk-ant-oat01-test' } });
+	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+	await waitFor(() =>
+		expect(view.onConfigurationChange).toHaveBeenCalledWith({
+			provider: 'claude',
+			configured: true
+		})
+	);
+	expect(save).toHaveBeenCalledWith({ token: 'sk-ant-oat01-test' });
 });
 
 it('shows key validation failures and permits a successful retry', async () => {
@@ -428,6 +445,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 				userId={userId}
 				localApi={localApi}
 				openAiConfigured={false}
+				claudeConfigured={false}
 				chatGptStatus={statusFixture()}
 				chatGptLoading={false}
 				chatGptStatusError={null}

@@ -16,7 +16,7 @@ export default function ProviderLogo({
 		return <OpenAiBlossom className={cn('text-foreground size-4', className)} />;
 	}
 
-	if (provider === 'anthropic') {
+	if (provider === 'anthropic' || provider === 'claude') {
 		return (
 			<svg
 				viewBox="0 0 24 24"

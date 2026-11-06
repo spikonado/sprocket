@@ -383,7 +383,8 @@ function getContextResult(args: {
 
 const getContextArgs = {
 	runId: v.id('runs'),
-	executionSecret: v.string()
+	executionSecret: v.string(),
+	includeClaude: v.optional(v.boolean())
 };
 
 export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof getContextArgs>) {
@@ -407,7 +408,9 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 		contextTokens,
 		providerHandoff,
 		providerPreferences: {
-			enabledProviders: enabledProviders(preferences?.providerOrder),
+			enabledProviders: enabledProviders(preferences?.providerOrder, {
+				includeClaude: args.includeClaude ?? false
+			}),
 			restrictSubagentsToProvider: false
 		},
 		cwd: thread?.cwd,

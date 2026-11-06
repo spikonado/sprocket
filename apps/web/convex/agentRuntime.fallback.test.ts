@@ -76,6 +76,15 @@ describe('provider fallback', () => {
 			enabledProviders: ['chatgpt', 'openai'],
 			restrictSubagentsToProvider: false
 		});
+		expect(
+			(
+				await asUser.query(api.agentRuntime.getContext, {
+					runId,
+					executionSecret,
+					includeClaude: true
+				})
+			).providerPreferences.enabledProviders
+		).toEqual(['chatgpt', 'openai', 'claude']);
 		expect(context.shareConversationContent).toBe(false);
 	});
 });

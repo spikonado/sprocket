@@ -16,7 +16,7 @@ const preferences: Doc<'uiPreferences'> = {
 async function mount(
 	data: Doc<'uiPreferences'> | null,
 	onOpenCredentials = vi.fn(),
-	configuredProviders: CompletionProvider[] = ['spikonado', 'openai', 'chatgpt']
+	configuredProviders: CompletionProvider[] = ['spikonado', 'openai', 'chatgpt', 'claude']
 ) {
 	const client = new ConvexTestClient();
 	client.registerQuery(api.uiPreferences.getMine, data);
@@ -44,7 +44,12 @@ function providerNames() {
 
 it('lists configured providers in the saved order and saves toggles', async () => {
 	const mutation = await mount(null);
-	expect(providerNames()).toEqual(['Spikonado', 'OpenAI API', 'ChatGPT Subscription']);
+	expect(providerNames()).toEqual([
+		'Spikonado',
+		'OpenAI API',
+		'ChatGPT Subscription',
+		'Claude Subscription'
+	]);
 
 	await act(async () => {
 		fireEvent.click(screen.getByRole('switch', { name: 'OpenAI API' }));
@@ -56,7 +61,8 @@ it('lists configured providers in the saved order and saves toggles', async () =
 			providerOrder: [
 				{ provider: 'spikonado', enabled: true },
 				{ provider: 'openai', enabled: false },
-				{ provider: 'chatgpt', enabled: true }
+				{ provider: 'chatgpt', enabled: true },
+				{ provider: 'claude', enabled: true }
 			]
 		},
 		expect.anything()

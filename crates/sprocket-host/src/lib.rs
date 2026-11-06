@@ -4,6 +4,7 @@ pub mod browser;
 mod browser_install;
 mod bun_install;
 pub mod chatgpt_credentials;
+mod claude_code_install;
 pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
@@ -37,6 +38,7 @@ use tokio::task::JoinHandle;
 use crate::artifact_watch::ArtifactWatchers;
 use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
+use crate::claude_code_install::ClaudeCodeInstaller;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_settings::GitHubSettingsStore;
 use crate::kicad_connector::KiCadConnector;
@@ -95,6 +97,7 @@ pub struct Host {
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
     pub kicad: Arc<KiCadConnector>,
+    pub claude_code: sprocket_agent::ClaudeCode,
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
     python: Arc<PythonTools>,
@@ -162,6 +165,10 @@ impl Host {
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
             kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
+            claude_code: sprocket_agent::ClaudeCode::new(
+                Arc::new(ClaudeCodeInstaller::new(data_dir)?),
+                data_dir.join("claude-code"),
+            ),
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
             python,
