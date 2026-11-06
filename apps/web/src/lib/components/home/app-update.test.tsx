@@ -133,9 +133,10 @@ it.each([undefined, true])(
 	}
 );
 
-it('drops an install error once the server pushes the installed update', async () => {
-	vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('Connection lost')));
-	const publish = mount(false);
+it('drops an install error and waits for a click once the server pushes the installed update', async () => {
+	const fetcher = vi.fn().mockRejectedValueOnce(new Error('Connection lost'));
+	vi.stubGlobal('fetch', fetcher);
+	const publish = mount(true);
 	publish(available);
 	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
 	expect(await screen.findByText('Connection lost')).toBeTruthy();
@@ -143,6 +144,7 @@ it('drops an install error once the server pushes the installed update', async (
 	publish({ ...available, status: 'installed' });
 	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toBeTruthy();
 	expect(screen.queryByText('Connection lost')).toBeNull();
+	expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it.each([
