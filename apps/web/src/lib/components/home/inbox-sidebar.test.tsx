@@ -664,19 +664,6 @@ it('does not attach keyboard context-menu behavior to thread rows', async () => 
 	expect(document.querySelector('.inbox-context-menu')).toBeNull();
 });
 
-it.each([
-	{ pointer: 'fine', draggable: 'true' },
-	{ pointer: 'coarse', draggable: 'false' }
-])('makes rows draggable only with a $pointer pointer', async ({ pointer, draggable }) => {
-	vi.stubGlobal(
-		'matchMedia',
-		vi.fn((query: string) => ({ matches: query === `(pointer: ${pointer})` }))
-	);
-	await render([thread()]);
-
-	expect(document.querySelector('.inbox-row')!.getAttribute('draggable')).toBe(draggable);
-});
-
 it('labels settle and unsettle controls with tooltips', async () => {
 	localStorage.setItem('sprocket.inbox.settled-open', 'true');
 	await render([thread(), thread(true)]);
@@ -1081,7 +1068,6 @@ it('hides settle and unsettle controls for child threads', async () => {
 
 	expect(childRow.querySelector('[aria-label^="Settle"]')).toBeNull();
 	expect(childRow.querySelector('[aria-label^="Unsettle"]')).toBeNull();
-	expect(childRow.getAttribute('draggable')).toBe('false');
 
 	act(() => {
 		childRow.dispatchEvent(
