@@ -50,3 +50,20 @@ fn gh_runs_without_prompts_or_inherited_tokens() {
         assert_eq!(envs.get(OsStr::new(name)), Some(&None), "{name}");
     }
 }
+
+#[tokio::test]
+async fn unloaded_saved_tokens_fail_instead_of_falling_back() {
+    saved_tokens::install(std::sync::Arc::new(
+        |_: String| -> saved_tokens::LoadFuture {
+            Box::pin(async {
+                anyhow::Result::<saved_tokens::SavedTokens>::Err(anyhow::anyhow!(
+                    "Convex is unreachable"
+                ))
+            })
+        },
+    ));
+    assert!(matches!(
+        resolve("user-unloaded", PUBLIC_HOST).await,
+        Err(GitHubError::Failed(_))
+    ));
+}
