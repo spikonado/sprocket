@@ -21,8 +21,11 @@ export function useAsyncResource<T>(
 	const [state, setState] = useState<{ key: string; resource: AsyncResource<T> } | null>(null);
 	const loadEvent = useEffectEvent(load);
 	const attempt = useRef(0);
+	const currentKey = useRef(key);
 
 	useEffect(() => {
+		currentKey.current = key;
+
 		if (key === null) return;
 		const loading = key;
 		const current = ++attempt.current;
@@ -57,12 +60,13 @@ export function useAsyncResource<T>(
 		return () => {
 			attempt.current += 1;
 			clearTimeout(retry);
+			setState(null);
 		};
 	}, [key]);
 
 	const set = useCallback(
 		(value: T) => {
-			if (key === null) return;
+			if (key === null || key !== currentKey.current) return;
 			attempt.current += 1;
 			setState({ key, resource: { status: 'loaded', value } });
 		},
