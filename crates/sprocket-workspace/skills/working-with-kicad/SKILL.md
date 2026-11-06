@@ -21,6 +21,7 @@ Use `kicad-cli` for checks and exports.
   | `py_router/route_diff.py`                            | Differential pairs, before single-ended routing                                   |
   | `py_router/qfn_fanout.py`, `py_router/bga_fanout.py` | Escape routing for fine-pitch ICs                                                 |
   | `py_router/check_weird.py`                           | Copper hygiene: removable segments, soft joints, dangling vias, narrow pad joints |
+  | `py_tools/route_review.py`                           | After a route: open nets, costly nets, congested areas, and the parts to move     |
 
 ## Before editing
 
@@ -38,6 +39,10 @@ Use `kicad-cli` for checks and exports.
 - DRC reports hundreds of `connection_width` violations after a zone fill: a new `Zone()` has 0 clearance and 0 mm thermal spokes.
   Set both, as in [Copper pours](#copper-pours).
 - KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
+- The Gerber job file lists placeholder dielectrics: kipy reads the stackup with `board.get_stackup()` but can't write it.
+  With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
+- DRC on a renamed copy of a board ignores the project's rules: `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
+  Copy the `.kicad_pro` and `.kicad_dru` next to the copy under its name.
 
 ## Designing the schematic
 
@@ -72,10 +77,41 @@ board.create_items([zone])
 
 ## Routing
 
-- Route the board with `kicad-route`.
-- It reads clearances and widths from the `.kicad_pro`.
-- It connects the pads of zone nets, like `GND`, to their pours, so draw the zones first.
-- It exits 0 even when nets fail. Run DRC with `--refill-zones` on the output, then reroute or fix every unconnected item.
+Route the board with `kicad-route`.
+It reads clearances and widths from the `.kicad_pro`, and connects the pads of zone nets, like `GND`, to their pours, so draw the zones first.
+Put rule-area keepouts on every layer over switch nodes and other areas that traces must avoid before the first route.
+
+Right after placement, and before the schematic is final, judge the placement with a trial route:
+
+1. Run `kicad-route board.kicad_pcb trial.kicad_pcb --quick 2`, then `route_review.py trial.kicad_pcb`.
+2. Move the parts it names and repeat until the open and costly nets are few.
+3. Where crossing nets connect to interchangeable pins, like MCU GPIOs, propose pin swaps to the user.
+   Once they agree, `--swappable-nets 'GPIO*' --schematic-dir proj/` swaps the pins and writes the swaps to the schematic.
+
+`kicad-route` exits 0 even when nets fail. Run DRC with `--refill-zones` on the output.
+For each round of fixes:
+
+- Route only what is still open: the nets DRC lists as unconnected with `--nets`, or one area with `--component REF` or `--group BLOCK`.
+  `--list-groups --group-by sheet` lists the areas.
+- Read the run's last `JSON_SUMMARY_MIN` and `JSON_IMPROVEMENT_GATE` lines.
+  When the gate rejects a run, `kicad-route` writes the input board back. Change the placement or the flags before the next run, because the same command gets the same result.
+- Commit the board after each stage that passes DRC, so a bad run is one `git checkout` away.
+- Write board-generating scripts so that rerunning them gives the same board. They must never delete copper they didn't create.
+
+| Flag                                  | Use                                                           |
+| ------------------------------------- | ------------------------------------------------------------- |
+| `--quick 2`                           | Fast trial route to judge placement, not to ship              |
+| `--nets`, `--component`, `--group`    | Limit the run to some nets or one area                        |
+| `--preview`, `--preview-png FILE`     | Report what the run would change without writing it           |
+| `--undo`                              | Remove the scoped nets' copper, back to unrouted              |
+| `--rip-existing-nets PATTERN`         | Let the run rip routed nets that block the ones it routes     |
+| `--force-reroute`                     | Reroute the `--nets` scope from scratch                       |
+| `--keep-input-copper`                 | Treat copper already on the board as read-only                |
+| `--power-nets`, `--power-nets-widths` | Track widths in mm for each power-net pattern                 |
+| `--keep-away AGG:VICTIM:GAP`          | Soft extra gap between two net groups, on the same layer only |
+| `--json-out FILE`                     | Write the run's summary, with the gate's verdict, to a file   |
+
+Read `kicad-route --help` for the rest.
 
 ## Finishing the copper
 
