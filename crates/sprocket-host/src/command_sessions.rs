@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use sprocket_workspace::{CommandSessionManager, RunningCommand};
+use sprocket_workspace::{CommandContainer, CommandSessionManager, RunningCommand};
 use tokio::sync::{Mutex, watch};
 
 /// Owns command processes independently of the run that launched them. Scopes
@@ -12,9 +12,25 @@ pub struct ThreadCommandSessions {
     threads: Mutex<HashMap<(String, String), CommandSessionManager>>,
     stopped: AtomicBool,
     changes: watch::Sender<()>,
+    container: Option<CommandContainer>,
 }
 
 impl ThreadCommandSessions {
+    /// Processes that leave a command's process group live until `stop_all`, which kills them
+    /// when the OS can contain them.
+    pub fn new() -> Self {
+        let container = CommandContainer::create().unwrap_or_else(|error| {
+            tracing::warn!(
+                "processes that leave a command's process group will outlive the server: {error:#}"
+            );
+            None
+        });
+        Self {
+            container,
+            ..Self::default()
+        }
+    }
+
     pub async fn for_run(
         &self,
         user_id: &str,
@@ -33,6 +49,7 @@ impl ThreadCommandSessions {
             .or_insert_with(|| {
                 CommandSessionManager::new(workspace_root.clone(), log_directory)
                     .with_change_signal(self.changes.clone())
+                    .with_container(self.container.clone())
             })
             .clone()
             .with_workspace_root(workspace_root)
@@ -79,6 +96,11 @@ impl ThreadCommandSessions {
         self.stopped.store(true, Ordering::Release);
         let threads = std::mem::take(&mut *self.threads.lock().await);
         futures::future::join_all(threads.values().map(CommandSessionManager::stop_all)).await;
+        if let Some(container) = &self.container
+            && let Err(error) = container.kill().await
+        {
+            tracing::warn!("failed to stop processes left by commands: {error:#}");
+        }
     }
 }
 

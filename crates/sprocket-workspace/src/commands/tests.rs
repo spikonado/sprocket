@@ -9,6 +9,7 @@ use super::{
     CommandSession, CommandSessionManager, ObservationMode,
 };
 use crate::cancellation::WorkspaceCancellation;
+use crate::command_container::CommandContainer;
 use crate::command_output::OutputChannel;
 use crate::default_command_shell;
 use crate::test_support::temp_workspace;
@@ -1762,6 +1763,80 @@ async fn terminate_kills_the_whole_process_tree() {
         "background children must not outlive a terminated session"
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn container_kill_stops_processes_that_left_the_process_group() {
+    let container = match CommandContainer::create() {
+        Ok(Some(container)) => container,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("skipping, this machine can't contain commands: {error:#}");
+            return;
+        }
+    };
+    let root = temp_workspace();
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
+        .with_container(Some(container.clone()));
+    #[cfg(unix)]
+    let command = "setsid sh -c 'echo $$ > pid.txt; exec sleep 30' >/dev/null 2>&1 </dev/null &";
+    #[cfg(windows)]
+    let command = "Set-Content -Path pid.txt -Value (Start-Process -FilePath ping.exe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru).Id";
+    let (id, _started) = exec_running_with_timeout(&sessions, command, None).await;
+    let finished = poll(&sessions, &id, 10_000).await;
+    assert!(finished.success, "{finished:?}");
+
+    let pid = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(pid) = fs::read_to_string(root.join("pid.txt"))
+                .ok()
+                .and_then(|pid| pid.trim().parse::<u32>().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        process_is_alive(pid),
+        "the escaped job lives on after its shell exits"
+    );
+
+    container.kill().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while process_is_alive(pid) {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("container kill must stop the escaped job");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: the handle is checked for null and closed after the zero-timeout wait.
+    unsafe {
+        let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if process.is_null() {
+            return false;
+        }
+        let alive = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+        CloseHandle(process);
+        alive
+    }
 }
 
 #[tokio::test]
