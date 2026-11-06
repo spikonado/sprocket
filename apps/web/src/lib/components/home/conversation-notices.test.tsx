@@ -6,7 +6,7 @@ import PromptComposer from './prompt-composer';
 import { UsageLimitError } from '$lib/home/submission-tracker';
 
 const usageLimit =
-	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
+	"Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider.";
 
 function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}, key?: string) {
 	return (

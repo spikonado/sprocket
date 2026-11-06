@@ -210,8 +210,10 @@ async fn spawn_siwc_sse(
                 }
                 captured.push(CapturedSiwcRequest {
                     headers,
-                    body: serde_json::from_slice(&request[body_start..body_start + length])
-                        .unwrap(),
+                    body: serde_json::from_slice(
+                        &zstd::decode_all(&request[body_start..body_start + length]).unwrap(),
+                    )
+                    .unwrap(),
                 });
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\nx-request-id: req-siwc-{turn}\r\n\r\n{body}",
@@ -544,6 +546,7 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
             Some(format!("Bearer token-{turn}").as_str())
         );
         assert_eq!(header("content-type"), Some("application/json"));
+        assert_eq!(header("content-encoding"), Some("zstd"));
         assert_eq!(header("session_id"), Some("thread-1"));
         let body = &request.body;
         assert_eq!(body["model"], "gpt-5.3-codex");
@@ -647,7 +650,7 @@ async fn subscription_usage_limit_has_actionable_message_and_preserves_diagnosti
             );
             assert_eq!(
                 error.to_string(),
-                "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
+                "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider."
             );
             assert!(
                 error
