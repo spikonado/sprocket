@@ -20,7 +20,6 @@ import {
 import {
 	contextDevScrapeResponse,
 	createQueuedRun,
-	fixtureWorkId,
 	initConvexTest,
 	mockContextDevScrape,
 	seedOwnedThread,
@@ -196,18 +195,6 @@ describe('Exa search failures', () => {
 });
 
 describe('queued request job checks', () => {
-	it('rejects cloud-enqueued scrape jobs before calling context.dev', async () => {
-		const t = initConvexTest();
-		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('executorJobs', job.jobId, { cloudWorkId: fixtureWorkId('cloud-work') });
-		});
-
-		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-		expect(scrape).not.toHaveBeenCalled();
-	});
-
 	it('rejects an expired claim before calling context.dev', async () => {
 		const t = initConvexTest();
 		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });

@@ -132,6 +132,10 @@ Older threads store the context summary cutoff as `contextSummaryThroughPartNumb
 
 Older subscription rows, including operator grants and free bootstrap rows, lack `accessPhase`, so the schema keeps it optional and readers treat a missing phase as `'none'`. `migrations:backfillSubscriptionAccess` materializes `accessPhase` and `accessEndsAt` on those rows and schedules their expiry checks, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, make `accessPhase` required, drop the `?? 'none'` reads in `lib/tiers.ts`, `subscriptionExpiry.ts` and `subscriptionReconciliation.ts`, and remove the migration.
 
+### Hosted parse upload URLs
+
+`hostedParseRequests` rows from before `createUpload` stopped storing upload URLs carry `uploadUrl`, so the schema keeps it optional. The hourly `hostedParse.cleanupExpired` cron deletes every row within two hours of its creation. Drop the field from the schema in any deploy that lands two hours after this one.
+
 ### Retired Prava mandate rows
 
 `mandates` and `mandateCharges` are untyped tables kept only so the schema accepts their old rows. Remove both tables after `bunx convex run payments:deleteRetiredMandates` has emptied them on each deployment, and remove that mutation with them. Delete the unmounted `actionRetrier` component's data on each deployment at the same time.

@@ -31,10 +31,7 @@ export const requestJob = internalMutation({
 	handler: async (ctx, args) => {
 		const active = await claimedJobForActiveRun(ctx, args);
 
-		if (!active || active.job.status !== 'claimed' || active.job.cloudWorkId !== undefined)
-			return null;
-
-		if (active.job.kind !== 'scrape_url') return null;
+		if (!active || active.job.status !== 'claimed' || active.job.kind !== 'scrape_url') return null;
 
 		return { kind: active.job.kind, payload: active.job.payload };
 	}
@@ -46,14 +43,7 @@ async function findActiveRun(
 ) {
 	const active = await claimedJobForActiveRun(ctx, request);
 
-	if (
-		!active ||
-		active.job.kind !== 'scrape_url' ||
-		active.job.status !== 'claimed' ||
-		active.job.cloudWorkId !== undefined
-	) {
-		return null;
-	}
+	if (!active || active.job.kind !== 'scrape_url' || active.job.status !== 'claimed') return null;
 
 	return active.run;
 }
@@ -130,8 +120,8 @@ export async function readRequestResult(ctx: QueryCtx, args: RequestAccessArgs) 
 	if (request.status === 'failed')
 		return { status: 'failed' as const, error: request.error ?? 'Web request failed.' };
 
-	if (request.status === 'completed' && request.resultStorageId) {
-		const url = await ctx.storage.getUrl(request.resultStorageId);
+	if (request.status === 'completed') {
+		const url = request.resultStorageId && (await ctx.storage.getUrl(request.resultStorageId));
 
 		if (url) return { status: 'completed' as const, url };
 
@@ -265,16 +255,6 @@ export const cleanup = internalMutation({
 		const request = await ctx.db.get('webRequests', id);
 
 		if (request) await remove(ctx, request);
-
-		return null;
-	}
-});
-
-export const removeResult = internalMutation({
-	args: { storageId: v.id('_storage') },
-	returns: v.null(),
-	handler: async (ctx, { storageId }) => {
-		await ctx.storage.delete(storageId);
 
 		return null;
 	}
