@@ -32,7 +32,7 @@ impl NativeAuthManager {
             anyhow::ensure!(
                 session.devices.is_empty()
                     && session.remote_devices.is_empty()
-                    && session.pending.by_state.is_empty(),
+                    && !session.logins.values().any(LoginAttempt::in_progress),
                 "cancel pending sign-ins before changing the credential store"
             );
         }
@@ -116,7 +116,7 @@ impl NativeAuthManager {
             }
             let result = match polled {
                 Ok(Ok(response)) => manager
-                    .accept_login(response)
+                    .accept_login(response, None)
                     .await
                     .map_err(|error| format!("{error:#}")),
                 Ok(Err(_)) => {

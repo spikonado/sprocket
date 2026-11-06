@@ -294,10 +294,10 @@ async fn accepting_a_login_invalidates_other_pending_browser_and_device_flows() 
     manager.start_device_login("cli".into()).await.unwrap();
     let generation = manager.session.lock().await.login_generation;
     manager
-        .accept_login(authentication_response(
-            access_token(unix_time_secs() + 3600),
-            "fresh",
-        ))
+        .accept_login(
+            authentication_response(access_token(unix_time_secs() + 3600), "fresh"),
+            None,
+        )
         .await
         .unwrap();
     assert!(
@@ -744,10 +744,10 @@ async fn failed_login_persistence_does_not_change_local_sessions() {
     store.fail_save.store(true, Ordering::SeqCst);
 
     let error = manager
-        .accept_login(authentication_response(
-            access_token(unix_time_secs() + 3_600),
-            "refresh-new",
-        ))
+        .accept_login(
+            authentication_response(access_token(unix_time_secs() + 3_600), "refresh-new"),
+            None,
+        )
         .await
         .expect_err("failed persistence must reject the login");
 
@@ -760,6 +760,39 @@ async fn failed_login_persistence_does_not_change_local_sessions() {
     );
     assert!(!changes.has_changed().unwrap());
     assert_eq!(local.user(&local_session).as_deref(), Some("user_old"));
+}
+
+#[tokio::test]
+async fn failed_code_exchange_reports_why_sign_in_failed() {
+    let store = MemoryRefreshTokenStore::empty();
+    store.fail_save.store(true, Ordering::SeqCst);
+    let manager = manager_with_response(
+        store,
+        StatusCode::OK,
+        serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 3_600),
+            "refresh-new",
+        ))
+        .unwrap(),
+    )
+    .await;
+    let login = manager
+        .start_login("paired-session", NativeLoginFlow::SignIn)
+        .await
+        .unwrap();
+
+    assert!(
+        manager
+            .complete_login("authorization-code", &login.login_id)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        manager.status("paired-session").await,
+        NativeLoginStatus::Failed {
+            error: "credential store unavailable".to_string()
+        }
+    );
 }
 
 #[tokio::test]
