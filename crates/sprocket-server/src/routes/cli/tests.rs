@@ -40,7 +40,8 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
     };
     let first = call(&state, &token, "output", &request, "127.0.0.1:1000").await;
     assert_eq!(first.0, StatusCode::OK);
-    assert_eq!(first.1["status"], "running");
+    assert_eq!(first.1["status"], serde_json::Value::Null);
+    assert_eq!(first.1["executionFinished"], false);
     let mut request = request;
     request.after_revision = first.1["revision"].as_u64();
     let terminal = {
@@ -59,7 +60,8 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
             .unwrap()
     };
     assert_eq!(terminal.0, StatusCode::OK);
-    assert_eq!(terminal.1["status"], "unknown");
+    assert_eq!(terminal.1["status"], serde_json::Value::Null);
+    assert_eq!(terminal.1["error"], "unconfirmed finalization");
     assert_eq!(terminal.1["executionFinished"], true);
     assert_eq!(terminal.1["answer"], "");
     request.after_revision = None;

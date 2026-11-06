@@ -10,7 +10,7 @@ fn overlay(thread_id: &str, text: &str) -> LiveCompletionOverlay {
     LiveCompletionOverlay {
         thread_id: thread_id.to_string(),
         run_id: "run-1".to_string(),
-        run_status: "running".to_string(),
+        run_status: RunStatus::Running,
         stream_id: "stream-1".to_string(),
         text: text.to_string(),
         parts: vec![LiveAssistantPart::Text {

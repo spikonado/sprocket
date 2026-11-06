@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sprocket_convex::RunStatus;
 use sprocket_workspace::{WorkspaceCancellation, async_tools::ZeroPollCooldown};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
@@ -494,7 +495,7 @@ async fn run_subagent(
         .await?
     };
 
-    if created.status == "queued" {
+    if created.status == RunStatus::Queued {
         launch_queued_child(
             launcher,
             context,
@@ -545,7 +546,7 @@ async fn launch_queued_child(
         context
             .runtime
             .with_execution_secret(child_execution_secret.to_string())
-            .finalize_queued_run(&created.run_id, &message, "failed", Some(&message))
+            .finalize_queued_run(&created.run_id, &message, RunStatus::Failed, Some(&message))
             .await
             .map_err(tool_error)?;
         return Err(tool_error(error));
@@ -788,7 +789,7 @@ impl ControlSubagentTool {
                 _ => None,
             };
             if let Some(queued) = queued {
-                if queued.status == "queued" {
+                if queued.status == RunStatus::Queued {
                     launch_queued_child(
                         require_launcher(&self.context)?,
                         &self.context,
@@ -806,18 +807,17 @@ impl ControlSubagentTool {
             YieldMode::Action.normalize(args.yield_time_ms, self.context.max_yield_ms);
         let mut result = if matches!(args.action, SubagentControlAction::Stop) {
             let stopped_run_id = response.stopped_run_id.as_deref();
-            if let Some(run_id) = stopped_run_id {
-                let updates = cancelled_read(
-                    &cancellation,
-                    watch_activity(&self.context, &args.thread_id, Some(run_id)),
-                )
-                .await?;
-                tokio::pin!(updates);
-                wait_for_final_status(&mut updates, &cancellation).await?;
-            }
-            let info = cancelled_read(
+            let info = wait_for_activity(
+                &self.context,
+                &args.thread_id,
+                stopped_run_id,
+                if stopped_run_id.is_some() {
+                    yield_time_ms
+                } else {
+                    0
+                },
                 &cancellation,
-                fetch_monitor_info(&self.context, &args.thread_id, stopped_run_id),
+                |activity| activity.status.is_final(),
             )
             .await?;
             subagent_metadata(&info)
@@ -1053,9 +1053,15 @@ fn list_page_response(page: &SubagentListPage) -> serde_json::Value {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubagentActivity {
-    status: String,
+    status: RunStatus,
     active: bool,
     has_pending_questions: bool,
+}
+
+impl SubagentActivity {
+    fn settled(&self) -> bool {
+        self.has_pending_questions || !self.active
+    }
 }
 
 fn monitor_fields(thread_id: &str, target_run_id: Option<&str>) -> BTreeMap<String, Value> {
@@ -1105,14 +1111,40 @@ async fn wait_for_settlement(
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
+    wait_for_activity(
+        context,
+        thread_id,
+        None,
+        yield_time_ms,
+        cancellation,
+        SubagentActivity::settled,
+    )
+    .await
+}
+
+async fn wait_for_activity(
+    context: &AgentToolContext,
+    thread_id: &str,
+    target_run_id: Option<&str>,
+    yield_time_ms: u64,
+    cancellation: &WorkspaceCancellation,
+    done: fn(&SubagentActivity) -> bool,
+) -> Result<SubagentMonitorInfo, ToolExecutionError> {
     if yield_time_ms > 0 {
         let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
-        let updates =
-            cancelled_read(cancellation, watch_activity(context, thread_id, None)).await?;
+        let updates = cancelled_read(
+            cancellation,
+            watch_activity(context, thread_id, target_run_id),
+        )
+        .await?;
         tokio::pin!(updates);
-        wait_for_settlement_using(&mut updates, deadline, cancellation).await?;
+        wait_for_activity_using(&mut updates, deadline, cancellation, done).await?;
     }
-    cancelled_read(cancellation, fetch_monitor_info(context, thread_id, None)).await
+    cancelled_read(
+        cancellation,
+        fetch_monitor_info(context, thread_id, target_run_id),
+    )
+    .await
 }
 
 async fn cancelled_read<T>(
@@ -1142,10 +1174,11 @@ where
     .await
 }
 
-async fn wait_for_settlement_using<S>(
+async fn wait_for_activity_using<S>(
     updates: &mut S,
     deadline: Instant,
     cancellation: &WorkspaceCancellation,
+    done: fn(&SubagentActivity) -> bool,
 ) -> Result<(), ToolExecutionError>
 where
     S: Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin,
@@ -1156,25 +1189,7 @@ where
             activity = next_activity(updates, cancellation) => activity?,
             _ = sleep_until(deadline) => return Ok(()),
         };
-        if activity.has_pending_questions || !activity.active {
-            return Ok(());
-        }
-    }
-}
-
-async fn wait_for_final_status<S>(
-    updates: &mut S,
-    cancellation: &WorkspaceCancellation,
-) -> Result<(), ToolExecutionError>
-where
-    S: Stream<Item = Result<SubagentActivity, ToolExecutionError>> + Unpin,
-{
-    loop {
-        let activity = next_activity(updates, cancellation).await?;
-        if matches!(
-            activity.status.as_str(),
-            "completed" | "failed" | "cancelled"
-        ) {
+        if done(&activity) {
             return Ok(());
         }
     }

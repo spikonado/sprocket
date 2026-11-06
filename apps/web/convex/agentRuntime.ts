@@ -44,7 +44,6 @@ import {
 	PAYMENTS_MOVED_TO_AGENTCARD,
 	RUN_ABANDONED_BY_MACHINE,
 	agentError,
-	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
@@ -62,14 +61,15 @@ import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, hydratePromptUrls } from '@convex/lib/transcriptParts';
 import { runStartedAt } from '@convex/lib/runs';
 import {
+	assertRunAcceptsWork,
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isClaimedRunStatus,
 	isCurrentCompletionAttempt,
-	isRunClaimLeaseActive,
 	ownsActiveRunClaim,
+	runAcceptsNewWork,
 	RUN_CLAIM_LEASE_DURATION_MS
 } from '@convex/lib/runLease';
 import {
@@ -242,10 +242,7 @@ export const issueGatewayCredential = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (
-			run.cancellationRequestedAt !== undefined ||
-			!ownsActiveRunClaim(run, args.claimId, Date.now())
-		) {
+		if (!runAcceptsNewWork(run, args.claimId, Date.now())) {
 			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 
@@ -667,12 +664,7 @@ export const fallBackToProvider = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (
-			run.cancellationRequestedAt !== undefined ||
-			!ownsActiveRunClaim(run, args.claimId, Date.now())
-		) {
-			return false;
-		}
+		if (!runAcceptsNewWork(run, args.claimId, Date.now())) return false;
 
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 
@@ -709,11 +701,7 @@ export async function registerCompletionAttemptHandler(
 	args: ObjectType<typeof registerCompletionAttemptArgs>
 ) {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-	assertRunAcceptsModelCompletion(run);
-
-	if (!isRunClaimLeaseActive(run, Date.now())) {
-		throw agentError('RUN_NO_LONGER_ACTIVE');
-	}
+	assertRunAcceptsWork(run, args.claimId, Date.now());
 
 	if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 		throw agentError('COMPLETION_STREAM_SUPERSEDED');
@@ -780,11 +768,7 @@ export const finalizeCompletionCall = mutation({
 	returns: v.union(schema.doc('threadTranscriptParts'), v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run);
-
-		if (!isRunClaimLeaseActive(run, Date.now())) {
-			throw agentError('RUN_NO_LONGER_ACTIVE');
-		}
+		assertRunAcceptsWork(run, args.claimId, Date.now());
 
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			return null;
@@ -1071,11 +1055,7 @@ export async function beginToolJobHandler(
 ) {
 	try {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run);
-
-		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-			throw agentError('RUN_NO_LONGER_ACTIVE');
-		}
+		assertRunAcceptsWork(run, args.claimId, Date.now());
 
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw agentError('COMPLETION_STREAM_SUPERSEDED');

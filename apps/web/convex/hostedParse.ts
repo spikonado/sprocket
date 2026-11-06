@@ -22,9 +22,9 @@ import {
 	shortHostedParseError,
 	vHostedParseClientStatus
 } from '@convex/lib/hostedParse';
-import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { assertRunAcceptsWork, runAcceptsNewWork } from '@convex/lib/runLease';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import { isRunFinalStatus, registeredFileUploadError } from '@convex/lib/validators';
+import { registeredFileUploadError } from '@convex/lib/validators';
 import { firecrawlPool } from '@convex/lib/webPools';
 
 const CLEANUP_BATCH_SIZE = 100;
@@ -240,10 +240,8 @@ export const getResult = query({
 			!job ||
 			job.runId !== run._id ||
 			isSettledExecutorJobStatus(job.status) ||
-			!ownsActiveRunClaim(run, request.claimId, Date.now()) ||
-			request.expiresAt <= Date.now() ||
-			run.cancellationRequestedAt !== undefined ||
-			isRunFinalStatus(run.status)
+			!runAcceptsNewWork(run, request.claimId, Date.now()) ||
+			request.expiresAt <= Date.now()
 		) {
 			return { status: 'failed' as const, error: 'Parse was cancelled.' };
 		}
@@ -314,9 +312,7 @@ export const getParseWork = internalQuery({
 
 		if (
 			!run ||
-			isRunFinalStatus(run.status) ||
-			run.cancellationRequestedAt !== undefined ||
-			!ownsActiveRunClaim(run, args.claimId, Date.now()) ||
+			!runAcceptsNewWork(run, args.claimId, Date.now()) ||
 			request.expiresAt <= Date.now()
 		) {
 			return null;
@@ -356,9 +352,7 @@ export const completeHostedParse = internalMutation({
 			job.runId !== args.context.runId ||
 			isSettledExecutorJobStatus(job.status) ||
 			!run ||
-			isRunFinalStatus(run.status) ||
-			run.cancellationRequestedAt !== undefined ||
-			!ownsActiveRunClaim(run, args.context.claimId, Date.now()) ||
+			!runAcceptsNewWork(run, args.context.claimId, Date.now()) ||
 			request.expiresAt <= Date.now();
 
 		const claimMismatch = request.claimId !== args.context.claimId;
@@ -481,13 +475,7 @@ async function requireActiveParseJob(
 ) {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-	if (run.cancellationRequestedAt !== undefined) {
-		throw agentError('RUN_CANCELLED');
-	}
-
-	if (isRunFinalStatus(run.status) || !ownsActiveRunClaim(run, args.claimId, Date.now())) {
-		throw agentError('RUN_NO_LONGER_ACTIVE');
-	}
+	assertRunAcceptsWork(run, args.claimId, Date.now());
 
 	const job = await ctx.db.get('executorJobs', args.jobId);
 

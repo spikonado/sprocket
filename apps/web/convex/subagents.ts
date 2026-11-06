@@ -34,7 +34,7 @@ import {
 import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreate';
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
-import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
@@ -138,11 +138,7 @@ async function submissionRun(
 
 async function requireLiveCallerRun(ctx: MutationCtx, args: Infer<typeof vCallerRun>) {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-	assertRunAcceptsModelCompletion(run);
-
-	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-		throw agentError('RUN_NO_LONGER_ACTIVE');
-	}
+	assertRunAcceptsWork(run, args.claimId, Date.now());
 
 	return run;
 }

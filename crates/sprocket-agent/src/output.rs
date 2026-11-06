@@ -3,13 +3,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use sprocket_convex::RunStatus;
 use tokio::sync::watch;
 
 use sprocket_transcript::{TranscriptPart, TranscriptStore};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunOutcome {
-    pub status: String,
+    pub status: RunStatus,
     pub error: Option<String>,
 }
 
@@ -42,7 +43,9 @@ pub struct RunOutputPage {
     pub parts: Vec<TranscriptPart>,
     pub has_more: bool,
     pub finished: bool,
-    pub outcome: Option<RunOutcome>,
+    /// `None` until execution finishes with a confirmed final status.
+    pub status: Option<RunStatus>,
+    pub error: Option<String>,
     pub answer: String,
     pub output_error: Option<String>,
 }
@@ -138,7 +141,7 @@ impl RunOutput {
 
     pub(crate) fn finalized(&self, outcome: RunOutcome, accepted: bool) {
         self.update(|state| {
-            if outcome.status == "completed" && !accepted && state.outcome.is_none() {
+            if outcome.status == RunStatus::Completed && !accepted && state.outcome.is_none() {
                 state.answer.clear();
                 state.output_error = Some("The run completed without accepting this executor's finalization. Its final answer could not be confirmed.".into());
             }
@@ -178,18 +181,12 @@ impl RunOutput {
             } else {
                 Vec::new()
             };
-            let outcome = if state.finished {
-                Some(state.outcome.clone().unwrap_or(RunOutcome {
-                    status: "unknown".into(),
-                    error: state.error.clone(),
-                }))
-            } else {
-                None
+            let (status, error) = match (&state.outcome, state.finished) {
+                (_, false) => (None, None),
+                (Some(outcome), true) => (Some(outcome.status), outcome.error.clone()),
+                (None, true) => (None, state.error.clone()),
             };
-            let answer = if outcome
-                .as_ref()
-                .is_some_and(|outcome| outcome.status == "completed")
-            {
+            let answer = if status == Some(RunStatus::Completed) {
                 state.answer.clone()
             } else {
                 String::new()
@@ -199,7 +196,8 @@ impl RunOutput {
                 has_more: numbers.len() > 16,
                 parts: Vec::new(),
                 finished: state.finished,
-                outcome,
+                status,
+                error,
                 answer,
                 output_error: state.output_error.clone(),
             };

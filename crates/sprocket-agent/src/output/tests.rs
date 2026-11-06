@@ -51,7 +51,7 @@ async fn caches_committed_parts_and_replays_bounded_pages_without_network_reads(
     assert_eq!(first.parts, replay.parts);
     output.finalized(
         RunOutcome {
-            status: "completed".into(),
+            status: RunStatus::Completed,
             error: None,
         },
         true,
@@ -80,7 +80,8 @@ async fn clearing_live_output_does_not_complete_a_run_and_unconfirmed_exit_is_un
     output.finish(Some("finalization timed out".into()));
     let page = output.page(-1).await.unwrap();
     assert!(page.finished);
-    assert_eq!(page.outcome.unwrap().status, "unknown");
+    assert_eq!(page.status, None);
+    assert_eq!(page.error.as_deref(), Some("finalization timed out"));
     assert!(page.answer.is_empty());
 }
 
@@ -92,7 +93,7 @@ async fn cancelled_and_empty_completions_do_not_return_earlier_commentary() {
     output.empty_completion();
     output.finalized(
         RunOutcome {
-            status: "completed".into(),
+            status: RunStatus::Completed,
             error: None,
         },
         true,
@@ -107,7 +108,7 @@ async fn cancelled_and_empty_completions_do_not_return_earlier_commentary() {
         .await;
     cancelled.finalized(
         RunOutcome {
-            status: "cancelled".into(),
+            status: RunStatus::Cancelled,
             error: None,
         },
         false,
@@ -115,7 +116,7 @@ async fn cancelled_and_empty_completions_do_not_return_earlier_commentary() {
     cancelled.finish(None);
     let page = cancelled.page(-1).await.unwrap();
     assert!(page.answer.is_empty());
-    assert_eq!(page.outcome.unwrap().status, "cancelled");
+    assert_eq!(page.status, Some(RunStatus::Cancelled));
 }
 
 #[tokio::test]
@@ -130,7 +131,7 @@ async fn tool_commentary_and_other_runs_cannot_become_the_final_answer() {
     output.record_part(other).await;
     output.finalized(
         RunOutcome {
-            status: "completed".into(),
+            status: RunStatus::Completed,
             error: None,
         },
         true,
@@ -150,14 +151,14 @@ async fn another_executors_completion_cannot_confirm_the_local_answer() {
         .await;
     output.finalized(
         RunOutcome {
-            status: "completed".into(),
+            status: RunStatus::Completed,
             error: None,
         },
         false,
     );
     output.finish(Some("claim ownership was lost".into()));
     let page = output.page(-1).await.unwrap();
-    assert_eq!(page.outcome.unwrap().status, "completed");
+    assert_eq!(page.status, Some(RunStatus::Completed));
     assert!(
         page.output_error
             .unwrap()
@@ -173,14 +174,14 @@ async fn failed_cache_writes_preserve_the_acknowledged_answer_and_terminal_statu
     output.record_part(completion(1, "Confirmed answer.")).await;
     output.finalized(
         RunOutcome {
-            status: "completed".into(),
+            status: RunStatus::Completed,
             error: None,
         },
         true,
     );
     output.finish(None);
     let page = output.page(-1).await.unwrap();
-    assert_eq!(page.outcome.unwrap().status, "completed");
+    assert_eq!(page.status, Some(RunStatus::Completed));
     assert_eq!(page.answer, "Confirmed answer.");
     assert!(page.output_error.unwrap().contains("Could not cache"));
     assert!(page.parts.is_empty());
@@ -194,7 +195,7 @@ async fn lost_cache_files_do_not_erase_a_confirmed_result_or_restart_paging() {
     output.record_part(completion(1, "Confirmed answer.")).await;
     output.finalized(
         RunOutcome {
-            status: "completed".into(),
+            status: RunStatus::Completed,
             error: None,
         },
         true,
@@ -203,7 +204,7 @@ async fn lost_cache_files_do_not_erase_a_confirmed_result_or_restart_paging() {
     tokio::fs::remove_dir_all(directory.path()).await.unwrap();
     for _ in 0..2 {
         let page = output.page(-1).await.unwrap();
-        assert_eq!(page.outcome.unwrap().status, "completed");
+        assert_eq!(page.status, Some(RunStatus::Completed));
         assert_eq!(page.answer, "Confirmed answer.");
         assert!(page.output_error.unwrap().contains("Could not read"));
         assert!(page.parts.is_empty());
