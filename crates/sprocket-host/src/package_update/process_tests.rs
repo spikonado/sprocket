@@ -263,6 +263,43 @@ echo '{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":n
 }
 
 #[tokio::test]
+async fn install_queued_behind_a_check_runs_only_when_an_update_is_available() {
+    for (check_status, version, settled, calls) in [
+        (
+            "available",
+            "\"1.1.0\"",
+            UpdateStatus::Installed,
+            "check\ninstall\n",
+        ),
+        ("idle", "null", UpdateStatus::Idle, "check\n"),
+    ] {
+        let dir = TempDir::new("sprocket-update-queued-install");
+        let (node, script) = write_helper(
+            dir.path(),
+            &format!(
+                r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
+if [ "$1" = check ]; then
+  sleep 0.3
+  echo '{{"status":"{check_status}","currentVersion":"1.0.0","version":{version},"error":null,"method":"package"}}'
+else
+  echo '{{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":null,"method":"package"}}'
+fi"#
+            ),
+        );
+        let manager = PackageUpdateManager::with_helper(node, script);
+        let check = {
+            let manager = Arc::clone(&manager);
+            tokio::spawn(async move { manager.status().await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(manager.install().await.status, UpdateStatus::Installing);
+        check.await.unwrap();
+        assert_eq!(wait_until_settled(&manager).await.status, settled);
+        assert_eq!(fs::read_to_string(dir.path().join("calls")).unwrap(), calls);
+    }
+}
+
+#[tokio::test]
 async fn concurrent_installs_coalesce_instead_of_rerunning() {
     let dir = TempDir::new("sprocket-update-coalesce");
     let (node, script) = write_helper(
