@@ -145,6 +145,8 @@ export class ArtifactPanel implements Store<number> {
 			this.#emit();
 		} else if (!args.cloudReady) {
 			this.#cloud = { ...this.#cloud, stale: true };
+			this.watchState = mergeArtifactSources(this.#cloud, this.#local);
+			this.#emit();
 		}
 
 		if (!args.scope) return;
@@ -167,7 +169,12 @@ export class ArtifactPanel implements Store<number> {
 		};
 
 		const stopCloud = args.cloudReady
-			? watchCloudArtifacts(args.artifactClient, cloudScope, (cloud) => publish({ cloud }))
+			? watchCloudArtifacts(
+					args.artifactClient,
+					cloudScope,
+					(cloud) => publish({ cloud }),
+					this.#cloud.artifacts
+				)
 			: () => {};
 
 		if (args.localApi && args.scope.workspacePath) {

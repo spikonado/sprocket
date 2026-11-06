@@ -125,7 +125,7 @@ describe('cloud artifact subscriptions', () => {
 		expect(fixture.unsubscribe).toHaveBeenCalledOnce();
 	});
 
-	it('rejects mixed-revision pages and retries without publishing a partial list', async () => {
+	it('rejects mixed-revision pages and retries while keeping the retained list', async () => {
 		vi.useFakeTimers();
 		const fixture = clientFixture();
 		fixture.query.mockResolvedValueOnce({
@@ -143,16 +143,29 @@ describe('cloud artifact subscriptions', () => {
 		fixture.query.mockResolvedValue({ page: [], isDone: true, continueCursor: '', revision: 2 });
 		const publish = vi.fn();
 
+		const retained = [
+			{
+				_id: 'kept',
+				userId: 'alice',
+				repositoryKey: 'repo',
+				content: 'kept',
+				title: 'Notes',
+				revision: 1,
+				updatedAt: 1
+			}
+		];
+
 		const stop = watchCloudArtifacts(
 			fixture.client,
 			{ userId: 'alice', repositoryKey: 'repo' },
-			publish
+			publish,
+			retained
 		);
 
 		fixture.update();
 		await vi.advanceTimersByTimeAsync(0);
 		expect(publish).toHaveBeenLastCalledWith({
-			artifacts: [],
+			artifacts: retained,
 			stale: true,
 			error: expect.stringContaining('changed')
 		});
