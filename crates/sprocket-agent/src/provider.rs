@@ -37,7 +37,7 @@ use crate::types::{
     ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
     UsagePricing, gateway_api_v1_url,
 };
-use crate::usage::{ModelCallUsage, UsageSource};
+use crate::usage::UsageSource;
 use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
 
 const AGENT_MAX_TURNS: usize = 1_000;
@@ -80,6 +80,35 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
         }
         Some(FinishReason::Stop | FinishReason::ToolCalls) | None => None,
         Some(reason) => Some(anyhow!("The model stopped unexpectedly: {reason:?}")),
+    }
+}
+
+/// A provider-switch handoff writes on the previous provider.
+fn usage_source(
+    target: &AgentProvider,
+    fast_mode: bool,
+    pricing: &UsagePricing,
+    handoff: Option<(&ProviderHandoff, &UsagePricing)>,
+) -> UsageSource {
+    let (provider, model, fast, pricing) = match handoff {
+        Some((handoff, pricing)) => (
+            handoff.completion_provider,
+            &handoff.selected_model,
+            handoff.fast_mode,
+            pricing,
+        ),
+        None => (
+            target.completion_provider,
+            &target.model,
+            fast_mode,
+            pricing,
+        ),
+    };
+    UsageSource {
+        provider,
+        model: model.clone(),
+        fast: fast && provider.serves_fast_mode(),
+        pricing: pricing.clone(),
     }
 }
 
@@ -638,8 +667,8 @@ async fn run_with_completion_model(
         &request.run_id,
         &request.thread_id,
         request.share_conversation_content,
+        target.completion_provider,
     );
-    let initial_provider = target.completion_provider;
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
@@ -665,7 +694,6 @@ async fn run_with_completion_model(
     let mut streamed_text = String::new();
     let mut observed_calls = 0;
     let mut completed_attempt = None;
-    let mut handoff_calls: Vec<ModelCallUsage> = Vec::new();
 
     if request.omit_prior_reasoning {
         match runtime
@@ -697,6 +725,20 @@ async fn run_with_completion_model(
         }
         prompt = handoff_prompt();
         context_handoff_hook.start_handoff();
+    }
+
+    macro_rules! current_usage_source {
+        () => {
+            usage_source(
+                &target,
+                request.fast_mode,
+                &request.usage_pricing,
+                provider_switch
+                    .as_ref()
+                    .filter(|_| context_handoff_hook.is_writing())
+                    .map(|handoff| (handoff, &request.handoff_usage_pricing)),
+            )
+        };
     }
 
     macro_rules! continue_without_handoff {
@@ -731,7 +773,6 @@ async fn run_with_completion_model(
                     before_prompt = false;
                     additional_params = target_params(&target);
                     context_handoff_hook.restart();
-                    handoff_calls.clear();
                     final_text.clear();
                     final_response_received = false;
                     streamed_text.clear();
@@ -860,44 +901,24 @@ async fn run_with_completion_model(
                                 if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 completed_attempt = Some(transcript.attempt_seq());
-                                let (provider, model, fast, pricing) = match provider_switch
-                                    .as_ref()
-                                    .filter(|_| context_handoff_hook.is_writing())
+                                let source = current_usage_source!();
+                                generation_tracker.capture(
+                                    call.call_index + 1,
+                                    &source,
+                                    context_handoff_hook.is_writing(),
+                                    call.usage,
+                                    call.finish_reason.as_ref(),
+                                );
+                                if let Some(call_usage) = source.call_usage(call.usage)
+                                    && let Err(error) = runtime.record_model_call(
+                                        &request.run_id, &request.claim_id, observed_calls, &call_usage,
+                                    ).await
                                 {
-                                    Some(handoff) => (
-                                        handoff.completion_provider,
-                                        &handoff.selected_model,
-                                        handoff.fast_mode,
-                                        &request.handoff_usage_pricing,
-                                    ),
-                                    None => (
-                                        target.completion_provider,
-                                        &target.model,
-                                        request.fast_mode,
-                                        &request.usage_pricing,
-                                    ),
-                                };
-                                let usage_source = UsageSource {
-                                    provider,
-                                    model: model.clone(),
-                                    fast: fast && provider.serves_fast_mode(),
-                                    pricing: pricing.clone(),
-                                };
-                                let call_usage = usage_source.call_usage(call.usage);
-                                generation_tracker.capture(crate::analytics::GenerationCall {
-                                    turn: call.call_index + 1,
-                                    provider,
-                                    model,
-                                    usage: call.usage,
-                                    finish_reason: call.finish_reason.as_ref(),
-                                    context_handoff: context_handoff_hook.is_writing(),
-                                    provider_fallback: provider != initial_provider,
-                                });
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
                                 let tokens = context_handoff_hook.record_usage(call.usage);
-                                if context_handoff_hook.is_writing() {
-                                    handoff_calls.extend(call_usage);
-                                } else {
-                                    transcript.record_usage(tokens, call_usage);
+                                if !context_handoff_hook.is_writing() {
+                                    transcript.record_context_tokens(tokens);
                                     transcript.record_stream_parts();
                                     pending_origin_turn = Some(call.call_index + 1);
                                 }
@@ -979,7 +1000,6 @@ async fn run_with_completion_model(
                                 let handoff = ContextHandoffWrite {
                                     summary: &summary,
                                     completion_attempt_seq: transcript.attempt_seq(),
-                                    handoff_calls: &handoff_calls,
                                 };
                                 let begin = if before_prompt { pending_begin.take() } else { None };
                                 let save = async {
@@ -1018,7 +1038,6 @@ async fn run_with_completion_model(
                                     additional_params = target_params(&target);
                                 }
                                 context_handoff_hook.restart();
-                                handoff_calls.clear();
                                 final_text.clear();
                                 final_response_received = false;
                                 streamed_text.clear();
@@ -1061,8 +1080,12 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(_)) => {}
                             Some(Err(error)) => {
+                                generation_tracker.capture_failure(
+                                    &current_usage_source!(),
+                                    context_handoff_hook.is_writing(),
+                                    &error,
+                                );
                                 if let Some(handoff_history) = context_handoff_hook.take_handoff_history() {
-                                    handoff_calls.clear();
                                     history = handoff_history;
                                     prompt = handoff_prompt();
                                     context_handoff_hook.start_handoff();

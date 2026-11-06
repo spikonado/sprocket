@@ -58,11 +58,11 @@ fn generation_properties_describe_the_call() {
     usage.input_tokens = Some(120);
     usage.output_tokens = Some(30);
     let call = GenerationCall {
-        turn: 1,
         provider: CompletionProvider::Spikonado,
         model: "gpt-5",
         usage,
         finish_reason: None,
+        error: None,
         context_handoff: true,
         provider_fallback: false,
     };
@@ -75,6 +75,17 @@ fn generation_properties_describe_the_call() {
     assert_eq!(properties["$ai_span_name"], "context_handoff");
     assert!(!properties.contains_key("$ai_cache_read_input_tokens"));
     assert!(!properties.contains_key("$ai_input"));
+
+    let failed = GenerationCall {
+        usage: Usage::default(),
+        error: Some("connection reset".to_string()),
+        ..call
+    };
+    let properties = generation_properties("run-1", "thread-1", &failed, None);
+
+    assert_eq!(properties["$ai_is_error"], true);
+    assert_eq!(properties["$ai_error"], "connection reset");
+    assert!(!properties.contains_key("$ai_input_tokens"));
 }
 
 #[test]

@@ -64,6 +64,10 @@ Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `sub
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
 
+### Model call usage on transcript writes
+
+Released agents send each call's usage as `usage.call` on `agentRuntime.finalizeCompletionCall` and as `handoffCalls` on `saveContextHandoff` and `beginRun`. Current agents send it to `agentRuntime.recordModelCall` when the call completes. Remove `usage.call`, `handoffCalls` and the code that records them once those agents age out.
+
 ### Question result booleans
 
 Released agents complete `ask_question` and `poll_question` jobs with `pending`, `timedOut` and `skipped` booleans and `answer.optionLabel`, in place of `status`. `vPollQuestionResult` and `vAskQuestionResult` accept both shapes. Once those agents age out, migrate stored job results to `status`, drop `optionLabel` from them, and remove the boolean variants.

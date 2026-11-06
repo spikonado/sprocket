@@ -81,24 +81,17 @@ pub(crate) enum FailedStartCleanup {
 pub(crate) struct ContextHandoffWrite<'a> {
     pub(crate) summary: &'a str,
     pub(crate) completion_attempt_seq: u64,
-    pub(crate) handoff_calls: &'a [crate::usage::ModelCallUsage],
 }
 
 impl ContextHandoffWrite<'_> {
-    fn args(&self) -> anyhow::Result<BTreeMap<String, Value>> {
+    fn args(&self) -> BTreeMap<String, Value> {
         let mut args = BTreeMap::new();
         args.insert("summary".to_string(), self.summary.to_string().into());
         args.insert(
             "completionAttemptSeq".to_string(),
             Value::Float64(self.completion_attempt_seq as f64),
         );
-        if !self.handoff_calls.is_empty() {
-            args.insert(
-                "handoffCalls".to_string(),
-                Value::try_from(serde_json::to_value(self.handoff_calls)?)?,
-            );
-        }
-        Ok(args)
+        args
     }
 }
 
@@ -395,6 +388,23 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn record_model_call(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        call_seq: usize,
+        call: &crate::usage::ModelCallUsage,
+    ) -> anyhow::Result<()> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("callSeq".to_string(), Value::Float64(call_seq as f64));
+        args.insert(
+            "call".to_string(),
+            Value::try_from(serde_json::to_value(call)?)?,
+        );
+        self.mutation_unit("agentRuntime:recordModelCall", args)
+            .await
+    }
+
     pub(crate) async fn finalize_completion_call(
         &self,
         run_id: &str,
@@ -403,8 +413,7 @@ impl RuntimeClient {
         stream_id: &str,
         items: Vec<serde_json::Value>,
         assignments: crate::hooks::CompletionAssignments,
-        usage_tokens: Option<u64>,
-        call_usage: Option<&crate::usage::ModelCallUsage>,
+        context_tokens: Option<u64>,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
         let mut args = self.run_args_with_claim(run_id, claim_id);
@@ -426,12 +435,11 @@ impl RuntimeClient {
             "sections".to_string(),
             Value::try_from(serde_json::to_value(assignments.sections)?)?,
         );
-        if let Some(tokens) = usage_tokens {
-            let mut usage = serde_json::json!({ "contextTokens": tokens });
-            if let Some(call) = call_usage {
-                usage["call"] = serde_json::to_value(call)?;
-            }
-            args.insert("usage".to_string(), Value::try_from(usage)?);
+        if let Some(tokens) = context_tokens {
+            args.insert(
+                "usage".to_string(),
+                Value::try_from(serde_json::json!({ "contextTokens": tokens }))?,
+            );
         }
         let persisted: Option<PersistedTranscriptPart> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
@@ -514,7 +522,7 @@ impl RuntimeClient {
         workspace_context: &[HiddenPrompt],
     ) -> anyhow::Result<ClaimStatus> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
-        args.extend(handoff.args()?);
+        args.extend(handoff.args());
         if !workspace_context.is_empty() {
             args.insert(
                 "workspaceContext".to_string(),
@@ -540,7 +548,7 @@ impl RuntimeClient {
             Value::try_from(serde_json::to_value(workspace_context)?)?,
         );
         if let Some(handoff) = handoff {
-            args.insert("handoff".to_string(), Value::Object(handoff.args()?));
+            args.insert("handoff".to_string(), Value::Object(handoff.args()));
         }
         self.claim_mutation_with_retries("agentRuntime:beginRun", args)
             .await

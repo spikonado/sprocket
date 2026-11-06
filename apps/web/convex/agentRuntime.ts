@@ -465,6 +465,7 @@ export const completionActor = query({
 const vHandoffSummary = {
 	summary: v.string(),
 	completionAttemptSeq: v.number(),
+	/** Sent by released agents; current agents call `recordModelCall`. */
 	handoffCalls: v.optional(v.array(vModelCallUsage))
 };
 
@@ -728,6 +729,30 @@ export const registerCompletionAttempt = mutation({
 	handler: registerCompletionAttemptHandler
 });
 
+/** Counts every call the provider completed, including ones whose turn never reaches the transcript. */
+export const recordModelCall = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		callSeq: v.number(),
+		call: vModelCallUsage,
+		executionSecret: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+		await recordModelCallUsage(ctx, thread, {
+			runId: run._id,
+			eventId: `call:${args.claimId}:${args.callSeq}`,
+			call: args.call
+		});
+
+		return null;
+	}
+});
+
 export const finalizeCompletionCall = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -748,6 +773,7 @@ export const finalizeCompletionCall = mutation({
 			v.object({
 				contextTokens: v.number(),
 				processedTokens: v.optional(v.number()),
+				/** Sent by released agents; current agents call `recordModelCall`. */
 				call: v.optional(vModelCallUsage)
 			})
 		),
