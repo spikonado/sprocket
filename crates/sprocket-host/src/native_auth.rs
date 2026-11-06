@@ -873,7 +873,7 @@ fn is_transient_refresh_error(error: &workos::Error) -> bool {
 
 fn login_failure_message(error: &anyhow::Error) -> String {
     let Some(provider_error) = error.downcast_ref::<workos::Error>() else {
-        return error.to_string();
+        return format!("{error:#}");
     };
     match provider_error.request_id() {
         Some(request_id) => format!("WorkOS sign-in failed (request {request_id})"),
