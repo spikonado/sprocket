@@ -24,6 +24,8 @@ const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
 const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt");
 const KIPY_API: &str = include_str!("../../../tools/kicad/kipy-api.py");
 const KIPY_API_FILE: &str = "kipy-api.py";
+const KICAD_VIEW: &str = include_str!("../../../tools/kicad/kicad-view.py");
+const KICAD_VIEW_FILE: &str = "kicad-view.py";
 const LIBRARIES_FILE: &str = "libraries-dir";
 const ROUTING_TOOLS_DIR: &str = "routing-tools";
 /// KiCad doesn't read this name, so a KiCad started from an agent's shell keeps its own paths.
@@ -95,14 +97,27 @@ impl KiCadConnector {
         })
     }
 
-    /// Deletes what an install interrupted by a restart left behind and resyncs the launchers.
-    pub(crate) fn prepare(&self) {
-        let (root, pinned) = (self.root.clone(), self.release.version.clone());
-        tokio::task::spawn_blocking(move || {
-            if let Err(error) = repair_unless_installing(&root, &pinned) {
-                tracing::warn!("KiCad cleanup failed: {error}");
+    /// Deletes what an install interrupted by a restart left behind, resyncs the launchers,
+    /// and gives the pinned venv the packages `requirements.txt` gained since it was made.
+    pub(crate) fn prepare(self: &Arc<Self>) {
+        let connector = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(error) = connector.repair().await {
+                tracing::warn!("KiCad repair failed: {error:#}");
             }
         });
+    }
+
+    async fn repair(&self) -> anyhow::Result<()> {
+        let (root, pinned) = (self.root.clone(), self.release.version.clone());
+        tokio::task::spawn_blocking(move || repair_unless_installing(&root, &pinned)).await??;
+        let version_dir = self.version_dir();
+        if !is_dir(&version_dir).await {
+            return Ok(());
+        }
+        let _lock = acquire_lock(self.root.join(INSTALL_LOCK)).await?;
+        self.python.ensure_installed().await?;
+        self.install_requirements(&venv_python(&version_dir)).await
     }
 
     pub async fn status(&self) -> ConnectorStatus {
@@ -379,23 +394,7 @@ impl KiCadConnector {
         )
         .await?;
         let python = venv_python(staging);
-        let requirements = staging.join("requirements.txt");
-        tokio::fs::write(&requirements, REQUIREMENTS).await?;
-        run_checked(
-            "Installing kipy's dependencies",
-            Command::new(&uv)
-                .args([
-                    "pip",
-                    "install",
-                    "--no-config",
-                    "--require-hashes",
-                    "--python",
-                ])
-                .arg(&python)
-                .arg("-r")
-                .arg(&requirements),
-        )
-        .await?;
+        self.install_requirements(&python).await?;
         let kipy = &self.release.kipy;
         let wheel = staging.join(download_name(&kipy.url));
         download_atomic(&self.client, &kipy.url, &kipy.checksum, &wheel).await?;
@@ -407,9 +406,28 @@ impl KiCadConnector {
                 .arg(&wheel),
         )
         .await?;
-        tokio::fs::remove_file(requirements).await?;
         tokio::fs::remove_file(wheel).await?;
         Ok(())
+    }
+
+    async fn install_requirements(&self, python: &Path) -> anyhow::Result<()> {
+        let requirements = tempfile::Builder::new().suffix(".txt").tempfile()?;
+        tokio::fs::write(requirements.path(), REQUIREMENTS).await?;
+        run_checked(
+            "Installing kipy's dependencies",
+            Command::new(self.python.uv())
+                .args([
+                    "pip",
+                    "install",
+                    "--no-config",
+                    "--require-hashes",
+                    "--python",
+                ])
+                .arg(python)
+                .arg("-r")
+                .arg(requirements.path()),
+        )
+        .await
     }
 }
 
@@ -458,11 +476,40 @@ fn sync_launchers(root: &Path, version: Option<&str>) -> io::Result<()> {
         };
     };
     fs::create_dir_all(&target)?;
-    for entry in fs::read_dir(root.join(version).join(LAUNCHER_DIR))? {
+    let version_dir = root.join(version);
+    write_kicad_view(&version_dir)?;
+    for entry in fs::read_dir(version_dir.join(LAUNCHER_DIR))? {
         let entry = entry?;
         let temporary = target.join(format!(".{}.tmp", entry.file_name().to_string_lossy()));
         fs::copy(entry.path(), &temporary)?;
         fs::rename(&temporary, target.join(entry.file_name()))?;
+    }
+    Ok(())
+}
+
+/// Written at every sync instead of at install, so existing installs and Sprocket updates get
+/// the current `kicad-view`.
+fn write_kicad_view(version_dir: &Path) -> io::Result<()> {
+    let routing_tools = version_dir.join(ROUTING_TOOLS_DIR);
+    if !routing_tools.is_dir() {
+        return Ok(());
+    }
+    let (script, bin) = (
+        version_dir.join(KICAD_VIEW_FILE),
+        version_dir.join(LAUNCHER_DIR),
+    );
+    fs::write(&script, KICAD_VIEW)?;
+    let cli = bin.join(if cfg!(windows) {
+        "kicad-cli.cmd"
+    } else {
+        "kicad-cli"
+    });
+    for (name, contents) in
+        kicad_view_launchers(&cli, &venv_python(version_dir), &script, &routing_tools)
+    {
+        let path = bin.join(name);
+        fs::write(&path, contents)?;
+        set_executable(&path)?;
     }
     Ok(())
 }
@@ -625,7 +672,7 @@ fn launchers(
     kipy_api: &Path,
     route: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
-    let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', r"'\''"));
+    let quote = sh_quote;
     let script = |body: String| format!("#!/bin/sh\n{body}\n");
     let gui = if cfg!(target_os = "macos") {
         let app = cli.ancestors().nth(3).unwrap_or(cli);
@@ -673,7 +720,7 @@ fn cmd_launchers(
     kipy_api: &Path,
     route: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
-    let escape = |path: &Path| path.display().to_string().replace('%', "%%");
+    let escape = cmd_escape;
     let quote = |path: &Path| format!("\"{}\"", escape(path));
     let script = |setup: String, command: String| -> String {
         format!("@echo off\r\nsetlocal\r\n{setup}{command} %*\r\nexit /b %ERRORLEVEL%\r\n")
@@ -709,6 +756,45 @@ fn cmd_launchers(
         ));
     }
     launchers
+}
+
+fn kicad_view_launchers(
+    cli: &Path,
+    python: &Path,
+    script: &Path,
+    routing_tools: &Path,
+) -> Vec<(&'static str, String)> {
+    let mut launchers = vec![(
+        "kicad-view",
+        format!(
+            "#!/bin/sh\nexport KICAD_CLI={}\nexport SPROCKET_KICAD_ROUTING_TOOLS={}\nexec {} {} \"$@\"\n",
+            sh_quote(cli),
+            sh_quote(routing_tools),
+            sh_quote(python),
+            sh_quote(script)
+        ),
+    )];
+    if cfg!(windows) {
+        launchers.push((
+            "kicad-view.cmd",
+            format!(
+                "@echo off\r\nsetlocal\r\nset \"KICAD_CLI={}\"\r\nset \"SPROCKET_KICAD_ROUTING_TOOLS={}\"\r\n\"{}\" \"{}\" %*\r\nexit /b %ERRORLEVEL%\r\n",
+                cmd_escape(cli),
+                cmd_escape(routing_tools),
+                cmd_escape(python),
+                cmd_escape(script)
+            ),
+        ));
+    }
+    launchers
+}
+
+fn sh_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+}
+
+fn cmd_escape(path: &Path) -> String {
+    path.display().to_string().replace('%', "%%")
 }
 
 async fn write_launchers(bin: &Path, launchers: Vec<(&'static str, String)>) -> io::Result<()> {

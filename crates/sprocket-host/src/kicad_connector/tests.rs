@@ -43,6 +43,39 @@ fn reads_kicad_versions() {
     assert_eq!(major_minor("(9.0.2)"), Some((9, 0)));
 }
 
+#[cfg(unix)]
+#[test]
+fn syncing_gives_an_existing_install_kicad_view() {
+    let root = tempfile::tempdir().unwrap();
+    let version = root.path().join("10.99.0-1-gabcdef");
+    fs::create_dir_all(version.join(LAUNCHER_DIR)).unwrap();
+    fs::create_dir_all(version.join(ROUTING_TOOLS_DIR)).unwrap();
+    let python = venv_python(&version);
+    fs::create_dir_all(python.parent().unwrap()).unwrap();
+    fs::write(
+        &python,
+        "#!/bin/sh\nprintf '%s|' \"$KICAD_CLI\" \"$SPROCKET_KICAD_ROUTING_TOOLS\" \"$@\"\n",
+    )
+    .unwrap();
+    set_executable(&python).unwrap();
+
+    sync_launchers(root.path(), Some("10.99.0-1-gabcdef")).unwrap();
+
+    let output = std::process::Command::new(root.path().join("bin/kicad-view"))
+        .arg("a b")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!(
+            "{}|{}|{}|a b|",
+            version.join("bin/kicad-cli").display(),
+            version.join(ROUTING_TOOLS_DIR).display(),
+            version.join(KICAD_VIEW_FILE).display()
+        )
+    );
+}
+
 #[test]
 fn copies_only_missing_lib_tables() {
     let directory = tempfile::tempdir().unwrap();

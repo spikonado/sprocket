@@ -11,6 +11,7 @@ Use `kicad-cli` for checks and exports.
 - Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
 - The connector puts `kicad-python` (run API scripts with it), `kicad-cli`, `kicad`, `kipy-api`, and `kicad-route` on PATH. Call them by name.
 - `kipy-api <module> [name ...]` lists the installed kipy's classes, signatures, and enums.
+- `kicad-view board.kicad_pcb --box X Y W H -o area.png [--layers F.Cu,F.Fab] [--nets PATTERN ...] [--drc drc.json]` renders one area in mm as a PNG, with net names on pads and tracks and markers from a `kicad-cli pcb drc --format json` report. Use it to look at the board instead of writing a viewer.
 - KiCad's symbol, footprint, and 3D model libraries are in `$SPROCKET_KICAD_LIBRARIES`.
 
 ## Before editing
