@@ -237,6 +237,9 @@ function invalidateAuthGeneration() {
 	clearConvexRecovery();
 	authGeneration += 1;
 	nativeTokenInflight = null;
+	// Superseded sign-outs and Convex retries return early without settling these.
+	convexAuthRetryPending.set(false);
+	authState.update((current) => (current.isLoading ? { ...current, isLoading: false } : current));
 }
 
 function getAuthBootstrapClient() {
