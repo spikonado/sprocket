@@ -1,9 +1,9 @@
 use rig::completion::CompletionRequest;
 use rig::error::EncodeError;
 use rig::operation::Completion;
-use rig::providers::openai::OpenAIConfig;
 use rig::providers::openai::responses_api::{SystemInstructionsPlacement, wire::Responses};
 use rig::providers::openai::wire::Auth;
+use rig::providers::openai::{OpenAI, OpenAIConfig};
 use rig::wire::{Body, Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
 
@@ -13,10 +13,10 @@ pub(crate) fn transport_auth_config() -> OpenAIConfig {
 }
 
 pub(crate) fn stateless_responses_model(
-    provider: OpenAIConfig,
+    client: OpenAI,
     model: impl Into<String>,
 ) -> DynModel<Completion> {
-    let model = provider.client().responses(model);
+    let model = client.responses(model);
     Model::new(StatelessResponses(model.wire), model.transport).erase()
 }
 

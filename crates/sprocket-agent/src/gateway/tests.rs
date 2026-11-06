@@ -43,7 +43,13 @@ async fn completion_and_stream_use_the_refreshed_credential() {
                 .unwrap();
             let mut body = vec![0; content_length];
             socket.read_exact(&mut body).await.unwrap();
-            let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("\r\ncontent-encoding: zstd\r\n")
+            );
+            let request: serde_json::Value =
+                serde_json::from_slice(&zstd::decode_all(&body[..]).unwrap()).unwrap();
             assert_eq!(request["instructions"], "Base instructions.");
             assert_eq!(request["input"][0]["role"], "user");
             assert_eq!(request["input"][1]["role"], "developer");

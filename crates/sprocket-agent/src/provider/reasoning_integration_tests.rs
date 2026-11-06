@@ -464,7 +464,9 @@ async fn assert_openai_compatible_lifecycle_stream(nullable_status: Option<bool>
         .collect::<String>();
     let (base_url, server) = spawn_responses_sse(vec![body]);
     let model = stateless_responses_model(
-        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        openai::OpenAIConfig::new("test-key")
+            .with_base_url(&base_url)
+            .client(),
         "gateway-model",
     );
     let mut stream = model.stream(CompletionRequest::new("hello")).unwrap();
@@ -837,7 +839,9 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     }
     let (base_url, server) = spawn_responses_sse(bodies);
     let model = stateless_responses_model(
-        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        openai::OpenAIConfig::new("test-key")
+            .with_base_url(&base_url)
+            .client(),
         "gateway-model",
     );
     let tracker = ToolCallTracker::new("run", "claim");
@@ -1097,7 +1101,9 @@ async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
     ]);
     let origin_hook = super::CompletionOrigin::default();
     let agent = rig::AgentBuilder::new(stateless_responses_model(
-        openai::OpenAIConfig::new("test").with_base_url(url),
+        openai::OpenAIConfig::new("test")
+            .with_base_url(url)
+            .client(),
         "gateway-model",
     ))
     .dynamic_tool(DynamicTool::new(
@@ -1222,7 +1228,9 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
         output_items_sse(vec![message("msg_final", "The workspace is /workspace.")]),
     ]);
     let model = stateless_responses_model(
-        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        openai::OpenAIConfig::new("test-key")
+            .with_base_url(&base_url)
+            .client(),
         "gateway-model",
     );
     let agent = rig::AgentBuilder::new(model)
