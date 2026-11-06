@@ -37,7 +37,7 @@ Use `kicad-cli` for checks and exports.
 - DRC reports `lib_footprint_mismatch` on rotated footprints: the `orientation` setter truncates rotated coordinates by 1 nm.
   Pass `orientation=` to `place_footprint_from_library` instead.
 - DRC reports hundreds of `connection_width` violations after a zone fill: a new `Zone()` has 0 clearance and 0 mm thermal spokes.
-  Set both, as in [Copper pours](#copper-pours).
+  Set its clearance and a full pad connection, as in [Copper pours](#copper-pours).
 - KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
 - The Gerber job file lists placeholder dielectrics: kipy reads the stackup with `board.get_stackup()` but can't write it.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
@@ -78,7 +78,7 @@ board.create_items([zone])
 ## Routing
 
 Route the board with `kicad-route`.
-It reads clearances and widths from the `.kicad_pro`, and connects the pads of zone nets, like `GND`, to their pours, so draw the zones first.
+It reads clearances and widths from the `.kicad_pro`, and connects the pads of zone nets, like `GND`, to their pours.
 Put rule-area keepouts on every layer over switch nodes and other areas that traces must avoid before the first route.
 
 Right after placement, and before the schematic is final, judge the placement with a trial route:
@@ -96,12 +96,10 @@ For each round of fixes:
 - Read the run's last `JSON_SUMMARY_MIN` and `JSON_IMPROVEMENT_GATE` lines.
   When the gate rejects a run, `kicad-route` writes the input board back. Change the placement or the flags before the next run, because the same command gets the same result.
 - Commit the board after each stage that passes DRC, so a bad run is one `git checkout` away.
-- Write board-generating scripts so that rerunning them gives the same board. They must never delete copper they didn't create.
+- Write board-generating scripts to be idempotent, and have them delete only copper they created.
 
 | Flag                                  | Use                                                           |
 | ------------------------------------- | ------------------------------------------------------------- |
-| `--quick 2`                           | Fast trial route to judge placement, not to ship              |
-| `--nets`, `--component`, `--group`    | Limit the run to some nets or one area                        |
 | `--preview`, `--preview-png FILE`     | Report what the run would change without writing it           |
 | `--undo`                              | Remove the scoped nets' copper, back to unrouted              |
 | `--rip-existing-nets PATTERN`         | Let the run rip routed nets that block the ones it routes     |
@@ -109,7 +107,6 @@ For each round of fixes:
 | `--keep-input-copper`                 | Treat copper already on the board as read-only                |
 | `--power-nets`, `--power-nets-widths` | Track widths in mm for each power-net pattern                 |
 | `--keep-away AGG:VICTIM:GAP`          | Soft extra gap between two net groups, on the same layer only |
-| `--json-out FILE`                     | Write the run's summary, with the gate's verdict, to a file   |
 
 Read `kicad-route --help` for the rest.
 
