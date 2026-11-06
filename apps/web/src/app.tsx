@@ -1494,26 +1494,6 @@ export default function App({
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
 	}
 
-	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
-		try {
-			await renameThreadRecord({ threadId, title });
-		} catch (error) {
-			setCurrentError(error instanceof Error ? error.message : 'Failed to rename thread.');
-			throw error;
-		}
-	}
-
-	async function regenerateThreadTitle(threadId: Id<'threadRecords'>) {
-		try {
-			await regenerateThreadTitleRecord({ threadId });
-		} catch (error) {
-			setCurrentError(
-				error instanceof Error ? error.message : 'Failed to regenerate thread title.'
-			);
-			throw error;
-		}
-	}
-
 	async function loadOlderTranscript() {
 		await transcript.loadOlder();
 	}
@@ -1550,26 +1530,20 @@ export default function App({
 
 	async function changeInboxState(thread: Doc<'threadRecords'>, state: InboxState) {
 		const expectedUserId = signedInUserIdRef.current;
+		const request = { threadId: thread._id };
 
-		try {
-			const request = { threadId: thread._id };
+		if (state === 'settled') await settleThreadRecord(request);
+		else await unsettleThreadRecord(request);
 
-			if (state === 'settled') await settleThreadRecord(request);
-			else await unsettleThreadRecord(request);
-
-			if (signedInUserIdRef.current === expectedUserId) {
-				if (state === 'settled' && currentThreadIdRef.current === thread._id) {
-					setCurrentThreadId(null);
-					setDraftWorkspacePath(currentWorkspacePathRef.current);
-					bumpProjectSelectionGeneration();
-				}
-
-				setCurrentError(null);
-			}
-		} catch (error) {
-			if (signedInUserIdRef.current !== expectedUserId) return;
-			setCurrentError(error instanceof Error ? error.message : 'Failed to update thread.');
-			throw error;
+		if (
+			signedInUserIdRef.current === expectedUserId &&
+			state === 'settled' &&
+			currentThreadIdRef.current === thread._id
+		) {
+			setCurrentThreadId(null);
+			setDraftWorkspacePath(currentWorkspacePathRef.current);
+			bumpProjectSelectionGeneration();
+			setCurrentError(null);
 		}
 	}
 
@@ -2339,7 +2313,8 @@ export default function App({
 		setProjectSelection(
 			threadProject.workspacePath,
 			currentThreadId,
-			draftWorkspacePath === threadProject.workspacePath
+			draftWorkspacePath === threadProject.workspacePath,
+			true
 		);
 	});
 
@@ -2629,8 +2604,12 @@ export default function App({
 							onRemoveProject={localApi ? removeProject : undefined}
 							onSettings={() => openSettings()}
 							onChange={changeInboxState}
-							onRename={(thread, title) => renameThread(thread._id, title)}
-							onRegenerateTitle={(thread) => regenerateThreadTitle(thread._id)}
+							onRename={async (thread, title) => {
+								await renameThreadRecord({ threadId: thread._id, title });
+							}}
+							onRegenerateTitle={async (thread) => {
+								await regenerateThreadTitleRecord({ threadId: thread._id });
+							}}
 							onMove={async (thread, project) => {
 								await moveThreadRecord({
 									threadId: thread._id,
