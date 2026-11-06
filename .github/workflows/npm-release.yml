@@ -46,6 +46,7 @@ jobs:
       version: ${{ steps.version.outputs.value }}
       npm-tag: ${{ steps.version.outputs.npm-tag }}
       source-sha: ${{ steps.version.outputs.source-sha }}
+      release: ${{ steps.order.outputs.release }}
     steps:
       - name: Require default branch for manual dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -86,9 +87,32 @@ jobs:
           else
             echo "npm-tag=latest" >> "$GITHUB_OUTPUT"
           fi
+      - id: order
+        name: Skip dev builds older than the published dev release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_TAG: ${{ steps.version.outputs.npm-tag }}
+          SOURCE_SHA: ${{ steps.version.outputs.source-sha }}
+        run: |
+          # Reruns of older main builds would otherwise move the dev tag back.
+          release=true
+          if [[ "$NPM_TAG" == "dev" ]]; then
+            published="$(npm view usesprocket@dev version 2>/dev/null || true)"
+            published_sha="${published##*-dev.}"
+            if [[ "$published_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$published_sha...$SOURCE_SHA" --jq .status)"
+              if [[ "$status" == "behind" || "$status" == "identical" ]]; then
+                echo "Skipping $SOURCE_SHA because the dev release $published is the same or newer."
+                release=false
+              fi
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
   web:
     needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -110,6 +134,7 @@ jobs:
 
   native:
     needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
