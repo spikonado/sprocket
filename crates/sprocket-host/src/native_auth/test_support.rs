@@ -68,11 +68,10 @@ impl NativeAuthManager {
 
     pub async fn expire_login_for_test(&self, session_token: &str) {
         let mut session = self.session.lock().await;
-        let Some(state) = session.pending.by_session.get(session_token).cloned() else {
-            return;
-        };
-        if let Some(pending) = session.pending.by_state.get_mut(&state) {
-            pending.created_at = Instant::now() - LOGIN_ATTEMPT_TTL - Duration::from_secs(1);
+        if let Some(LoginAttempt::Pending { started_at, .. }) =
+            session.logins.get_mut(session_token)
+        {
+            *started_at = Instant::now() - LOGIN_ATTEMPT_TTL - Duration::from_secs(1);
         }
     }
 }

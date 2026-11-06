@@ -124,16 +124,30 @@ pub enum NativeLoginFlow {
     SignUp,
 }
 
-struct PendingLogin {
-    session_token: String,
-    code_verifier: String,
-    created_at: Instant,
+enum LoginAttempt {
+    Pending {
+        login_id: String,
+        code_verifier: String,
+        started_at: Instant,
+    },
+    Exchanging {
+        login_id: String,
+    },
+    Failed(String),
 }
 
-#[derive(Default)]
-struct PendingLogins {
-    by_state: HashMap<String, PendingLogin>,
-    by_session: HashMap<String, String>,
+impl LoginAttempt {
+    fn is_pending(&self, id: &str) -> bool {
+        matches!(self, Self::Pending { login_id, .. } if login_id == id)
+    }
+
+    fn is_exchanging(&self, id: &str) -> bool {
+        matches!(self, Self::Exchanging { login_id } if login_id == id)
+    }
+
+    fn in_progress(&self) -> bool {
+        !matches!(self, Self::Failed(_))
+    }
 }
 
 struct AccessToken {
@@ -144,14 +158,13 @@ struct AccessToken {
 struct NativeSession {
     devices: HashMap<String, device::PendingDeviceLogin>,
     remote_devices: HashMap<String, device::PendingDeviceLogin>,
-    pending: PendingLogins,
+    logins: HashMap<String, LoginAttempt>,
     access_token: Option<AccessToken>,
     refresh_token: Option<String>,
     refresh_token_persisted: bool,
     credential_store: Option<CredentialStore>,
     refresh_generation: u64,
     user: Option<NativeUser>,
-    login_errors: HashMap<String, String>,
     suppress_persisted_resume: bool,
     login_generation: u64,
 }
@@ -161,14 +174,13 @@ impl Default for NativeSession {
         Self {
             devices: HashMap::new(),
             remote_devices: HashMap::new(),
-            pending: PendingLogins::default(),
+            logins: HashMap::new(),
             access_token: None,
             refresh_token: None,
             refresh_token_persisted: true,
             credential_store: None,
             refresh_generation: 0,
             user: None,
-            login_errors: HashMap::new(),
             suppress_persisted_resume: false,
             login_generation: 0,
         }
@@ -183,6 +195,13 @@ impl NativeSession {
         self.credential_store = None;
         self.user = None;
         self.suppress_persisted_resume = true;
+    }
+
+    fn purge_expired_logins(&mut self) {
+        self.logins.retain(|_, attempt| match attempt {
+            LoginAttempt::Pending { started_at, .. } => started_at.elapsed() <= LOGIN_ATTEMPT_TTL,
+            _ => true,
+        });
     }
 }
 
@@ -260,23 +279,15 @@ impl NativeAuthManager {
             .context("failed to build WorkOS authorization URL")?;
         let _operation = self.credential_operation.lock().await;
         let mut session = self.session.lock().await;
-        purge_expired_logins(&mut session.pending);
-        if let Some(previous_state) = session.pending.by_session.remove(session_token) {
-            session.pending.by_state.remove(&previous_state);
-        }
-        session
-            .pending
-            .by_session
-            .insert(session_token.to_string(), authorization.state.clone());
-        session.pending.by_state.insert(
-            authorization.state.clone(),
-            PendingLogin {
-                session_token: session_token.to_string(),
+        session.purge_expired_logins();
+        session.logins.insert(
+            session_token.to_string(),
+            LoginAttempt::Pending {
+                login_id: authorization.state.clone(),
                 code_verifier: authorization.code_verifier,
-                created_at: Instant::now(),
+                started_at: Instant::now(),
             },
         );
-        session.login_errors.remove(session_token);
 
         Ok(NativeLoginStart {
             authorization_url: authorization.url,
@@ -304,78 +315,103 @@ impl NativeAuthManager {
     ) -> anyhow::Result<(NativeUser, String)> {
         let code = required_callback_value(code, "authorization code")?;
         let state = required_callback_value(state, "desktop login state")?;
-        let (code_verifier, pending_session_token, login_generation) = {
+        let (session_token, code_verifier, login_generation) = {
             let mut session = self.session.lock().await;
-            purge_expired_logins(&mut session.pending);
-            let pending = session
-                .pending
-                .by_state
-                .remove(state)
+            session.purge_expired_logins();
+            let login_generation = session.login_generation;
+            let (session_token, code_verifier) = session
+                .logins
+                .iter_mut()
+                .find_map(|(token, attempt)| {
+                    let LoginAttempt::Pending {
+                        login_id,
+                        code_verifier,
+                        ..
+                    } = &mut *attempt
+                    else {
+                        return None;
+                    };
+                    if login_id.as_str() != state {
+                        return None;
+                    }
+                    let code_verifier = std::mem::take(code_verifier);
+                    *attempt = LoginAttempt::Exchanging {
+                        login_id: state.to_string(),
+                    };
+                    Some((token.clone(), code_verifier))
+                })
                 .context("no pending desktop login attempt")?;
-            session.pending.by_session.remove(&pending.session_token);
-            (
-                pending.code_verifier,
-                pending.session_token,
-                session.login_generation,
-            )
+            (session_token, code_verifier, login_generation)
         };
 
         let _credential_operation = self.credential_operation.lock().await;
+        let result = self
+            .exchange_code(code, code_verifier, login_generation, &session_token)
+            .await;
+        if let Err(error) = &result {
+            let mut session = self.session.lock().await;
+            if session
+                .logins
+                .get(&session_token)
+                .is_some_and(|attempt| attempt.is_exchanging(state))
+            {
+                session.logins.insert(
+                    session_token.clone(),
+                    LoginAttempt::Failed(login_failure_message(error)),
+                );
+            }
+        }
+        result.map(|user| (user, session_token))
+    }
+
+    async fn exchange_code(
+        &self,
+        code: &str,
+        code_verifier: String,
+        login_generation: u64,
+        session_token: &str,
+    ) -> anyhow::Result<NativeUser> {
         if self.session.lock().await.login_generation != login_generation {
             anyhow::bail!("desktop login attempt was invalidated by another sign-in or sign-out");
         }
         let mut params = AuthenticateWithCodeParams::new(code);
         params.code_verifier = Some(code_verifier.into());
-        match self
+        let response = self
             .client()
             .await?
             .user_management()
             .authenticate_with_code(params)
             .await
-        {
-            Ok(response) => self
-                .accept_login(response)
-                .await
-                .map(|user| (user, pending_session_token)),
-            Err(error) => {
-                self.session
-                    .lock()
-                    .await
-                    .login_errors
-                    .insert(pending_session_token, provider_error(&error));
-                Err(error).context("WorkOS authorization-code exchange failed")
-            }
-        }
+            .context("WorkOS authorization-code exchange failed")?;
+        self.accept_login(response, Some(session_token)).await
     }
 
     pub async fn fail_login(&self, state: &str, error: &str) -> anyhow::Result<()> {
         let state = required_callback_value(state, "desktop login state")?;
         let error = required_callback_value(error, "desktop login error")?;
         let mut session = self.session.lock().await;
-        purge_expired_logins(&mut session.pending);
-        let pending = session
-            .pending
-            .by_state
-            .remove(state)
+        session.purge_expired_logins();
+        let attempt = session
+            .logins
+            .values_mut()
+            .find(|attempt| attempt.is_pending(state))
             .context("no pending desktop login attempt")?;
-        session.pending.by_session.remove(&pending.session_token);
-        session
-            .login_errors
-            .insert(pending.session_token, error.to_string());
+        *attempt = LoginAttempt::Failed(error.to_string());
         Ok(())
     }
 
     pub async fn status(self: &Arc<Self>, session_token: &str) -> NativeLoginStatus {
         {
             let mut session = self.session.lock().await;
-            purge_expired_logins(&mut session.pending);
-            if session.pending.by_session.contains_key(session_token) {
-                return NativeLoginStatus::Pending;
-            }
-            if let Some(error) = session.login_errors.get(session_token) {
-                return NativeLoginStatus::Failed {
-                    error: error.clone(),
-                };
+            session.purge_expired_logins();
+            match session.logins.get(session_token) {
+                Some(LoginAttempt::Failed(error)) => {
+                    return NativeLoginStatus::Failed {
+                        error: error.clone(),
+                    };
+                }
+                Some(_) => return NativeLoginStatus::Pending,
+                None => {}
             }
         }
 
@@ -394,13 +430,11 @@ impl NativeAuthManager {
     pub async fn cancel_login(&self, session_token: &str, login_id: &str) {
         let mut session = self.session.lock().await;
         if session
-            .pending
-            .by_session
+            .logins
             .get(session_token)
-            .is_some_and(|state| state == login_id)
+            .is_some_and(|attempt| attempt.is_pending(login_id))
         {
-            session.pending.by_session.remove(session_token);
-            session.pending.by_state.remove(login_id);
+            session.logins.remove(session_token);
         }
     }
 
@@ -606,15 +640,21 @@ impl NativeAuthManager {
         }
     }
 
-    async fn accept_login(&self, response: AuthenticateResponse) -> anyhow::Result<NativeUser> {
+    async fn accept_login(
+        &self,
+        response: AuthenticateResponse,
+        completed_login: Option<&str>,
+    ) -> anyhow::Result<NativeUser> {
         let user = self.accept_new_login(response).await?;
         let mut session = self.session.lock().await;
         session.login_generation = session.login_generation.wrapping_add(1);
         let invalidated =
             "Another sign-in completed. Start sign-in again if you want to switch accounts.";
-        let pending = std::mem::take(&mut session.pending);
-        for token in pending.by_session.into_keys() {
-            session.login_errors.insert(token, invalidated.into());
+        session.logins.retain(|token, attempt| {
+            attempt.in_progress() && Some(token.as_str()) != completed_login
+        });
+        for attempt in session.logins.values_mut() {
+            *attempt = LoginAttempt::Failed(invalidated.into());
         }
         for attempt in session.devices.values_mut() {
             attempt.cancel.cancel();
@@ -676,7 +716,6 @@ impl NativeAuthManager {
             session.refresh_token_persisted = persist_before_acceptance;
             session.refresh_generation = session.refresh_generation.wrapping_add(1);
             session.user = Some(user.clone());
-            session.login_errors.clear();
             session.suppress_persisted_resume = false;
         }
         self.flush_refresh_token().await?;
@@ -764,20 +803,6 @@ impl NativeAuthManager {
     }
 }
 
-fn purge_expired_logins(logins: &mut PendingLogins) {
-    let expired: Vec<_> = logins
-        .by_state
-        .iter()
-        .filter(|(_, pending)| pending.created_at.elapsed() > LOGIN_ATTEMPT_TTL)
-        .map(|(state, _)| state.clone())
-        .collect();
-    for state in expired {
-        if let Some(pending) = logins.by_state.remove(&state) {
-            logins.by_session.remove(&pending.session_token);
-        }
-    }
-}
-
 fn required_callback_value<'a>(value: &'a str, name: &str) -> anyhow::Result<&'a str> {
     let value = value.trim();
     if value.is_empty() {
@@ -846,8 +871,11 @@ fn is_transient_refresh_error(error: &workos::Error) -> bool {
         || matches!(error.status(), Some(408))
 }
 
-fn provider_error(error: &workos::Error) -> String {
-    match error.request_id() {
+fn login_failure_message(error: &anyhow::Error) -> String {
+    let Some(provider_error) = error.downcast_ref::<workos::Error>() else {
+        return error.to_string();
+    };
+    match provider_error.request_id() {
         Some(request_id) => format!("WorkOS sign-in failed (request {request_id})"),
         None => "WorkOS sign-in failed".to_string(),
     }
