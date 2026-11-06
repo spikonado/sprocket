@@ -1779,11 +1779,29 @@ async fn container_kill_stops_processes_that_left_the_process_group() {
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
         .with_container(Some(container.clone()));
     #[cfg(unix)]
-    let command = "setsid sleep 30 >/dev/null 2>&1 </dev/null & echo $! > pid.txt";
+    let (shell, command) = (
+        default_command_shell(),
+        "setsid sleep 30 >/dev/null 2>&1 </dev/null & echo $! > pid.txt",
+    );
+    // Windows defaults to Git Bash when it's installed, as on CI.
     #[cfg(windows)]
-    let command = "Set-Content -Path pid.txt -Value (Start-Process -FilePath ping.exe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru).Id";
-    let (id, _started) = exec_running_with_timeout(&sessions, command, None).await;
-    let finished = poll(&sessions, &id, 10_000).await;
+    let (shell, command) = (
+        "powershell.exe".to_string(),
+        "Set-Content -Path pid.txt -Value (Start-Process -FilePath ping.exe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru).Id",
+    );
+    let finished = sessions
+        .exec_command(
+            WorkspaceCancellation::new(),
+            command,
+            ".",
+            &shell,
+            None,
+            10_000,
+            20_000,
+        )
+        .await
+        .unwrap()
+        .result;
     assert!(finished.success, "{finished:?}");
 
     let pid: u32 = fs::read_to_string(root.join("pid.txt"))
