@@ -209,7 +209,7 @@ describe('Agentcard payments', () => {
 		]);
 	});
 
-	it('hides a purchase whose payment the store rejected', async () => {
+	it('hides a purchase whose payment the store rejected until a charge settles', async () => {
 		const t = initConvexTest();
 		agentcardApi();
 		const { asUser, auth } = await startRun(t, 'buyer');
@@ -233,6 +233,15 @@ describe('Agentcard payments', () => {
 		});
 
 		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([]);
+
+		await t.mutation(internal.payments.updatePurchase, {
+			authorizationId: 'cauth_1',
+			status: 'settled'
+		});
+
+		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
+			expect.objectContaining({ status: 'settled' })
+		]);
 	});
 
 	it('refuses requests that are not recognized payment requests', async () => {
