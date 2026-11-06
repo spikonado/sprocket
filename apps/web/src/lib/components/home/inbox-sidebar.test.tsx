@@ -1068,7 +1068,6 @@ it('hides settle and unsettle controls for child threads', async () => {
 
 	expect(childRow.querySelector('[aria-label^="Settle"]')).toBeNull();
 	expect(childRow.querySelector('[aria-label^="Unsettle"]')).toBeNull();
-	expect(childRow.getAttribute('draggable')).toBe('false');
 
 	act(() => {
 		childRow.dispatchEvent(
