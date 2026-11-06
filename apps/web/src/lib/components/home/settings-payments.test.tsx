@@ -62,6 +62,28 @@ it('lists saved cards and purchases and opens a purchase thread', async () => {
 	expect(onOpenThread).toHaveBeenCalledWith(threadId);
 });
 
+it('keeps the newest card list when an older reload finishes last', async () => {
+	const client = new ConvexTestClient();
+	await mount(client);
+	await screen.findByText('•••• 4242');
+
+	let resolveSlow: (cards: []) => void = () => {};
+
+	client.handleAction(
+		api.payments.listMyCards,
+		() => new Promise((resolve) => (resolveSlow = resolve))
+	);
+	fireEvent.focus(window);
+	client.handleAction(api.payments.listMyCards, async () => [
+		{ id: 'new', brand: 'visa', last4: '1111', expiryMonth: 1, expiryYear: 2031 }
+	]);
+	fireEvent.focus(window);
+	expect(await screen.findByText('•••• 1111')).toBeTruthy();
+
+	await act(async () => resolveSlow([]));
+	expect(screen.getByText('•••• 1111')).toBeTruthy();
+});
+
 it('opens the card popup on click and points it at the Agentcard link', async () => {
 	const { popup, open } = stubPopup();
 	const client = new ConvexTestClient();
