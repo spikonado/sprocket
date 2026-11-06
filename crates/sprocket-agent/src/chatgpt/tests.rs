@@ -335,7 +335,7 @@ async fn siwc_recovers_a_truncated_turn_without_repeating_committed_tools() {
             .prompt(prompt)
             .history(history)
             .max_turns(3)
-            .add_hook(recovery.clone())
+            .add_hook(recovery.hook())
             .stream();
         while let Some(item) = stream.next().await {
             match item {

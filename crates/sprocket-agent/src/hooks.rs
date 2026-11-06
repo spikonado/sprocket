@@ -108,13 +108,17 @@ struct PendingDispatch {
 #[derive(Clone, Debug)]
 pub(crate) struct ToolCallTracker(Arc<Mutex<ToolCallState>>);
 
+pub(crate) fn completion_stream_id(run_id: &str, claim_id: &str, attempt_seq: u64) -> String {
+    format!("agent:{run_id}:{claim_id}:{attempt_seq}")
+}
+
 impl ToolCallTracker {
     pub(crate) fn new(run_id: &str, claim_id: &str) -> Self {
         Self(Arc::new(Mutex::new(ToolCallState {
             run_id: run_id.to_owned(),
             claim_id: claim_id.to_owned(),
             attempt_seq: 1,
-            stream_id: format!("agent:{run_id}:{claim_id}:1"),
+            stream_id: completion_stream_id(run_id, claim_id, 1),
             next_section_ordinal: 1,
             open_section: None,
             invocations_by_internal_id: HashMap::new(),
