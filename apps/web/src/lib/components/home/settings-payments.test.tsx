@@ -29,7 +29,6 @@ async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => 
 			amount: 2306,
 			currency: 'usd',
 			status: 'settled',
-			approvalUrl: 'https://approve.test',
 			orderNumber: '112-7',
 			orderLink: 'https://shop.example.com/orders/112-7',
 			trackingLink: 'https://track.example.com/1Z',
