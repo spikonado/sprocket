@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Doc } from '@convex/_generated/dataModel';
-import { computeAccess } from './subscriptionProjection';
-import {
-	RENEWAL_GRACE_MS,
-	displayAccessPhase,
-	displayTier,
-	enforcementAccessPhase,
-	enforcementTier
-} from './tiers';
+import { RENEWAL_GRACE_MS, displayAccessPhase, displayTier, enforcementTier } from './tiers';
 
 const T0 = Date.UTC(2026, 5, 15, 12);
 
@@ -24,7 +17,6 @@ type AccessRow = Pick<
 	| 'billingPeriodEnd'
 	| 'cancelAtNextBillingDate'
 	| 'accessPhase'
-	| 'accessEndsAt'
 >;
 
 function row(overrides: Partial<AccessRow> = {}): AccessRow {
@@ -35,7 +27,6 @@ function row(overrides: Partial<AccessRow> = {}): AccessRow {
 		billingPeriodStart: termStart,
 		billingPeriodEnd: termEnd,
 		accessPhase: 'paid',
-		accessEndsAt: termEnd,
 		...overrides
 	};
 }
@@ -54,23 +45,5 @@ describe('paid access', () => {
 
 		expect(enforcementTier(stale, termEnd + RENEWAL_GRACE_MS)).toBe('free');
 		expect(displayTier(stale)).toBe('pro');
-	});
-
-	it('a stored none ends access unless it only waits for the term to start', () => {
-		expect(enforcementAccessPhase(row({ accessPhase: 'none' }), T0)).toBe('none');
-		expect(enforcementAccessPhase(row({ accessPhase: 'none', accessEndsAt: termStart }), T0)).toBe(
-			'paid'
-		);
-	});
-
-	it('enforcement and display agree with the materialized access at every boundary', () => {
-		const subscription = row();
-
-		for (const now of [termStart - 1, T0, termEnd, termEnd + RENEWAL_GRACE_MS]) {
-			const materialized = { ...subscription, ...computeAccess(subscription, now) };
-
-			expect(enforcementAccessPhase(materialized, now)).toBe(materialized.accessPhase);
-			expect(displayAccessPhase(materialized)).toBe(materialized.accessPhase);
-		}
 	});
 });

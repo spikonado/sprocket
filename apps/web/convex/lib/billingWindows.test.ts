@@ -81,10 +81,7 @@ describe('UTC usage windows', () => {
 	});
 
 	it('freezes the paid monthly window during renewal-processing grace', () => {
-		const paid = paidSubscription('monthly', '2026-01-15T00:00:00Z', '2026-02-15T00:00:00Z', {
-			accessPhase: 'renewal_processing',
-			accessEndsAt: timestamp('2026-02-15T01:00:00Z')
-		});
+		const paid = paidSubscription('monthly', '2026-01-15T00:00:00Z', '2026-02-15T00:00:00Z');
 
 		expect(billingWindow(paid, timestamp('2026-02-15T00:30:00Z'))).toEqual({
 			start: timestamp('2026-01-15T00:00:00Z'),

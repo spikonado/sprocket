@@ -29,9 +29,9 @@ import {
 } from '@convex/lib/subscriptionProjection';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import {
+	accessPhaseAt,
 	displayAccessPhase,
 	displayTier,
-	enforcementAccessPhase,
 	ensureSubscription,
 	getSubscriptionDoc,
 	getTierLabel,
@@ -1026,7 +1026,7 @@ export const attemptActivated = internalQuery({
 		const subscriptions = await listSubscriptionDocs(ctx, args.userId);
 
 		for (const subscription of subscriptions) {
-			if (enforcementAccessPhase(subscription, args.now) === 'none') continue;
+			if (accessPhaseAt(subscription, args.now) === 'none') continue;
 
 			if (subscription.checkoutAttemptId !== args.attemptId) continue;
 
