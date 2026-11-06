@@ -290,6 +290,21 @@ describe('ProjectPicker', () => {
 		});
 	});
 
+	it('lets the user retry after a failed submit', async () => {
+		const { props, resolveWorkspacePath } = renderPicker();
+		resolveWorkspacePath.mockRejectedValueOnce(new Error('Directory is not readable.'));
+		await waitForDirectories();
+
+		const submit = document.querySelector<HTMLButtonElement>('[data-project-submit]')!;
+		fireEvent.click(submit);
+		await waitFor(() => expect(document.body.textContent).toContain('Directory is not readable.'));
+		expect(submit.disabled).toBe(false);
+
+		fireEvent.click(submit);
+		await waitFor(() => expect(props.onClose).toHaveBeenCalledOnce());
+		expect(resolveWorkspacePath).toHaveBeenCalledTimes(2);
+	});
+
 	it.each(['D:', 'D:\\', 'E:/'])('browses and resolves a typed Windows root %s', async (query) => {
 		const desktopApi = createWindowsDesktopApi();
 		const { props } = renderPicker({ localApi: desktopApi });

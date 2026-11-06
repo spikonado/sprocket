@@ -25,6 +25,9 @@ type RecentProjectPath = {
 
 type ProjectPickerLocalApi = Pick<LocalApi, 'browseFilesystem' | 'resolveWorkspacePath'>;
 
+// A browse error blocks submitting that path; a submit error leaves retrying open.
+type PickerError = { source: 'browse' | 'submit'; message: string };
+
 export type ProjectSelection = {
 	workspacePath: string;
 	displayName: string;
@@ -57,7 +60,7 @@ export default function ProjectPicker({
 	const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
 	const [isLoadingBrowse, setIsLoadingBrowse] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [errorMessage, setErrorMessage] = useState<string | null>(null);
+	const [error, setError] = useState<PickerError | null>(null);
 	const [browseQuery, setBrowseQuery] = useState<string | null>(null);
 	const [opened, setOpened] = useState(false);
 	const queryRef = useRef('~/');
@@ -97,8 +100,8 @@ export default function ProjectPicker({
 				setBrowseEntries(result.entries);
 				setVolumeListState(result.volumeList === true);
 				setBrowseQuery(partialPath);
-				setErrorMessage(null);
-			} catch (error) {
+				setError(null);
+			} catch (browseError) {
 				if (requestId !== browseRequestIdRef.current || partialPath !== queryRef.current) {
 					return;
 				}
@@ -108,7 +111,11 @@ export default function ProjectPicker({
 				setVolumeListState(false);
 				setBrowseQuery(partialPath);
 				lastBrowseQueryRef.current = null;
-				setErrorMessage(error instanceof Error ? error.message : 'Failed to browse directories.');
+				setError({
+					source: 'browse',
+					message:
+						browseError instanceof Error ? browseError.message : 'Failed to browse directories.'
+				});
 			} finally {
 				if (requestId === browseRequestIdRef.current) {
 					setIsLoadingBrowse(false);
@@ -171,7 +178,7 @@ export default function ProjectPicker({
 	const canSubmit =
 		browseStateIsCurrent &&
 		!volumeList &&
-		!errorMessage &&
+		error?.source !== 'browse' &&
 		resolvedWorkspacePath.length > 0 &&
 		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0);
 
@@ -236,7 +243,7 @@ export default function ProjectPicker({
 		setOpened(true);
 		setQuery('~/');
 		setHighlightedPath(null);
-		setErrorMessage(null);
+		setError(null);
 		setVolumeListState(false);
 		setBrowseQuery(null);
 		void loadBrowse('~/');
@@ -307,24 +314,12 @@ export default function ProjectPicker({
 	}
 
 	async function confirmSelection() {
-		if (volumeList) {
-			return;
-		}
-
-		const workspacePath = resolvedWorkspacePath;
-
-		if (!workspacePath) {
-			setErrorMessage('Enter a project directory path.');
-
-			return;
-		}
-
 		setIsSubmitting(true);
-		setErrorMessage(null);
+		setError(null);
 
 		try {
 			const resolution = await localApi.resolveWorkspacePath({
-				workspacePath,
+				workspacePath: resolvedWorkspacePath,
 				createIfMissing: willCreateDirectory
 			});
 
@@ -334,10 +329,14 @@ export default function ProjectPicker({
 				repositoryKey: resolution.repositoryKey
 			});
 			onClose();
-		} catch (error) {
-			setErrorMessage(
-				error instanceof Error ? error.message : 'Failed to open the selected project.'
-			);
+		} catch (submitError) {
+			setError({
+				source: 'submit',
+				message:
+					submitError instanceof Error
+						? submitError.message
+						: 'Failed to open the selected project.'
+			});
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -571,9 +570,9 @@ export default function ProjectPicker({
 					)}
 				</div>
 
-				{errorMessage && (
+				{error && (
 					<p className="text-destructive border-t border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm">
-						{errorMessage}
+						{error.message}
 					</p>
 				)}
 
