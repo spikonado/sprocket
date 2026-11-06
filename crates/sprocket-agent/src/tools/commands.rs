@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_transcript::TranscriptPart;
-use sprocket_workspace::{CommandAction, default_command_shell};
+use sprocket_workspace::CommandAction;
 
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, tool_error};
@@ -243,7 +243,10 @@ impl rig::tool::Tool for ExecCmdTool {
                         cancellation,
                         &args.cmd,
                         &cwd.to_string_lossy(),
-                        &args.shell.clone().unwrap_or_else(default_command_shell),
+                        &args
+                            .shell
+                            .clone()
+                            .unwrap_or_else(|| self.0.command_sessions.default_shell()),
                         args.timeout_ms,
                         YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
                         DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
