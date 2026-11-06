@@ -18,7 +18,7 @@ const stripeTokens = {
 type MockAuthorization = {
 	status: string;
 	execution_mode?: string;
-	approvalUrl?: string;
+	approvalUrl?: string | null;
 	replay_attempted?: boolean;
 };
 
@@ -206,7 +206,7 @@ describe('Agentcard payments', () => {
 		const t = initConvexTest();
 
 		const authorizations: MockAuthorizations = {
-			create: { status: 'awaiting_approval', execution_mode: 'autopilot' }
+			create: { status: 'awaiting_approval', execution_mode: 'autopilot', approvalUrl: null }
 		};
 
 		const fetchMock = agentcardApi(authorizations);
@@ -220,6 +220,7 @@ describe('Agentcard payments', () => {
 
 		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
 
+		expect(await t.action(api.payments.checkoutCreate, { ...auth, ...checkout })).toEqual(created);
 		expect(
 			fetchMock.mock.calls.filter(
 				([url, init]) =>

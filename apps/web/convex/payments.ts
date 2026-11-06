@@ -788,6 +788,7 @@ export const pendingThreadApprovals = query({
 			.withIndex('by_threadId_status', (query) =>
 				query.eq('threadId', args.threadId).eq('status', 'awaiting_approval')
 			)
+			.filter((query) => query.neq(query.field('approvalUrl'), undefined))
 			.take(20);
 
 		return purchases.flatMap((purchase) =>
