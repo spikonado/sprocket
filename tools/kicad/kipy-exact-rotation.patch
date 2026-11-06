@@ -1,8 +1,8 @@
 diff --git a/kipy/geometry.py b/kipy/geometry.py
-index d17d7fa..ba59c16 100644
+index d17d7fa5d10a94f05abf8b39f16f0aa87f5d89c0..37a2e087bb8e00fc16c5b8faa5617c829d9e8f85 100644
 --- a/kipy/geometry.py
 +++ b/kipy/geometry.py
-@@ -161,13 +161,26 @@ class Vector2(Wrapper):
+@@ -161,13 +161,25 @@ class Vector2(Wrapper):
          """
          pt_x = self.x - center.x
          pt_y = self.y - center.y
@@ -12,7 +12,6 @@ index d17d7fa..ba59c16 100644
 -        cos_angle = math.cos(rotation)
 +        degrees = angle.degrees % 360
 +
-+        # Matches KiCad's RotatePoint(), so rotated footprints still match their library copy
 +        if degrees == 0:
 +            x, y = pt_x, pt_y
 +        elif degrees == 90:
@@ -35,7 +34,7 @@ index d17d7fa..ba59c16 100644
 
          return self
 
-@@ -783,4 +796,8 @@ def normalize_angle_degrees(angle: float) -> float:
+@@ -783,6 +795,10 @@ def normalize_angle_degrees(angle: float) -> float:
      return angle
 
 
@@ -44,3 +43,36 @@ index d17d7fa..ba59c16 100644
 +
 +
  def normalize_angle_radians(angle: float) -> float:
+     """Normalizes an angle to fall within the range [0, 2*pi)
+
+diff --git a/tests/test_geometry.py b/tests/test_geometry.py
+index fbdd9750b948ad60279f520436b658788cee03be..4271acbde675cf2c6974ffda27ef060f7469bd4d 100644
+--- a/tests/test_geometry.py
++++ b/tests/test_geometry.py
+@@ -503,3 +503,26 @@ def test_angle_iadd_isub():
+     view -= Angle.from_degrees(30)
+     assert view.degrees == pytest.approx(60)
+     assert holder.value_degrees == pytest.approx(60)
++
++
++@pytest.mark.parametrize(
++    ("degrees", "expected"),
++    [
++        (0, (-107836, -360000)),
++        (90, (-360000, 107836)),
++        (180, (107836, 360000)),
++        (270, (360000, -107836)),
++        (-90, (360000, -107836)),
++        (450, (-360000, 107836)),
++    ],
++)
++def test_vector2_rotate_quarter_turns_are_exact(degrees, expected):
++    v = Vector2.from_xy(-107836, -360000).rotate(
++        Angle.from_degrees(degrees), Vector2.from_xy(0, 0)
++    )
++    assert (v.x, v.y) == expected
++
++
++def test_vector2_rotate_rounds_other_angles():
++    v = Vector2.from_xy(1000000, 0).rotate(Angle.from_degrees(45), Vector2.from_xy(0, 0))
++    assert (v.x, v.y) == (707107, -707107)
