@@ -1,0 +1,15 @@
+{
+	"version": "2.56.0.windows.4",
+	"platforms": {
+		"win32-arm64": {
+			"url": "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/MinGit-2.56.0.4-arm64.zip",
+			"bytes": 37980967,
+			"sha256": "70f7649f78088c1db1d2f3571ca46a04d5bef06e4e9d56d8ed7f9829e8c6c4db"
+		},
+		"win32-x64": {
+			"url": "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/MinGit-2.56.0.4-64-bit.zip",
+			"bytes": 39846926,
+			"sha256": "e3bf78351fe777fba47ddee5950082f8a98bb0f02604fdc7ba3ee2cb68ffa877"
+		}
+	}
+}

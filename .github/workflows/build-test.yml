@@ -46,6 +46,7 @@ jobs:
               - tools/agent-desktop/*.json
               - tools/bun/*.json
               - tools/gh/*.json
+              - tools/git/*.json
               - tools/kicad/{releases.json,requirements.txt}
               - tools/uv/*.json
             web:

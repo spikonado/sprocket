@@ -43,6 +43,16 @@ on demand. It is copyright GitHub, Inc., and licensed under
 The GitHub CLI version, archive sizes, and SHA256 checksums are recorded in
 `tools/gh/releases.json`.
 
+## MinGit
+
+On Windows, Sprocket downloads unmodified releases of
+[MinGit](https://gitforwindows.org/mingit) from Git for Windows on demand. Git is
+licensed under [GPL-2.0](https://github.com/git-for-windows/git/blob/main/COPYING);
+MinGit's bundled components keep their own licenses.
+
+The MinGit version, archive sizes, and SHA256 checksums are recorded in
+`tools/git/releases.json`.
+
 ## uv and Python
 
 Sprocket downloads unmodified releases of [uv](https://github.com/astral-sh/uv)
