@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow};
 use futures::StreamExt;
 use rig::completion::Message;
 use rig::message::UserContent;
-use sprocket_convex::{ConvexErrorCode, convex_error_code};
+use sprocket_convex::{ConvexErrorCode, RunStatus, convex_error_code};
 use sprocket_workspace::{
     BUILTIN_SKILLS, WorkspaceSkill, default_user_skills_dirs, load_workspace_instructions,
     load_workspace_skills, resolve_directory, resolve_workspace_root, simplified_path,
@@ -83,23 +83,6 @@ impl AgentRun {
     }
 }
 
-#[derive(Clone, Copy)]
-enum RunFinalStatus {
-    Completed,
-    Cancelled,
-    Failed,
-}
-
-impl RunFinalStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Cancelled => "cancelled",
-            Self::Failed => "failed",
-        }
-    }
-}
-
 fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
     saved
         .and_then(|saved| {
@@ -156,14 +139,7 @@ async fn fail_run_before_start(
     cleanup_twice(
         &format!("queued run cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || {
-            runtime.finalize_queued_run(
-                run_id,
-                &message,
-                RunFinalStatus::Failed.as_str(),
-                Some(&last_error),
-            )
-        },
+        || runtime.finalize_queued_run(run_id, &message, RunStatus::Failed, Some(&last_error)),
     )
     .await
 }
@@ -235,17 +211,16 @@ async fn finalize_run(
     run_id: &str,
     claim_id: &str,
     assistant_text: &str,
-    status: RunFinalStatus,
+    status: RunStatus,
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
-    let status_text = status.as_str();
     let accepted = runtime
-        .finalize_run(run_id, claim_id, assistant_text, status_text, error_message)
+        .finalize_run(run_id, claim_id, assistant_text, status, error_message)
         .await
-        .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))?;
+        .map_err(|error| anyhow!("failed to finalize {status} run: {error}"))?;
     if !accepted {
         return Err(anyhow!(
-            "failed to finalize {status_text} run because claim ownership was lost"
+            "failed to finalize {status} run because claim ownership was lost"
         ));
     }
     Ok(())
@@ -260,27 +235,11 @@ async fn finalize_provider_result(
     match provider_result {
         AgentProviderResult::Completed { text } => {
             eprintln!("sprocket-agent: model completed {}", run_id);
-            finalize_run(
-                runtime,
-                run_id,
-                claim_id,
-                &text,
-                RunFinalStatus::Completed,
-                None,
-            )
-            .await
+            finalize_run(runtime, run_id, claim_id, &text, RunStatus::Completed, None).await
         }
         AgentProviderResult::Cancelled { text } => {
             eprintln!("sprocket-agent: run cancelled {}", run_id);
-            finalize_run(
-                runtime,
-                run_id,
-                claim_id,
-                &text,
-                RunFinalStatus::Cancelled,
-                None,
-            )
-            .await
+            finalize_run(runtime, run_id, claim_id, &text, RunStatus::Cancelled, None).await
         }
         AgentProviderResult::Superseded { error } => {
             eprintln!(
@@ -304,7 +263,7 @@ async fn finalize_provider_result(
                 run_id,
                 claim_id,
                 &text,
-                RunFinalStatus::Failed,
+                RunStatus::Failed,
                 Some(&error_text),
             )
             .await
@@ -323,16 +282,7 @@ async fn acknowledge_stop(
     run_id: &str,
     claim_id: &str,
 ) -> anyhow::Result<()> {
-    match finalize_run(
-        runtime,
-        run_id,
-        claim_id,
-        "",
-        RunFinalStatus::Cancelled,
-        None,
-    )
-    .await
-    {
+    match finalize_run(runtime, run_id, claim_id, "", RunStatus::Cancelled, None).await {
         Ok(()) => Ok(()),
         Err(error) => {
             eprintln!("sprocket-agent: stop acknowledgement for run {run_id}: {error}");
@@ -891,7 +841,7 @@ pub async fn run_agent(
             tokio::select! {
                 biased;
                 _ = request.cancellation.cancelled() => {
-                    runtime.finalize_queued_run(&run_id, "", RunFinalStatus::Cancelled.as_str(), None).await?;
+                    runtime.finalize_queued_run(&run_id, "", RunStatus::Cancelled, None).await?;
                     return Ok(());
                 }
                 update = updates.next() => {

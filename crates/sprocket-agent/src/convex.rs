@@ -2,7 +2,7 @@ use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
-use sprocket_convex::{Client as ConvexRpcClient, decode_function_result};
+use sprocket_convex::{Client as ConvexRpcClient, RunStatus, decode_function_result};
 use sprocket_transcript::sections::WorkAssignment;
 use sprocket_transcript::{
     DownloadOrder, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
@@ -641,7 +641,7 @@ impl RuntimeClient {
         run_id: &str,
         claim_id: &str,
         text: &str,
-        status: &str,
+        status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
         self.finalize_run_with_expectations(run_id, text, status, last_error, Some(claim_id), None)
@@ -652,21 +652,28 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         text: &str,
-        status: &str,
+        status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
-        self.finalize_run_with_expectations(run_id, text, status, last_error, None, Some("queued"))
-            .await
+        self.finalize_run_with_expectations(
+            run_id,
+            text,
+            status,
+            last_error,
+            None,
+            Some(RunStatus::Queued),
+        )
+        .await
     }
 
     async fn finalize_run_with_expectations(
         &self,
         run_id: &str,
         text: &str,
-        status: &str,
+        status: RunStatus,
         last_error: Option<&str>,
         expected_claim_id: Option<&str>,
-        expected_status: Option<&str>,
+        expected_status: Option<RunStatus>,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args(run_id);
         if let Some(expected_claim_id) = expected_claim_id {
@@ -678,11 +685,11 @@ impl RuntimeClient {
         if let Some(expected_status) = expected_status {
             args.insert(
                 "expectedStatus".to_string(),
-                expected_status.to_string().into(),
+                expected_status.as_str().into(),
             );
         }
         args.insert("text".to_string(), text.to_string().into());
-        args.insert("status".to_string(), status.to_string().into());
+        args.insert("status".to_string(), status.as_str().into());
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }

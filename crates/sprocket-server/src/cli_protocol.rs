@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use sprocket_convex::RunStatus;
 pub use sprocket_host::native_auth::{
     CredentialStore, DeviceLoginResponse, NativeLoginStatus as LoginStatus, NativeUser,
     UNENCRYPTED_CREDENTIALS_NOTICE,
@@ -141,7 +142,8 @@ pub struct CliRunSnapshot {
     pub answer: String,
     pub run_id: String,
     pub thread_id: String,
-    pub status: String,
+    /// `None` until execution finishes with a confirmed final status.
+    pub status: Option<RunStatus>,
     pub error: Option<String>,
     pub parts: Vec<sprocket_transcript::TranscriptPart>,
     pub has_more: bool,

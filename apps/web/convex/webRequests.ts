@@ -1,6 +1,5 @@
 import { vOnCompleteArgs } from '@convex-dev/workpool';
 import { v, type Infer } from 'convex/values';
-import { getRunWithExecution } from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
@@ -12,7 +11,6 @@ import {
 } from '@convex/_generated/server';
 import { getExecutionRun } from '@convex/lib/auth';
 import { RUN_NO_LONGER_ACTIVE, agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
-import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { contextDevPool } from '@convex/lib/webPools';
 import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
 import schema from '@convex/schema';
@@ -46,17 +44,6 @@ async function findActiveRun(
 	ctx: MutationCtx,
 	request: Pick<WebRequest, 'runId' | 'claimId' | 'jobId' | 'kind'>
 ) {
-	const run = await getRunWithExecution(ctx.db, request.runId);
-
-	if (
-		!run ||
-		run.cancellationRequestedAt !== undefined ||
-		run.claimId !== request.claimId ||
-		!isRunClaimLeaseActive(run, Date.now())
-	) {
-		return null;
-	}
-
 	const active = await claimedJobForActiveRun(ctx, request);
 
 	if (
@@ -68,7 +55,7 @@ async function findActiveRun(
 		return null;
 	}
 
-	return run;
+	return active.run;
 }
 
 async function activeRun(
