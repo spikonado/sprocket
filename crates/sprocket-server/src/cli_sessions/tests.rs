@@ -1,21 +1,37 @@
 use super::*;
 
-#[test]
-fn temporary_server_waits_for_all_clients_and_runs() {
+fn cli_sessions(
+    host: &Arc<HostLifetime>,
+    temporary: bool,
+) -> (tempfile::TempDir, Arc<AuthState>, CliSessions) {
+    let directory = tempfile::tempdir().unwrap();
+    let auth = AuthState::load(directory.path()).unwrap();
+    let native_auth = NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
+            workos_client_id: "client_test".into(),
+        },
+        "http://127.0.0.1/callback".into(),
+    );
+    let sessions = CliSessions::new(Arc::clone(host), native_auth, Arc::clone(&auth), temporary);
+    (directory, auth, sessions)
+}
+
+#[tokio::test]
+async fn temporary_server_waits_for_all_clients_and_runs() {
     let host = HostLifetime::new();
-    let lifetime = CliSessions::new(Arc::clone(&host), true);
+    let (_directory, _auth, lifetime) = cli_sessions(&host, true);
     let first = uuid::Uuid::new_v4().to_string();
     let second = uuid::Uuid::new_v4().to_string();
-    lifetime.connect(&first, "a").unwrap();
-    lifetime.connect(&second, "b").unwrap();
+    lifetime.connect(&first, "a").await.unwrap();
+    lifetime.connect(&second, "b").await.unwrap();
     let run = host.run_guard().unwrap();
-    lifetime.release(&first, "a").unwrap();
-    assert!(!lifetime.tick(Instant::now()).0);
-    lifetime.release(&second, "b").unwrap();
-    assert!(!lifetime.tick(Instant::now()).0);
+    lifetime.release(&first, "a").await.unwrap();
+    assert!(!lifetime.tick(Instant::now()).await);
+    lifetime.release(&second, "b").await.unwrap();
+    assert!(!lifetime.tick(Instant::now()).await);
     drop(run);
-    assert!(lifetime.tick(Instant::now()).0);
-    assert!(lifetime.connect(&first, "a").is_err());
+    assert!(lifetime.tick(Instant::now()).await);
+    assert!(lifetime.connect(&first, "a").await.is_err());
 }
 
 #[tokio::test]
@@ -26,9 +42,9 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().to_path_buf();
         let host = HostLifetime::new();
-        let lifetime = CliSessions::new(Arc::clone(&host), true);
+        let (_auth_directory, _auth, lifetime) = cli_sessions(&host, true);
         let client_id = uuid::Uuid::new_v4().to_string();
-        lifetime.connect(&client_id, "client").unwrap();
+        lifetime.connect(&client_id, "client").await.unwrap();
         let run_guard = host.run_guard().unwrap();
         let command_lifetime = Arc::clone(&host);
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
@@ -46,9 +62,9 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
             .await
             .unwrap();
         let session_id = started.session_id.unwrap();
-        lifetime.release(&client_id, "client").unwrap();
+        lifetime.release(&client_id, "client").await.unwrap();
         drop(run_guard);
-        assert!(!lifetime.tick(Instant::now()).0);
+        assert!(!lifetime.tick(Instant::now()).await);
         assert!(!host.shutdown.is_cancelled());
         if terminate {
             assert!(sessions.terminate_command(&session_id).await);
@@ -61,7 +77,7 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
             .unwrap();
         assert!(!finished.result.running);
         assert_eq!(finished.result.success, !terminate);
-        assert!(lifetime.tick(Instant::now()).0);
+        assert!(lifetime.tick(Instant::now()).await);
         assert!(host.shutdown.is_cancelled());
         sessions.stop_all().await;
     }
@@ -74,9 +90,9 @@ async fn failed_command_spawn_releases_temporary_server_guard() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().to_path_buf();
     let host = HostLifetime::new();
-    let lifetime = CliSessions::new(Arc::clone(&host), true);
+    let (_auth_directory, _auth, lifetime) = cli_sessions(&host, true);
     let client_id = uuid::Uuid::new_v4().to_string();
-    lifetime.connect(&client_id, "client").unwrap();
+    lifetime.connect(&client_id, "client").await.unwrap();
     let command_lifetime = Arc::clone(&host);
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
         .with_lifetime_guard_factory(move || command_lifetime.run_guard());
@@ -96,21 +112,21 @@ async fn failed_command_spawn_releases_temporary_server_guard() {
         .unwrap_err();
     assert!(error.to_string().contains("failed to start shell"));
     assert!(sessions.running_commands().await.is_empty());
-    lifetime.release(&client_id, "client").unwrap();
-    assert!(lifetime.tick(Instant::now()).0);
+    lifetime.release(&client_id, "client").await.unwrap();
+    assert!(lifetime.tick(Instant::now()).await);
 }
 
-#[test]
-fn lost_clients_cancel_their_run_but_not_the_shared_server() {
+#[tokio::test]
+async fn lost_clients_end_their_run_and_auth_session_but_not_the_shared_server() {
     let host = HostLifetime::new();
-    let lifetime = CliSessions::new(Arc::clone(&host), false);
+    let (_directory, auth, lifetime) = cli_sessions(&host, false);
     let id = uuid::Uuid::new_v4().to_string();
-    lifetime.connect(&id, "a").unwrap();
+    lifetime.connect(&id, "a").await.unwrap();
+    assert!(auth.session_state(Some("a")).await.authenticated);
     let client = lifetime.client(&id, "a").unwrap();
     assert!(lifetime.client(&id, "b").is_err());
-    let (stop, expired) = lifetime.tick(Instant::now() + CLIENT_GRACE);
-    assert!(!stop);
-    assert_eq!(expired, ["a"]);
+    assert!(!lifetime.tick(Instant::now() + CLIENT_GRACE).await);
     assert!(client.cancellation.is_cancelled());
+    assert!(!auth.session_state(Some("a")).await.authenticated);
     assert!(lifetime.client(&id, "a").is_err());
 }

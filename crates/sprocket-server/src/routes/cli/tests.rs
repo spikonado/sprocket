@@ -1,9 +1,29 @@
 use std::time::Duration;
 
 use super::*;
+use crate::cli_sessions::{StartedRun, Submission};
 use axum::body::Body;
 use axum::http::Request;
 use tower::ServiceExt;
+
+fn started_submission(request: &CliRunRequest) -> Option<Submission> {
+    Some(Submission {
+        request: request.clone(),
+        result: Ok(StartedRun {
+            user_id: "user".into(),
+            run: RunStarted {
+                run_id: "run".into(),
+                thread_id: "thread".into(),
+                settings: crate::cli_protocol::CliRunSettings {
+                    model: "model".into(),
+                    reasoning: "high".into(),
+                    fast: false,
+                },
+                stopped: false,
+            },
+        }),
+    })
+}
 
 #[tokio::test]
 async fn output_waits_for_local_execution_and_never_needs_a_backend_connection() {
@@ -19,20 +39,7 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
         "run".into(),
     );
     state.auth.bind_session_user(&token, "user").await.unwrap();
-    {
-        let mut submission = client.submission.lock().await;
-        submission.user_id = Some("user".into());
-        submission.result = Some(Ok(RunStarted {
-            run_id: "run".into(),
-            thread_id: "thread".into(),
-            settings: crate::cli_protocol::CliRunSettings {
-                model: "model".into(),
-                reasoning: "high".into(),
-                fast: false,
-            },
-            stopped: false,
-        }));
-    }
+    *client.submission.lock().await = started_submission(&request);
     let request = CliOutputRequest {
         client_id: request.client_id,
         after_part: -1,
@@ -239,7 +246,7 @@ async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
 async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
     let directory = tempfile::tempdir().unwrap();
     let auth = crate::auth::AuthState::load(directory.path()).unwrap();
-    let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
+    let token = uuid::Uuid::new_v4().to_string();
     let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
         sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".into(),
@@ -265,6 +272,7 @@ async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
     state
         .cli_sessions
         .connect(&request.client_id, &token)
+        .await
         .unwrap();
     (directory, state, token, request)
 }
@@ -303,20 +311,7 @@ async fn concurrent_retries_recover_the_same_submission_and_reject_argument_chan
         .cli_sessions
         .client(&request.client_id, &token)
         .unwrap();
-    {
-        let mut submission = client.submission.lock().await;
-        submission.request = Some(request.clone());
-        submission.result = Some(Ok(RunStarted {
-            run_id: "run".into(),
-            thread_id: "thread".into(),
-            settings: crate::cli_protocol::CliRunSettings {
-                model: "model".into(),
-                reasoning: "high".into(),
-                fast: false,
-            },
-            stopped: false,
-        }));
-    }
+    *client.submission.lock().await = started_submission(&request);
     let (first, second) = tokio::join!(
         call(&state, &token, "run", &request, "127.0.0.1:1000"),
         call(&state, &token, "run", &request, "127.0.0.1:1001"),

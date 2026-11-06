@@ -81,8 +81,8 @@ async fn bootstrap(
     state
         .cli_sessions
         .connect(&request.client.client_id, &request.session_token)
+        .await
         .map_err(ApiError::bad_request)?;
-    state.auth.create_cli_session(request.session_token).await;
     Ok(Json(CliBootstrapResponse { proof }))
 }
 
@@ -164,13 +164,8 @@ async fn release(
     state
         .cli_sessions
         .release(&request.client_id, &token)
-        .map_err(ApiError::bad_request)?;
-    state.host.native_auth.cancel_device_login(&token).await;
-    state
-        .auth
-        .end_session(&token)
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(ApiError::bad_request)?;
     Ok(Json(true))
 }
 
