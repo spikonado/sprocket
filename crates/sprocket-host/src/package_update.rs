@@ -95,18 +95,21 @@ impl HelperAction {
     }
 }
 
-struct RunningOp {
-    action: HelperAction,
-    wait: watch::Receiver<Option<PackageUpdateSnapshot>>,
+type HelperResult = watch::Receiver<Option<PackageUpdateSnapshot>>;
+
+enum Op {
+    None,
+    Check {
+        then_install: bool,
+        result: HelperResult,
+    },
+    Install,
 }
 
 struct Inner {
     snapshot: PackageUpdateSnapshot,
-    last_check_at: Option<Instant>,
-    last_check_failed: bool,
-    installed: bool,
-    pending_install: bool,
-    running: Option<RunningOp>,
+    checked_at: Option<Instant>,
+    op: Op,
 }
 
 pub struct PackageUpdateManager {
@@ -173,11 +176,8 @@ impl PackageUpdateManager {
             install_timeout,
             inner: Mutex::new(Inner {
                 snapshot,
-                last_check_at: None,
-                last_check_failed: false,
-                installed: false,
-                pending_install: false,
-                running: None,
+                checked_at: None,
+                op: Op::None,
             }),
             changes,
         }
@@ -188,23 +188,26 @@ impl PackageUpdateManager {
         if self.command.is_none() {
             return PackageUpdateSnapshot::unavailable();
         }
-        if inner.installed {
-            return inner.snapshot.clone();
-        }
-        if let Some(running) = &inner.running {
-            if running.action == HelperAction::Install || inner.pending_install {
-                return inner.snapshot.clone();
+        match &inner.op {
+            Op::Install
+            | Op::Check {
+                then_install: true, ..
+            } => return inner.snapshot.clone(),
+            Op::Check { result, .. } => {
+                let mut result = result.clone();
+                drop(inner);
+                return wait_for_snapshot(&mut result).await;
             }
-            let mut wait = running.wait.clone();
-            drop(inner);
-            return wait_for_snapshot(&mut wait).await;
+            Op::None => {}
         }
-        if cache_is_fresh(&inner, self.success_ttl, self.failure_ttl) {
+        if inner.snapshot.status == UpdateStatus::Installed
+            || cache_is_fresh(&inner, self.success_ttl, self.failure_ttl)
+        {
             return inner.snapshot.clone();
         }
-        let wait = self.start_locked(&mut inner, HelperAction::Check);
+        let mut result = self.start_locked(&mut inner, HelperAction::Check);
         drop(inner);
-        wait_for_snapshot(&mut wait.clone()).await
+        wait_for_snapshot(&mut result).await
     }
 
     /// While the stream is held, it re-runs the freshness check that `status` performs.
@@ -236,26 +239,25 @@ impl PackageUpdateManager {
         if self.command.is_none() {
             return PackageUpdateSnapshot::unavailable();
         }
-        if inner.installed {
-            return inner.snapshot.clone();
-        }
-        if let Some(running) = &inner.running {
-            if running.action == HelperAction::Install || inner.pending_install {
-                return inner.snapshot.clone();
+        let inner = &mut *inner;
+        match &mut inner.op {
+            Op::None if inner.snapshot.status != UpdateStatus::Installed => {
+                self.start_locked(inner, HelperAction::Install);
             }
-            inner.pending_install = true;
-            mark_installing(&mut inner.snapshot);
-            self.publish(&inner.snapshot);
-            return inner.snapshot.clone();
+            Op::Check { then_install, .. } if !*then_install => {
+                *then_install = true;
+                mark_installing(&mut inner.snapshot);
+                self.publish(&inner.snapshot);
+            }
+            _ => {}
         }
-        self.start_locked(&mut inner, HelperAction::Install);
         inner.snapshot.clone()
     }
 
     pub async fn prepare_restart(&self) -> anyhow::Result<()> {
         let inner = self.inner.lock().await;
         anyhow::ensure!(
-            inner.installed,
+            inner.snapshot.status == UpdateStatus::Installed,
             "Install a package update before restarting Sprocket."
         );
         let (Some(launcher), Some(restart_file)) =
@@ -276,32 +278,33 @@ impl PackageUpdateManager {
         }
     }
 
-    fn start_locked(
-        self: &Arc<Self>,
-        inner: &mut Inner,
-        action: HelperAction,
-    ) -> watch::Receiver<Option<PackageUpdateSnapshot>> {
+    fn start_locked(self: &Arc<Self>, inner: &mut Inner, action: HelperAction) -> HelperResult {
         let (tx, rx) = watch::channel(None);
-        if action == HelperAction::Install {
-            mark_installing(&mut inner.snapshot);
-        }
-        inner.running = Some(RunningOp {
-            action,
-            wait: rx.clone(),
-        });
+        inner.op = match action {
+            HelperAction::Check => Op::Check {
+                then_install: false,
+                result: rx.clone(),
+            },
+            HelperAction::Install => {
+                mark_installing(&mut inner.snapshot);
+                Op::Install
+            }
+        };
         self.publish(&inner.snapshot);
         let manager = Arc::clone(self);
         tokio::spawn(async move {
             let snapshot = manager.run_helper(action).await;
             let mut inner = manager.inner.lock().await;
-            inner.apply_result(action, snapshot);
-            inner.running = None;
-            let follow_with_install = action == HelperAction::Check
-                && inner.pending_install
-                && !inner.installed
-                && inner.snapshot.status != UpdateStatus::Unavailable;
-            inner.pending_install = false;
-            if follow_with_install {
+            let then_install = matches!(
+                inner.op,
+                Op::Check {
+                    then_install: true,
+                    ..
+                }
+            );
+            inner.op = Op::None;
+            inner.apply_result(snapshot);
+            if then_install && inner.snapshot.status == UpdateStatus::Available {
                 manager.start_locked(&mut inner, HelperAction::Install);
             }
             manager.publish(&inner.snapshot);
@@ -376,43 +379,31 @@ impl PackageUpdateManager {
 }
 
 impl Inner {
-    fn apply_result(&mut self, action: HelperAction, snapshot: PackageUpdateSnapshot) {
-        let mut snapshot = snapshot;
+    fn apply_result(&mut self, mut snapshot: PackageUpdateSnapshot) {
         if snapshot.current_version.is_empty() && !self.snapshot.current_version.is_empty() {
             snapshot.current_version = self.snapshot.current_version.clone();
         }
         if snapshot.status == UpdateStatus::Error && snapshot.version.is_none() {
             snapshot.version = self.snapshot.version.clone();
         }
-        if snapshot.status == UpdateStatus::Installed {
-            self.installed = true;
-        }
-        if action == HelperAction::Check || snapshot.status == UpdateStatus::Error {
-            self.last_check_at = Some(Instant::now());
-            self.last_check_failed = snapshot.status == UpdateStatus::Error;
-        } else if snapshot.status == UpdateStatus::Installed {
-            self.last_check_at = Some(Instant::now());
-            self.last_check_failed = false;
-        }
+        self.checked_at = Some(Instant::now());
         self.snapshot = snapshot;
     }
 }
 
 fn cache_is_fresh(inner: &Inner, success_ttl: Duration, failure_ttl: Duration) -> bool {
-    let Some(last_check_at) = inner.last_check_at else {
+    let Some(checked_at) = inner.checked_at else {
         return false;
     };
-    let ttl = if inner.last_check_failed {
+    let ttl = if inner.snapshot.status == UpdateStatus::Error {
         failure_ttl
     } else {
         success_ttl
     };
-    last_check_at.elapsed() < ttl
+    checked_at.elapsed() < ttl
 }
 
-async fn wait_for_snapshot(
-    wait: &mut watch::Receiver<Option<PackageUpdateSnapshot>>,
-) -> PackageUpdateSnapshot {
+async fn wait_for_snapshot(wait: &mut HelperResult) -> PackageUpdateSnapshot {
     loop {
         if let Some(snapshot) = wait.borrow().clone() {
             return snapshot;
