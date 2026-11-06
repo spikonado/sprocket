@@ -778,12 +778,12 @@ export const cleanupCheckoutHistory = internalMutation({
 		for (const row of page.page) {
 			const terminal = checkoutOutcomeIsTerminal(row.outcome);
 
-			const neverSent =
-				row.outcome === 'reserved' && !row.createRequest && !row.checkoutUrl && !row.dodoSessionId;
-
+			// Provider sessions expire 24h after creation and ambiguous creates stop
+			// retrying long before this cutoff, so no row past it can still be paid
+			// through or resumed. Webhooks for old payments match by metadata, not rows.
 			if (
 				(terminal && (row.outcomeUpdatedAt ?? row._creationTime) <= cutoff) ||
-				(neverSent && row.expiresAt <= cutoff)
+				row.expiresAt <= cutoff
 			) {
 				await ctx.db.delete(table, row._id);
 			} else if (terminal && (row.checkoutUrl || row.createRequest || row.idempotencyKey)) {
