@@ -154,7 +154,7 @@ jobs:
             runner: macos-15-intel
             executable: sprocket
           - id: darwin-arm64
-            runner: macos-14
+            runner: macos-15
             executable: sprocket
           - id: win32-x64-msvc
             runner: windows-2022
