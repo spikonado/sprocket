@@ -640,7 +640,7 @@ it('commits a rename once when Enter and blur both fire before it settles', asyn
 	renderView(<Harness {...input} />);
 	await flush();
 
-	fireEvent.doubleClick(document.querySelector('.inbox-row-open')!);
+	fireEvent.dblClick(document.querySelector('.inbox-row-open')!);
 	const renameInput = document.querySelector<HTMLInputElement>('[aria-label="Rename thread"]')!;
 	fireEvent.change(renameInput, { target: { value: 'Updated thread' } });
 	act(() => {
