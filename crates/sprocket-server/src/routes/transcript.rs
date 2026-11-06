@@ -250,7 +250,7 @@ pub(crate) async fn watch_events(
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
         .await;
-    // The first event tells a (re)subscribed client to refresh what it missed.
+    // The first event makes a reconnecting client refresh what it missed.
     stream::once(async { TranscriptWatchEvent::UPDATED })
         .chain(unfold(session, |mut session| async move {
             match session.receiver().recv().await {
