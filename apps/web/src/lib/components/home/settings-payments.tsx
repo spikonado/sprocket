@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, Truck } from 'lucide-react';
 import { useAction, useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
@@ -46,6 +46,7 @@ export default function SettingsPayments({
 	const [cards, setCards] = useState<Card[] | null>(null);
 	const [cardsError, setCardsError] = useState<string | null>(null);
 	const [openError, setOpenError] = useState<string | null>(null);
+	const latestCardsRequest = useRef(0);
 
 	const purchases = useQuery_experimental({
 		query: api.payments.listMyPurchases,
@@ -53,10 +54,16 @@ export default function SettingsPayments({
 	});
 
 	const loadCards = useCallback(async () => {
+		const request = ++latestCardsRequest.current;
+
 		try {
-			setCards(await listMyCards({}));
+			const listed = await listMyCards({});
+
+			if (request !== latestCardsRequest.current) return;
+			setCards(listed);
 			setCardsError(null);
 		} catch (error) {
+			if (request !== latestCardsRequest.current) return;
 			setCardsError(errorMessage(error, 'Couldn’t load your cards.'));
 		}
 	}, [listMyCards]);
