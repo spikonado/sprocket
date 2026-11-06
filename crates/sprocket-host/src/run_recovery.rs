@@ -17,6 +17,8 @@ const MAX_RECOVERIES: u8 = 3;
 const MAX_RECORDS: usize = 256;
 const MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 const RETRY_DELAY_MS: u64 = 30_000;
+/// 30 minutes of recovery rounds.
+const MAX_MISSING_RETRY_ROUNDS: u64 = 60;
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -76,6 +78,41 @@ pub struct RunRecovery {
     path: std::path::PathBuf,
     records: AsyncMutex<BTreeMap<String, RecoveryRecord>>,
     active: Arc<Mutex<HashMap<String, usize>>>,
+    missing_retries: MissingRetries,
+}
+
+/// Spaces out relaunches of continuations that never reached Convex, which keep failing
+/// for as long as their cause lasts.
+#[derive(Default)]
+struct MissingRetries(Mutex<HashMap<String, MissingRetry>>);
+
+struct MissingRetry {
+    delay: u64,
+    next_round: u64,
+}
+
+impl MissingRetries {
+    fn due(&self, key: &str, round: u64) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .get(key)
+            .is_none_or(|retry| round >= retry.next_round)
+    }
+
+    fn launched(&self, key: &str, round: u64) {
+        let mut retries = self.0.lock().unwrap();
+        let retry = retries.entry(key.to_owned()).or_insert(MissingRetry {
+            delay: 1,
+            next_round: 0,
+        });
+        retry.next_round = round + retry.delay;
+        retry.delay = (retry.delay * 2).min(MAX_MISSING_RETRY_ROUNDS);
+    }
+
+    fn clear(&self, key: &str) {
+        self.0.lock().unwrap().remove(key);
+    }
 }
 
 pub struct ActiveRun {
@@ -118,6 +155,7 @@ impl RunRecovery {
             path,
             records: AsyncMutex::new(records),
             active: Arc::new(Mutex::new(HashMap::new())),
+            missing_retries: MissingRetries::default(),
         }))
     }
 
@@ -182,6 +220,7 @@ impl RunRecovery {
         key: &str,
         replacement: Option<RecoveryRecord>,
     ) -> anyhow::Result<()> {
+        self.missing_retries.clear(key);
         let store = Arc::clone(self);
         let key = key.to_string();
         crate::run_to_completion(async move {
@@ -234,13 +273,16 @@ enum RecoveryState {
     },
 }
 
-async fn recover_one(host: &Host, record: RecoveryRecord) -> anyhow::Result<()> {
+async fn recover_one(host: &Host, record: RecoveryRecord, round: u64) -> anyhow::Result<()> {
     let key = record.key();
     let Some(reservation) = host.run_recovery.reserve_exclusive(key.clone()) else {
         return Ok(());
     };
     if crate::now_ms().saturating_sub(record.created_at) >= MAX_AGE_MS {
         return host.run_recovery.replace(&key, None).await;
+    }
+    if !host.run_recovery.missing_retries.due(&key, round) {
+        return Ok(());
     }
     let recovery: RecoveryState = timeout(RPC_TIMEOUT, async {
         let client = host.convex_client_for(&record.request.user_id).await?;
@@ -261,9 +303,15 @@ async fn recover_one(host: &Host, record: RecoveryRecord) -> anyhow::Result<()> 
     })
     .await??;
     let next = match recovery {
-        RecoveryState::Pending => return Ok(()),
+        RecoveryState::Pending => {
+            host.run_recovery.missing_retries.clear(&key);
+            return Ok(());
+        }
         RecoveryState::Discard => return host.run_recovery.replace(&key, None).await,
-        RecoveryState::Missing if record.recoveries > 0 => record,
+        RecoveryState::Missing if record.recoveries > 0 => {
+            host.run_recovery.missing_retries.launched(&key, round);
+            record
+        }
         RecoveryState::Missing => return host.run_recovery.replace(&key, None).await,
         RecoveryState::Recover { run_id, thread_id } => {
             let Some(next) = record.continuation(run_id, thread_id) else {
@@ -283,7 +331,7 @@ pub fn spawn(host: Host) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticks = interval(Duration::from_millis(RETRY_DELAY_MS));
         ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        loop {
+        for round in 0.. {
             tokio::select! {
                 biased;
                 _ = host.lifetime.shutdown.cancelled() => return,
@@ -298,7 +346,7 @@ pub fn spawn(host: Host) -> JoinHandle<()> {
                 .cloned()
                 .collect::<Vec<_>>();
             let mut recoveries = futures::stream::iter(records)
-                .map(|record| recover_one(&host, record))
+                .map(|record| recover_one(&host, record, round))
                 .buffer_unordered(4);
             loop {
                 tokio::select! {
