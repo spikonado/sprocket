@@ -1,8 +1,9 @@
 import ArtifactMenu from '$lib/components/artifact-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import LazyJsonRender from '$lib/components/lazy-json-render';
+import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 import { buildArtifactPreviewDocument, type ArtifactPreviewType } from '$lib/chat/artifact-preview';
 
 type Props = {
@@ -38,34 +39,16 @@ export default function ArtifactDisplay({
 	const hasPreview = previewDocument !== null || artifactType === 'json-render';
 
 	const [showSource, setShowSource] = useState(false);
-	const [copied, setCopied] = useState(false);
-	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const { copied, markCopied, resetCopied } = useCopyFeedback();
 
 	async function copyContent() {
 		try {
 			await navigator.clipboard.writeText(content);
-			setCopied(true);
-
-			if (copyTimeoutRef.current !== null) {
-				clearTimeout(copyTimeoutRef.current);
-			}
-
-			copyTimeoutRef.current = setTimeout(() => {
-				setCopied(false);
-				copyTimeoutRef.current = null;
-			}, 1_500);
+			markCopied(true);
 		} catch {
-			setCopied(false);
+			resetCopied();
 		}
 	}
-
-	useEffect(() => {
-		return () => {
-			if (copyTimeoutRef.current !== null) {
-				clearTimeout(copyTimeoutRef.current);
-			}
-		};
-	}, []);
 
 	function renderBody(frameClass: string) {
 		const source = (

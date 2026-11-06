@@ -1,6 +1,7 @@
 import { Check, Copy, Download, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useLatest } from '$lib/use-latest';
+import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 
 export type ViewerImage = {
 	url: string;
@@ -109,12 +110,10 @@ export default function ImageViewer({
 	onClose: () => void;
 }) {
 	const dialogRef = useRef<HTMLDivElement | null>(null);
-	const [copied, setCopied] = useState(false);
+	const { copied, markCopied, resetCopied } = useCopyFeedback();
 	const [copying, setCopying] = useState(false);
 	const [downloading, setDownloading] = useState(false);
-	const [copyError, setCopyError] = useState<string | null>(null);
-	const [downloadError, setDownloadError] = useState<string | null>(null);
-	const copiedTimeoutRef = useRef<number | null>(null);
+	const [actionError, setActionError] = useState<string | null>(null);
 	const generationRef = useRef(0);
 	const onCloseRef = useLatest(onClose);
 
@@ -125,11 +124,10 @@ export default function ImageViewer({
 			return;
 		}
 
-		setCopied(false);
+		resetCopied();
 		setCopying(false);
 		setDownloading(false);
-		setCopyError(null);
-		setDownloadError(null);
+		setActionError(null);
 
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -202,16 +200,11 @@ export default function ImageViewer({
 			window.removeEventListener('keydown', handleWindowKeydown, true);
 			document.body.style.overflow = previousBodyOverflow;
 
-			if (copiedTimeoutRef.current !== null) {
-				window.clearTimeout(copiedTimeoutRef.current);
-				copiedTimeoutRef.current = null;
-			}
-
 			if (previouslyFocused?.isConnected) {
 				previouslyFocused.focus();
 			}
 		};
-	}, [image, onCloseRef]);
+	}, [image, onCloseRef, resetCopied]);
 
 	async function copyImage(current: ViewerImage) {
 		if (copying) {
@@ -220,8 +213,7 @@ export default function ImageViewer({
 
 		const generation = generationRef.current;
 		setCopying(true);
-		setCopyError(null);
-		setDownloadError(null);
+		setActionError(null);
 
 		try {
 			if (!globalThis.ClipboardItem) {
@@ -235,20 +227,11 @@ export default function ImageViewer({
 				return;
 			}
 
-			setCopied(true);
-
-			if (copiedTimeoutRef.current !== null) {
-				window.clearTimeout(copiedTimeoutRef.current);
-			}
-
-			copiedTimeoutRef.current = window.setTimeout(() => {
-				setCopied(false);
-				copiedTimeoutRef.current = null;
-			}, 2_000);
+			markCopied(true);
 		} catch {
 			if (generation === generationRef.current) {
-				setCopied(false);
-				setCopyError('Could not copy the image to the clipboard.');
+				resetCopied();
+				setActionError('Could not copy the image to the clipboard.');
 			}
 		} finally {
 			if (generation === generationRef.current) {
@@ -264,8 +247,7 @@ export default function ImageViewer({
 
 		const generation = generationRef.current;
 		setDownloading(true);
-		setCopyError(null);
-		setDownloadError(null);
+		setActionError(null);
 
 		try {
 			const blob = await fetchImageBlob(current);
@@ -288,7 +270,7 @@ export default function ImageViewer({
 			}
 		} catch {
 			if (generation === generationRef.current) {
-				setDownloadError('Could not download the image.');
+				setActionError('Could not download the image.');
 			}
 		} finally {
 			if (generation === generationRef.current) {
@@ -390,12 +372,12 @@ export default function ImageViewer({
 								: ''}
 				</span>
 
-				{copyError || downloadError ? (
+				{actionError ? (
 					<p
 						className="border-border absolute right-3 bottom-14 max-w-[min(20rem,calc(100%-1.5rem))] rounded-lg border bg-black/80 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-sm"
 						role="alert"
 					>
-						{copyError ?? downloadError}
+						{actionError}
 					</p>
 				) : null}
 			</div>

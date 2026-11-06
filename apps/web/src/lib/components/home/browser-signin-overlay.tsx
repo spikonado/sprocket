@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink, LoaderCircle } from 'lucide-react';
 import Button from '$lib/components/ui/button/button';
+import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 
 export default function BrowserSignInOverlay({
 	open,
@@ -15,10 +16,9 @@ export default function BrowserSignInOverlay({
 	onCancel: () => void;
 	onClearOpenError?: () => void;
 }) {
-	const [copied, setCopied] = useState(false);
+	const { copied, markCopied, resetCopied } = useCopyFeedback();
 	const [copyError, setCopyError] = useState<string | null>(null);
 	const dialogRef = useRef<HTMLDivElement | null>(null);
-	const copiedTimeoutRef = useRef<number | null>(null);
 	const onCancelRef = useRef(onCancel);
 	const onClearOpenErrorRef = useRef(onClearOpenError);
 
@@ -29,7 +29,7 @@ export default function BrowserSignInOverlay({
 
 	useEffect(() => {
 		if (!open) {
-			setCopied(false);
+			resetCopied();
 			setCopyError(null);
 
 			return;
@@ -92,16 +92,11 @@ export default function BrowserSignInOverlay({
 		return () => {
 			window.removeEventListener('keydown', handleWindowKeydown, true);
 
-			if (copiedTimeoutRef.current !== null) {
-				window.clearTimeout(copiedTimeoutRef.current);
-				copiedTimeoutRef.current = null;
-			}
-
 			if (previouslyFocused?.isConnected) {
 				previouslyFocused.focus();
 			}
 		};
-	}, [open]);
+	}, [open, resetCopied]);
 
 	async function copySignInUrl() {
 		if (!signInUrl) {
@@ -110,19 +105,10 @@ export default function BrowserSignInOverlay({
 
 		try {
 			await navigator.clipboard.writeText(signInUrl);
-			setCopied(true);
+			markCopied(true);
 			setCopyError(null);
-
-			if (copiedTimeoutRef.current !== null) {
-				window.clearTimeout(copiedTimeoutRef.current);
-			}
-
-			copiedTimeoutRef.current = window.setTimeout(() => {
-				setCopied(false);
-				copiedTimeoutRef.current = null;
-			}, 2_000);
 		} catch {
-			setCopied(false);
+			resetCopied();
 			setCopyError('Could not copy the sign-in link. Select it above and copy manually.');
 		}
 	}
