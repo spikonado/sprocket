@@ -291,9 +291,13 @@ fi"#
             let manager = Arc::clone(&manager);
             tokio::spawn(async move { manager.status().await })
         };
-        while !dir.path().join("calls").exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !dir.path().join("calls").exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the check helper started");
         assert_eq!(manager.install().await.status, UpdateStatus::Installing);
         fs::write(dir.path().join("release"), "").unwrap();
         check.await.unwrap();
