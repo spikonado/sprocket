@@ -542,13 +542,13 @@ describe('installed and hosted auth', () => {
 			}
 		});
 		await initializeAuth(convexClient);
-		const onChange = watchAuthChanges.mock.calls[0]?.[2];
+		const onChange = watchAuthChanges.mock.calls[0]?.[1].onEvent;
 
 		if (!onChange) throw new Error('missing auth subscription');
 		const retry = retryConvexAuthentication();
 		await vi.waitFor(() => expect(tokenCalls).toBe(2));
 		expect(get(convexAuthRetryPending)).toBe(true);
-		onChange();
+		onChange(1);
 		await vi.waitFor(() => expect(get(authState).nativeSession).toBe('unavailable'));
 		retryToken.resolve(jsonResponse(200, { accessToken: 'late-token', user: nativeUser }));
 		await retry;
