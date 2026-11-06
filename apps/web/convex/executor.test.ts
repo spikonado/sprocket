@@ -691,6 +691,15 @@ describe('executor', () => {
 			job: { status: 'failed', error: 'boom' },
 			run: { status: 'running' }
 		});
+		await expect(
+			matching.asUser.mutation(api.executor.fail, {
+				jobId: matching.jobId,
+				error: 'boom',
+				runId: matching.runId,
+				claimId: matching.claimId,
+				executionSecret: matching.executionSecret
+			})
+		).resolves.toBe(true);
 		expect(
 			(await t.run(
 				async (ctx) => (await getRunWithExecution(ctx.db, matching.runId))?.activeJobId
