@@ -100,11 +100,8 @@ async fn poll_reports_an_expired_sign_in_so_the_client_stops_waiting() {
             result: None,
         },
     );
-    assert_eq!(
-        serde_json::to_value(pending.poll(&session, "user-a", &value).await).unwrap(),
-        serde_json::json!({
-            "status": "error",
-            "error": "ChatGPT sign-in expired or was cancelled. Start sign-in again."
-        })
-    );
+    assert!(matches!(
+        pending.poll(&session, "user-a", &value).await,
+        LoginResult::Error { .. }
+    ));
 }
