@@ -1,19 +1,9 @@
 import type { Doc } from '@convex/_generated/dataModel';
-import { enforcementAccessPhase } from '@convex/lib/tiers';
+import { accessPhaseAt, type AccessClock } from '@convex/lib/tiers';
 
 type UsageWindow = { start: number; end: number };
 
-export type BillingWindowSubscription = Pick<
-	Doc<'subscriptions'>,
-	| 'status'
-	| 'dodoSubscriptionId'
-	| 'billingInterval'
-	| 'billingPeriodStart'
-	| 'billingPeriodEnd'
-	| 'accessPhase'
-	| 'accessEndsAt'
-	| 'cancelAtNextBillingDate'
->;
+export type BillingWindowSubscription = AccessClock & Pick<Doc<'subscriptions'>, 'billingInterval'>;
 
 function utcMonth(year: number, month: number, day: number, anchor: Date): number {
 	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
@@ -34,7 +24,7 @@ export function billingWindow(
 	now: number = Date.now()
 ): UsageWindow {
 	const date = new Date(now);
-	const access = enforcementAccessPhase(subscription, now);
+	const access = subscription ? accessPhaseAt(subscription, now) : 'none';
 	const paid = subscription !== null && access !== 'none' && !!subscription.dodoSubscriptionId;
 
 	if (paid && subscription.billingInterval === 'monthly') {
