@@ -16,7 +16,6 @@ pub struct TranscriptState {
     pub context_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_stripped_through_part_number: Option<i64>,
-    pub downloaded_ranges: Vec<DownloadedRange>,
     pub stale: bool,
 }
 
@@ -30,50 +29,9 @@ impl TranscriptState {
             history_from_number: 0,
             context_summary: None,
             reasoning_stripped_through_part_number: None,
-            downloaded_ranges: Vec::new(),
             stale: false,
         }
     }
-
-    pub fn mark_downloaded(&mut self, numbers: &[u32]) {
-        for &number in numbers {
-            insert_number(&mut self.downloaded_ranges, number);
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DownloadedRange {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl DownloadedRange {
-    pub fn contains(self, number: u32) -> bool {
-        number >= self.start && number <= self.end
-    }
-}
-
-fn insert_number(ranges: &mut Vec<DownloadedRange>, number: u32) {
-    if ranges.iter().any(|range| range.contains(number)) {
-        return;
-    }
-    ranges.push(DownloadedRange {
-        start: number,
-        end: number,
-    });
-    ranges.sort_by_key(|range| range.start);
-    let mut merged: Vec<DownloadedRange> = Vec::new();
-    for range in ranges.drain(..) {
-        match merged.last_mut() {
-            Some(last) if range.start <= last.end.saturating_add(1) => {
-                last.end = last.end.max(range.end);
-            }
-            _ => merged.push(range),
-        }
-    }
-    *ranges = merged;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

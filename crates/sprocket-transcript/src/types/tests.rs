@@ -1,16 +1,18 @@
 use super::*;
 
 #[test]
-fn merges_adjacent_downloaded_ranges() {
-    let mut state = TranscriptState::new("user".into(), "thread".into());
-    state.mark_downloaded(&[0, 2, 1, 5, 4]);
-    assert_eq!(
-        state.downloaded_ranges,
-        vec![
-            DownloadedRange { start: 0, end: 2 },
-            DownloadedRange { start: 4, end: 5 }
-        ]
-    );
+fn transcript_state_reads_files_that_list_downloaded_ranges() {
+    let state: TranscriptState = serde_json::from_value(serde_json::json!({
+        "schemaVersion": 1,
+        "userId": "user",
+        "threadId": "thread",
+        "remoteTotalParts": 3,
+        "historyFromNumber": 0,
+        "downloadedRanges": [{ "start": 0, "end": 2 }],
+        "stale": false
+    }))
+    .unwrap();
+    assert_eq!(state.remote_total_parts, 3);
 }
 
 #[test]

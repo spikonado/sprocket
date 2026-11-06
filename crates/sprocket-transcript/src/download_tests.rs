@@ -37,13 +37,6 @@ async fn assert_saved(store: &TranscriptStore, start: u32, end: u32) {
         store.read_parts("user", "thread", &numbers).await.unwrap(),
         numbers.iter().copied().map(part).collect::<Vec<_>>()
     );
-    let state = store.load_state("user", "thread").await.unwrap();
-    assert!(numbers.iter().all(|&number| {
-        state
-            .downloaded_ranges
-            .iter()
-            .any(|range| range.contains(number))
-    }));
     store
         .with_work_replica("user", "thread", move |replica| {
             for number in numbers {
@@ -67,14 +60,6 @@ async fn assert_empty(store: &TranscriptStore) {
             .read_parts("user", "thread", &(0..8).collect::<Vec<_>>())
             .await
             .unwrap()
-            .is_empty()
-    );
-    assert!(
-        store
-            .load_state("user", "thread")
-            .await
-            .unwrap()
-            .downloaded_ranges
             .is_empty()
     );
     store

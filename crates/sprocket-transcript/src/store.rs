@@ -171,28 +171,12 @@ impl TranscriptStore {
         user_id: &str,
         thread_id: &str,
         parts: &[TranscriptPart],
-    ) -> anyhow::Result<TranscriptState> {
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        let mut state = self.load_state(user_id, thread_id).await?;
-        self.write_parts_unlocked(user_id, thread_id, parts).await?;
-        if !parts.is_empty() {
-            let numbers = parts.iter().map(|part| part.number).collect::<Vec<_>>();
-            state.mark_downloaded(&numbers);
-        }
-        self.write_state(user_id, thread_id, &state).await?;
-        Ok(state)
-    }
-
-    async fn write_parts_unlocked(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        parts: &[TranscriptPart],
     ) -> anyhow::Result<()> {
         if parts.is_empty() {
             return Ok(());
         }
+        let lock = self.lock_thread(user_id, thread_id).await;
+        let _guard = lock.lock().await;
         let dir = self.thread_dir(user_id, thread_id).join("parts");
         tokio::fs::create_dir_all(&dir).await?;
         let mut grouped: HashMap<u32, Vec<&TranscriptPart>> = HashMap::new();
@@ -264,6 +248,32 @@ impl TranscriptStore {
             .iter()
             .filter_map(|number| by_number.get(number).cloned())
             .collect())
+    }
+
+    pub(super) async fn read_all_parts(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+    ) -> anyhow::Result<Vec<TranscriptPart>> {
+        let lock = self.lock_thread(user_id, thread_id).await;
+        let _guard = lock.lock().await;
+        let dir = self.thread_dir(user_id, thread_id).join("parts");
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let mut parts = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+            {
+                parts.extend(recover_and_read_chunk(&path).await?);
+            }
+        }
+        Ok(parts)
     }
 
     pub async fn clear_thread(&self, user_id: &str, thread_id: &str) -> anyhow::Result<()> {

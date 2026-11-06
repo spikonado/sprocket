@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{DownloadedRange, TranscriptPartKind, TranscriptPromptBody};
+use crate::types::{TranscriptPartKind, TranscriptPromptBody};
 
 fn prompt(number: u32, text: &str) -> TranscriptPart {
     TranscriptPart {
@@ -81,11 +81,6 @@ async fn shared_store_preserves_concurrent_part_updates() {
     let numbers = (0..32).collect::<Vec<_>>();
     let parts = store.read_parts("user", "thread", &numbers).await.unwrap();
     assert_eq!(parts.len(), numbers.len());
-    let state = store.load_state("user", "thread").await.unwrap();
-    assert_eq!(
-        state.downloaded_ranges,
-        vec![DownloadedRange { start: 0, end: 31 }]
-    );
 }
 
 #[tokio::test]

@@ -546,6 +546,21 @@ async fn attachment_lookup_checks_identity_and_stays_in_its_thread() {
             .unwrap()
             .is_none()
     );
+    store
+        .append_parts(
+            "user",
+            "other",
+            &[prompt_part(3, vec![]), prompt_part(105, vec![meta.clone()])],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .attachment_metadata("user", "other", &meta.storage_id)
+            .await
+            .unwrap(),
+        Some(meta.clone())
+    );
     let current = store.attachment_path("user", "thread", &meta);
     let mut wrong = meta.clone();
     wrong.storage_id = "other-storage".into();
