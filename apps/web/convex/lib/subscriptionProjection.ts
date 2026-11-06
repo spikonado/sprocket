@@ -109,6 +109,48 @@ type TransitionFences = {
 	payload: SubscriptionPayload;
 };
 
+type Watermarks = {
+	eventAt: number;
+	payloadEventAt: number;
+	termEventAt: number;
+	scheduleEventAt: number;
+};
+
+/** Rows written before a watermark existed fall back to the next coarser one. */
+function storedWatermarks(existing: Doc<'subscriptions'>): Watermarks {
+	const payloadEventAt = existing.payloadEventAt ?? existing.eventAt;
+
+	return {
+		eventAt: existing.eventAt,
+		payloadEventAt,
+		termEventAt: existing.termEventAt ?? payloadEventAt,
+		scheduleEventAt: existing.scheduleEventAt ?? payloadEventAt
+	};
+}
+
+/**
+ * The watermarks to store after applying `payload`. A fence that held keeps
+ * the stored watermark; one the payload passed moves to the event time.
+ */
+export function advanceWatermarks(
+	existing: Doc<'subscriptions'> | null,
+	payload: SubscriptionPayload,
+	stale: { status: boolean; payload: boolean; term: boolean; schedule: boolean }
+): Watermarks {
+	const kept = existing
+		? storedWatermarks(existing)
+		: { eventAt: 0, payloadEventAt: 0, termEventAt: 0, scheduleEventAt: 0 };
+
+	if (payload.source === 'observation') return kept;
+
+	return {
+		eventAt: stale.status ? kept.eventAt : payload.eventAt,
+		payloadEventAt: stale.payload ? kept.payloadEventAt : payload.eventAt,
+		termEventAt: stale.term ? kept.termEventAt : payload.eventAt,
+		scheduleEventAt: stale.schedule ? kept.scheduleEventAt : payload.eventAt
+	};
+}
+
 // Product fence on the payloadEventAt watermark; independent from the status
 // fence, so a winning status never blocks a winning product and vice versa.
 export function isStalePayload({ existing, payload }: TransitionFences): boolean {
@@ -116,7 +158,7 @@ export function isStalePayload({ existing, payload }: TransitionFences): boolean
 
 	if (existing.dodoSubscriptionId !== payload.dodoSubscriptionId) return false;
 
-	const watermark = existing.payloadEventAt ?? existing.eventAt;
+	const watermark = storedWatermarks(existing).payloadEventAt;
 	const position = payloadPosition(payload);
 
 	if (position < watermark) return true;
@@ -161,7 +203,7 @@ export function isStaleTerm(
 
 	if (existing.dodoSubscriptionId !== payload.dodoSubscriptionId) return false;
 
-	const termAt = existing.termEventAt ?? existing.payloadEventAt ?? existing.eventAt;
+	const termAt = storedWatermarks(existing).termEventAt;
 
 	if (
 		existing.billingPeriodStart !== undefined &&
@@ -179,7 +221,7 @@ export function isStaleTerm(
 
 export function isStaleSchedule({ existing, payload }: TransitionFences): boolean {
 	if (!existing || existing.dodoSubscriptionId !== payload.dodoSubscriptionId) return false;
-	const watermark = existing.scheduleEventAt ?? existing.payloadEventAt ?? existing.eventAt;
+	const watermark = storedWatermarks(existing).scheduleEventAt;
 	const position = payloadPosition(payload);
 
 	if (position !== watermark) return position < watermark;
