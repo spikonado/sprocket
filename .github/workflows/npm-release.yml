@@ -22,8 +22,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: npm-release-${{ github.event_name == 'workflow_run' && 'main-dev' || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+  # Events that won't release get their own group so they can't replace a pending release.
+  # Dev releases never cancel a running publish; GitHub keeps only the newest pending one, so they publish in order.
+  group: >-
+    npm-release-${{
+      github.event_name != 'workflow_run' && github.ref ||
+      github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && 'main-dev' ||
+      github.run_id
+    }}
+  cancel-in-progress: false
 
 jobs:
   prepare:
@@ -228,9 +235,6 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.source-sha }}
       - uses: actions/setup-node@v7
         with:
           node-version: 26
@@ -244,20 +248,7 @@ jobs:
         run: >
           find npm-dist -type f \( -name sprocket -o -name sprocket.js \)
           -exec chmod 755 {} +
-      - id: freshness
-        name: Skip stale main-branch builds
-        if: needs.prepare.outputs.npm-tag == 'dev'
-        env:
-          TESTED_SHA: ${{ needs.prepare.outputs.source-sha }}
-        run: |
-          echo "publish=true" >> "$GITHUB_OUTPUT"
-          git fetch origin main
-          if [[ "$TESTED_SHA" != "$(git rev-parse origin/main)" ]]; then
-            echo "Skipping stale npm dev release for $TESTED_SHA."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Publish native packages
-        if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
         env:
           NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -274,7 +265,6 @@ jobs:
             fi
           done
       - name: Wait for native packages on the registry
-        if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
@@ -291,20 +281,10 @@ jobs:
             exit 1
           done
       - name: Publish root packages last
-        if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
         env:
           NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
-          TESTED_SHA: ${{ needs.prepare.outputs.source-sha }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          if [[ "$NPM_TAG" == "dev" ]]; then
-            git fetch origin main
-            if [[ "$TESTED_SHA" != "$(git rev-parse origin/main)" ]]; then
-              echo "Skipping stale npm dev root release for $TESTED_SHA."
-              exit 0
-            fi
-          fi
-
           # The legacy package goes last because its installs migrate to the usesprocket version.
           for package in npm-dist/sprocket npm-dist/legacy; do
             name="$(node -p "require('./$package/package.json').name")"
