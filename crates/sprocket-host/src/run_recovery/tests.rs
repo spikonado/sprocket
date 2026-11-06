@@ -192,3 +192,19 @@ async fn replacement_is_durable_and_recovery_is_bounded() {
             .is_empty()
     );
 }
+
+#[test]
+fn missing_relaunches_back_off_to_thirty_minutes() {
+    let retries = MissingRetries::default();
+    let mut round = 0;
+    let mut gaps = Vec::new();
+    for _ in 0..8 {
+        retries.launched("key", round);
+        let next = (round..).find(|&next| retries.due("key", next)).unwrap();
+        gaps.push(next - round);
+        round = next;
+    }
+    assert_eq!(gaps, [1, 2, 4, 8, 16, 32, 60, 60]);
+    retries.clear("key");
+    assert!(retries.due("key", round));
+}
