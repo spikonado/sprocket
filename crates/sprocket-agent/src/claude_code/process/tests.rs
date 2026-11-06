@@ -5,19 +5,6 @@ fn tools() -> Vec<Value> {
 }
 
 #[test]
-fn mcp_lists_sprocket_tools() {
-    let reply = mcp_reply(
-        &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
-        &tools(),
-    );
-
-    assert_eq!(
-        reply,
-        McpReply::Respond(json!({ "jsonrpc": "2.0", "id": 1, "result": { "tools": tools() } }))
-    );
-}
-
-#[test]
 fn mcp_tool_calls_wait_for_sprocket() {
     let call = json!({
         "jsonrpc": "2.0",

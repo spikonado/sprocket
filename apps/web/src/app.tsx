@@ -141,6 +141,7 @@ import { LocalResponseError } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
 	ChatGptStatus,
+	ClaudeCodeStatus,
 	LocalApi,
 	ExecutorJob,
 	ThreadSummary,
@@ -165,6 +166,8 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
 const agentLaunchTimeoutMs = 30_000;
+
+const claudeCodeInstallPollMs = 2_000;
 
 type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
@@ -344,23 +347,15 @@ export default function App({
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const [catalogLoading, setCatalogLoading] = useState(true);
 	const [openAiConfigured, setOpenAiConfigured] = useState(false);
-	const [claudeConfigured, setClaudeConfigured] = useState(false);
+	const [claudeTokenSaved, setClaudeTokenSaved] = useState(false);
+	const [claudeCodeStatus, setClaudeCodeStatus] = useState<ClaudeCodeStatus | null>(null);
+	const [claudeCodeStatusError, setClaudeCodeStatusError] = useState<string | null>(null);
 	const [chatGptConfigured, setChatGptConfigured] = useState(false);
 	const [chatGptStatus, setChatGptStatus] = useState<ChatGptStatus | null>(null);
 	const [chatGptStatusLoading, setChatGptStatusLoading] = useState(false);
 	const [chatGptStatusError, setChatGptStatusError] = useState<string | null>(null);
 	const [providerConfigurationLoading, setProviderConfigurationLoading] = useState(false);
 	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(null);
-
-	const configuredProviders = useMemo<CompletionProvider[]>(
-		() => [
-			'spikonado',
-			...(openAiConfigured ? (['openai'] as const) : []),
-			...(chatGptConfigured ? (['chatgpt'] as const) : []),
-			...(claudeConfigured ? (['claude'] as const) : [])
-		],
-		[openAiConfigured, chatGptConfigured, claudeConfigured]
-	);
 
 	async function loadModelCatalog() {
 		setCatalogLoading(true);
@@ -395,7 +390,7 @@ export default function App({
 			)
 				return;
 			setOpenAiConfigured(configuration.openai);
-			setClaudeConfigured(configuration.claude);
+			setClaudeTokenSaved(configuration.claude);
 		} catch (error) {
 			if (
 				signedInUserIdRef.current !== userId ||
@@ -511,6 +506,67 @@ export default function App({
 			chatGptStatusLoadedFor.current = null;
 		};
 	}, [authReady, signedInUserId, signedInUserIdRef, localApi]);
+
+	const claudeCodeStatusGeneration = useRef(0);
+
+	const loadClaudeCodeStatus = useEffectEvent((api: LocalApi, userId: string) => {
+		const generation = ++claudeCodeStatusGeneration.current;
+
+		const current = () =>
+			generation === claudeCodeStatusGeneration.current && signedInUserIdRef.current === userId;
+
+		api
+			.fetchClaudeCodeStatus(userId)
+			.then((status) => {
+				if (current()) handleClaudeCodeStatusChange(status);
+			})
+			.catch((error: Error) => {
+				if (current())
+					setClaudeCodeStatusError(error.message || 'Couldn’t check Claude Code on this computer.');
+			});
+	});
+
+	useEffect(() => {
+		if (!authReady || !signedInUserId || !localApi) {
+			setClaudeCodeStatus(null);
+			setClaudeCodeStatusError(null);
+
+			return;
+		}
+
+		loadClaudeCodeStatus(localApi, signedInUserId);
+
+		return () => {
+			claudeCodeStatusGeneration.current += 1;
+		};
+	}, [authReady, signedInUserId, localApi]);
+
+	const claudeCodeInstalling = claudeCodeStatus?.state === 'installing';
+
+	useEffect(() => {
+		if (!claudeCodeInstalling || !localApi || !signedInUserId) return;
+
+		const timer = setInterval(
+			() => loadClaudeCodeStatus(localApi, signedInUserId),
+			claudeCodeInstallPollMs
+		);
+
+		return () => clearInterval(timer);
+	}, [claudeCodeInstalling, localApi, signedInUserId]);
+
+	// A window without the local server can't see Claude Code, so it trusts the saved token.
+	const claudeConfigured =
+		claudeTokenSaved && (!localApi || claudeCodeStatus?.state === 'installed');
+
+	const configuredProviders = useMemo<CompletionProvider[]>(
+		() => [
+			'spikonado',
+			...(openAiConfigured ? (['openai'] as const) : []),
+			...(chatGptConfigured ? (['chatgpt'] as const) : []),
+			...(claudeConfigured ? (['claude'] as const) : [])
+		],
+		[openAiConfigured, chatGptConfigured, claudeConfigured]
+	);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -1434,8 +1490,14 @@ export default function App({
 
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
 
-		if (change.provider === 'claude') setClaudeConfigured(change.configured);
+		if (change.provider === 'claude') setClaudeTokenSaved(change.configured);
 		setProviderConfigurationError(null);
+	}
+
+	function handleClaudeCodeStatusChange(status: ClaudeCodeStatus) {
+		claudeCodeStatusGeneration.current += 1;
+		setClaudeCodeStatus(status);
+		setClaudeCodeStatusError(null);
 	}
 
 	function handleChatGptStatusChange(status: ChatGptStatus) {
@@ -2164,7 +2226,7 @@ export default function App({
 		ensureSubscriptionAttemptedFor.current = null;
 		providerConfigurationLoadedFor.current = null;
 		setOpenAiConfigured(false);
-		setClaudeConfigured(false);
+		setClaudeTokenSaved(false);
 		setChatGptConfigured(false);
 		setChatGptStatus(null);
 		setChatGptStatusLoading(false);
@@ -2730,13 +2792,16 @@ export default function App({
 								userId={signedInUserId}
 								localApi={localApi}
 								openAiConfigured={openAiConfigured}
-								claudeConfigured={claudeConfigured}
+								claudeTokenSaved={claudeTokenSaved}
+								claudeCodeStatus={claudeCodeStatus}
+								claudeCodeStatusError={claudeCodeStatusError}
 								chatGptStatus={chatGptStatus}
 								chatGptLoading={chatGptStatusLoading}
 								chatGptStatusError={chatGptStatusError}
 								loading={providerConfigurationLoading}
 								loadError={providerConfigurationError}
 								onChatGptStatusChange={handleChatGptStatusChange}
+								onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
 								onConfigurationChange={handleProviderConfigurationChange}
 							/>
 						) : settingsPage === 'payments' ? (

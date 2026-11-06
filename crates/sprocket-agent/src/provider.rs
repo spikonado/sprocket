@@ -97,7 +97,7 @@ pub(crate) struct AgentProvider {
     model_vendor: String,
     chatgpt_client: Option<ChatGptClient>,
     chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
-    claude_code: Option<ClaudeCode>,
+    claude_code: ClaudeCode,
     cwd: PathBuf,
     provider_handoff: Option<ProviderHandoff>,
 }
@@ -177,7 +177,7 @@ impl AgentProvider {
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
         chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
-        claude_code: Option<ClaudeCode>,
+        claude_code: ClaudeCode,
         cwd: PathBuf,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
@@ -422,11 +422,8 @@ impl AgentProvider {
                 ))
             }
             CompletionProvider::Claude => {
-                let claude_code = self.claude_code.as_ref().ok_or_else(|| {
-                    anyhow!("Claude subscription runs require the local Claude Code service.")
-                })?;
                 let credential = runtime.issue_claude_credential(run_id, claim_id).await?;
-                claude_code
+                self.claude_code
                     .completion_model(
                         credential.token,
                         &self.model,

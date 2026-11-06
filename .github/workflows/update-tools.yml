@@ -19,8 +19,6 @@ jobs:
         include:
           - tool: bun
             label: Bun
-          - tool: claude-code
-            label: Claude Code
           - tool: agent-browser
             label: agent-browser
             note: ' Check the dashboard adapters in `crates/sprocket-server/src/routes/browser.rs` against the new release before merging: dashboard loading, dynamic chunks, session creation, and live input.'

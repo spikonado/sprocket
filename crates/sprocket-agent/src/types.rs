@@ -64,8 +64,8 @@ pub trait ChatGptCredentials: Send + Sync {
     fn credential(&self) -> BoxFuture<'_, anyhow::Result<ChatGptAccess>>;
 }
 
-pub trait ClaudeCodeInstall: Send + Sync {
-    /// Installs the pinned Claude Code on first use. The path stays valid while the host runs.
+pub trait ClaudeCodeLocator: Send + Sync {
+    /// Finds the user's Claude Code, or explains how to install or update it.
     fn executable(&self) -> BoxFuture<'_, anyhow::Result<PathBuf>>;
 }
 
@@ -73,8 +73,7 @@ pub trait ClaudeCodeInstall: Send + Sync {
 pub struct RunAgentRequest {
     /// Local ChatGPT credential service handle. Required for ChatGPT runs.
     pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
-    /// Required for Claude subscription runs.
-    pub claude_code: Option<crate::claude_code::ClaudeCode>,
+    pub claude_code: crate::claude_code::ClaudeCode,
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,

@@ -179,19 +179,6 @@ fn checkpoint_after_tool_results_asks_to_continue() {
 }
 
 #[test]
-fn tool_names_lose_the_mcp_prefix() {
-    let mut event = json!({
-        "type": "content_block_start",
-        "index": 1,
-        "content_block": { "type": "tool_use", "id": "toolu_1", "name": "mcp__sprocket__exec_cmd", "input": {} },
-    });
-
-    unprefix_tool_names(&mut event);
-
-    assert_eq!(event["content_block"]["name"], "exec_cmd");
-}
-
-#[test]
 fn rejected_rate_limits_report_the_subscription_limit() {
     let result = json!({ "type": "result", "is_error": true, "api_error_status": 429 });
     let info = json!({ "status": "rejected", "resetsAt": 10_000 + 2 * 3_600 });

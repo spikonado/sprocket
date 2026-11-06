@@ -16,7 +16,7 @@ use tokio::sync::OwnedMutexGuard;
 
 use self::process::{Event, Process, SessionStart, Spawn};
 use crate::stream_recovery::provider_response;
-use crate::types::ClaudeCodeInstall;
+use crate::types::ClaudeCodeLocator;
 
 const TOOL_PREFIX: &str = "mcp__sprocket__";
 const UNUSED_ENDPOINT: &str = "http://claude-code.invalid";
@@ -30,7 +30,7 @@ type Digest32 = [u8; 32];
 /// Runs Anthropic models through the local Claude Code CLI on the user's subscription.
 #[derive(Clone)]
 pub struct ClaudeCode {
-    install: Arc<dyn ClaudeCodeInstall>,
+    locator: Arc<dyn ClaudeCodeLocator>,
     config_dir: PathBuf,
     sessions: Sessions,
 }
@@ -47,9 +47,9 @@ struct SessionRecord {
 }
 
 impl ClaudeCode {
-    pub fn new(install: Arc<dyn ClaudeCodeInstall>, config_dir: PathBuf) -> Self {
+    pub fn new(locator: Arc<dyn ClaudeCodeLocator>, config_dir: PathBuf) -> Self {
         Self {
-            install,
+            locator,
             config_dir,
             sessions: Arc::default(),
         }
@@ -63,7 +63,7 @@ impl ClaudeCode {
         thread_id: &str,
         cwd: &Path,
     ) -> anyhow::Result<DynModel<Completion>> {
-        let executable = self.install.executable().await?;
+        let executable = self.locator.executable().await?;
         let wire = AnthropicConfig::new("")
             .with_base_url(UNUSED_ENDPOINT)
             .completion(anthropic_model_id(model))
@@ -530,7 +530,7 @@ fn result_error(result: &Value, rate_limit: Option<&Value>, now_secs: u64) -> Va
     if status == Some(401) {
         return error_event(
             ERROR_CODE,
-            "Claude rejected the subscription token. Run `claude setup-token` again and replace the token in Settings.",
+            "Claude rejected the subscription token. Remove it and sign in with Claude again in Settings > BYOK/BYOS.",
         );
     }
     let detail = result["result"]

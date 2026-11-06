@@ -24,17 +24,6 @@ libraries under their own licenses, including JavaScriptCore under LGPL-2.
 The Bun version, archive sizes, and SHA256 checksums are recorded in
 `tools/bun/releases.json`.
 
-## Claude Code
-
-Sprocket downloads unmodified native releases of
-[Claude Code](https://github.com/anthropics/claude-code) from npm when a
-Claude subscription run first needs it. Claude Code is © Anthropic PBC, and its
-use is subject to Anthropic's
-[legal agreements](https://code.claude.com/docs/en/legal-and-compliance).
-
-The Claude Code version, archive sizes, and SHA256 checksums are recorded in
-`tools/claude-code/releases.json`.
-
 ## agent-desktop
 
 Sprocket downloads unmodified native releases of

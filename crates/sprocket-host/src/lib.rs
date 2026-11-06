@@ -4,7 +4,7 @@ pub mod browser;
 mod browser_install;
 mod bun_install;
 pub mod chatgpt_credentials;
-mod claude_code_install;
+pub mod claude_code_cli;
 pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
@@ -38,7 +38,7 @@ use tokio::task::JoinHandle;
 use crate::artifact_watch::ArtifactWatchers;
 use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
-use crate::claude_code_install::ClaudeCodeInstaller;
+use crate::claude_code_cli::ClaudeCodeCli;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_settings::GitHubSettingsStore;
 use crate::kicad_connector::KiCadConnector;
@@ -97,6 +97,7 @@ pub struct Host {
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
     pub kicad: Arc<KiCadConnector>,
+    pub claude_code_cli: Arc<ClaudeCodeCli>,
     pub claude_code: sprocket_agent::ClaudeCode,
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
@@ -134,6 +135,7 @@ impl Host {
         );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         let python = Arc::new(PythonTools::new(data_dir)?);
+        let claude_code_cli = Arc::new(ClaudeCodeCli::new());
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
@@ -166,9 +168,10 @@ impl Host {
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
             kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
             claude_code: sprocket_agent::ClaudeCode::new(
-                Arc::new(ClaudeCodeInstaller::new(data_dir)?),
+                Arc::clone(&claude_code_cli) as _,
                 data_dir.join("claude-code"),
             ),
+            claude_code_cli,
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
             python,

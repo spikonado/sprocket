@@ -78,7 +78,12 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		updateGitHubSettings: unusedDesktopCall,
 		fetchConnectors: unusedDesktopCall,
 		installConnector: unusedDesktopCall,
-		uninstallConnector: unusedDesktopCall
+		uninstallConnector: unusedDesktopCall,
+		fetchClaudeCodeStatus: unusedDesktopCall,
+		installClaudeCode: unusedDesktopCall,
+		startClaudeCodeLogin: unusedDesktopCall,
+		finishClaudeCodeLogin: unusedDesktopCall,
+		cancelClaudeCodeLogin: unusedDesktopCall
 	};
 }
 

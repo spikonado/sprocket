@@ -5,6 +5,7 @@ mod attachment_upload;
 pub mod auth;
 pub(crate) mod browser;
 pub(crate) mod chatgpt;
+pub(crate) mod claude_code;
 pub(crate) mod cli;
 pub mod config;
 pub(crate) mod connectors;

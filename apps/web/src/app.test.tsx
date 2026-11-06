@@ -12,6 +12,7 @@ import type { RuntimeConfig } from '$lib/runtime-config';
 import { stubWebSocket } from '$lib/local/socket-test-support';
 import { LocalResponseError } from '$lib/local/transport';
 import type {
+	ClaudeCodeStatus,
 	LocalApi,
 	ProjectAttachment,
 	TranscriptDisplayPage,
@@ -150,7 +151,22 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchConnectors: unused,
 		installConnector: unused,
 		uninstallConnector: unused,
+		fetchClaudeCodeStatus: async () => claudeCodeStatus('installed'),
+		installClaudeCode: unused,
+		startClaudeCodeLogin: unused,
+		finishClaudeCodeLogin: unused,
+		cancelClaudeCodeLogin: unused,
 		...overrides
+	};
+}
+
+function claudeCodeStatus(state: ClaudeCodeStatus['state']): ClaudeCodeStatus {
+	return {
+		state,
+		version: '2.1.300',
+		minimumVersion: '2.1.257',
+		installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
+		error: null
 	};
 }
 
@@ -1465,3 +1481,26 @@ it('shows a retained-account sign-out failure in Account settings', async () => 
 		'a@example.com'
 	);
 });
+
+it.each([
+	['installed', true],
+	['outdated', false]
+] as const)(
+	'shows a saved Claude token as a provider only when Claude Code is up to date (%s)',
+	async (state, shown) => {
+		const client = createConvexFixtures();
+		client.registerAction(api.providerCredentials.getMyConfiguration, {
+			openai: false,
+			claude: true,
+			chatgpt: false,
+			chatgptModelIds: null
+		});
+		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(state));
+		await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));
+		fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
+		fireEvent.click(screen.getByRole('button', { name: 'Providers' }));
+		await flushPendingWork();
+		expect(fetchClaudeCodeStatus).toHaveBeenCalledWith('user-a');
+		expect(screen.queryByRole('switch', { name: 'Claude Subscription' }) !== null).toBe(shown);
+	}
+);

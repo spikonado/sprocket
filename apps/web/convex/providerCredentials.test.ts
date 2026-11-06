@@ -192,7 +192,7 @@ describe('provider credentials', () => {
 
 		await expect(
 			asUser.action(api.providerCredentials.saveClaudeToken, { token: 'sk-ant-api03-key' })
-		).rejects.toThrow('Enter a valid Claude token');
+		).rejects.toThrow("That isn't a valid Claude token");
 		await asUser.action(api.providerCredentials.saveClaudeToken, {
 			token: ' sk-ant-oat01-token_A-1 '
 		});

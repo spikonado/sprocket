@@ -112,7 +112,7 @@ export const saveClaudeToken = action({
 		const token = args.token.trim();
 
 		if (token.length > 512 || !CLAUDE_TOKEN_PATTERN.test(token)) {
-			throw new Error('Enter a valid Claude token from `claude setup-token`.');
+			throw new Error("That isn't a valid Claude token. Sign in with Claude again.");
 		}
 
 		await storeVaultObject(name, token);
