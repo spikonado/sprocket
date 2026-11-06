@@ -13,6 +13,7 @@ use tokio::time::Instant;
 
 use crate::now_ms;
 use crate::openai::{DeveloperResponses, transport_auth_config};
+use crate::request_compression::ZstdResponsesRequests;
 use crate::types::GatewayCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
@@ -113,8 +114,9 @@ impl GatewayClient {
         Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
     {
         let auth = GatewayAuth::new(Some(credential), issue_credential);
-        let http =
-            DynHttpClient::new(ReqwestClient::from(reqwest::Client::new())).with_middleware(auth);
+        let http = DynHttpClient::new(ReqwestClient::from(reqwest::Client::new()))
+            .with_middleware(auth)
+            .with_middleware(ZstdResponsesRequests);
         Self { base_url, http }
     }
 

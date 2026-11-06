@@ -10,6 +10,7 @@ use rig::{DynModel, Model};
 
 use crate::now_ms;
 use crate::openai::{StatelessResponses, transport_auth_config};
+use crate::request_compression::zstd_compress;
 use crate::stream_recovery::provider_error_code;
 use crate::types::ChatGptCredentials;
 
@@ -22,8 +23,6 @@ const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SUBSCRIPTION_USAGE_LIMIT_CODE: &str = "subscription_sharing_usage_limit_exceeded";
-// Codex's level. The SIWC route's gateway resets uncompressed bodies over 1 MiB with a 503.
-const REQUEST_ZSTD_LEVEL: i32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 #[error(
@@ -235,8 +234,8 @@ impl HttpClientExt for SiwcHttpClient {
                 ));
             }
             let body = rewrite_request_body(&body.into())?;
-            let body = zstd::bulk::compress(&body, REQUEST_ZSTD_LEVEL)
-                .map_err(|error| stream_error(error.to_string()))?;
+            // The SIWC route's gateway resets uncompressed bodies over 1 MiB with a 503.
+            let body = zstd_compress(&body).map_err(|error| stream_error(error.to_string()))?;
             let request = this
                 .inner
                 .request(parts.method, endpoint)

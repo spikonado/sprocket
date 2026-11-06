@@ -31,6 +31,7 @@ use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::openai::stateless_responses_model;
+use crate::request_compression::ZstdResponsesRequests;
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
@@ -416,7 +417,8 @@ impl AgentProvider {
                 let credential = runtime.issue_openai_credential(run_id, claim_id).await?;
                 let model = stateless_responses_model(
                     openai::OpenAIConfig::new(credential.api_key)
-                        .with_instructions(base_instructions),
+                        .with_instructions(base_instructions)
+                        .connect(rig::rig_reqwest::shared().with_middleware(ZstdResponsesRequests)),
                     &self.model,
                 );
                 Ok(model)
