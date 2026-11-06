@@ -60,6 +60,10 @@ Released agents report claim lease loss through `agentRuntime.finalizeClaimFailu
 
 Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `subagents:createOrSend`, so their runs record the prompt at creation and return it as `promptPart`. They also read `prompt` from `subagents:recoverSubmission`, send `beforePrompt: true` to `saveContextHandoff` and `omitReasoningReplay` (which places the handoff cutoff before the recorded prompt), and send `prompt` and `storageIds` to `finalizeFailedStart`, which ignores them. Once those agents age out, make `deferPrompt` the only path and remove `promptPart`, the `recoverSubmission` prompt, `beforePrompt`, and the ignored arguments.
 
+### Run finalization text
+
+Released agents send `text` to `agentRuntime.finalizeExecutorRun`, `finalizeFailedStart` and `finalizeClaimFailure`. All three accept and ignore it. Remove the argument once those agents age out.
+
 ### Processed-token usage
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
