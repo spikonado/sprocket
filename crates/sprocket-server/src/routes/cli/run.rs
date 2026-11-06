@@ -254,15 +254,8 @@ pub(super) async fn output(
         thread_id: started.thread_id,
         revision: snapshot.revision,
         answer: snapshot.answer,
-        status: snapshot
-            .outcome
-            .as_ref()
-            .map(|outcome| outcome.status.clone())
-            .unwrap_or_else(|| "running".into()),
-        error: match (
-            snapshot.outcome.and_then(|outcome| outcome.error),
-            snapshot.output_error,
-        ) {
+        status: snapshot.status,
+        error: match (snapshot.error, snapshot.output_error) {
             (Some(run_error), Some(output_error)) => Some(format!("{run_error}\n{output_error}")),
             (run_error, output_error) => run_error.or(output_error),
         },

@@ -1,5 +1,5 @@
 import { Brain, ChevronRight } from 'lucide-react';
-import { useInProgressDisclosure } from '$lib/components/home/in-progress-disclosure';
+import { useState } from 'react';
 
 type Props = {
 	text: string;
@@ -7,23 +7,29 @@ type Props = {
 };
 
 export default function ReasoningDisclosure({ text, inProgress }: Props) {
-	const disclosure = useInProgressDisclosure(inProgress);
+	const [expanded, setExpanded] = useState(inProgress);
+	const [previousInProgress, setPreviousInProgress] = useState(inProgress);
+
+	if (inProgress !== previousInProgress) {
+		setPreviousInProgress(inProgress);
+		setExpanded(inProgress);
+	}
 
 	return (
 		<div className="text-muted-foreground text-sm">
 			<button
 				type="button"
 				className="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1.5 transition"
-				onClick={disclosure.toggle}
-				aria-expanded={disclosure.expanded}
+				onClick={() => setExpanded((value) => !value)}
+				aria-expanded={expanded}
 			>
 				<ReasoningLabel inProgress={inProgress} />
 				<ChevronRight
-					className={`size-3.5 shrink-0 transition-transform ${disclosure.expanded ? 'rotate-90' : ''}`}
+					className={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
 					aria-hidden="true"
 				/>
 			</button>
-			{disclosure.expanded ? (
+			{expanded ? (
 				<div className="mt-1.5">
 					<ReasoningText text={text} />
 				</div>

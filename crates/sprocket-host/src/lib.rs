@@ -9,6 +9,7 @@ pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
 mod gh_install;
+mod git_install;
 pub mod github_settings;
 pub mod kicad_connector;
 pub mod lifetime;
@@ -103,6 +104,7 @@ pub struct Host {
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
     gh: Arc<PinnedTool>,
+    git: Option<Arc<PinnedTool>>,
     python: Arc<PythonTools>,
 }
 
@@ -164,7 +166,7 @@ impl Host {
             ),
             native_auth,
             live_completions: Arc::new(LiveCompletionHub::new()),
-            command_sessions: Arc::new(ThreadCommandSessions::default()),
+            command_sessions: Arc::new(ThreadCommandSessions::new()),
             convex_deployment_url,
             machine_identity,
             run_recovery: RunRecovery::load(data_dir)?,
@@ -179,6 +181,10 @@ impl Host {
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
             gh,
+            git: cfg!(windows)
+                .then(|| git_install::installer(data_dir))
+                .transpose()?
+                .map(Arc::new),
             python,
         })
     }
@@ -188,6 +194,9 @@ impl Host {
         self.bun.prepare();
         self.desktop.prepare();
         self.gh.prepare();
+        if let Some(git) = &self.git {
+            git.prepare();
+        }
         self.python.prepare();
         self.kicad.prepare();
     }
@@ -206,7 +215,8 @@ impl Host {
             ),
             [self.bun.bin_dir()]
                 .into_iter()
-                .chain(self.python.bin_dirs()),
+                .chain(self.python.bin_dirs())
+                .chain(self.git.as_deref().map(git_install::path_dir)),
         );
         environment.extend(self.kicad.environment());
         environment

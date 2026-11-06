@@ -12,12 +12,27 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     fs::create_dir_all(old.join("bin")).unwrap();
     fs::write(old.join("bin/kicad-cli"), "old launcher").unwrap();
     fs::write(old.join(USER_KICAD_VERSION_FILE), "11.0.1\n").unwrap();
+    fs::write(old.join(LIBRARIES_FILE), "/kicad/share\n").unwrap();
+    fs::create_dir_all(old.join(ROUTING_TOOLS_DIR)).unwrap();
     fs::create_dir_all(connector.root.join(".staging-interrupted")).unwrap();
 
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);
     assert!(status.update_available);
     assert_eq!(connector.installed().unwrap().version, "11.0.1");
+    assert_eq!(
+        connector.environment(),
+        vec![
+            (
+                OsString::from(LIBRARIES_VARIABLE),
+                OsString::from("/kicad/share")
+            ),
+            (
+                OsString::from(ROUTING_TOOLS_VARIABLE),
+                old.join(ROUTING_TOOLS_DIR).into_os_string()
+            ),
+        ]
+    );
 
     repair_unless_installing(&connector.root, &connector.release.version).unwrap();
     assert!(!connector.root.join(".staging-interrupted").exists());
@@ -70,27 +85,33 @@ fn copies_only_missing_lib_tables() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn launchers_run_kicad_and_point_kipy_and_the_router_at_its_cli() {
+async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
     let directory = tempfile::tempdir().unwrap();
     let tree = directory.path().join("it's here");
     fs::create_dir_all(&tree).unwrap();
-    let (cli, python, kipy_api, route) = (
+    let (cli, python, kipy_api, kicad_view) = (
         tree.join("kicad-cli"),
         tree.join("python"),
         tree.join("kipy-api.py"),
-        tree.join("route.py"),
+        tree.join("kicad-view.py"),
     );
     for (program, body) in [
         (&cli, r#"printf '%s|' cli "$@""#),
-        (&python, r#"printf '%s|' "$KICAD_CLI_PATH$KICAD_CLI" "$@""#),
+        (
+            &python,
+            r#"printf '%s|' "$KICAD_CLI_PATH$KICAD_CLI" "$SPROCKET_KICAD_ROUTING_TOOLS" "$@""#,
+        ),
     ] {
         fs::write(program, format!("#!/bin/sh\n{body}\n")).unwrap();
         set_executable(program).unwrap();
     }
     let bin = directory.path().join("bin");
-    write_launchers(&bin, launchers(&cli, &python, &kipy_api, Some(&route)))
-        .await
-        .unwrap();
+    write_launchers(
+        &bin,
+        launchers(&cli, &python, &kipy_api, &kicad_view, Some(&tree)),
+    )
+    .await
+    .unwrap();
 
     let output = |name: &str| {
         let output = std::process::Command::new(bin.join(name))
@@ -100,13 +121,26 @@ async fn launchers_run_kicad_and_point_kipy_and_the_router_at_its_cli() {
         String::from_utf8(output.stdout).unwrap()
     };
     assert_eq!(output("kicad-cli"), "cli|a b|c|");
-    assert_eq!(output("kicad-python"), format!("{}|a b|c|", cli.display()));
+    assert_eq!(output("kicad-python"), format!("{}||a b|c|", cli.display()));
     assert_eq!(
         output("kipy-api"),
-        format!("|{}|a b|c|", kipy_api.display())
+        format!("||{}|a b|c|", kipy_api.display())
     );
     assert_eq!(
         output("kicad-route"),
-        format!("{}|{}|a b|c|", cli.display(), route.display())
+        format!(
+            "{}||{}|a b|c|",
+            cli.display(),
+            route_script(&tree).display()
+        )
+    );
+    assert_eq!(
+        output("kicad-view"),
+        format!(
+            "{}|{}|{}|a b|c|",
+            cli.display(),
+            tree.display(),
+            kicad_view.display()
+        )
     );
 }

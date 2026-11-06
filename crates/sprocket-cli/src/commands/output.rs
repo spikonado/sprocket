@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io::Write;
 
-use sprocket_server::cli_protocol::{CliRunSnapshot, RunStarted};
+use sprocket_server::cli_protocol::{CliRunSnapshot, RunStarted, RunStatus};
 
 fn run_header(started: &RunStarted) -> String {
     format!(
@@ -110,11 +110,15 @@ impl Output {
         }
     }
 
-    pub fn finish(&mut self, status: String, error: Option<String>) -> anyhow::Result<()> {
+    pub fn finish(
+        &mut self,
+        status: Option<RunStatus>,
+        error: Option<String>,
+    ) -> anyhow::Result<()> {
         if self.finished {
             return Ok(());
         }
-        if status == "completed" && !self.answer.is_empty() {
+        if status == Some(RunStatus::Completed) && !self.answer.is_empty() {
             let mut stdout = std::io::stdout().lock();
             writeln!(stdout, "{}", self.answer)?;
             stdout.flush()?;
@@ -127,11 +131,11 @@ impl Output {
     }
 
     pub fn failure(&mut self, error: String) -> anyhow::Result<()> {
-        self.finish("failed".into(), Some(error))
+        self.finish(Some(RunStatus::Failed), Some(error))
     }
 
     pub fn unknown(&mut self, error: String) -> anyhow::Result<()> {
-        self.finish("unknown".into(), Some(error))
+        self.finish(None, Some(error))
     }
 }
 

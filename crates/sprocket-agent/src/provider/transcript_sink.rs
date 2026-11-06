@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rig::message::AssistantContent;
+use sprocket_convex::RunStatus;
 use sprocket_transcript::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts,
@@ -228,7 +229,7 @@ impl TranscriptSink {
         let overlay = LiveCompletionOverlay {
             thread_id: self.thread_id.clone(),
             run_id: self.run_id.clone(),
-            run_status: "running".to_string(),
+            run_status: RunStatus::Running,
             stream_id: self.stream_id.clone(),
             text: self.assistant_text(),
             parts: visible_live_parts(&self.parts.parts),

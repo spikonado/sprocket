@@ -1,7 +1,8 @@
 use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
-use sprocket_convex::{Client as ConvexRpcClient, decode_function_result};
+use sprocket_convex::{Client as ConvexRpcClient, RunStatus, decode_function_result};
 use sprocket_transcript::sections::WorkAssignment;
 use sprocket_transcript::{
     DownloadOrder, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
@@ -17,8 +18,8 @@ use crate::types::{
 };
 use crate::workspace_context::HiddenPrompt;
 
-const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
-const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
+const TRANSPORT_MAX_ATTEMPTS: usize = 3;
+const TRANSPORT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -308,9 +309,9 @@ impl RuntimeClient {
         args.insert("deferPrompt".to_string(), Value::Boolean(true));
         self.add_execution_secret(&mut args);
 
-        let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
+        let mut retry_delay = TRANSPORT_INITIAL_RETRY_DELAY;
         let mut last_error = None;
-        for attempt in 1..=CREATE_RUN_MAX_ATTEMPTS {
+        for attempt in 1..=TRANSPORT_MAX_ATTEMPTS {
             match self
                 .client
                 .action("agentRuntime:createGatewayRun", args.clone())
@@ -319,7 +320,7 @@ impl RuntimeClient {
                 Ok(result) => {
                     return decode_function_result(result, "agentRuntime:createGatewayRun");
                 }
-                Err(error) if attempt < CREATE_RUN_MAX_ATTEMPTS => {
+                Err(error) if attempt < TRANSPORT_MAX_ATTEMPTS => {
                     eprintln!(
                         "sprocket-agent: createGatewayRun transport attempt {attempt} failed; \
                          reconciling with request {}: {error:#}",
@@ -335,7 +336,7 @@ impl RuntimeClient {
         Err(last_error.expect("createGatewayRun retry loop records a final error")).with_context(
             || {
                 format!(
-                    "agentRuntime:createGatewayRun failed after {CREATE_RUN_MAX_ATTEMPTS} attempts"
+                    "agentRuntime:createGatewayRun failed after {TRANSPORT_MAX_ATTEMPTS} attempts"
                 )
             },
         )
@@ -563,7 +564,7 @@ impl RuntimeClient {
         if let Some(handoff) = handoff {
             args.insert("handoff".to_string(), Value::Object(handoff.args()));
         }
-        self.claim_mutation_with_retries("agentRuntime:beginRun", args)
+        self.mutation_with_retries("agentRuntime:beginRun", args)
             .await
     }
 
@@ -573,7 +574,7 @@ impl RuntimeClient {
         claim_id: &str,
     ) -> anyhow::Result<ClaimStatus> {
         let args = self.run_args_with_claim(run_id, claim_id);
-        self.claim_mutation_with_retries("agentRuntime:omitReasoningReplay", args)
+        self.mutation_with_retries("agentRuntime:omitReasoningReplay", args)
             .await
     }
 
@@ -585,20 +586,26 @@ impl RuntimeClient {
     ) -> anyhow::Result<ClaimStatus> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("completionProvider".to_string(), provider.as_str().into());
-        self.claim_mutation_with_retries("agentRuntime:fallBackToProvider", args)
+        self.mutation_with_retries("agentRuntime:fallBackToProvider", args)
             .await
     }
 
-    async fn claim_mutation_with_retries(
+    /// Retries transport failures only, so `function` must accept a repeat of a
+    /// call whose first attempt committed but lost its response.
+    pub(crate) async fn mutation_with_retries<T: DeserializeOwned>(
         &self,
         function: &str,
         args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<ClaimStatus> {
-        for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
+    ) -> anyhow::Result<T> {
+        for attempt in 0..TRANSPORT_MAX_ATTEMPTS {
             match self.mutation_checked(function, args.clone()).await {
-                Ok(status) => return Ok(status),
-                Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
-                    sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
+                Ok(value) => return Ok(value),
+                Err(MutationFailure::Transport(error)) if attempt + 1 < TRANSPORT_MAX_ATTEMPTS => {
+                    eprintln!(
+                        "sprocket-agent: {function} transport attempt {} failed; retrying: {error:#}",
+                        attempt + 1
+                    );
+                    sleep(TRANSPORT_INITIAL_RETRY_DELAY * (1 << attempt)).await;
                 }
                 Err(MutationFailure::Transport(error) | MutationFailure::Functional(error)) => {
                     return Err(error);
@@ -647,7 +654,7 @@ impl RuntimeClient {
         run_id: &str,
         claim_id: &str,
         text: &str,
-        status: &str,
+        status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
         self.finalize_run_with_expectations(run_id, text, status, last_error, Some(claim_id), None)
@@ -658,21 +665,28 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         text: &str,
-        status: &str,
+        status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
-        self.finalize_run_with_expectations(run_id, text, status, last_error, None, Some("queued"))
-            .await
+        self.finalize_run_with_expectations(
+            run_id,
+            text,
+            status,
+            last_error,
+            None,
+            Some(RunStatus::Queued),
+        )
+        .await
     }
 
     async fn finalize_run_with_expectations(
         &self,
         run_id: &str,
         text: &str,
-        status: &str,
+        status: RunStatus,
         last_error: Option<&str>,
         expected_claim_id: Option<&str>,
-        expected_status: Option<&str>,
+        expected_status: Option<RunStatus>,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args(run_id);
         if let Some(expected_claim_id) = expected_claim_id {
@@ -684,11 +698,11 @@ impl RuntimeClient {
         if let Some(expected_status) = expected_status {
             args.insert(
                 "expectedStatus".to_string(),
-                expected_status.to_string().into(),
+                expected_status.as_str().into(),
             );
         }
         args.insert("text".to_string(), text.to_string().into());
-        args.insert("status".to_string(), status.to_string().into());
+        args.insert("status".to_string(), status.as_str().into());
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }

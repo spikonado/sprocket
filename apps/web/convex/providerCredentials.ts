@@ -2,7 +2,7 @@ import { action, internalQuery, type ActionCtx } from '@convex/_generated/server
 import { internal } from '@convex/_generated/api';
 import { v, type ObjectType } from 'convex/values';
 import { getExecutionRun } from '@convex/lib/auth';
-import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { runAcceptsNewWork } from '@convex/lib/runLease';
 import { agentError } from '@convex/lib/agentErrors';
 import { getProviderHandoff } from '@convex/lib/contextHandoff';
 import {
@@ -143,10 +143,7 @@ export const authorizeRunCredential = internalQuery({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (
-			run.cancellationRequestedAt !== undefined ||
-			!ownsActiveRunClaim(run, args.claimId, Date.now())
-		) {
+		if (!runAcceptsNewWork(run, args.claimId, Date.now())) {
 			throw agentError('RUN_NO_LONGER_ACTIVE');
 		}
 

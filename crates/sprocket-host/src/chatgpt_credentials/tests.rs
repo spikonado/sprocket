@@ -1420,10 +1420,24 @@ async fn authorization_builds_pkce_urls_for_dynamic_and_returning_clients() {
     assert_eq!(pairs["code_challenge_method"], "S256");
     assert!(pairs["ext_agent_host_id"].starts_with("urn:uuid:"));
 
+    let returning_tokens = tokens(
+        &fixture,
+        "client-1",
+        "subject-1",
+        "access-1",
+        "refresh-1",
+        now() + 3600,
+    );
+    let id_token = returning_tokens.id_token.clone();
     insert(
         &fixture.service,
         "user-a",
-        account("connection-1", "client-1", "subject-1", None),
+        account(
+            "connection-1",
+            "client-1",
+            "subject-1",
+            Some(returning_tokens),
+        ),
     )
     .await;
     let nonce = Uuid::new_v4().to_string();
@@ -1446,6 +1460,8 @@ async fn authorization_builds_pkce_urls_for_dynamic_and_returning_clients() {
         .collect();
     assert_eq!(pairs["client_id"], "client-1");
     assert!(!pairs.contains_key("agent_name_hint"));
+    assert_eq!(pairs["id_token_hint"], id_token);
+    assert_eq!(pairs["login_hint"], "agent@example.com");
 }
 
 #[tokio::test]

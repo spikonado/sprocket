@@ -24,10 +24,13 @@ const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
 const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt");
 const KIPY_API: &str = include_str!("../../../tools/kicad/kipy-api.py");
 const KIPY_API_FILE: &str = "kipy-api.py";
+const KICAD_VIEW: &str = include_str!("../../../tools/kicad/kicad-view.py");
+const KICAD_VIEW_FILE: &str = "kicad-view.py";
 const LIBRARIES_FILE: &str = "libraries-dir";
 const ROUTING_TOOLS_DIR: &str = "routing-tools";
 /// KiCad doesn't read this name, so a KiCad started from an agent's shell keeps its own paths.
 const LIBRARIES_VARIABLE: &str = "SPROCKET_KICAD_LIBRARIES";
+const ROUTING_TOOLS_VARIABLE: &str = "SPROCKET_KICAD_ROUTING_TOOLS";
 const NAME: &str = "KiCad";
 const STAGING_PREFIX: &str = ".staging-";
 const LAUNCHER_DIR: &str = "bin";
@@ -216,10 +219,20 @@ impl KiCadConnector {
         Ok(tokio::fs::read(output.path()).await?)
     }
 
-    pub(crate) fn environment(&self) -> Option<(OsString, OsString)> {
-        let dir = installed_version(&self.root, &self.release.version)?;
-        let libraries = fs::read_to_string(self.root.join(dir).join(LIBRARIES_FILE)).ok()?;
-        Some((LIBRARIES_VARIABLE.into(), libraries.trim().into()))
+    pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {
+        let Some(dir) = installed_version(&self.root, &self.release.version) else {
+            return Vec::new();
+        };
+        let dir = self.root.join(dir);
+        let mut environment = Vec::new();
+        if let Ok(libraries) = fs::read_to_string(dir.join(LIBRARIES_FILE)) {
+            environment.push((LIBRARIES_VARIABLE.into(), libraries.trim().into()));
+        }
+        let routing_tools = dir.join(ROUTING_TOOLS_DIR);
+        if routing_tools.is_dir() {
+            environment.push((ROUTING_TOOLS_VARIABLE.into(), routing_tools.into()));
+        }
+        environment
     }
 
     fn activity(&self) -> MutexGuard<'_, Activity> {
@@ -289,15 +302,11 @@ impl KiCadConnector {
             .await?;
         }
         self.create_venv(staging).await?;
-        let route = match self.routing_tools_asset() {
+        let routing_tools = match self.routing_tools_asset() {
             Some(asset) => {
                 self.download_routing_tools(asset, staging).await?;
-                Some(
-                    version_dir
-                        .join(ROUTING_TOOLS_DIR)
-                        .join("py_router")
-                        .join("route.py"),
-                )
+                tokio::fs::write(staging.join(KICAD_VIEW_FILE), KICAD_VIEW).await?;
+                Some(version_dir.join(ROUTING_TOOLS_DIR))
             }
             None => None,
         };
@@ -308,7 +317,8 @@ impl KiCadConnector {
                 &published_cli,
                 &venv_python(version_dir),
                 &version_dir.join(KIPY_API_FILE),
-                route.as_deref(),
+                &version_dir.join(KICAD_VIEW_FILE),
+                routing_tools.as_deref(),
             ),
         )
         .await?;
@@ -617,13 +627,15 @@ fn venv_python(dir: &Path) -> PathBuf {
 }
 
 /// `kicad-python` points kipy at this KiCad, since kipy would otherwise prefer a system
-/// install over `PATH`, and `kicad-route` does the same for KiCadRoutingTools. Windows also
-/// gets `.cmd` launchers, while Git Bash, agents' usual shell there, only runs the `sh` ones.
+/// install over `PATH`, and `kicad-route` and `kicad-view` do the same for KiCadRoutingTools.
+/// Windows also gets `.cmd` launchers, while Git Bash, agents' usual shell there, only runs
+/// the `sh` ones.
 fn launchers(
     cli: &Path,
     python: &Path,
     kipy_api: &Path,
-    route: Option<&Path>,
+    kicad_view: &Path,
+    routing_tools: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
     let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', r"'\''"));
     let script = |body: String| format!("#!/bin/sh\n{body}\n");
@@ -650,20 +662,40 @@ fn launchers(
             script(format!("exec {} {} \"$@\"", quote(python), quote(kipy_api))),
         ),
     ];
-    if let Some(route) = route {
+    if let Some(tools) = routing_tools {
         launchers.push((
             "kicad-route",
             script(format!(
                 "export KICAD_CLI={}\nexec {} {} \"$@\"",
                 quote(cli),
                 quote(python),
-                quote(route)
+                quote(&route_script(tools))
+            )),
+        ));
+        launchers.push((
+            "kicad-view",
+            script(format!(
+                "export KICAD_CLI={}\nexport SPROCKET_KICAD_ROUTING_TOOLS={}\nexec {} {} \"$@\"",
+                quote(cli),
+                quote(tools),
+                quote(python),
+                quote(kicad_view)
             )),
         ));
     }
     #[cfg(windows)]
-    launchers.extend(cmd_launchers(cli, python, kipy_api, route));
+    launchers.extend(cmd_launchers(
+        cli,
+        python,
+        kipy_api,
+        kicad_view,
+        routing_tools,
+    ));
     launchers
+}
+
+fn route_script(routing_tools: &Path) -> PathBuf {
+    routing_tools.join("py_router").join("route.py")
 }
 
 #[cfg(windows)]
@@ -671,7 +703,8 @@ fn cmd_launchers(
     cli: &Path,
     python: &Path,
     kipy_api: &Path,
-    route: Option<&Path>,
+    kicad_view: &Path,
+    routing_tools: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
     let escape = |path: &Path| path.display().to_string().replace('%', "%%");
     let quote = |path: &Path| format!("\"{}\"", escape(path));
@@ -699,12 +732,23 @@ fn cmd_launchers(
             ),
         ),
     ];
-    if let Some(route) = route {
+    if let Some(tools) = routing_tools {
         launchers.push((
             "kicad-route.cmd",
             script(
                 format!("set \"KICAD_CLI={}\"\r\n", escape(cli)),
-                format!("{} {}", quote(python), quote(route)),
+                format!("{} {}", quote(python), quote(&route_script(tools))),
+            ),
+        ));
+        launchers.push((
+            "kicad-view.cmd",
+            script(
+                format!(
+                    "set \"KICAD_CLI={}\"\r\nset \"SPROCKET_KICAD_ROUTING_TOOLS={}\"\r\n",
+                    escape(cli),
+                    escape(tools)
+                ),
+                format!("{} {}", quote(python), quote(kicad_view)),
             ),
         ));
     }

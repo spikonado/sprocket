@@ -20,13 +20,9 @@ import {
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
-import {
-	agentError,
-	assertRunAcceptsModelCompletion,
-	toAgentToolConvexError
-} from '@convex/lib/agentErrors';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
-import { isRunClaimLeaseActive } from '@convex/lib/runLease';
+import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
 import {
 	captureThreadActivityBeforeChange,
@@ -89,11 +85,7 @@ async function createQuestion(
 	args: CreateQuestionArgs
 ): Promise<CreatedQuestion> {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-	assertRunAcceptsModelCompletion(run);
-
-	if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-		throw agentError('RUN_NO_LONGER_ACTIVE');
-	}
+	assertRunAcceptsWork(run, args.claimId, Date.now());
 
 	if (!run.activeJobId) {
 		throw new Error('Ask question requires an active tool job.');

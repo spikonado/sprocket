@@ -11,9 +11,6 @@ fn merges_adjacent_downloaded_ranges() {
             DownloadedRange { start: 4, end: 5 }
         ]
     );
-    assert_eq!(state.missing_in(0, 7), vec![3, 6]);
-    state.remote_total_parts = 1;
-    assert_eq!(state.visible_end_exclusive(), 6);
 }
 
 #[test]

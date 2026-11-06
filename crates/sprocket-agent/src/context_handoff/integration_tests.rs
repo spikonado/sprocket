@@ -355,7 +355,8 @@ fn test_agent(base_url: &str) -> rig::Agent {
     let model = stateless_responses_model(
         openai::OpenAIConfig::new("test-key")
             .with_base_url(base_url)
-            .with_instructions("context handoff fixture"),
+            .with_instructions("context handoff fixture")
+            .client(),
         MODEL,
     );
     rig::AgentBuilder::new(model)
@@ -624,7 +625,8 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let target_model = stateless_responses_model(
         openai::OpenAIConfig::new("test-key")
             .with_base_url(&new_url)
-            .with_instructions("context handoff fixture"),
+            .with_instructions("context handoff fixture")
+            .client(),
         TARGET_MODEL,
     );
     let (history, prompt) = resume_context_handoff(
@@ -744,7 +746,8 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     let target_model = stateless_responses_model(
         openai::OpenAIConfig::new("test-key")
             .with_base_url(&new_url)
-            .with_instructions("context handoff fixture"),
+            .with_instructions("context handoff fixture")
+            .client(),
         TARGET_MODEL,
     );
     let recorded = std::cell::Cell::new(false);

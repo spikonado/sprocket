@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use sprocket_convex::RunStatus;
 use tokio::sync::broadcast;
 
 const CHANNEL_CAPACITY: usize = 64;
@@ -279,7 +280,7 @@ impl LiveAssistantParts {
 pub struct LiveCompletionOverlay {
     pub thread_id: String,
     pub run_id: String,
-    pub run_status: String,
+    pub run_status: RunStatus,
     pub stream_id: String,
     pub text: String,
     pub parts: Vec<LiveAssistantPart>,

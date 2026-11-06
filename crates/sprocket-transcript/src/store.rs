@@ -277,44 +277,6 @@ impl TranscriptStore {
             .collect())
     }
 
-    pub async fn has_complete_range(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        start: u32,
-        end_exclusive: u32,
-    ) -> anyhow::Result<bool> {
-        Ok(self
-            .missing_numbers(user_id, thread_id, start, end_exclusive)
-            .await?
-            .is_empty())
-    }
-
-    pub async fn missing_numbers(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        start: u32,
-        end_exclusive: u32,
-    ) -> anyhow::Result<Vec<u32>> {
-        let numbers: Vec<u32> = (start..end_exclusive).collect();
-        if numbers.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut missing = Vec::new();
-        for chunk in numbers.chunks(TRANSCRIPT_CHUNK_SIZE as usize) {
-            let parts = self.read_parts(user_id, thread_id, chunk).await?;
-            let have: HashSet<u32> = parts.iter().map(|part| part.number).collect();
-            missing.extend(
-                chunk
-                    .iter()
-                    .copied()
-                    .filter(|number| !have.contains(number)),
-            );
-        }
-        Ok(missing)
-    }
-
     pub async fn clear_thread(&self, user_id: &str, thread_id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             !thread_id.is_empty()

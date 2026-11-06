@@ -10,9 +10,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::async_tools::ZeroPollCooldown;
 use crate::cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
+use crate::command_container::CommandContainer;
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, UnreturnedOutput, read_log_from};
-use crate::command_shell::resolve_command_shell;
+use crate::command_shell::{default_shell_for, resolve_command_shell};
 use crate::paths::resolve_directory;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -92,6 +93,7 @@ pub struct CommandSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<CommandSession>>>>,
     stopped: Arc<AtomicBool>,
     lifetime_guard_factory: Option<CommandLifetimeGuardFactory>,
+    container: Option<CommandContainer>,
     history_scope: (String, String, String),
     history_resolver: Option<HistoryResolver>,
     history_fetch_lock: Arc<Mutex<()>>,
@@ -109,6 +111,7 @@ impl CommandSessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             stopped: Arc::new(AtomicBool::new(false)),
             lifetime_guard_factory: None,
+            container: None,
             history_scope: Default::default(),
             history_resolver: None,
             history_fetch_lock: Arc::new(Mutex::new(())),
@@ -123,6 +126,11 @@ impl CommandSessionManager {
 
     pub fn with_change_signal(mut self, changes: watch::Sender<()>) -> Self {
         self.changes = Some(changes);
+        self
+    }
+
+    pub fn with_container(mut self, container: Option<CommandContainer>) -> Self {
+        self.container = container;
         self
     }
 
@@ -249,6 +257,20 @@ impl CommandSessionManager {
         &self.environment
     }
 
+    /// The shell commands get when they name none, found on their own `PATH`, which
+    /// includes pinned tools such as Windows' Git Bash.
+    pub fn default_shell(&self) -> String {
+        default_shell_for(self.command_path().as_deref())
+    }
+
+    fn command_path(&self) -> Option<OsString> {
+        self.environment
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+            .map(|(_, path)| path.clone())
+            .or_else(|| std::env::var_os("PATH"))
+    }
+
     /// Gives each command git and `gh` access with this user's GitHub credentials.
     pub fn with_github_credentials(mut self, user_id: String) -> Self {
         self.github_user_id = Some(user_id);
@@ -273,7 +295,7 @@ impl CommandSessionManager {
         let max_output_chars = max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS);
 
         let cwd = resolve_directory(&self.workspace_root, workdir)?;
-        let shell = resolve_command_shell(shell, &cwd)?;
+        let shell = resolve_command_shell(shell, &cwd, self.command_path().as_deref())?;
         let github_environment = match &self.github_user_id {
             Some(user_id) => crate::github::agent_environment(user_id).await,
             None => Vec::new(),
@@ -336,9 +358,11 @@ impl CommandSessionManager {
                 .as_ref()
                 .map(|factory| factory())
                 .transpose()?;
-            let child = process.spawn().with_context(|| {
-                format!("failed to start shell \"{shell}\" in {}", cwd.display())
-            })?;
+            let child = match &self.container {
+                Some(container) => container.spawn(&mut process),
+                None => process.spawn(),
+            }
+            .with_context(|| format!("failed to start shell \"{shell}\" in {}", cwd.display()))?;
             Ok((child, lifetime_guard))
         })();
         let (mut child, lifetime_guard) = match launch {

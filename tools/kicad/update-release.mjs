@@ -345,7 +345,8 @@ async function buildRoutingTools(work) {
 }
 
 function compileRequirements(wheel, path) {
-	const routingTools = ['numpy', 'scipy', 'shapely'].map(
+	// Pillow is for kicad-view, which renders with KiCadRoutingTools.
+	const routingTools = ['numpy', 'scipy', 'shapely', 'pillow'].map(
 		(name) => `${name} ; ${ROUTING_TOOLS_MARKER}`
 	);
 

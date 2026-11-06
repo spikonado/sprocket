@@ -43,6 +43,16 @@ on demand. It is copyright GitHub, Inc., and licensed under
 The GitHub CLI version, archive sizes, and SHA256 checksums are recorded in
 `tools/gh/releases.json`.
 
+## PortableGit
+
+On Windows, Sprocket downloads unmodified releases of
+[PortableGit](https://gitforwindows.org) from Git for Windows on demand. Git is
+licensed under [GPL-2.0](https://github.com/git-for-windows/git/blob/main/COPYING);
+PortableGit's bundled components, such as Bash, keep their own licenses.
+
+The PortableGit version, archive sizes, and SHA256 checksums are recorded in
+`tools/git/releases.json`.
+
 ## uv and Python
 
 Sprocket downloads unmodified releases of [uv](https://github.com/astral-sh/uv)

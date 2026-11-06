@@ -147,6 +147,7 @@ Each of these Convex variants goes once a full production scan confirms no retai
 - `truncated` on `read_skill` results. Also wait for released clients that send it to age out.
 - `hidden` on executor jobs. Sectionless jobs keep their terminal-write fallback during reconciliation until they're reconciled.
 - `headSha` and non-`true` `conflicting` on `poll_pr` results.
+- The `pending` executor job status, from before jobs were inserted as `claimed`.
 
 ## Local data directory shims
 
