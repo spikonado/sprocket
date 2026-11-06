@@ -13,6 +13,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { WithoutSystemFields } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
 import {
+	advanceWatermarks,
 	computeAccess,
 	identityTakeoverAllowed,
 	isStalePayload,
@@ -1173,18 +1174,6 @@ function forcedReconcile(
 	};
 }
 
-function keptWatermarks(existing: Doc<'subscriptions'> | null) {
-	const eventAt = existing?.eventAt ?? 0;
-	const payloadEventAt = existing?.payloadEventAt ?? eventAt;
-
-	return {
-		eventAt,
-		payloadEventAt,
-		scheduleEventAt: existing?.scheduleEventAt ?? payloadEventAt,
-		termEventAt: existing?.termEventAt ?? eventAt
-	};
-}
-
 async function planSubscriptionProjection(
 	ctx: QueryCtx,
 	args: DodoSubscriptionEventArgs,
@@ -1425,19 +1414,12 @@ async function planSubscriptionProjection(
 	const tier =
 		stalePayload && existing ? existing.tier : resolvedTier.unresolved ? 'free' : resolvedTier.tier;
 
-	const kept = keptWatermarks(existing);
-
-	const watermarks =
-		payload.source === 'observation'
-			? kept
-			: {
-					eventAt: keepStatus ? kept.eventAt : payload.eventAt,
-					payloadEventAt: stalePayload ? kept.payloadEventAt : payload.eventAt,
-					scheduleEventAt: staleSchedule ? kept.scheduleEventAt : payload.eventAt,
-					termEventAt: staleTerm
-						? (existing?.termEventAt ?? payload.eventAt)
-						: Math.max(payload.eventAt, existing?.termEventAt ?? -Infinity)
-				};
+	const watermarks = advanceWatermarks(existing, payload, {
+		status: keepStatus,
+		payload: stalePayload,
+		term: staleTerm,
+		schedule: staleSchedule
+	});
 
 	const previousTier = sameIdentity ? existing.tier : undefined;
 

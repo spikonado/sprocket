@@ -3,6 +3,7 @@ import { parse } from 'convex-helpers/validators';
 import { v } from 'convex/values';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
+	advanceWatermarks,
 	computeAccess,
 	identityTakeoverAllowed,
 	isStalePayload,
@@ -142,6 +143,44 @@ describe('observation provenance', () => {
 		const existing = row({ eventAt: T0 + 5_000, payloadEventAt: T0 + 5_000 });
 
 		expect(isStalePayload({ existing, payload: observation(T0 + 2_000) })).toBe(true);
+	});
+});
+
+describe('watermark advance', () => {
+	it('keeps the term fence a row without termEventAt reads from payloadEventAt', () => {
+		const legacy = row({ eventAt: T0, payloadEventAt: T0 + 5_000, termEventAt: undefined });
+		const delayed = payload({ eventAt: T0 + 1_000 });
+
+		const stale = {
+			status: isStaleStatus({ existing: legacy, payload: delayed }),
+			payload: isStalePayload({ existing: legacy, payload: delayed }),
+			term: isStaleTerm(legacy, delayed),
+			schedule: isStaleSchedule({ existing: legacy, payload: delayed })
+		};
+
+		expect(stale).toEqual({ status: false, payload: true, term: true, schedule: true });
+		expect(advanceWatermarks(legacy, delayed, stale)).toEqual({
+			eventAt: T0 + 1_000,
+			payloadEventAt: T0 + 5_000,
+			termEventAt: T0 + 5_000,
+			scheduleEventAt: T0 + 5_000
+		});
+		expect(advanceWatermarks(legacy, observation(T0 + 9_000), stale).termEventAt).toBe(T0 + 5_000);
+	});
+
+	it('starts a replacement subscription at its own event time', () => {
+		const replaced = row({ dodoSubscriptionId: 'sub_old', termEventAt: T0 + 5_000 });
+		const replacement = payload({ dodoSubscriptionId: 'sub_new', eventAt: T0 + 1_000 });
+
+		expect(isStaleTerm(replaced, replacement)).toBe(false);
+		expect(
+			advanceWatermarks(replaced, replacement, {
+				status: false,
+				payload: false,
+				term: false,
+				schedule: false
+			}).termEventAt
+		).toBe(T0 + 1_000);
 	});
 });
 
