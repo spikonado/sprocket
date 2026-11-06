@@ -1827,6 +1827,17 @@ async fn concurrent_refresh_requests_serialize_on_the_state_lock() {
         async move { credentials.credential().await }
     });
     fixture.provider.await_token_requests(1).await;
+    let disk: Store = serde_json::from_slice(
+        &std::fs::read(fixture.directory.path().join("chatgpt-siwc.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        disk.users["user-a"].accounts[0]
+            .tokens
+            .as_ref()
+            .unwrap()
+            .refresh_in_flight
+    );
     let second = tokio::spawn({
         let credentials = Arc::clone(&credentials);
         async move { credentials.credential().await }
