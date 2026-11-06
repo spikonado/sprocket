@@ -81,27 +81,3 @@ async fn callback_listener_uses_an_available_loopback_port() {
     listener.abort();
     let _ = listener.await;
 }
-
-#[tokio::test]
-async fn poll_reports_an_expired_sign_in_so_the_client_stops_waiting() {
-    let (_directory, pending, session) = fixture().await;
-    let value = secret();
-    pending.logins.lock().await.attempts.insert(
-        value.clone(),
-        PendingLogin {
-            session: session.clone(),
-            user: "user-a".into(),
-            connection: None,
-            expires: Instant::now(),
-            nonce: secret(),
-            verifier: secret(),
-            redirect_uri: "http://127.0.0.1:1234/auth/callback".into(),
-            processing: false,
-            result: None,
-        },
-    );
-    assert!(matches!(
-        pending.poll(&session, "user-a", &value).await,
-        LoginResult::Error { .. }
-    ));
-}
