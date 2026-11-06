@@ -254,6 +254,10 @@ impl BrowserManager {
                     self.installer.skills_directory().into_os_string(),
                 ),
                 (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
+                (
+                    "AGENT_BROWSER_ARGS".into(),
+                    "--disable-blink-features=AutomationControlled".into(),
+                ),
             ],
             [self.installer.bin_dir()],
         )
