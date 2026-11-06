@@ -43,39 +43,6 @@ fn reads_kicad_versions() {
     assert_eq!(major_minor("(9.0.2)"), Some((9, 0)));
 }
 
-#[cfg(unix)]
-#[test]
-fn repair_gives_an_existing_install_kicad_view() {
-    let root = tempfile::tempdir().unwrap();
-    let version = root.path().join("10.99.0-1-gabcdef");
-    fs::create_dir_all(version.join(LAUNCHER_DIR)).unwrap();
-    fs::create_dir_all(version.join(ROUTING_TOOLS_DIR)).unwrap();
-    let python = venv_python(&version);
-    fs::create_dir_all(python.parent().unwrap()).unwrap();
-    fs::write(
-        &python,
-        "#!/bin/sh\nprintf '%s|' \"$KICAD_CLI\" \"$SPROCKET_KICAD_ROUTING_TOOLS\" \"$@\"\n",
-    )
-    .unwrap();
-    set_executable(&python).unwrap();
-
-    repair_unless_installing(root.path(), "10.99.0-1-gabcdef").unwrap();
-
-    let output = std::process::Command::new(root.path().join("bin/kicad-view"))
-        .arg("a b")
-        .output()
-        .unwrap();
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        format!(
-            "{}|{}|{}|a b|",
-            version.join("bin/kicad-cli").display(),
-            version.join(ROUTING_TOOLS_DIR).display(),
-            version.join(KICAD_VIEW_FILE).display()
-        )
-    );
-}
-
 #[test]
 fn copies_only_missing_lib_tables() {
     let directory = tempfile::tempdir().unwrap();
@@ -103,27 +70,33 @@ fn copies_only_missing_lib_tables() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn launchers_run_kicad_and_point_kipy_and_the_router_at_its_cli() {
+async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
     let directory = tempfile::tempdir().unwrap();
     let tree = directory.path().join("it's here");
     fs::create_dir_all(&tree).unwrap();
-    let (cli, python, kipy_api, route) = (
+    let (cli, python, kipy_api, kicad_view) = (
         tree.join("kicad-cli"),
         tree.join("python"),
         tree.join("kipy-api.py"),
-        tree.join("route.py"),
+        tree.join("kicad-view.py"),
     );
     for (program, body) in [
         (&cli, r#"printf '%s|' cli "$@""#),
-        (&python, r#"printf '%s|' "$KICAD_CLI_PATH$KICAD_CLI" "$@""#),
+        (
+            &python,
+            r#"printf '%s|' "$KICAD_CLI_PATH$KICAD_CLI" "$SPROCKET_KICAD_ROUTING_TOOLS" "$@""#,
+        ),
     ] {
         fs::write(program, format!("#!/bin/sh\n{body}\n")).unwrap();
         set_executable(program).unwrap();
     }
     let bin = directory.path().join("bin");
-    write_launchers(&bin, launchers(&cli, &python, &kipy_api, Some(&route)))
-        .await
-        .unwrap();
+    write_launchers(
+        &bin,
+        launchers(&cli, &python, &kipy_api, &kicad_view, Some(&tree)),
+    )
+    .await
+    .unwrap();
 
     let output = |name: &str| {
         let output = std::process::Command::new(bin.join(name))
@@ -133,13 +106,26 @@ async fn launchers_run_kicad_and_point_kipy_and_the_router_at_its_cli() {
         String::from_utf8(output.stdout).unwrap()
     };
     assert_eq!(output("kicad-cli"), "cli|a b|c|");
-    assert_eq!(output("kicad-python"), format!("{}|a b|c|", cli.display()));
+    assert_eq!(output("kicad-python"), format!("{}||a b|c|", cli.display()));
     assert_eq!(
         output("kipy-api"),
-        format!("|{}|a b|c|", kipy_api.display())
+        format!("||{}|a b|c|", kipy_api.display())
     );
     assert_eq!(
         output("kicad-route"),
-        format!("{}|{}|a b|c|", cli.display(), route.display())
+        format!(
+            "{}||{}|a b|c|",
+            cli.display(),
+            route_script(&tree).display()
+        )
+    );
+    assert_eq!(
+        output("kicad-view"),
+        format!(
+            "{}|{}|{}|a b|c|",
+            cli.display(),
+            tree.display(),
+            kicad_view.display()
+        )
     );
 }
