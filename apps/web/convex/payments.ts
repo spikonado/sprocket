@@ -14,7 +14,14 @@ import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { vCompletionActor } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
-import { vPurchaseStatus, vReportOrderResult, type PurchaseStatus } from '@convex/lib/validators';
+import {
+	vListedPurchaseStatus,
+	vOrderOutcome,
+	vPurchaseStatus,
+	vReportOrderResult,
+	type ListedPurchaseStatus,
+	type PurchaseStatus
+} from '@convex/lib/validators';
 import {
 	AgentcardError,
 	agentcardCredentials,
@@ -45,7 +52,7 @@ const vPurchase = v.object({
 	merchant: v.string(),
 	amount: v.number(),
 	currency: v.string(),
-	status: vPurchaseStatus,
+	status: vListedPurchaseStatus,
 	approvalUrl: v.string(),
 	orderNumber: v.optional(v.string()),
 	orderLink: v.optional(v.string()),
@@ -53,7 +60,13 @@ const vPurchase = v.object({
 	createdAt: v.number()
 });
 
-function purchaseView(purchase: Doc<'purchases'>): Infer<typeof vPurchase> {
+type ListedPurchase = Doc<'purchases'> & { status: ListedPurchaseStatus };
+
+function isListed(purchase: Doc<'purchases'>): purchase is ListedPurchase {
+	return purchase.status !== 'failed';
+}
+
+function purchaseView(purchase: ListedPurchase): Infer<typeof vPurchase> {
 	return {
 		_id: purchase._id,
 		threadId: purchase.threadId,
@@ -73,6 +86,9 @@ function nextPurchaseStatus(current: PurchaseStatus, incoming: PurchaseStatus): 
 	if (current === 'settled' || current === 'cancelled' || incoming === 'awaiting_approval') {
 		return current;
 	}
+
+	// Only Agentcard's read-back of a charge outranks the agent seeing the payment fail.
+	if (current === 'failed' && incoming !== 'settled') return current;
 
 	return incoming;
 }
@@ -543,6 +559,7 @@ const vCheckoutCancelResult = v.object({
 		v.literal('declined'),
 		v.literal('expired'),
 		v.literal('cancelled'),
+		v.literal('failed'),
 		v.literal('outcome_unknown')
 	)
 });
@@ -611,7 +628,8 @@ export const reportOrder = action({
 	args: {
 		...runAuth,
 		purchaseId: v.string(),
-		orderNumber: v.string(),
+		outcome: v.optional(vOrderOutcome),
+		orderNumber: v.optional(v.string()),
 		orderLink: v.optional(v.string()),
 		trackingLink: v.optional(v.string())
 	},
@@ -619,13 +637,23 @@ export const reportOrder = action({
 	handler: async (ctx, args) =>
 		await withAgentToolErrors(async () => {
 			const actor = await activeActor(ctx, args);
-			const orderNumber = args.orderNumber.trim();
+			const { authorizationId } = await requirePurchase(ctx, args.purchaseId, actor.userId);
+
+			if (args.outcome === 'failed') {
+				await ctx.runMutation(internal.payments.updatePurchase, {
+					authorizationId,
+					status: 'failed'
+				});
+
+				return {};
+			}
+
+			const orderNumber = args.orderNumber?.trim();
 
 			if (!orderNumber) throw new Error('Order number is required.');
 
 			await ctx.runMutation(internal.payments.updatePurchase, {
-				authorizationId: (await requirePurchase(ctx, args.purchaseId, actor.userId))
-					.authorizationId,
+				authorizationId,
 				orderNumber,
 				orderLink: httpsLink(args.orderLink, 'orderLink'),
 				trackingLink: httpsLink(args.trackingLink, 'trackingLink')
@@ -717,7 +745,7 @@ export const listMyPurchases = query({
 			.order('desc')
 			.take(100);
 
-		return purchases.map(purchaseView);
+		return purchases.filter(isListed).map(purchaseView);
 	}
 });
 
@@ -737,6 +765,6 @@ export const pendingThreadApprovals = query({
 			)
 			.take(20);
 
-		return purchases.map(purchaseView);
+		return purchases.filter(isListed).map(purchaseView);
 	}
 });

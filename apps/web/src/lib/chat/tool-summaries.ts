@@ -156,6 +156,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		}
 
 		case 'report_order': {
+			if (jsonString(fields?.outcome) === 'failed') return 'Recorded failed payment';
+
 			const orderNumber = jsonString(fields?.orderNumber);
 
 			return orderNumber ? `Recorded order ${orderNumber}` : 'Order';

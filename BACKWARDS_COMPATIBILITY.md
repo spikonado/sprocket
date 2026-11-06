@@ -84,6 +84,10 @@ Hosts from v0.4.3 and earlier mark automatic recovery only with an `automatic-re
 
 Agents from v0.4.3 and earlier ignore `leaseDurationMs`. They assume a 120 s lease and renew it every 40 s. Keep `RUN_CLAIM_LEASE_DURATION_MS` at 120 s until they age out.
 
+### Order reports without an outcome
+
+Released agents call `payments:reportOrder` without `outcome`, which means `ordered`. Make `outcome` required once those agents age out. Stored `report_order` jobs without it stay readable, see the permanent list.
+
 ## Convex data shims
 
 ### Usage-generation key
@@ -198,6 +202,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `name` and `description` on `read_skill` results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `merchant` on `card_checkout` results, and `{ recorded: true }` `report_order` results.
+- `report_order` payloads without `outcome`, which all reported orders.
 - `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
