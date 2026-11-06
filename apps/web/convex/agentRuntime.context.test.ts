@@ -154,75 +154,45 @@ describe('agentRuntime context accounting', () => {
 		vi.useRealTimers();
 	});
 
-	it('records usage atomically with a durable completion', async () => {
+	it('records each model call once', async () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(new Date('2026-08-01T23:59:30.000Z'));
 
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'finalized-context-usage-secret';
+		const executionSecret = 'model-call-usage-secret';
 
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
 			threadId,
-			'finalized-context-usage',
+			'model-call-usage',
 			executionSecret,
 			'Continue'
 		);
 
-		await asUser.mutation(api.agentRuntime.start, {
-			runId,
-			claimId: 'claim-finalized-usage',
-			executionSecret
-		});
+		const recordCall = (callSeq: number, call: ModelCallUsage) =>
+			asUser.mutation(api.agentRuntime.recordModelCall, {
+				runId,
+				claimId: 'claim-usage',
+				callSeq,
+				call,
+				executionSecret
+			});
 
-		await finalizeTextCompletion(asUser, {
-			runId,
-			claimId: 'claim-finalized-usage',
-			executionSecret,
-			attemptSeq: 1,
-			streamId: 'stream-finalized-usage',
-			text: 'Done',
-			usage: { contextTokens: 8_000, call: modelCall() }
-		});
-		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			runId,
-			claimId: 'claim-finalized-usage',
-			attemptSeq: 1,
-			streamId: 'stream-finalized-usage',
-			items: [
-				{
-					type: 'text',
-					id: 'stream-finalized-usage:text',
-					text: 'Done',
-					turnId: 'stream-finalized-usage'
-				}
-			],
-			...emptyCompletionAssignments,
-			usage: { contextTokens: 8_000, call: modelCall() },
-			executionSecret
-		});
+		await recordCall(1, modelCall());
+		await recordCall(1, modelCall());
 
 		vi.setSystemTime(new Date('2026-08-02T00:00:30.000Z'));
-		await finalizeTextCompletion(asUser, {
-			runId,
-			claimId: 'claim-finalized-usage',
-			executionSecret,
-			attemptSeq: 2,
-			streamId: 'stream-finalized-usage-2',
-			text: 'Done again',
-			usage: { contextTokens: 300_000, call: modelCall({ longContext: true }) }
-		});
+		await recordCall(2, modelCall({ longContext: true }));
 
 		const firstCall = { calls: 1, standard: callTokens, longContext: emptyTokens };
 		const secondCall = { calls: 1, standard: emptyTokens, longContext: callTokens };
 		const usage = await readThreadUsage(t, threadId);
 
-		expect(usage.contextTokens).toBe(300_000);
 		expect(usage.calls.map((call) => call.eventId)).toEqual([
-			'turn:claim-finalized-usage:1',
-			'turn:claim-finalized-usage:2'
+			'call:claim-usage:1',
+			'call:claim-usage:2'
 		]);
 		expect(usage.totals).toEqual([
 			expect.objectContaining({
@@ -305,7 +275,7 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
-	it('does not record usage when a completion has no durable items', async () => {
+	it('does not record context tokens when a completion has no durable items', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'empty-context-usage-secret';
@@ -339,49 +309,11 @@ describe('agentRuntime context accounting', () => {
 				streamId: 'stream-empty-usage',
 				items: [],
 				...emptyCompletionAssignments,
-				usage: { contextTokens: 8_000, call: modelCall() },
+				usage: { contextTokens: 8_000 },
 				executionSecret
 			})
 		).resolves.toBeNull();
-		const usage = await readThreadUsage(t, threadId);
-		expect(usage.contextTokens).toBeUndefined();
-		expect(usage.calls).toEqual([]);
-	});
-
-	it('rolls back the transcript when finalized usage is invalid', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'invalid-finalized-usage-secret';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'invalid-finalized-usage',
-			executionSecret,
-			'Continue'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, {
-			runId,
-			claimId: 'claim-invalid-finalized-usage',
-			executionSecret
-		});
-
-		await expect(
-			finalizeTextCompletion(asUser, {
-				runId,
-				claimId: 'claim-invalid-finalized-usage',
-				executionSecret,
-				attemptSeq: 1,
-				streamId: 'stream-invalid-finalized-usage',
-				text: 'Must not persist',
-				usage: { contextTokens: 8_000, call: modelCall({ cacheReadTokens: 10_000 }) }
-			})
-		).rejects.toThrow('Invalid token count.');
-
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(1);
-		expect((await readThreadUsage(t, threadId)).totals).toEqual([]);
+		expect((await readThreadUsage(t, threadId)).contextTokens).toBeUndefined();
 	});
 
 	it('preserves opaque run model ids for the worker', async () => {
@@ -463,7 +395,7 @@ describe('agentRuntime context accounting', () => {
 		).toMatchObject({ contextTokens: 12_345 });
 	});
 
-	it('records visible completion and handoff usage through a mid-run handoff', async () => {
+	it('records usage that released agents send with completions and handoffs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-mid-run-secret';
@@ -588,8 +520,7 @@ describe('agentRuntime context accounting', () => {
 				executionSecret,
 				summary: 'First step is done.',
 				completionAttemptSeq: 2,
-				beforePrompt: false,
-				handoffCalls: [modelCall()]
+				beforePrompt: false
 			})
 		).resolves.toBe(true);
 		await appendFinishedToolPart(t, {
@@ -604,16 +535,12 @@ describe('agentRuntime context accounting', () => {
 				executionSecret,
 				summary: 'First step is done.',
 				completionAttemptSeq: 2,
-				beforePrompt: false,
-				handoffCalls: [modelCall()]
+				beforePrompt: false
 			})
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
 			contextSummaryPartCount: 2
 		});
-		expect((await readThreadUsage(t, threadId)).totals).toEqual([
-			expect.objectContaining({ calls: 1 })
-		]);
 		await expect(
 			asUser.mutation(api.agentRuntime.saveContextHandoff, {
 				runId,
@@ -742,8 +669,7 @@ describe('agentRuntime context accounting', () => {
 				workspaceContext: [{ kind: 'environment', text: '# Environment' }],
 				handoff: {
 					summary: 'The old work is complete.',
-					completionAttemptSeq: 1,
-					handoffCalls: [modelCall()]
+					completionAttemptSeq: 1
 				}
 			})
 		).resolves.toBe(true);

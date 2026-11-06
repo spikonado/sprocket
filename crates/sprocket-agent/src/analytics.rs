@@ -6,7 +6,7 @@ use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, ModelTurnAction, ModelTurnFinished, OutcomeAction, OutcomeEvent,
 };
-use rig::completion::{FinishReason, Message, Usage};
+use rig::completion::{FinishReason, Message, PromptError, Usage};
 use rig::effect::EffectId;
 use rig::message::AssistantContent;
 use serde::Serialize;
@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::chatgpt::ChatGptNotConnected;
 use crate::stream_recovery::is_provider_failure_cause;
 use crate::types::CompletionProvider;
+use crate::usage::UsageSource;
 
 const MAX_CONTENT_BYTES: usize = 256 * 1024;
 
@@ -26,6 +27,7 @@ pub(crate) struct GenerationTracker {
     trace_id: String,
     session_id: String,
     share_content: bool,
+    initial_provider: CompletionProvider,
     state: Arc<Mutex<TrackerState>>,
 }
 
@@ -33,6 +35,8 @@ pub(crate) struct GenerationTracker {
 struct TrackerState {
     conversation_len: usize,
     turns: HashMap<usize, PendingGeneration>,
+    /// The turn whose call started and has not reported its usage yet.
+    in_flight_turn: Option<usize>,
     latest_generation_span_id: Option<String>,
     tools: HashMap<EffectId, PendingTool>,
 }
@@ -59,44 +63,106 @@ impl Drop for PendingGeneration {
     }
 }
 
-pub(crate) struct GenerationCall<'a> {
-    pub(crate) turn: usize,
-    pub(crate) provider: CompletionProvider,
-    pub(crate) model: &'a str,
-    pub(crate) usage: Usage,
-    pub(crate) finish_reason: Option<&'a FinishReason>,
-    pub(crate) context_handoff: bool,
-    pub(crate) provider_fallback: bool,
+struct GenerationCall<'a> {
+    provider: CompletionProvider,
+    model: &'a str,
+    usage: Usage,
+    finish_reason: Option<&'a FinishReason>,
+    error: Option<String>,
+    context_handoff: bool,
+    provider_fallback: bool,
 }
 
 impl GenerationTracker {
-    pub(crate) fn new(run_id: &str, thread_id: &str, share_content: bool) -> Self {
+    pub(crate) fn new(
+        run_id: &str,
+        thread_id: &str,
+        share_content: bool,
+        initial_provider: CompletionProvider,
+    ) -> Self {
         Self {
             trace_id: analytics_id(run_id),
             session_id: analytics_id(thread_id),
             share_content,
+            initial_provider,
             state: Arc::default(),
         }
     }
 
-    pub(crate) fn capture(&self, call: GenerationCall<'_>) {
+    pub(crate) fn capture(
+        &self,
+        turn: usize,
+        source: &UsageSource,
+        context_handoff: bool,
+        usage: Usage,
+        finish_reason: Option<&FinishReason>,
+    ) {
+        let call = GenerationCall {
+            usage,
+            finish_reason,
+            ..self.generation_call(source, context_handoff)
+        };
         let mut state = self.state.lock().ok();
-        let mut pending = state
-            .as_mut()
-            .and_then(|state| state.turns.remove(&call.turn));
-        let mut event = posthog_rs::Event::new("$ai_generation", self.trace_id.as_str());
-        for (key, value) in
-            generation_properties(&self.trace_id, &self.session_id, &call, pending.as_mut())
-        {
-            let _ = event.insert_prop(key, value);
-        }
+        let mut pending = state.as_mut().and_then(|state| {
+            state.in_flight_turn = None;
+            state.turns.remove(&turn)
+        });
+        let event = self.generation_event(&call, pending.as_mut());
         match (state, pending) {
             (Some(mut state), Some(mut pending)) => {
                 pending.event = Some(event);
-                state.turns.insert(call.turn, pending);
+                state.turns.insert(turn, pending);
             }
             _ => posthog_rs::capture(event),
         }
+    }
+
+    /// Rig reports no usage for a call that fails, so only the in-flight call is known.
+    pub(crate) fn capture_failure(
+        &self,
+        source: &UsageSource,
+        context_handoff: bool,
+        error: &PromptError,
+    ) {
+        let Some(mut pending) = self.state.lock().ok().and_then(|mut state| {
+            let turn = state.in_flight_turn.take()?;
+            state.turns.remove(&turn)
+        }) else {
+            return;
+        };
+        let call = GenerationCall {
+            error: Some(error.to_string()),
+            ..self.generation_call(source, context_handoff)
+        };
+        posthog_rs::capture(self.generation_event(&call, Some(&mut pending)));
+    }
+
+    fn generation_call<'a>(
+        &self,
+        source: &'a UsageSource,
+        context_handoff: bool,
+    ) -> GenerationCall<'a> {
+        GenerationCall {
+            provider: source.provider,
+            model: &source.model,
+            usage: Usage::default(),
+            finish_reason: None,
+            error: None,
+            context_handoff,
+            provider_fallback: source.provider != self.initial_provider,
+        }
+    }
+
+    fn generation_event(
+        &self,
+        call: &GenerationCall<'_>,
+        pending: Option<&mut PendingGeneration>,
+    ) -> posthog_rs::Event {
+        let mut event = posthog_rs::Event::new("$ai_generation", self.trace_id.as_str());
+        for (key, value) in generation_properties(&self.trace_id, &self.session_id, call, pending) {
+            let _ = event.insert_prop(key, value);
+        }
+        event
     }
 
     fn capture_tool_span(&self, name: &str, pending: PendingTool, event: &OutcomeEvent<'_>) {
@@ -154,6 +220,7 @@ impl AgentHook for GenerationTracker {
             state.conversation_len = event.history.len() + 1;
             let span_id = Uuid::new_v4().to_string();
             state.latest_generation_span_id = Some(span_id.clone());
+            state.in_flight_turn = Some(event.turn);
             state.turns.insert(
                 event.turn,
                 PendingGeneration {
@@ -296,6 +363,10 @@ fn generation_properties(
     );
     set("$ai_reasoning_tokens", json!(call.usage.reasoning_tokens));
     set("$ai_stop_reason", to_json(call.finish_reason));
+    if let Some(error) = &call.error {
+        set("$ai_is_error", json!(true));
+        set("$ai_error", json!(error));
+    }
     set("$process_person_profile", json!(false));
     set("provider_fallback", json!(call.provider_fallback));
     if call.context_handoff {

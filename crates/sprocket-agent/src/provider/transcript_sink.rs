@@ -12,7 +12,6 @@ use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 use crate::now_ms;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
-use crate::usage::ModelCallUsage;
 
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -30,8 +29,7 @@ pub(super) struct TranscriptSink {
     unpublished: usize,
     streamed: bool,
     finalized: bool,
-    usage_tokens: Option<u64>,
-    call_usage: Option<ModelCallUsage>,
+    context_tokens: Option<u64>,
     tool_call_tracker: ToolCallTracker,
 }
 
@@ -61,8 +59,7 @@ impl TranscriptSink {
             unpublished: 0,
             streamed: false,
             finalized: false,
-            usage_tokens: None,
-            call_usage: None,
+            context_tokens: None,
             tool_call_tracker,
         })
     }
@@ -134,8 +131,7 @@ impl TranscriptSink {
         self.unpublished = 0;
         self.streamed = false;
         self.finalized = false;
-        self.usage_tokens = None;
-        self.call_usage = None;
+        self.context_tokens = None;
     }
 
     pub(super) async fn finalize_turn(&mut self) -> anyhow::Result<()> {
@@ -148,8 +144,7 @@ impl TranscriptSink {
                 &self.stream_id,
                 self.items_json(),
                 self.tool_call_tracker.completion_assignments(),
-                self.usage_tokens,
-                self.call_usage.as_ref(),
+                self.context_tokens,
             )
             .await?;
         self.streamed = false;
@@ -195,12 +190,9 @@ impl TranscriptSink {
         self.unpublished > 0
     }
 
-    pub(super) fn record_usage(&mut self, tokens: Option<u64>, call_usage: Option<ModelCallUsage>) {
+    pub(super) fn record_context_tokens(&mut self, tokens: Option<u64>) {
         if tokens.is_some() {
-            self.usage_tokens = tokens;
-        }
-        if call_usage.is_some() {
-            self.call_usage = call_usage;
+            self.context_tokens = tokens;
         }
     }
 

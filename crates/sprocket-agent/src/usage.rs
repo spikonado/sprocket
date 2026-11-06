@@ -33,7 +33,7 @@ impl UsageSource {
         }
         let input_tokens = usage.input_tokens.unwrap_or(0);
         let output_tokens = usage.output_tokens.unwrap_or(0);
-        // Convex rejects counts that break rig's subset contract, which would drop the transcript.
+        // Convex rejects counts that break rig's subset contract, which would fail the run.
         let cache_read_tokens = usage.cached_input_tokens.unwrap_or(0).min(input_tokens);
         let cache_write_tokens = usage
             .cache_creation_input_tokens

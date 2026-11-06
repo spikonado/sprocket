@@ -34,6 +34,15 @@ copyright Vercel, Inc., and licensed under
 The agent-desktop version, archive sizes, and SHA256 checksums are recorded in
 `tools/agent-desktop/releases.json`.
 
+## GitHub CLI
+
+Sprocket downloads unmodified releases of the [GitHub CLI](https://github.com/cli/cli)
+on demand. It is copyright GitHub, Inc., and licensed under
+[MIT](https://github.com/cli/cli/blob/trunk/LICENSE).
+
+The GitHub CLI version, archive sizes, and SHA256 checksums are recorded in
+`tools/gh/releases.json`.
+
 ## uv and Python
 
 Sprocket downloads unmodified releases of [uv](https://github.com/astral-sh/uv)
