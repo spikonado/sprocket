@@ -80,6 +80,7 @@ import {
 	type ProjectState
 } from '$lib/home/desktop';
 import { convexClientErrorMessage } from '$lib/convex-error';
+import { useAsyncResource } from '$lib/async-resource';
 import {
 	MarkdownFileLinksContext,
 	openMarkdownLink,
@@ -90,7 +91,6 @@ import {
 	getComposerRecoveryKey,
 	launchError,
 	useSubmissionTracker,
-	UsageLimitError,
 	type ComposerError
 } from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
@@ -139,13 +139,7 @@ import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sp
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
 import { LocalResponseError } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
-import type {
-	ChatGptStatus,
-	LocalApi,
-	ExecutorJob,
-	ThreadSummary,
-	ProjectAttachment
-} from '$lib/types/sprocket';
+import type { LocalApi, ExecutorJob, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
 import { syncShareConversationContent } from '$lib/analytics';
 
@@ -264,6 +258,10 @@ function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: s
 	return threadId ? `thread:${threadId}` : workspacePath ? `draft:${workspacePath}` : null;
 }
 
+function loadErrorMessage(error: Error, fallback: string) {
+	return convexClientErrorMessage(error) || fallback;
+}
+
 export default function App({
 	config,
 	runtime = productionAppRuntime
@@ -340,13 +338,51 @@ export default function App({
 	const [modelCatalog, setModelCatalog] = useState<ModelCatalog | undefined>(undefined);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const [catalogLoading, setCatalogLoading] = useState(true);
-	const [openAiConfigured, setOpenAiConfigured] = useState(false);
-	const [chatGptConfigured, setChatGptConfigured] = useState(false);
-	const [chatGptStatus, setChatGptStatus] = useState<ChatGptStatus | null>(null);
-	const [chatGptStatusLoading, setChatGptStatusLoading] = useState(false);
-	const [chatGptStatusError, setChatGptStatusError] = useState<string | null>(null);
-	const [providerConfigurationLoading, setProviderConfigurationLoading] = useState(false);
-	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(null);
+
+	const [openAiConfiguration, setOpenAiConfiguration] = useAsyncResource(
+		authReady ? signedInUserId : null,
+		async () => (await getMyProviderConfiguration({})).openai
+	);
+
+	const openAiConfigured = openAiConfiguration.status === 'loaded' && openAiConfiguration.value;
+
+	const openAiConfigurationError =
+		openAiConfiguration.status === 'failed'
+			? loadErrorMessage(openAiConfiguration.error, 'Couldn’t load provider settings.')
+			: null;
+
+	const [localConnection] = useAsyncResource('local-server', async () => {
+		const client = await runtime.resolveLocalApi();
+		await reconcileNativeAuthentication();
+		void refreshDesktopProjectAttachments(client).catch((error) => {
+			setCurrentError(
+				error instanceof Error ? error.message : 'Failed to load local project attachments.'
+			);
+		});
+
+		return client;
+	});
+
+	const localApi = localConnection.status === 'loaded' ? localConnection.value : null;
+	const localApiRef = useLatest(localApi);
+
+	const [chatGptStatusResource, setChatGptStatus] = useAsyncResource(
+		authReady && localApi ? signedInUserId : null,
+		() => localApi!.fetchChatGptStatus({ userId: signedInUserId! })
+	);
+
+	const chatGptStatus =
+		chatGptStatusResource.status === 'loaded' ? chatGptStatusResource.value : null;
+
+	const chatGptStatusError =
+		chatGptStatusResource.status === 'failed'
+			? loadErrorMessage(chatGptStatusResource.error, 'Couldn’t load ChatGPT connection status.')
+			: (chatGptStatus?.error ?? null);
+
+	const chatGptConfigured =
+		chatGptStatus?.accounts.find(
+			(account) => account.connectionId === chatGptStatus.activeConnectionId
+		)?.connected === true;
 
 	const configuredProviders = useMemo<CompletionProvider[]>(
 		() => [
@@ -373,46 +409,6 @@ export default function App({
 	}
 
 	const ensureSubscriptionAttemptedFor = useRef<string | null>(null);
-	const providerConfigurationLoadedFor = useRef<string | null>(null);
-	const providerConfigurationGeneration = useRef(0);
-
-	async function loadProviderConfiguration(userId: string) {
-		const generation = providerConfigurationGeneration.current;
-		setProviderConfigurationLoading(true);
-		setProviderConfigurationError(null);
-
-		try {
-			const configuration = await getMyProviderConfiguration({});
-
-			if (
-				signedInUserIdRef.current !== userId ||
-				generation !== providerConfigurationGeneration.current
-			)
-				return;
-			setOpenAiConfigured(configuration.openai);
-		} catch (error) {
-			if (
-				signedInUserIdRef.current !== userId ||
-				generation !== providerConfigurationGeneration.current
-			)
-				return;
-			setProviderConfigurationError(
-				(error instanceof Error && convexClientErrorMessage(error)) ||
-					'Couldn’t load provider settings.'
-			);
-		} finally {
-			if (
-				signedInUserIdRef.current === userId &&
-				generation === providerConfigurationGeneration.current
-			) {
-				setProviderConfigurationLoading(false);
-			}
-		}
-	}
-
-	const loadProviderConfigurationEvent = useEffectEvent((userId: string) => {
-		loadProviderConfiguration(userId);
-	});
 
 	useEffect(() => {
 		if (!authReady) return;
@@ -421,90 +417,6 @@ export default function App({
 		ensureSubscriptionAttemptedFor.current = signedInUserId;
 		void ensureMySubscription({}).catch(() => {});
 	}, [authReady, signedInUserId, ensureMySubscription]);
-
-	useEffect(() => {
-		if (!authReady) return;
-
-		if (!signedInUserId || providerConfigurationLoadedFor.current === signedInUserId) return;
-		providerConfigurationLoadedFor.current = signedInUserId;
-		loadProviderConfigurationEvent(signedInUserId);
-	}, [authReady, signedInUserId]);
-
-	const [localApi, setLocalApi] = useState<LocalApi | null>(null);
-	const localApiRef = useLatest(localApi);
-	const [localApiResolved, setLocalApiResolved] = useState(false);
-
-	const chatGptStatusLoadedFor = useRef<{ userId: string; api: LocalApi } | null>(null);
-	const chatGptStatusGeneration = useRef(0);
-
-	const chatGptStatusChangeEvent = useEffectEvent((status: ChatGptStatus) => {
-		handleChatGptStatusChange(status);
-	});
-
-	useEffect(() => {
-		const userId = signedInUserId;
-
-		if (!authReady || !userId || !localApi) {
-			chatGptStatusLoadedFor.current = null;
-			setChatGptStatus(null);
-			setChatGptConfigured(false);
-			setChatGptStatusLoading(false);
-
-			return;
-		}
-
-		if (
-			chatGptStatusLoadedFor.current?.userId === userId &&
-			chatGptStatusLoadedFor.current.api === localApi
-		)
-			return;
-		chatGptStatusLoadedFor.current = { userId, api: localApi };
-		const generation = ++chatGptStatusGeneration.current;
-		setChatGptStatus(null);
-		setChatGptConfigured(false);
-		setChatGptStatusLoading(true);
-		setChatGptStatusError(null);
-		localApi
-			.fetchChatGptStatus({ userId })
-			.then((status) => {
-				if (
-					generation !== chatGptStatusGeneration.current ||
-					signedInUserIdRef.current !== userId
-				) {
-					return;
-				}
-
-				chatGptStatusChangeEvent(status);
-			})
-			.catch((error: Error) => {
-				if (
-					generation !== chatGptStatusGeneration.current ||
-					signedInUserIdRef.current !== userId
-				) {
-					return;
-				}
-
-				setChatGptStatus(null);
-				setChatGptConfigured(false);
-				setChatGptStatusError(
-					(error instanceof Error && convexClientErrorMessage(error)) ||
-						'Couldn’t load ChatGPT connection status.'
-				);
-			})
-			.finally(() => {
-				if (
-					generation === chatGptStatusGeneration.current &&
-					signedInUserIdRef.current === userId
-				) {
-					setChatGptStatusLoading(false);
-				}
-			});
-
-		return () => {
-			chatGptStatusGeneration.current += 1;
-			chatGptStatusLoadedFor.current = null;
-		};
-	}, [authReady, signedInUserId, signedInUserIdRef, localApi]);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -1420,26 +1332,6 @@ export default function App({
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	function handleProviderConfigurationChange(change: { provider: 'openai'; configured: boolean }) {
-		providerConfigurationGeneration.current += 1;
-
-		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
-		setProviderConfigurationError(null);
-	}
-
-	function handleChatGptStatusChange(status: ChatGptStatus) {
-		chatGptStatusGeneration.current += 1;
-		setChatGptStatusLoading(false);
-		setChatGptStatus(status);
-		setChatGptStatusError(status.error ?? null);
-
-		const active = status.accounts.find(
-			(account) => account.connectionId === status.activeConnectionId
-		);
-
-		setChatGptConfigured(active?.connected === true);
-	}
-
 	function startThreadDraftForProject(workspacePath: string) {
 		openProject(workspacePath, { draft: true });
 		void focusCreateThreadComposer();
@@ -2126,14 +2018,6 @@ export default function App({
 		setPendingCreatedThreadId(null);
 		setPendingAgentLaunches({});
 		ensureSubscriptionAttemptedFor.current = null;
-		providerConfigurationLoadedFor.current = null;
-		setOpenAiConfigured(false);
-		setChatGptConfigured(false);
-		setChatGptStatus(null);
-		setChatGptStatusLoading(false);
-		setChatGptStatusError(null);
-		chatGptStatusLoadedFor.current = null;
-		setProviderConfigurationError(null);
 		lastSyncedComposerThreadId.current = null;
 		bumpProjectSelectionGeneration();
 		setPrompt('');
@@ -2448,29 +2332,6 @@ export default function App({
 
 	useEffect(() => watchProjectLaunches(), []);
 
-	const connectLocalApi = useEffectEvent(() => {
-		void runtime
-			.resolveLocalApi()
-			.then(async (client) => {
-				setLocalApi(client);
-				await reconcileNativeAuthentication();
-				setLocalApiResolved(true);
-				void refreshDesktopProjectAttachments(client).catch((error) => {
-					setCurrentError(
-						error instanceof Error ? error.message : 'Failed to load local project attachments.'
-					);
-				});
-			})
-			.catch((error) => {
-				setCurrentError(
-					error instanceof Error ? error.message : 'Failed to connect to the Sprocket server.'
-				);
-				setLocalApiResolved(true);
-			});
-	});
-
-	useEffect(() => connectLocalApi(), []);
-
 	async function focusSidebarControl(open: boolean) {
 		await Promise.resolve();
 		document
@@ -2508,7 +2369,7 @@ export default function App({
 		await focusSidebarControl(sidebarOpen);
 	}
 
-	if (!localApiResolved) {
+	if (localConnection.status === 'loading') {
 		return (
 			<CalmCentered
 				title="Connecting to Sprocket…"
@@ -2518,16 +2379,8 @@ export default function App({
 		);
 	}
 
-	if (!localApi) {
-		return (
-			<CalmCentered
-				title="Connect to Sprocket"
-				description={
-					(currentError instanceof UsageLimitError ? currentError.message : currentError) ??
-					'Open Sprocket from the desktop app or CLI to continue.'
-				}
-			/>
-		);
+	if (localConnection.status === 'failed') {
+		return <CalmCentered title="Connect to Sprocket" description={localConnection.error.message} />;
 	}
 
 	if (!authReady) {
@@ -2693,12 +2546,12 @@ export default function App({
 								localApi={localApi}
 								openAiConfigured={openAiConfigured}
 								chatGptStatus={chatGptStatus}
-								chatGptLoading={chatGptStatusLoading}
+								chatGptLoading={chatGptStatusResource.status === 'loading'}
 								chatGptStatusError={chatGptStatusError}
-								loading={providerConfigurationLoading}
-								loadError={providerConfigurationError}
-								onChatGptStatusChange={handleChatGptStatusChange}
-								onConfigurationChange={handleProviderConfigurationChange}
+								loading={openAiConfiguration.status === 'loading'}
+								loadError={openAiConfigurationError}
+								onChatGptStatusChange={setChatGptStatus}
+								onConfigurationChange={(change) => setOpenAiConfiguration(change.configured)}
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments onOpenThread={openPurchaseThread} />
