@@ -356,6 +356,23 @@ async function requirePurchase(
 	return purchase;
 }
 
+async function readAuthorization(
+	ctx: ActionCtx,
+	authorizationId: string
+): Promise<AgentcardAuthorization> {
+	return await agentcardRequest(
+		await agentcardToken(ctx),
+		`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}`,
+		agentcardAuthorization
+	);
+}
+
+/** Agentcard can expire an authorization after the user's device sent the
+ * card, and that charge can still settle, so retrying could pay twice. */
+function expiredOutcome(authorization: AgentcardAuthorization): 'expired' | 'outcome_unknown' {
+	return authorization.replay_attempted ? 'outcome_unknown' : 'expired';
+}
+
 export const checkoutRecognizers = action({
 	args: runAuth,
 	returns: v.array(v.object({ psp: v.string(), hosts: v.array(v.string()), match: v.string() })),
@@ -496,7 +513,8 @@ const vCheckoutPollResult = v.object({
 		v.literal('approved'),
 		v.literal('submitted_on_device'),
 		v.literal('declined'),
-		v.literal('expired')
+		v.literal('expired'),
+		v.literal('outcome_unknown')
 	),
 	pollIntervalMs: v.number(),
 	reason: v.optional(v.string()),
@@ -519,11 +537,7 @@ export const checkoutPoll = action({
 			let authorization: AgentcardAuthorization;
 
 			try {
-				authorization = await agentcardRequest(
-					await agentcardToken(ctx),
-					`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}`,
-					agentcardAuthorization
-				);
+				authorization = await readAuthorization(ctx, authorizationId);
 			} catch (error) {
 				if (error instanceof AgentcardError && error.code === 'slow_down') {
 					return { status: 'awaiting_approval' as const, pollIntervalMs: DEFAULT_POLL_INTERVAL_MS };
@@ -538,7 +552,8 @@ export const checkoutPoll = action({
 			});
 
 			const result: Infer<typeof vCheckoutPollResult> = {
-				status: authorization.status,
+				status:
+					authorization.status === 'expired' ? expiredOutcome(authorization) : authorization.status,
 				pollIntervalMs: authorization.poll_interval_ms ?? DEFAULT_POLL_INTERVAL_MS
 			};
 
@@ -579,6 +594,8 @@ export const checkoutCancel = action({
 					break;
 				case 'settled':
 					return { status: 'approved' as const };
+				case 'expired':
+					return { status: expiredOutcome(await readAuthorization(ctx, purchase.authorizationId)) };
 				default:
 					return { status: purchase.status };
 			}
