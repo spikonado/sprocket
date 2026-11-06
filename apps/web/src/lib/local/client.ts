@@ -7,6 +7,10 @@ import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 
+// The server answers after the prompt is written, which can wait on a model call
+// that writes a context handoff first.
+const agentLaunchTimeoutMs = 10 * 60_000;
+
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 
 const browserStatusSchema = z.object({
@@ -568,11 +572,23 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify(input)
 			}),
-		runAgent: async (requestBody) =>
-			await request('/api/agent/run', agentRunStartSchema, {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
+		runAgent: async (requestBody) => {
+			try {
+				return await request('/api/agent/run', agentRunStartSchema, {
+					method: 'POST',
+					body: JSON.stringify(requestBody),
+					signal: AbortSignal.timeout(agentLaunchTimeoutMs)
+				});
+			} catch (error) {
+				if (error instanceof DOMException && error.name === 'TimeoutError') {
+					throw new Error('The local server did not start the agent in time. Try again.', {
+						cause: error
+					});
+				}
+
+				throw error;
+			}
+		},
 		fetchTranscriptDisplay: async (requestBody, signal) =>
 			await request('/api/transcript/display', displayPageSchema, {
 				method: 'POST',
