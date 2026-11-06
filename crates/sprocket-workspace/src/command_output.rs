@@ -143,7 +143,7 @@ impl CapturedOutput {
         let next_bytes = (bytes.len() + encoded.len()) as u64;
         ensure!(
             next_bytes <= self.limits.max_log_bytes.saturating_sub(self.log_bytes),
-            "command output log quota of {} bytes reached; logs contain only a prefix",
+            "command output log quota of {} bytes reached",
             self.limits.max_log_bytes,
         );
         ensure_disk_reserve(
@@ -296,7 +296,7 @@ async fn ensure_disk_reserve(path: PathBuf, next_bytes: u64, reserve: u64) -> Re
         .context("failed to read command log filesystem space")?;
     ensure!(
         available.saturating_sub(next_bytes) >= reserve && available >= next_bytes,
-        "command output would cross the free-space reserve of {reserve} bytes; logs contain only a prefix",
+        "command output would cross the free-space reserve of {reserve} bytes",
     );
     Ok(())
 }
