@@ -97,7 +97,14 @@ drc = json.loads(drc_path.read_text())
 problems = [
     item["description"]
     for item in drc["violations"] + drc["unconnected_items"]
-    if item["type"] in ("clearance", "shorting_items", "tracks_crossing", "unconnected_items")
+    if item["type"]
+    in (
+        "clearance",
+        "shorting_items",
+        "tracks_crossing",
+        "unconnected_items",
+        "lib_footprint_mismatch",
+    )
 ]
 if problems:
     sys.exit(f"The routed board has {problems}")

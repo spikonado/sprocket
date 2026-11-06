@@ -278,6 +278,7 @@ function buildKipy(work) {
 		source
 	]);
 	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-cli-env.patch')]);
+	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-exact-rotation.patch')]);
 	// Poetry emits a platform wheel; the build script writes the pure one to the source's dist.
 	run(
 		'uv',
@@ -464,7 +465,7 @@ async function createRelease(build, tag) {
 			'',
 			`Corresponding source: https://gitlab.com/kicad/code/kicad/-/tree/${build.commit}`,
 			'',
-			`\`${basename(kipy.path)}\` is kicad-python built from ${KIPY_REPOSITORY}/-/tree/${kipy.commit} with one patch: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path.`,
+			`\`${basename(kipy.path)}\` is kicad-python built from ${KIPY_REPOSITORY}/-/tree/${kipy.commit} with two patches: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path, and \`Vector2.rotate()\` rounds like KiCad's \`RotatePoint()\` so rotated footprints keep matching their library.`,
 			'',
 			`The \`kicad-routing-tools-*\` archives are https://github.com/${ROUTING_TOOLS_REPOSITORY}/releases/tag/v${routingTools.version} with one patch that reads the footprint poses of board format 20260616 and later, without its example boards. Each holds its platform's \`grid_router\` binary.`,
 			'',

@@ -24,7 +24,7 @@ Use `kicad-cli` for checks and exports.
 - ERC reports a missing library `''`, or the file gains `lib_name`s like `R_1`: `update_items` on a symbol sent with its `definition` forks its library link.
   Call `sym.proto.ClearField("definition")` before updating schematic symbols.
   Clearing it on a board footprint wipes its pads.
-- DRC reports `lib_footprint_mismatch` on rotated footprints: the `orientation` setter truncates rotated coordinates by 1 nm.
+- DRC reports `lib_footprint_mismatch` on footprints rotated with the `orientation` setter: kipy's `Vector2.rotate()` truncates where KiCad rounds, so their coordinates drift by 1 nm.
   Pass `orientation=` to `place_footprint_from_library` instead.
 
 ## Designing the schematic
