@@ -1,5 +1,5 @@
 # Draws a two-resistor schematic through a headless kipy session, imports its netlist into a
-# board, routes it with KiCadRoutingTools, then runs ERC and DRC on the saved files.
+# board, routes it with KiCadRoutingTools, runs ERC and DRC on the saved files, then renders it with kicad-view.
 # Usage: KICAD_CLI_PATH=<kicad-cli> python smoke-test.py <kicad template dir> <routing tools dir>
 import json
 import os
@@ -101,6 +101,13 @@ problems = [
 ]
 if problems:
     sys.exit(f"The routed board has {problems}")
+
+subprocess.run(
+    [sys.executable, Path(__file__).with_name("kicad-view.py"), routed_path, "--layers", "F.Cu,B.Cu,F.SilkS"]
+    + ["--box", "95", "95", "20", "10", "--drc", drc_path, "-o", work / "view.png"],
+    check=True,
+    env={**os.environ, "KICAD_CLI": cli, "SPROCKET_KICAD_ROUTING_TOOLS": str(routing_tools)},
+)
 
 if FOOTPRINT not in board_path.read_text():
     sys.exit(f"The saved board does not contain {FOOTPRINT}")
