@@ -2,7 +2,7 @@ import { Moon, PanelLeft, Sun } from 'lucide-react';
 import type { SprocketTheme } from '$lib/theme';
 
 const buttonClass =
-	'text-muted-foreground hover:text-foreground hover:bg-hover-fill inline-flex size-7 shrink-0 items-center justify-center rounded-md transition';
+	'touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill relative inline-flex size-7 shrink-0 items-center justify-center rounded-md transition';
 
 export default function SidebarTopActions({
 	theme,
