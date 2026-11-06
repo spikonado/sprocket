@@ -7,6 +7,9 @@ type ExecutorJobState = {
 	completedAt?: number;
 };
 
+const STARTED_WORK_MAY_CONTINUE =
+	'Only the wait for its result ended. Work it started, such as a command or subagent, may still be running, so check before assuming it stopped.';
+
 export function runStartedAt(run: { _creationTime: number }): number {
 	return Math.floor(run._creationTime);
 }
@@ -35,13 +38,14 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 		return [...args.jobs];
 	}
 
-	const error =
-		args.lastError ??
-		(args.runStatus === 'cancelled'
-			? 'Run was stopped before executor job completed.'
+	const reason =
+		args.runStatus === 'cancelled'
+			? 'The run was stopped before this tool call finished.'
 			: args.runStatus === 'failed'
-				? 'Run failed before executor job completed.'
-				: 'Run completed before executor job completed.');
+				? 'The run failed before this tool call finished.'
+				: 'The run ended before this tool call finished.';
+
+	const error = [reason, args.lastError, STARTED_WORK_MAY_CONTINUE].filter(Boolean).join(' ');
 
 	return args.jobs.map((job) => {
 		if (isSettledExecutorJobStatus(job.status)) {
