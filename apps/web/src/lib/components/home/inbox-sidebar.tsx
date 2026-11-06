@@ -721,13 +721,15 @@ function ThreadTreeRow({
 	const expanded = expansion.isExpanded(thread._id);
 	const isRoot = isRootThread(thread);
 	const indentStyle = depth > 0 ? { marginLeft: `${depth * 14}px` } : undefined;
+	// Touch browsers turn a long-press on a draggable element into a drag, so the thread menu never opens.
+	const finePointer = window.matchMedia?.('(pointer: fine)').matches === true;
 
 	return (
 		<div className="inbox-tree-node">
 			<div
 				className={cn('inbox-row', { 'inbox-row-selected': selected })}
 				style={indentStyle}
-				draggable={mutationsEnabled && !busy && !renaming && isRoot}
+				draggable={finePointer && mutationsEnabled && !busy && !renaming && isRoot}
 				onDragStart={(event) => onDragStart(thread, event)}
 				onDragEnd={onDragEnd}
 				onContextMenu={(event) => onOpenMenu(event, thread)}
