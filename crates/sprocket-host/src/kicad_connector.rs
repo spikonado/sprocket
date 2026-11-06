@@ -494,10 +494,8 @@ fn write_kicad_view(version_dir: &Path) -> io::Result<()> {
     if !routing_tools.is_dir() {
         return Ok(());
     }
-    let (script, bin) = (
-        version_dir.join(KICAD_VIEW_FILE),
-        version_dir.join(LAUNCHER_DIR),
-    );
+    let script = version_dir.join(KICAD_VIEW_FILE);
+    let bin = version_dir.join(LAUNCHER_DIR);
     fs::write(&script, KICAD_VIEW)?;
     let cli = bin.join(if cfg!(windows) {
         "kicad-cli.cmd"

@@ -54,8 +54,8 @@ def main():
         view = (x, y, x + w, y + h)
     renderer = BoardRenderer(pcb, size=args.size, layers=copper or None, view=view, show_pads=bool(copper), show_zones=bool(copper))
     if view:
-        scale = args.size / max(view[2] - view[0], view[3] - view[1])
-        renderer.set_canvas(round((view[2] - view[0]) * scale), round((view[3] - view[1]) * scale))
+        scale = args.size / max(w, h)
+        renderer.set_canvas(round(w * scale), round(h * scale))
 
     segments = [s for s in pcb.segments if s.layer in copper]
     vias = pcb.vias if copper else []
