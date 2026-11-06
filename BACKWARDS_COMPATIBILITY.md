@@ -34,7 +34,7 @@ Released agents require `providerPreferences.restrictSubagentsToProvider` in `ag
 
 ### Enabled providers without Claude
 
-Released clients reject unknown completion providers, so `uiPreferences.getMyEnabledProviders` and `agentRuntime.getContext` leave `claude` out of enabled providers unless the caller passes `includeClaude: true`. Once those clients age out, always include `claude` and remove the argument.
+Released clients reject unknown completion providers, so `uiPreferences.getMyEnabledProviders` and `agentRuntime.getContext` leave `claude` out of enabled providers and provider handoffs unless the caller passes `includeClaude: true`. Once those clients age out, always include `claude` and remove the argument.
 
 ### Descendant status counts
 

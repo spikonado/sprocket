@@ -171,6 +171,19 @@ describe('provider handoff provenance', () => {
 		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
 	});
 
+	it('hands off from Claude only to callers that include it', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		await historicalRun(t, threadId, 'claude');
+		const run = await currentRun(t, threadId, 'spikonado');
+
+		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
+		expect(
+			(await t.query(api.agentRuntime.getContext, { ...run, includeClaude: true })).providerHandoff
+				?.completionProvider
+		).toBe('claude');
+	});
+
 	it('ignores current-run completions and completions covered by a handoff', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
