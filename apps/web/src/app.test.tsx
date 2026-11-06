@@ -919,6 +919,28 @@ it('restores the prompt and shows the usage limit when the server refuses a laun
 	expect(alert.textContent).toContain('Usage limit reached. Try again in 3h 20m.');
 });
 
+it('keeps a failed send error when another thread is settled', async () => {
+	const { client, launch, runAgent } = await renderThreadLaunch();
+	client.registerMutation(api.threads.settle, null);
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	await act(async () => {
+		launch.reject(new Error('Local agent unavailable.'));
+	});
+	const group = screen.getByRole('group', { name: 'Message composer' });
+	await waitFor(() =>
+		expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.')
+	);
+
+	fireEvent.click(screen.getByRole('button', { name: 'Settle Other work' }));
+	await flushPendingWork();
+
+	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+});
+
 it('restores a failed send after the composer held other text', async () => {
 	const { launch, runAgent } = await renderThreadLaunch();
 	const composer = screen.getByRole('combobox');
