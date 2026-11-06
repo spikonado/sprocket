@@ -33,6 +33,12 @@ export type PendingAgentQuestion = {
 	options: AgentQuestionOption[];
 };
 
+type SkillsLoad = {
+	workspacePath: string | null;
+	status: 'loading' | 'ready' | 'error';
+	skills: SkillSummary[];
+};
+
 export type PromptComposerProps = {
 	notices?: ReactNode;
 	prompt?: string;
@@ -56,8 +62,7 @@ export type PromptComposerProps = {
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
 	canSend: boolean;
-	isSubmitting: boolean;
-	isStarting: boolean;
+	submitting: 'request' | 'agentLaunch' | null;
 	isRunning: boolean;
 	isWorking: boolean;
 	projectSkills?: {
@@ -107,8 +112,7 @@ export default function PromptComposer({
 	selectedQuestionOptionId = null,
 	onSelectedQuestionOptionIdChange,
 	canSend,
-	isSubmitting,
-	isStarting,
+	submitting,
 	isRunning,
 	isWorking,
 	projectSkills = null,
@@ -118,6 +122,7 @@ export default function PromptComposer({
 	onSkipQuestion
 }: PromptComposerProps) {
 	const continueWorkingVisible = showContinueWorking && Boolean(onContinueWorking);
+	const isSubmitting = submitting !== null;
 
 	const selectedCatalogModel =
 		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
@@ -125,19 +130,12 @@ export default function PromptComposer({
 	const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
 	const [attachTooltip, setAttachTooltip] = useState<{ top: number; left: number } | null>(null);
-	const [skills, setSkills] = useState<SkillSummary[]>([]);
-
-	const [skillsLoadState, setSkillsLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
-		'idle'
-	);
-
+	const [skillsLoad, setSkillsLoad] = useState<SkillsLoad | null>(null);
 	const [skillsDismissed, setSkillsDismissed] = useState(false);
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	const [caretPosition, setCaretPosition] = useState(0);
 	const [pathsDismissed, setPathsDismissed] = useState(false);
 	const [pathHighlightedIndex, setPathHighlightedIndex] = useState(0);
-	const skillsRequestId = useRef(0);
-	const skillsCacheKey = useRef<string | null | undefined>(undefined);
 	const [draggingFiles, setDraggingFiles] = useState(false);
 	const [trackedPendingQuestionId, setTrackedPendingQuestionId] = useState<string | null>(null);
 
@@ -167,10 +165,13 @@ export default function PromptComposer({
 	const paths = useComposerPaths(projectPaths, pathsPopupOpen ? atQuery : null);
 	const activePathIndex = Math.min(pathHighlightedIndex, Math.max(0, paths.entries.length - 1));
 	const popupOpen = skillsPopupOpen || pathsPopupOpen;
+	const skillsWorkspacePath = projectSkills?.workspacePath ?? null;
+	const projectSkillsLoad = skillsLoad?.workspacePath === skillsWorkspacePath ? skillsLoad : null;
+	const skills = projectSkillsLoad?.skills;
 
 	const filteredSkills = useMemo(
 		() =>
-			skillQuery === null
+			skillQuery === null || !skills
 				? []
 				: filterSkills(
 						skillPrefix === '/' ? skills.filter((skill) => skill.disableModelInvocation) : skills,
@@ -208,53 +209,24 @@ export default function PromptComposer({
 		textarea.style.overflowY = textarea.scrollHeight > nextHeight ? 'auto' : 'hidden';
 	}, []);
 
-	const invalidateSkillsCache = useCallback(() => {
-		setSkills([]);
-		setSkillsLoadState('idle');
-		setSkillsDismissed(false);
-		setHighlightedIndex(0);
-		skillsRequestId.current += 1;
-	}, []);
+	const loadSkills = useCallback(async () => {
+		const workspacePath = projectSkills?.workspacePath ?? null;
 
-	const ensureSkillsLoaded = useCallback(
-		async (force = false) => {
-			if (
-				skillsLoadState === 'loading' ||
-				((skillsLoadState === 'ready' || skillsLoadState === 'error') && !force)
-			) {
-				return;
-			}
+		const settle = (status: 'ready' | 'error', skills: SkillSummary[] = []) =>
+			setSkillsLoad((current) =>
+				current?.workspacePath === workspacePath && current.status === 'loading'
+					? { workspacePath, status, skills }
+					: current
+			);
 
-			if (!projectSkills?.load) {
-				setSkills([]);
-				setSkillsLoadState('ready');
+		setSkillsLoad({ workspacePath, status: 'loading', skills: [] });
 
-				return;
-			}
-
-			const requestId = ++skillsRequestId.current;
-			setSkillsLoadState('loading');
-
-			try {
-				const nextSkills = await projectSkills.load();
-
-				if (requestId !== skillsRequestId.current) {
-					return;
-				}
-
-				setSkills(nextSkills);
-				setSkillsLoadState('ready');
-			} catch {
-				if (requestId !== skillsRequestId.current) {
-					return;
-				}
-
-				setSkills([]);
-				setSkillsLoadState('error');
-			}
-		},
-		[projectSkills, skillsLoadState]
-	);
+		try {
+			settle('ready', projectSkills ? await projectSkills.load() : []);
+		} catch {
+			settle('error');
+		}
+	}, [projectSkills]);
 
 	function selectSkill(skill: SkillSummary) {
 		const selection = applySkillSelection(prompt, caretPosition, skill);
@@ -557,25 +529,14 @@ export default function PromptComposer({
 	]);
 
 	useEffect(() => {
-		const path = projectSkills?.workspacePath ?? null;
-
-		if (skillsCacheKey.current !== path) {
-			skillsCacheKey.current = path;
-			invalidateSkillsCache();
-		}
-
 		if (skillQuery === null) {
 			setSkillsDismissed(false);
 
 			return;
 		}
 
-		if (skillsDismissed) {
-			return;
-		}
-
-		void ensureSkillsLoaded();
-	}, [projectSkills, skillQuery, skillsDismissed, ensureSkillsLoaded, invalidateSkillsCache]);
+		if (!skillsDismissed && !projectSkillsLoad) void loadSkills();
+	}, [skillQuery, skillsDismissed, projectSkillsLoad, loadSkills]);
 
 	useEffect(() => {
 		setHighlightedIndex(0);
@@ -606,7 +567,7 @@ export default function PromptComposer({
 							aria-live="polite"
 						>
 							<span className="bg-foreground/28 size-1.5 animate-pulse rounded-full"></span>
-							<span>{isStarting ? 'Starting agent…' : 'Sending request…'}</span>
+							<span>{submitting === 'agentLaunch' ? 'Starting agent…' : 'Sending request…'}</span>
 						</div>
 					) : null}
 
@@ -691,10 +652,10 @@ export default function PromptComposer({
 									{skillsPopupOpen ? (
 										<ComposerSkillMenu
 											prefix={skillPrefix}
-											loadState={skillsLoadState}
+											loadState={projectSkillsLoad?.status ?? 'loading'}
 											skills={filteredSkills}
 											highlightedIndex={highlightedIndex}
-											onRetry={() => void ensureSkillsLoaded(true)}
+											onRetry={() => void loadSkills()}
 											onHighlight={(index) => {
 												setHighlightedIndex(index);
 											}}

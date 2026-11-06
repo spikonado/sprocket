@@ -2831,10 +2831,13 @@ export default function App({
 										selectedQuestionOptionId={selectedQuestionOptionId}
 										onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
 										canSend={canSend}
-										isSubmitting={
-											isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion
+										submitting={
+											hasPendingAgentLaunch
+												? 'agentLaunch'
+												: isSubmittingPrompt || answeringAgentQuestion
+													? 'request'
+													: null
 										}
-										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
 										isWorking={!hasPendingAgentLaunch && isRunInProgress && !runEnded}
 										projectSkills={composerProjectSkills}
