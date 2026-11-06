@@ -222,7 +222,7 @@ impl rig::tool::Tool for ExecCmdTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command.".to_string()
+        "Run a shell command. The command keeps running past `yieldTimeMs`, so run long jobs in the foreground and check them with poll_cmd. Jobs started with `&` or `nohup` are killed when the shell exits.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
