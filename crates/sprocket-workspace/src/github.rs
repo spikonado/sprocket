@@ -1,7 +1,10 @@
+mod agent_environment;
 mod credentials;
 pub mod pull_requests;
 pub mod saved_tokens;
 pub mod status;
+
+pub use agent_environment::agent_environment;
 
 use std::collections::BTreeSet;
 use std::sync::{LazyLock, RwLock};
