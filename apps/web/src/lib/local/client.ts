@@ -437,7 +437,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
 		watchBrowserStatus: (handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'browserStatus' },
 				browserStatusSchema,
 				handlers.signal,
@@ -467,7 +467,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				signal
 			}),
 		watchWorkspaceFiles: (input, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'workspaceFiles', params: input },
 				workspaceFilesEventSchema,
 				handlers.signal,
@@ -483,7 +483,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			return kind;
 		},
 		watchWorkspaceFile: (input, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'workspaceFile', params: input },
 				workspaceFileEventSchema,
 				handlers.signal,
@@ -561,12 +561,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchRunningCommands: (requestBody, handlers) =>
-			socket.subscribe(
-				{ kind: 'commands', params: requestBody },
-				runningCommandsSchema,
-				handlers.signal,
-				handlers.onEvent
-			),
+			socket.subscribe({ kind: 'commands', params: requestBody }, runningCommandsSchema, handlers),
 		terminateCommand: (input) =>
 			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {
 				method: 'POST',
@@ -603,7 +598,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchTranscript: (requestBody, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'transcript', params: requestBody },
 				transcriptWatchEventSchema.nullable().catch(null),
 				handlers.signal,
@@ -612,7 +607,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				}
 			),
 		watchLiveCompletion: (requestBody, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'liveCompletion', params: requestBody },
 				liveCompletionWatchEventSchema.nullable().catch(null),
 				handlers.signal,
@@ -676,14 +671,12 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchArtifacts: (requestBody, handlers) =>
-			socket.subscribe(
-				{ kind: 'artifacts', params: requestBody },
-				artifactsWatchEventSchema,
-				handlers.signal,
-				(event) => {
+			socket.subscribe({ kind: 'artifacts', params: requestBody }, artifactsWatchEventSchema, {
+				...handlers,
+				onEvent: (event) => {
 					handlers.onEvent(parseArtifactsWatchEvent(event));
 				}
-			),
+			}),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',

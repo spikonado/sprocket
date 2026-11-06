@@ -8,6 +8,7 @@ import {
 	useArtifactPanel,
 	type ConvexArtifactClient
 } from '$lib/home/artifact-panel';
+import type { LocalApi } from '$lib/types/sprocket';
 
 function createFakeClient(readRevision: () => number | undefined) {
 	const listeners = new Set<() => void>();
@@ -137,6 +138,48 @@ it('keeps a side panel snapshot per scope and restores it on return', () => {
 	expect(panel.panel.open).toBe(false);
 	panel.selectScope(scope('robot'));
 	expect(panel.panel.open).toBe(false);
+});
+
+it('keeps artifacts while a watch restarts in the same scope and clears them on a scope switch', () => {
+	const fake = createFakeClient(() => undefined);
+	const watches: Parameters<LocalApi['watchArtifacts']>[1][] = [];
+
+	const localApi = {
+		watchArtifacts: vi.fn<LocalApi['watchArtifacts']>((_request, handlers) => {
+			watches.push(handlers);
+
+			return new Promise<void>(() => {});
+		})
+	};
+
+	const artifact = {
+		_id: 'artifact-1',
+		userId: 'user-a',
+		repositoryKey: 'robot',
+		content: '# Notes',
+		title: 'notes.md',
+		revision: 1,
+		updatedAt: 1
+	};
+
+	const panel = new ArtifactPanel();
+
+	const args = {
+		localApi,
+		artifactClient: createConvexArtifactClient(fake.client),
+		scope: scope('robot')
+	};
+
+	const stop = panel.watch({ ...args, cloudReady: true });
+	watches[0]!.onEvent({ artifacts: [artifact], stale: false });
+	expect(panel.artifacts.map((entry) => entry.key)).toEqual(['artifact-1']);
+
+	stop?.();
+	panel.watch({ ...args, cloudReady: false });
+	expect(panel.artifacts.map((entry) => entry.key)).toEqual(['artifact-1']);
+
+	panel.watch({ ...args, scope: scope('other'), cloudReady: false });
+	expect(panel.artifacts).toEqual([]);
 });
 
 it('clears the fullscreen artifact when switching scope or resetting', () => {
