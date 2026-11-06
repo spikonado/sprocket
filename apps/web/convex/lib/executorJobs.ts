@@ -98,11 +98,11 @@ export async function applyExecutorJobFailure(
 		claimId: string;
 	}
 ): Promise<boolean> {
-	if (
-		args.job.status === 'cancelled' ||
-		args.job.status === 'completed' ||
-		args.job.status === 'failed'
-	) {
+	if (args.job.status === 'failed') {
+		return true;
+	}
+
+	if (args.job.status === 'cancelled' || args.job.status === 'completed') {
 		return false;
 	}
 

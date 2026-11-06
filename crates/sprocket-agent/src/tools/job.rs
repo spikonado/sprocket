@@ -325,11 +325,7 @@ where
                     Ok(true) => {
                         cancellation.cancel();
                         let _ = operation.await;
-                        eprintln!(
-                            "sprocket-agent: cancelled tool {} for run {}",
-                            kind, context.run_id
-                        );
-                        return Err(cancelled_error());
+                        break Err(cancelled_error());
                     }
                     Err(error) => {
                         cancellation.cancel();
@@ -342,54 +338,56 @@ where
         }
     };
 
-    match operation_result {
-        Ok(output) => {
+    finish_job(context, kind, job_id, operation_result).await
+}
+
+async fn finish_job(
+    context: &AgentToolContext,
+    kind: &str,
+    job_id: String,
+    outcome: Result<serde_json::Value, ToolExecutionError>,
+) -> Result<serde_json::Value, ToolExecutionError> {
+    let outcome = outcome.and_then(|output| {
+        let result = Value::try_from(output.clone()).map_err(tool_error)?;
+        Ok((output, result))
+    });
+    let mut args = BTreeMap::new();
+    args.insert("jobId".to_string(), job_id.into());
+    args.insert("runId".to_string(), context.run_id.clone().into());
+    args.insert("claimId".to_string(), context.claim_id.clone().into());
+    let (function, outcome) = match outcome {
+        Ok((output, result)) => {
             eprintln!(
                 "sprocket-agent: completed tool {} for run {}",
                 kind, context.run_id
             );
-            let mut complete_args = BTreeMap::new();
-            complete_args.insert("jobId".to_string(), job_id.into());
-            complete_args.insert("runId".to_string(), context.run_id.clone().into());
-            complete_args.insert("claimId".to_string(), context.claim_id.clone().into());
-            complete_args.insert(
-                "result".to_string(),
-                Value::try_from(output.clone()).map_err(tool_error)?,
+            args.insert("result".to_string(), result);
+            ("executor:complete", Ok(output))
+        }
+        Err(error) if error.kind() == ToolErrorKind::Cancelled => {
+            eprintln!(
+                "sprocket-agent: cancelled tool {} for run {}",
+                kind, context.run_id
             );
-            let accepted: bool = context
-                .runtime
-                .mutation_json("executor:complete", complete_args)
-                .await
-                .map_err(tool_error)?;
-            if accepted {
-                Ok(output)
-            } else {
-                Err(cancelled_error())
-            }
+            return Err(error);
         }
         Err(error) => {
             eprintln!(
                 "sprocket-agent: failed tool {} for run {}: {}",
                 kind, context.run_id, error
             );
-            if error.kind() == ToolErrorKind::Cancelled {
-                return Err(error);
-            }
-            let mut fail_args = BTreeMap::new();
-            fail_args.insert("jobId".to_string(), job_id.into());
-            fail_args.insert("runId".to_string(), context.run_id.clone().into());
-            fail_args.insert("claimId".to_string(), context.claim_id.clone().into());
-            fail_args.insert("error".to_string(), error.to_string().into());
-            let accepted: bool = context
-                .runtime
-                .mutation_json("executor:fail", fail_args)
-                .await
-                .map_err(tool_error)?;
-            if accepted {
-                Err(error)
-            } else {
-                Err(cancelled_error())
-            }
+            args.insert("error".to_string(), error.to_string().into());
+            ("executor:fail", Err(error))
         }
+    };
+    let accepted: bool = context
+        .runtime
+        .mutation_with_retries(function, args)
+        .await
+        .map_err(tool_error)?;
+    if accepted {
+        outcome
+    } else {
+        Err(cancelled_error())
     }
 }
