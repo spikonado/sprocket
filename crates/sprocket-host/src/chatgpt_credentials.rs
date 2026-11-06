@@ -522,9 +522,20 @@ impl ChatGptService {
             ("code_challenge_method", "S256"),
             ("code_challenge", challenge.as_str()),
         ]);
-        if account.is_none() {
-            url.query_pairs_mut()
-                .append_pair("agent_name_hint", "Sprocket");
+        match account {
+            None => {
+                url.query_pairs_mut()
+                    .append_pair("agent_name_hint", "Sprocket");
+            }
+            Some(account) => {
+                if let Some(tokens) = &account.tokens {
+                    url.query_pairs_mut()
+                        .append_pair("id_token_hint", &tokens.id_token);
+                }
+                if let Some(email) = &account.email {
+                    url.query_pairs_mut().append_pair("login_hint", email);
+                }
+            }
         }
         Ok(url.to_string())
     }

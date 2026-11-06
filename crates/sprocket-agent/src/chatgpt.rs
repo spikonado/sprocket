@@ -10,6 +10,7 @@ use rig::{DynModel, Model};
 
 use crate::now_ms;
 use crate::openai::{StatelessResponses, transport_auth_config};
+use crate::request_compression::zstd_compress;
 use crate::stream_recovery::provider_error_code;
 use crate::types::ChatGptCredentials;
 
@@ -25,7 +26,7 @@ const SUBSCRIPTION_USAGE_LIMIT_CODE: &str = "subscription_sharing_usage_limit_ex
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
+    "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider."
 )]
 struct SubscriptionUsageLimit {
     #[source]
@@ -233,10 +234,13 @@ impl HttpClientExt for SiwcHttpClient {
                 ));
             }
             let body = rewrite_request_body(&body.into())?;
+            // The SIWC route's gateway resets uncompressed bodies over 1 MiB with a 503.
+            let body = zstd_compress(&body).map_err(|error| stream_error(error.to_string()))?;
             let request = this
                 .inner
                 .request(parts.method, endpoint)
                 .headers(parts.headers)
+                .header(http::header::CONTENT_ENCODING, "zstd")
                 .body(body)
                 .build()
                 .map_err(|error| stream_error(error.to_string()))?;
