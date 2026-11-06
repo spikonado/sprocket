@@ -111,9 +111,7 @@ export async function reconcileTerminalRun(
 			await ctx.db.patch(
 				'agentQuestions',
 				question._id,
-				run.status === 'cancelled'
-					? { status: 'cancelled', answeredAt: args.completedAt }
-					: { requiresContinuation: true }
+				run.status === 'cancelled' ? { status: 'cancelled' } : { requiresContinuation: true }
 			);
 		}
 

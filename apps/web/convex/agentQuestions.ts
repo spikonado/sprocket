@@ -43,8 +43,6 @@ export function toAgentQuestionSnapshot(question: Doc<'agentQuestions'>): AgentQ
 
 	if (question.answer) snapshot.answer = question.answer;
 
-	if (question.answeredAt !== undefined) snapshot.answeredAt = question.answeredAt;
-
 	return snapshot;
 }
 
@@ -109,7 +107,6 @@ async function createQuestion(
 			options,
 			status: timeoutMs === 0 ? 'timedOut' : 'pending',
 			timeoutAt,
-			answeredAt: timeoutMs === 0 ? now : undefined,
 			sequence
 		})
 	);
@@ -249,13 +246,11 @@ export async function answerPendingQuestion(
 		text: args.text
 	});
 
-	const answeredAt = Date.now();
 	const run = await ctx.db.get('runs', question.runId);
 
 	const questionPatch = {
 		status: 'answered',
 		answer,
-		answeredAt,
 		requiresContinuation:
 			question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
 	} as const;
@@ -306,10 +301,7 @@ export const skip = mutation({
 
 		await assertHeadPendingQuestion(ctx, question);
 		await changeThreadActivity(ctx, args.threadId, () =>
-			ctx.db.patch('agentQuestions', question._id, {
-				status: 'skipped',
-				answeredAt: Date.now()
-			})
+			ctx.db.patch('agentQuestions', question._id, { status: 'skipped' })
 		);
 
 		return { continuation: await questionContinuation(ctx, question) };
@@ -377,10 +369,7 @@ export const timeout = internalMutation({
 
 		if (run?.status === 'cancelled') {
 			await changeThreadActivity(ctx, question.threadId, () =>
-				ctx.db.patch('agentQuestions', question._id, {
-					status: 'cancelled',
-					answeredAt: run.completedAt ?? now
-				})
+				ctx.db.patch('agentQuestions', question._id, { status: 'cancelled' })
 			);
 
 			return null;
@@ -407,10 +396,7 @@ export const timeout = internalMutation({
 		}
 
 		await changeThreadActivity(ctx, question.threadId, () =>
-			ctx.db.patch('agentQuestions', question._id, {
-				status: 'timedOut',
-				answeredAt: now
-			})
+			ctx.db.patch('agentQuestions', question._id, { status: 'timedOut' })
 		);
 
 		return null;
@@ -458,7 +444,6 @@ export async function cancelPendingQuestionsForThread(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
-	const now = Date.now();
 	let cancelledAny = false;
 
 	const latest = await ctx.db
@@ -484,10 +469,7 @@ export async function cancelPendingQuestionsForThread(
 			.withIndex('by_threadId_status_sequence', (query) =>
 				query.eq('threadId', threadId).eq('status', 'pending')
 			)) {
-			await ctx.db.patch('agentQuestions', question._id, {
-				status: 'cancelled',
-				answeredAt: now
-			});
+			await ctx.db.patch('agentQuestions', question._id, { status: 'cancelled' });
 			cancelledAny = true;
 		}
 	});
