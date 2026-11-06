@@ -8,8 +8,10 @@ import { vDescendantStatusCounts } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import {
 	listDirectChildrenPage,
+	settleRoot,
 	subtreeSummary,
-	threadAncestryIds
+	threadAncestryIds,
+	unsettleRoot
 } from '@convex/lib/threadHierarchy';
 
 // One transaction moves the whole tree, so no run can start in a half-moved tree.
@@ -28,36 +30,6 @@ async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 		title: trimmedTitle,
 		titleRenameKey: crypto.randomUUID()
 	});
-
-	return { userId, record };
-}
-
-async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
-	const userId = await getUserId(ctx);
-	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-
-	if (record.parentThreadId !== undefined) {
-		throw new Error('Only root threads can be settled.');
-	}
-
-	if ((await subtreeSummary(ctx.db, record)).anyActive) {
-		throw new Error('Cannot settle a thread with active work.');
-	}
-
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
-
-	return { userId, record };
-}
-
-async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
-	const userId = await getUserId(ctx);
-	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-
-	if (record.parentThreadId !== undefined) {
-		throw new Error('Only root threads can be settled.');
-	}
-
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
 
 	return { userId, record };
 }
@@ -93,7 +65,11 @@ export const settle = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await settleOwnedThread(ctx, args.threadId);
+		const record = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+
+		if (!(await settleRoot(ctx, record))) {
+			throw new Error('Cannot settle a thread with active work.');
+		}
 
 		return null;
 	}
@@ -105,7 +81,13 @@ export const unsettle = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await unsettleOwnedThread(ctx, args.threadId);
+		const record = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+
+		if (record.parentThreadId !== undefined) {
+			throw new Error('Only root threads can be settled.');
+		}
+
+		await unsettleRoot(ctx, record);
 
 		return null;
 	}

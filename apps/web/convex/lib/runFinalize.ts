@@ -18,6 +18,7 @@ import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
 import { runStartedAt } from '@convex/lib/runs';
 import { getTranscriptState } from '@convex/lib/transcriptParts';
+import { settleRoot } from '@convex/lib/threadHierarchy';
 
 type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
@@ -150,11 +151,11 @@ export async function finalizeRunRecord(
 async function settleEmptyRootThread(ctx: MutationCtx, threadId: Doc<'threadRecords'>['_id']) {
 	const thread = await ctx.db.get('threadRecords', threadId);
 
-	if (!thread || thread.parentThreadId !== undefined || thread.archivedAt !== undefined) return;
+	if (!thread || thread.parentThreadId !== undefined) return;
 
 	if (((await getTranscriptState(ctx, threadId))?.totalParts ?? 0) > 0) return;
 
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+	await settleRoot(ctx, thread);
 }
 
 export async function abandonRunRecord(ctx: MutationCtx, run: ExecutionRun): Promise<boolean> {

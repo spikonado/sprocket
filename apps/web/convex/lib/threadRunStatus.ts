@@ -1,8 +1,20 @@
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
 import { changeThreadActivity } from '@convex/lib/threadHierarchy';
+
+export async function insertQueuedRun(
+	ctx: MutationCtx,
+	run: Omit<Doc<'runs'>, '_id' | '_creationTime' | 'status'>
+): Promise<Id<'runs'>> {
+	return await changeThreadActivity(ctx, run.threadId, async () => {
+		const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
+		await mirrorLatestRunStatus(ctx, run.threadId);
+
+		return runId;
+	});
+}
 
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
@@ -24,17 +36,21 @@ export async function setRunAndThreadStatus(
 			await ctx.db.patch('runs', run._id, { ...runPatch, status });
 		}
 
-		const [latestRun, thread] = await Promise.all([
-			ctx.db
-				.query('runs')
-				.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
-				.order('desc')
-				.first(),
-			ctx.db.get('threadRecords', run.threadId)
-		]);
-
-		if (latestRun && thread && thread.status !== latestRun.status) {
-			await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
-		}
+		await mirrorLatestRunStatus(ctx, run.threadId);
 	});
+}
+
+async function mirrorLatestRunStatus(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+	const [latestRun, thread] = await Promise.all([
+		ctx.db
+			.query('runs')
+			.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+			.order('desc')
+			.first(),
+		ctx.db.get('threadRecords', threadId)
+	]);
+
+	if (latestRun && thread && thread.status !== latestRun.status) {
+		await ctx.db.patch('threadRecords', threadId, { status: latestRun.status });
+	}
 }
