@@ -2,8 +2,11 @@ mod process;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use rig::http_client::{self, HttpClientExt, Request, Response};
 use rig::operation::Completion;
@@ -24,6 +27,9 @@ const DEFAULT_MAX_TOKENS: u64 = 128_000;
 const STREAM_REQUIRED: &str = "Claude Code only streams completions.";
 const USAGE_LIMIT_CODE: &str = "claude_subscription_usage_limit";
 const ERROR_CODE: &str = "claude_code_error";
+const IMAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
+static IMAGE_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 type Digest32 = [u8; 32];
 
@@ -466,6 +472,45 @@ fn render_block(block: &Value, text: &mut String, content: &mut Vec<Value>) {
     }
 }
 
+/// MCP carries images only as base64, while tool images usually arrive as uploaded URLs.
+async fn inline_image_urls(result: &mut Value) {
+    for item in result["content"].as_array_mut().into_iter().flatten() {
+        if item["type"] != "image" || item["source"]["type"] != "url" {
+            continue;
+        }
+        let Some(url) = item["source"]["url"].as_str() else {
+            continue;
+        };
+        match download_image(url).await {
+            Ok((media_type, bytes)) => {
+                item["source"] = json!({
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": STANDARD.encode(bytes),
+                });
+            }
+            Err(error) => eprintln!("sprocket-agent: couldn't download a tool image ({error:#})"),
+        }
+    }
+}
+
+async fn download_image(url: &str) -> anyhow::Result<(String, Bytes)> {
+    let response = IMAGE_CLIENT
+        .get(url)
+        .timeout(IMAGE_DOWNLOAD_TIMEOUT)
+        .send()
+        .await?
+        .error_for_status()?;
+    let media_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| value.starts_with("image/"))
+        .ok_or_else(|| anyhow::anyhow!("the response isn't an image"))?
+        .to_string();
+    Ok((media_type, response.bytes().await?))
+}
+
 /// The MCP result for a Messages tool result.
 fn mcp_tool_result(block: &Value) -> Value {
     let content: Vec<Value> = match &block["content"] {
@@ -636,12 +681,17 @@ impl TurnStream {
         let resumed = matches!(planned, Plan::Resume { .. });
         match planned {
             Plan::AnswerTools(results) => {
+                let mut answers = Vec::with_capacity(results.len());
+                for (tool_use_id, mut result) in results {
+                    inline_image_urls(&mut result).await;
+                    answers.push((tool_use_id, mcp_tool_result(&result)));
+                }
                 let process = state
                     .process
                     .as_ref()
                     .expect("a live session has a process");
-                for (tool_use_id, result) in results {
-                    process.answer(&tool_use_id, mcp_tool_result(&result));
+                for (tool_use_id, answer) in answers {
+                    process.answer(&tool_use_id, answer);
                 }
             }
             Plan::Continue(content) => {

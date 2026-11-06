@@ -1504,3 +1504,17 @@ it.each([
 		expect(screen.queryByRole('switch', { name: 'Claude Subscription' }) !== null).toBe(shown);
 	}
 );
+
+it('checks Claude Code again when BYOK/BYOS opens', async () => {
+	const client = createConvexFixtures();
+
+	const fetchClaudeCodeStatus = vi
+		.fn<() => Promise<ClaudeCodeStatus>>()
+		.mockResolvedValueOnce(claudeCodeStatus('notInstalled'))
+		.mockResolvedValue(claudeCodeStatus('installed'));
+
+	await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));
+	fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
+	fireEvent.click(screen.getByRole('button', { name: 'BYOK/BYOS' }));
+	expect(await screen.findByRole('button', { name: 'Sign in with Claude' })).toBeTruthy();
+});

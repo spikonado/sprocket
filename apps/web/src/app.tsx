@@ -527,32 +527,15 @@ export default function App({
 	});
 
 	useEffect(() => {
-		if (!authReady || !signedInUserId || !localApi) {
-			setClaudeCodeStatus(null);
-			setClaudeCodeStatusError(null);
+		if (claudeCodeStatus?.state !== 'installing' || !localApi || !signedInUserId) return;
 
-			return;
-		}
-
-		loadClaudeCodeStatus(localApi, signedInUserId);
-
-		return () => {
-			claudeCodeStatusGeneration.current += 1;
-		};
-	}, [authReady, signedInUserId, localApi]);
-
-	const claudeCodeInstalling = claudeCodeStatus?.state === 'installing';
-
-	useEffect(() => {
-		if (!claudeCodeInstalling || !localApi || !signedInUserId) return;
-
-		const timer = setInterval(
+		const timer = setTimeout(
 			() => loadClaudeCodeStatus(localApi, signedInUserId),
 			claudeCodeInstallPollMs
 		);
 
-		return () => clearInterval(timer);
-	}, [claudeCodeInstalling, localApi, signedInUserId]);
+		return () => clearTimeout(timer);
+	}, [claudeCodeStatus, localApi, signedInUserId]);
 
 	// A window without the local server can't see Claude Code, so it trusts the saved token.
 	const claudeConfigured =
@@ -627,6 +610,23 @@ export default function App({
 	const [settledInboxOpen, setSettledInboxOpen] = useState(false);
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
 	const [initialProjectLaunchResolved, setInitialProjectLaunchResolved] = useState(false);
+	const credentialsOpen = settingsOpen && settingsPage === 'credentials';
+
+	// Opening BYOK/BYOS checks again, since the user may have installed Claude Code from a terminal.
+	useEffect(() => {
+		if (!authReady || !signedInUserId || !localApi) {
+			setClaudeCodeStatus(null);
+			setClaudeCodeStatusError(null);
+
+			return;
+		}
+
+		loadClaudeCodeStatus(localApi, signedInUserId);
+
+		return () => {
+			claudeCodeStatusGeneration.current += 1;
+		};
+	}, [authReady, signedInUserId, localApi, credentialsOpen]);
 
 	const [createThreadComposerElement, setCreateThreadComposerElement] =
 		useState<HTMLElement | null>(null);
