@@ -15,7 +15,7 @@ const stripeTokens = {
 	body: 'card[number]=4242424242424242'
 };
 
-function agentcardApi(readAuthorization: () => object = () => ({})) {
+function agentcardApi(authorization: { status?: string; replay_attempted?: boolean } = {}) {
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input);
 
@@ -62,7 +62,7 @@ function agentcardApi(readAuthorization: () => object = () => ({})) {
 				id: 'cauth_1',
 				amount: 2306,
 				currency: 'usd',
-				...readAuthorization()
+				...authorization
 			});
 		}
 
@@ -220,8 +220,8 @@ describe('Agentcard payments', () => {
 
 	it('reports an expiry after the device may have sent the card as an unknown outcome', async () => {
 		const t = initConvexTest();
-		let replayAttempted = false;
-		agentcardApi(() => ({ status: 'expired', replay_attempted: replayAttempted }));
+		const authorization = { status: 'expired', replay_attempted: false };
+		agentcardApi(authorization);
 		const { auth } = await startRun(t, 'buyer');
 		await t.mutation(internal.payments.saveAgentcardUser, {
 			userId: 'buyer',
@@ -239,7 +239,7 @@ describe('Agentcard payments', () => {
 		});
 		expect(await t.action(api.payments.checkoutCancel, purchase)).toEqual({ status: 'expired' });
 
-		replayAttempted = true;
+		authorization.replay_attempted = true;
 
 		expect(await t.action(api.payments.checkoutPoll, purchase)).toMatchObject({
 			status: 'outcome_unknown'

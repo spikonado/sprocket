@@ -369,8 +369,8 @@ async function readAuthorization(
 
 /** Agentcard can expire an authorization after the user's device sent the
  * card, and that charge can still settle, so retrying could pay twice. */
-function expiredOutcome(authorization: AgentcardAuthorization) {
-	return authorization.replay_attempted ? ('outcome_unknown' as const) : ('expired' as const);
+function expiredOutcome(authorization: AgentcardAuthorization): 'expired' | 'outcome_unknown' {
+	return authorization.replay_attempted ? 'outcome_unknown' : 'expired';
 }
 
 export const checkoutRecognizers = action({
