@@ -1779,26 +1779,18 @@ async fn container_kill_stops_processes_that_left_the_process_group() {
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
         .with_container(Some(container.clone()));
     #[cfg(unix)]
-    let command = "setsid sh -c 'echo $$ > pid.txt; exec sleep 30' >/dev/null 2>&1 </dev/null &";
+    let command = "setsid sleep 30 >/dev/null 2>&1 </dev/null & echo $! > pid.txt";
     #[cfg(windows)]
     let command = "Set-Content -Path pid.txt -Value (Start-Process -FilePath ping.exe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru).Id";
     let (id, _started) = exec_running_with_timeout(&sessions, command, None).await;
     let finished = poll(&sessions, &id, 10_000).await;
     assert!(finished.success, "{finished:?}");
 
-    let pid = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if let Some(pid) = fs::read_to_string(root.join("pid.txt"))
-                .ok()
-                .and_then(|pid| pid.trim().parse::<u32>().ok())
-            {
-                return pid;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .unwrap();
+    let pid: u32 = fs::read_to_string(root.join("pid.txt"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     assert!(
         process_is_alive(pid),
         "the escaped job lives on after its shell exits"

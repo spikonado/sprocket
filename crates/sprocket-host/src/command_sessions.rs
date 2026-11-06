@@ -16,8 +16,8 @@ pub struct ThreadCommandSessions {
 }
 
 impl ThreadCommandSessions {
-    /// Processes that leave a command's process group live until `stop_all`, which kills them
-    /// when the OS can contain them.
+    /// Processes that leave a command's process group, such as agent-browser's daemon, must
+    /// outlive their command. `stop_all` kills them when the OS can contain them.
     pub fn new() -> Self {
         let container = CommandContainer::create().unwrap_or_else(|error| {
             tracing::warn!(
