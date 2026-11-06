@@ -74,10 +74,10 @@ export const createUpload = mutation({
 					throw new ConvexError('Hosted parse request not found.');
 				}
 
-				return createUploadResponse(existing);
-			}
+				if (existing.status !== 'awaiting_upload') return { requestId: existing._id };
 
-			const uploadUrl = await ctx.storage.generateUploadUrl();
+				return { requestId: existing._id, uploadUrl: await ctx.storage.generateUploadUrl() };
+			}
 
 			const requestId = await ctx.db.insert('hostedParseRequests', {
 				jobId: job._id,
@@ -85,15 +85,10 @@ export const createUpload = mutation({
 				userId: run.userId,
 				claimId: args.claimId,
 				status: 'awaiting_upload',
-				uploadUrl,
 				expiresAt: Date.now() + HOSTED_PARSE_TTL_MS
 			});
 
-			await ctx.scheduler.runAfter(HOSTED_PARSE_TTL_MS, internal.hostedParse.cleanupExpiredOne, {
-				requestId
-			});
-
-			return { requestId, uploadUrl };
+			return { requestId, uploadUrl: await ctx.storage.generateUploadUrl() };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -146,8 +141,7 @@ export const start = mutation({
 				await ctx.storage.delete(args.storageId);
 				await ctx.db.patch('hostedParseRequests', request._id, {
 					status: 'failed',
-					error: 'Filename must be between 1 and 255 characters.',
-					uploadUrl: undefined
+					error: 'Filename must be between 1 and 255 characters.'
 				});
 
 				return null;
@@ -158,8 +152,7 @@ export const start = mutation({
 			if (!metadata) {
 				await ctx.db.patch('hostedParseRequests', request._id, {
 					status: 'failed',
-					error: 'Uploaded file was not found.',
-					uploadUrl: undefined
+					error: 'Uploaded file was not found.'
 				});
 
 				return null;
@@ -169,8 +162,7 @@ export const start = mutation({
 				await ctx.storage.delete(args.storageId);
 				await ctx.db.patch('hostedParseRequests', request._id, {
 					status: 'failed',
-					error: 'File exceeds the 50 MB hosted parse limit.',
-					uploadUrl: undefined
+					error: 'File exceeds the 50 MB hosted parse limit.'
 				});
 
 				return null;
@@ -181,11 +173,10 @@ export const start = mutation({
 				claimId: args.claimId,
 				inputStorageId: args.storageId,
 				filename,
-				pages: args.pages,
-				uploadUrl: undefined
+				pages: args.pages
 			});
 
-			const workId = await firecrawlPool.enqueueAction(
+			await firecrawlPool.enqueueAction(
 				ctx,
 				internal.hostedParseActions.executeHostedParse,
 				{
@@ -205,8 +196,6 @@ export const start = mutation({
 					}
 				}
 			);
-
-			await ctx.db.patch('executorJobs', job._id, { cloudWorkId: workId });
 
 			return null;
 		} catch (error) {
@@ -369,8 +358,7 @@ export const completeHostedParse = internalMutation({
 			await ctx.db.patch('hostedParseRequests', request._id, {
 				status: 'failed',
 				error: 'Parse was cancelled.',
-				inputStorageId: undefined,
-				uploadUrl: undefined
+				inputStorageId: undefined
 			});
 
 			return null;
@@ -385,7 +373,6 @@ export const completeHostedParse = internalMutation({
 				status: 'completed',
 				resultStorageId,
 				inputStorageId: undefined,
-				uploadUrl: undefined,
 				error: undefined
 			});
 
@@ -397,25 +384,8 @@ export const completeHostedParse = internalMutation({
 			error: shortHostedParseError(
 				args.result.kind === 'failed' ? args.result.error : 'Hosted parse returned no result.'
 			),
-			inputStorageId: undefined,
-			uploadUrl: undefined
+			inputStorageId: undefined
 		});
-
-		return null;
-	}
-});
-
-export const cleanupExpiredOne = internalMutation({
-	args: { requestId: v.id('hostedParseRequests') },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const request = await ctx.db.get('hostedParseRequests', args.requestId);
-
-		if (!request || request.expiresAt > Date.now()) {
-			return null;
-		}
-
-		await deleteHostedParseRequest(ctx, request);
 
 		return null;
 	}
@@ -455,14 +425,6 @@ export const deleteUnregisteredStorage = internalMutation({
 		return null;
 	}
 });
-
-function createUploadResponse(request: Doc<'hostedParseRequests'>) {
-	if (request.status === 'awaiting_upload' && request.uploadUrl) {
-		return { requestId: request._id, uploadUrl: request.uploadUrl };
-	}
-
-	return { requestId: request._id };
-}
 
 async function requireActiveParseJob(
 	ctx: MutationCtx | QueryCtx,

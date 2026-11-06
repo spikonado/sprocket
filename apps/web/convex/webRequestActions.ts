@@ -4,8 +4,8 @@ import { v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
 import { internalAction } from '@convex/_generated/server';
 import { executeQueuedWebRequest } from '@convex/webTools';
-import { REQUEST_TTL_MS } from '@convex/webRequests';
 
+/** A blob whose publish never lands is unregistered, so `storageCleanup.cleanupUnregistered` sweeps it. */
 export const execute = internalAction({
 	args: { id: v.id('webRequests') },
 	returns: v.null(),
@@ -18,15 +18,6 @@ export const execute = internalAction({
 		const storageId = await ctx.storage.store(
 			new Blob([JSON.stringify(result)], { type: 'application/json' })
 		);
-
-		try {
-			await ctx.scheduler.runAfter(REQUEST_TTL_MS, internal.webRequests.removeResult, {
-				storageId
-			});
-		} catch (error) {
-			await ctx.storage.delete(storageId);
-			throw error;
-		}
 
 		await ctx.runMutation(internal.webRequests.publish, { id, storageId });
 
