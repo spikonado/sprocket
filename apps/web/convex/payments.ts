@@ -235,7 +235,6 @@ export const updatePurchase = internalMutation({
 
 		if (status !== purchase.status) changes.status = status;
 
-		// A purchase Agentcard could not pay without asking gets its approval link later.
 		if (approvalUrl && approvalUrl !== purchase.approvalUrl) changes.approvalUrl = approvalUrl;
 
 		if (Object.keys(changes).length > 0) {
