@@ -254,8 +254,6 @@ impl BrowserManager {
                     self.installer.skills_directory().into_os_string(),
                 ),
                 (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
-                // Checkout bot checks such as Stripe's hCaptcha reject
-                // browsers that report `navigator.webdriver`.
                 (
                     "AGENT_BROWSER_ARGS".into(),
                     "--disable-blink-features=AutomationControlled".into(),
