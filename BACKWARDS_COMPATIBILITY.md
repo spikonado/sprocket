@@ -68,6 +68,10 @@ Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `sub
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
 
+### Model call usage on transcript writes
+
+Released agents send each call's usage as `usage.call` on `agentRuntime.finalizeCompletionCall` and as `handoffCalls` on `saveContextHandoff` and `beginRun`. Current agents send it to `agentRuntime.recordModelCall` when the call completes. Remove `usage.call`, `handoffCalls` and the code that records them once those agents age out.
+
 ### Question result booleans
 
 Released agents complete `ask_question` and `poll_question` jobs with `pending`, `timedOut` and `skipped` booleans and `answer.optionLabel`, in place of `status`. `vPollQuestionResult` and `vAskQuestionResult` accept both shapes. Once those agents age out, migrate stored job results to `status`, drop `optionLabel` from them, and remove the boolean variants.
@@ -87,6 +91,10 @@ Hosts from v0.4.3 and earlier mark automatic recovery only with an `automatic-re
 ### Fixed claim lease
 
 Agents from v0.4.3 and earlier ignore `leaseDurationMs`. They assume a 120 s lease and renew it every 40 s. Keep `RUN_CLAIM_LEASE_DURATION_MS` at 120 s until they age out.
+
+### Order reports without an outcome
+
+Released agents call `payments:reportOrder` without `outcome`, which means `ordered`. Make `outcome` required once those agents age out. Stored `report_order` jobs without it stay readable, see the permanent list.
 
 ## Convex data shims
 
@@ -202,6 +210,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - `name` and `description` on `read_skill` results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `merchant` on `card_checkout` results, and `{ recorded: true }` `report_order` results.
+- `report_order` payloads without `outcome`, which all reported orders.
 - `eventsPath` on command tool results, which released servers still send.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.

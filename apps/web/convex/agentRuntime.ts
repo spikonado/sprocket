@@ -733,6 +733,30 @@ export const registerCompletionAttempt = mutation({
 	handler: registerCompletionAttemptHandler
 });
 
+/** Counts every call the provider completed, including ones whose turn never reaches the transcript. */
+export const recordModelCall = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		callSeq: v.number(),
+		call: vModelCallUsage,
+		executionSecret: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+		await recordModelCallUsage(ctx, thread, {
+			runId: run._id,
+			eventId: `call:${args.claimId}:${args.callSeq}`,
+			call: args.call
+		});
+
+		return null;
+	}
+});
+
 export const finalizeCompletionCall = mutation({
 	args: {
 		runId: v.id('runs'),

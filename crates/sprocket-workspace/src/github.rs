@@ -1,7 +1,10 @@
+mod agent_environment;
 mod credentials;
 pub mod pull_requests;
 pub mod saved_tokens;
 pub mod status;
+
+pub use agent_environment::agent_environment;
 
 use std::collections::BTreeSet;
 use std::sync::{LazyLock, RwLock};
@@ -10,6 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use reqwest::{StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+pub use credentials::use_pinned_gh;
 
 const PUBLIC_HOST: &str = "github.com";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

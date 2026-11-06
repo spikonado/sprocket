@@ -315,9 +315,12 @@ export const vPollCheckoutPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vOrderOutcome = v.union(v.literal('ordered'), v.literal('failed'));
+
 export const vReportOrderPayload = v.object({
 	purchaseId: v.string(),
-	orderNumber: v.string(),
+	outcome: v.optional(vOrderOutcome),
+	orderNumber: v.optional(v.string()),
 	orderLink: v.optional(v.string()),
 	trackingLink: v.optional(v.string())
 });
@@ -329,12 +332,22 @@ export const purchaseStatuses = [
 	'declined',
 	'expired',
 	'cancelled',
-	'settled'
+	'settled',
+	// The agent saw the store reject the payment after approval.
+	'failed'
 ] as const;
 
 export type PurchaseStatus = (typeof purchaseStatuses)[number];
 
 export const vPurchaseStatus = v.union(...literals(purchaseStatuses));
+
+export type ListedPurchaseStatus = Exclude<PurchaseStatus, 'failed'>;
+
+export const vListedPurchaseStatus = v.union(
+	...literals(
+		purchaseStatuses.filter((status): status is ListedPurchaseStatus => status !== 'failed')
+	)
+);
 
 export const vAskQuestionOption = v.object({
 	id: v.string(),

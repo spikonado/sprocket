@@ -4,7 +4,7 @@ import { useAction, useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
-import type { PurchaseStatus } from '@convex/lib/validators';
+import type { ListedPurchaseStatus } from '@convex/lib/validators';
 import SaveCardButton from '$lib/components/home/save-card-button';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { formatMinorAmount } from '$lib/format';
@@ -12,7 +12,7 @@ import { cn } from '$lib/utils';
 
 type Card = FunctionReturnType<typeof api.payments.listMyCards>[number];
 
-const statuses: Record<PurchaseStatus, { label: string; dot: string }> = {
+const statuses: Record<ListedPurchaseStatus, { label: string; dot: string }> = {
 	awaiting_approval: { label: 'Awaiting approval', dot: 'bg-amber-500' },
 	approved: { label: 'Approved', dot: 'bg-emerald-500' },
 	submitted_on_device: { label: 'Finishing on your device', dot: 'bg-accent-strong' },

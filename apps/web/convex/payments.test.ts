@@ -209,6 +209,41 @@ describe('Agentcard payments', () => {
 		]);
 	});
 
+	it('hides a purchase whose payment the store rejected until a charge settles', async () => {
+		const t = initConvexTest();
+		agentcardApi();
+		const { asUser, auth } = await startRun(t, 'buyer');
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
+		});
+
+		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
+
+		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
+
+		await t.action(api.payments.reportOrder, {
+			...auth,
+			purchaseId: created.purchaseId,
+			outcome: 'failed'
+		});
+		await t.mutation(internal.payments.updatePurchase, {
+			authorizationId: 'cauth_1',
+			status: 'approved'
+		});
+
+		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([]);
+
+		await t.mutation(internal.payments.updatePurchase, {
+			authorizationId: 'cauth_1',
+			status: 'settled'
+		});
+
+		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
+			expect.objectContaining({ status: 'settled' })
+		]);
+	});
+
 	it('refuses requests that are not recognized payment requests', async () => {
 		const t = initConvexTest();
 		agentcardApi();

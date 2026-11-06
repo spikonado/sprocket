@@ -309,6 +309,7 @@ async fn launch_agent_inner(
                         ),
                     )
                     .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
+                    .with_github_credentials(user_id.clone())
                     .with_history_resolver({
                         let user_id = user_id.clone();
                         let thread_id = thread_id.clone();
