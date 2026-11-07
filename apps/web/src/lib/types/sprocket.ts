@@ -118,8 +118,6 @@ export type LiveCompletionOverlay = {
 
 export type TranscriptWatchEvent = {
 	eventType: string;
-	totalParts?: number;
-	stale: boolean;
 };
 
 export type LocalUserRequest = {
@@ -344,6 +342,9 @@ export type DiskEvent<T> = ({ kind: 'snapshot' } & T) | { kind: 'error'; message
 
 export type WatchHandlers<T> = { onEvent: (event: T) => void; signal: AbortSignal };
 
+/** Handlers for a watch that resubscribes after each interruption until `signal` aborts. */
+export type SubscriptionHandlers<T> = WatchHandlers<T> & { onError: (error: Error) => void };
+
 export type WorkspaceFileWriteResult = { status: 'saved' | 'conflict'; version: string };
 
 export type WorkspaceFileTarget = { workspacePath: string; path: string };
@@ -366,7 +367,7 @@ export type LocalApi = {
 	watchBrowserStatus: (handlers: WatchHandlers<BrowserStatus>) => Promise<void>;
 	watchRunningCommands: (
 		request: TranscriptScopeRequest,
-		handlers: WatchHandlers<RunningCommand[]>
+		handlers: SubscriptionHandlers<RunningCommand[]>
 	) => Promise<void>;
 	terminateCommand: (
 		request: TranscriptScopeRequest & { sessionId: string }
@@ -442,7 +443,7 @@ export type LocalApi = {
 	deleteArtifact: (request: ArtifactsWatchRequest & { artifactId: string }) => Promise<void>;
 	watchArtifacts: (
 		request: ArtifactsWatchRequest,
-		handlers: WatchHandlers<ArtifactsWatchEvent>
+		handlers: SubscriptionHandlers<ArtifactsWatchEvent>
 	) => Promise<void>;
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	fetchPullRequestStates: (

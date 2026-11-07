@@ -190,7 +190,6 @@ pub async fn apply_remote_state(
     user_id: &str,
     thread_id: &str,
     remote: &RemoteTranscriptState,
-    stale: bool,
 ) -> anyhow::Result<TranscriptState> {
     anyhow::ensure!(
         remote.thread_id == thread_id,
@@ -203,7 +202,7 @@ pub async fn apply_remote_state(
             state.context_summary = remote.context_summary.clone();
             state.reasoning_stripped_through_part_number =
                 remote.reasoning_stripped_through_part_number;
-            state.stale = stale;
+            state.stale = false;
         })
         .await
 }

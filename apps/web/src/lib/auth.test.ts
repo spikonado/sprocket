@@ -4,11 +4,13 @@ import type { Store } from './store';
 import { z } from 'zod';
 import {
 	authState,
+	convexAuthRetryPending,
 	convexAuthRetryVersion,
 	getAccessToken,
 	getConvexAccessToken,
 	initializeAuth,
 	resetAuthRuntime,
+	retryConvexAuthentication,
 	setAuthRuntime,
 	signIn,
 	signOut,
@@ -23,7 +25,7 @@ const resolveLocalApiBaseUrl = vi.fn<AuthRuntime['resolveLocalApiBaseUrl']>();
 
 const watchAuthChanges = vi.fn<AuthRuntime['watchAuthChanges']>();
 
-function waitForAbort(_baseUrl: string, signal: AbortSignal) {
+function waitForAbort(_baseUrl: string, { signal }: { signal: AbortSignal }) {
 	return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
 }
 
@@ -122,15 +124,16 @@ describe('installed and hosted auth', () => {
 				jsonResponse(200, signedIn ? { accessToken: 'native-token', user: nativeUser } : null)
 		});
 		await initializeAuth(convexClient);
-		const [baseUrl, signal, onChange] = watchAuthChanges.mock.calls[0] ?? [];
+		const [baseUrl, handlers] = watchAuthChanges.mock.calls[0] ?? [];
 
-		if (!onChange || !signal) throw new Error('missing auth subscription');
+		if (!handlers) throw new Error('missing auth subscription');
+		const { signal, onEvent: onChange } = handlers;
 		expect(baseUrl).toBe('http://localhost:17731');
 		signedIn = true;
-		onChange();
+		onChange(1);
 		await vi.waitFor(() => expect(get(authState).user?.id).toBe(nativeUser.id));
 		signedIn = false;
-		onChange();
+		onChange(2);
 		await vi.waitFor(() => expect(get(authState).user).toBeNull());
 		expect(createAuthKitClient).not.toHaveBeenCalled();
 		resetAuthRuntime();
@@ -373,11 +376,11 @@ describe('installed and hosted auth', () => {
 			error: null
 		});
 		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual(['POST']);
-		expect(watchAuthChanges).toHaveBeenCalledWith(
-			'http://localhost:17731',
-			expect.any(AbortSignal),
-			expect.any(Function)
-		);
+		expect(watchAuthChanges).toHaveBeenCalledWith('http://localhost:17731', {
+			signal: expect.any(AbortSignal),
+			onEvent: expect.any(Function),
+			onError: expect.any(Function)
+		});
 	});
 
 	it('revokes only the browser session and can sign in again remotely', async () => {
@@ -521,6 +524,37 @@ describe('installed and hosted auth', () => {
 
 		expect(await previousToken).toBeNull();
 		expect(get(authState).user).toMatchObject({ id: 'user-b', email: 'b@example.com' });
+	});
+
+	it('settles a Convex retry that a native auth change supersedes', async () => {
+		stubInstalledWindow();
+		const retryToken = deferred<Response>();
+		let tokenCalls = 0;
+		stubFetch({
+			token: () => {
+				tokenCalls += 1;
+
+				if (tokenCalls === 1) return jsonResponse(200, { accessToken: 'token', user: nativeUser });
+
+				if (tokenCalls === 2) return retryToken.promise;
+
+				return jsonResponse(401, { error: 'Session expired.' });
+			}
+		});
+		await initializeAuth(convexClient);
+		const onChange = watchAuthChanges.mock.calls[0]?.[1].onEvent;
+
+		if (!onChange) throw new Error('missing auth subscription');
+		const retry = retryConvexAuthentication();
+		await vi.waitFor(() => expect(tokenCalls).toBe(2));
+		expect(get(convexAuthRetryPending)).toBe(true);
+		onChange(1);
+		await vi.waitFor(() => expect(get(authState).nativeSession).toBe('unavailable'));
+		retryToken.resolve(jsonResponse(200, { accessToken: 'late-token', user: nativeUser }));
+		await retry;
+
+		expect(get(authState).isLoading).toBe(false);
+		expect(get(convexAuthRetryPending)).toBe(false);
 	});
 
 	it('ignores a native token that finishes after sign-out', async () => {

@@ -47,8 +47,7 @@ function composerProps(overrides: Partial<PromptComposerProps> = {}): PromptComp
 		onAttachFiles: vi.fn(),
 		onRemoveAttachment: vi.fn(),
 		canSend: true,
-		isSubmitting: false,
-		isStarting: false,
+		submitting: null,
 		isRunning: false,
 		isWorking: false,
 		onSubmit: vi.fn(),
@@ -214,7 +213,7 @@ describe('PromptComposer file drag and drop', () => {
 
 		dispatchDrag(composer, 'dragenter', transfer);
 		expect(document.querySelector('[role="status"]')).not.toBeNull();
-		rerender({ ...props, isSubmitting: true });
+		rerender({ ...props, submitting: 'request' });
 		expect(within(composer).queryByText('Drop files to attach')).toBeNull();
 
 		dispatchDrag(composer, 'dragover', transfer);
@@ -643,6 +642,41 @@ describe('PromptComposer skill menu', () => {
 		expect(document.getElementById('composer-skills-listbox')?.getAttribute('role')).toBe(
 			'listbox'
 		);
+	});
+
+	it('loads the new project skills when the project changes', async () => {
+		const { textarea, props, rerender } = renderComposer({
+			projectSkills: { workspacePath: '/demo', load: async () => skills }
+		});
+
+		await typeInComposer(textarea, '$');
+		expect(screen.getAllByRole('option')).toHaveLength(2);
+
+		await act(async () =>
+			rerender({
+				...props,
+				projectSkills: { workspacePath: '/other', load: async () => skills.slice(0, 1) }
+			})
+		);
+		expect(screen.getAllByRole('option')).toHaveLength(1);
+	});
+
+	it('ignores a stale load for a project the user left and came back to', async () => {
+		const stale = Promise.withResolvers<typeof skills>();
+		const fresh = Promise.withResolvers<typeof skills>();
+		const load = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
+		const demo = { workspacePath: '/demo', load };
+		const { textarea, props, rerender } = renderComposer({ projectSkills: demo });
+
+		await typeInComposer(textarea, '$');
+		await act(async () =>
+			rerender({ ...props, projectSkills: { workspacePath: '/other', load: async () => [] } })
+		);
+		await act(async () => rerender({ ...props, projectSkills: demo }));
+		await act(async () => stale.reject(new Error('offline')));
+		await act(async () => fresh.resolve(skills));
+
+		expect(screen.getAllByRole('option')).toHaveLength(2);
 	});
 });
 

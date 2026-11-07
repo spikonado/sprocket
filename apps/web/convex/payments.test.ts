@@ -15,7 +15,21 @@ const stripeTokens = {
 	body: 'card[number]=4242424242424242'
 };
 
-function agentcardApi() {
+type MockAuthorization = {
+	status: string;
+	execution_mode?: string;
+	approvalUrl?: string | null;
+	replay_attempted?: boolean;
+};
+
+type MockAuthorizations = { create?: MockAuthorization; read?: MockAuthorization };
+
+const awaitingApproval: MockAuthorization = {
+	status: 'awaiting_approval',
+	approvalUrl: 'https://vault.agentcard.sh/authorize?id=cauth_1'
+};
+
+function agentcardApi(authorizations: MockAuthorizations = {}) {
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input);
 
@@ -36,11 +50,10 @@ function agentcardApi() {
 		if (url.endsWith('/api/v2/checkout/authorizations') && init?.method === 'POST') {
 			return Response.json({
 				id: 'cauth_1',
-				status: 'awaiting_approval',
 				amount: 2306,
 				currency: 'usd',
-				approvalUrl: 'https://vault.agentcard.sh/authorize?id=cauth_1',
-				poll_interval_ms: 2000
+				poll_interval_ms: 2000,
+				...(authorizations.create ?? awaitingApproval)
 			});
 		}
 
@@ -55,6 +68,15 @@ function agentcardApi() {
 
 		if (url.endsWith('/api/v2/checkout/authorizations/cauth_1/cancel')) {
 			return Response.json({ id: 'cauth_1', status: 'declined' });
+		}
+
+		if (url.endsWith('/api/v2/checkout/authorizations/cauth_1') && authorizations.read) {
+			return Response.json({
+				id: 'cauth_1',
+				amount: 2306,
+				currency: 'usd',
+				...authorizations.read
+			});
 		}
 
 		throw new Error(`Unexpected Agentcard call: ${url}`);
@@ -180,6 +202,61 @@ describe('Agentcard payments', () => {
 		]);
 	});
 
+	it('records a purchase Agentcard pays without asking and shows its approval card only once it needs one', async () => {
+		const t = initConvexTest();
+
+		const authorizations: MockAuthorizations = {
+			create: { status: 'awaiting_approval', execution_mode: 'autopilot', approvalUrl: null }
+		};
+
+		const fetchMock = agentcardApi(authorizations);
+		const { asUser, threadId, auth } = await startRun(t, 'buyer');
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
+		});
+
+		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
+
+		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
+
+		expect(await t.action(api.payments.checkoutCreate, { ...auth, ...checkout })).toEqual(created);
+		expect(
+			fetchMock.mock.calls.filter(
+				([url, init]) =>
+					String(url).endsWith('/api/v2/checkout/authorizations') && init?.method === 'POST'
+			)
+		).toHaveLength(1);
+		expect(await asUser.query(api.payments.pendingThreadApprovals, { threadId })).toEqual([]);
+		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
+			expect.objectContaining({ status: 'awaiting_approval' })
+		]);
+
+		authorizations.read = { ...awaitingApproval, execution_mode: 'user_approval' };
+		await t.action(api.payments.checkoutPoll, { ...auth, purchaseId: created.purchaseId });
+
+		expect(await asUser.query(api.payments.pendingThreadApprovals, { threadId })).toEqual([
+			expect.objectContaining({ approvalUrl: awaitingApproval.approvalUrl })
+		]);
+	});
+
+	it('records the status Agentcard creates a purchase with', async () => {
+		const t = initConvexTest();
+		agentcardApi({ create: { status: 'approved', execution_mode: 'autopilot' } });
+		const { asUser, auth } = await startRun(t, 'buyer');
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
+		});
+
+		expect(await t.action(api.payments.checkoutCreate, { ...auth, ...checkout })).toMatchObject({
+			status: 'awaiting_approval'
+		});
+		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
+			expect.objectContaining({ status: 'approved' })
+		]);
+	});
+
 	it('cancels a purchase once and keeps it cancelled', async () => {
 		const t = initConvexTest();
 		const fetchMock = agentcardApi();
@@ -207,6 +284,37 @@ describe('Agentcard payments', () => {
 		expect(await asUser.query(api.payments.listMyPurchases, {})).toEqual([
 			expect.objectContaining({ status: 'cancelled' })
 		]);
+	});
+
+	it('reports an expiry after the device may have sent the card as an unknown outcome', async () => {
+		const t = initConvexTest();
+		const authorization = { status: 'expired', replay_attempted: false };
+		agentcardApi({ read: authorization });
+		const { auth } = await startRun(t, 'buyer');
+		await t.mutation(internal.payments.saveAgentcardUser, {
+			userId: 'buyer',
+			agentcardUserId: 'usr_buyer'
+		});
+
+		const created = await t.action(api.payments.checkoutCreate, { ...auth, ...checkout });
+
+		if (created.status !== 'awaiting_approval') throw new Error('Expected a purchase.');
+
+		const purchase = { ...auth, purchaseId: created.purchaseId };
+
+		expect(await t.action(api.payments.checkoutPoll, purchase)).toMatchObject({
+			status: 'expired'
+		});
+		expect(await t.action(api.payments.checkoutCancel, purchase)).toEqual({ status: 'expired' });
+
+		authorization.replay_attempted = true;
+
+		expect(await t.action(api.payments.checkoutPoll, purchase)).toMatchObject({
+			status: 'outcome_unknown'
+		});
+		expect(await t.action(api.payments.checkoutCancel, purchase)).toEqual({
+			status: 'outcome_unknown'
+		});
 	});
 
 	it('hides a purchase whose payment the store rejected until a charge settles', async () => {

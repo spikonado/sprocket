@@ -64,6 +64,10 @@ Released agents report claim lease loss through `agentRuntime.finalizeClaimFailu
 
 Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `subagents:createOrSend`, so their runs record the prompt at creation and return it as `promptPart`. They also read `prompt` from `subagents:recoverSubmission`, send `beforePrompt: true` to `saveContextHandoff` and `omitReasoningReplay` (which places the handoff cutoff before the recorded prompt), and send `prompt` and `storageIds` to `finalizeFailedStart`, which ignores them. Once those agents age out, make `deferPrompt` the only path and remove `promptPart`, the `recoverSubmission` prompt, `beforePrompt`, and the ignored arguments.
 
+### Run finalization text
+
+Released agents send `text` to `agentRuntime.finalizeExecutorRun`, `finalizeFailedStart` and `finalizeClaimFailure`. All three accept and ignore it. Remove the argument once those agents age out.
+
 ### Processed-token usage
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
@@ -75,6 +79,10 @@ Released agents send each call's usage as `usage.call` on `agentRuntime.finalize
 ### Question result booleans
 
 Released agents complete `ask_question` and `poll_question` jobs with `pending`, `timedOut` and `skipped` booleans and `answer.optionLabel`, in place of `status`. `vPollQuestionResult` and `vAskQuestionResult` accept both shapes. Once those agents age out, migrate stored job results to `status`, drop `optionLabel` from them, and remove the boolean variants.
+
+### Question job IDs
+
+Released agents omit `jobId` from `agentQuestions:createWithOptionalExpiry`, so it falls back to the run's `activeJobId`. Make `jobId` required and drop the fallback once those agents age out.
 
 ### Retired Prava mandate tools
 
@@ -135,6 +143,14 @@ Older threads store the context summary cutoff as `contextSummaryThroughPartNumb
 ### Subscription rows without an access phase
 
 Older subscription rows, including operator grants and free bootstrap rows, lack `accessPhase`, so the schema keeps it optional and readers treat a missing phase as `'none'`. `migrations:backfillSubscriptionAccess` materializes `accessPhase` and `accessEndsAt` on those rows and schedules their expiry checks, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, make `accessPhase` required, drop the `?? 'none'` reads in `lib/tiers.ts`, `subscriptionExpiry.ts` and `subscriptionReconciliation.ts`, and remove the migration.
+
+### Hosted parse upload URLs
+
+`hostedParseRequests` rows from before `createUpload` stopped storing upload URLs carry `uploadUrl`, so the schema keeps it optional. The hourly `hostedParse.cleanupExpired` cron deletes every row within two hours of its creation. Drop the field from the schema in any deploy that lands two hours after this one.
+
+### Question settle timestamps
+
+Older `agentQuestions` rows carry an `answeredAt` that nothing reads, so the schema keeps it optional. `migrations:dropQuestionAnsweredAt` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
 
 ### Retired Prava mandate rows
 
@@ -220,6 +236,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - The retired `list_subagent_models` tool kind, including `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on its results.
 - `lastError: null`, empty `pendingQuestions`, `settings.fast: false` and `settings.completionProvider` on subagent tool results, and `hasMore` on `list_subagents` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
+- `downloadedRanges` in local transcript `state.json` files, which readers ignore.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.
 - Local readers of `scrape_url` and `read_skill` `truncated`, `jobId` pairing and command parts without input.

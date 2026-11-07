@@ -29,10 +29,10 @@ function commandApi(
 	const watches: Watch[] = [];
 
 	const watchRunningCommands = vi.fn<CommandApi['watchRunningCommands']>(
-		(_request, { signal, onEvent }) =>
-			new Promise<void>((resolve, reject) => {
+		(_request, { signal, onEvent, onError }) =>
+			new Promise<void>((resolve) => {
 				signal.addEventListener('abort', () => resolve(), { once: true });
-				watches.push({ signal, emit: onEvent, fail: reject });
+				watches.push({ signal, emit: onEvent, fail: onError });
 
 				if (initial) onEvent(initial);
 			})
@@ -200,7 +200,7 @@ describe('running commands dashboard', () => {
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
-		await act(async () => watches[0].fail(new Error('Server offline')));
+		act(() => watches[0].fail(new Error('Server offline')));
 		expect(screen.getByRole('region', { name: 'Running commands' })).toBeTruthy();
 		expect(
 			screen.getByRole('button', { name: 'Running commands' }).getAttribute('aria-expanded')
@@ -208,8 +208,7 @@ describe('running commands dashboard', () => {
 		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
 		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(screen.getByText('bun run dev')).toBeTruthy();
-		await flush(1_000);
-		expect(watches).toHaveLength(2);
+		act(() => watches[0].emit([command]));
 		expect(screen.getByText('bun run dev')).toBeTruthy();
 		expect(screen.queryByRole('alert')).toBeNull();
 	});

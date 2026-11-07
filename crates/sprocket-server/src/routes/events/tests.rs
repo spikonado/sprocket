@@ -52,7 +52,13 @@ async fn subscriptions_require_the_session_user() {
         .err()
         .expect("another user's transcript is rejected");
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
-    assert!(open(&state, &headers, transcript("user")).await.is_ok());
+    let Ok(mut transcript_events) = open(&state, &headers, transcript("user")).await else {
+        panic!("the session user can watch their transcript");
+    };
+    assert_eq!(
+        transcript_events.next().await,
+        Some(serde_json::json!({ "eventType": "updated" }))
+    );
 
     let browser_status =
         serde_json::from_value::<Topic>(serde_json::json!({ "kind": "browserStatus" })).unwrap();

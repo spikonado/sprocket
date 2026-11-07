@@ -166,7 +166,10 @@ export type AccessClock = Pick<
 	| 'cancelAtNextBillingDate'
 >;
 
-/** The phase the provider billing period gives at `now`, ignoring the materialized phase. */
+/**
+ * The phase the provider billing period gives at `now`. Paths that know `now`
+ * enforce this, so a delayed expiry check can't extend access.
+ */
 export function accessPhaseAt(subscription: AccessClock, now: number): AccessPhase {
 	if (subscription.status !== 'active') return 'none';
 
@@ -190,36 +193,11 @@ export function accessPhaseAt(subscription: AccessClock, now: number): AccessPha
 	return now < termEnd + RENEWAL_GRACE_MS ? 'renewal_processing' : 'none';
 }
 
-type EnforcementFields = AccessClock & Pick<Doc<'subscriptions'>, 'accessPhase' | 'accessEndsAt'>;
-
-/**
- * Phase for paths that know `now`. Re-checking the clock keeps a delayed
- * expiry scheduler from extending access, and a materialized 'none' still
- * ends access unless it only waits for the term to start.
- */
-export function enforcementAccessPhase(
-	subscription: EnforcementFields | null,
-	now: number
-): AccessPhase {
-	if (!subscription) return 'none';
-
-	const awaitingTermStart =
-		subscription.billingPeriodStart !== undefined &&
-		subscription.accessEndsAt === subscription.billingPeriodStart;
-
-	if (!isOperatorGrant(subscription) && subscription.accessPhase === 'none' && !awaitingTermStart)
-		return 'none';
-
-	return accessPhaseAt(subscription, now);
-}
-
 export function enforcementTier(
-	subscription: (EnforcementFields & Pick<Doc<'subscriptions'>, 'tier'>) | null,
+	subscription: (AccessClock & Pick<Doc<'subscriptions'>, 'tier'>) | null,
 	now: number
 ): SubscriptionTier {
-	return subscription && enforcementAccessPhase(subscription, now) !== 'none'
-		? subscription.tier
-		: 'free';
+	return subscription && accessPhaseAt(subscription, now) !== 'none' ? subscription.tier : 'free';
 }
 
 type DisplayFields = Pick<Doc<'subscriptions'>, 'status' | 'dodoSubscriptionId' | 'accessPhase'>;

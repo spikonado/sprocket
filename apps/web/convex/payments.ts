@@ -53,12 +53,13 @@ const vPurchase = v.object({
 	amount: v.number(),
 	currency: v.string(),
 	status: vListedPurchaseStatus,
-	approvalUrl: v.string(),
 	orderNumber: v.optional(v.string()),
 	orderLink: v.optional(v.string()),
 	trackingLink: v.optional(v.string()),
 	createdAt: v.number()
 });
+
+const vPendingApproval = v.object({ ...vPurchase.fields, approvalUrl: v.string() });
 
 type ListedPurchase = Doc<'purchases'> & { status: ListedPurchaseStatus };
 
@@ -74,7 +75,6 @@ function purchaseView(purchase: ListedPurchase): Infer<typeof vPurchase> {
 		amount: purchase.amount,
 		currency: purchase.currency,
 		status: purchase.status,
-		approvalUrl: purchase.approvalUrl,
 		orderNumber: purchase.orderNumber,
 		orderLink: purchase.orderLink,
 		trackingLink: purchase.trackingLink,
@@ -169,11 +169,11 @@ export const insertPurchase = internalMutation({
 		merchant: v.string(),
 		amount: v.number(),
 		currency: v.string(),
-		approvalUrl: v.string()
+		status: vPurchaseStatus,
+		approvalUrl: v.optional(v.string())
 	},
 	returns: v.id('purchases'),
-	handler: async (ctx, args) =>
-		await ctx.db.insert('purchases', { ...args, status: 'awaiting_approval' })
+	handler: async (ctx, args) => await ctx.db.insert('purchases', args)
 });
 
 export const attemptPurchaseId = internalQuery({
@@ -216,12 +216,13 @@ export const updatePurchase = internalMutation({
 	args: {
 		authorizationId: v.string(),
 		status: v.optional(vPurchaseStatus),
+		approvalUrl: v.optional(v.string()),
 		orderNumber: v.optional(v.string()),
 		orderLink: v.optional(v.string()),
 		trackingLink: v.optional(v.string())
 	},
 	returns: v.null(),
-	handler: async (ctx, { authorizationId, status: incoming, ...order }) => {
+	handler: async (ctx, { authorizationId, status: incoming, approvalUrl, ...order }) => {
 		const purchase = await ctx.db
 			.query('purchases')
 			.withIndex('by_authorizationId', (query) => query.eq('authorizationId', authorizationId))
@@ -230,9 +231,14 @@ export const updatePurchase = internalMutation({
 		if (!purchase) return null;
 
 		const status = incoming ? nextPurchaseStatus(purchase.status, incoming) : purchase.status;
+		const changes: Partial<Doc<'purchases'>> = { ...order };
 
-		if (status !== purchase.status || Object.keys(order).length > 0) {
-			await ctx.db.patch('purchases', purchase._id, { status, ...order });
+		if (status !== purchase.status) changes.status = status;
+
+		if (approvalUrl && approvalUrl !== purchase.approvalUrl) changes.approvalUrl = approvalUrl;
+
+		if (Object.keys(changes).length > 0) {
+			await ctx.db.patch('purchases', purchase._id, changes);
 		}
 
 		return null;
@@ -356,6 +362,23 @@ async function requirePurchase(
 	return purchase;
 }
 
+async function readAuthorization(
+	ctx: ActionCtx,
+	authorizationId: string
+): Promise<AgentcardAuthorization> {
+	return await agentcardRequest(
+		await agentcardToken(ctx),
+		`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}`,
+		agentcardAuthorization
+	);
+}
+
+/** Agentcard can expire an authorization after the user's device sent the
+ * card, and that charge can still settle, so retrying could pay twice. */
+function expiredOutcome(authorization: AgentcardAuthorization): 'expired' | 'outcome_unknown' {
+	return authorization.replay_attempted ? 'outcome_unknown' : 'expired';
+}
+
 export const checkoutRecognizers = action({
 	args: runAuth,
 	returns: v.array(v.object({ psp: v.string(), hosts: v.array(v.string()), match: v.string() })),
@@ -467,10 +490,8 @@ export const checkoutCreate = action({
 				throw error;
 			}
 
-			if (!authorization.approvalUrl) {
-				throw new Error('Agentcard returned no approval link for this purchase.');
-			}
-
+			// From here on, an error makes the agent retry the create, which starts a
+			// second authorization that Agentcard may pay without asking.
 			const purchaseId: Id<'purchases'> = await ctx.runMutation(internal.payments.insertPurchase, {
 				userId: actor.userId,
 				threadId: actor.threadId,
@@ -479,9 +500,11 @@ export const checkoutCreate = action({
 				merchant,
 				amount: authorization.amount ?? 0,
 				currency: authorization.currency ?? currency,
+				status: authorization.status,
 				approvalUrl: authorization.approvalUrl
 			});
 
+			// Agents poll every new purchase until it ends, even one Agentcard already paid.
 			return {
 				status: 'awaiting_approval' as const,
 				purchaseId,
@@ -496,7 +519,8 @@ const vCheckoutPollResult = v.object({
 		v.literal('approved'),
 		v.literal('submitted_on_device'),
 		v.literal('declined'),
-		v.literal('expired')
+		v.literal('expired'),
+		v.literal('outcome_unknown')
 	),
 	pollIntervalMs: v.number(),
 	reason: v.optional(v.string()),
@@ -519,11 +543,7 @@ export const checkoutPoll = action({
 			let authorization: AgentcardAuthorization;
 
 			try {
-				authorization = await agentcardRequest(
-					await agentcardToken(ctx),
-					`/api/v2/checkout/authorizations/${encodeURIComponent(authorizationId)}`,
-					agentcardAuthorization
-				);
+				authorization = await readAuthorization(ctx, authorizationId);
 			} catch (error) {
 				if (error instanceof AgentcardError && error.code === 'slow_down') {
 					return { status: 'awaiting_approval' as const, pollIntervalMs: DEFAULT_POLL_INTERVAL_MS };
@@ -534,11 +554,13 @@ export const checkoutPoll = action({
 
 			await ctx.runMutation(internal.payments.updatePurchase, {
 				authorizationId,
-				status: authorization.settlement?.status === 'settled' ? 'settled' : authorization.status
+				status: authorization.settlement?.status === 'settled' ? 'settled' : authorization.status,
+				approvalUrl: authorization.approvalUrl
 			});
 
 			const result: Infer<typeof vCheckoutPollResult> = {
-				status: authorization.status,
+				status:
+					authorization.status === 'expired' ? expiredOutcome(authorization) : authorization.status,
 				pollIntervalMs: authorization.poll_interval_ms ?? DEFAULT_POLL_INTERVAL_MS
 			};
 
@@ -579,6 +601,8 @@ export const checkoutCancel = action({
 					break;
 				case 'settled':
 					return { status: 'approved' as const };
+				case 'expired':
+					return { status: expiredOutcome(await readAuthorization(ctx, purchase.authorizationId)) };
 				default:
 					return { status: purchase.status };
 			}
@@ -751,7 +775,7 @@ export const listMyPurchases = query({
 
 export const pendingThreadApprovals = query({
 	args: { threadId: v.id('threadRecords') },
-	returns: v.array(vPurchase),
+	returns: v.array(vPendingApproval),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const thread = await ctx.db.get('threadRecords', args.threadId);
@@ -763,8 +787,13 @@ export const pendingThreadApprovals = query({
 			.withIndex('by_threadId_status', (query) =>
 				query.eq('threadId', args.threadId).eq('status', 'awaiting_approval')
 			)
+			.filter((query) => query.neq(query.field('approvalUrl'), undefined))
 			.take(20);
 
-		return purchases.filter(isListed).map(purchaseView);
+		return purchases.flatMap((purchase) =>
+			isListed(purchase) && purchase.approvalUrl
+				? [{ ...purchaseView(purchase), approvalUrl: purchase.approvalUrl }]
+				: []
+		);
 	}
 });

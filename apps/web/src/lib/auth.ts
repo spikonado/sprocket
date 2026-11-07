@@ -5,6 +5,7 @@ import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { ensureLocalSession, resolveLocalApiBaseUrl } from '$lib/local/client';
 import { localSocket } from '$lib/local/socket';
 import { LocalResponseError } from '$lib/local/transport';
+import type { SubscriptionHandlers } from '$lib/types/sprocket';
 import { createStore, selectStore } from './store';
 
 export type AuthUser = Pick<User, 'id' | 'email' | 'firstName' | 'lastName' | 'profilePictureUrl'>;
@@ -87,16 +88,16 @@ export type AuthRuntime = {
 	createAuthKitClient: (...args: Parameters<typeof createClient>) => Promise<AuthClient>;
 	resolveLocalApiBaseUrl: () => string | null;
 	ensureLocalSession: (baseUrl: string) => Promise<void>;
-	/** Calls `onChange` on subscribe and after each sign-in or sign-out on the machine. */
-	watchAuthChanges: (baseUrl: string, signal: AbortSignal, onChange: () => void) => Promise<void>;
+	/** Delivers an event on subscribe and after each sign-in or sign-out on the machine. */
+	watchAuthChanges: (baseUrl: string, handlers: SubscriptionHandlers<number>) => Promise<void>;
 };
 
 const productionAuthRuntime: AuthRuntime = {
 	createAuthKitClient: createClient,
 	resolveLocalApiBaseUrl,
 	ensureLocalSession,
-	watchAuthChanges: (baseUrl, signal, onChange) =>
-		localSocket(baseUrl).subscribe({ kind: 'authChanges' }, z.number(), signal, onChange)
+	watchAuthChanges: (baseUrl, handlers) =>
+		localSocket(baseUrl).subscribe({ kind: 'authChanges' }, z.number(), handlers)
 };
 
 let authRuntime: AuthRuntime = productionAuthRuntime;
@@ -236,6 +237,9 @@ function invalidateAuthGeneration() {
 	clearConvexRecovery();
 	authGeneration += 1;
 	nativeTokenInflight = null;
+	// Superseded sign-outs and Convex retries return early without settling these.
+	convexAuthRetryPending.set(false);
+	authState.update((current) => (current.isLoading ? { ...current, isLoading: false } : current));
 }
 
 function getAuthBootstrapClient() {
@@ -438,22 +442,17 @@ function watchNativeAuthentication() {
 		void initializeInstalledAuth(generation);
 	};
 
-	void (async () => {
-		while (!watch.signal.aborted) {
-			try {
-				await authRuntime.watchAuthChanges(baseUrl, watch.signal, onChange);
-			} catch (error) {
-				// The server rejected this session; the next auth initialization subscribes again.
-				if (error instanceof LocalResponseError) {
-					if (nativeAuthWatch === watch) nativeAuthWatch = null;
+	void authRuntime.watchAuthChanges(baseUrl, {
+		signal: watch.signal,
+		onEvent: onChange,
+		onError: (error) => {
+			// The server rejected this session; the next auth initialization subscribes again.
+			if (!(error instanceof LocalResponseError)) return;
+			watch.abort();
 
-					return;
-				}
-			}
-
-			if (!watch.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
+			if (nativeAuthWatch === watch) nativeAuthWatch = null;
 		}
-	})();
+	});
 }
 
 async function initializeHostedAuth() {

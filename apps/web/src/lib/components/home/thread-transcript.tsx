@@ -21,6 +21,7 @@ import {
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer';
+import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 import TranscriptPromptMessage from '$lib/components/home/transcript-prompt-message';
 import ReasoningDisclosure, { ReasoningText } from '$lib/components/home/reasoning-disclosure';
 import SaveCardButton from '$lib/components/home/save-card-button';
@@ -112,8 +113,12 @@ export default function ThreadTranscript({
 	const requestedBeforeRef = useRef<number | undefined>(undefined);
 	const historyPrefetchPagesRef = useRef(HISTORY_PREFETCH_PAGES);
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
-	const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const {
+		copied: copiedMessageId,
+		markCopied: markMessageCopied,
+		resetCopied: resetMessageCopied
+	} = useCopyFeedback<string>();
 
 	const [rememberedCommands, setRememberedCommands] = useState<ReadonlyMap<string, string>>(
 		() => new Map()
@@ -455,23 +460,11 @@ export default function ThreadTranscript({
 	async function copyUserMessage(messageId: string, text: string) {
 		try {
 			await navigator.clipboard.writeText(text);
-			setCopiedMessageId(messageId);
-
-			if (copiedTimeoutRef.current !== null) clearTimeout(copiedTimeoutRef.current);
-			copiedTimeoutRef.current = setTimeout(() => {
-				setCopiedMessageId((current) => (current === messageId ? null : current));
-				copiedTimeoutRef.current = null;
-			}, 1_500);
+			markMessageCopied(messageId);
 		} catch {
-			setCopiedMessageId(null);
+			resetMessageCopied();
 		}
 	}
-
-	useLayoutEffect(() => {
-		return () => {
-			if (copiedTimeoutRef.current !== null) clearTimeout(copiedTimeoutRef.current);
-		};
-	}, []);
 
 	useLayoutEffect(() => {
 		sectionKeys.retain(

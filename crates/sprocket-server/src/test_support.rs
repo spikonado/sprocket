@@ -16,6 +16,8 @@ impl AppState {
         Self {
             cli_sessions: Arc::new(cli_sessions::CliSessions::new(
                 Arc::clone(&host.lifetime),
+                Arc::clone(&host.native_auth),
+                Arc::clone(&auth),
                 false,
             )),
             host,

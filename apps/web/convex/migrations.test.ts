@@ -188,3 +188,49 @@ test('backfillSubscriptionAccess materializes access on rows without it', async 
 	expect(check?.scheduledTime).toBe(termEnd);
 	vi.useRealTimers();
 });
+
+test('run removes stored question settle timestamps', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId } = await seedOwnedThread(t);
+
+	const questionId = await t.run(async (ctx) => {
+		const run = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+			.unique();
+
+		if (!run) throw new Error('Missing fixture run.');
+
+		const jobId = await ctx.db.insert('executorJobs', {
+			threadId,
+			runId: run._id,
+			kind: 'ask_question',
+			toolInvocationId: 'invocation-question',
+			payload: { question: 'Which?', options: [{ id: 'a', label: 'A' }] },
+			status: 'completed',
+			enqueuedAt: 1,
+			claimedAt: 1,
+			sequence: 0
+		});
+
+		return ctx.db.insert('agentQuestions', {
+			threadId,
+			runId: run._id,
+			jobId,
+			question: 'Which?',
+			options: [{ id: 'a', label: 'A' }],
+			status: 'skipped',
+			answeredAt: 1,
+			sequence: 1
+		});
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const question = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
+	expect(question).not.toHaveProperty('answeredAt');
+	expect(question?.status).toBe('skipped');
+	vi.useRealTimers();
+});

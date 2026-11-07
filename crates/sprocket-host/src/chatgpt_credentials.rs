@@ -29,6 +29,8 @@ pub struct ChatGptService {
     token_endpoint: String,
     client: reqwest::Client,
     watches: Arc<StdMutex<HashMap<String, watch::Sender<Option<String>>>>>,
+    /// Stays set after a failed write, since disk may then hold either version,
+    /// and memory can be ahead of it with tokens OpenAI already rotated.
     persistence_pending: Arc<AtomicBool>,
     storage_error: Option<String>,
     #[cfg(test)]
@@ -73,6 +75,14 @@ struct Tokens {
     expires_at: u64,
     earliest_refresh_at: u64,
     refresh_in_flight: bool,
+}
+
+enum Refresh {
+    Refreshed(Tokens),
+    /// The old tokens are still usable.
+    Retry(&'static str),
+    /// The old tokens are spent or unsafe to reuse.
+    Disconnect(anyhow::Error),
 }
 
 pub struct PendingGrant {
@@ -144,26 +154,20 @@ fn session(accounts: &UserAccounts) -> Option<String> {
     account.tokens.as_ref().map(|_| account.session_id.clone())
 }
 
-fn active_account<'a>(
-    state: &'a mut Store,
-    user: &str,
-) -> anyhow::Result<(&'a mut UserAccounts, String)> {
+fn active_account<'a>(state: &'a mut Store, user: &str) -> anyhow::Result<&'a mut Account> {
     let accounts = state
         .users
         .get_mut(user)
         .context("Connect ChatGPT locally in Settings before starting a run.")?;
     let active = accounts
         .active
-        .clone()
+        .as_deref()
         .context("Select a ChatGPT account in Settings.")?;
-    ensure!(
-        accounts
-            .accounts
-            .iter()
-            .any(|account| account.connection_id == active),
-        "Select a ChatGPT account in Settings."
-    );
-    Ok((accounts, active))
+    accounts
+        .accounts
+        .iter_mut()
+        .find(|account| account.connection_id == active)
+        .context("Select a ChatGPT account in Settings.")
 }
 
 fn scopes(value: &str) -> Vec<String> {
@@ -905,18 +909,13 @@ impl ChatGptService {
         if self.persistence_pending.load(Ordering::Acquire) {
             self.persist(&state).await?;
         }
-        let (accounts, active) = active_account(&mut state, user)?;
-        let account = accounts
-            .accounts
-            .iter_mut()
-            .find(|account| account.connection_id == active)
-            .unwrap();
+        let account = active_account(&mut state, user)?;
         let tokens = account
             .tokens
             .clone()
             .context("Reconnect ChatGPT locally in Settings.")?;
         require_scopes(&tokens.scopes)?;
-        if tokens.expires_at > now().saturating_add(60) && !tokens.refresh_in_flight {
+        if tokens.expires_at > now().saturating_add(60) {
             return Ok(ChatGptAccess {
                 connection_id: account.session_id.clone(),
                 access_token: tokens.access_token,
@@ -929,129 +928,114 @@ impl ChatGptService {
         );
         let client_id = account.client_id.clone();
         let subject = account.subject.clone();
-        account.tokens.as_mut().unwrap().refresh_in_flight = true;
-        self.persist(&state).await?;
-        let sent_at = now();
-        let result = self
-            .client
-            .post(&self.token_endpoint)
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", client_id.as_str()),
-                ("refresh_token", tokens.refresh_token.as_str()),
-                ("resource", RESOURCE),
-            ])
-            .send()
-            .await;
-        let refreshed = match result {
-            Ok(response) if response.status().is_success() => {
-                let response: TokenResponse = match json(response).await {
-                    Ok(response) => response,
-                    Err(error) => {
-                        let (accounts, active) = active_account(&mut state, user)?;
-                        let account = accounts
-                            .accounts
-                            .iter_mut()
-                            .find(|account| account.connection_id == active)
-                            .unwrap();
-                        account.tokens = None;
-                        account.session_id = Uuid::new_v4().to_string();
-                        self.notify(user, accounts);
-                        self.persist(&state).await?;
-                        return Err(error);
-                    }
-                };
-                let issued_refresh = response.refresh_token.clone();
-                let outcome = async {
-                    if let Some(id_token) = &response.id_token {
-                        let identity = self.identity(id_token, &client_id, None).await?;
-                        ensure!(
-                            identity.sub == subject,
-                            "ChatGPT refresh returned another identity."
-                        );
-                    }
-                    token_tuple(response, Some(&tokens), sent_at)
-                }
-                .await;
-                if outcome.is_err() {
-                    self.revoke(&client_id, &issued_refresh).await;
-                }
-                outcome
-            }
-            Ok(response) => {
-                let status = response.status();
-                let terminal = json::<OAuthError>(response)
-                    .await
-                    .ok()
-                    .is_some_and(|error| {
-                        [
-                            "invalid_grant",
-                            "refresh_token_expired",
-                            "refresh_token_reused",
-                            "refresh_token_invalidated",
-                            "token_revoked",
-                        ]
-                        .contains(&error.error.as_str())
-                    });
-                if !terminal && (status.is_server_error() || status.as_u16() == 429) {
-                    let (accounts, active) = active_account(&mut state, user)?;
-                    let account = accounts
-                        .accounts
-                        .iter_mut()
-                        .find(|account| account.connection_id == active)
-                        .unwrap();
-                    account.tokens = Some(tokens);
-                    self.persist(&state).await?;
-                    bail!("ChatGPT refresh is temporarily unavailable. Retry later.");
-                }
-                Err(anyhow::anyhow!(if terminal {
-                    "ChatGPT session expired. Reconnect locally in Settings."
-                } else {
-                    "ChatGPT refresh could not be completed safely. Reconnect locally in Settings."
-                }))
-            }
-            Err(error) if error.is_connect() || error.is_timeout() => {
-                let (accounts, active) = active_account(&mut state, user)?;
-                let account = accounts
-                    .accounts
-                    .iter_mut()
-                    .find(|account| account.connection_id == active)
-                    .unwrap();
-                account.tokens = Some(tokens);
-                self.persist(&state).await?;
-                bail!(if error.is_timeout() {
-                    "ChatGPT refresh timed out. Retry when connectivity returns."
-                } else {
-                    "Could not connect to ChatGPT to refresh credentials. Retry when connectivity returns."
-                });
-            }
-            Err(_) => Err(anyhow::anyhow!(
-                "ChatGPT refresh was interrupted. Reconnect locally in Settings."
-            )),
-        };
-        let (accounts, active) = active_account(&mut state, user)?;
-        let account = accounts
-            .accounts
-            .iter_mut()
-            .find(|account| account.connection_id == active)
-            .unwrap();
-        match refreshed {
-            Ok(refreshed) => {
+        // Only disk carries the marker, so a crash mid-refresh makes load retire the token.
+        let mut marked = state.clone();
+        active_account(&mut marked, user)?
+            .tokens
+            .as_mut()
+            .context("Reconnect ChatGPT locally in Settings.")?
+            .refresh_in_flight = true;
+        self.persist(&marked).await?;
+        let outcome = self.refresh(&client_id, &subject, &tokens).await;
+        let account = active_account(&mut state, user)?;
+        let result = match outcome {
+            Refresh::Refreshed(refreshed) => {
                 let access = ChatGptAccess {
                     connection_id: account.session_id.clone(),
                     access_token: refreshed.access_token.clone(),
                     expires_at: refreshed.expires_at.saturating_mul(1000),
                 };
                 account.tokens = Some(refreshed);
-                self.persist(&state).await?;
                 Ok(access)
             }
-            Err(error) => {
+            Refresh::Retry(message) => Err(anyhow::anyhow!(message)),
+            Refresh::Disconnect(error) => {
                 account.tokens = None;
                 account.session_id = Uuid::new_v4().to_string();
-                self.notify(user, accounts);
-                self.persist(&state).await?;
+                self.notify(user, &state.users[user]);
                 Err(error)
+            }
+        };
+        self.persist(&state).await?;
+        result
+    }
+
+    async fn refresh(&self, client_id: &str, subject: &str, tokens: &Tokens) -> Refresh {
+        let sent_at = now();
+        let result = self
+            .client
+            .post(&self.token_endpoint)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", client_id),
+                ("refresh_token", tokens.refresh_token.as_str()),
+                ("resource", RESOURCE),
+            ])
+            .send()
+            .await;
+        let response = match result {
+            Ok(response) => response,
+            Err(error) if error.is_timeout() => {
+                return Refresh::Retry(
+                    "ChatGPT refresh timed out. Retry when connectivity returns.",
+                );
+            }
+            Err(error) if error.is_connect() => {
+                return Refresh::Retry(
+                    "Could not connect to ChatGPT to refresh credentials. Retry when connectivity returns.",
+                );
+            }
+            Err(_) => {
+                return Refresh::Disconnect(anyhow::anyhow!(
+                    "ChatGPT refresh was interrupted. Reconnect locally in Settings."
+                ));
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let terminal = json::<OAuthError>(response)
+                .await
+                .ok()
+                .is_some_and(|error| {
+                    [
+                        "invalid_grant",
+                        "refresh_token_expired",
+                        "refresh_token_reused",
+                        "refresh_token_invalidated",
+                        "token_revoked",
+                    ]
+                    .contains(&error.error.as_str())
+                });
+            if !terminal && (status.is_server_error() || status.as_u16() == 429) {
+                return Refresh::Retry("ChatGPT refresh is temporarily unavailable. Retry later.");
+            }
+            return Refresh::Disconnect(anyhow::anyhow!(if terminal {
+                "ChatGPT session expired. Reconnect locally in Settings."
+            } else {
+                "ChatGPT refresh could not be completed safely. Reconnect locally in Settings."
+            }));
+        }
+        let response: TokenResponse = match json(response).await {
+            Ok(response) => response,
+            Err(error) => return Refresh::Disconnect(error),
+        };
+        let issued_refresh = response.refresh_token.clone();
+        let refreshed = async {
+            if let Some(id_token) = &response.id_token {
+                let identity = self.identity(id_token, client_id, None).await?;
+                ensure!(
+                    identity.sub == subject,
+                    "ChatGPT refresh returned another identity."
+                );
+            }
+            token_tuple(response, Some(tokens), sent_at)
+        }
+        .await;
+        match refreshed {
+            Ok(refreshed) => Refresh::Refreshed(refreshed),
+            Err(error) => {
+                self.revoke(client_id, &issued_refresh).await;
+                Refresh::Disconnect(error)
             }
         }
     }

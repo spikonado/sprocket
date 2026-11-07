@@ -546,7 +546,7 @@ async fn launch_queued_child(
         context
             .runtime
             .with_execution_secret(child_execution_secret.to_string())
-            .finalize_queued_run(&created.run_id, &message, RunStatus::Failed, Some(&message))
+            .finalize_queued_run(&created.run_id, RunStatus::Failed, Some(&message))
             .await
             .map_err(tool_error)?;
         return Err(tool_error(error));
@@ -1255,7 +1255,7 @@ async fn read_transcript_snapshot(
         run_id,
         hidden_prompt_runs: info.caller_prompt_run_ids.clone(),
     };
-    sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
+    sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript)
         .await
         .map_err(tool_error)?;
     let page = sprocket_transcript::monitor::download_monitor_page(

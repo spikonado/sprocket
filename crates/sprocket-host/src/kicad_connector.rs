@@ -164,7 +164,10 @@ impl KiCadConnector {
         let _lock = acquire_lock(self.root.join(INSTALL_LOCK)).await?;
         let root = self.root.clone();
         tokio::task::spawn_blocking(move || remove_installs(&root)).await??;
-        *self.activity() = Activity::Idle;
+        let mut activity = self.activity();
+        if matches!(*activity, Activity::Failed(_)) {
+            *activity = Activity::Idle;
+        }
         Ok(())
     }
 

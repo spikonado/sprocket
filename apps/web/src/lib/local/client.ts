@@ -7,6 +7,10 @@ import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 
+// The server answers after the prompt is written, which can wait on a model call
+// that writes a context handoff first.
+const agentLaunchTimeoutMs = 10 * 60_000;
+
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 
 const browserStatusSchema = z.object({
@@ -227,9 +231,7 @@ const displayDetailsSchema = z.object({
 });
 
 const transcriptWatchEventSchema = z.object({
-	eventType: z.string(),
-	totalParts: z.int().optional(),
-	stale: z.boolean()
+	eventType: z.string()
 });
 
 const liveCompletionOverlaySchema = z.object({
@@ -445,7 +447,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
 		watchBrowserStatus: (handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'browserStatus' },
 				browserStatusSchema,
 				handlers.signal,
@@ -475,7 +477,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				signal
 			}),
 		watchWorkspaceFiles: (input, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'workspaceFiles', params: input },
 				workspaceFilesEventSchema,
 				handlers.signal,
@@ -491,7 +493,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			return kind;
 		},
 		watchWorkspaceFile: (input, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'workspaceFile', params: input },
 				workspaceFileEventSchema,
 				handlers.signal,
@@ -569,22 +571,29 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchRunningCommands: (requestBody, handlers) =>
-			socket.subscribe(
-				{ kind: 'commands', params: requestBody },
-				runningCommandsSchema,
-				handlers.signal,
-				handlers.onEvent
-			),
+			socket.subscribe({ kind: 'commands', params: requestBody }, runningCommandsSchema, handlers),
 		terminateCommand: (input) =>
 			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {
 				method: 'POST',
 				body: JSON.stringify(input)
 			}),
-		runAgent: async (requestBody) =>
-			await request('/api/agent/run', agentRunStartSchema, {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
+		runAgent: async (requestBody) => {
+			try {
+				return await request('/api/agent/run', agentRunStartSchema, {
+					method: 'POST',
+					body: JSON.stringify(requestBody),
+					signal: AbortSignal.timeout(agentLaunchTimeoutMs)
+				});
+			} catch (error) {
+				if (error instanceof DOMException && error.name === 'TimeoutError') {
+					throw new Error('The local server did not start the agent in time. Try again.', {
+						cause: error
+					});
+				}
+
+				throw error;
+			}
+		},
 		fetchTranscriptDisplay: async (requestBody, signal) =>
 			await request('/api/transcript/display', displayPageSchema, {
 				method: 'POST',
@@ -599,7 +608,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchTranscript: (requestBody, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'transcript', params: requestBody },
 				transcriptWatchEventSchema.nullable().catch(null),
 				handlers.signal,
@@ -608,7 +617,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				}
 			),
 		watchLiveCompletion: (requestBody, handlers) =>
-			socket.subscribe(
+			socket.subscribeOnce(
 				{ kind: 'liveCompletion', params: requestBody },
 				liveCompletionWatchEventSchema.nullable().catch(null),
 				handlers.signal,
@@ -672,14 +681,12 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			});
 		},
 		watchArtifacts: (requestBody, handlers) =>
-			socket.subscribe(
-				{ kind: 'artifacts', params: requestBody },
-				artifactsWatchEventSchema,
-				handlers.signal,
-				(event) => {
+			socket.subscribe({ kind: 'artifacts', params: requestBody }, artifactsWatchEventSchema, {
+				...handlers,
+				onEvent: (event) => {
 					handlers.onEvent(parseArtifactsWatchEvent(event));
 				}
-			),
+			}),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',

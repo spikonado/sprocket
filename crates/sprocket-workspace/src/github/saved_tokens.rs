@@ -21,7 +21,7 @@ static CACHE: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<Entry>>>>> =
 
 #[derive(Default)]
 struct Entry {
-    tokens: SavedTokens,
+    tokens: Option<SavedTokens>,
     error: Option<String>,
     next_load: Option<Instant>,
 }
@@ -31,8 +31,9 @@ pub fn install(loader: Loader) {
 }
 
 pub(super) struct Loaded {
-    pub tokens: SavedTokens,
-    /// Why the last load failed; `tokens` are then the last ones known.
+    /// The last tokens known, or `None` before any load succeeded.
+    pub tokens: Option<SavedTokens>,
+    /// Why the last load failed.
     pub error: Option<String>,
 }
 
@@ -47,7 +48,7 @@ pub(super) async fn reload(user_id: &str) -> Loaded {
 async fn load_or_reload(user_id: &str, reload: bool) -> Loaded {
     let Some(loader) = LOADER.get() else {
         return Loaded {
-            tokens: SavedTokens::new(),
+            tokens: Some(SavedTokens::new()),
             error: None,
         };
     };
@@ -62,7 +63,7 @@ async fn load_or_reload(user_id: &str, reload: bool) -> Loaded {
     if reload || entry.next_load.is_none_or(|next| next <= Instant::now()) {
         match tokio::time::timeout(LOAD_TIMEOUT, loader(user_id.to_string())).await {
             Ok(Ok(tokens)) => {
-                entry.tokens = tokens;
+                entry.tokens = Some(tokens);
                 entry.error = None;
                 entry.next_load = Some(Instant::now() + FRESH_FOR);
             }

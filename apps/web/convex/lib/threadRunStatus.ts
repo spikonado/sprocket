@@ -2,10 +2,19 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
-import {
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange
-} from '@convex/lib/threadHierarchy';
+import { changeThreadActivity } from '@convex/lib/threadHierarchy';
+
+export async function insertQueuedRun(
+	ctx: MutationCtx,
+	run: Omit<Doc<'runs'>, '_id' | '_creationTime' | 'status'>
+) {
+	return await changeThreadActivity(ctx, run.threadId, async () => {
+		const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
+		await ctx.db.patch('threadRecords', run.threadId, { status: 'queued' });
+
+		return runId;
+	});
+}
 
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
@@ -17,31 +26,27 @@ export async function setRunAndThreadStatus(
 
 	if (!current) throw new Error('Run not found.');
 
-	const before = await captureThreadActivityBeforeChange(ctx, current.threadId);
+	await changeThreadActivity(ctx, current.threadId, async () => {
+		if (
+			current.status !== status ||
+			('completedAt' in runPatch && current.completedAt !== runPatch.completedAt) ||
+			('lastError' in runPatch && current.lastError !== runPatch.lastError) ||
+			('failureKind' in runPatch && current.failureKind !== runPatch.failureKind)
+		) {
+			await ctx.db.patch('runs', run._id, { ...runPatch, status });
+		}
 
-	if (
-		current.status !== status ||
-		('completedAt' in runPatch && current.completedAt !== runPatch.completedAt) ||
-		('lastError' in runPatch && current.lastError !== runPatch.lastError) ||
-		('failureKind' in runPatch && current.failureKind !== runPatch.failureKind)
-	) {
-		await ctx.db.patch('runs', run._id, { ...runPatch, status });
-	}
+		const [latestRun, thread] = await Promise.all([
+			ctx.db
+				.query('runs')
+				.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
+				.order('desc')
+				.first(),
+			ctx.db.get('threadRecords', run.threadId)
+		]);
 
-	const [latestRun, thread] = await Promise.all([
-		ctx.db
-			.query('runs')
-			.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
-			.order('desc')
-			.first(),
-		ctx.db.get('threadRecords', run.threadId)
-	]);
-
-	if (!latestRun || !thread) return;
-
-	if (thread.status !== latestRun.status) {
-		await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
-	}
-
-	await updateThreadHierarchyAfterChange(ctx, before);
+		if (latestRun && thread && thread.status !== latestRun.status) {
+			await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
+		}
+	});
 }

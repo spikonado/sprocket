@@ -14,7 +14,7 @@ use sprocket_agent::{ModelSettings, SettingsOverrides, model_catalog};
 use super::client_session;
 use crate::AppState;
 use crate::cli_protocol::*;
-use crate::cli_sessions::CliSession;
+use crate::cli_sessions::{CliSession, StartedRun, Submission};
 use crate::routes::agent::launch_run;
 use crate::routes::api_error::ApiError;
 use crate::routes::run_settings::{self, convex_client, gateway_url};
@@ -79,56 +79,56 @@ pub(super) async fn start(
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
     let result = tokio::spawn(async move {
         let mut submission = client.submission.lock().await;
-        if let Some(previous) = &submission.request {
+        if let Some(previous) = &*submission {
             anyhow::ensure!(
-                previous == &request,
+                previous.request == request,
                 "a CLI submission cannot be reused with different arguments"
             );
-            return submission
+            return previous
                 .result
                 .clone()
-                .context("submission result is missing")?
+                .map(|started| started.run)
                 .map_err(anyhow::Error::msg);
         }
-        submission.request = Some(request.clone());
-        let result = tokio::select! {
-            biased;
-            _ = client.cancellation.cancelled() => Err(anyhow::anyhow!("CLI run was cancelled before submission")),
-            result = tokio::time::timeout(Duration::from_secs(45), prepare_run(&state, &client, &request)) => {
-                result.context("CLI run preparation timed out").and_then(|result| result)
-            }
-        };
-        let result = match result {
-            Ok(payload) => {
-                submission.user_id = Some(payload.user_id.clone());
-                if client.cancellation.is_cancelled() {
-                    Err(anyhow::anyhow!("CLI run was cancelled before submission"))
-                } else {
-                    launch_run(
-                        state.host,
-                        payload,
-                        WorkspaceAccess::RunDirectory,
-                        false,
-                        client.cancellation.clone(),
-                        Some(Arc::clone(&client.output)),
-                    )
-                    .await
-                    .map_err(anyhow::Error::from)
-                }
-            }
-            Err(error) => Err(error),
-        };
-        submission.result = Some(
-            result
-                .as_ref()
-                .map(Clone::clone)
-                .map_err(ToString::to_string),
-        );
-        result
+        let result = submit(&state, &client, &request).await;
+        *submission = Some(Submission {
+            request,
+            result: result.as_ref().cloned().map_err(ToString::to_string),
+        });
+        result.map(|started| started.run)
     })
     .await
     .map_err(|error| ApiError::internal(error.into()))?;
     result.map(Json).map_err(ApiError::bad_request)
+}
+
+async fn submit(
+    state: &AppState,
+    client: &CliSession,
+    request: &CliRunRequest,
+) -> anyhow::Result<StartedRun> {
+    let payload = tokio::select! {
+        biased;
+        _ = client.cancellation.cancelled() => anyhow::bail!("CLI run was cancelled before submission"),
+        result = tokio::time::timeout(Duration::from_secs(45), prepare_run(state, client, request)) => {
+            result.context("CLI run preparation timed out")??
+        }
+    };
+    anyhow::ensure!(
+        !client.cancellation.is_cancelled(),
+        "CLI run was cancelled before submission"
+    );
+    let user_id = payload.user_id.clone();
+    let run = launch_run(
+        state.host.clone(),
+        payload,
+        WorkspaceAccess::RunDirectory,
+        false,
+        client.cancellation.clone(),
+        Some(Arc::clone(&client.output)),
+    )
+    .await?;
+    Ok(StartedRun { user_id, run })
 }
 
 async fn thread_settings(
@@ -214,15 +214,16 @@ pub(super) async fn output(
     Json(request): Json<CliOutputRequest>,
 ) -> Result<Json<CliRunSnapshot>, ApiError> {
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
-    let (started, user_id) = {
-        let submission = client.submission.lock().await;
-        let started = submission
-            .result
-            .as_ref()
-            .and_then(|result| result.as_ref().ok())
-            .cloned()
-            .ok_or_else(|| ApiError::bad_request(anyhow::anyhow!("CLI run has not started")))?;
-        (started, submission.user_id.clone().unwrap_or_default())
+    let StartedRun { user_id, run } = match &*client.submission.lock().await {
+        Some(Submission {
+            result: Ok(started),
+            ..
+        }) => started.clone(),
+        _ => {
+            return Err(ApiError::bad_request(anyhow::anyhow!(
+                "CLI run has not started"
+            )));
+        }
     };
     state
         .auth
@@ -247,11 +248,11 @@ pub(super) async fn output(
     let live = state
         .host
         .live_completions
-        .snapshot(&started.thread_id)
-        .filter(|live| live.run_id == started.run_id);
+        .snapshot(&run.thread_id)
+        .filter(|live| live.run_id == run.run_id);
     Ok(Json(CliRunSnapshot {
-        run_id: started.run_id,
-        thread_id: started.thread_id,
+        run_id: run.run_id,
+        thread_id: run.thread_id,
         revision: snapshot.revision,
         answer: snapshot.answer,
         status: snapshot.status,

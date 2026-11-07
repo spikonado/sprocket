@@ -28,13 +28,14 @@ type CloudArtifactClient = {
 export function watchCloudArtifacts(
 	client: CloudArtifactClient,
 	scope: CloudArtifactScope,
-	onSnapshot: (state: ArtifactWatchState) => void
+	onSnapshot: (state: ArtifactWatchState) => void,
+	retained: LocalArtifact[] = []
 ): () => void {
 	const { userId, ...queryScope } = scope;
 	let stopped = false;
 	let generation = 0;
 	let retry: ReturnType<typeof setTimeout> | undefined;
-	let latest: LocalArtifact[] = [];
+	let latest = retained;
 
 	async function refresh(version: number) {
 		try {

@@ -29,7 +29,7 @@ async fn fixture() -> (tempfile::TempDir, AppState, String) {
     (directory, state, session)
 }
 
-fn request(path: &str, session: &str, user: &str) -> Request<Body> {
+fn request(path: &str, session: &str, body: serde_json::Value) -> Request<Body> {
     let mut request = Request::builder()
         .method("POST")
         .uri(path)
@@ -40,7 +40,7 @@ fn request(path: &str, session: &str, user: &str) -> Request<Body> {
             format!("{}={session}", crate::SESSION_COOKIE_NAME),
         )
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(serde_json::json!({"userId":user}).to_string()))
+        .body(Body::from(body.to_string()))
         .unwrap();
     request
         .extensions_mut()
@@ -54,7 +54,11 @@ async fn local_status_is_account_scoped_and_reports_login_availability() {
     let app = crate::build_router(state, None);
     let response = app
         .clone()
-        .oneshot(request("/api/chatgpt/status", &session, "user-a"))
+        .oneshot(request(
+            "/api/chatgpt/status",
+            &session,
+            serde_json::json!({"userId":"user-a"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -69,8 +73,31 @@ async fn local_status_is_account_scoped_and_reports_login_availability() {
         })
     );
     let response = app
-        .oneshot(request("/api/chatgpt/status", &session, "user-b"))
+        .oneshot(request(
+            "/api/chatgpt/status",
+            &session,
+            serde_json::json!({"userId":"user-b"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn unknown_browser_sign_in_reports_an_error_the_client_can_stop_on() {
+    let (_directory, state, session) = fixture().await;
+    let response = crate::build_router(state, None)
+        .oneshot(request(
+            "/api/chatgpt/browser/result",
+            &session,
+            serde_json::json!({"userId":"user-a", "state":"expired"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(result["status"], "error");
 }

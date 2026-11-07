@@ -37,13 +37,10 @@ const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
 
-let serverBaseUrl = null;
-
 let mainWindowRef = null;
 
-let serverReadyPromise = null;
-
-let isQuitting = false;
+/** @type {'starting' | 'running' | 'updating' | 'quitting'} */
+let phase = 'starting';
 
 let hasUnsavedChanges = false;
 
@@ -56,10 +53,6 @@ const updates = new DesktopUpdater(
 );
 
 let updateTimer = null;
-
-let updateInstallationPending = false;
-
-let shutdownPromise = null;
 
 updates.subscribe((state) => {
 	if (mainWindowRef && !mainWindowRef.isDestroyed()) {
@@ -204,16 +197,21 @@ async function attachToRunningServer(baseUrl, dataDir) {
 		);
 	}
 
-	serverBaseUrl = pairingProof.httpBaseUrl;
-
 	return true;
 }
 
-async function startLocalServer() {
-	if (serverBaseUrl) {
-		return serverBaseUrl;
-	}
+function isStoppingServer() {
+	return phase === 'updating' || phase === 'quitting';
+}
 
+async function startServer() {
+	phase = 'starting';
+	await startLocalServer();
+
+	if (phase === 'starting') phase = 'running';
+}
+
+async function startLocalServer() {
 	const port = serverPort;
 	const host = serverHost;
 	const dataDir = getLocalDataDir();
@@ -223,7 +221,7 @@ async function startLocalServer() {
 	const fallbackBaseUrl = `http://${host}:${port}`;
 
 	if (await attachToRunningServer(fallbackBaseUrl, dataDir)) {
-		return serverBaseUrl;
+		return;
 	}
 
 	const desktopBootstrapToken = randomUUID();
@@ -262,12 +260,13 @@ async function startLocalServer() {
 		stdio: ['ignore', 'pipe', 'pipe']
 	});
 	serverProcess.once('error', (error) => {
-		if (!isQuitting) {
+		if (!isStoppingServer()) {
 			reportFatalError('Failed to start Sprocket server', error);
 			app.quit();
 		}
 	});
 
+	let serverBaseUrl = fallbackBaseUrl;
 	serverProcess.stdout?.on('data', (chunk) => {
 		const text = chunk.toString();
 		process.stdout.write(text);
@@ -292,7 +291,7 @@ async function startLocalServer() {
 			console.error(`Sprocket local server exited with code ${code}`);
 		}
 
-		if (isQuitting) return;
+		if (isStoppingServer()) return;
 
 		// 'exit' can fire before the last stderr bytes are read; a server child
 		// may also hold the pipe open, so the wait is bounded.
@@ -300,7 +299,7 @@ async function startLocalServer() {
 			await Promise.race([once(serverStderr, 'end'), delay(1_000)]);
 		}
 
-		if (isQuitting) return;
+		if (isStoppingServer()) return;
 
 		const exitReason = signal
 			? `The local server exited via signal ${signal}.`
@@ -314,7 +313,6 @@ async function startLocalServer() {
 	});
 
 	await waitForServerReady(fallbackBaseUrl);
-	serverBaseUrl ??= fallbackBaseUrl;
 
 	const bootstrapResponse = await fetch(`${serverBaseUrl}/api/auth/desktop-bootstrap`, {
 		headers: {
@@ -327,25 +325,17 @@ async function startLocalServer() {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
 
-	const bootstrap = parseDesktopBootstrap(await bootstrapResponse.json());
-
-	if (bootstrap === null) {
+	if (parseDesktopBootstrap(await bootstrapResponse.json()) === null) {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
-
-	serverBaseUrl = bootstrap.httpBaseUrl;
-
-	return serverBaseUrl;
 }
 
-async function stopServerBeforeUpdate() {
+async function stopServer() {
 	const child = serverProcess;
 
 	if (!child) return;
 	await stopUpdateProcess(child);
 	serverProcess = null;
-	serverBaseUrl = null;
-	serverReadyPromise = null;
 }
 
 function queueWorkspaceLaunch(workspacePath) {
@@ -371,19 +361,11 @@ function notifyWorkspaceLaunch() {
 	}
 }
 
-async function showDesktopApp() {
-	if (!serverReadyPromise) {
-		throw new Error('Local server startup is unavailable.');
-	}
-
-	await serverReadyPromise;
-
+function focusMainWindow() {
 	const mainWindow = mainWindowRef;
 
 	if (!mainWindow || mainWindow.isDestroyed()) {
-		createMainWindow();
-
-		return;
+		return false;
 	}
 
 	if (mainWindow.isMinimized()) {
@@ -392,6 +374,14 @@ async function showDesktopApp() {
 
 	mainWindow.show();
 	mainWindow.focus();
+
+	return true;
+}
+
+function showDesktopApp() {
+	if (!focusMainWindow() && phase === 'running') {
+		createMainWindow();
+	}
 }
 
 async function loadRendererWhenReady(mainWindow, targetUrl, timeoutMs = 60_000) {
@@ -507,7 +497,7 @@ ipcMain.handle('sprocket:set-unsaved-changes', (event, value) => {
 function confirmDiscardUnsavedChanges() {
 	// Quitting and installing start only after the user already chose to discard.
 	if (
-		isQuitting ||
+		phase !== 'running' ||
 		updates.getState().status === 'installing' ||
 		!hasUnsavedChanges ||
 		!mainWindowRef ||
@@ -544,50 +534,43 @@ ipcMain.handle('sprocket:download-update', (event) => {
 ipcMain.handle('sprocket:install-update', async (event) => {
 	requireUpdateRenderer(event);
 
-	if (updateInstallationPending || updates.getState().status !== 'downloaded') {
+	if (
+		phase !== 'running' ||
+		updates.getState().status !== 'downloaded' ||
+		!confirmDiscardUnsavedChanges()
+	) {
 		return updates.getState();
 	}
 
-	if (!confirmDiscardUnsavedChanges()) return updates.getState();
+	if (process.platform === 'darwin') {
+		// Squirrel validates the staged update asynchronously and may reject it without quitting.
+		updates.install();
 
-	updateInstallationPending = true;
+		return updates.getState();
+	}
+
+	phase = 'updating';
 
 	try {
-		if (!isQuitting) {
-			if (process.platform === 'darwin') {
-				// Squirrel validates the staged update asynchronously and may reject it without quitting.
-				updates.install();
+		await stopServer();
 
-				return updates.getState();
-			}
+		if (phase !== 'updating') return updates.getState();
+		// AppImage can launch its replacement before the old Electron process exits.
+		app.releaseSingleInstanceLock();
 
-			isQuitting = true;
-
-			try {
-				await stopServerBeforeUpdate();
-				// AppImage can launch its replacement before the old Electron process exits.
-				app.releaseSingleInstanceLock();
-
-				if (!updates.install()) {
-					isQuitting = false;
-
-					if (!app.requestSingleInstanceLock()) {
-						app.quit();
-					} else {
-						serverReadyPromise = startLocalServer();
-						await serverReadyPromise;
-					}
-				}
-			} catch (error) {
-				isQuitting = false;
-				reportFatalError('Failed to install Sprocket update', error);
+		if (!updates.install()) {
+			if (app.requestSingleInstanceLock()) {
+				await startServer();
+			} else {
+				app.quit();
 			}
 		}
-
-		return updates.getState();
-	} finally {
-		updateInstallationPending = false;
+	} catch (error) {
+		reportFatalError('Failed to install Sprocket update', error);
+		app.quit();
 	}
+
+	return updates.getState();
 });
 
 function openWithXdgOpen(url) {
@@ -680,50 +663,32 @@ ipcMain.handle('sprocket:open-external', async (event, url) => {
 
 ipcMain.handle('sprocket:focus-window', (event) => {
 	requireTrustedRenderer(event);
-	const mainWindow = mainWindowRef;
 
-	if (!mainWindow || mainWindow.isDestroyed()) {
-		return false;
-	}
-
-	if (mainWindow.isMinimized()) {
-		mainWindow.restore();
-	}
-
-	mainWindow.show();
-	mainWindow.focus();
-
-	return true;
+	return focusMainWindow();
 });
 
 if (hasSingleInstanceLock) {
 	app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
 		queueWorkspaceLaunch(additionalData?.workspacePath);
-		void showDesktopApp().catch((error) => {
-			console.error('Failed to handle Sprocket launch request', error);
-		});
+		showDesktopApp();
 	});
 
-	serverReadyPromise = app.whenReady().then(async () => {
-		Menu.setApplicationMenu(null);
-		await startLocalServer();
-		void updates.check();
-		updateTimer = setInterval(() => void updates.check(), 60 * 60 * 1000);
-		updateTimer.unref();
-	});
-
-	void serverReadyPromise
-		.then(() => showDesktopApp())
+	void app
+		.whenReady()
+		.then(async () => {
+			Menu.setApplicationMenu(null);
+			await startServer();
+			showDesktopApp();
+			void updates.check();
+			updateTimer = setInterval(() => void updates.check(), 60 * 60 * 1000);
+			updateTimer.unref();
+		})
 		.catch((error) => {
 			reportFatalError('Failed to start Sprocket', error);
 			app.quit();
 		});
 
-	app.on('activate', () => {
-		void showDesktopApp().catch((error) => {
-			console.error('Failed to show Sprocket desktop app', error);
-		});
-	});
+	app.on('activate', showDesktopApp);
 }
 
 app.on('window-all-closed', () => {
@@ -739,12 +704,15 @@ app.on('before-quit', (event) => {
 		return;
 	}
 
-	isQuitting = true;
+	const stopAlreadyRequested = phase === 'quitting';
+	phase = 'quitting';
 	clearInterval(updateTimer);
 
 	if (!serverProcess) return;
 	event.preventDefault();
-	shutdownPromise ??= stopServerBeforeUpdate()
+
+	if (stopAlreadyRequested) return;
+	void stopServer()
 		.then(() => {
 			if (process.platform === 'darwin' && updates.getState().status === 'installing') {
 				electronUpdater.autoUpdater.quitAndInstall();

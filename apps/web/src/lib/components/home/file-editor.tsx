@@ -85,14 +85,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [readError, setReadError] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
-	/** Disk version the buffer has not absorbed because it has unsaved edits. */
-	const [diskVersion, setDiskVersion] = useState<string | null>(null);
+	/** Disk state the buffer has not absorbed because it has unsaved edits. */
+	const [diskChange, setDiskChange] = useState<WorkspaceFileContent | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const savedDoc = useRef<Text | null>(null);
 	const version = useRef<string | null>(null);
-	/** The newest disk state, kept so Reload can apply it. */
-	const disk = useRef<WorkspaceFileContent | null>(null);
 	/** Snapshots arriving mid-save could undo it or the edits made since; `rewatch` re-reads after. */
 	const saves = useRef(0);
 	/** Starts a fresh watch, so a snapshot read before a save can't arrive after it. */
@@ -158,7 +156,8 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		void loadLanguage(view);
 		savedDoc.current = base ?? view.state.doc;
 		version.current = nextVersion;
-		setDiskVersion(null);
+		setDiskChange(null);
+		setSaveError(null);
 		reportDraft();
 	}
 
@@ -186,7 +185,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 		if (result.unsupported) {
 			if (hasEdits && !force) {
-				setDiskVersion(result.version);
+				setDiskChange(result);
 
 				return;
 			}
@@ -206,12 +205,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		setReadError(null);
 
 		if (result.version === version.current) {
-			setDiskVersion(null);
+			setDiskChange(null);
 
 			return;
 		}
 
-		if (hasEdits && !force) setDiskVersion(result.version);
+		if (hasEdits && !force) setDiskChange(result);
 		else replaceContent(result.content ?? '', result.version);
 	}
 
@@ -231,15 +230,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 				expectedVersion: overwrite ? null : version.current
 			});
 
-			if (result.status === 'conflict') {
-				setDiskVersion(result.version);
-
-				return;
-			}
+			// The rewatch below reads the conflicting disk state and offers it as a reload.
+			if (result.status === 'conflict') return;
 
 			savedDoc.current = doc;
 			version.current = result.version;
-			setDiskVersion(null);
+			setDiskChange(null);
 			setSaveError(null);
 			reportDraft();
 		} catch (error) {
@@ -300,7 +296,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 						if (saves.current > 0) return;
 
 						if (event.kind === 'error') return actions.current.readFailed(event.message);
-						disk.current = event;
 						actions.current.absorb(event, false);
 					}
 				});
@@ -329,13 +324,12 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 			controller.abort();
 			clearTimeout(timer);
-			disk.current = null;
 		};
 	}, [api, active, visible, file.workspacePath, file.path]);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			{diskVersion !== null ? (
+			{diskChange ? (
 				<div
 					role="alert"
 					className="border-hairline flex shrink-0 items-center gap-2 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-900 dark:text-amber-100"
@@ -343,9 +337,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 					<span className="min-w-0 flex-1">This file changed on disk while you were editing.</span>
 					<button
 						type="button"
-						onClick={() => {
-							if (disk.current) actions.current.absorb(disk.current, true);
-						}}
+						onClick={() => actions.current.absorb(diskChange, true)}
 						className="hover:bg-hover-fill shrink-0 rounded px-2 py-0.5 font-medium"
 					>
 						Reload

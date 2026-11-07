@@ -850,7 +850,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			for (const question of questions) {
 				expect(question).toMatchObject(
 					status === 'cancelled'
-						? { status: 'cancelled', answeredAt: expect.any(Number) }
+						? { status: 'cancelled' }
 						: { status: 'pending', requiresContinuation: true }
 				);
 			}

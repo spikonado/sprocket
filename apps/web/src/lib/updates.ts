@@ -94,7 +94,7 @@ export async function watchPackageUpdate(handlers: WatchHandlers<UpdateState>): 
 		return;
 	}
 
-	await localSocket(baseUrl).subscribe(
+	await localSocket(baseUrl).subscribeOnce(
 		{ kind: 'packageUpdate' },
 		updateStateSchema,
 		handlers.signal,

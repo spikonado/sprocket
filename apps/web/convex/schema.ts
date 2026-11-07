@@ -571,7 +571,8 @@ export default defineSchema({
 		amount: v.number(),
 		currency: v.string(),
 		status: vPurchaseStatus,
-		approvalUrl: v.string(),
+		// Absent while Agentcard pays without asking, under a user's auto-approval.
+		approvalUrl: v.optional(v.string()),
 		orderNumber: v.optional(v.string()),
 		orderLink: v.optional(v.string()),
 		trackingLink: v.optional(v.string())

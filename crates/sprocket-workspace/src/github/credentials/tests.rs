@@ -50,3 +50,20 @@ fn gh_runs_without_prompts_or_inherited_tokens() {
         assert_eq!(envs.get(OsStr::new(name)), Some(&None), "{name}");
     }
 }
+
+#[tokio::test]
+async fn unloaded_saved_tokens_fail_instead_of_falling_back() {
+    // The loader is process-wide, so every other user loads no tokens, as with no loader.
+    saved_tokens::install(std::sync::Arc::new(
+        |user_id: String| -> saved_tokens::LoadFuture {
+            Box::pin(async move {
+                anyhow::ensure!(user_id != "user-unloaded", "Convex is unreachable");
+                anyhow::Ok(saved_tokens::SavedTokens::new())
+            })
+        },
+    ));
+    assert!(matches!(
+        resolve("user-unloaded", PUBLIC_HOST).await,
+        Err(GitHubError::Failed(_))
+    ));
+}

@@ -6,7 +6,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use futures::StreamExt;
-use futures::stream::{BoxStream, unfold};
+use futures::stream::{self, BoxStream, unfold};
 use serde::Deserialize;
 use sprocket_transcript::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
 use tokio::sync::broadcast;
@@ -250,21 +250,18 @@ pub(crate) async fn watch_events(
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
         .await;
-    unfold(session, |mut session| async move {
-        match session.receiver().recv().await {
-            Ok(event) => Some((event, session)),
-            Err(broadcast::error::RecvError::Lagged(_)) => {
-                let event = TranscriptWatchEvent {
-                    event_type: "updated",
-                    total_parts: None,
-                    stale: false,
-                };
-                Some((event, session))
+    // The first event makes a reconnecting client refresh what it missed.
+    stream::once(async { TranscriptWatchEvent::UPDATED })
+        .chain(unfold(session, |mut session| async move {
+            match session.receiver().recv().await {
+                Ok(event) => Some((event, session)),
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    Some((TranscriptWatchEvent::UPDATED, session))
+                }
+                Err(broadcast::error::RecvError::Closed) => None,
             }
-            Err(broadcast::error::RecvError::Closed) => None,
-        }
-    })
-    .boxed()
+        }))
+        .boxed()
 }
 
 async fn clear_handler(

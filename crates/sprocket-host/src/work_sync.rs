@@ -33,7 +33,7 @@ async fn metadata(
     user: &str,
     thread: &str,
     states: watch::Sender<RemoteTranscriptState>,
-    changed: &(impl Fn(u32) + Send + Sync),
+    changed: &(impl Fn() + Send + Sync),
 ) -> anyhow::Result<()> {
     let mut updates = client.watch_all().await?;
     let subscription = client
@@ -49,14 +49,14 @@ async fn metadata(
         if previous.as_ref() == Some(&state) {
             continue;
         }
-        apply_remote_state(store, user, thread, &state, false).await?;
+        apply_remote_state(store, user, thread, &state).await?;
         let total = state.total_parts;
         store
             .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
             .await?;
         previous = Some(state.clone());
         states.send_replace(state);
-        changed(total);
+        changed();
     }
     anyhow::bail!("transcript state subscription ended")
 }
@@ -66,7 +66,7 @@ async fn download<F, Fut>(
     user: &str,
     thread: &str,
     mut states: watch::Receiver<RemoteTranscriptState>,
-    changed: &(impl Fn(u32) + Send + Sync),
+    changed: &(impl Fn() + Send + Sync),
     mut fetch: F,
 ) -> anyhow::Result<()>
 where
@@ -91,7 +91,7 @@ where
         if remaining.0 < remaining.1 {
             pending.push(remaining);
         }
-        changed(total);
+        changed();
         tokio::task::yield_now().await;
     }
 }
@@ -114,7 +114,7 @@ pub async fn synchronize(
     store: Arc<TranscriptStore>,
     user: String,
     thread: String,
-    changed: impl Fn(u32) + Send + Sync,
+    changed: impl Fn() + Send + Sync,
 ) -> anyhow::Result<()> {
     let resets = store.watch_work_replica_resets();
     store.prepare_work_replica(&user, &thread).await?;

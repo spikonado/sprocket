@@ -23,13 +23,8 @@ import {
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
-import {
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange,
-	registerChildThread,
-	threadRoot,
-	unsettleRootOfThread
-} from '@convex/lib/threadHierarchy';
+import { registerChildThread, threadRoot } from '@convex/lib/threadHierarchy';
+import { insertQueuedRun } from '@convex/lib/threadRunStatus';
 import { startRunLifecycle } from '@convex/runLifecycle';
 import {
 	attachmentMetaForUploads,
@@ -278,11 +273,10 @@ export async function createQueuedRunRecord(
 		? { text: prompt, imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds) }
 		: undefined;
 
-	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
+	const runRecord: Parameters<typeof insertQueuedRun>[1] = {
 		threadId: threadRecord._id,
 		userId: args.userId,
 		submissionId: args.submissionId,
-		status: 'queued' as const,
 		executionSecretHash: secretHash,
 		selectedModel: args.selectedModel,
 		completionProvider,
@@ -300,9 +294,8 @@ export async function createQueuedRunRecord(
 
 	if (promptBody && args.deferPrompt) runRecord.pendingPrompt = promptBody;
 
-	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
+	const runId = await insertQueuedRun(ctx, runRecord);
 
-	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 
 	if (taskDeadlineAt !== undefined) {
@@ -334,14 +327,12 @@ export async function createQueuedRunRecord(
 	}
 
 	const threadUpdates = {
-		status: 'queued' as const,
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
 		completionProvider,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
-		lastMessageAt: Date.now(),
-		archivedAt: undefined
+		lastMessageAt: Date.now()
 	};
 
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
@@ -354,8 +345,6 @@ export async function createQueuedRunRecord(
 		);
 	}
 
-	await unsettleRootOfThread(ctx, threadRecord);
-	await updateThreadHierarchyAfterChange(ctx, before);
 	await startRunLifecycle(ctx, runId);
 
 	return created;
@@ -440,7 +429,6 @@ export async function finalizeFailedQueuedStart(
 		completionProvider?: CompletionProvider;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
 		fastMode: boolean;
-		text: string;
 		lastError: string;
 		executionSecret: string;
 	}

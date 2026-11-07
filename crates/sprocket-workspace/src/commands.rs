@@ -540,15 +540,10 @@ impl CommandSessionManager {
         })
     }
 
-    /// Release live handles only after their completed results are saved on disk.
+    /// A completed result whose save failed reads back as interrupted once released.
     pub async fn prune_completed(&self) {
         self.sessions.lock().await.retain(|_, session| {
-            Arc::strong_count(session) > 1
-                || !session
-                    .completion
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|completion| completion.archived)
+            Arc::strong_count(session) > 1 || session.completion.borrow().is_none()
         });
     }
 

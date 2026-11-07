@@ -24,22 +24,23 @@ const available: UpdateState = {
 
 let nextPort = 7300;
 
+function preferences(automaticAgentContinuation?: boolean): Doc<'uiPreferences'> | null {
+	return automaticAgentContinuation === undefined
+		? null
+		: {
+				_id: fixtureId<'uiPreferences'>('preferences-test'),
+				_creationTime: 1,
+				userId: 'user-test',
+				theme: 'light',
+				automaticAgentContinuation
+			};
+}
+
 function mount(automaticAgentContinuation?: boolean, loading = false) {
 	const client = new ConvexTestClient();
 
 	if (!loading) {
-		const preferences: Doc<'uiPreferences'> | null =
-			automaticAgentContinuation === undefined
-				? null
-				: {
-						_id: fixtureId<'uiPreferences'>('preferences-test'),
-						_creationTime: 1,
-						userId: 'user-test',
-						theme: 'light',
-						automaticAgentContinuation
-					};
-
-		client.registerQuery(api.uiPreferences.getMine, preferences);
+		client.registerQuery(api.uiPreferences.getMine, preferences(automaticAgentContinuation));
 	}
 
 	// Each server URL gets its own socket, so tests do not share one.
@@ -53,10 +54,15 @@ function mount(automaticAgentContinuation?: boolean, loading = false) {
 	);
 	sockets[0]?.open();
 
-	return (state: UpdateState) =>
+	const publish = (state: UpdateState) =>
 		act(() => {
 			sockets[0]?.onmessage?.({ data: JSON.stringify({ type: 'event', id: 1, data: state }) });
 		});
+
+	const setContinuation = (enabled: boolean) =>
+		act(() => client.registerQuery(api.uiPreferences.getMine, preferences(enabled)));
+
+	return Object.assign(publish, { setContinuation });
 }
 
 it('installs a package update on the first click and prevents another request while busy', async () => {
@@ -133,9 +139,10 @@ it.each([undefined, true])(
 	}
 );
 
-it('drops an install error once the server pushes the installed update', async () => {
-	vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('Connection lost')));
-	const publish = mount(false);
+it('drops an install error and waits for a click once the server pushes the installed update', async () => {
+	const fetcher = vi.fn().mockRejectedValueOnce(new Error('Connection lost'));
+	vi.stubGlobal('fetch', fetcher);
+	const publish = mount(true);
 	publish(available);
 	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
 	expect(await screen.findByText('Connection lost')).toBeTruthy();
@@ -143,6 +150,30 @@ it('drops an install error once the server pushes the installed update', async (
 	publish({ ...available, status: 'installed' });
 	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toBeTruthy();
 	expect(screen.queryByText('Connection lost')).toBeNull();
+	expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+	['the install reports an error', true, { ...available, status: 'error' as const }],
+	['automatic continuation is turned on after the click', false, null]
+])('waits for a click to restart when %s', async (_, enabled, failure) => {
+	const fetcher = vi
+		.fn()
+		.mockResolvedValueOnce(Response.json({ ...available, status: 'installing' }));
+
+	vi.stubGlobal('fetch', fetcher);
+	const publish = mount(enabled);
+	publish(available);
+	await act(async () =>
+		fireEvent.click(await screen.findByRole('button', { name: 'Update available' }))
+	);
+
+	if (failure) publish(failure);
+
+	publish({ ...available, status: 'installed' });
+	publish.setContinuation(true);
+	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toBeTruthy();
+	expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it.each([

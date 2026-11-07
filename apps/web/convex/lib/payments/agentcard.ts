@@ -142,9 +142,13 @@ export const agentcardAuthorization = z.object({
 	status: z.enum(['awaiting_approval', 'approved', 'submitted_on_device', 'declined', 'expired']),
 	amount: z.number().nullable(),
 	currency: z.string().nullable(),
-	approvalUrl: z.string().optional(),
+	approvalUrl: z
+		.string()
+		.nullish()
+		.transform((url) => url ?? undefined),
 	poll_interval_ms: z.number().optional(),
 	reason: z.string().optional(),
+	replay_attempted: z.boolean().nullish(),
 	settlement: z.object({ status: z.string().optional() }).nullish(),
 	response: z
 		.object({ status: z.number(), headers: z.record(z.string(), z.string()), body: z.string() })

@@ -249,8 +249,8 @@ async fn watch(
     latest: Arc<Mutex<Option<ArtifactWatchEvent>>>,
 ) {
     let mut feed = ArtifactFeed::new(key.clone(), bindings.clone());
-    let mut stale = true;
-    let mut error = None;
+    let mut cloud_stale = true;
+    let mut cloud_error = None;
     let (pending_tx, pending_rx) = tokio::sync::watch::channel(Vec::new());
     let (cloud_tx, mut cloud_rx) = tokio::sync::mpsc::channel(1);
     let mut tasks = tokio::task::JoinSet::new();
@@ -268,25 +268,28 @@ async fn watch(
                 match result {
                     Some(Ok(snapshot)) => {
                         feed.apply_registry(snapshot.artifacts);
-                        stale = false;
-                        error = None;
+                        cloud_stale = false;
+                        cloud_error = None;
                     }
                     Some(Err(failure)) if is_native_account_revoked(&failure) => {
                         publish(&events, &latest, ArtifactWatchEvent { artifacts: vec![], stale: true, error: Some(failure.to_string()) });
                         return;
                     }
-                    Some(Err(failure)) => { stale = true; error = Some(failure.to_string()); }
+                    Some(Err(failure)) => { cloud_stale = true; cloud_error = Some(failure.to_string()); }
                     None => return,
                 }
             }
             _ = poll.tick() => {}
         }
-        if let Err(failure) = feed.refresh().await {
-            stale = true;
-            error = Some(failure.to_string());
-        }
+        let local_error = feed
+            .refresh()
+            .await
+            .err()
+            .map(|failure| failure.to_string());
+        let stale = cloud_stale || local_error.is_some();
+        let error = cloud_error.clone().or(local_error);
         pending_tx.send_replace(feed.pending.clone());
-        publish(&events, &latest, feed.snapshot(stale, error.clone()));
+        publish(&events, &latest, feed.snapshot(stale, error));
     }
 }
 

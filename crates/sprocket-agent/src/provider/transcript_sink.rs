@@ -10,7 +10,7 @@ use sprocket_transcript::{
 };
 
 use crate::convex::RuntimeClient;
-use crate::hooks::ToolCallTracker;
+use crate::hooks::{ToolCallTracker, completion_stream_id};
 use crate::now_ms;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 
@@ -24,6 +24,7 @@ pub(super) struct TranscriptSink {
     thread_id: String,
     stream_id: String,
     attempt_seq: u64,
+    call_completed: bool,
     parts: LiveAssistantParts,
     provider_metadata: HashMap<String, serde_json::Value>,
     last_publish: Instant,
@@ -47,13 +48,14 @@ impl TranscriptSink {
             .register_completion_attempt(&run_id, &claim_id, 1)
             .await?;
         Ok(Self {
-            stream_id: format!("agent:{run_id}:{claim_id}:1"),
+            stream_id: completion_stream_id(&run_id, &claim_id, 1),
             runtime,
             live,
             run_id,
             claim_id,
             thread_id,
             attempt_seq: 1,
+            call_completed: false,
             parts: LiveAssistantParts::default(),
             provider_metadata: HashMap::new(),
             last_publish: Instant::now(),
@@ -69,7 +71,7 @@ impl TranscriptSink {
         self.attempt_seq
     }
 
-    pub(super) fn assistant_text(&self) -> String {
+    fn assistant_text(&self) -> String {
         join_assistant_text_parts(&self.parts.parts)
     }
 
@@ -155,16 +157,33 @@ impl TranscriptSink {
 
     pub(super) async fn advance_attempt(&mut self) -> anyhow::Result<()> {
         self.reset_parts();
+        self.call_completed = false;
         self.attempt_seq += 1;
-        self.stream_id = format!(
-            "agent:{}:{}:{}",
-            self.run_id, self.claim_id, self.attempt_seq
-        );
+        self.stream_id = completion_stream_id(&self.run_id, &self.claim_id, self.attempt_seq);
         self.runtime
             .register_completion_attempt(&self.run_id, &self.claim_id, self.attempt_seq)
             .await?;
         self.tool_call_tracker
             .begin_attempt(self.attempt_seq, &self.stream_id);
+        Ok(())
+    }
+
+    /// Discards the attempt's live output before the model retries it.
+    pub(super) async fn retry_attempt(&mut self) -> anyhow::Result<()> {
+        self.advance_attempt().await?;
+        self.clear_live();
+        Ok(())
+    }
+
+    pub(super) fn finish_completion_call(&mut self) {
+        self.call_completed = true;
+    }
+
+    /// Each completion call after the first in an attempt gets its own attempt.
+    pub(super) async fn begin_completion_call(&mut self) -> anyhow::Result<()> {
+        if self.call_completed {
+            self.advance_attempt().await?;
+        }
         Ok(())
     }
 
@@ -240,7 +259,7 @@ impl TranscriptSink {
         }
     }
 
-    pub(super) fn clear_live(&self) {
+    fn clear_live(&self) {
         self.live.clear(&self.thread_id);
         if let Some(output) = &self.runtime.output {
             output.notify_live_update();

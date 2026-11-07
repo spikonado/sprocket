@@ -13,6 +13,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { WithoutSystemFields } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
 import {
+	advanceWatermarks,
 	computeAccess,
 	identityTakeoverAllowed,
 	isStalePayload,
@@ -28,9 +29,9 @@ import {
 } from '@convex/lib/subscriptionProjection';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import {
+	accessPhaseAt,
 	displayAccessPhase,
 	displayTier,
-	enforcementAccessPhase,
 	ensureSubscription,
 	getSubscriptionDoc,
 	getTierLabel,
@@ -1025,7 +1026,7 @@ export const attemptActivated = internalQuery({
 		const subscriptions = await listSubscriptionDocs(ctx, args.userId);
 
 		for (const subscription of subscriptions) {
-			if (enforcementAccessPhase(subscription, args.now) === 'none') continue;
+			if (accessPhaseAt(subscription, args.now) === 'none') continue;
 
 			if (subscription.checkoutAttemptId !== args.attemptId) continue;
 
@@ -1170,18 +1171,6 @@ function forcedReconcile(
 		dodoSubscriptionId,
 		projectionRevision: existing.projectionRevision ?? 0,
 		force: true
-	};
-}
-
-function keptWatermarks(existing: Doc<'subscriptions'> | null) {
-	const eventAt = existing?.eventAt ?? 0;
-	const payloadEventAt = existing?.payloadEventAt ?? eventAt;
-
-	return {
-		eventAt,
-		payloadEventAt,
-		scheduleEventAt: existing?.scheduleEventAt ?? payloadEventAt,
-		termEventAt: existing?.termEventAt ?? eventAt
 	};
 }
 
@@ -1425,19 +1414,12 @@ async function planSubscriptionProjection(
 	const tier =
 		stalePayload && existing ? existing.tier : resolvedTier.unresolved ? 'free' : resolvedTier.tier;
 
-	const kept = keptWatermarks(existing);
-
-	const watermarks =
-		payload.source === 'observation'
-			? kept
-			: {
-					eventAt: keepStatus ? kept.eventAt : payload.eventAt,
-					payloadEventAt: stalePayload ? kept.payloadEventAt : payload.eventAt,
-					scheduleEventAt: staleSchedule ? kept.scheduleEventAt : payload.eventAt,
-					termEventAt: staleTerm
-						? (existing?.termEventAt ?? payload.eventAt)
-						: Math.max(payload.eventAt, existing?.termEventAt ?? -Infinity)
-				};
+	const watermarks = advanceWatermarks(existing, payload, {
+		status: keepStatus,
+		payload: stalePayload,
+		term: staleTerm,
+		schedule: staleSchedule
+	});
 
 	const previousTier = sameIdentity ? existing.tier : undefined;
 

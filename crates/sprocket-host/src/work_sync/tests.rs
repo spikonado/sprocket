@@ -49,8 +49,8 @@ async fn downloads_partial_pages_around_cached_gaps_and_prioritizes_live_parts()
     let requests = Arc::new(Mutex::new(Vec::new()));
     let fetched_numbers = Arc::new(Mutex::new(Vec::new()));
     let (changed_tx, mut changes) = tokio::sync::mpsc::unbounded_channel();
-    let changed = move |total| {
-        changed_tx.send(total).unwrap();
+    let changed = move || {
+        changed_tx.send(()).unwrap();
     };
     let mut downloading = tokio::spawn({
         let store = Arc::clone(&store);

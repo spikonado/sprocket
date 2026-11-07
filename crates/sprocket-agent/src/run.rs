@@ -20,7 +20,10 @@ use crate::history::{
     agent_history_from_parts, current_run_has_finished_turns, pending_prompt_part,
     shown_workspace_context,
 };
-use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult, RunBegin};
+use crate::provider::{
+    AgentProvider, AgentProviderRequest, AgentProviderResult, ProviderSwitch,
+    ProviderSwitchHandoff, RunBegin,
+};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::{
     CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
@@ -134,12 +137,11 @@ async fn fail_run_before_start(
     run_id: &str,
     error: &anyhow::Error,
 ) -> anyhow::Result<bool> {
-    let message = format!("Run failed before the model started: {error}");
     let last_error = error.to_string();
     cleanup_twice(
         &format!("queued run cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || runtime.finalize_queued_run(run_id, &message, RunStatus::Failed, Some(&last_error)),
+        || runtime.finalize_queued_run(run_id, RunStatus::Failed, Some(&last_error)),
     )
     .await
 }
@@ -161,13 +163,12 @@ async fn finalize_claim_failure(
     run_id: &str,
     claim_id: &str,
     error: &anyhow::Error,
-    text: &str,
 ) -> anyhow::Result<()> {
     let last_error = error.to_string();
     let accepted = cleanup_twice(
         &format!("claim failure cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || runtime.finalize_claim_failure(run_id, claim_id, text, &last_error),
+        || runtime.finalize_claim_failure(run_id, claim_id, &last_error),
     )
     .await?;
     if !accepted {
@@ -184,8 +185,7 @@ async fn abort_after_claim(
     claim_id: &str,
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
-    let text = format!("Run aborted: {error:#}");
-    match finalize_claim_failure(runtime, run_id, claim_id, &error, &text).await {
+    match finalize_claim_failure(runtime, run_id, claim_id, &error).await {
         Ok(()) => Err(error),
         Err(cleanup_error) => Err(anyhow!(
             "{error}; additionally failed to durably terminalize the run: {cleanup_error}"
@@ -210,12 +210,11 @@ async fn finalize_run(
     runtime: &RuntimeClient,
     run_id: &str,
     claim_id: &str,
-    assistant_text: &str,
     status: RunStatus,
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
     let accepted = runtime
-        .finalize_run(run_id, claim_id, assistant_text, status, error_message)
+        .finalize_run(run_id, claim_id, status, error_message)
         .await
         .map_err(|error| anyhow!("failed to finalize {status} run: {error}"))?;
     if !accepted {
@@ -233,13 +232,13 @@ async fn finalize_provider_result(
     provider_result: AgentProviderResult,
 ) -> anyhow::Result<()> {
     match provider_result {
-        AgentProviderResult::Completed { text } => {
+        AgentProviderResult::Completed => {
             eprintln!("sprocket-agent: model completed {}", run_id);
-            finalize_run(runtime, run_id, claim_id, &text, RunStatus::Completed, None).await
+            finalize_run(runtime, run_id, claim_id, RunStatus::Completed, None).await
         }
-        AgentProviderResult::Cancelled { text } => {
+        AgentProviderResult::Cancelled => {
             eprintln!("sprocket-agent: run cancelled {}", run_id);
-            finalize_run(runtime, run_id, claim_id, &text, RunStatus::Cancelled, None).await
+            finalize_run(runtime, run_id, claim_id, RunStatus::Cancelled, None).await
         }
         AgentProviderResult::Superseded { error } => {
             eprintln!(
@@ -254,7 +253,7 @@ async fn finalize_provider_result(
             )
             .await
         }
-        AgentProviderResult::Failed { text, error } => {
+        AgentProviderResult::Failed { error } => {
             let error_text = error.to_string();
             eprintln!("sprocket-agent: model failed {}: {}", run_id, error_text);
 
@@ -262,7 +261,6 @@ async fn finalize_provider_result(
                 runtime,
                 run_id,
                 claim_id,
-                &text,
                 RunStatus::Failed,
                 Some(&error_text),
             )
@@ -282,7 +280,7 @@ async fn acknowledge_stop(
     run_id: &str,
     claim_id: &str,
 ) -> anyhow::Result<()> {
-    match finalize_run(runtime, run_id, claim_id, "", RunStatus::Cancelled, None).await {
+    match finalize_run(runtime, run_id, claim_id, RunStatus::Cancelled, None).await {
         Ok(()) => Ok(()),
         Err(error) => {
             eprintln!("sprocket-agent: stop acknowledgement for run {run_id}: {error}");
@@ -311,9 +309,8 @@ async fn claim_run(
                     let claim_error = anyhow!(
                         "failed to claim run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
                     );
-                    let text = format!("Run failed before the model started: {claim_error}");
                     if let Err(cleanup_error) =
-                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error, &text).await
+                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error).await
                     {
                         return Err(anyhow!(
                             "{claim_error}; additionally failed to durably terminalize the run: {cleanup_error}"
@@ -574,12 +571,11 @@ pub async fn finalize_failed_start(
     let startup_error = format!("{startup_error:#}");
     let runtime = RuntimeClient::from_request(&request).await?;
     runtime.client.clear_auth().await;
-    let text = format!("Run failed before the model started: {startup_error}");
     let deadline = Instant::now() + START_FAILURE_RECONCILE_TIMEOUT;
     loop {
         let result = timeout(
             START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-            runtime.finalize_failed_start(&request, &text, &startup_error),
+            runtime.finalize_failed_start(&request, &startup_error),
         )
         .await;
         match result {
@@ -646,7 +642,7 @@ async fn load_prior_history(
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
-    let state = apply_remote_state(store, user_id, thread_id, &remote, false).await?;
+    let state = apply_remote_state(store, user_id, thread_id, &remote).await?;
     let (mut parts, current_run_had_context_handoff) = load_context_parts(
         store,
         user_id,
@@ -745,7 +741,7 @@ pub async fn run_agent(
 ) -> anyhow::Result<()> {
     let AgentRun {
         request,
-        chatgpt_client,
+        mut chatgpt_client,
         runtime,
         run_id,
         claim_id,
@@ -769,46 +765,43 @@ pub async fn run_agent(
             Ok(models) => models,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
-    let mut omit_prior_reasoning = false;
-    let mut handoff_model = match handoff_model {
-        Ok(model) => model,
+    let handoff_model = handoff_model.and_then(|model| {
+        if chatgpt_client.is_none()
+            && model.as_ref().is_some_and(|(handoff, _)| {
+                handoff.completion_provider == CompletionProvider::Chatgpt
+            })
+        {
+            chatgpt_client = Some(
+                request
+                    .chatgpt_credentials
+                    .clone()
+                    .context(
+                        "The previous ChatGPT provider must remain connected to write the context handoff.",
+                    )
+                    .and_then(crate::chatgpt::ChatGptClient::new)?,
+            );
+        }
+        Ok(model)
+    });
+    let (provider_switch, history_supports_images) = match handoff_model {
+        Ok(Some((handoff, handoff_capabilities))) => (
+            ProviderSwitch::Handoff(ProviderSwitchHandoff {
+                base_instructions: base_instructions(
+                    &handoff_capabilities.label,
+                    &handoff.selected_model,
+                ),
+                usage_pricing: handoff_capabilities.usage_pricing,
+                handoff,
+            }),
+            handoff_capabilities.supports_images,
+        ),
+        Ok(None) => (ProviderSwitch::None, capabilities.supports_images),
         Err(error) => {
             eprintln!(
                 "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
             );
-            omit_prior_reasoning = true;
-            None
+            (ProviderSwitch::WithoutHandoff, capabilities.supports_images)
         }
-    };
-    context.provider_handoff = handoff_model.as_ref().map(|(handoff, _)| handoff.clone());
-
-    let chatgpt_client = if chatgpt_client.is_none()
-        && context
-            .provider_handoff
-            .as_ref()
-            .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
-    {
-        let previous_client = request
-            .chatgpt_credentials
-            .clone()
-            .context(
-                "The previous ChatGPT provider must remain connected to write the context handoff.",
-            )
-            .and_then(crate::chatgpt::ChatGptClient::new);
-        match previous_client {
-            Ok(client) => Some(client),
-            Err(error) => {
-                eprintln!(
-                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
-                );
-                context.provider_handoff = None;
-                handoff_model = None;
-                omit_prior_reasoning = true;
-                None
-            }
-        }
-    } else {
-        chatgpt_client
     };
     let provider = AgentProvider::default_for_run(
         &context,
@@ -822,17 +815,8 @@ pub async fn run_agent(
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let fast_mode = context.run.fast_mode;
-    let prepare_history = load_prior_history(
-        &runtime,
-        &store,
-        &context,
-        &run_id,
-        handoff_model
-            .as_ref()
-            .map(|(_, capabilities)| capabilities)
-            .unwrap_or(&capabilities)
-            .supports_images,
-    );
+    let prepare_history =
+        load_prior_history(&runtime, &store, &context, &run_id, history_supports_images);
     let prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
             Ok(updates) => updates,
@@ -843,7 +827,7 @@ pub async fn run_agent(
             tokio::select! {
                 biased;
                 _ = request.cancellation.cancelled() => {
-                    runtime.finalize_queued_run(&run_id, "", RunStatus::Cancelled, None).await?;
+                    runtime.finalize_queued_run(&run_id, RunStatus::Cancelled, None).await?;
                     return Ok(());
                 }
                 update = updates.next() => {
@@ -898,9 +882,6 @@ pub async fn run_agent(
             &workspace_root,
         );
         let system_prompt = base_instructions(&capabilities.label, &context.run.selected_model);
-        let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
-            base_instructions(&capabilities.label, &handoff.selected_model)
-        });
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -911,24 +892,16 @@ pub async fn run_agent(
             provider,
             workspace_context,
             system_prompt,
-            handoff_base_instructions,
             skills,
             continue_without_prompt,
         ))
     })();
 
-    let (
-        prompt,
-        provider,
-        workspace_context,
-        system_prompt,
-        handoff_base_instructions,
-        skills,
-        continue_without_prompt,
-    ) = match prepared {
-        Ok(values) => values,
-        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-    };
+    let (prompt, provider, workspace_context, system_prompt, skills, continue_without_prompt) =
+        match prepared {
+            Ok(values) => values,
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        };
     let prompt = if continue_without_prompt {
         Message::user(CONTINUE_PROMPT)
     } else {
@@ -1000,7 +973,6 @@ pub async fn run_agent(
                     live: live.clone(),
                     prompt,
                     base_instructions: system_prompt,
-                    handoff_base_instructions,
                     workspace_context,
                     begin: RunBegin {
                         workspace_context: begin_prompts,
@@ -1023,14 +995,10 @@ pub async fn run_agent(
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
                     usage_pricing: capabilities.usage_pricing.clone(),
-                    handoff_usage_pricing: handoff_model
-                        .as_ref()
-                        .map(|(_, capabilities)| capabilities.usage_pricing.clone())
-                        .unwrap_or_default(),
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
-                    omit_prior_reasoning,
+                    provider_switch,
                     gateway_url: gateway_url.clone(),
                     subagent_models: Arc::new(subagent_models),
                     subagent_launcher: request.subagent_launcher.clone(),
@@ -1040,7 +1008,7 @@ pub async fn run_agent(
             )
             .await;
 
-        if let AgentProviderResult::Failed { error, .. } = &provider_result {
+        if let AgentProviderResult::Failed { error } = &provider_result {
             crate::analytics::capture_run_failure(error, &context.run.user_id, &run_id).await;
         }
         finalize_provider_result(&runtime, &run_id, &claim_id, provider_result).await

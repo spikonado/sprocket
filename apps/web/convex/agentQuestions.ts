@@ -23,11 +23,9 @@ import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/a
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { assertRunAcceptsWork } from '@convex/lib/runLease';
+import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
-import {
-	captureThreadActivityBeforeChange,
-	updateThreadHierarchyAfterChange
-} from '@convex/lib/threadHierarchy';
+import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
@@ -44,8 +42,6 @@ export function toAgentQuestionSnapshot(question: Doc<'agentQuestions'>): AgentQ
 	if (question.timeoutAt !== undefined) snapshot.timeoutAt = question.timeoutAt;
 
 	if (question.answer) snapshot.answer = question.answer;
-
-	if (question.answeredAt !== undefined) snapshot.answeredAt = question.answeredAt;
 
 	return snapshot;
 }
@@ -66,6 +62,7 @@ async function nextThreadSequence(
 type CreateQuestionArgs = {
 	runId: Id<'runs'>;
 	claimId: string;
+	jobId?: Id<'executorJobs'>;
 	question: string;
 	options: Infer<typeof vAskQuestionOption>[];
 	timeoutMs?: number | null;
@@ -86,8 +83,10 @@ async function createQuestion(
 ): Promise<CreatedQuestion> {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 	assertRunAcceptsWork(run, args.claimId, Date.now());
+	const jobId = args.jobId ?? run.activeJobId;
+	const job = jobId && (await ctx.db.get('executorJobs', jobId));
 
-	if (!run.activeJobId) {
+	if (!job || job.runId !== run._id || isSettledExecutorJobStatus(job.status)) {
 		throw new Error('Ask question requires an active tool job.');
 	}
 
@@ -99,25 +98,22 @@ async function createQuestion(
 	const timeoutAt = timeoutMs === undefined ? undefined : now + timeoutMs;
 	const sequence = await nextThreadSequence(ctx, run.threadId);
 
-	const before = await captureThreadActivityBeforeChange(ctx, run.threadId);
-
-	const questionId = await ctx.db.insert('agentQuestions', {
-		threadId: run.threadId,
-		runId: run._id,
-		jobId: run.activeJobId,
-		question,
-		options,
-		status: timeoutMs === 0 ? 'timedOut' : 'pending',
-		timeoutAt,
-		answeredAt: timeoutMs === 0 ? now : undefined,
-		sequence
-	});
+	const questionId = await changeThreadActivity(ctx, run.threadId, () =>
+		ctx.db.insert('agentQuestions', {
+			threadId: run.threadId,
+			runId: run._id,
+			jobId: job._id,
+			question,
+			options,
+			status: timeoutMs === 0 ? 'timedOut' : 'pending',
+			timeoutAt,
+			sequence
+		})
+	);
 
 	if (timeoutAt !== undefined && timeoutMs !== 0) {
 		await scheduleDeadlineCheck(ctx, questionId, now, timeoutAt);
 	}
-
-	await updateThreadHierarchyAfterChange(ctx, before);
 
 	return {
 		questionId,
@@ -153,6 +149,7 @@ const vCreatedQuestion = v.object({
 const vCreateQuestionArgs = {
 	runId: v.id('runs'),
 	claimId: v.string(),
+	jobId: v.optional(v.id('executorJobs')),
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
 	executionSecret: v.string()
@@ -249,21 +246,18 @@ export async function answerPendingQuestion(
 		text: args.text
 	});
 
-	const answeredAt = Date.now();
 	const run = await ctx.db.get('runs', question.runId);
 
 	const questionPatch = {
 		status: 'answered',
 		answer,
-		answeredAt,
 		requiresContinuation:
 			question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
 	} as const;
 
-	const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
-
-	await ctx.db.patch('agentQuestions', question._id, questionPatch);
-	await updateThreadHierarchyAfterChange(ctx, before);
+	await changeThreadActivity(ctx, args.threadId, () =>
+		ctx.db.patch('agentQuestions', question._id, questionPatch)
+	);
 
 	return {
 		kind: 'answered',
@@ -306,13 +300,9 @@ export const skip = mutation({
 		}
 
 		await assertHeadPendingQuestion(ctx, question);
-		const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
-
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'skipped',
-			answeredAt: Date.now()
-		});
-		await updateThreadHierarchyAfterChange(ctx, before);
+		await changeThreadActivity(ctx, args.threadId, () =>
+			ctx.db.patch('agentQuestions', question._id, { status: 'skipped' })
+		);
 
 		return { continuation: await questionContinuation(ctx, question) };
 	}
@@ -378,10 +368,9 @@ export const timeout = internalMutation({
 		const now = Date.now();
 
 		if (run?.status === 'cancelled') {
-			await ctx.db.patch('agentQuestions', question._id, {
-				status: 'cancelled',
-				answeredAt: run.completedAt ?? now
-			});
+			await changeThreadActivity(ctx, question.threadId, () =>
+				ctx.db.patch('agentQuestions', question._id, { status: 'cancelled' })
+			);
 
 			return null;
 		}
@@ -406,13 +395,9 @@ export const timeout = internalMutation({
 			}
 		}
 
-		const before = await captureThreadActivityBeforeChange(ctx, question.threadId);
-
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: now
-		});
-		await updateThreadHierarchyAfterChange(ctx, before);
+		await changeThreadActivity(ctx, question.threadId, () =>
+			ctx.db.patch('agentQuestions', question._id, { status: 'timedOut' })
+		);
 
 		return null;
 	}
@@ -459,8 +444,6 @@ export async function cancelPendingQuestionsForThread(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
-	const before = await captureThreadActivityBeforeChange(ctx, threadId);
-	const now = Date.now();
 	let cancelledAny = false;
 
 	const latest = await ctx.db
@@ -480,19 +463,16 @@ export async function cancelPendingQuestionsForThread(
 		}
 	}
 
-	for await (const question of ctx.db
-		.query('agentQuestions')
-		.withIndex('by_threadId_status_sequence', (query) =>
-			query.eq('threadId', threadId).eq('status', 'pending')
-		)) {
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'cancelled',
-			answeredAt: now
-		});
-		cancelledAny = true;
-	}
-
-	await updateThreadHierarchyAfterChange(ctx, before);
+	await changeThreadActivity(ctx, threadId, async () => {
+		for await (const question of ctx.db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (query) =>
+				query.eq('threadId', threadId).eq('status', 'pending')
+			)) {
+			await ctx.db.patch('agentQuestions', question._id, { status: 'cancelled' });
+			cancelledAny = true;
+		}
+	});
 
 	return cancelledAny;
 }

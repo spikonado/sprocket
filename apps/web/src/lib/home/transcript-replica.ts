@@ -175,22 +175,20 @@ export class TranscriptReplica implements Store<number> {
 					{ userId, threadId },
 					{
 						signal: ac.signal,
-						onEvent: (event) => {
+						onEvent: () => {
 							if (ac.signal.aborted || !isCurrent()) return;
-							this.stale = event.stale;
-							this.#emit();
+							history.setWatching(true);
 							void history.refresh();
 						}
 					}
 				);
 			} catch {
-				if (!ac.signal.aborted) {
-					this.stale = true;
-					this.#emit();
-				}
+				// The watch is retried below whether it failed or ended.
 			}
 
-			if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
+			if (ac.signal.aborted) return;
+			history.setWatching(false);
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
 		}
 	}
 

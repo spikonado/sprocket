@@ -472,7 +472,6 @@ impl RuntimeClient {
     pub(crate) async fn finalize_failed_start(
         &self,
         request: &RunAgentRequest,
-        text: &str,
         last_error: &str,
     ) -> anyhow::Result<FailedStartCleanup> {
         let mut args = BTreeMap::new();
@@ -496,7 +495,6 @@ impl RuntimeClient {
             request.reasoning_effort.clone().into(),
         );
         args.insert("fastMode".to_string(), request.fast_mode.into());
-        args.insert("text".to_string(), text.to_string().into());
         args.insert("lastError".to_string(), last_error.to_string().into());
         self.mutation_json("agentRuntime:finalizeFailedStart", args)
             .await
@@ -506,11 +504,9 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         claim_id: &str,
-        text: &str,
         last_error: &str,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
-        args.insert("text".to_string(), text.to_string().into());
         args.insert("lastError".to_string(), last_error.to_string().into());
         self.finalize_mutation("agentRuntime:finalizeClaimFailure", args)
             .await
@@ -653,24 +649,21 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         claim_id: &str,
-        text: &str,
         status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
-        self.finalize_run_with_expectations(run_id, text, status, last_error, Some(claim_id), None)
+        self.finalize_run_with_expectations(run_id, status, last_error, Some(claim_id), None)
             .await
     }
 
     pub(crate) async fn finalize_queued_run(
         &self,
         run_id: &str,
-        text: &str,
         status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
         self.finalize_run_with_expectations(
             run_id,
-            text,
             status,
             last_error,
             None,
@@ -682,7 +675,6 @@ impl RuntimeClient {
     async fn finalize_run_with_expectations(
         &self,
         run_id: &str,
-        text: &str,
         status: RunStatus,
         last_error: Option<&str>,
         expected_claim_id: Option<&str>,
@@ -701,7 +693,6 @@ impl RuntimeClient {
                 expected_status.as_str().into(),
             );
         }
-        args.insert("text".to_string(), text.to_string().into());
         args.insert("status".to_string(), status.as_str().into());
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());

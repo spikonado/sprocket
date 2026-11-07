@@ -7,7 +7,6 @@ import {
 	applyArtifactsWatchEvent,
 	artifactEntryFromLocal,
 	artifactWatchScopeKey,
-	isCurrentArtifactsWatch,
 	mergeArtifactSources,
 	type ArtifactWatchState
 } from '$lib/chat/artifacts';
@@ -33,6 +32,8 @@ type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
 
 type ArtifactLocalApi = Pick<LocalApi, 'watchArtifacts'>;
 
+const STALE_CLOUD_ARTIFACTS: ArtifactWatchState = { artifacts: [], stale: true, error: null };
+
 type ArtifactRegistryQuery = typeof api.artifacts.listArtifacts;
 
 type ArtifactStateQuery = typeof api.artifacts.getArtifactState;
@@ -53,8 +54,9 @@ export class ArtifactPanel implements Store<number> {
 	panel: SidePanelSnapshot = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
 	fullscreenKey: string | null = null;
 
-	#watchGeneration = 0;
 	#watchScope: string | null = null;
+	#cloud: ArtifactWatchState = STALE_CLOUD_ARTIFACTS;
+	#local: ArtifactWatchState | null = null;
 	#snapshots = new Map<string, SidePanelSnapshot>();
 	#panelScopeKey: string | null = null;
 	#nextId = 1;
@@ -132,25 +134,32 @@ export class ArtifactPanel implements Store<number> {
 		cloudReady: boolean;
 		scope: ArtifactsWatchRequest | null;
 	}) {
-		const generation = ++this.#watchGeneration;
-		this.watchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
-		this.#emit();
+		const scopeKey = args.scope ? artifactWatchScopeKey(args.scope) : null;
 
-		if (!args.scope) {
-			this.#watchScope = null;
-
-			return;
+		// Restarting the same scope keeps the last artifacts until fresh ones arrive.
+		if (scopeKey !== this.#watchScope) {
+			this.#watchScope = scopeKey;
+			this.#cloud = STALE_CLOUD_ARTIFACTS;
+			this.#local = null;
+			this.watchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
+			this.#emit();
+		} else if (!args.cloudReady) {
+			this.#cloud = { ...this.#cloud, stale: true };
+			this.watchState = mergeArtifactSources(this.#cloud, this.#local);
+			this.#emit();
 		}
 
-		const scopeKey = artifactWatchScopeKey(args.scope);
-		this.#watchScope = scopeKey;
+		if (!args.scope) return;
 		const ac = new AbortController();
-		let cloud: ArtifactWatchState = { artifacts: [], stale: true, error: null };
-		let local: ArtifactWatchState | null = null;
 
-		const publish = () => {
-			if (ac.signal.aborted || generation !== this.#watchGeneration) return;
-			this.watchState = mergeArtifactSources(cloud, local);
+		const publish = (
+			source: { cloud: ArtifactWatchState } | { local: ArtifactWatchState | null }
+		) => {
+			if (ac.signal.aborted || this.#watchScope !== scopeKey) return;
+
+			if ('cloud' in source) this.#cloud = source.cloud;
+			else this.#local = source.local;
+			this.watchState = mergeArtifactSources(this.#cloud, this.#local);
 			this.#emit();
 		};
 
@@ -160,21 +169,21 @@ export class ArtifactPanel implements Store<number> {
 		};
 
 		const stopCloud = args.cloudReady
-			? watchCloudArtifacts(args.artifactClient, cloudScope, (snapshot) => {
-					cloud = snapshot;
-					publish();
-				})
+			? watchCloudArtifacts(
+					args.artifactClient,
+					cloudScope,
+					(cloud) => publish({ cloud }),
+					this.#cloud.artifacts
+				)
 			: () => {};
 
-		void this.#watchLocal(args.localApi, args.scope.workspacePath, args.scope, {
-			ac,
-			generation,
-			scopeKey,
-			setLocal: (next) => {
-				local = next;
-				publish();
-			}
-		});
+		if (args.localApi && args.scope.workspacePath) {
+			void args.localApi.watchArtifacts(args.scope, {
+				signal: ac.signal,
+				onEvent: (event) => publish({ local: applyArtifactsWatchEvent(event) }),
+				onError: () => publish({ local: null })
+			});
+		}
 
 		return () => {
 			ac.abort();
@@ -401,53 +410,6 @@ export class ArtifactPanel implements Store<number> {
 		this.#version += 1;
 
 		for (const listener of this.#listeners) listener();
-	}
-
-	async #watchLocal(
-		localApi: ArtifactLocalApi | null,
-		workspacePath: string,
-		request: ArtifactsWatchRequest,
-		state: {
-			ac: AbortController;
-			generation: number;
-			scopeKey: string;
-			setLocal: (state: ArtifactWatchState | null) => void;
-		}
-	) {
-		if (!localApi || !workspacePath) return;
-
-		while (!state.ac.signal.aborted) {
-			await localApi
-				.watchArtifacts(request, {
-					signal: state.ac.signal,
-					onEvent: (event) => {
-						if (
-							!isCurrentArtifactsWatch({
-								aborted: state.ac.signal.aborted,
-								generation: state.generation,
-								currentGeneration: this.#watchGeneration,
-								eventScopeKey: state.scopeKey,
-								currentScopeKey: this.#watchScope
-							})
-						) {
-							return;
-						}
-
-						state.setLocal(applyArtifactsWatchEvent(event));
-					}
-				})
-				.catch(() => undefined);
-
-			if (
-				!state.ac.signal.aborted &&
-				state.generation === this.#watchGeneration &&
-				this.#watchScope === state.scopeKey
-			) {
-				state.setLocal(null);
-			}
-
-			if (!state.ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
-		}
 	}
 }
 

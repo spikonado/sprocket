@@ -23,7 +23,6 @@ export function useRunningCommands(api: CommandApi, { userId, threadId }: Transc
 	useEffect(() => {
 		const controller = new AbortController();
 		const active = { api, controller, stopping: new Set<string>() };
-		let timer: ReturnType<typeof setTimeout>;
 
 		function onCommands(commands: RunningCommand[]) {
 			if (controller.signal.aborted) return;
@@ -41,30 +40,22 @@ export function useRunningCommands(api: CommandApi, { userId, threadId }: Transc
 			}));
 		}
 
-		async function watch() {
-			await api
-				.watchRunningCommands(
-					{ userId, threadId },
-					{ signal: controller.signal, onEvent: onCommands }
-				)
-				.catch(() => undefined);
+		void api.watchRunningCommands(
+			{ userId, threadId },
+			{
+				signal: controller.signal,
+				onEvent: onCommands,
+				onError: () => {
+					setState((previous) =>
+						previous?.lifetime === active
+							? { ...previous, refreshError: 'Unable to refresh running commands. Reconnecting…' }
+							: null
+					);
+				}
+			}
+		);
 
-			if (controller.signal.aborted) return;
-
-			setState((previous) =>
-				previous?.lifetime === active
-					? { ...previous, refreshError: 'Unable to refresh running commands. Reconnecting…' }
-					: null
-			);
-			timer = setTimeout(watch, 1_000);
-		}
-
-		void watch();
-
-		return () => {
-			controller.abort();
-			clearTimeout(timer);
-		};
+		return () => controller.abort();
 	}, [api, userId, threadId]);
 
 	const current =

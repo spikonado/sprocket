@@ -2,7 +2,7 @@ import { internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
-import { cancelCloudToolJob } from '@convex/lib/toolJobs';
+import { cancelWebSearchWork } from '@convex/lib/toolJobs';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { getRunExecutionState } from '@convex/lib/runExecution';
 
@@ -60,7 +60,7 @@ export async function reconcileTerminalRun(
 		);
 
 	for await (const job of jobs) {
-		await cancelCloudToolJob(ctx, job);
+		await cancelWebSearchWork(ctx, job);
 
 		const [finalizedJob] = cancelExecutorJobsForTerminalRun({
 			jobs: [job],
@@ -111,9 +111,7 @@ export async function reconcileTerminalRun(
 			await ctx.db.patch(
 				'agentQuestions',
 				question._id,
-				run.status === 'cancelled'
-					? { status: 'cancelled', answeredAt: args.completedAt }
-					: { requiresContinuation: true }
+				run.status === 'cancelled' ? { status: 'cancelled' } : { requiresContinuation: true }
 			);
 		}
 

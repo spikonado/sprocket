@@ -13,7 +13,6 @@ import {
 	X
 } from 'lucide-react';
 import type {
-	DragEvent as ReactDragEvent,
 	KeyboardEvent as ReactKeyboardEvent,
 	MouseEvent as ReactMouseEvent,
 	ReactElement,
@@ -80,8 +79,6 @@ type ThreadTreeRowProps = {
 	onCommitRename: () => Promise<void>;
 	onRenameTitleChange: (title: string) => void;
 	onChange: (thread: Thread, state: InboxState, subtreeActive: boolean) => Promise<void>;
-	onDragStart: (thread: Thread, event: ReactDragEvent) => void;
-	onDragEnd: () => void;
 };
 
 type InboxSidebarProps = {
@@ -137,13 +134,12 @@ export default function InboxSidebar({
 	resolveChildren,
 	readTreeSummary = useThreadTreeSummary
 }: InboxSidebarProps) {
-	const [dragging, setDragging] = useState<Thread | null>(null);
 	const [menu, setMenu] = useState<ThreadMenu | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	const mutating = useRef(false);
 	const [renameThread, setRenameThread] = useState<Thread | null>(null);
 	const [renameTitle, setRenameTitle] = useState('');
-	const busyRef = useRef(false);
 	const menuTriggerRef = useRef<HTMLElement | null>(null);
 	const renameInputRef = useRef<HTMLInputElement | null>(null);
 	const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -179,11 +175,6 @@ export default function InboxSidebar({
 
 	const menuSummary = readTreeSummary({
 		threadId: menuThread?._id ?? null,
-		enabled: mutationsEnabled
-	});
-
-	const draggingSummary = readTreeSummary({
-		threadId: dragging?._id ?? null,
 		enabled: mutationsEnabled
 	});
 
@@ -243,6 +234,23 @@ export default function InboxSidebar({
 		writeStorage(SETTLED_INBOX_OPEN_KEY, String(next));
 	}
 
+	/** Runs one thread mutation at a time. `mutating` blocks a second click before `busy` renders. */
+	async function mutate(failureMessage: string, action: () => Promise<void> | void) {
+		if (!mutationsEnabled || mutating.current) return;
+		mutating.current = true;
+		setBusy(true);
+		setNotice(null);
+
+		try {
+			await action();
+		} catch (error) {
+			setNotice(error instanceof Error ? error.message : failureMessage);
+		} finally {
+			mutating.current = false;
+			setBusy(false);
+		}
+	}
+
 	function beginRename(thread: Thread) {
 		setMenu(null);
 		setRenameThread(thread);
@@ -258,56 +266,27 @@ export default function InboxSidebar({
 		if (!renameThread) return;
 		const thread = renameThread;
 		const title = renameTitle.trim();
-
-		if (!title || title === (thread.title ?? '')) {
-			cancelRename();
-
-			return;
-		}
-
 		cancelRename();
 
-		try {
-			await onRename(thread, title);
-		} catch (error) {
-			setNotice(error instanceof Error ? error.message : 'Could not rename thread.');
-		}
+		if (!title || title === (thread.title ?? '')) return;
+
+		await mutate('Could not rename thread.', () => onRename(thread, title));
 	}
 
-	async function regenerateTitle(thread: Thread) {
-		if (!mutationsEnabled || busyRef.current) return;
-		closeMenu();
-		busyRef.current = true;
-		setBusy(true);
-		setNotice(null);
+	function regenerateTitle(thread: Thread) {
+		return mutate('Could not regenerate thread title.', () => {
+			closeMenu();
 
-		try {
-			await onRegenerateTitle(thread);
-		} catch (error) {
-			setNotice(error instanceof Error ? error.message : 'Could not regenerate thread title.');
-		} finally {
-			busyRef.current = false;
-			setBusy(false);
-		}
+			return onRegenerateTitle(thread);
+		});
 	}
 
-	async function move(thread: Thread, project: Project) {
-		if (!mutationsEnabled || busyRef.current) return;
-		closeMenu();
+	function move(thread: Thread, project: Project) {
+		return mutate('Could not move thread.', () => {
+			closeMenu();
 
-		if (project.repositoryKey === thread.repositoryKey) return;
-		busyRef.current = true;
-		setBusy(true);
-		setNotice(null);
-
-		try {
-			await onMove(thread, project);
-		} catch (error) {
-			setNotice(error instanceof Error ? error.message : 'Could not move thread.');
-		} finally {
-			busyRef.current = false;
-			setBusy(false);
-		}
+			if (project.repositoryKey !== thread.repositoryKey) return onMove(thread, project);
+		});
 	}
 
 	function canChange(thread: Thread, state: InboxState, subtreeActive: boolean) {
@@ -316,47 +295,12 @@ export default function InboxSidebar({
 		return state !== 'settled' || canSettleThread(thread, subtreeActive);
 	}
 
-	async function change(thread: Thread, state: InboxState, subtreeActive: boolean) {
-		if (!mutationsEnabled || busyRef.current) return;
-		closeMenu();
-		busyRef.current = true;
-		setBusy(true);
-		setNotice(null);
+	function change(thread: Thread, state: InboxState, subtreeActive: boolean) {
+		return mutate('Could not update thread.', () => {
+			closeMenu();
 
-		if (!canChange(thread, state, subtreeActive)) {
-			busyRef.current = false;
-			setBusy(false);
-
-			return;
-		}
-
-		try {
-			await onChange(thread, state);
-		} catch (error) {
-			setNotice(error instanceof Error ? error.message : 'Could not update thread.');
-		} finally {
-			busyRef.current = false;
-			setBusy(false);
-		}
-	}
-
-	function canDrop(state: InboxState) {
-		return (
-			mutationsEnabled &&
-			!busy &&
-			dragging !== null &&
-			canChange(dragging, state, draggingSummary?.anyActive === true)
-		);
-	}
-
-	function dropThreads(event: ReactDragEvent, state: InboxState) {
-		event.preventDefault();
-
-		if (dragging && canDrop(state)) {
-			void change(dragging, state, draggingSummary?.anyActive === true);
-		}
-
-		setDragging(null);
+			if (canChange(thread, state, subtreeActive)) return onChange(thread, state);
+		});
 	}
 
 	function openMenu(event: ReactMouseEvent, thread: Thread) {
@@ -400,8 +344,6 @@ export default function InboxSidebar({
 			onCommitRename={commitRename}
 			onRenameTitleChange={setRenameTitle}
 			onChange={change}
-			onDragStart={(dragged) => setDragging(dragged)}
-			onDragEnd={() => setDragging(null)}
 		/>
 	);
 
@@ -535,10 +477,6 @@ export default function InboxSidebar({
 					<section
 						key={section.state}
 						id={`inbox-${section.state}`}
-						onDragOver={(event) => {
-							if (canDrop(section.state)) event.preventDefault();
-						}}
-						onDrop={(event) => dropThreads(event, section.state)}
 						aria-label={labels[section.state]}
 					>
 						{section.state === 'settled' && (
@@ -647,7 +585,7 @@ export default function InboxSidebar({
 									type="button"
 									role="menuitem"
 									data-ph-capture-attribute-action="rename_thread"
-									disabled={!mutationsEnabled}
+									disabled={!mutationsEnabled || busy}
 									onClick={() => beginRename(menuThread)}
 								>
 									<SquarePen size={14} />
@@ -729,9 +667,7 @@ function ThreadTreeRow({
 	onCancelRename,
 	onCommitRename,
 	onRenameTitleChange,
-	onChange,
-	onDragStart,
-	onDragEnd
+	onChange
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
@@ -755,9 +691,6 @@ function ThreadTreeRow({
 			<div
 				className={cn('inbox-row', { 'inbox-row-selected': selected })}
 				style={indentStyle}
-				draggable={mutationsEnabled && !busy && !renaming && isRoot}
-				onDragStart={(event) => onDragStart(thread, event)}
-				onDragEnd={onDragEnd}
 				onContextMenu={(event) => onOpenMenu(event, thread)}
 				role="group"
 				aria-label={thread.title ?? 'New thread'}

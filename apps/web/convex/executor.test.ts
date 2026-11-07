@@ -576,6 +576,29 @@ describe('executor', () => {
 		expect(state.run?.activeJobId ?? undefined).toBeUndefined();
 	});
 
+	it('records a tool that finishes while the run is cancelling', async () => {
+		const t = initConvexTest();
+
+		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+			executionSecret: 'executor-cancelling-secret'
+		});
+
+		await t.run((ctx) => ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() }));
+
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result: commandResult,
+				runId,
+				claimId,
+				executionSecret
+			})
+		).resolves.toBe(true);
+		expect(await t.run(async (ctx) => (await ctx.db.get('executorJobs', jobId))?.status)).toBe(
+			'completed'
+		);
+	});
+
 	it('accepts browser tool result shapes', async () => {
 		const t = initConvexTest();
 

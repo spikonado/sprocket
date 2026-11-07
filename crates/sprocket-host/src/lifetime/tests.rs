@@ -1,9 +1,10 @@
 use super::*;
 
 #[test]
-fn shutdown_rejects_new_run_guards() {
+fn shutdown_stops_the_host_and_rejects_new_run_guards() {
     let lifetime = HostLifetime::new();
     lifetime.shutdown.cancel();
+    assert!(lifetime.is_stopping());
     assert!(lifetime.run_guard().is_err());
 }
 
@@ -28,5 +29,4 @@ fn active_runs_keep_an_idle_stop_from_happening() {
     drop(run);
     lifetime.stop_if_idle();
     assert!(lifetime.is_stopping());
-    assert!(lifetime.shutdown.is_cancelled());
 }

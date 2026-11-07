@@ -42,13 +42,6 @@ impl PendingLogins {
         let verifier = secret();
         let mut logins = self.logins.lock().await;
         logins.expire();
-        if logins
-            .listener
-            .as_ref()
-            .is_some_and(|task| task.is_finished())
-        {
-            logins.listener.take();
-        }
         if logins.listener.is_none() {
             let (redirect_uri, listener) = bind_callback(Arc::clone(self))
                 .await
@@ -97,18 +90,22 @@ impl PendingLogins {
         })
     }
 
-    pub(crate) async fn poll(&self, session: &str, user: &str, state: &str) -> Option<LoginResult> {
+    pub(crate) async fn poll(&self, session: &str, user: &str, state: &str) -> LoginResult {
         let logins = self.logins.lock().await;
-        let login = logins.attempts.get(state).filter(|login| {
+        let Some(login) = logins.attempts.get(state).filter(|login| {
             login.session == session && login.user == user && login.expires > Instant::now()
-        })?;
-        Some(match &login.result {
+        }) else {
+            return LoginResult::Error {
+                error: "ChatGPT sign-in expired or was cancelled. Start sign-in again.".into(),
+            };
+        };
+        match &login.result {
             None => LoginResult::Pending,
             Some(Ok(())) => LoginResult::Complete,
             Some(Err(error)) => LoginResult::Error {
                 error: error.clone(),
             },
-        })
+        }
     }
 
     pub(crate) async fn cancel(&self, session: &str, user: &str, state: &str) {

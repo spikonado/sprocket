@@ -936,6 +936,28 @@ it('restores the prompt and shows the usage limit when the server refuses a laun
 	expect(alert.textContent).toContain('Usage limit reached. Try again in 3h 20m.');
 });
 
+it('keeps a failed send error when another thread is settled', async () => {
+	const { client, launch, runAgent } = await renderThreadLaunch();
+	client.registerMutation(api.threads.settle, null);
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	await act(async () => {
+		launch.reject(new Error('Local agent unavailable.'));
+	});
+	const group = screen.getByRole('group', { name: 'Message composer' });
+	await waitFor(() =>
+		expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.')
+	);
+
+	fireEvent.click(screen.getByRole('button', { name: 'Settle Other work' }));
+	await flushPendingWork();
+
+	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+});
+
 it('restores a failed send after the composer held other text', async () => {
 	const { launch, runAgent } = await renderThreadLaunch();
 	const composer = screen.getByRole('combobox');
@@ -1192,7 +1214,7 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	fireEvent.click(await screen.findByText('Other work'));
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 	await act(async () => {
-		watchers.get(thread._id)?.({ eventType: 'updated', stale: true });
+		watchers.get(thread._id)?.({ eventType: 'updated' });
 	});
 	expect(within(composer).queryByRole('status')).toBeNull();
 
@@ -1200,7 +1222,7 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	await within(composer).findByRole('status');
 	await act(async () => {
 		stale = false;
-		watchers.get(thread._id)?.({ eventType: 'updated', stale: false });
+		watchers.get(thread._id)?.({ eventType: 'updated' });
 	});
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 });
@@ -1286,7 +1308,7 @@ it('renders remote history progressively and allows sending while older parts lo
 	);
 	await act(async () => {
 		synced = true;
-		update?.({ eventType: 'updated', stale: false });
+		update?.({ eventType: 'updated' });
 	});
 	expect(await screen.findByText('An older robot update')).toBeTruthy();
 	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());

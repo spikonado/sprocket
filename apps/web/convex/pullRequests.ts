@@ -5,7 +5,7 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { subtreeSummary } from '@convex/lib/threadHierarchy';
+import { settleRoot } from '@convex/lib/threadHierarchy';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { vLinkedPullRequest, type LinkedPullRequest } from '@convex/lib/validators';
 
@@ -95,18 +95,16 @@ export const updateStates = mutation({
 
 			const justMerged = allMerged(pullRequests) && !allMerged(linked);
 
-			const settle =
+			await ctx.db.patch('threadRecords', thread._id, { pullRequests });
+
+			if (
 				justMerged &&
 				thread.parentThreadId === undefined &&
-				thread.archivedAt === undefined &&
 				(settleMergedThreads ??=
-					(await getUiPreferences(ctx.db, userId))?.settleMergedThreads ?? false) &&
-				!(await subtreeSummary(ctx.db, thread)).anyActive;
-
-			await ctx.db.patch('threadRecords', thread._id, {
-				pullRequests,
-				...(settle && { archivedAt: Date.now() })
-			});
+					(await getUiPreferences(ctx.db, userId))?.settleMergedThreads ?? false)
+			) {
+				await settleRoot(ctx, thread);
+			}
 		}
 
 		return null;

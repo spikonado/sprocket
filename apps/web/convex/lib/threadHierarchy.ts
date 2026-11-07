@@ -117,11 +117,6 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 	return state;
 }
 
-type ThreadActivity = {
-	thread: Doc<'threadRecords'>;
-	active: boolean;
-};
-
 async function applyAncestorCountChanges(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>,
@@ -146,7 +141,7 @@ async function applyAncestorCountChanges(
 		});
 	}
 
-	if (changes.active > 0) await unsettleRootOfThread(ctx, thread);
+	if (changes.active > 0) await unsettleRoot(ctx, thread);
 }
 
 export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
@@ -158,41 +153,35 @@ export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadR
 	});
 }
 
-export async function captureThreadActivityBeforeChange(
+/**
+ * Wrap every write to `threadRecords.status`, `runs.status`,
+ * `runs.cancellationRequestedAt`, or `agentQuestions.status` so ancestor counters
+ * follow it. Calls for the same thread must not nest, or the inner change counts twice.
+ */
+export async function changeThreadActivity<T>(
 	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<ThreadActivity | null> {
-	const thread = await ctx.db.get('threadRecords', threadId);
+	threadId: Id<'threadRecords'>,
+	change: () => Promise<T>
+): Promise<T> {
+	const before = await ctx.db.get('threadRecords', threadId);
 
-	if (!thread) return null;
+	if (!before) return await change();
 
-	const before = { thread, active: await threadOwnActivity(ctx.db, threadId) };
-	const state = await hierarchyState(ctx.db, threadId);
+	const wasActive = await threadOwnActivity(ctx.db, threadId);
+	await ensureHierarchyState(ctx, threadId);
 
-	if (!state) {
-		await ensureHierarchyState(ctx, threadId);
+	const result = await change();
+	const after = await ctx.db.get('threadRecords', threadId);
 
-		return before;
+	if (after) {
+		await applyAncestorCountChanges(ctx, after, {
+			total: 0,
+			active: Number(await threadOwnActivity(ctx.db, threadId)) - Number(wasActive),
+			working: Number(after.status === 'running') - Number(before.status === 'running')
+		});
 	}
 
-	return before;
-}
-
-export async function updateThreadHierarchyAfterChange(
-	ctx: MutationCtx,
-	before: ThreadActivity | null
-): Promise<void> {
-	if (!before) return;
-
-	const thread = await ctx.db.get('threadRecords', before.thread._id);
-
-	if (!thread) return;
-
-	await applyAncestorCountChanges(ctx, thread, {
-		total: 0,
-		active: Number(await threadOwnActivity(ctx.db, thread._id)) - Number(before.active),
-		working: Number(thread.status === 'running') - Number(before.thread.status === 'running')
-	});
+	return result;
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
@@ -217,7 +206,20 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 	};
 }
 
-export async function unsettleRootOfThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+/** Returns false, leaving the thread unsettled, while its tree has active work. */
+export async function settleRoot(ctx: MutationCtx, root: Doc<'threadRecords'>): Promise<boolean> {
+	if (root.parentThreadId !== undefined) throw new Error('Only root threads can be settled.');
+
+	if (root.archivedAt !== undefined) return true;
+
+	if ((await subtreeSummary(ctx.db, root)).anyActive) return false;
+
+	await ctx.db.patch('threadRecords', root._id, { archivedAt: Date.now() });
+
+	return true;
+}
+
+export async function unsettleRoot(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
 	const root = await threadRoot(ctx.db, thread);
 
 	if (root.archivedAt !== undefined) {

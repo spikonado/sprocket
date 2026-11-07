@@ -8,20 +8,17 @@ import {
 	isCloudWebSearchKind,
 	webSearchWorkpool
 } from '@convex/webSearchPool';
-import { firecrawlPool } from '@convex/lib/webPools';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 
-export async function cancelCloudToolJob(
+export async function cancelWebSearchWork(
 	ctx: MutationCtx,
 	job: Doc<'executorJobs'>
 ): Promise<void> {
-	if (!job.cloudWorkId || isSettledExecutorJobStatus(job.status)) return;
+	if (!isCloudWebSearchKind(job.kind) || !job.cloudWorkId || isSettledExecutorJobStatus(job.status))
+		return;
 
 	try {
-		await (job.kind === 'web_search' ? webSearchWorkpool : firecrawlPool).cancel(
-			ctx,
-			job.cloudWorkId
-		);
+		await webSearchWorkpool.cancel(ctx, job.cloudWorkId);
 	} catch {
 		// Best-effort; callbacks are fenced on job/claim state.
 	}

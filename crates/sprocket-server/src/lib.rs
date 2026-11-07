@@ -156,6 +156,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         chatgpt_oauth::PendingLogins::new(Arc::clone(&host.chatgpt_credentials), Arc::clone(&auth));
     let cli_sessions = Arc::new(cli_sessions::CliSessions::new(
         Arc::clone(&host.lifetime),
+        Arc::clone(&host.native_auth),
+        Arc::clone(&auth),
         options.temporary,
     ));
 
@@ -216,7 +218,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
     }
 
     let host_tasks = host.start();
-    let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
 
     let lifetime = Arc::clone(&host.lifetime);
@@ -233,12 +234,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
                 _ = async {
                     loop {
                         tokio::time::sleep(Duration::from_millis(500)).await;
-                        let (stop, expired) = cli_sessions.tick(std::time::Instant::now());
-                        for session in expired {
-                            host.native_auth.cancel_device_login(&session).await;
-                            let _ = lease_auth.end_session(&session).await;
-                        }
-                        if stop { break; }
+                        if cli_sessions.tick(std::time::Instant::now()).await { break; }
                     }
                 } => {},
             }

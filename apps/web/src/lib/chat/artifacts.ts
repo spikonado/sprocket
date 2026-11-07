@@ -41,20 +41,6 @@ export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
 	};
 }
 
-export function isCurrentArtifactsWatch(args: {
-	aborted: boolean;
-	generation: number;
-	currentGeneration: number;
-	eventScopeKey: string;
-	currentScopeKey: string | null;
-}): boolean {
-	return (
-		!args.aborted &&
-		args.generation === args.currentGeneration &&
-		args.currentScopeKey === args.eventScopeKey
-	);
-}
-
 export function applyArtifactsWatchEvent(event: ArtifactsWatchEvent): ArtifactWatchState {
 	return {
 		artifacts: event.artifacts,
