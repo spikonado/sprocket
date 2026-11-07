@@ -14,11 +14,13 @@ export const prerender = false;
 export const POST: APIRoute = async ({ request, cookies, url }) => {
 	try {
 		if (!isSameOriginPost(request)) throw new PricingAuthError('Request not allowed.', 403);
+
 		return pricingAuthJson(await getPricingSession(await pricingAuthServer(), cookies, url));
 	} catch (error) {
 		const response = pricingAuthFailure(error);
-		if (response.status >= 500)
-			captureServerException(error, request, { context: 'pricing_session' });
+
+		if (response.status >= 500) captureServerException(error, request, 'pricing_session');
+
 		return response;
 	}
 };

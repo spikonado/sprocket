@@ -11,11 +11,16 @@ import {
 	DEFAULT_DESCRIPTION,
 	DEFAULT_OG_IMAGE,
 	DEFAULT_TITLE,
+	ORGANIZATION_DESCRIPTION,
+	ORGANIZATION_ID,
+	ORGANIZATION_NAME,
 	ORGANIZATION_SAME_AS,
+	ORGANIZATION_URL,
 	SITE_NAME,
 	SITE_URL,
 	TWITTER_HANDLE,
-	absoluteUrl
+	absoluteUrl,
+	type JsonLdNode
 } from '@/lib/seo';
 
 interface Props {
@@ -24,7 +29,7 @@ interface Props {
 	/** Path or absolute URL for social preview image. */
 	image?: string;
 	/** Optional JSON-LD objects merged after the default Organization graph. */
-	jsonLd?: Record<string, unknown> | Record<string, unknown>[];
+	jsonLd?: JsonLdNode | JsonLdNode[];
 	noindex?: boolean;
 }
 
@@ -42,11 +47,11 @@ const robots = noindex ? 'noindex, nofollow' : 'index, follow, max-image-preview
 
 const organizationLd = {
 	'@type': 'Organization',
-	'@id': `${SITE_URL}/#organization`,
-	name: SITE_NAME,
-	url: SITE_URL,
+	'@id': ORGANIZATION_ID,
+	name: ORGANIZATION_NAME,
+	url: ORGANIZATION_URL,
 	logo: absoluteUrl(logoSvg.src, Astro.site ?? SITE_URL),
-	description: DEFAULT_DESCRIPTION,
+	description: ORGANIZATION_DESCRIPTION,
 	sameAs: [...ORGANIZATION_SAME_AS],
 	email: 'privacy@spikonado.com'
 };
@@ -57,11 +62,12 @@ const websiteLd = {
 	name: SITE_NAME,
 	url: SITE_URL,
 	description: DEFAULT_DESCRIPTION,
-	publisher: { '@id': `${SITE_URL}/#organization` },
+	publisher: { '@id': ORGANIZATION_ID },
 	inLanguage: 'en'
 };
 
 const extraLd = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
+
 const jsonLdDocument = {
 	'@context': 'https://schema.org',
 	'@graph': [organizationLd, websiteLd, ...extraLd]
@@ -83,7 +89,7 @@ const jsonLdDocument = {
 		<title>{title}</title>
 		<meta name="description" content={description} />
 		<meta name="robots" content={robots} />
-		<meta name="author" content={SITE_NAME} />
+		<meta name="author" content={ORGANIZATION_NAME} />
 		<meta name="generator" content={Astro.generator} />
 
 		<meta property="og:site_name" content={SITE_NAME} />
@@ -109,22 +115,9 @@ const jsonLdDocument = {
 		<script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdDocument)} />
 
 		<script>
-			import { initBotId } from 'botid/client/core';
 			import { initAnalytics } from '@/lib/analytics/client';
 
 			initAnalytics();
-
-			const bootBotId = () => {
-				initBotId({
-					protect: [{ path: '/api/build-log/subscribe', method: 'POST' }]
-				});
-			};
-
-			if (typeof requestIdleCallback === 'function') {
-				requestIdleCallback(bootBotId, { timeout: 2000 });
-			} else {
-				setTimeout(bootBotId, 1);
-			}
 		</script>
 	</head>
 	<body>

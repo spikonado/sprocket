@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { buildPlanCards, formatPrice } from './catalog';
 
+function usdPrice(amountMinor: number) {
+	return {
+		name: null,
+		productId: `pdt_${amountMinor}`,
+		amountMinor,
+		currency: 'USD',
+		paymentFrequencyCount: 1,
+		paymentFrequencyInterval: 'Month'
+	};
+}
+
 describe('formatPrice', () => {
 	test('uses each currency’s minor units', () => {
 		expect(formatPrice({ amountMinor: 2000, currency: 'USD' })).toBe('$20');
@@ -19,6 +30,7 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 5,
 				description: null,
 				features: [],
+				displayOrder: 0,
 				highlighted: false,
 				prices: { monthly: null, annual: null }
 			},
@@ -28,11 +40,9 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 50,
 				description: ' For daily work ',
 				features: ['Frontier models', ' '],
+				displayOrder: 1,
 				highlighted: true,
-				prices: {
-					monthly: { amountMinor: 2000, currency: 'USD' },
-					annual: { amountMinor: 20_000, currency: 'USD' }
-				}
+				prices: { monthly: usdPrice(2000), annual: usdPrice(20_000) }
 			},
 			{
 				id: 'ultra',
@@ -40,11 +50,13 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 300,
 				description: null,
 				features: ['Frontier models', 'Priority support'],
+				displayOrder: 2,
 				highlighted: false,
 				prices: { monthly: null, annual: null }
 			}
 		]
 	});
+
 	expect(free.prices).toEqual({ monthly: '$0', annual: '$0' });
 	expect(free.previousPlanName).toBeNull();
 	expect(free.features.map(({ label }) => label)).toEqual([

@@ -8,10 +8,12 @@ export const prerender = false;
 export const GET: APIRoute = async ({ cookies, request, url }) => {
 	const location = await pricingAuthServer()
 		.then((server) => completePricingSignIn(server, cookies, url))
-		.catch((error: unknown) => {
-			captureServerException(error, request, { context: 'pricing_sign_in_callback' });
+		.catch((cause: unknown) => {
+			captureServerException(cause, request, 'pricing_sign_in_callback');
+
 			return '/pricing?sign_in=failed';
 		});
+
 	return new Response(null, {
 		status: 303,
 		headers: { Location: location, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }

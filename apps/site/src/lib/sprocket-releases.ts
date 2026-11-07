@@ -1,7 +1,9 @@
-export const SPROCKET_NPM_COMMAND = 'npx @spikonado/sprocket';
+import { name as npmPackageName } from '../../../../npm/sprocket/package.json';
+
+export const SPROCKET_NPM_COMMAND = `npx ${npmPackageName}`;
 export const SPROCKET_GITHUB_URL = 'https://github.com/spikonado/sprocket';
 export const SPROCKET_RELEASES_LATEST_URL = `${SPROCKET_GITHUB_URL}/releases/latest`;
-export const SPROCKET_NPM_URL = 'https://www.npmjs.com/package/@spikonado/sprocket';
+export const SPROCKET_NPM_URL = `https://www.npmjs.com/package/${npmPackageName}`;
 
 /** Stable identifiers matching GitHub desktop asset filenames. */
 export type SprocketDesktopPlatform =
@@ -39,12 +41,15 @@ export function osFamilyForPlatform(
 	if (!platform) {
 		return null;
 	}
+
 	if (platform.startsWith('mac-')) {
 		return 'mac';
 	}
+
 	if (platform.startsWith('win-')) {
 		return 'windows';
 	}
+
 	return 'linux';
 }
 
@@ -86,34 +91,21 @@ const DESKTOP_ASSET_RULES: {
 	}
 ];
 
-interface GitHubReleaseAsset {
-	name?: string;
-	browser_download_url?: string;
+export interface GitHubReleaseAsset {
+	name: string;
+	browser_download_url: string;
 }
 
-interface GitHubRelease {
-	tag_name?: string;
-	name?: string;
-	html_url?: string;
-	assets?: GitHubReleaseAsset[];
-}
-
-export function parseSprocketDesktopAssets(
-	assets: GitHubReleaseAsset[] | undefined
-): SprocketDesktopAsset[] {
-	if (!assets?.length) {
-		return [];
-	}
-
+export function parseSprocketDesktopAssets(assets: GitHubReleaseAsset[]): SprocketDesktopAsset[] {
 	const parsed: SprocketDesktopAsset[] = [];
 
 	for (const rule of DESKTOP_ASSET_RULES) {
-		const asset = assets.find(
-			(candidate) => typeof candidate.name === 'string' && rule.match.test(candidate.name)
-		);
-		if (!asset?.name || !asset.browser_download_url) {
+		const asset = assets.find((candidate) => rule.match.test(candidate.name));
+
+		if (!asset) {
 			continue;
 		}
+
 		parsed.push({
 			platform: rule.platform,
 			label: rule.label,
@@ -133,6 +125,7 @@ export function pickDesktopAsset(
 	if (!platform) {
 		return null;
 	}
+
 	return assets.find((asset) => asset.platform === platform) ?? null;
 }
 
@@ -143,6 +136,7 @@ export function otherDesktopAssets(
 	if (!platform) {
 		return assets;
 	}
+
 	return assets.filter((asset) => asset.platform !== platform);
 }
 
@@ -182,36 +176,44 @@ export function detectDesktopTarget(
 		/android/i.test(ua) ||
 		/iphone|ipad|ipod/i.test(ua) ||
 		(/mac/i.test(platform) && (nav.maxTouchPoints ?? 0) > 1);
+
 	if (isMobile) {
 		return { platform: null, osFamily: null, osLabel: 'your device' };
 	}
 
 	const isWindows =
 		uaDataPlatform.includes('windows') || /win/i.test(platform) || /windows/i.test(ua);
+
 	if (isWindows) {
 		return { platform: 'win-x64', osFamily: 'windows', osLabel: 'Windows' };
 	}
 
 	const isMac =
 		uaDataPlatform.includes('mac') || /mac/i.test(platform) || /macintosh|mac os x/i.test(ua);
+
 	if (isMac) {
 		const isIntel = architecture === 'x86' || architecture === 'x86_64';
 		const isArm = architecture === 'arm' || architecture === 'arm64';
+
 		if (isIntel) {
 			return { platform: 'mac-x64', osFamily: 'mac', osLabel: 'macOS' };
 		}
+
 		if (isArm) {
 			return { platform: 'mac-arm64', osFamily: 'mac', osLabel: 'macOS' };
 		}
+
 		// Architecture unknown: show macOS CTA but do not auto-pick a DMG.
 		return { platform: null, osFamily: 'mac', osLabel: 'macOS' };
 	}
 
 	const isLinux = uaDataPlatform.includes('linux') || /linux/i.test(platform) || /linux/i.test(ua);
+
 	if (isLinux) {
 		// Only auto-pick when the arch is positively known. ARMv7 / unknown must not
 		// fall through to the x86_64 AppImage (unusable), or be treated as ARM64.
 		const isArm64 = architecture === 'arm64' || /\baarch64\b/i.test(ua) || /\barm64\b/i.test(ua);
+
 		if (isArm64) {
 			return { platform: 'linux-arm64', osFamily: 'linux', osLabel: 'Linux' };
 		}
@@ -222,6 +224,7 @@ export function detectDesktopTarget(
 			/\bamd64\b/i.test(ua) ||
 			/\bx86_64\b/i.test(platform) ||
 			/\bamd64\b/i.test(platform);
+
 		if (isX64) {
 			return { platform: 'linux-x86_64', osFamily: 'linux', osLabel: 'Linux' };
 		}
@@ -238,50 +241,16 @@ export async function detectDesktopTargetAsync(
 		: navigator
 ): Promise<DetectedDesktopTarget> {
 	let architecture = '';
+
 	try {
 		const values = await nav.userAgentData?.getHighEntropyValues?.(['architecture', 'platform']);
+
 		if (values?.architecture) {
 			architecture = values.architecture;
 		}
 	} catch {
 		// Keep the empty default when Client Hints are unavailable.
 	}
+
 	return detectDesktopTarget(nav, architecture);
-}
-
-export async function fetchLatestSprocketRelease(
-	fetchImpl: typeof fetch = fetch
-): Promise<SprocketRelease | null> {
-	try {
-		const response = await fetchImpl(
-			'https://api.github.com/repos/spikonado/sprocket/releases/latest',
-			{
-				headers: {
-					Accept: 'application/vnd.github+json',
-					'User-Agent': 'spikonado.com'
-				}
-			}
-		);
-
-		if (!response.ok) {
-			return null;
-		}
-
-		const data = (await response.json()) as GitHubRelease;
-		const assets = parseSprocketDesktopAssets(data.assets);
-		if (!data.tag_name || assets.length === 0) {
-			return null;
-		}
-
-		const version = data.tag_name.replace(/^v/, '');
-
-		return {
-			version,
-			tagName: data.tag_name,
-			htmlUrl: data.html_url ?? SPROCKET_RELEASES_LATEST_URL,
-			assets
-		};
-	} catch {
-		return null;
-	}
 }

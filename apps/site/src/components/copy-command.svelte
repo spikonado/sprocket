@@ -3,48 +3,51 @@
 	import { cn } from '@/utils';
 
 	interface Props {
-		command?: string;
+		command: string;
 		class?: string;
 	}
 
-	let { command = 'npx @spikonado/sprocket', class: className = '' }: Props = $props();
+	let { command, class: className = '' }: Props = $props();
 
 	let copied = $state(false);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async function copyCommand(event: MouseEvent & { currentTarget: HTMLButtonElement }) {
 		const button = event.currentTarget;
+
 		try {
 			await navigator.clipboard.writeText(command);
 			copied = true;
 			track('install_command_copied', { command }, button);
+
 			if (copyTimer) {
 				clearTimeout(copyTimer);
 			}
+
 			copyTimer = setTimeout(() => {
 				copied = false;
 			}, 1800);
 		} catch (error) {
 			copied = false;
-			captureException(error, { context: 'install_command_copy' });
+			captureException(error, 'install_command_copy');
 		}
 	}
 </script>
 
 <div
 	class={cn(
-		'flex min-w-0 items-center gap-2 rounded-xl border border-border bg-background px-3 py-3 font-mono text-sm text-foreground sm:text-[0.95rem]',
+		'border-border bg-background text-foreground flex min-w-0 items-center gap-2 rounded-xl border px-3 py-3 font-mono text-sm sm:text-[0.95rem]',
 		className
 	)}
 >
 	<span
-		class="min-w-0 flex-1 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent overflow-x-auto whitespace-nowrap"
+		class="scrollbar-thumb-border min-w-0 flex-1 scrollbar-thin scrollbar-track-transparent overflow-x-auto whitespace-nowrap"
 	>
 		{command}
 	</span>
 	<button
 		type="button"
-		class="inline-flex shrink-0 items-center justify-center rounded-lg border border-border bg-surface p-2 text-foreground transition-colors hover:bg-accent-soft focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+		class="border-border bg-surface text-foreground hover:bg-accent-soft focus-visible:ring-ring/50 inline-flex shrink-0 items-center justify-center rounded-lg border p-2 transition-colors focus-visible:ring-2 focus-visible:outline-none"
 		onclick={copyCommand}
 		aria-label={copied ? 'Copied' : 'Copy command'}
 	>

@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://spikonado.com/sitemap-index.xml
+Sitemap: https://usesprocket.dev/sitemap-index.xml

@@ -15,14 +15,17 @@ let initialized = false;
 function client(): typeof posthog | undefined {
 	if (!initialized) {
 		initialized = true;
+
 		if (!POSTHOG_KEY) {
 			if (import.meta.env.DEV) {
 				console.error(
 					'PUBLIC_POSTHOG_KEY variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once PUBLIC_POSTHOG_KEY is configured'
 				);
 			}
+
 			return undefined;
 		}
+
 		posthog.init(POSTHOG_KEY, {
 			api_host: 'https://kpg.spikonado.com',
 			ui_host: 'https://eu.posthog.com',
@@ -33,9 +36,10 @@ function client(): typeof posthog | undefined {
 			// Links API route events and errors to the browser's person and session replay.
 			tracing_headers: [window.location.hostname]
 		});
-		posthog.register({ site: 'spikonado_marketing' });
+		posthog.register({ site: 'usesprocket' });
 		trackSectionViews();
 	}
+
 	return POSTHOG_KEY ? posthog : undefined;
 }
 
@@ -53,8 +57,8 @@ export function track<E extends AnalyticsEvent>(
 	client()?.capture(event, section ? { ...properties, section } : properties);
 }
 
-export function captureException(error: unknown, properties: Record<string, unknown>): void {
-	client()?.captureException(error, properties);
+export function captureException(cause: unknown, context: string): void {
+	client()?.captureException(cause, { context });
 }
 
 /**
@@ -63,17 +67,21 @@ export function captureException(error: unknown, properties: Record<string, unkn
  */
 export function setAnalyticsUser(user: { id: string; email: string } | null): void {
 	const ph = client();
+
 	if (!ph) return;
+
 	if (user) ph.identify(user.id, { email: user.email });
 	else if (ph.get_property('$user_state') === 'identified') ph.reset();
 }
 
 function trackSectionViews(): void {
 	if (typeof IntersectionObserver === 'undefined') return;
+
 	const observer = new IntersectionObserver(
 		(entries) => {
 			for (const entry of entries) {
 				const section = entry.target.getAttribute(SECTION_ATTRIBUTE);
+
 				if (!entry.isIntersecting || !section) continue;
 				observer.unobserve(entry.target);
 				posthog.capture('section_viewed', { section } satisfies AnalyticsEvents['section_viewed']);
@@ -81,5 +89,6 @@ function trackSectionViews(): void {
 		},
 		{ threshold: 0.35, rootMargin: '0px 0px -10% 0px' }
 	);
+
 	document.querySelectorAll(`main [${SECTION_ATTRIBUTE}]`).forEach((el) => observer.observe(el));
 }

@@ -10,13 +10,13 @@ import QuestionsMock from '@/components/sprocket/mocks/questions-mock.astro';
 import SubagentsMock from '@/components/sprocket/mocks/subagents-mock.astro';
 import ReleaseBadge from '@/components/sprocket/release-badge.astro';
 import BaseLayout from '@/layouts/base-layout.astro';
+import { fetchLatestSprocketRelease } from '@/lib/latest-sprocket-release';
 import {
-	fetchLatestSprocketRelease,
 	SPROCKET_GITHUB_URL,
 	SPROCKET_NPM_URL,
 	SPROCKET_RELEASES_LATEST_URL
 } from '@/lib/sprocket-releases';
-import { SITE_URL, SPROCKET_DESCRIPTION, titleWithBrand } from '@/lib/seo';
+import { DEFAULT_DESCRIPTION, ORGANIZATION_ID, SITE_URL } from '@/lib/seo';
 import {
 	marketingButtonPrimaryClass,
 	marketingSectionBodyClass,
@@ -25,9 +25,6 @@ import {
 import { cn } from '@/utils';
 
 const release = await fetchLatestSprocketRelease();
-
-const title = titleWithBrand('Sprocket - The best AI agent for hardware and software');
-const description = SPROCKET_DESCRIPTION;
 
 const showcases = [
 	{
@@ -176,17 +173,18 @@ const softwareLd = {
 	name: 'Sprocket',
 	applicationCategory: 'DeveloperApplication',
 	operatingSystem: 'Windows, macOS, Linux',
-	url: `${SITE_URL}/sprocket`,
-	description,
+	url: `${SITE_URL}/`,
+	description: DEFAULT_DESCRIPTION,
 	downloadUrl: release?.htmlUrl ?? SPROCKET_RELEASES_LATEST_URL,
 	installUrl: SPROCKET_NPM_URL,
 	featureList: capabilities.map(({ name, body }) => `${name}: ${body}`),
-	...(release ? { softwareVersion: release.version } : {}),
-	publisher: { '@id': `${SITE_URL}/#organization` }
+	softwareVersion: release?.version,
+	publisher: { '@id': ORGANIZATION_ID }
 };
 
 const chipClass =
 	'inline-flex items-center gap-1 rounded-full bg-foreground/6 px-3.5 py-1.5 font-sans text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none';
+
 const chips = [
 	{ label: 'GitHub', href: SPROCKET_GITHUB_URL, external: true },
 	{ label: 'Releases', href: SPROCKET_RELEASES_LATEST_URL, external: true },
@@ -197,7 +195,7 @@ const subheadingClass =
 	'font-brand text-3xl font-semibold tracking-tight text-foreground sm:text-4xl';
 ---
 
-<BaseLayout title={title} description={description} jsonLd={softwareLd}>
+<BaseLayout jsonLd={softwareLd}>
 	<main id="main" class="atmosphere">
 		<section
 			class="relative overflow-hidden px-4 pt-32 pb-16 text-center sm:px-6 sm:pt-40 lg:px-8"
@@ -317,6 +315,7 @@ const subheadingClass =
 		</section>
 
 		<section
+			id="download"
 			class="border-t border-border/70 px-4 py-20 text-center sm:px-6 lg:px-8 lg:py-28"
 			aria-labelledby="sprocket-install-heading"
 			data-ph-capture-attribute-section="sprocket_install"
