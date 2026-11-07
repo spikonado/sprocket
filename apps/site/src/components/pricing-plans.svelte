@@ -11,11 +11,21 @@
 		readCheckoutAttempt,
 		signInForCheckout,
 		signOutOfPricing,
-		startCheckout
+		startCheckout,
+		userFacingError
 	} from '@/lib/pricing/billing';
-	import { buildPlanCards, isBillingInterval, type PlanCard } from '@/lib/pricing/catalog';
+	import {
+		buildCreditPackCards,
+		buildPlanCards,
+		isBillingInterval,
+		readPurchase,
+		type PlanCard,
+		type PlanFeature,
+		type Purchase
+	} from '@/lib/pricing/catalog';
 	import type {
 		BillingInterval,
+		CheckoutStatus,
 		MySubscription,
 		PublicPricingCatalog
 	} from '@/lib/pricing/convex-types';
@@ -35,7 +45,17 @@
 		accessPhase: 'none'
 	};
 
-	const CHECKOUT_PARAMS = ['checkout', 'tier', 'interval', 'attempt', 'sign_in'];
+	// Dodo appends `payment_id`, `status` and `email` to the return URL.
+	const CHECKOUT_PARAMS = [
+		'checkout',
+		'tier',
+		'interval',
+		'pack',
+		'sign_in',
+		'payment_id',
+		'status',
+		'email'
+	];
 
 	// svelte-ignore state_referenced_locally
 	let catalog = $state(initialCatalog);
@@ -43,15 +63,26 @@
 	let user = $state<{ id: string; email: string } | null>(null);
 	let subscription = $state(FREE);
 	let loading = $state(true);
-	let busy = $state<{ plan: string | null; label: string } | null>(null);
+
+	// `id` is the plan or pack whose button shows the label.
+	let busy = $state<{ id: string | null; label: string } | null>(null);
 	let notice = $state<{ text: string; error: boolean } | null>(null);
-	let pending = $state<{ attemptId: string; checkoutUrl: string | null } | null>(null);
+	let pending = $state(false);
 
 	const cards = $derived(catalog ? buildPlanCards(catalog) : []);
+	const packs = $derived(catalog ? buildCreditPackCards(catalog) : []);
 	const largestDiscount = $derived(Math.max(0, ...cards.map((card) => card.annualDiscountPercent)));
+
+	// Plan changes go through the Dodo portal, since checkout refuses a second subscription.
+	const subscribed = $derived(subscription.tier !== 'free' && subscription.billingManaged);
 
 	const linkClass =
 		'font-medium text-accent-strong underline decoration-accent-strong/30 underline-offset-4 disabled:opacity-60';
+
+	const ctaClass =
+		'focus-visible:ring-ring/50 mt-8 inline-flex min-h-11 w-full items-center justify-center rounded-full px-5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60';
+
+	const secondaryCtaClass = 'border-border bg-surface text-foreground hover:bg-action-soft border';
 
 	function planLabel(tier: string): string {
 		return catalog?.plans.find((plan) => plan.id === tier)?.label ?? tier;
@@ -59,8 +90,40 @@
 
 	function fail(cause: unknown, fallback: string) {
 		busy = null;
-		notice = { text: cause instanceof Error ? cause.message : fallback, error: true };
-		captureException(cause, fallback);
+		const message = userFacingError(cause);
+		notice = { text: message ?? (cause instanceof Error ? cause.message : fallback), error: true };
+
+		if (!message) captureException(cause, fallback);
+	}
+
+	function purchaseId(purchase: Purchase): string {
+		return 'pack' in purchase ? purchase.pack : purchase.tier;
+	}
+
+	function purchaseProps(purchase: Purchase) {
+		return 'pack' in purchase
+			? { pack: purchase.pack }
+			: { plan: purchase.tier, interval: purchase.interval };
+	}
+
+	// A subscription counts once its tier shows. A pack counts once the webhook granted its credit.
+	async function purchaseConfirmed(purchase: Purchase, status: CheckoutStatus): Promise<boolean> {
+		if ('pack' in purchase) return status.creditsAdded === true;
+
+		if (!status.activated) return false;
+		subscription = await fetchMySubscription();
+
+		return subscription.tier === purchase.tier;
+	}
+
+	function confirmedNotice(purchase: Purchase): string {
+		if ('tier' in purchase)
+			return `${subscription.tierLabel} is active. You can manage billing anytime from this page.`;
+		const pack = packs.find((card) => card.productId === purchase.pack);
+
+		return pack
+			? `${pack.usage} of AI usage was added to your account. It expires ${pack.expiresAfterDays} days after purchase.`
+			: 'Your credit pack was added to your account.';
 	}
 
 	async function loadAccount() {
@@ -69,31 +132,31 @@
 		subscription = user ? await fetchMySubscription() : FREE;
 	}
 
-	// Payment success alone is not entitlement, so wait for the subscription to show the tier.
 	async function recoverAttempt(): Promise<boolean> {
 		const attempt = user && readCheckoutAttempt(user.id);
 
 		if (!attempt) return false;
-		const label = planLabel(attempt.tier);
-		pending = { attemptId: attempt.attemptId, checkoutUrl: null };
-		busy = { plan: attempt.tier, label: `Confirming ${label}…` };
-		notice = { text: `Confirming your ${label} subscription…`, error: false };
+		const { purchase } = attempt;
+		const label = 'pack' in purchase ? null : planLabel(purchase.tier);
+		const what = label ? `${label} subscription` : 'credit pack';
+		pending = true;
+		busy = { id: purchaseId(purchase), label: label ? `Confirming ${label}…` : 'Confirming…' };
+		notice = { text: `Confirming your ${what}…`, error: false };
 		const deadline = Date.now() + ACTIVATION_TIMEOUT_MS;
 
 		while (Date.now() < deadline) {
 			const status = await fetchCheckoutStatus(attempt.attemptId).catch(() => null);
 
 			if (status?.status === 'awaiting_payment') {
-				pending = { attemptId: attempt.attemptId, checkoutUrl: status.checkout_url ?? null };
 				busy = null;
-				notice = { text: `Your ${label} checkout is not paid yet.`, error: false };
+				notice = { text: `Your ${what} checkout is not paid yet.`, error: false };
 
 				return true;
 			}
 
-			if (status?.status === 'failed' || status?.status === 'expired') {
+			if (status?.status === 'failed') {
 				clearCheckoutAttempt();
-				pending = null;
+				pending = false;
 				busy = null;
 				notice = {
 					text: 'Your previous checkout did not complete. You can start a new checkout below.',
@@ -103,21 +166,16 @@
 				return true;
 			}
 
-			if (status?.activated) {
-				subscription = await fetchMySubscription();
+			if (status && (await purchaseConfirmed(purchase, status))) {
+				clearCheckoutAttempt();
+				pending = false;
+				busy = null;
+				notice = { text: confirmedNotice(purchase), error: false };
 
-				if (subscription.tier === attempt.tier) {
-					clearCheckoutAttempt();
-					pending = null;
-					busy = null;
-					notice = {
-						text: `${subscription.tierLabel} is active. You can manage billing anytime from this page.`,
-						error: false
-					};
-					track('pricing_subscription_activated', { plan: attempt.tier });
+				if ('pack' in purchase) track('pricing_credits_added', { pack: purchase.pack });
+				else track('pricing_subscription_activated', { plan: purchase.tier });
 
-					return true;
-				}
+				return true;
 			}
 
 			await new Promise((resolve) => setTimeout(resolve, ACTIVATION_POLL_MS));
@@ -125,44 +183,46 @@
 
 		busy = null;
 		notice = {
-			text: `We could not confirm your ${label} payment yet. Check again in a moment. No new purchase will be started.`,
+			text: `We could not confirm your ${what} payment yet. Check again in a moment. No new purchase will be started.`,
 			error: false
 		};
-		track('pricing_activation_timed_out', { plan: attempt.tier });
+		track('pricing_activation_timed_out', purchaseProps(purchase));
 
 		return true;
 	}
 
-	async function checkout(tier: string, planInterval: BillingInterval) {
+	async function checkout(purchase: Purchase) {
 		notice = null;
+		const id = purchaseId(purchase);
 
 		if (!user) {
-			busy = { plan: tier, label: 'Redirecting to sign in…' };
-			signInForCheckout(tier, planInterval);
+			busy = { id, label: 'Redirecting to sign in…' };
+			signInForCheckout(purchase);
 
 			return;
 		}
 
-		busy = { plan: tier, label: 'Starting checkout…' };
-		const plan = { plan: tier, interval: planInterval };
-		track('pricing_checkout_started', plan);
+		busy = { id, label: 'Starting checkout…' };
+		const props = purchaseProps(purchase);
+		track('pricing_checkout_started', props);
 
 		try {
-			const checkoutUrl = await startCheckout(tier, planInterval);
-			busy = { plan: tier, label: 'Redirecting to checkout…' };
-			track('pricing_checkout_redirected', plan);
+			const checkoutUrl = await startCheckout(purchase);
+			busy = { id, label: 'Redirecting to checkout…' };
+			track('pricing_checkout_redirected', props);
 			window.location.assign(checkoutUrl);
 		} catch (error) {
-			track('pricing_checkout_failed', plan);
+			track('pricing_checkout_failed', props);
 			fail(error, 'Could not start checkout.');
-			const attempt = readCheckoutAttempt(user.id);
+			pending = readCheckoutAttempt(user.id) !== null;
 
-			if (attempt) pending = { attemptId: attempt.attemptId, checkoutUrl: null };
+			// A refusal can mean a subscription went live since the page loaded.
+			if (userFacingError(error)) await loadAccount().catch(() => {});
 		}
 	}
 
-	async function manageBilling() {
-		busy = { plan: subscription.tier, label: 'Opening billing portal…' };
+	async function manageBilling(id: string | null = null) {
+		busy = { id, label: 'Opening billing portal…' };
 
 		try {
 			window.location.assign(await fetchCustomerPortalUrl());
@@ -175,7 +235,7 @@
 		try {
 			if (!(await recoverAttempt())) {
 				await loadAccount();
-				pending = null;
+				pending = false;
 				notice = { text: 'Your billing status has been refreshed.', error: false };
 			}
 		} catch (error) {
@@ -183,32 +243,15 @@
 		}
 	}
 
-	async function continueCheckout() {
-		if (!pending) return;
-		busy = { plan: null, label: 'Redirecting to checkout…' };
-
-		try {
-			const status = await fetchCheckoutStatus(pending.attemptId);
-
-			if (status.status === 'awaiting_payment' && status.checkout_url) {
-				window.location.assign(status.checkout_url);
-			} else {
-				await recoverAttempt();
-			}
-		} catch (error) {
-			fail(error, 'Could not resume the checkout.');
-		}
-	}
-
 	async function signOut() {
-		busy = { plan: null, label: 'Signing out…' };
+		busy = { id: null, label: 'Signing out…' };
 
 		try {
 			await signOutOfPricing();
 			setAnalyticsUser(null);
 			user = null;
 			subscription = FREE;
-			pending = null;
+			pending = false;
 			busy = null;
 			notice = null;
 		} catch (error) {
@@ -222,8 +265,8 @@
 	}
 
 	function selectPlan(card: PlanCard) {
-		if (!card.isFree && card.id === subscription.tier && subscription.billingManaged) {
-			void manageBilling();
+		if (!card.isFree && subscribed) {
+			void manageBilling(card.id);
 
 			return;
 		}
@@ -231,18 +274,25 @@
 		track('pricing_plan_selected', { plan: card.id, interval, signed_in: user !== null });
 
 		if (card.isFree) window.location.assign('/#download');
-		else void checkout(card.id, interval);
+		else void checkout({ tier: card.id, interval });
+	}
+
+	function buyPack(productId: string) {
+		track('pricing_credit_pack_selected', { pack: productId, signed_in: user !== null });
+		void checkout({ pack: productId });
 	}
 
 	function buttonLabel(card: PlanCard): string {
-		if (busy?.plan === card.id) return busy.label;
+		if (busy?.id === card.id) return busy.label;
 
 		if (card.isFree) return 'Start free';
 
 		if (card.id === subscription.tier)
 			return subscription.billingManaged ? 'Manage billing' : 'Current plan';
 
-		return card.prices[interval] ? `Get ${card.name}` : 'Unavailable';
+		if (!card.prices[interval]) return 'Unavailable';
+
+		return subscribed ? `Switch to ${card.name}` : `Get ${card.name}`;
 	}
 
 	function buttonDisabled(card: PlanCard): boolean {
@@ -258,14 +308,13 @@
 	async function initialize(params: URLSearchParams) {
 		try {
 			await loadAccount();
-			const tier = params.get('tier');
-			const requestedInterval = params.get('interval');
+			const purchase = readPurchase(params);
 
-			if (params.get('checkout') === 'resume' && tier && isBillingInterval(requestedInterval)) {
+			if (params.get('checkout') === 'resume' && purchase) {
 				// Never send the user back to sign-in from here, which would loop if the session cookie is lost.
 				if (!user)
-					throw new Error('Your sign-in could not be restored. Choose your plan to try again.');
-				await checkout(tier, requestedInterval);
+					throw new Error('Your sign-in could not be restored. Choose your purchase to try again.');
+				await checkout(purchase);
 
 				return;
 			}
@@ -274,8 +323,11 @@
 				track('pricing_sign_in_failed', {});
 				notice = { text: 'Sign-in could not be completed. Try again.', error: true };
 			} else if (params.get('checkout') === 'cancel') {
+				clearCheckoutAttempt();
 				track('pricing_checkout_cancelled', {});
 				notice = { text: 'Checkout was cancelled. You can try again anytime.', error: false };
+
+				return;
 			}
 
 			await recoverAttempt();
@@ -313,6 +365,25 @@
 		return () => window.removeEventListener('pageshow', onPageShow);
 	});
 </script>
+
+{#snippet featureItem(feature: PlanFeature)}
+	<li class="text-foreground flex gap-2.5 text-sm leading-snug">
+		<span
+			class="bg-action-soft mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs"
+			aria-hidden="true">✓</span
+		>
+		{#if feature.href}
+			<a
+				class="decoration-foreground/30 hover:decoration-foreground underline underline-offset-4 transition-colors"
+				href={feature.href}
+				target="_blank"
+				rel="noopener">{feature.label}</a
+			>
+		{:else}
+			<span>{feature.label}</span>
+		{/if}
+	</li>
+{/snippet}
 
 <section aria-label="Plans" data-ph-capture-attribute-section="pricing_plans">
 	<div class="flex flex-col items-center text-center">
@@ -360,11 +431,6 @@
 					Your payment is not confirmed yet. If you are stuck, email
 					<a class={linkClass} href={SUPPORT_HREF}>{SUPPORT_EMAIL}</a>.
 				</p>
-				{#if pending.checkoutUrl}
-					<button type="button" class={linkClass} disabled={!!busy} onclick={continueCheckout}>
-						Continue checkout
-					</button>
-				{/if}
 				<button type="button" class={linkClass} disabled={!!busy} onclick={checkPaymentStatus}>
 					Check payment status
 				</button>
@@ -384,7 +450,7 @@
 				<button type="button" class={linkClass} disabled={!!busy} onclick={signOut}>Sign out</button
 				>
 				{#if subscription.billingManaged}
-					<button type="button" class={linkClass} disabled={!!busy} onclick={manageBilling}>
+					<button type="button" class={linkClass} disabled={!!busy} onclick={() => manageBilling()}>
 						Manage billing
 					</button>
 					<a class={linkClass} href={SUPPORT_HREF}>Billing support</a>
@@ -442,31 +508,16 @@
 					{/if}
 					<ul class={cn('flex-1 space-y-2.5', card.previousPlanName ? 'mt-2.5' : 'mt-6')}>
 						{#each card.features as feature (feature.label)}
-							<li class="text-foreground flex gap-2.5 text-sm leading-snug">
-								<span
-									class="bg-action-soft mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs"
-									aria-hidden="true">✓</span
-								>
-								{#if feature.href}
-									<a
-										class="decoration-foreground/30 hover:decoration-foreground underline underline-offset-4 transition-colors"
-										href={feature.href}
-										target="_blank"
-										rel="noopener">{feature.label}</a
-									>
-								{:else}
-									<span>{feature.label}</span>
-								{/if}
-							</li>
+							{@render featureItem(feature)}
 						{/each}
 					</ul>
 					<button
 						type="button"
 						class={cn(
-							'focus-visible:ring-ring/50 mt-8 inline-flex min-h-11 w-full items-center justify-center rounded-full px-5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60',
+							ctaClass,
 							card.primaryCta
 								? 'bg-foreground text-background hover:bg-foreground/90'
-								: 'border-border bg-surface text-foreground hover:bg-action-soft border'
+								: secondaryCtaClass
 						)}
 						disabled={buttonDisabled(card)}
 						onclick={() => selectPlan(card)}
@@ -478,3 +529,43 @@
 		</div>
 	{/if}
 </section>
+
+{#if packs.length > 0}
+	<section
+		class="mx-auto mt-20 max-w-6xl"
+		aria-labelledby="credit-packs-heading"
+		data-ph-capture-attribute-section="pricing_credit_packs"
+	>
+		<h2 id="credit-packs-heading" class="font-brand text-foreground text-2xl font-semibold">
+			Credit packs
+		</h2>
+		<p class="text-muted-foreground mt-3 max-w-2xl text-base leading-relaxed">
+			Packs add AI usage on top of any plan. Sprocket uses them after your monthly allowance runs
+			out, and each pack expires a set number of days after purchase.
+		</p>
+		<div class="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+			{#each packs as pack (pack.productId)}
+				<article class="border-border/70 bg-surface/90 flex flex-col rounded-2xl border p-6 sm:p-7">
+					<h3 class="font-brand text-foreground text-xl font-semibold">{pack.label}</h3>
+					<p class="font-brand text-foreground mt-3 text-3xl font-semibold tracking-tight">
+						{pack.price}
+					</p>
+					<p class="text-muted-foreground mt-1 text-sm">one-time payment</p>
+					<ul class="mt-6 flex-1 space-y-2.5">
+						{#each [`${pack.usage} of AI usage`, `Expires ${pack.expiresAfterDays} days after purchase`] as line (line)}
+							{@render featureItem({ label: line })}
+						{/each}
+					</ul>
+					<button
+						type="button"
+						class={cn(ctaClass, secondaryCtaClass)}
+						disabled={loading || !!busy}
+						onclick={() => buyPack(pack.productId)}
+					>
+						{busy?.id === pack.productId ? busy.label : `Buy ${pack.label}`}
+					</button>
+				</article>
+			{/each}
+		</div>
+	</section>
+{/if}

@@ -76,6 +76,25 @@ test('sign-in returns to the plan chosen before signing in', async () => {
 	expect(jar.has('__Host-sprocket-pricing-login')).toBe(false);
 });
 
+test('sign-in returns to the credit pack chosen before signing in', async () => {
+	const { server } = fakeServer();
+	const { cookies } = fakeCookies();
+
+	await beginPricingSignIn(
+		server,
+		cookies,
+		new URL('https://usesprocket.dev/api/pricing/sign-in?pack=pdt_10')
+	);
+
+	expect(
+		await completePricingSignIn(
+			server,
+			cookies,
+			new URL('https://usesprocket.dev/pricing/callback?code=code-1&state=state-1')
+		)
+	).toBe('/pricing?checkout=resume&pack=pdt_10');
+});
+
 test('sign-in completion requires the state issued to this browser', async () => {
 	const { server, authenticateWithCode } = fakeServer();
 	const { cookies } = fakeCookies();

@@ -1,10 +1,11 @@
 import { api } from '@convex/_generated/api';
 import type { ConvexHttpClient } from 'convex/browser';
+import { ConvexError } from 'convex/values';
 import * as z from 'zod/mini';
 import { convexClientWithTimeout } from '@/lib/convex-client';
 import type { PricingSession } from './auth-server';
+import type { Purchase } from './catalog';
 import type {
-	BillingInterval,
 	CheckoutMode,
 	CheckoutStatus,
 	MySubscription,
@@ -23,7 +24,10 @@ const CHECKOUT_ORIGINS: Record<CheckoutMode, string> = {
 const checkoutAttemptSchema = z.object({
 	userId: z.string(),
 	attemptId: z.string(),
-	tier: z.string()
+	purchase: z.union([
+		z.object({ tier: z.string(), interval: z.enum(['monthly', 'annual']) }),
+		z.object({ pack: z.string() })
+	])
 });
 
 export type CheckoutAttempt = z.infer<typeof checkoutAttemptSchema>;
@@ -83,8 +87,8 @@ async function signedIn(): Promise<{ convex: ConvexHttpClient; userId: string }>
 	return { convex: convexClient(current.accessToken), userId: current.user.id };
 }
 
-export function signInForCheckout(tier: string, interval: BillingInterval): void {
-	window.location.assign(`/api/pricing/sign-in?${new URLSearchParams({ tier, interval })}`);
+export function signInForCheckout(purchase: Purchase): void {
+	window.location.assign(`/api/pricing/sign-in?${new URLSearchParams(purchase)}`);
 }
 
 export async function signOutOfPricing(): Promise<void> {
@@ -111,18 +115,17 @@ export function assertCheckoutUrl(url: string, mode: CheckoutMode): void {
 }
 
 /** Creates a hosted checkout and returns its URL after recording the attempt for recovery. */
-export async function startCheckout(tier: string, interval: BillingInterval): Promise<string> {
+export async function startCheckout(purchase: Purchase): Promise<string> {
 	const { convex, userId } = await signedIn();
-	const result = await convex.action(api.billing.checkout, { tier, interval });
 
-	if (!result.attemptId) {
-		throw new Error('Checkout recovery is unavailable. Contact billing support before paying.');
-	}
+	const result = await ('pack' in purchase
+		? convex.action(api.billing.buyCredits, { productId: purchase.pack })
+		: convex.action(api.billing.checkout, purchase));
 
 	try {
 		sessionStorage.setItem(
 			ATTEMPT_KEY,
-			JSON.stringify({ userId, attemptId: result.attemptId, tier } satisfies CheckoutAttempt)
+			JSON.stringify({ userId, attemptId: result.attemptId, purchase } satisfies CheckoutAttempt)
 		);
 	} catch {
 		// Without storage the checkout still works; only automatic recovery on return is lost.
@@ -155,15 +158,17 @@ export function clearCheckoutAttempt(): void {
 
 export async function fetchCheckoutStatus(attemptId: string): Promise<CheckoutStatus> {
 	const { convex } = await signedIn();
-	const status = await convex.action(api.billing.getCheckoutStatus, { attemptId });
 
-	if (status.checkout_url) assertCheckoutUrl(status.checkout_url, status.mode);
-
-	return status;
+	return convex.action(api.billing.getCheckoutStatus, { attemptId });
 }
 
 export async function fetchCustomerPortalUrl(): Promise<string> {
 	const { convex } = await signedIn();
 
 	return (await convex.action(api.billing.customerPortal, {})).portal_url;
+}
+
+/** Billing refusals, such as checkout while a subscription is live, are ConvexErrors worded for users. */
+export function userFacingError(cause: unknown): string | null {
+	return cause instanceof ConvexError ? (z.string().safeParse(cause.data).data ?? null) : null;
 }

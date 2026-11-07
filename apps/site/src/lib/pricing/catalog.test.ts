@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildPlanCards, formatPrice } from './catalog';
+import { buildCreditPackCards, buildPlanCards, formatPrice } from './catalog';
 
 function usdPrice(amountMinor: number) {
 	return {
@@ -54,7 +54,8 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				highlighted: false,
 				prices: { monthly: null, annual: null }
 			}
-		]
+		],
+		creditPacks: []
 	});
 
 	expect(free.prices).toEqual({ monthly: '$0', annual: '$0' });
@@ -82,5 +83,31 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 	expect(ultra.features.map(({ label }) => label)).toEqual([
 		'$300 of AI usage each month',
 		'Priority support'
+	]);
+});
+
+test('buildCreditPackCards lists only packs with a synced price', () => {
+	const pack = { label: '$10 of usage', usageDollars: 10, expiresAfterDays: 90 };
+
+	expect(
+		buildCreditPackCards({
+			plans: [],
+			creditPacks: [
+				{ ...pack, productId: 'pdt_new', price: null },
+				{
+					...pack,
+					productId: 'pdt_10',
+					price: { productId: 'pdt_10', amountMinor: 999, currency: 'USD' }
+				}
+			]
+		})
+	).toEqual([
+		{
+			productId: 'pdt_10',
+			label: '$10 of usage',
+			price: '$9.99',
+			usage: '$10',
+			expiresAfterDays: 90
+		}
 	]);
 });

@@ -16,11 +16,23 @@ export type PlanCard = {
 
 export type PlanFeature = { label: string; href?: string };
 
+export type CreditPackCard = {
+	productId: string;
+	label: string;
+	price: string;
+	usage: string;
+	expiresAfterDays: number;
+};
+
+export type Purchase = { tier: string; interval: BillingInterval } | { pack: string };
+
+function usd(dollars: number): string {
+	return formatPrice({ amountMinor: Math.round(dollars * 100), currency: 'USD' });
+}
+
 function planFeatures(plan: PublicPricingCatalog['plans'][number], isFree: boolean): PlanFeature[] {
 	return [
-		{
-			label: `${formatPrice({ amountMinor: Math.round(plan.monthlyUsageDollars * 100), currency: 'USD' })} of AI usage each month`
-		},
+		{ label: `${usd(plan.monthlyUsageDollars)} of AI usage each month` },
 		{ label: 'Bring your own API keys and subscriptions' },
 		{ label: `${isFree ? 'Limited' : 'Unlimited'} context from the web` },
 		{ label: 'Fair source', href: 'https://fsl.software/' },
@@ -57,6 +69,16 @@ export const pricingFaqs = [
 
 export function isBillingInterval(value: unknown): value is BillingInterval {
 	return value === 'monthly' || value === 'annual';
+}
+
+export function readPurchase(params: URLSearchParams): Purchase | null {
+	const pack = params.get('pack');
+	const tier = params.get('tier');
+	const interval = params.get('interval');
+
+	if (pack) return { pack };
+
+	return tier && isBillingInterval(interval) ? { tier, interval } : null;
 }
 
 // Dodo amounts are in ISO 4217 minor units, which Intl's currency fraction digits match.
@@ -117,4 +139,22 @@ export function buildPlanCards(catalog: PublicPricingCatalog): PlanCard[] {
 			annualDiscountPercent: annualDiscountPercent(monthly, annual)
 		};
 	});
+}
+
+/** Packs without a synced price can't be bought yet. */
+export function buildCreditPackCards(catalog: PublicPricingCatalog): CreditPackCard[] {
+	return catalog.creditPacks.flatMap(
+		({ productId, label, usageDollars, expiresAfterDays, price }) =>
+			price
+				? [
+						{
+							productId,
+							label,
+							price: formatPrice(price),
+							usage: usd(usageDollars),
+							expiresAfterDays
+						}
+					]
+				: []
+	);
 }

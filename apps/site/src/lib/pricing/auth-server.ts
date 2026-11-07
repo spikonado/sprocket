@@ -1,7 +1,7 @@
 import { WorkOS, type User } from '@workos-inc/node';
 import type { AstroCookies, AstroCookieSetOptions } from 'astro';
 import * as z from 'zod/mini';
-import { isBillingInterval } from './catalog';
+import { readPurchase } from './catalog';
 
 type Cookies = {
 	get(name: string): { value: string } | undefined;
@@ -76,13 +76,11 @@ export async function beginPricingSignIn(
 	cookies: Cookies,
 	url: URL
 ): Promise<string> {
-	const tier = url.searchParams.get('tier');
-	const interval = url.searchParams.get('interval');
+	const purchase = readPurchase(url.searchParams);
 
-	const returnTo =
-		tier && isBillingInterval(interval)
-			? `/pricing?${new URLSearchParams({ checkout: 'resume', tier, interval })}`
-			: '/pricing';
+	const returnTo = purchase
+		? `/pricing?${new URLSearchParams({ checkout: 'resume', ...purchase })}`
+		: '/pricing';
 
 	const login = await server.workos.userManagement.getAuthorizationUrlWithPKCE({
 		provider: 'authkit',
@@ -99,7 +97,7 @@ export async function beginPricingSignIn(
 	return login.url;
 }
 
-/** Returns the pricing path to continue on, carrying the plan chosen before sign-in. */
+/** Returns the pricing path to continue on, carrying the plan or pack chosen before sign-in. */
 export async function completePricingSignIn(
 	server: PricingAuthServer,
 	cookies: Cookies,
