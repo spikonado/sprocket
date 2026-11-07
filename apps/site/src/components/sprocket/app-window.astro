@@ -1,0 +1,137 @@
+---
+import logo from '@/assets/logo.svg';
+
+interface Props {
+	label: string;
+	thread: string;
+}
+
+const { label, thread } = Astro.props;
+
+const iconProps = {
+	viewBox: '0 0 24 24',
+	fill: 'none',
+	stroke: 'currentColor',
+	'stroke-width': '2',
+	'stroke-linecap': 'round',
+	'stroke-linejoin': 'round'
+} as const;
+---
+
+<div
+	data-mock
+	role="img"
+	aria-label={label}
+	class="overflow-hidden rounded-2xl border border-border/80 bg-surface font-sans text-[0.8125rem] leading-relaxed text-foreground shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.6)]"
+>
+	<div
+		class="flex items-center gap-2 border-b border-border/70 bg-accent-soft/40 px-4 py-2.5"
+		aria-hidden="true"
+	>
+		<img src={logo.src} alt="" width="16" height="16" class="h-4 w-4" />
+		<span class="font-semibold">Sprocket</span>
+		<span class="text-muted-foreground">/</span>
+		<span class="truncate text-muted-foreground">{thread}</span>
+	</div>
+	<div class="flex min-h-80 flex-col gap-2.5 px-4 py-4 sm:px-5" aria-hidden="true">
+		<slot />
+	</div>
+	<div class="px-3 pb-3" aria-hidden="true">
+		<div
+			class="rounded-[1.25rem] border border-border/80 bg-surface px-3.5 pt-3 pb-2.5 shadow-[0_6px_20px_-12px_oklch(0.2_0.02_260/0.35)]"
+		>
+			<p class="truncate pb-5 text-muted-foreground">
+				Ask anything, use / for commands, @ to tag files/folders, and $ for skills
+			</p>
+			<div class="flex items-center gap-3 text-xs text-foreground/80">
+				<svg {...iconProps} class="h-3.5 w-3.5 text-muted-foreground">
+					<path
+						d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+					></path>
+				</svg>
+				<span class="h-4 w-px bg-border"></span>
+				<span class="inline-flex items-center gap-1">
+					<svg viewBox="0 0 24 24" class="mr-0.5 h-3 w-3" fill="#D97757">
+						<path
+							d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"
+						></path>
+					</svg>
+					Opus 5.5 · High
+					<svg {...iconProps} class="h-3 w-3 text-muted-foreground">
+						<path d="m6 9 6 6 6-6"></path>
+					</svg>
+				</span>
+				<span
+					class="ml-auto flex h-7 w-7 items-center justify-center rounded-full bg-muted-foreground/40 text-surface"
+				>
+					<svg {...iconProps} class="h-3.5 w-3.5">
+						<path d="M12 19V5M5 12l7-7 7 7"></path>
+					</svg>
+				</span>
+			</div>
+		</div>
+	</div>
+</div>
+
+<style is:global>
+	@keyframes mock-step-in {
+		from {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	@keyframes mock-step-out {
+		to {
+			opacity: 0;
+		}
+	}
+
+	[data-mock][data-animate] [data-step] {
+		opacity: 0;
+	}
+
+	[data-mock][data-animate].is-playing [data-step] {
+		animation: mock-step-in 0.45s ease-out forwards;
+		animation-delay: calc(var(--step, 0) * 0.65s);
+	}
+
+	[data-mock]:not([data-animate]) [data-step-out] {
+		opacity: 0;
+	}
+
+	[data-mock][data-animate].is-playing [data-step-out] {
+		animation: mock-step-out 0.2s ease-in forwards;
+		animation-delay: calc(var(--step-out, 0) * 0.65s);
+	}
+</style>
+
+<script>
+	// Steps stay visible without JS or with reduced motion; they're only hidden once we can reveal them.
+	const mocks = document.querySelectorAll<HTMLElement>('[data-mock]');
+	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	if (!reduceMotion && 'IntersectionObserver' in window) {
+		for (const mock of mocks) {
+			// A mock taller than the viewport (short windows, high zoom) can never be 35% visible.
+			const cutoff = Math.min(0.35, (0.5 * window.innerHeight) / mock.offsetHeight);
+
+			const observer = new IntersectionObserver(
+				([entry]) => {
+					// Rewind only once a mock drops below the viewport, so it replays when scrolled down to again.
+					if (entry.intersectionRatio >= cutoff) mock.classList.add('is-playing');
+					else if (!entry.isIntersecting && entry.boundingClientRect.top > 0)
+						mock.classList.remove('is-playing');
+				},
+				{ threshold: [0, cutoff] }
+			);
+
+			mock.dataset.animate = '';
+			observer.observe(mock);
+		}
+	}
+</script>

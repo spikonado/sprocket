@@ -1,0 +1,83 @@
+---
+import Footer from '@/components/footer.svelte';
+import PricingPlans from '@/components/pricing-plans.svelte';
+import BaseLayout from '@/layouts/base-layout.astro';
+import { fetchPricingCatalog } from '@/lib/pricing/billing';
+import { pricingFaqs } from '@/lib/pricing/catalog';
+import type { PublicPricingCatalog } from '@/lib/pricing/convex-types';
+import { ORGANIZATION_NAME, SITE_URL } from '@/lib/seo';
+
+const description =
+	'Compare Sprocket plans and choose the AI usage limits that fit your engineering work.';
+
+let initialCatalog: PublicPricingCatalog | null = null;
+
+try {
+	initialCatalog = await fetchPricingCatalog();
+} catch {
+	// The island fetches the live catalog in the browser.
+}
+
+const productLd = {
+	'@type': 'Product',
+	name: 'Sprocket',
+	description,
+	brand: { '@type': 'Brand', name: ORGANIZATION_NAME },
+	url: `${SITE_URL}/pricing`,
+	// Paid prices can change after this static page is built, so only the free plan is listed.
+	offers: [{ '@type': 'Offer', name: 'Sprocket Free', price: '0', priceCurrency: 'USD' }]
+};
+
+const faqLd = {
+	'@type': 'FAQPage',
+	mainEntity: pricingFaqs.map((faq) => ({
+		'@type': 'Question',
+		name: faq.question,
+		acceptedAnswer: { '@type': 'Answer', text: faq.answer }
+	}))
+};
+---
+
+<BaseLayout title="Pricing | Sprocket" description={description} jsonLd={[productLd, faqLd]}>
+	<main id="main" class="atmosphere min-h-svh px-4 pt-28 pb-16 sm:px-6 sm:pt-32 lg:px-8">
+		<article class="mx-auto max-w-7xl">
+			<h1
+				class="mb-8 text-center font-brand text-5xl font-semibold tracking-tight text-foreground sm:text-6xl"
+			>
+				Pricing
+			</h1>
+			<PricingPlans client:load {initialCatalog} />
+
+			<section
+				class="mx-auto mt-20 max-w-6xl"
+				aria-labelledby="pricing-faq-heading"
+				data-ph-capture-attribute-section="pricing_faq"
+			>
+				<h2 id="pricing-faq-heading" class="font-brand text-2xl font-semibold text-foreground">
+					FAQ
+				</h2>
+				<div class="mt-6 space-y-4">
+					{
+						pricingFaqs.map((faq) => (
+							<details class="group rounded-2xl border border-border/70 bg-surface/90 p-5">
+								<summary class="cursor-pointer list-none font-brand text-lg font-semibold text-foreground marker:content-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none">
+									<span class="flex items-center justify-between gap-3">
+										{faq.question}
+										<span
+											class="text-muted-foreground transition-transform group-open:rotate-45"
+											aria-hidden="true"
+										>
+											+
+										</span>
+									</span>
+								</summary>
+								<p class="mt-3 text-base leading-relaxed text-muted-foreground">{faq.answer}</p>
+							</details>
+						))
+					}
+				</div>
+			</section>
+		</article>
+	</main>
+	<Footer />
+</BaseLayout>

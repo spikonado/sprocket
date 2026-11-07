@@ -17,6 +17,15 @@ describe('billing return origins', () => {
 				'https://spikonado.com/pricing?checkout=return&tier=team%20%26%20pro&attempt=opaque%2Fattempt',
 			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=team%20%26%20pro'
 		});
+		expect(
+			resolveMarketingPricingUrls(
+				{
+					SPROCKET_MARKETING_ORIGIN: 'https://usesprocket.dev',
+					DODO_PAYMENTS_ENVIRONMENT: 'live_mode'
+				},
+				'pro'
+			).return_url
+		).toBe('https://usesprocket.dev/pricing?checkout=return&tier=pro');
 	});
 	it('accepts only the explicitly approved HTTPS staging origin in test mode', () => {
 		const env = {

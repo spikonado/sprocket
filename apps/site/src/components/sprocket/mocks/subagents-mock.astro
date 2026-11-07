@@ -1,0 +1,56 @@
+---
+import AppWindow from '@/components/sprocket/app-window.astro';
+import Step from '@/components/sprocket/mock-step.astro';
+
+const subagents = [
+	{ task: 'Review motor driver firmware', result: 'PWM duty is clamped on M2', doneAt: 6 },
+	{
+		task: 'Check encoder wiring in the schematic',
+		result: 'Wiring matches the pin map',
+		doneAt: 8
+	},
+	{ task: 'Search for known TB6612FNG issues', result: 'No matching errata', doneAt: 4 }
+];
+---
+
+<AppWindow
+	thread="Robot drifts left"
+	label="Sprocket starting three subagents in the background, then reading and testing the firmware itself while each subagent reports back at a different time"
+>
+	<Step step={0} kind="user">Find out why the robot drifts left at full speed.</Step>
+	<Step step={1} kind="agent">Started 3 subagents in the background</Step>
+	<Step step={2} kind="text">
+		<ul class="space-y-1.5">
+			{
+				subagents.map(({ task, result, doneAt }) => (
+					<li class="rounded-lg border border-border/80 bg-background/50 px-2.5 py-1.5">
+						<p class="truncate">{task}</p>
+						<div class="grid text-xs">
+							<p
+								data-step-out
+								style={`--step-out:${doneAt}`}
+								class="col-start-1 row-start-1 flex items-center gap-1.5 text-muted-foreground"
+							>
+								<span class="h-1.5 w-1.5 rounded-full bg-accent-strong motion-safe:animate-pulse" />
+								Running
+							</p>
+							<p
+								data-step
+								style={`--step:${doneAt}`}
+								class="col-start-1 row-start-1 truncate text-muted-foreground"
+							>
+								{result}
+							</p>
+						</div>
+					</li>
+				))
+			}
+		</ul>
+	</Step>
+	<Step step={3} kind="file">Read firmware/motors.cpp</Step>
+	<Step step={5} kind="command">pio test -e robot</Step>
+	<Step step={7} kind="file">Edited firmware/motors.cpp</Step>
+	<Step step={9} kind="text" class="mt-1">
+		A copy-paste bug capped M2 at 90% duty. I fixed it, and all 18 motor tests pass.
+	</Step>
+</AppWindow>

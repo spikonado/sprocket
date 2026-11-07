@@ -1,0 +1,59 @@
+---
+import schematic from '@/assets/robot-car-schematic.svg';
+import AppWindow from '@/components/sprocket/app-window.astro';
+import Step from '@/components/sprocket/mock-step.astro';
+
+const bom = [
+	['U1', 'ESP32-CAM-MB camera board', '1'],
+	['U2', 'TB6612FNG motor driver board', '1'],
+	['U3', 'LM2596 buck converter module', '1'],
+	['BT1', '2× 18650 battery holder with switch', '1'],
+	['MFL–MRR', 'BO gearmotor', '4']
+] as const;
+---
+
+<AppWindow
+	thread="Wi-Fi robot car"
+	label="Sprocket designing a Wi-Fi camera robot car: it reads datasheets, draws a schematic of the battery, buck converter, ESP32-CAM, motor driver, and four motors, then writes a bill of materials and an assembly guide"
+>
+	<Step step={0} kind="user"
+		>Design the electronics for a 4-motor robot car I can drive over Wi-Fi.</Step
+	>
+	<Step step={1} kind="web">Read ESP32-CAM, TB6612FNG, and LM2596 datasheets</Step>
+	<Step step={2} kind="file">Created artifact · Robot car schematic</Step>
+	<Step step={3} kind="text">
+		<img
+			src={schematic.src}
+			width={schematic.width}
+			height={schematic.height}
+			alt=""
+			loading="lazy"
+			decoding="async"
+			class="h-auto w-full rounded-xl border border-border/80"
+		/>
+	</Step>
+	<Step step={4} kind="file">Created docs/bom.md</Step>
+	<Step step={5} kind="text">
+		<table class="w-full text-left text-xs">
+			<thead class="text-muted-foreground">
+				<tr>
+					<th class="py-1 pr-2 font-medium">Ref</th>
+					<th class="py-1 pr-2 font-medium">Part</th>
+					<th class="py-1 text-right font-medium">Qty</th>
+				</tr>
+			</thead>
+			<tbody class="divide-y divide-border/70 border-t border-border/70">
+				{
+					bom.map(([ref, part, qty]) => (
+						<tr>
+							<td class="py-1 pr-2 font-mono">{ref}</td>
+							<td class="py-1 pr-2">{part}</td>
+							<td class="py-1 text-right">{qty}</td>
+						</tr>
+					))
+				}
+			</tbody>
+		</table>
+	</Step>
+	<Step step={6} kind="done">Wrote docs/assembly.md with 12 steps</Step>
+</AppWindow>
