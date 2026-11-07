@@ -1,10 +1,17 @@
-import { useLayoutEffect, useState, type ReactNode } from 'react';
+import { use, useLayoutEffect, useState, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { isJsonObject } from '@convex/lib/json';
 import {
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
+import { jsonObjectString } from '$lib/chat/json-fields';
+import {
+	fileLinkTarget,
+	MarkdownFileLinksContext,
+	type MarkdownFileLinks
+} from '$lib/chat/markdown-file-links';
 import { toolItemLabel, toolItemSummary, toolShellCommand } from '$lib/chat/tool-summaries';
 import { toolLogIcon } from '$lib/chat/tool-icons';
 import HighlightedCommand from './highlighted-command';
@@ -15,18 +22,32 @@ type Props = {
 	commands: ReadonlyMap<string, string>;
 };
 
+const rowClass =
+	'hover:text-foreground focus-visible:ring-ring/60 flex min-w-0 cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none';
+
+function parsedFileOpener(tool: AssistantTimelineTool, fileLinks: MarkdownFileLinks | null) {
+	if (!fileLinks) return undefined;
+
+	const path = isJsonObject(tool.output) ? jsonObjectString(tool.output.source, 'path') : undefined;
+	const target = path ? fileLinkTarget(path, fileLinks.roots) : null;
+
+	return target ? () => fileLinks.open(target) : undefined;
+}
+
 function ToolRow({
 	Icon,
 	label,
 	item,
 	status,
-	command
+	command,
+	onOpen
 }: {
 	Icon: LucideIcon;
 	label: string | undefined;
 	item: string;
 	status: ReactNode;
 	command: string | undefined;
+	onOpen: (() => void) | undefined;
 }) {
 	const [open, setOpen] = useState(false);
 	const [itemElement, setItemElement] = useState<HTMLSpanElement | null>(null);
@@ -64,6 +85,21 @@ function ToolRow({
 		</>
 	);
 
+	if (onOpen) {
+		return (
+			<button
+				type="button"
+				data-tool-row
+				data-work-detail
+				title={item}
+				className={rowClass}
+				onClick={onOpen}
+			>
+				{row}
+			</button>
+		);
+	}
+
 	if (!expandable) {
 		return (
 			<div data-tool-row data-work-detail className="flex min-w-0 items-start gap-1.5">
@@ -77,7 +113,7 @@ function ToolRow({
 			<summary
 				data-tool-row
 				data-work-detail
-				className="hover:text-foreground focus-visible:ring-ring/60 group-open:text-foreground flex min-w-0 cursor-pointer list-none items-start gap-1.5 rounded-sm focus-visible:ring-2 focus-visible:outline-none [&::-webkit-details-marker]:hidden"
+				className={`${rowClass} group-open:text-foreground list-none [&::-webkit-details-marker]:hidden`}
 			>
 				{row}
 			</summary>
@@ -96,6 +132,8 @@ function ToolRow({
 }
 
 export default function WorkTools({ tools, inProgress, commands }: Props) {
+	const fileLinks = use(MarkdownFileLinksContext);
+
 	return (
 		<div className="text-muted-foreground space-y-1.5 text-[13px] leading-6">
 			{tools.map((tool) => {
@@ -107,6 +145,7 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 				const command = toolShellCommand(tool, commands);
 				const error = assistantTimelineToolError(tool, inProgress);
 				const failure = assistantTimelineToolFailureKind(tool, inProgress);
+				const onOpen = kind === 'parse_file' ? parsedFileOpener(tool, fileLinks) : undefined;
 
 				const errorClass =
 					failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
@@ -129,6 +168,7 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 									item={item}
 									status={status}
 									command={command}
+									onOpen={onOpen}
 								/>
 							);
 						})}

@@ -311,7 +311,9 @@ async fn persist_parse_file(
     let path = parse_file_args(&args)?;
     ensure_not_cancelled(&cancellation)?;
     let file_path = resolve_local_path(workspace_root, &path);
-    let source = ParseFilePersistedSource::Path { path };
+    let source = ParseFilePersistedSource::Path {
+        path: file_path.to_string_lossy().into_owned(),
+    };
     let prefix = peek_file(&file_path, &cancellation).await?;
     if sniff_supported_image_format(&prefix).is_some() {
         anyhow::ensure!(

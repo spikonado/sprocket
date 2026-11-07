@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
+import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
 import WorkTools from './work-tools';
 
 describe('tool rows', () => {
@@ -157,5 +158,31 @@ describe('tool rows', () => {
 				.getAllByRole('status')
 				.map((row) => row.textContent)
 		).toEqual(['The patch did not apply.']);
+	});
+
+	it('opens the resolved path of a parsed file in the file viewer', () => {
+		const open = vi.fn();
+
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'parse',
+			name: 'parse_file',
+			input: { path: 'design.pdf' },
+			output: { source: { type: 'path', path: '/repo/docs/design.pdf' } }
+		};
+
+		const view = render(
+			<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
+				<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />
+			</MarkdownFileLinksContext>
+		);
+
+		fireEvent.click(within(view.container).getByRole('button'));
+
+		expect(open).toHaveBeenCalledWith({
+			workspacePath: '/repo',
+			path: 'docs/design.pdf',
+			directory: false
+		});
 	});
 });
