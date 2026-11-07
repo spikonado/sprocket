@@ -290,7 +290,6 @@ fn digest(value: &Value) -> Digest32 {
 #[derive(Debug, PartialEq)]
 enum Plan {
     AnswerTools(Vec<(String, Value)>),
-    Continue(Vec<Value>),
     Resume {
         session_id: String,
         content: Vec<Value>,
@@ -304,7 +303,10 @@ fn plan(turn: &Turn, live: Option<&LiveSession>, resume: Option<&ResumePoint>) -
     {
         let planned = match &live.awaiting {
             Awaiting::ToolResults(ids) => tool_results(tail, ids).map(Plan::AnswerTools),
-            Awaiting::TurnEnd => new_user_content(tail).map(Plan::Continue),
+            Awaiting::TurnEnd => new_user_content(tail).map(|content| Plan::Resume {
+                session_id: live.id.clone(),
+                content,
+            }),
         };
         if let Some(planned) = planned {
             return planned;
@@ -668,13 +670,27 @@ impl TurnStream {
                     process.answer(&tool_use_id, answer);
                 }
             }
-            Plan::Continue(content) => {
-                let process = state
-                    .process
-                    .as_mut()
-                    .expect("a live session has a process");
-                match process.finish_turn().await {
-                    Ok(()) => process.send_user(content),
+            Plan::Resume {
+                session_id,
+                content,
+            } => {
+                let finished = match state.process.as_mut() {
+                    Some(process) => process.finish_turn().await,
+                    None => Ok(()),
+                };
+                match finished {
+                    // A fork leaves the session that wrote the transcript's latest reply
+                    // ending at that reply, even if this turn never reaches the transcript.
+                    Ok(()) => spawn(
+                        &run,
+                        &mut state,
+                        &turn,
+                        SessionStart::Fork {
+                            from: session_id,
+                            id: uuid::Uuid::new_v4().to_string(),
+                        },
+                        content,
+                    )?,
                     Err(error) => {
                         eprintln!(
                             "sprocket-agent: {error:#}; replaying the conversation in a new Claude Code session"
@@ -683,16 +699,6 @@ impl TurnStream {
                     }
                 }
             }
-            Plan::Resume {
-                session_id,
-                content,
-            } => spawn(
-                &run,
-                &mut state,
-                &turn,
-                SessionStart::Resume(session_id),
-                content,
-            )?,
             Plan::Fresh => spawn_fresh(&run, &mut state, &turn)?,
         }
         expect_turn(&mut state, &turn);

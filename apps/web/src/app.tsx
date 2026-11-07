@@ -355,6 +355,7 @@ export default function App({
 	const savedProviders =
 		providerConfiguration.status === 'loaded' ? providerConfiguration.value : null;
 
+	const savedProvidersRef = useLatest(savedProviders);
 	const openAiConfigured = savedProviders?.openai === true;
 	const claudeTokenSaved = savedProviders?.claude === true;
 
@@ -1403,8 +1404,9 @@ export default function App({
 		provider: 'openai' | 'claude';
 		configured: boolean;
 	}) {
-		if (savedProviders)
-			setProviderConfiguration({ ...savedProviders, [change.provider]: change.configured });
+		const saved = savedProvidersRef.current;
+
+		if (saved) setProviderConfiguration({ ...saved, [change.provider]: change.configured });
 	}
 
 	function handleClaudeCodeStatusChange(status: ClaudeCodeStatus) {

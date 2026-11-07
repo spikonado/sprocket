@@ -191,8 +191,13 @@ async fn detect() -> Detected {
 /// desktop often get a `PATH` without it.
 fn candidates() -> Vec<PathBuf> {
     let name = format!("claude{}", std::env::consts::EXE_SUFFIX);
+    // Runs start Claude Code from the workspace, where a relative entry names another file.
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect())
+        .map(|path| {
+            std::env::split_paths(&path)
+                .filter(|dir| dir.is_absolute())
+                .collect()
+        })
         .unwrap_or_default();
     if let Some(home) = sprocket_workspace::home_dir() {
         dirs.push(home.join(".local").join("bin"));

@@ -21,13 +21,13 @@ const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 pub(super) enum SessionStart {
     New(String),
-    Resume(String),
+    Fork { from: String, id: String },
 }
 
 impl SessionStart {
     pub(super) fn id(&self) -> &str {
         match self {
-            Self::New(id) | Self::Resume(id) => id,
+            Self::New(id) | Self::Fork { id, .. } => id,
         }
     }
 }
@@ -239,10 +239,11 @@ fn arguments(spawn: &Spawn<'_>, system_prompt: &Path) -> Vec<OsString> {
     if let Some(effort) = spawn.effort {
         arguments.push(format!("--effort={effort}").into());
     }
-    arguments.push(match &spawn.session {
-        SessionStart::New(id) => format!("--session-id={id}").into(),
-        SessionStart::Resume(id) => format!("--resume={id}").into(),
-    });
+    if let SessionStart::Fork { from, .. } = &spawn.session {
+        arguments.push(format!("--resume={from}").into());
+        arguments.push("--fork-session".into());
+    }
+    arguments.push(format!("--session-id={}", spawn.session.id()).into());
     arguments
 }
 
