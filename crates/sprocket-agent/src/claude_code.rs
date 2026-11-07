@@ -311,7 +311,7 @@ fn plan(turn: &Turn, live: Option<&LiveSession>, resume: Option<&ResumePoint>) -
         }
     }
     if let Some(resume) = resume.filter(|resume| resume.model == turn.launch.model)
-        && let Some(content) = after_last_reply(turn).and_then(new_user_content)
+        && let Some(content) = after_last_reply(turn).and_then(resumed_content)
     {
         return Plan::Resume {
             session_id: resume.session_id.clone(),
@@ -363,6 +363,23 @@ fn new_user_content(tail: &[Value]) -> Option<Vec<Value>> {
     let content: Vec<Value> = blocks(tail).cloned().collect();
     (!content.is_empty() && content.iter().all(|block| block["type"] != "tool_result"))
         .then_some(content)
+}
+
+/// An interrupt makes Claude Code reject its pending tool calls, so Sprocket's own results
+/// for them go in as text.
+fn resumed_content(tail: &[Value]) -> Option<Vec<Value>> {
+    let (results, prompt): (Vec<&Value>, Vec<&Value>) =
+        blocks(tail).partition(|block| block["type"] == "tool_result");
+    let mut content = Vec::new();
+    if !results.is_empty() {
+        let mut text = String::from("Sprocket recorded these results for your tool calls:\n");
+        for result in results {
+            render_block(result, &mut text, &mut content);
+        }
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    content.extend(prompt.into_iter().cloned());
+    (!content.is_empty()).then_some(content)
 }
 
 /// One user message that carries a conversation Claude Code didn't write. The latest user

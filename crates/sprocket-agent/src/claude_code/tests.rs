@@ -112,7 +112,12 @@ fn the_latest_reply_names_the_session_to_resume() {
 
     let reply = json!({ "role": "assistant", "content": [{ "type": "text", "text": "Hello" }] });
     let next = turn(json!([user("Hi"), reply, user("Thanks")]));
-    let after_tools = turn(json!([user("Hi"), tool_call("call"), tool_result("call")]));
+    let after_tools = turn(json!([
+        user("Hi"),
+        tool_call("call"),
+        tool_result("call"),
+        user("Thanks")
+    ]));
 
     assert_eq!(
         plan(&next, None, Some(&resume)),
@@ -121,7 +126,16 @@ fn the_latest_reply_names_the_session_to_resume() {
             content: vec![json!({ "type": "text", "text": "Thanks" })],
         }
     );
-    assert_eq!(plan(&after_tools, None, Some(&resume)), Plan::Fresh);
+    assert_eq!(
+        plan(&after_tools, None, Some(&resume)),
+        Plan::Resume {
+            session_id: SESSION.to_string(),
+            content: vec![
+                json!({ "type": "text", "text": "Sprocket recorded these results for your tool calls:\n<tool_result id=\"call\">\nCargo.toml\n</tool_result>\n" }),
+                json!({ "type": "text", "text": "Thanks" }),
+            ],
+        }
+    );
 }
 
 #[test]
