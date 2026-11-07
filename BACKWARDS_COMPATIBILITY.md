@@ -146,7 +146,7 @@ Older `subscriptions` rows carry `quotaGeneration` and `quotaTransitionAt`, whic
 
 ### Rate limiter usage buckets
 
-Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of the `rateLimiter` component, so `convex.config.ts` keeps it mounted and `test.setup.ts` keeps registering it. `migrations:copyRateLimiterUsage` adds each user's current-window bucket to their `usage` row, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration, unmount the component (which deletes its data), and drop the `@convex-dev/rate-limiter` dependency.
+Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of the `rateLimiter` component. Until a window has a `usage` row, `lib/quota.ts` reads its usage from `lib/legacyUsage.ts`, and the first charge copies it into the new row. Every window open at this deploy ends within 32 days. In any deploy at least 32 days after this one reaches production, remove `lib/legacyUsage.ts` and its fallback, the `app.use(rateLimiter)` mount in `convex.config.ts` (which deletes the component's data), the `rateLimiterTest.register` call in `test.setup.ts`, the `@convex-dev/rate-limiter` dependency, its `vite.config.ts` entry, and the legacy usage test in `subscriptionUsage.test.ts`.
 
 ### Retired Prava mandate rows
 

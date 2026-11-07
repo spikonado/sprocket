@@ -1,6 +1,8 @@
+import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { posthog } from '@convex/lib/analytics';
-import { billingWindow, type BillingWindowSubscription } from '@convex/lib/billingWindows';
+import { billingWindow } from '@convex/lib/billingWindows';
+import { legacyUsage } from '@convex/lib/legacyUsage';
 import { ensureSubscription, resolveTierLimits, type SubscriptionTier } from '@convex/lib/tiers';
 
 const SECOND = 1_000;
@@ -8,55 +10,35 @@ const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-async function usageRow(ctx: QueryCtx, userId: string, windowStart: number) {
-	return await ctx.db
-		.query('usage')
-		.withIndex('by_userId_and_windowStart', (q) =>
-			q.eq('userId', userId).eq('windowStart', windowStart)
-		)
-		.unique();
-}
-
 export async function readUsage(
 	ctx: QueryCtx,
 	userId: string,
-	subscription: BillingWindowSubscription | null,
+	subscription: Doc<'subscriptions'> | null,
 	now: number
-): Promise<{ used: number; resetsAt: number }> {
+) {
 	const window = billingWindow(subscription, now);
 
-	return { used: (await usageRow(ctx, userId, window.start))?.used ?? 0, resetsAt: window.end };
+	const row = await ctx.db
+		.query('usage')
+		.withIndex('by_userId_and_windowStart', (q) =>
+			q.eq('userId', userId).eq('windowStart', window.start)
+		)
+		.unique();
+
+	const used =
+		row?.used ?? (await legacyUsage(ctx, userId, window.start, subscription?.quotaResetAt));
+
+	return { window, row, used };
 }
 
-/** Returns the usage recorded in the window before these units. */
-export async function addUsage(
-	ctx: MutationCtx,
-	userId: string,
-	windowStart: number,
-	units: number
-): Promise<number> {
-	const row = await usageRow(ctx, userId, windowStart);
+/** Clears every window, including a paid term that resumes after a hold. */
+export async function resetUsage(ctx: MutationCtx, userId: string): Promise<void> {
+	const rows = await ctx.db
+		.query('usage')
+		.withIndex('by_userId_and_windowStart', (q) => q.eq('userId', userId))
+		.collect();
 
-	if (row) {
-		await ctx.db.patch('usage', row._id, { used: row.used + units });
-
-		return row.used;
-	}
-
-	await ctx.db.insert('usage', { userId, windowStart, used: units });
-
-	return 0;
-}
-
-export async function resetUsage(
-	ctx: MutationCtx,
-	userId: string,
-	subscription: BillingWindowSubscription,
-	now: number
-): Promise<void> {
-	const row = await usageRow(ctx, userId, billingWindow(subscription, now).start);
-
-	if (row) await ctx.db.delete('usage', row._id);
+	for (const row of rows) await ctx.db.delete('usage', row._id);
 }
 
 function formatRetryAfter(milliseconds: number): string {
@@ -91,14 +73,14 @@ export async function gatewayQuotaStatus(
 	const now = Date.now();
 	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 	const { modelUsage: limit } = await resolveTierLimits(ctx, tier);
-	const { used, resetsAt } = await readUsage(ctx, userId, subscription, now);
+	const { used, window } = await readUsage(ctx, userId, subscription, now);
 
 	if (used < limit) return { tier, exhausted: false };
 
 	return {
 		tier,
 		exhausted: true,
-		message: `Usage limit reached. Try again in ${formatRetryAfter(resetsAt - now)}.`
+		message: `Usage limit reached. Try again in ${formatRetryAfter(window.end - now)}.`
 	};
 }
 
@@ -107,9 +89,12 @@ export async function chargeUsage(ctx: MutationCtx, userId: string, units: numbe
 	const now = Date.now();
 	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 	const { modelUsage: limit } = await resolveTierLimits(ctx, tier);
-	const usedBefore = await addUsage(ctx, userId, billingWindow(subscription, now).start, units);
+	const { window, row, used } = await readUsage(ctx, userId, subscription, now);
 
-	if (usedBefore < limit && usedBefore + units >= limit) {
+	if (row) await ctx.db.patch('usage', row._id, { used: used + units });
+	else await ctx.db.insert('usage', { userId, windowStart: window.start, used: used + units });
+
+	if (used < limit && used + units >= limit) {
 		await posthog.capture(ctx, {
 			distinctId: userId,
 			event: 'quota_exhausted',
