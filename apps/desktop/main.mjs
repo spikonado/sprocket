@@ -96,6 +96,13 @@ function reportFatalError(title, error) {
 	}
 }
 
+/** Quits without the unsaved-changes prompt, because choosing Stay would leave a window with no server. */
+function fatalQuit(title, error) {
+	reportFatalError(title, error);
+	hasUnsavedChanges = false;
+	app.quit();
+}
+
 function requireTrustedRenderer(event) {
 	let senderOrigin;
 
@@ -261,8 +268,7 @@ async function startLocalServer() {
 	});
 	serverProcess.once('error', (error) => {
 		if (!isStoppingServer()) {
-			reportFatalError('Failed to start Sprocket server', error);
-			app.quit();
+			fatalQuit('Failed to start Sprocket server', error);
 		}
 	});
 
@@ -305,11 +311,10 @@ async function startLocalServer() {
 			? `The local server exited via signal ${signal}.`
 			: `The local server exited with code ${code ?? 0}.`;
 
-		reportFatalError(
+		fatalQuit(
 			'Sprocket server stopped',
 			new Error(`${exitReason}\n\n${serverStderrTail.trim()}`.trim())
 		);
-		app.quit();
 	});
 
 	await waitForServerReady(fallbackBaseUrl);
@@ -466,8 +471,8 @@ function createMainWindow() {
 	});
 
 	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
-		reportFatalError('Failed to load Sprocket', error);
-		app.quit();
+		if (mainWindow.isDestroyed() || mainWindow !== mainWindowRef) return;
+		fatalQuit('Failed to load Sprocket', error);
 	});
 
 	if (isDevelopment) {
@@ -566,8 +571,7 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 			}
 		}
 	} catch (error) {
-		reportFatalError('Failed to install Sprocket update', error);
-		app.quit();
+		fatalQuit('Failed to install Sprocket update', error);
 	}
 
 	return updates.getState();
@@ -684,8 +688,7 @@ if (hasSingleInstanceLock) {
 			updateTimer.unref();
 		})
 		.catch((error) => {
-			reportFatalError('Failed to start Sprocket', error);
-			app.quit();
+			fatalQuit('Failed to start Sprocket', error);
 		});
 
 	app.on('activate', showDesktopApp);
