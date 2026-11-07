@@ -40,6 +40,8 @@ async function billingFixture() {
 
 		if (path === '/customers') return Response.json({ customer_id: 'cus_owner' });
 
+		if (path === '/subscriptions') return Response.json({ items: [] });
+
 		if (path.startsWith('/products/')) {
 			return Response.json({
 				product_id: path.split('/').at(-1),
@@ -81,6 +83,8 @@ function stubDodoCheckoutCreates(
 		const path = new URL(request.url).pathname;
 
 		if (path === '/customers') return Response.json({ customer_id: 'cus_owner' });
+
+		if (path === '/subscriptions') return Response.json({ items: [] });
 
 		if (path.startsWith('/products/')) {
 			return Response.json({
