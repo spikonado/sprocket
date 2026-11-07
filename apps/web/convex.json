@@ -9,7 +9,7 @@
 					"http://localhost:5173/callback",
 					"http://localhost:4321/pricing/callback",
 					"http://127.0.0.1:4321/pricing/callback",
-					"https://spikonado.com/pricing/callback",
+					"https://usesprocket.dev/pricing/callback",
 					"http://127.0.0.1:*/api/auth/desktop-login/callback"
 				],
 				"appHomepageUrl": "http://localhost:5173",
@@ -17,7 +17,7 @@
 					"http://localhost:5173",
 					"http://localhost:4321",
 					"http://127.0.0.1:4321",
-					"https://spikonado.com"
+					"https://usesprocket.dev"
 				]
 			}
 		}
