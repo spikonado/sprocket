@@ -1,0 +1,70 @@
+---
+import AppWindow from '@/components/sprocket/app-window.astro';
+import Step from '@/components/sprocket/mock-step.astro';
+import { cn } from '@/utils';
+
+const options = [
+	'Desktop app on your laptop',
+	'Web page served by the robot',
+	'Phone app',
+	'Let Sprocket decide'
+];
+const chosen = 1;
+---
+
+<AppWindow
+	thread="Telemetry dashboard"
+	label="Sprocket asking a multiple-choice question about where a telemetry dashboard should run before it starts building"
+>
+	<Step step={0} kind="user">Add a dashboard for the robot's telemetry.</Step>
+	<Step step={1} kind="question">Waiting for your answer</Step>
+	<Step step={2} kind="text">
+		<div class="rounded-xl border border-border/80 bg-background/50 p-3">
+			<p class="font-medium">Where should the dashboard run?</p>
+			<ul class="mt-2 space-y-1.5">
+				{
+					options.map((option, index) => (
+						<li
+							class={cn(
+								'flex items-center gap-2 rounded-lg border px-2.5 py-1.5',
+								index === chosen
+									? 'question-chosen border-border/80'
+									: 'border-border/80 text-muted-foreground'
+							)}
+						>
+							<span class="font-mono text-xs text-muted-foreground">{index + 1}</span>
+							{option}
+						</li>
+					))
+				}
+			</ul>
+		</div>
+	</Step>
+	<Step step={4} kind="done">Answered "Web page served by the robot"</Step>
+	<Step step={5} kind="text" class="mt-1">
+		I'll serve the dashboard from the robot over Wi-Fi, so any browser on your network can open it.
+	</Step>
+</AppWindow>
+
+<style>
+	@keyframes question-choose {
+		to {
+			border-color: var(--accent-strong);
+			background-color: var(--accent-soft);
+		}
+	}
+
+	.question-chosen {
+		border-color: var(--accent-strong);
+		background-color: var(--accent-soft);
+	}
+
+	:global([data-mock][data-animate]) .question-chosen {
+		border-color: var(--border);
+		background-color: transparent;
+	}
+
+	:global([data-mock][data-animate].is-playing) .question-chosen {
+		animation: question-choose 0.3s 2.3s ease-out forwards;
+	}
+</style>

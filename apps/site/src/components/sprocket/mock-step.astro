@@ -1,0 +1,58 @@
+---
+import LineIcon, { type LineIconName } from '@/components/line-icon.astro';
+import { cn } from '@/utils';
+
+type Kind = 'user' | 'text' | 'command' | 'file' | 'web' | 'question' | 'agent' | 'done';
+
+interface Props {
+	step: number;
+	kind: Kind;
+	class?: string;
+}
+
+const { step, kind, class: className } = Astro.props;
+
+const icons: Record<Exclude<Kind, 'user' | 'text'>, LineIconName> = {
+	command: 'terminal',
+	file: 'file',
+	web: 'globe',
+	question: 'question',
+	agent: 'chevron',
+	done: 'check'
+};
+const style = `--step:${step}`;
+---
+
+{
+	kind === 'user' ? (
+		<p
+			data-step
+			style={style}
+			class={cn(
+				'ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-accent-soft px-3.5 py-2',
+				className
+			)}
+		>
+			<slot />
+		</p>
+	) : kind === 'text' ? (
+		<div data-step style={style} class={className}>
+			<slot />
+		</div>
+	) : (
+		<p
+			data-step
+			style={style}
+			class={cn(
+				'flex min-w-0 items-center gap-2 text-muted-foreground',
+				kind === 'done' && 'text-accent-strong',
+				className
+			)}
+		>
+			<LineIcon name={icons[kind]} class="h-3.5 w-3.5 shrink-0" />
+			<span class="truncate">
+				<slot />
+			</span>
+		</p>
+	)
+}

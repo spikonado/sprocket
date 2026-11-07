@@ -1,0 +1,108 @@
+@import 'tailwindcss';
+
+:root {
+	/* Soft sage parchment - PostHog-adjacent, not cream */
+	--background: oklch(0.955 0.014 130);
+	--foreground: oklch(0.18 0.02 260);
+	--surface: oklch(0.99 0.004 130);
+	--muted-foreground: oklch(0.48 0.02 260);
+	--border: oklch(0.88 0.012 130);
+	--ring: oklch(0.72 0.08 230);
+
+	/* Logo-aligned sky blue */
+	--accent: oklch(0.72 0.1 230);
+	--accent-strong: oklch(0.52 0.16 250);
+	--accent-soft: oklch(0.92 0.04 230);
+
+	/* Lighter blue-green fill for install controls */
+	--action-soft: oklch(0.955 0.03 185);
+	--action-soft-hover: oklch(0.93 0.035 185);
+	/* Dark surface for product screenshots */
+	--ink: oklch(0.16 0.015 40);
+}
+
+@theme inline {
+	--font-sans: 'DM Sans Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-brand: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-surface: var(--surface);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-border: var(--border);
+	--color-ring: var(--ring);
+	--color-accent: var(--accent);
+	--color-accent-strong: var(--accent-strong);
+	--color-accent-soft: var(--accent-soft);
+	--color-action-soft: var(--action-soft);
+	--color-action-soft-hover: var(--action-soft-hover);
+	--color-ink: var(--ink);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+
+	html {
+		scroll-behavior: smooth;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		html {
+			scroll-behavior: auto;
+		}
+	}
+
+	body {
+		@apply bg-background font-sans text-foreground antialiased;
+	}
+
+	::selection {
+		background: var(--accent-soft);
+		color: var(--foreground);
+	}
+}
+
+@layer utilities {
+	/* Marker sits in the mid-line so line boxes don't clip neighboring descenders. */
+	.mark-accent {
+		color: var(--accent-strong);
+		padding-inline: 0.2em;
+		border-radius: 0.25rem;
+		background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
+		background-repeat: no-repeat;
+		background-size: 100% 0.72em;
+		background-position: 0 0.78em;
+		box-decoration-break: clone;
+		-webkit-box-decoration-break: clone;
+	}
+	.atmosphere {
+		background-color: var(--background);
+		background-image:
+			radial-gradient(ellipse 70% 55% at 85% 15%, oklch(0.72 0.1 230 / 0.14), transparent 58%),
+			radial-gradient(ellipse 50% 45% at 10% 85%, oklch(0.72 0.1 230 / 0.08), transparent 55%),
+			linear-gradient(
+				180deg,
+				oklch(0.97 0.01 130) 0%,
+				var(--background) 42%,
+				var(--background) 100%
+			);
+	}
+
+	/* Soft construction grid - Spikonado atmosphere without the rainbow sweep. */
+	.hero-mesh {
+		background-image:
+			linear-gradient(to right, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px),
+			linear-gradient(to bottom, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px);
+		background-size: 56px 56px;
+		mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, black 15%, transparent 70%);
+	}
+
+	.hero-orb {
+		background:
+			radial-gradient(circle at 50% 50%, oklch(0.72 0.1 230 / 0.22), transparent 68%),
+			radial-gradient(circle at 30% 70%, oklch(0.85 0.05 230 / 0.12), transparent 55%);
+		filter: blur(8px);
+	}
+}
