@@ -546,7 +546,7 @@ async fn launch_queued_child(
         context
             .runtime
             .with_execution_secret(child_execution_secret.to_string())
-            .finalize_queued_run(&created.run_id, &message, RunStatus::Failed, Some(&message))
+            .finalize_queued_run(&created.run_id, RunStatus::Failed, Some(&message))
             .await
             .map_err(tool_error)?;
         return Err(tool_error(error));

@@ -137,12 +137,11 @@ async fn fail_run_before_start(
     run_id: &str,
     error: &anyhow::Error,
 ) -> anyhow::Result<bool> {
-    let message = format!("Run failed before the model started: {error}");
     let last_error = error.to_string();
     cleanup_twice(
         &format!("queued run cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || runtime.finalize_queued_run(run_id, &message, RunStatus::Failed, Some(&last_error)),
+        || runtime.finalize_queued_run(run_id, RunStatus::Failed, Some(&last_error)),
     )
     .await
 }
@@ -164,13 +163,12 @@ async fn finalize_claim_failure(
     run_id: &str,
     claim_id: &str,
     error: &anyhow::Error,
-    text: &str,
 ) -> anyhow::Result<()> {
     let last_error = error.to_string();
     let accepted = cleanup_twice(
         &format!("claim failure cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || runtime.finalize_claim_failure(run_id, claim_id, text, &last_error),
+        || runtime.finalize_claim_failure(run_id, claim_id, &last_error),
     )
     .await?;
     if !accepted {
@@ -187,8 +185,7 @@ async fn abort_after_claim(
     claim_id: &str,
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
-    let text = format!("Run aborted: {error:#}");
-    match finalize_claim_failure(runtime, run_id, claim_id, &error, &text).await {
+    match finalize_claim_failure(runtime, run_id, claim_id, &error).await {
         Ok(()) => Err(error),
         Err(cleanup_error) => Err(anyhow!(
             "{error}; additionally failed to durably terminalize the run: {cleanup_error}"
@@ -217,7 +214,7 @@ async fn finalize_run(
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
     let accepted = runtime
-        .finalize_run(run_id, claim_id, "", status, error_message)
+        .finalize_run(run_id, claim_id, status, error_message)
         .await
         .map_err(|error| anyhow!("failed to finalize {status} run: {error}"))?;
     if !accepted {
@@ -312,9 +309,8 @@ async fn claim_run(
                     let claim_error = anyhow!(
                         "failed to claim run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
                     );
-                    let text = format!("Run failed before the model started: {claim_error}");
                     if let Err(cleanup_error) =
-                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error, &text).await
+                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error).await
                     {
                         return Err(anyhow!(
                             "{claim_error}; additionally failed to durably terminalize the run: {cleanup_error}"
@@ -575,12 +571,11 @@ pub async fn finalize_failed_start(
     let startup_error = format!("{startup_error:#}");
     let runtime = RuntimeClient::from_request(&request).await?;
     runtime.client.clear_auth().await;
-    let text = format!("Run failed before the model started: {startup_error}");
     let deadline = Instant::now() + START_FAILURE_RECONCILE_TIMEOUT;
     loop {
         let result = timeout(
             START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-            runtime.finalize_failed_start(&request, &text, &startup_error),
+            runtime.finalize_failed_start(&request, &startup_error),
         )
         .await;
         match result {
@@ -830,7 +825,7 @@ pub async fn run_agent(
             tokio::select! {
                 biased;
                 _ = request.cancellation.cancelled() => {
-                    runtime.finalize_queued_run(&run_id, "", RunStatus::Cancelled, None).await?;
+                    runtime.finalize_queued_run(&run_id, RunStatus::Cancelled, None).await?;
                     return Ok(());
                 }
                 update = updates.next() => {

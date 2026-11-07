@@ -429,7 +429,6 @@ export async function finalizeFailedQueuedStart(
 		completionProvider?: CompletionProvider;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
 		fastMode: boolean;
-		text: string;
 		lastError: string;
 		executionSecret: string;
 	}

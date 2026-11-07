@@ -191,7 +191,6 @@ describe('agentQuestions', () => {
 		});
 
 		expect(timedSnapshot?.status).toBe('timedOut');
-		expect(timedSnapshot?.answeredAt).toBeTypeOf('number');
 
 		vi.useRealTimers();
 	});
@@ -268,7 +267,6 @@ describe('agentQuestions', () => {
 			});
 
 			expect(snapshot?.status).toBe('timedOut');
-			expect(snapshot?.answeredAt).toBe(created.timeoutAt);
 
 			expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toBeNull();
 
@@ -519,7 +517,6 @@ describe('agentQuestions', () => {
 				status: 'answered',
 				answer: { optionId: 'yes', optionLabel: 'Yes', text: 'stored once' }
 			});
-			expect(snapshot?.answeredAt).toBeTypeOf('number');
 
 			if (previous !== undefined) expect(snapshot).toEqual(previous);
 			previous = snapshot;

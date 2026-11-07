@@ -60,6 +60,10 @@ Released agents report claim lease loss through `agentRuntime.finalizeClaimFailu
 
 Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `subagents:createOrSend`, so their runs record the prompt at creation and return it as `promptPart`. They also read `prompt` from `subagents:recoverSubmission`, send `beforePrompt: true` to `saveContextHandoff` and `omitReasoningReplay` (which places the handoff cutoff before the recorded prompt), and send `prompt` and `storageIds` to `finalizeFailedStart`, which ignores them. Once those agents age out, make `deferPrompt` the only path and remove `promptPart`, the `recoverSubmission` prompt, `beforePrompt`, and the ignored arguments.
 
+### Run finalization text
+
+Released agents send `text` to `agentRuntime.finalizeExecutorRun`, `finalizeFailedStart` and `finalizeClaimFailure`. All three accept and ignore it. Remove the argument once those agents age out.
+
 ### Processed-token usage
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
@@ -139,6 +143,10 @@ Older subscription rows, including operator grants and free bootstrap rows, lack
 ### Hosted parse upload URLs
 
 `hostedParseRequests` rows from before `createUpload` stopped storing upload URLs carry `uploadUrl`, so the schema keeps it optional. The hourly `hostedParse.cleanupExpired` cron deletes every row within two hours of its creation. Drop the field from the schema in any deploy that lands two hours after this one.
+
+### Question settle timestamps
+
+Older `agentQuestions` rows carry an `answeredAt` that nothing reads, so the schema keeps it optional. `migrations:dropQuestionAnsweredAt` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
 
 ### Retired Prava mandate rows
 

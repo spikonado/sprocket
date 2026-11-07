@@ -955,7 +955,7 @@ export const finalizeExecutorRun = mutation({
 		expectedStatus: v.optional(vRunStatus),
 		expectedClaimId: v.optional(v.string()),
 		runId: v.id('runs'),
-		text: v.string(),
+		text: v.optional(v.string()),
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string()),
 		executionSecret: v.string()
@@ -996,7 +996,7 @@ export const finalizeFailedStart = mutation({
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
-		text: v.string(),
+		text: v.optional(v.string()),
 		lastError: v.string(),
 		executionSecret: v.string()
 	},
@@ -1014,7 +1014,7 @@ export const finalizeClaimFailure = mutation({
 	args: {
 		claimId: v.string(),
 		runId: v.id('runs'),
-		text: v.string(),
+		text: v.optional(v.string()),
 		lastError: v.string(),
 		executionSecret: v.string()
 	},
