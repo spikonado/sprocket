@@ -18,6 +18,25 @@ fn generation_options_map_reasoning_effort() {
 }
 
 #[test]
+fn fast_mode_sends_each_providers_service_tier() {
+    use crate::types::CompletionProvider;
+    for (provider, tier) in [
+        (CompletionProvider::Spikonado, "fast"),
+        (CompletionProvider::Openai, "priority"),
+        (CompletionProvider::Chatgpt, "priority"),
+    ] {
+        assert_eq!(
+            super::service_tier_params(provider, true),
+            serde_json::json!({ "service_tier": tier })
+        );
+        assert_eq!(
+            super::service_tier_params(provider, false),
+            serde_json::json!({})
+        );
+    }
+}
+
+#[test]
 fn live_projection_omits_empty_reasoning_without_removing_durable_state() {
     let parts = vec![
         LiveAssistantPart::Reasoning {
