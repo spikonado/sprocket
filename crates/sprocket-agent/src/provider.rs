@@ -295,6 +295,8 @@ impl AgentProvider {
                 }
             }
         };
+        // Models started later join mid-run, after replies the resumed session didn't write.
+        self.claude_resume = None;
         match run_with_completion_model(model, runtime, request, self, switch, omit_prior_reasoning)
             .await
         {
