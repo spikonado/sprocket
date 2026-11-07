@@ -28,6 +28,7 @@ import {
 	type SubscriptionPayload
 } from '@convex/lib/subscriptionProjection';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
+import { resetUsage } from '@convex/lib/quota';
 import {
 	accessPhaseAt,
 	displayAccessPhase,
@@ -1163,6 +1164,7 @@ type ProjectionWrite = {
 	linkCustomer: { userId: Id<'users'>; dodoCustomerId: string } | null;
 	supersededDodoSubscriptionId: string | null;
 	reconcileAfterWrite: boolean;
+	resetUsage: boolean;
 	outcome: 'applied' | 'noop';
 };
 
@@ -1444,8 +1446,8 @@ async function planSubscriptionProjection(
 
 	// Usage resets once per confirmed effective tier change or new subscription.
 	// Renewals, status-only events, scheduled changes, and unchanged-product
-	// remaps keep the current reset. Each reset gets a distinct timestamp
-	// because it keys the usage bucket.
+	// remaps keep the current reset. Each reset gets a distinct timestamp so
+	// a changed quotaResetAt marks exactly one usage reset.
 	const isPlanChange = previousTier !== undefined && previousTier !== tier;
 
 	const quotaResetAt =
@@ -1539,6 +1541,7 @@ async function planSubscriptionProjection(
 			access.accessPhase === 'none' &&
 			!terminalConfirmed &&
 			(!sameIdentity || existing.accessPhase !== 'none' || existing.status !== effectiveStatus),
+		resetUsage: quotaResetAt !== existing?.quotaResetAt,
 		outcome: matches ? 'noop' : 'applied'
 	};
 }
@@ -1602,6 +1605,8 @@ async function writeProjectedSubscription(
 	const subscriptionId = plan.existingId ?? (await ctx.db.insert('subscriptions', subscription));
 
 	if (plan.existingId) await ctx.db.replace('subscriptions', subscriptionId, subscription);
+
+	if (plan.resetUsage) await resetUsage(ctx, subscription.userId, subscription, plan.now);
 
 	await scheduleSubscriptionExpiry(ctx, { _id: subscriptionId, ...subscription });
 

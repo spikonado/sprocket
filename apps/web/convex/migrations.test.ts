@@ -1,6 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import { internal } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread } from '@convex/test.setup';
+import { RateLimiter } from '@convex-dev/rate-limiter';
+import { components, internal } from '@convex/_generated/api';
+import { billingWindow } from '@convex/lib/billingWindows';
+import { chargeUsage, readUsage } from '@convex/lib/quota';
+import { initConvexTest, seedOwnedThread, seedTiers } from '@convex/test.setup';
 
 test('run backfills tool invocation IDs from source keys', async () => {
 	vi.useFakeTimers();
@@ -259,5 +262,44 @@ test('run removes stored quota generations and keeps the usage reset key', async
 	expect(subscription).not.toHaveProperty('quotaGeneration');
 	expect(subscription).not.toHaveProperty('quotaTransitionAt');
 	expect(subscription?.quotaResetAt).toBe(5);
+	vi.useRealTimers();
+});
+
+test('run adds the current rate limiter bucket to the usage table', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	await seedTiers(t);
+	const userId = 'legacy_usage';
+	const capacity = 4_000_000_000_000_000;
+
+	await t.run(async (ctx) => {
+		const id = await ctx.db.insert('subscriptions', {
+			userId,
+			tier: 'free',
+			status: 'active',
+			eventAt: 0,
+			accessPhase: 'paid'
+		});
+
+		const subscription = await ctx.db.get('subscriptions', id);
+		const { start } = billingWindow(subscription, Date.now());
+
+		await new RateLimiter(components.rateLimiter, {}).limit(ctx, 'modelUsageMonthly', {
+			key: `${userId}:monthly:${start}:0`,
+			config: { kind: 'fixed window', period: 365 * 86_400_000, rate: capacity, start },
+			count: 7,
+			reserve: true
+		});
+		await chargeUsage(ctx, userId, 2);
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const usage = await t.run(async (ctx) =>
+		readUsage(ctx, userId, await ctx.db.query('subscriptions').first(), Date.now())
+	);
+
+	expect(usage.used).toBe(9);
 	vi.useRealTimers();
 });
