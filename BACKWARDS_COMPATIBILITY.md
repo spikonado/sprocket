@@ -223,7 +223,7 @@ Stored executor jobs and transcripts keep accepting these historical shapes so h
 - Retired tool kinds: the old artifact create and update tools, Browserbase `browser_observe`, `browser_act` and `browser_extract`, Firecrawl `browser_interact` and `browser_screenshot`, `screenshot_url`, and `list_connectors`.
 - Scope and thread metadata on artifact tool payloads and results.
 - `add_artifact` and `edit_artifact` jobs, from before `bind_artifact` replaced them, and the `repositoryKey`, `type`, `contentType`, `title`, `revision` and `updatedAt` fields on artifact tool results.
-- `parse_file` URL sources and legacy command results.
+- `parse_file` URL sources and legacy command results, and path sources stored as the agent passed them, which the UI resolves against the thread cwd.
 - `name` and `description` on `read_skill` results.
 - Retired Prava tool kinds `mandate_setup`, `mandate_status`, `mandate_list`, `mandate_charge` and `mandate_report`, with their payloads and results, including `mandate_status` results without `description`.
 - `merchant` on `card_checkout` results, and `{ recorded: true }` `report_order` results.

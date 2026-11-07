@@ -71,8 +71,14 @@ export function markdownFileTarget(
 
 	const path = decodeImagePath(href);
 
-	if (!path) return null;
+	return path ? fileLinkTarget(path, roots, scope) : null;
+}
 
+export function fileLinkTarget(
+	path: string,
+	roots: readonly string[],
+	scope?: MarkdownImageScope
+): MarkdownLinkTarget | null {
 	const documentPath = scope?.documentPath;
 
 	const base = documentPath

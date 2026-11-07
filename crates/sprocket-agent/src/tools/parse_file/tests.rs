@@ -339,7 +339,7 @@ async fn persist_and_replay_round_trip_from_a_local_path() {
                 Some(std::fs::canonicalize(&cache).expect("cache").as_path())
             );
             let ParseFilePersistedSource::Path { path } = source;
-            assert_eq!(path, "shot.png");
+            assert_eq!(Path::new(path), workspace.join("shot.png"));
         }
         other => panic!("expected image output, got {other:?}"),
     }

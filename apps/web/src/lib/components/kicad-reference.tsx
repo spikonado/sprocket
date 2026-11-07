@@ -1,5 +1,5 @@
 import { use } from 'react';
-import { MarkdownFileLinksContext, markdownFileTarget } from '$lib/chat/markdown-file-links';
+import { MarkdownFileLinksContext, fileLinkTarget } from '$lib/chat/markdown-file-links';
 import type { MarkdownImageScope } from '$lib/chat/markdown-images';
 import { ReferenceCard } from '$lib/components/artifact-reference';
 
@@ -11,9 +11,7 @@ export default function KicadReference({
 	imageScope?: MarkdownImageScope;
 }) {
 	const fileLinks = use(MarkdownFileLinksContext);
-	// Encoded so `#`, `?`, and `%` in filenames survive the link parsing.
-	const href = path.split('/').map(encodeURIComponent).join('/');
-	const target = fileLinks ? markdownFileTarget(href, fileLinks.roots, imageScope) : null;
+	const target = fileLinks ? fileLinkTarget(path, fileLinks.roots, imageScope) : null;
 
 	return (
 		<ReferenceCard
