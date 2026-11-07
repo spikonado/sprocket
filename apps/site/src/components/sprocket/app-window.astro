@@ -116,19 +116,20 @@ const iconProps = {
 	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 	if (!reduceMotion && 'IntersectionObserver' in window) {
-		const observer = new IntersectionObserver(
-			(entries) => {
-				for (const entry of entries) {
-					// Rewind only once a mock drops below the viewport, so it replays when scrolled down to again.
-					if (entry.intersectionRatio >= 0.35) entry.target.classList.add('is-playing');
-					else if (!entry.isIntersecting && entry.boundingClientRect.top > 0)
-						entry.target.classList.remove('is-playing');
-				}
-			},
-			{ threshold: [0, 0.35] }
-		);
-
 		for (const mock of mocks) {
+			// A mock taller than the viewport (short windows, high zoom) can never be 35% visible.
+			const cutoff = Math.min(0.35, (0.5 * window.innerHeight) / mock.offsetHeight);
+
+			const observer = new IntersectionObserver(
+				([entry]) => {
+					// Rewind only once a mock drops below the viewport, so it replays when scrolled down to again.
+					if (entry.intersectionRatio >= cutoff) mock.classList.add('is-playing');
+					else if (!entry.isIntersecting && entry.boundingClientRect.top > 0)
+						mock.classList.remove('is-playing');
+				},
+				{ threshold: [0, cutoff] }
+			);
+
 			mock.dataset.animate = '';
 			observer.observe(mock);
 		}
