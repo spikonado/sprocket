@@ -2,7 +2,6 @@
 import CopyCommand from '@/components/copy-command.svelte';
 import SprocketDownload from '@/components/sprocket-download.svelte';
 import { SPROCKET_NPM_COMMAND, type SprocketRelease } from '@/lib/sprocket-releases';
-import { marketingCopyCommandSurfaceClass } from '@/styles/marketing';
 import { cn } from '@/utils';
 
 interface Props {
@@ -28,6 +27,9 @@ const controlClass = 'h-12 w-full rounded-xl text-left sm:w-auto';
 	<CopyCommand
 		client:idle
 		command={SPROCKET_NPM_COMMAND}
-		class={cn(controlClass, 'py-0 pr-1.5', marketingCopyCommandSurfaceClass)}
+		class={cn(
+			controlClass,
+			'border-foreground/12 bg-surface py-0 pr-1.5 shadow-[0_10px_28px_-16px_oklch(0.2_0.02_260/0.55)]'
+		)}
 	/>
 </div>

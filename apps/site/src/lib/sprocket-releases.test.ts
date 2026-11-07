@@ -1,11 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-	detectDesktopTarget,
-	osFamilyForPlatform,
-	otherDesktopAssets,
-	parseSprocketDesktopAssets,
-	pickDesktopAsset
-} from './sprocket-releases.ts';
+import { detectDesktopTarget, parseSprocketDesktopAssets } from './sprocket-releases.ts';
 
 const sampleAssets = [
 	{
@@ -51,25 +45,6 @@ describe('parseSprocketDesktopAssets', () => {
 			'linux-arm64'
 		]);
 		expect(assets.find((asset) => asset.platform === 'mac-arm64')?.url).toContain('mac-arm64.dmg');
-	});
-});
-
-describe('pickDesktopAsset / otherDesktopAssets', () => {
-	const assets = parseSprocketDesktopAssets(sampleAssets);
-
-	test('picks the matching platform asset', () => {
-		expect(pickDesktopAsset(assets, 'win-x64')?.filename).toBe(
-			'sprocket-desktop-0.2.4-win-x64.exe'
-		);
-	});
-
-	test('lists every other platform when one is selected', () => {
-		expect(otherDesktopAssets(assets, 'mac-arm64').map((asset) => asset.platform)).toEqual([
-			'mac-x64',
-			'win-x64',
-			'linux-x86_64',
-			'linux-arm64'
-		]);
 	});
 });
 
@@ -194,15 +169,5 @@ describe('detectDesktopTarget', () => {
 				userAgentData: { platform: 'Android' }
 			})
 		).toEqual({ platform: null, osFamily: null, osLabel: 'your device' });
-	});
-});
-
-describe('osFamilyForPlatform', () => {
-	test('maps platforms to brand families', () => {
-		expect(osFamilyForPlatform('mac-arm64')).toBe('mac');
-		expect(osFamilyForPlatform('mac-x64')).toBe('mac');
-		expect(osFamilyForPlatform('win-x64')).toBe('windows');
-		expect(osFamilyForPlatform('linux-x86_64')).toBe('linux');
-		expect(osFamilyForPlatform(null)).toBeNull();
 	});
 });

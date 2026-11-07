@@ -1,11 +1,11 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { track } from '@/lib/analytics/client';
 	import type { AnalyticsEvents } from '@/lib/analytics/events';
 	import {
 		detectDesktopTargetAsync,
-		otherDesktopAssets,
-		pickDesktopAsset,
 		SPROCKET_RELEASES_LATEST_URL,
+		type DetectedDesktopTarget,
 		type SprocketOsFamily,
 		type SprocketRelease
 	} from '@/lib/sprocket-releases';
@@ -13,57 +13,25 @@
 	import { cn } from '@/utils';
 
 	interface Props {
-		release?: SprocketRelease | null;
-		class?: string;
-		/** Hide the alternate-platform link row (useful in tight layouts). */
-		showAlternates?: boolean;
-		buttonClass?: string;
-		alternatesClass?: string;
+		release: SprocketRelease | null;
+		showAlternates: boolean;
+		class: string;
+		buttonClass: string;
+		alternatesClass: string;
 	}
 
-	let {
-		release = null,
-		class: className = '',
-		showAlternates = true,
-		buttonClass = '',
-		alternatesClass = ''
-	}: Props = $props();
+	let { release, showAlternates, class: className, buttonClass, alternatesClass }: Props = $props();
 
-	/** null until client detection finishes — keeps SSR and first paint stable. */
-	let detected = $state(false);
-	let osLabel = $state('your OS');
-	let osFamily = $state<SprocketOsFamily | null>(null);
-	let primaryAsset = $state<ReturnType<typeof pickDesktopAsset>>(null);
-	let alternateAssets = $state<SprocketRelease['assets']>([]);
+	// Null until detection runs in the browser, so SSR and first paint match.
+	let target = $state<DetectedDesktopTarget | null>(null);
 
-	$effect(() => {
-		let cancelled = false;
-		const assets = release?.assets ?? [];
-
-		void detectDesktopTargetAsync().then((target) => {
-			if (cancelled) {
-				return;
-			}
-
-			osLabel = target.osLabel;
-			osFamily = target.osFamily;
-			primaryAsset = pickDesktopAsset(assets, target.platform);
-			alternateAssets = otherDesktopAssets(assets, target.platform);
-			detected = true;
-		});
-
-		return () => {
-			cancelled = true;
-		};
+	onMount(() => {
+		void detectDesktopTargetAsync().then((detected) => (target = detected));
 	});
 
-	const knownDesktop = $derived(detected && osFamily !== null);
-
-	const downloadHref = $derived(
-		knownDesktop && primaryAsset ? primaryAsset.url : SPROCKET_RELEASES_LATEST_URL
-	);
-
-	const downloadLabel = $derived(knownDesktop ? `Download for ${osLabel}` : 'Download desktop app');
+	const assets = $derived(release?.assets ?? []);
+	const primaryAsset = $derived(assets.find((asset) => asset.platform === target?.platform));
+	const alternateAssets = $derived(assets.filter((asset) => asset.platform !== target?.platform));
 
 	const iconClass = 'h-4 w-4 shrink-0';
 
@@ -103,19 +71,18 @@
 
 <div class={cn('min-w-0', className)}>
 	<a
-		href={downloadHref}
+		href={primaryAsset?.url ?? SPROCKET_RELEASES_LATEST_URL}
 		class={cn(marketingButtonSecondaryClass, 'w-full gap-3', buttonClass)}
-		data-detected={detected ? 'true' : 'false'}
-		{...knownDesktop && primaryAsset ? { download: primaryAsset.filename } : {}}
+		download={primaryAsset?.filename}
 		onclick={(event) =>
 			trackDownload(event, {
 				variant: 'primary',
-				platform: primaryAsset?.platform ?? osFamily ?? 'unknown',
+				platform: primaryAsset?.platform ?? target?.osFamily ?? 'unknown',
 				filename: primaryAsset?.filename
 			})}
 	>
-		{#if knownDesktop && osFamily}
-			{@render osIcon(osFamily)}
+		{#if target?.osFamily}
+			{@render osIcon(target.osFamily)}
 		{:else}
 			<span class="inline-flex items-center gap-1.5" aria-hidden="true">
 				{@render osIcon('mac')}
@@ -123,10 +90,10 @@
 				{@render osIcon('linux')}
 			</span>
 		{/if}
-		<span>{downloadLabel}</span>
+		<span>{target?.osFamily ? `Download for ${target.osLabel}` : 'Download desktop app'}</span>
 	</a>
 
-	{#if showAlternates && detected}
+	{#if showAlternates && target}
 		{#if alternateAssets.length > 0}
 			<p
 				class={cn('text-muted-foreground mt-3 font-sans text-xs leading-relaxed', alternatesClass)}

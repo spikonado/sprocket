@@ -3,8 +3,6 @@ import { join } from 'node:path';
 import type { APIRoute } from 'astro';
 import sharp from 'sharp';
 
-export const prerender = true;
-
 const ICON_SIZE = 180;
 const LOGO_SIZE = 144;
 
@@ -22,10 +20,5 @@ export const GET: APIRoute = async () => {
 		.png()
 		.toBuffer();
 
-	return new Response(new Uint8Array(png), {
-		headers: {
-			'Content-Type': 'image/png',
-			'Cache-Control': 'public, max-age=86400'
-		}
-	});
+	return new Response(new Uint8Array(png), { headers: { 'Content-Type': 'image/png' } });
 };

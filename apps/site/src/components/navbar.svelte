@@ -1,7 +1,7 @@
 <script lang="ts">
 	import logo from '@/assets/logo.svg';
 	import github from '@/assets/github_logo.svg';
-	import { lockOverlay } from '@/lib/focus-trap';
+	import { lockOverlay } from '@/lib/overlay';
 	import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
 	import { marketingBrandClass, marketingButtonPrimaryClass } from '@/styles/marketing';
 	import { cn } from '@/utils';
@@ -12,14 +12,9 @@
 	] as const;
 
 	let menuOpen = $state(false);
-	let menuButton: HTMLButtonElement | undefined = $state();
 
 	function closeMenu() {
 		menuOpen = false;
-	}
-
-	function toggleMenu() {
-		menuOpen = !menuOpen;
 	}
 </script>
 
@@ -72,13 +67,12 @@
 			</a>
 
 			<button
-				bind:this={menuButton}
 				type="button"
 				class="border-border bg-surface text-foreground hover:bg-accent-soft focus-visible:ring-ring/50 inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors focus-visible:ring-2 focus-visible:outline-none md:hidden"
 				aria-label={menuOpen ? 'Close menu' : 'Open menu'}
 				aria-expanded={menuOpen}
 				aria-controls="mobile-nav"
-				onclick={toggleMenu}
+				onclick={() => (menuOpen = !menuOpen)}
 			>
 				{#if menuOpen}
 					<svg

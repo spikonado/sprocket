@@ -1,5 +1,5 @@
 import posthog from 'posthog-js';
-import type { AnalyticsEvent, AnalyticsEvents } from '@/lib/analytics/events';
+import type { AnalyticsEvents } from '@/lib/analytics/events';
 
 const POSTHOG_KEY = import.meta.env.PUBLIC_POSTHOG_KEY?.trim();
 
@@ -48,7 +48,7 @@ export function initAnalytics(): void {
 }
 
 /** Pass `source` to record which page section the event came from. */
-export function track<E extends AnalyticsEvent>(
+export function track<E extends keyof AnalyticsEvents>(
 	event: E,
 	properties: AnalyticsEvents[E],
 	source?: Element

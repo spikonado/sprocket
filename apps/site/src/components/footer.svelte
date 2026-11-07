@@ -8,11 +8,7 @@
 	import { ORGANIZATION_NAME, ORGANIZATION_URL } from '@/lib/seo';
 	import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
 	import { cn } from '@/utils';
-	import {
-		marketingBrandClass,
-		marketingSectionBodyClass,
-		marketingSectionShellClass
-	} from '@/styles/marketing';
+	import { marketingBrandClass, marketingSectionBodyClass } from '@/styles/marketing';
 
 	const sprocketLinks = [
 		{ label: 'Home', href: '/' },
@@ -45,10 +41,7 @@
 </script>
 
 <footer
-	class={cn(
-		marketingSectionShellClass,
-		'border-border/60 border-t px-4 pt-20 pb-10 sm:px-6 sm:pt-24 lg:px-8'
-	)}
+	class="border-border/60 bg-background relative overflow-hidden border-t px-4 pt-20 pb-10 sm:px-6 sm:pt-24 lg:px-8"
 	data-ph-capture-attribute-section="footer"
 >
 	<div

@@ -20,10 +20,7 @@
 			copied = true;
 			track('install_command_copied', { command }, button);
 
-			if (copyTimer) {
-				clearTimeout(copyTimer);
-			}
-
+			clearTimeout(copyTimer);
 			copyTimer = setTimeout(() => {
 				copied = false;
 			}, 1800);

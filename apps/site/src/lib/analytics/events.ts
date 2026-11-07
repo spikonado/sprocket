@@ -23,5 +23,3 @@ export type AnalyticsEvents = {
 	pricing_activation_timed_out: { plan: string };
 	pricing_sign_in_failed: Record<string, never>;
 };
-
-export type AnalyticsEvent = keyof AnalyticsEvents;

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import screenshot from '@/assets/sprocket.webp';
 	import { track } from '@/lib/analytics/client';
-	import { lockOverlay, portal } from '@/lib/focus-trap';
+	import { lockOverlay, portal } from '@/lib/overlay';
 
 	const alt =
 		'Sprocket running parallel agent threads, showing AI cost per reply, designing a PCB in KiCad, asking questions before it guesses, keeping commands running, and connecting a ChatGPT subscription or API key';
