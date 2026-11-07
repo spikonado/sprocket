@@ -1,0 +1,20 @@
+---
+import AppWindow from '@/components/sprocket/app-window.astro';
+import Step from '@/components/sprocket/mock-step.astro';
+---
+
+<AppWindow
+	thread="IMU reads zeros"
+	label="Sprocket debugging an IMU by searching the web, reading the vendor guide and datasheet, then fixing the configuration"
+>
+	<Step step={0} kind="user">My BNO085 IMU only reads zeros on the Raspberry Pi. Why?</Step>
+	<Step step={1} kind="web">Searched the web for "BNO085 Raspberry Pi I2C"</Step>
+	<Step step={2} kind="web">Read learn.adafruit.com · BNO085 Python setup</Step>
+	<Step step={3} kind="file">Read BNO08x-datasheet.pdf · I2C interface</Step>
+	<Step step={4} kind="command">sudo nano /boot/firmware/config.txt</Step>
+	<Step step={5} kind="text" class="mt-1">
+		The Pi's I2C controller doesn't handle the BNO085's clock stretching well. I set the bus speed
+		from Adafruit's guide, and the IMU now reports orientation.
+	</Step>
+	<Step step={6} kind="done">Verified 100 Hz readings for 60 seconds</Step>
+</AppWindow>
