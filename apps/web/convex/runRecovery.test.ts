@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { LEGACY_RUN_ABANDONED_BY_AGENT, RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import {
 	abandonRun,
 	initConvexTest,
 	insertQueuedRun,
+	readTranscriptRange,
 	seedOwnedThread,
 	tickPastLastCommit
 } from './test.setup';
@@ -145,46 +145,6 @@ describe('automatic run recovery', () => {
 		).rejects.toThrow('This run cannot recover automatically.');
 	});
 
-	it('recovers a lease failure reported by a released agent before the lifecycle deadline', async () => {
-		vi.useFakeTimers();
-		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();
-		await asUser.mutation(api.agentRuntime.start, {
-			runId,
-			executionSecret: 'run-secret',
-			claimId: 'disconnected-agent'
-		});
-		await vi.advanceTimersByTimeAsync(RUN_CLAIM_LEASE_DURATION_MS - 10_000);
-
-		expect(
-			await asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
-				runId,
-				executionSecret: 'run-secret',
-				claimId: 'disconnected-agent',
-				text: `Run aborted: ${LEGACY_RUN_ABANDONED_BY_AGENT}: claim renewal timed out`,
-				lastError: LEGACY_RUN_ABANDONED_BY_AGENT
-			})
-		).toMatchObject({ accepted: true });
-		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({
-			failureKind: 'abandoned',
-			lastError: RUN_ABANDONED_BY_MACHINE
-		});
-		await vi.advanceTimersByTimeAsync(10_000);
-		await t.finishInProgressScheduledFunctions();
-		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
-			state: 'recover',
-			runId,
-			threadId
-		});
-
-		await asUser.mutation(api.machines.heartbeatProcess, {
-			machineId: queryArgs.machineId,
-			processId: 'machine-process'
-		});
-		const continuation = await insertQueuedRun(t, asUser, recoveryArgs);
-		expect(continuation.created).toBe(true);
-		expect(continuation.promptPart).toBeUndefined();
-	});
-
 	it('hands recovery ownership to a manual continuation on another machine', async () => {
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs, abandon } = await setup();
 		await abandon();
@@ -279,7 +239,7 @@ describe('automatic run recovery', () => {
 				continuationOfRunId: runId
 			})
 		).toEqual({ state: 'pending' });
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts).toHaveLength(1);
 		expect(parts.parts[0]?.runId).toBe(runId);
 	});

@@ -92,22 +92,22 @@ async fn deletion_unlinks_a_registered_symlink_without_deleting_its_target() {
 }
 
 #[tokio::test]
-async fn legacy_bindings_migrate_without_merging_colliding_files() {
+async fn colliding_bindings_load_without_merging_files() {
     let dir = tempfile::tempdir().unwrap();
     let store = ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
     tokio::fs::create_dir_all(&store.directory).await.unwrap();
     save_new_file(dir.path(), "notes.md", "untouched")
         .await
         .unwrap();
-    let legacy = serde_json::json!([
-        {"registration_id": "first-registration", "artifact_id": "first", "scope": "project",
-         "thread_id": null, "local_path": "notes.md", "content_hash": "first-baseline"},
-        {"registration_id": "second-registration", "artifact_id": "second", "scope": "thread",
-         "thread_id": "old-thread", "local_path": "./notes.md", "content_hash": "second-baseline"}
+    let colliding = serde_json::json!([
+        {"registration_id": "first-registration", "artifact_id": "first",
+         "local_path": "notes.md", "content_hash": "first-baseline"},
+        {"registration_id": "second-registration", "artifact_id": "second",
+         "local_path": "./notes.md", "content_hash": "second-baseline"}
     ]);
     tokio::fs::write(
         store.directory.join("bindings.json"),
-        serde_json::to_vec(&legacy).unwrap(),
+        serde_json::to_vec(&colliding).unwrap(),
     )
     .await
     .unwrap();
@@ -137,17 +137,6 @@ async fn legacy_bindings_migrate_without_merging_colliding_files() {
             .validate_destination(dir.path(), guard.get("second").unwrap())
             .await
             .is_err()
-    );
-    let persisted: Vec<serde_json::Value> = serde_json::from_slice(
-        &tokio::fs::read(store.directory.join("bindings.json"))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert!(
-        persisted
-            .iter()
-            .all(|row| row.get("scope").is_none() && row.get("thread_id").is_none())
     );
     let mut rebound = guard.get("second").unwrap().clone();
     rebound.local_path = "second.md".into();

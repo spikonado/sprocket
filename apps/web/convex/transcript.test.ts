@@ -9,6 +9,7 @@ import {
 	emptyCompletionAssignments,
 	initConvexTest,
 	insertQueuedRun,
+	readTranscriptRange,
 	seedOwnedThread,
 	toolTranscriptAssignment,
 	type ConvexTestInstance
@@ -41,7 +42,7 @@ describe('numbered transcript parts', () => {
 
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(1);
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 1);
 		expect(parts.parts).toHaveLength(1);
 		expect(parts.parts[0]).toMatchObject({
 			number: 0,
@@ -128,7 +129,7 @@ describe('numbered transcript parts', () => {
 		expect(again?._id).toBe(number?._id);
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(2);
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
@@ -245,7 +246,7 @@ describe('numbered transcript parts', () => {
 		});
 
 		expect(number?.number).toBe(1);
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 
 		const stored = await t.run(
@@ -259,10 +260,11 @@ describe('numbered transcript parts', () => {
 		expect(stored?.completion?.items).toEqual(expectedItems);
 		expect(parts.parts[1]?.completion?.items).toEqual(expectedItems);
 
-		const agentParts = await t.query(api.transcript.getPartsForRun, {
+		const agentParts = await t.query(api.transcript.getPartsPageForRun, {
 			runId,
 			executionSecret,
-			numbers: [1]
+			start: 1,
+			end: 2
 		});
 
 		expect(agentParts.parts[0]?.completion?.items).toEqual(parts.parts[1]?.completion?.items);
@@ -306,7 +308,7 @@ describe('numbered transcript parts', () => {
 
 		const afterStart = await asUser.query(api.transcript.getState, { threadId });
 		expect(afterStart.totalParts).toBe(2);
-		const startedParts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const startedParts = await readTranscriptRange(asUser, threadId, 0, 2);
 		const started = startedParts.parts[1];
 		const invocationId = started?.tool?.toolInvocationId;
 		expect(started).toMatchObject({
@@ -394,7 +396,7 @@ describe('numbered transcript parts', () => {
 			],
 			executionSecret
 		});
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2, 3] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 4);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'tool', 'tool', 'completion']);
 		expect(parts.parts[2]).toMatchObject({
 			sourceKey: `tool:${invocationId}:finished`,
@@ -467,7 +469,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion', 'tool']);
 		expect(parts.parts[2]?.tool).toMatchObject({ callId: 'c1', status: 'started' });
 	});
@@ -502,7 +504,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [1] });
+		const started = await readTranscriptRange(asUser, threadId, 1, 2);
 		const invocationId = started.parts[0]?.tool?.toolInvocationId;
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
@@ -514,7 +516,7 @@ describe('numbered transcript parts', () => {
 		});
 		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
 		expect(afterCancel.totalParts).toBe(3);
-		const finished = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
+		const finished = await readTranscriptRange(asUser, threadId, 2, 3);
 		expect(finished.parts[0]).toMatchObject({
 			sourceKey: `tool:${invocationId}:finished`,
 			tool: {
@@ -617,10 +619,12 @@ describe('numbered transcript parts', () => {
 				]
 			});
 
-			const parts = await asUser.query(api.transcript.getPartsForRun, {
+			const parts = await asUser.query(api.transcript.getPartsPageForRun, {
 				runId,
 				executionSecret,
-				numbers: [0, 1, 2, 3, 4]
+				start: 0,
+				end: 5,
+				order: 'asc'
 			});
 
 			expect(parts.parts.map((part) => part.kind)).toEqual([
@@ -680,10 +684,12 @@ describe('numbered transcript parts', () => {
 		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });
 		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });
 
-		const parts = await asUser.query(api.transcript.getPartsForRun, {
+		const parts = await asUser.query(api.transcript.getPartsPageForRun, {
 			runId,
 			executionSecret,
-			numbers: [1, 2]
+			start: 1,
+			end: 3,
+			order: 'asc'
 		});
 
 		expect(parts.parts.map((part) => part.tool?.status)).toEqual(['started', 'completed']);
@@ -750,7 +756,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 	});
 
@@ -782,7 +788,7 @@ describe('numbered transcript parts', () => {
 		});
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(1);
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 1);
 		expect(parts.parts[0]?.kind).toBe('prompt');
 	});
 
@@ -845,42 +851,8 @@ describe('numbered transcript parts', () => {
 
 		expect(continuation.runId).not.toBe(runId);
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
-	});
-
-	it('getParts preserves request order and skips missing numbers', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const first = await createQueuedRun(t, asUser, threadId, 'sub-a', 'secret-a', 'A');
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: first.runId,
-			text: '',
-			status: 'cancelled',
-			executionSecret: 'secret-a'
-		});
-		await createQueuedRun(t, asUser, threadId, 'sub-b', 'secret-b', 'B');
-
-		const parts = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [1, 0, 9]
-		});
-
-		expect(parts.parts.map((part) => [part.number, part.prompt?.text])).toEqual([
-			[1, 'B'],
-			[0, 'A']
-		]);
-	});
-
-	it('rejects oversized getParts requests', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		await expect(
-			asUser.query(api.transcript.getParts, {
-				threadId,
-				numbers: Array.from({ length: 101 }, (_, index) => index)
-			})
-		).rejects.toThrow(/at most 100/);
 	});
 
 	it('returns zero totalParts for a thread with no transcript state row', async () => {
@@ -944,7 +916,7 @@ describe('numbered transcript parts', () => {
 			historyFromNumber: 2,
 			contextSummary: 'Covered work is done.'
 		});
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => [part.number, part.kind])).toEqual([
 			[0, 'prompt'],
 			[1, 'completion']
@@ -1194,30 +1166,9 @@ describe('transcript attachment identity', () => {
 		return { ...owned, file, runId: created.runId, executionSecret };
 	}
 
-	it('hydrates legacy number endpoints but leaves page attachment URLs unresolved', async () => {
+	it('returns attachment metadata without URLs from page endpoints', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId, file, runId, executionSecret } = await seedAttachedPrompt(t);
-
-		const parts = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [0]
-		});
-
-		expect(parts.parts[0]?.prompt?.imageUploads[0]).toEqual({
-			name: 'file.txt',
-			mediaType: 'text/plain',
-			size: 4,
-			storageId: file.storageId,
-			url: expect.any(String)
-		});
-
-		const runParts = await t.query(api.transcript.getPartsForRun, {
-			runId,
-			executionSecret,
-			numbers: [0]
-		});
-
-		expect(runParts).toEqual(parts);
 
 		const page = await asUser.query(api.transcript.getPartsPage, { threadId, start: 0, end: 1 });
 		expect(page.parts[0]?.prompt?.imageUploads).toEqual([

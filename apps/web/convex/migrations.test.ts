@@ -257,3 +257,26 @@ test('run removes stored question settle timestamps', async () => {
 	expect(question?.status).toBe('skipped');
 	vi.useRealTimers();
 });
+
+test('run backfills missing completion providers as spikonado', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId } = await seedOwnedThread(t);
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const [thread, run] = await t.run(async (ctx) =>
+		Promise.all([
+			ctx.db.get('threadRecords', threadId),
+			ctx.db
+				.query('runs')
+				.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+				.unique()
+		])
+	);
+
+	expect(thread?.completionProvider).toBe('spikonado');
+	expect(run?.completionProvider).toBe('spikonado');
+	vi.useRealTimers();
+});

@@ -38,12 +38,7 @@ import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
-import {
-	getPromptPart,
-	loadTranscriptPartsByNumbers,
-	loadTranscriptPartsPage,
-	transcriptPartsForClient
-} from '@convex/lib/transcriptParts';
+import { getPromptPart, loadTranscriptPartsPage } from '@convex/lib/transcriptParts';
 import {
 	isRunFinalStatus,
 	vCompletionProvider,
@@ -175,7 +170,7 @@ export const createOrSend = mutation({
 		model: v.string(),
 		reasoning: vReasoningEffort,
 		fast: v.boolean(),
-		completionProvider: v.optional(vCompletionProvider),
+		completionProvider: vCompletionProvider,
 		timeoutMs: v.optional(v.number()),
 		deferPrompt: v.optional(v.boolean())
 	},
@@ -195,11 +190,6 @@ export const createOrSend = mutation({
 				args.threadId === undefined
 					? callerThread
 					: await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
-
-			const completionProvider =
-				args.completionProvider ??
-				(creating ? callerRun.completionProvider : targetThread.completionProvider) ??
-				'spikonado';
 
 			const timeoutMs = normalizeTaskTimeoutMs(args.timeoutMs);
 
@@ -245,7 +235,7 @@ export const createOrSend = mutation({
 				prompt: args.prompt,
 				imageUploadIds: [],
 				selectedModel: args.model,
-				completionProvider,
+				completionProvider: args.completionProvider,
 				reasoningEffort: args.reasoning,
 				fastMode: args.fast,
 				machineId: callerRun.machineId,
@@ -443,28 +433,6 @@ export const control = mutation({
 				answer: result.question.answer,
 				continuation: result.continuation
 			};
-		} catch (error) {
-			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
-		}
-	}
-});
-
-export const transcriptParts = mutation({
-	args: {
-		...vDescendantCaller.fields,
-		numbers: v.array(v.number())
-	},
-	returns: vTranscriptPartsResult,
-	handler: async (ctx, args) => {
-		try {
-			const thread = await requireDescendantThread(ctx, args);
-
-			const parts = await transcriptPartsForClient(
-				ctx,
-				await loadTranscriptPartsByNumbers(ctx, thread._id, args.numbers)
-			);
-
-			return { threadId: thread._id, parts };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}

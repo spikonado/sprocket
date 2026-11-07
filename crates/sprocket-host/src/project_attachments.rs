@@ -276,15 +276,7 @@ impl ProjectAttachmentStore {
             let contents = tokio::fs::read_to_string(&store_path)
                 .await
                 .with_context(|| format!("failed to read {}", store_path.display()))?;
-            let stored_json: serde_json::Value = serde_json::from_str(&contents)
-                .with_context(|| "failed to parse project attachments")?;
-            should_save = stored_json.as_array().is_some_and(|attachments| {
-                attachments.iter().any(|attachment| {
-                    attachment.get("previousRepositoryKey").is_some()
-                        || attachment.get("lastMessageSentAt").is_none()
-                })
-            });
-            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_value(stored_json)
+            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_str(&contents)
                 .with_context(|| "failed to parse project attachments")?;
             let mut sessions = self.attachments.write().await;
             for attachment in stored {

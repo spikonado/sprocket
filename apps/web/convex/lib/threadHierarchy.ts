@@ -187,19 +187,11 @@ export async function changeThreadActivity<T>(
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
 	const state = await hierarchyState(db, thread._id);
 	const descendantsActive = (state?.activeDescendantCount ?? 0) > 0;
-	const workingCount = state?.workingDescendantCount ?? 0;
 	const ownWaitingForInput = await waitingForInput(db, thread._id);
 
 	return {
 		descendantCount: state?.descendantCount ?? 0,
-		workingDescendantCount: workingCount,
-		descendantStatusCounts: {
-			queued: 0,
-			running: workingCount,
-			completed: Math.max(0, (state?.descendantCount ?? 0) - workingCount),
-			failed: 0,
-			cancelled: 0
-		},
+		workingDescendantCount: state?.workingDescendantCount ?? 0,
 		anyActive: descendantsActive || ownWaitingForInput || (await latestRunActive(db, thread._id)),
 		descendantsActive,
 		waitingForInput: ownWaitingForInput

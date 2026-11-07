@@ -2,7 +2,7 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
 import { getRunWithExecution } from '@convex/lib/runExecution';
-import { executionSecretHash, getUserId } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import {
 	getOwnedMachine,
 	isMachineActive,
@@ -66,17 +66,16 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 	await ctx.db.patch('machines', machine._id, { runIds: [] });
 }
 
-const vMachineMetadata = {
+const vRegistration = v.object({
 	machineId: v.string(),
 	friendlyName: v.string(),
 	platform: v.string(),
 	platformVersion: v.string(),
 	architecture: v.string(),
 	hostname: v.string(),
-	appVersion: v.string()
-};
-
-const vRegistration = v.object({ ...vMachineMetadata, processId: v.string() });
+	appVersion: v.string(),
+	processId: v.string()
+});
 
 const vRegistrationResult = v.union(
 	v.object({ status: v.literal('registered'), machineId: v.string(), userId: v.string() }),
@@ -181,34 +180,4 @@ export const endProcess = mutation({
 			ctx,
 			await requireMachineProcess(ctx, await getUserId(ctx), args.machineId, args.processId)
 		)
-});
-
-export const tryRegister = mutation({
-	args: { ...vMachineMetadata, credentialHash: v.string() },
-	returns: vRegistrationResult,
-	handler: async (ctx, { credentialHash, ...args }) =>
-		await registerMachine(ctx, { ...args, processId: credentialHash })
-});
-
-const vLegacyProcess = { userId: v.string(), machineId: v.string(), credential: v.string() };
-
-async function requireLegacyMachine(
-	ctx: MutationCtx,
-	args: { userId: string; machineId: string; credential: string }
-): Promise<Doc<'machines'>> {
-	const processId = await executionSecretHash(args.credential);
-
-	return await requireMachineProcess(ctx, args.userId, args.machineId, processId);
-}
-
-export const heartbeat = mutation({
-	args: vLegacyProcess,
-	returns: v.null(),
-	handler: async (ctx, args) => await heartbeatMachine(ctx, await requireLegacyMachine(ctx, args))
-});
-
-export const end = mutation({
-	args: vLegacyProcess,
-	returns: v.null(),
-	handler: async (ctx, args) => await endMachine(ctx, await requireLegacyMachine(ctx, args))
 });
