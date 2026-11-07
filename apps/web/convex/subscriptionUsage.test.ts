@@ -1,5 +1,7 @@
+import { DAY, RateLimiter } from '@convex-dev/rate-limiter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, internal } from '@convex/_generated/api';
+import { api, components, internal } from '@convex/_generated/api';
+import { billingWindow } from '@convex/lib/billingWindows';
 import { chargeUsage, gatewayQuotaStatus } from '@convex/lib/quota';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { initConvexTest, seedTiers, type ConvexTestInstance } from './test.setup';
@@ -121,6 +123,30 @@ describe('subscription and usage backend', () => {
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
 			exhausted: true
 		});
+	});
+
+	it('counts usage the rate limiter recorded before the usage table', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_legacy_usage';
+		const asUser = t.withIdentity({ subject: userId });
+		const { start } = billingWindow(null, Date.now());
+
+		await t.run((ctx) =>
+			new RateLimiter(components.rateLimiter, {}).limit(ctx, 'modelUsageMonthly', {
+				key: `${userId}:monthly:${start}:0`,
+				config: { kind: 'fixed window', period: 365 * DAY, rate: 4e15, start },
+				count: 7,
+				reserve: true
+			})
+		);
+
+		const monthlyUsage = async () =>
+			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.used;
+
+		expect(await monthlyUsage()).toBe(7);
+		await t.run((ctx) => chargeUsage(ctx, userId, 2));
+		expect(await monthlyUsage()).toBe(9);
 	});
 
 	it('rolls the monthly usage window when the client supplies a later now', async () => {

@@ -1606,7 +1606,7 @@ async function writeProjectedSubscription(
 
 	if (plan.existingId) await ctx.db.replace('subscriptions', subscriptionId, subscription);
 
-	if (plan.resetUsage) await resetUsage(ctx, subscription.userId, subscription, plan.now);
+	if (plan.resetUsage) await resetUsage(ctx, subscription.userId);
 
 	await scheduleSubscriptionExpiry(ctx, { _id: subscriptionId, ...subscription });
 

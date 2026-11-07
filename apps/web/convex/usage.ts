@@ -17,7 +17,8 @@ export const getMyUsage = query({
 		const subscription = await getSubscriptionDoc(ctx, userId);
 		const tier = enforcementTier(subscription, now);
 		const { limits, label: tierLabel } = await resolveTier(ctx, tier);
-		const { used, resetsAt } = await readUsage(ctx, userId, subscription, now);
+		const { used, window } = await readUsage(ctx, userId, subscription, now);
+		const resetsAt = window.end;
 		const exhausted = used >= limits.modelUsage;
 
 		return {
