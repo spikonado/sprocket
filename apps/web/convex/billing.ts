@@ -10,6 +10,7 @@ import {
 } from '@convex/_generated/server';
 import type { UserIdentity } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
+import { grantForPayment } from '@convex/lib/credits';
 import { readDodoEnvironment } from '@convex/lib/dodoProducts';
 import { resolvePlan } from '@convex/lib/tiers';
 import {
@@ -53,26 +54,21 @@ function pricingPageUrls(params: Record<string, string>) {
 	};
 }
 
-function checkoutMode(): DodoMode {
-	const mode = paymentsMode();
-
-	if (!env.DODO_PAYMENTS_WEBHOOK_SECRET?.trim()) {
-		throw new ConvexError('Payments are not configured.');
-	}
-
-	return mode;
-}
-
 async function startCheckout(
 	ctx: ActionCtx,
 	identity: UserIdentity,
-	mode: DodoMode,
 	{
 		productId,
 		refuseLiveSubscription,
 		pageParams
 	}: { productId: string; refuseLiveSubscription: boolean; pageParams: Record<string, string> }
 ): Promise<CheckoutStart> {
+	const mode = paymentsMode();
+
+	if (!env.DODO_PAYMENTS_WEBHOOK_SECRET?.trim()) {
+		throw new ConvexError('Payments are not configured.');
+	}
+
 	// The pricing site can start checkout before the app ever created the
 	// users row that stores the Dodo customer.
 	await ctx.runMutation(api.billing.ensureMySubscription, {});
@@ -149,8 +145,6 @@ export const checkout = action({
 
 		if (tier === 'free') throw new ConvexError('The Free tier does not use checkout.');
 
-		const mode = checkoutMode();
-
 		const productId: string | null = await ctx.runQuery(internal.pricing.getTierProduct, {
 			tierId: tier,
 			interval
@@ -160,7 +154,7 @@ export const checkout = action({
 			throw new ConvexError(`No ${interval} checkout product is configured for tier "${tier}".`);
 		}
 
-		return await startCheckout(ctx, identity, mode, {
+		return await startCheckout(ctx, identity, {
 			productId,
 			refuseLiveSubscription: true,
 			pageParams: { tier }
@@ -174,13 +168,12 @@ export const buyCredits = action({
 	returns: vCheckoutStart,
 	handler: async (ctx, { productId }): Promise<CheckoutStart> => {
 		const identity = await requireIdentity(ctx);
-		const mode = checkoutMode();
 
 		if (!(await ctx.runQuery(internal.credits.isPack, { productId }))) {
 			throw new ConvexError('Unknown credit pack.');
 		}
 
-		return await startCheckout(ctx, identity, mode, {
+		return await startCheckout(ctx, identity, {
 			productId,
 			refuseLiveSubscription: false,
 			pageParams: { pack: productId }
@@ -233,10 +226,7 @@ export const checkoutOutcome = internalQuery({
 	args: { userId: v.string(), paymentId: v.string(), now: v.number() },
 	returns: v.object({ activated: v.boolean(), creditsAdded: v.boolean() }),
 	handler: async (ctx, { userId, paymentId, now }) => {
-		const grant = await ctx.db
-			.query('creditGrants')
-			.withIndex('by_paymentId', (q) => q.eq('paymentId', paymentId))
-			.unique();
+		const grant = await grantForPayment(ctx, paymentId);
 
 		return {
 			activated: (await resolvePlan(ctx, userId, now)).subscription !== null,

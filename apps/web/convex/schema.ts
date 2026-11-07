@@ -125,7 +125,6 @@ export default defineSchema({
 		label: v.string(),
 		units: v.number(),
 		expiresAfterDays: v.number(),
-		displayOrder: v.optional(v.number()),
 		price: v.optional(vPackPrice)
 	}).index('by_productId', ['productId']),
 	creditGrants: defineTable({

@@ -115,7 +115,9 @@ async function syncPayment(
 			: await client.payments.retrieve(paymentEventData.parse(event.data).payment_id)
 	);
 
-	if (!payment.product_cart?.length) return;
+	const [item] = payment.product_cart ?? [];
+
+	if (!item) return;
 
 	await ctx.runMutation(internal.credits.syncPayment, {
 		paymentId: payment.payment_id,
@@ -128,10 +130,8 @@ async function syncPayment(
 		paidAt: toEpochMs(payment.created_at),
 		dodoCustomerId: payment.customer.customer_id,
 		metadataUserId: checkoutMetadata.parse(payment.metadata).userId,
-		productCart: payment.product_cart.map((item) => ({
-			productId: item.product_id,
-			quantity: item.quantity
-		}))
+		productId: item.product_id,
+		quantity: item.quantity
 	});
 }
 

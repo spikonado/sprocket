@@ -70,28 +70,30 @@ export async function gatewayQuotaStatus(
 	};
 }
 
-/** Draws the allowance window first, then credit grants; what grants can't cover is window overdraft. */
+/** Draws the allowance window first, then credit grants; what grants can't cover overdraws the window. */
 export async function chargeUsage(ctx: MutationCtx, userId: string, units: number): Promise<void> {
 	if (units <= 0) return;
 	const now = Date.now();
 	const plan = await resolvePlan(ctx, userId, now);
 	const limit = plan.limits.modelUsage;
 	const { window, row, used } = await readUsage(ctx, userId, plan, now);
-	const fromAllowance = Math.min(units, Math.max(0, limit - used));
 	const grants = await spendableGrants(ctx, userId, now);
-	const creditsBefore = remainingCredits(grants);
-	const overdraft = await drawCredits(ctx, grants, units - fromAllowance);
-	const windowUsed = used + fromAllowance + overdraft;
+	const credits = remainingCredits(grants);
+	const fromAllowance = Math.min(units, Math.max(0, limit - used));
+	const fromCredits = Math.min(units - fromAllowance, credits);
+	const windowUsed = used + units - fromCredits;
+
+	await drawCredits(ctx, grants, fromCredits);
 
 	if (windowUsed !== used) {
 		if (row) await ctx.db.patch('usage', row._id, { used: windowUsed });
 		else await ctx.db.insert('usage', { userId, windowStart: window.start, used: windowUsed });
 	}
 
-	const creditsAfter = creditsBefore - (units - fromAllowance - overdraft);
-	const wasExhausted = used >= limit && creditsBefore === 0;
+	const wasExhausted = used >= limit && credits === 0;
+	const isExhausted = windowUsed >= limit && fromCredits === credits;
 
-	if (!wasExhausted && windowUsed >= limit && creditsAfter === 0) {
+	if (!wasExhausted && isExhausted) {
 		await posthog.capture(ctx, {
 			distinctId: userId,
 			event: 'quota_exhausted',

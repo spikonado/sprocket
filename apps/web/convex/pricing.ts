@@ -57,10 +57,7 @@ export const getCatalog = internalQuery({
 		const packs = await ctx.db.query('creditPacks').collect();
 
 		packs.sort(
-			(left, right) =>
-				(left.displayOrder ?? 100) - (right.displayOrder ?? 100) ||
-				left.units - right.units ||
-				left.productId.localeCompare(right.productId)
+			(left, right) => left.units - right.units || left.productId.localeCompare(right.productId)
 		);
 
 		const creditPacks = packs.map((pack) => ({

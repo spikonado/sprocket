@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { internalMutation, internalQuery, type QueryCtx } from '@convex/_generated/server';
 import { resolveCustomerOwner } from '@convex/billingCustomers';
+import { grantForPayment } from '@convex/lib/credits';
 import { vPackPrice } from '@convex/lib/pricingValidators';
 
 const DAY = 24 * 60 * 60 * 1_000;
@@ -30,14 +31,12 @@ export const syncPayment = internalMutation({
 		paidAt: v.number(),
 		dodoCustomerId: v.string(),
 		metadataUserId: v.optional(v.string()),
-		productCart: v.array(v.object({ productId: v.string(), quantity: v.number() }))
+		productId: v.string(),
+		quantity: v.number()
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('creditGrants')
-			.withIndex('by_paymentId', (q) => q.eq('paymentId', args.paymentId))
-			.unique();
+		const existing = await grantForPayment(ctx, args.paymentId);
 
 		if (existing) {
 			if (args.revoked && existing.revokedAt === undefined) {
@@ -47,10 +46,9 @@ export const syncPayment = internalMutation({
 			return null;
 		}
 
-		const [item] = args.productCart;
-		const pack = args.succeeded && item ? await getPackRow(ctx, item.productId) : null;
+		const pack = args.succeeded ? await getPackRow(ctx, args.productId) : null;
 
-		if (!item || !pack) return null;
+		if (!pack) return null;
 
 		const userId = await resolveCustomerOwner(ctx, args.dodoCustomerId, args.metadataUserId);
 
@@ -66,7 +64,7 @@ export const syncPayment = internalMutation({
 			userId,
 			paymentId: args.paymentId,
 			productId: pack.productId,
-			units: pack.units * item.quantity,
+			units: pack.units * args.quantity,
 			used: 0,
 			expiresAt: args.paidAt + pack.expiresAfterDays * DAY,
 			revokedAt: args.revoked ? Date.now() : undefined
