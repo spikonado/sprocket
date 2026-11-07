@@ -89,9 +89,8 @@ import {
 import { useComposerAttachments } from '$lib/home/composer-attachments';
 import {
 	getComposerRecoveryKey,
-	launchError,
 	useSubmissionTracker,
-	type ComposerError
+	type ComposerRecovery
 } from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -436,7 +435,7 @@ export default function App({
 	);
 
 	const [autoSubmitComposerContinuation, setAutoSubmitComposerContinuation] = useState(false);
-	const [currentError, setCurrentError] = useState<ComposerError | null>(null);
+	const [currentError, setCurrentError] = useState<string | null>(null);
 
 	const [pendingAgentLaunches, setPendingAgentLaunches] = useState<PendingAgentLaunches>({});
 	const [hasResolvedInitialSelection, setHasResolvedInitialSelection] = useState(false);
@@ -1686,23 +1685,34 @@ export default function App({
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 
-		const recoverSubmission = (message: ComposerError | null, submissionId?: string) => {
-			submissions.storeRecovery(submittedUserId, recoveryScope, {
-				message,
-				prompt: submittedPrompt,
-				attachments: submittedAttachments,
-				storageIds: submittedStorageIds,
-				reasoningEffort: submittedReasoningEffort,
-				fastMode: submittedFastMode,
-				selectedModel: submittedModel,
-				continuationOfRunId: submittedContinuationOfRunId,
-				autoSubmit: false,
-				submissionId:
+		const submissionRecovery = (
+			message: string | null,
+			submissionId: string
+		): ComposerRecovery => ({
+			message,
+			prompt: submittedPrompt,
+			attachments: submittedAttachments,
+			storageIds: submittedStorageIds,
+			reasoningEffort: submittedReasoningEffort,
+			fastMode: submittedFastMode,
+			selectedModel: submittedModel,
+			continuationOfRunId: submittedContinuationOfRunId,
+			autoSubmit: false,
+			submissionId
+		});
+
+		const recoverSubmission = (message: string | null, submissionId?: string) => {
+			submissions.storeRecovery(
+				submittedUserId,
+				recoveryScope,
+				submissionRecovery(
+					message,
 					submissionId ??
-					(!selectedThreadId && recoveryScope === originatingRecoveryScope
-						? threadSubmissionId
-						: runSubmissionId)
-			});
+						(!selectedThreadId && recoveryScope === originatingRecoveryScope
+							? threadSubmissionId
+							: runSubmissionId)
+				)
+			);
 		};
 
 		const clearSubmissionDelay = () => {
@@ -1812,22 +1822,21 @@ export default function App({
 					clearLaunch();
 					// The server answered, so any run it created has already failed.
 					recoverSubmission(
-						launchError(error),
+						error.message,
 						error instanceof LocalResponseError ? crypto.randomUUID() : undefined
 					);
 				},
-				onStopped: () => {
-					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
-					clearLaunch();
-					recoverSubmission(null, crypto.randomUUID());
-				},
-				onStarted: (_runId, createdThreadId) => {
+				onStarted: (runId, createdThreadId) => {
 					if (isSubmittedUserCurrent()) {
 						void refreshDesktopProjectAttachments().catch(() => {});
 					}
 
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					launchedThreadId = createdThreadId;
+					submissions.holdLaunchedPrompt(submittedUserId, `thread:${createdThreadId}`, {
+						runId,
+						recovery: submissionRecovery(null, crypto.randomUUID())
+					});
 
 					if (
 						currentThreadIdRef.current !== selectedThreadId ||
@@ -1964,10 +1973,9 @@ export default function App({
 				clearLaunch();
 
 				if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId) return;
-				setCurrentError(launchError(error));
+				setCurrentError(error.message);
 			},
 			onStarted: () => {},
-			onStopped: clearLaunch,
 			threadId,
 			prompt: '',
 			storageIds: [],
@@ -2093,6 +2101,17 @@ export default function App({
 		setSelectedReasoningEffort(thread.reasoningEffort);
 		setFastMode(thread.fastMode ?? false);
 	}, [currentActiveThread]);
+
+	useEffect(() => {
+		if (!signedInUserId || !currentThreadId || !currentLifecycle?.run) return;
+
+		submissions.settleLaunchedPrompt(
+			signedInUserId,
+			`thread:${currentThreadId}`,
+			currentLifecycle.run,
+			!isLifecycleInProgress(currentLifecycle.phase)
+		);
+	}, [signedInUserId, currentThreadId, currentLifecycle, submissions]);
 
 	useEffect(() => {
 		const userId = signedInUserId;
@@ -2619,6 +2638,7 @@ export default function App({
 													key={currentThreadId}
 													error={conversationError}
 													runError={runError}
+													outOfUsage={runState?.failureKind === 'usage_limit'}
 													reconnecting={Boolean(
 														currentThreadId &&
 														transcript.threadId === currentThreadId &&

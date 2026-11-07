@@ -720,6 +720,10 @@ export const vRunStatus = v.union(
 	v.literal('cancelled')
 );
 
+export const vRunFailureKind = v.union(v.literal('abandoned'), v.literal('usage_limit'));
+
+export type RunFailureKind = Infer<typeof vRunFailureKind>;
+
 export const vDescendantStatusCounts = v.object({
 	queued: v.number(),
 	running: v.number(),

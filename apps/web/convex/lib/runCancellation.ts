@@ -1,7 +1,12 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
 import { runStartedAt } from '@convex/lib/runs';
-import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	vRunFailureKind,
+	type vRunFinalStatus,
+	type vRunStatus
+} from '@convex/lib/validators';
 
 export const CANCELLATION_FORCE_AFTER_MS = 10_000;
 
@@ -34,7 +39,7 @@ export const vSelectedThreadLifecycleRun = v.object({
 	startedAt: v.number(),
 	completedAt: v.optional(v.number()),
 	lastError: v.optional(v.string()),
-	failureKind: v.optional(v.literal('abandoned')),
+	failureKind: v.optional(vRunFailureKind),
 	promptUnsent: v.optional(v.literal(true)),
 	executorFriendlyName: v.optional(v.string())
 });

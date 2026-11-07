@@ -115,8 +115,6 @@ pub struct RunStarted {
     pub run_id: String,
     pub thread_id: String,
     pub settings: CliRunSettings,
-    /// The run was stopped before it began.
-    pub stopped: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

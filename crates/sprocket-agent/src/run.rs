@@ -21,8 +21,7 @@ use crate::history::{
     shown_workspace_context,
 };
 use crate::provider::{
-    AgentProvider, AgentProviderRequest, AgentProviderResult, ProviderSwitch,
-    ProviderSwitchHandoff, RunBegin,
+    AgentProvider, AgentProviderRequest, AgentProviderResult, ProviderSwitch, ProviderSwitchHandoff,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::{
@@ -211,10 +210,10 @@ async fn finalize_run(
     run_id: &str,
     claim_id: &str,
     status: RunStatus,
-    error_message: Option<&str>,
+    error: Option<&anyhow::Error>,
 ) -> anyhow::Result<()> {
     let accepted = runtime
-        .finalize_run(run_id, claim_id, status, error_message)
+        .finalize_run(run_id, claim_id, status, error)
         .await
         .map_err(|error| anyhow!("failed to finalize {status} run: {error}"))?;
     if !accepted {
@@ -254,18 +253,9 @@ async fn finalize_provider_result(
             .await
         }
         AgentProviderResult::Failed { error } => {
-            let error_text = error.to_string();
-            eprintln!("sprocket-agent: model failed {}: {}", run_id, error_text);
+            eprintln!("sprocket-agent: model failed {run_id}: {error}");
 
-            match finalize_run(
-                runtime,
-                run_id,
-                claim_id,
-                RunStatus::Failed,
-                Some(&error_text),
-            )
-            .await
-            {
+            match finalize_run(runtime, run_id, claim_id, RunStatus::Failed, Some(&error)).await {
                 Ok(()) => Err(error),
                 Err(finalization_error) => Err(anyhow!(
                     "model failed: {error}; additionally failed to finalize run: {finalization_error}"
@@ -737,7 +727,6 @@ pub async fn run_agent(
     command_sessions: sprocket_workspace::CommandSessionManager,
     live: Arc<LiveCompletionHub>,
     store: Arc<TranscriptStore>,
-    begun: tokio::sync::oneshot::Sender<()>,
 ) -> anyhow::Result<()> {
     let AgentRun {
         request,
@@ -910,7 +899,6 @@ pub async fn run_agent(
 
     let Some(lease) = claim_run(&runtime, &run_id, &claim_id).await? else {
         // Another executor owns the run and begins it.
-        let _ = begun.send(());
         return Ok(());
     };
 
@@ -972,10 +960,7 @@ pub async fn run_agent(
                     prompt,
                     base_instructions: system_prompt,
                     workspace_context,
-                    begin: RunBegin {
-                        workspace_context: begin_prompts,
-                        begun,
-                    },
+                    begin_prompts,
                     prior_history: prior_messages,
                     artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),

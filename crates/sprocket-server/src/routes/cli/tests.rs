@@ -19,7 +19,6 @@ fn started_submission(request: &CliRunRequest) -> Option<Submission> {
                     reasoning: "high".into(),
                     fast: false,
                 },
-                stopped: false,
             },
         }),
     })
