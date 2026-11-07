@@ -275,6 +275,15 @@ async fn launch_agent_inner(
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
+                if records_message
+                    && let Err(error) = project_attachments
+                        .record_message_sent(&attachment_key, crate::now_ms())
+                        .await
+                {
+                    eprintln!(
+                        "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
+                    );
+                }
                 let _ = start_result_sender.send(Ok(LaunchedRun {
                     run_id: run_id.clone(),
                     thread_id: thread_id.clone(),
@@ -322,15 +331,6 @@ async fn launch_agent_inner(
                         }
                     })
                     .with_lifetime_guard_factory(move || command_lifetime.run_guard());
-                if records_message
-                    && let Err(error) = project_attachments
-                        .record_message_sent(&attachment_key, crate::now_ms())
-                        .await
-                {
-                    eprintln!(
-                        "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
-                    );
-                }
                 let artifact_watch = if artifact_repository_key.is_empty() {
                     None
                 } else {
