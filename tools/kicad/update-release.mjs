@@ -452,13 +452,7 @@ function isAncestor(commit, of) {
 }
 
 function nextVersion(pinned, bump) {
-	const match = pinned?.match(/^(\d+)\.(\d+)\.(\d+)$/);
-
-	if (!match) {
-		return '0.1.0';
-	}
-
-	const [major, minor, patch] = match.slice(1).map(Number);
+	const [major, minor, patch] = pinned.split('.').map(Number);
 
 	return bump === 'minor' ? `${major}.${minor + 1}.0` : `${major}.${minor}.${patch + 1}`;
 }
@@ -557,21 +551,21 @@ const routingToolsRelease = JSON.parse(
 
 const routingToolsVersion = routingToolsRelease.tag_name.replace(/^v/, '');
 
-const pinned = await readFile(releasesPath, 'utf8').then(JSON.parse, () => undefined);
+const pinned = JSON.parse(await readFile(releasesPath, 'utf8'));
 
 const buildCommit = lastCommit(BUILD_FILES);
 
 const buildChanged =
 	!isAncestor(buildCommit, lastCommit(['releases.json'])) ||
-	pinned?.kipy?.commit !== kipyCommit ||
-	pinned?.routingTools?.version !== routingToolsVersion;
+	pinned.kipy.commit !== kipyCommit ||
+	pinned.routingTools.version !== routingToolsVersion;
 
-if (!buildChanged && pinned?.kicad?.version === build.version) {
+if (!buildChanged && pinned.kicad.version === build.version) {
 	console.log(`KiCad connector v${pinned.version} is current.`);
 	process.exit(0);
 }
 
-const version = nextVersion(pinned?.version, buildChanged ? 'minor' : 'patch');
+const version = nextVersion(pinned.version, buildChanged ? 'minor' : 'patch');
 
 const tag = `${TAG_PREFIX}${version}`;
 

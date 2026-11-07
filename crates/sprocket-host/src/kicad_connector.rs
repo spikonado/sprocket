@@ -189,12 +189,8 @@ impl KiCadConnector {
     /// Describes the install for agents, such as `KiCad connector v0.1.0 (KiCad 10.0.1)`.
     pub fn installed(&self) -> Option<String> {
         let dir = installed_version(&self.root, &self.pinned)?;
-        Some(
-            match fs::read_to_string(self.root.join(&dir).join(KICAD_VERSION_FILE)) {
-                Ok(kicad) => format!("{NAME} connector {dir} ({NAME} {})", kicad.trim()),
-                Err(_) => format!("{NAME} connector {dir}"),
-            },
-        )
+        let kicad = fs::read_to_string(self.root.join(&dir).join(KICAD_VERSION_FILE)).ok()?;
+        Some(format!("{NAME} connector {dir} ({NAME} {})", kicad.trim()))
     }
 
     pub(crate) fn bin_dir(&self) -> PathBuf {
