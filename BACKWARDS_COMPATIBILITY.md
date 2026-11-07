@@ -104,7 +104,7 @@ Released agents call `payments:reportOrder` without `outcome`, which means `orde
 
 ### Legacy checkout attempts
 
-Legacy ambiguous creates without a frozen request require provider reconciliation, and legacy subscription rows without `checkoutAttemptId` never prove activation of a specific attempt. Remove these fail-closed recovery paths after all pre-freeze ambiguous attempts resolve and legacy uncorrelated subscriptions terminate.
+Legacy ambiguous creates without a frozen request require provider reconciliation. Remove this fail-closed recovery path after all pre-freeze ambiguous attempts resolve.
 
 The checkout tables keep `by_userId` because released readers use it. Remove it once those readers age out and all current-session lookups use the compound indexes. Keep a creation-order history index while history iteration needs it.
 
@@ -128,9 +128,17 @@ Older `dodoPricingCache` rows carry a `cacheKey` that nothing reads, so the sche
 
 Older threads store the context summary cutoff as `contextSummaryThroughPartNumber`, the inclusive last covered part with `-1` for an empty prefix. When `contextSummaryPartCount` is missing, `existingContextSummaryPartCount` uses that value plus one. `migrations:countContextSummaryParts` rewrites those rows, and the Convex Production workflow runs it after each deploy. Once it reports done on production, remove the old field, the fallback and the migration.
 
-### Subscription rows without an access phase
+### Subscription mirror legacy fields
 
-Older subscription rows, including operator grants and free bootstrap rows, lack `accessPhase`, so the schema keeps it optional and readers treat a missing phase as `'none'`. `migrations:backfillSubscriptionAccess` materializes `accessPhase` and `accessEndsAt` on those rows and schedules their expiry checks, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, make `accessPhase` required, drop the `?? 'none'` reads in `lib/tiers.ts`, `subscriptionExpiry.ts` and `subscriptionReconciliation.ts`, and remove the migration.
+Older `subscriptions` rows hold the retired webhook projection, including operator grants and free bootstrap rows without a Dodo subscription. So the schema keeps `tier`, `eventAt`, `accessPhase` and the other projection fields optional, along with the mirror's `dodoSubscriptionId`, `dodoProductId`, billing period, `cancelAtNextBillingDate` and `syncedAt`. `migrations:migrateSubscriptionRows` moves active grants to `users.grantedTier`, deletes the other rows without a Dodo subscription, cancels pending expiry checks and unsets the projection fields. `migrations:resyncDodoCustomers` then mirrors every Dodo customer's subscriptions. The Convex Production workflow runs both after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports both done on production, drop the projection fields, make the mirror fields required, and remove both migrations.
+
+### Retired billing tables
+
+`subscriptionReconciliations` and `supersededSubscriptions` are untyped tables kept only so the schema accepts their old rows. `migrations:clearSubscriptionReconciliations` and `migrations:clearSupersededSubscriptions` empty them. Once both report done on production, remove the tables and the migrations, and delete the unmounted `billingWebhookWorkpool` and `billingReconciliationWorkpool` components' data on each deployment.
+
+### Dodo webhook ledger
+
+`dodoWebhookEvents` keeps the retired webhook ledger so an operator can find customers it may have double-charged with `bunx convex run --prod billingAudit:listDoubleCharges`. Run it once `migrations:resyncDodoCustomers` reports done and the `dodo:syncCustomer` runs it spreads over the next hour have succeeded in the dashboard logs. Rerun any failed one by hand. After those refunds, run `bunx convex run --prod billingAudit:deleteWebhookEvents` on each deployment, then remove the table, `billingAudit.ts`, and the `billingAudit` assertions in `subscriptions.test.ts`.
 
 ### Hosted parse upload URLs
 
@@ -140,13 +148,9 @@ Older subscription rows, including operator grants and free bootstrap rows, lack
 
 Older `agentQuestions` rows carry an `answeredAt` that nothing reads, so the schema keeps it optional. `migrations:dropQuestionAnsweredAt` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
 
-### Quota generations
-
-Older `subscriptions` rows carry `quotaGeneration` and `quotaTransitionAt`, which nothing reads, so the schema keeps them optional. `migrations:dropQuotaGenerations` unsets them, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop both fields and the migration.
-
 ### Rate limiter usage buckets
 
-Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of the `rateLimiter` component. Until a window has a `usage` row, `lib/quota.ts` reads its usage from `lib/legacyUsage.ts`, and the first charge copies it into the new row. Every window open at this deploy ends within 32 days. In any deploy at least 32 days after this one reaches production, remove `lib/legacyUsage.ts` and its fallback, the `app.use(rateLimiter)` mount in `convex.config.ts` (which deletes the component's data), the `rateLimiterTest.register` call in `test.setup.ts`, the `@convex-dev/rate-limiter` dependency, its `vite.config.ts` entry, and the legacy usage test in `subscriptionUsage.test.ts`.
+Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of the `rateLimiter` component. Until a window has a `usage` row, `lib/quota.ts` reads its usage from `lib/legacyUsage.ts`, and the first charge copies it into the new row. The bucket key includes `subscriptions.quotaResetAt`, which `resolvePlan` returns as `legacyQuotaResetAt`. Every window open at this deploy ends within 32 days. In any deploy at least 32 days after this one reaches production, remove `lib/legacyUsage.ts` and its fallback, `quotaResetAt` with `legacyQuotaResetAt`, the `app.use(rateLimiter)` mount in `convex.config.ts` (which deletes the component's data), the `rateLimiterTest.register` call in `test.setup.ts`, the `@convex-dev/rate-limiter` dependency, its `vite.config.ts` entry, and the legacy usage test in `subscriptionUsage.test.ts`.
 
 ### Retired Prava mandate rows
 

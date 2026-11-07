@@ -30,16 +30,9 @@ crons.interval(
 );
 
 crons.interval(
-	'retry failed Dodo webhook processing',
-	{ minutes: 15 },
-	internal.billingWebhook.retryPending,
-	{}
-);
-
-crons.interval(
-	'prune Dodo webhook payloads and expired dedup rows',
-	{ hours: 12 },
-	internal.billingWebhook.cleanupEvents,
+	'resync Dodo subscriptions past their billing period',
+	{ hours: 1 },
+	internal.dodo.syncOverdue,
 	{}
 );
 

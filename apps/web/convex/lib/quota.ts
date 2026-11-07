@@ -1,22 +1,16 @@
-import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { posthog } from '@convex/lib/analytics';
 import { billingWindow } from '@convex/lib/billingWindows';
 import { legacyUsage } from '@convex/lib/legacyUsage';
-import { ensureSubscription, resolveTierLimits, type SubscriptionTier } from '@convex/lib/tiers';
+import { resolvePlan, type Plan, type SubscriptionTier } from '@convex/lib/tiers';
 
 const SECOND = 1_000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export async function readUsage(
-	ctx: QueryCtx,
-	userId: string,
-	subscription: Doc<'subscriptions'> | null,
-	now: number
-) {
-	const window = billingWindow(subscription, now);
+export async function readUsage(ctx: QueryCtx, userId: string, plan: Plan, now: number) {
+	const window = billingWindow(plan.subscription, now);
 
 	const row = await ctx.db
 		.query('usage')
@@ -25,20 +19,9 @@ export async function readUsage(
 		)
 		.unique();
 
-	const used =
-		row?.used ?? (await legacyUsage(ctx, userId, window.start, subscription?.quotaResetAt));
+	const used = row?.used ?? (await legacyUsage(ctx, userId, window.start, plan.legacyQuotaResetAt));
 
 	return { window, row, used };
-}
-
-/** Clears every window, including a paid term that resumes after a hold. */
-export async function resetUsage(ctx: MutationCtx, userId: string): Promise<void> {
-	const rows = await ctx.db
-		.query('usage')
-		.withIndex('by_userId_and_windowStart', (q) => q.eq('userId', userId))
-		.collect();
-
-	for (const row of rows) await ctx.db.delete('usage', row._id);
 }
 
 function formatRetryAfter(milliseconds: number): string {
@@ -71,11 +54,11 @@ export async function gatewayQuotaStatus(
 	| { tier: SubscriptionTier; exhausted: true; message: string }
 > {
 	const now = Date.now();
-	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
-	const { modelUsage: limit } = await resolveTierLimits(ctx, tier);
-	const { used, window } = await readUsage(ctx, userId, subscription, now);
+	const plan = await resolvePlan(ctx, userId, now);
+	const { tier } = plan;
+	const { used, window } = await readUsage(ctx, userId, plan, now);
 
-	if (used < limit) return { tier, exhausted: false };
+	if (used < plan.limits.modelUsage) return { tier, exhausted: false };
 
 	return {
 		tier,
@@ -87,9 +70,9 @@ export async function gatewayQuotaStatus(
 export async function chargeUsage(ctx: MutationCtx, userId: string, units: number): Promise<void> {
 	if (units <= 0) return;
 	const now = Date.now();
-	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
-	const { modelUsage: limit } = await resolveTierLimits(ctx, tier);
-	const { window, row, used } = await readUsage(ctx, userId, subscription, now);
+	const plan = await resolvePlan(ctx, userId, now);
+	const limit = plan.limits.modelUsage;
+	const { window, row, used } = await readUsage(ctx, userId, plan, now);
 
 	if (row) await ctx.db.patch('usage', row._id, { used: used + units });
 	else await ctx.db.insert('usage', { userId, windowStart: window.start, used: used + units });
@@ -98,7 +81,7 @@ export async function chargeUsage(ctx: MutationCtx, userId: string, units: numbe
 		await posthog.capture(ctx, {
 			distinctId: userId,
 			event: 'quota_exhausted',
-			properties: { tier }
+			properties: { tier: plan.tier }
 		});
 	}
 }

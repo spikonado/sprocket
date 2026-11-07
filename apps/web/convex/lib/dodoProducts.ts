@@ -1,5 +1,4 @@
 import { v, type Infer } from 'convex/values';
-import { z } from 'zod';
 
 export const billingIntervalIds = ['monthly', 'annual'] as const;
 
@@ -17,14 +16,6 @@ export const vDodoPublicPrice = v.object({
 export type DodoPublicPrice = Infer<typeof vDodoPublicPrice>;
 
 export type DodoEnvironment = 'test_mode' | 'live_mode';
-
-/** Every stored webhook payload must parse with this, so verification checks it before persisting. */
-export const dodoWebhookEnvelopeSchema = z.object({
-	business_id: z.string().optional(),
-	type: z.string().min(1),
-	timestamp: z.string().optional(),
-	data: z.unknown()
-});
 
 export function readDodoEnvironment(env: { DODO_PAYMENTS_ENVIRONMENT?: string }): DodoEnvironment {
 	const value = env.DODO_PAYMENTS_ENVIRONMENT?.trim();

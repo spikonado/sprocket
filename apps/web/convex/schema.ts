@@ -35,7 +35,9 @@ export default defineSchema({
 		subject: v.string(),
 		tokenIdentifier: v.string(),
 		email: v.string(),
-		dodoCustomerId: v.optional(v.string())
+		dodoCustomerId: v.optional(v.string()),
+		// Operator-set tier id that overrides Dodo subscriptions.
+		grantedTier: v.optional(v.string())
 	})
 		.index('by_subject', ['subject'])
 		.index('by_dodoCustomerId', ['dodoCustomerId']),
@@ -147,30 +149,26 @@ export default defineSchema({
 	})
 		.index('by_environment_and_productId', ['environment', 'productId'])
 		.index('by_environment_and_leaseExpiresAt', ['environment', 'leaseExpiresAt']),
-	subscriptionReconciliations: defineTable({
-		subscriptionId: v.id('subscriptions'),
-		dodoSubscriptionId: v.string(),
-		projectionRevision: v.number(),
-		attempt: v.number(),
-		accessPhase: v.string(),
-		workId: vWorkId,
-		state: v.union(v.literal('pending'), v.literal('completed'), v.literal('exhausted')),
-		updatedAt: v.number()
-	}).index('by_subscriptionId', ['subscriptionId']),
+	subscriptionReconciliations: defineTable(v.any()),
+	// Mirror of Dodo subscriptions; Dodo is the source of truth.
 	subscriptions: defineTable({
 		userId: v.string(),
-		// Operator-managed tier id (see the `tiers` table).
-		tier: v.string(),
+		dodoSubscriptionId: v.optional(v.string()),
+		dodoProductId: v.optional(v.string()),
 		status: vSubscriptionStatus,
-		eventAt: v.number(),
+		billingPeriodStart: v.optional(v.number()),
+		billingPeriodEnd: v.optional(v.number()),
+		cancelAtNextBillingDate: v.optional(v.boolean()),
+		syncedAt: v.optional(v.number()),
+		quotaResetAt: v.optional(v.number()),
+		tier: v.optional(v.string()),
+		eventAt: v.optional(v.number()),
 		projectionRevision: v.optional(v.number()),
 		observedAt: v.optional(v.number()),
 		providerStatus: v.optional(v.string()),
 		scheduleEventAt: v.optional(v.number()),
 		checkoutAttemptId: v.optional(v.string()),
-		accessPhase: v.optional(
-			v.union(v.literal('paid'), v.literal('renewal_processing'), v.literal('none'))
-		),
+		accessPhase: v.optional(v.string()),
 		accessEndsAt: v.optional(v.number()),
 		scheduledChange: v.optional(
 			v.object({
@@ -179,34 +177,18 @@ export default defineSchema({
 				effectiveAt: v.number()
 			})
 		),
-		// Distinct ordering watermark for product/term payloads. Status
-		// transitions fence on `eventAt`; payload (tier/term/scheduled change)
-		// transitions fence on this.
 		payloadEventAt: v.optional(v.number()),
-		// Paid-term confirmations fence on their own watermark so a historical
-		// failure cannot override a newer successful term.
 		termEventAt: v.optional(v.number()),
 		billingInterval: v.optional(vBillingInterval),
-		billingPeriodStart: v.optional(v.number()),
-		billingPeriodEnd: v.optional(v.number()),
 		billingPeriodCheckId: v.optional(v.id('_scheduled_functions')),
-		cancelAtNextBillingDate: v.optional(v.boolean()),
-		quotaResetAt: v.optional(v.number()),
 		quotaGeneration: v.optional(v.number()),
 		quotaTransitionAt: v.optional(v.number()),
-		terminalConfirmed: v.optional(v.boolean()),
-		dodoSubscriptionId: v.optional(v.string()),
-		dodoProductId: v.optional(v.string())
+		terminalConfirmed: v.optional(v.boolean())
 	})
 		.index('by_userId', ['userId'])
-		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
-	supersededSubscriptions: defineTable({
-		userId: v.string(),
-		dodoSubscriptionId: v.string(),
-		supersededAt: v.number()
-	})
-		.index('by_userId', ['userId'])
-		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
+		.index('by_dodoSubscriptionId', ['dodoSubscriptionId'])
+		.index('by_status_and_billingPeriodEnd', ['status', 'billingPeriodEnd']),
+	supersededSubscriptions: defineTable(v.any()),
 	usage: defineTable({
 		userId: v.string(),
 		windowStart: v.number(),

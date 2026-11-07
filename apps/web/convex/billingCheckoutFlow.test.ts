@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { initConvexTest, insertUser } from './test.setup';
-import {
-	drainWebhookJobs,
-	sendSubscriptionWebhook,
-	subscriptionPayload
-} from './billingWebhook.test.setup';
 
 beforeEach(() => vi.useFakeTimers());
 
@@ -227,62 +222,6 @@ describe('checkout selection changes', () => {
 		await expect(
 			t.action(internal.pricing.ensureCustomer, { userId: 'owner', name: 'Owner' })
 		).resolves.toBe('cus_owner');
-	});
-
-	it('honors an older checkout that is paid after the customer selects a different interval', async () => {
-		const { t, owner } = await billingFixture();
-		await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
-
-		const monthly = await t.run(async (ctx) => ctx.db.query('billingCheckoutSessions').unique());
-
-		if (!monthly) throw new Error('Missing monthly checkout reservation.');
-
-		await owner.action(api.billing.checkout, { tier: 'pro', interval: 'annual' });
-
-		const now = Date.now();
-
-		const response = await sendSubscriptionWebhook(
-			t,
-			'subscription.active',
-			subscriptionPayload({
-				subscription_id: 'sub_monthly',
-				product_id: 'prod_monthly',
-				metadata: { userId: 'owner', tierId: 'pro', checkoutAttemptId: monthly.attemptId },
-				previous_billing_date: new Date(now),
-				next_billing_date: new Date(now + 30 * 86_400_000)
-			}),
-			now
-		);
-
-		expect(response.status).toBe(200);
-		await drainWebhookJobs(t);
-
-		const stored = await t.run(async (ctx) =>
-			ctx.db
-				.query('subscriptions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
-				.unique()
-		);
-
-		expect(stored).toMatchObject({
-			tier: 'pro',
-			status: 'active',
-			eventAt: now,
-			billingInterval: 'monthly',
-			dodoSubscriptionId: 'sub_monthly',
-			dodoProductId: 'prod_monthly'
-		});
-		await expect(owner.query(api.billing.getMySubscription, {})).resolves.toMatchObject({
-			tier: 'pro',
-			billingManaged: true
-		});
-
-		await expect(
-			owner.action(api.billing.checkout, { tier: 'pro', interval: 'annual' })
-		).resolves.toMatchObject({
-			checkout_url: 'https://checkout.example/prod_annual',
-			mode: 'test'
-		});
 	});
 
 	it('retains a late monthly attachment without replacing the current annual reservation', async () => {

@@ -48,8 +48,4 @@ app.use(workpool, { name: 'contextDevWorkpool' });
 // Keeps its original name so hosted parses queued before a deploy still run.
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
 
-app.use(workpool, { name: 'billingWebhookWorkpool' });
-
-app.use(workpool, { name: 'billingReconciliationWorkpool' });
-
 export default app;

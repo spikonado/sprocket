@@ -1,10 +1,47 @@
 import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
+import type { MutationCtx } from '@convex/_generated/server';
+import { getUserBySubject } from '@convex/lib/auth';
 import schema from '@convex/schema';
-import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, { schema, internalMutation });
+
+// Spreads the resync's Dodo list calls so up to ~14k customers stay under Dodo's 240 requests a minute.
+const DODO_RESYNC_SPREAD_MS = 60 * 60 * 1_000;
+
+/** Keeps the legacy pick: the latest grant wins and `active` breaks ties, so a later revoke holds. */
+async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
+	const rows = await ctx.db
+		.query('subscriptions')
+		.withIndex('by_userId', (query) => query.eq('userId', userId))
+		.collect();
+
+	const grants = rows.filter((row) => !row.dodoSubscriptionId && row.tier && row.tier !== 'free');
+
+	// An earlier row in the same batch already moved this user's grants.
+	if (grants.length === 0) return;
+
+	const winner = grants.reduce((best, row) => {
+		const [rowAt, bestAt] = [row.eventAt ?? 0, best.eventAt ?? 0];
+
+		return rowAt > bestAt || (rowAt === bestAt && row.status === 'active') ? row : best;
+	});
+
+	if (winner.status === 'active') {
+		const user = await getUserBySubject(ctx.db, userId);
+
+		if (!user) {
+			console.error(`Tier grant ${winner._id} has no users row; leaving it in place.`);
+
+			return;
+		}
+
+		await ctx.db.patch('users', user._id, { grantedTier: user.grantedTier ?? winner.tier });
+	}
+
+	for (const grant of grants) await ctx.db.delete('subscriptions', grant._id);
+}
 
 export const backfillToolInvocationIds = migrations.define({
 	table: 'threadTranscriptParts',
@@ -43,15 +80,6 @@ export const countContextSummaryParts = migrations.define({
 	}
 });
 
-export const backfillSubscriptionAccess = migrations.define({
-	table: 'subscriptions',
-	migrateOne: async (ctx, subscription) => {
-		if (subscription.accessPhase !== undefined) return;
-
-		await scheduleSubscriptionExpiry(ctx, subscription);
-	}
-});
-
 export const dropQuestionAnsweredAt = migrations.define({
 	table: 'agentQuestions',
 	migrateOne: (_ctx, question) => {
@@ -59,15 +87,66 @@ export const dropQuestionAnsweredAt = migrations.define({
 	}
 });
 
-export const dropQuotaGenerations = migrations.define({
+/** Moves operator grants to `users.grantedTier`, deletes free bootstrap rows, and strips projection fields. */
+export const migrateSubscriptionRows = migrations.define({
 	table: 'subscriptions',
-	migrateOne: (_ctx, subscription) => {
-		if (
-			subscription.quotaGeneration !== undefined ||
-			subscription.quotaTransitionAt !== undefined
-		) {
-			return { quotaGeneration: undefined, quotaTransitionAt: undefined };
+	migrateOne: async (ctx, row) => {
+		if (row.billingPeriodCheckId) {
+			const check = await ctx.db.system.get('_scheduled_functions', row.billingPeriodCheckId);
+
+			if (check?.state.kind === 'pending') await ctx.scheduler.cancel(check._id);
 		}
+
+		if (!row.dodoSubscriptionId) {
+			if (row.tier && row.tier !== 'free') await moveGrants(ctx, row.userId);
+			else await ctx.db.delete('subscriptions', row._id);
+
+			return;
+		}
+
+		if (row.syncedAt !== undefined) return;
+
+		await ctx.db.replace('subscriptions', row._id, {
+			userId: row.userId,
+			dodoSubscriptionId: row.dodoSubscriptionId,
+			dodoProductId: row.dodoProductId,
+			status: row.status,
+			billingPeriodStart: row.billingPeriodStart,
+			billingPeriodEnd: row.billingPeriodEnd,
+			cancelAtNextBillingDate: row.cancelAtNextBillingDate,
+			quotaResetAt: row.quotaResetAt,
+			syncedAt: 0
+		});
+	}
+});
+
+export const clearSubscriptionReconciliations = migrations.define({
+	table: 'subscriptionReconciliations',
+	migrateOne: async (ctx, row) => {
+		await ctx.db.delete('subscriptionReconciliations', row._id);
+	}
+});
+
+export const clearSupersededSubscriptions = migrations.define({
+	table: 'supersededSubscriptions',
+	migrateOne: async (ctx, row) => {
+		await ctx.db.delete('supersededSubscriptions', row._id);
+	}
+});
+
+/** Mirrors every Dodo subscription, including duplicates the old webhook rejected. */
+export const resyncDodoCustomers = migrations.define({
+	table: 'users',
+	customRange: (query) =>
+		query.withIndex('by_dodoCustomerId', (index) => index.gte('dodoCustomerId', '')),
+	migrateOne: async (ctx, user) => {
+		if (!user.dodoCustomerId) return;
+
+		await ctx.scheduler.runAfter(
+			Math.floor(Math.random() * DODO_RESYNC_SPREAD_MS),
+			internal.dodo.syncCustomer,
+			{ dodoCustomerId: user.dodoCustomerId }
+		);
 	}
 });
 
@@ -76,7 +155,9 @@ export const run = migrations.runner([
 	internal.migrations.removeArtifactTypes,
 	internal.migrations.dropPricingCacheKeys,
 	internal.migrations.countContextSummaryParts,
-	internal.migrations.backfillSubscriptionAccess,
 	internal.migrations.dropQuestionAnsweredAt,
-	internal.migrations.dropQuotaGenerations
+	internal.migrations.migrateSubscriptionRows,
+	internal.migrations.clearSubscriptionReconciliations,
+	internal.migrations.clearSupersededSubscriptions,
+	internal.migrations.resyncDodoCustomers
 ]);
