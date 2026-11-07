@@ -11,6 +11,10 @@ export const vPrice = v.object({
 
 export type Price = Infer<typeof vPrice>;
 
+export const vPackPrice = v.object({ amountMinor: v.number(), currency: v.string() });
+
+export type PackPrice = Infer<typeof vPackPrice>;
+
 export const vPublicPricingPlan = v.object({
 	id: v.string(),
 	label: v.string(),
@@ -27,8 +31,17 @@ export const vPublicPricingPlan = v.object({
 
 export type PublicPricingPlan = Infer<typeof vPublicPricingPlan>;
 
+export const vPublicCreditPack = v.object({
+	productId: v.string(),
+	label: v.string(),
+	usageDollars: v.number(),
+	expiresAfterDays: v.number(),
+	price: v.union(vPackPrice, v.null())
+});
+
 export const vPublicPricingCatalog = v.object({
-	plans: v.array(vPublicPricingPlan)
+	plans: v.array(vPublicPricingPlan),
+	creditPacks: v.array(vPublicCreditPack)
 });
 
 export type PublicPricingCatalog = Infer<typeof vPublicPricingCatalog>;

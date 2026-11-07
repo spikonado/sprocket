@@ -54,7 +54,24 @@ export const getCatalog = internalQuery({
 				left.id.localeCompare(right.id)
 		);
 
-		return { plans };
+		const packs = await ctx.db.query('creditPacks').collect();
+
+		packs.sort(
+			(left, right) =>
+				(left.displayOrder ?? 100) - (right.displayOrder ?? 100) ||
+				left.units - right.units ||
+				left.productId.localeCompare(right.productId)
+		);
+
+		const creditPacks = packs.map((pack) => ({
+			productId: pack.productId,
+			label: pack.label,
+			usageDollars: pack.units / MODEL_USAGE_UNITS_PER_DOLLAR,
+			expiresAfterDays: pack.expiresAfterDays,
+			price: pack.price ?? null
+		}));
+
+		return { plans, creditPacks };
 	}
 });
 

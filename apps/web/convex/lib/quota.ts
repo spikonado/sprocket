@@ -1,6 +1,7 @@
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { posthog } from '@convex/lib/analytics';
 import { billingWindow } from '@convex/lib/billingWindows';
+import { drawCredits, remainingCredits, spendableGrants } from '@convex/lib/credits';
 import { legacyUsage } from '@convex/lib/legacyUsage';
 import { resolvePlan, type Plan, type SubscriptionTier } from '@convex/lib/tiers';
 
@@ -58,7 +59,9 @@ export async function gatewayQuotaStatus(
 	const { tier } = plan;
 	const { used, window } = await readUsage(ctx, userId, plan, now);
 
-	if (used < plan.limits.modelUsage) return { tier, exhausted: false };
+	if (used < plan.limits.modelUsage || (await spendableGrants(ctx, userId, now)).length > 0) {
+		return { tier, exhausted: false };
+	}
 
 	return {
 		tier,
@@ -67,17 +70,28 @@ export async function gatewayQuotaStatus(
 	};
 }
 
+/** Draws the allowance window first, then credit grants; what grants can't cover is window overdraft. */
 export async function chargeUsage(ctx: MutationCtx, userId: string, units: number): Promise<void> {
 	if (units <= 0) return;
 	const now = Date.now();
 	const plan = await resolvePlan(ctx, userId, now);
 	const limit = plan.limits.modelUsage;
 	const { window, row, used } = await readUsage(ctx, userId, plan, now);
+	const fromAllowance = Math.min(units, Math.max(0, limit - used));
+	const grants = await spendableGrants(ctx, userId, now);
+	const creditsBefore = remainingCredits(grants);
+	const overdraft = await drawCredits(ctx, grants, units - fromAllowance);
+	const windowUsed = used + fromAllowance + overdraft;
 
-	if (row) await ctx.db.patch('usage', row._id, { used: used + units });
-	else await ctx.db.insert('usage', { userId, windowStart: window.start, used: used + units });
+	if (windowUsed !== used) {
+		if (row) await ctx.db.patch('usage', row._id, { used: windowUsed });
+		else await ctx.db.insert('usage', { userId, windowStart: window.start, used: windowUsed });
+	}
 
-	if (used < limit && used + units >= limit) {
+	const creditsAfter = creditsBefore - (units - fromAllowance - overdraft);
+	const wasExhausted = used >= limit && creditsBefore === 0;
+
+	if (!wasExhausted && windowUsed >= limit && creditsAfter === 0) {
 		await posthog.capture(ctx, {
 			distinctId: userId,
 			event: 'quota_exhausted',

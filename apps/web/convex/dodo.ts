@@ -16,7 +16,7 @@ import {
 	readDodoEnvironment,
 	type BillingInterval
 } from '@convex/lib/dodoProducts';
-import type { Price } from '@convex/lib/pricingValidators';
+import type { PackPrice, Price } from '@convex/lib/pricingValidators';
 import { vCheckoutAttemptStatus } from '@convex/lib/validators';
 
 export const LIVE_SUBSCRIPTION_CHECKOUT_ERROR =
@@ -31,6 +31,19 @@ const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<SubscriptionStatus> = new Set([
 ]);
 
 const subscriptionEventData = z.object({ subscription_id: z.string() });
+
+const paymentEventData = z.object({ payment_id: z.string() });
+
+const dodoPayment = z.object({
+	payment_id: z.string(),
+	status: z.string().nullish(),
+	created_at: z.string(),
+	customer: z.object({ customer_id: z.string() }),
+	metadata: z.record(z.string(), z.unknown()),
+	product_cart: z.array(z.object({ product_id: z.string(), quantity: z.number() })).nullish(),
+	refunds: z.array(z.object({ status: z.string() })),
+	disputes: z.array(z.unknown())
+});
 
 const checkoutMetadata = z.object({ userId: z.string().optional() });
 
@@ -86,6 +99,42 @@ async function listCustomerSubscriptions(client: DodoPayments, dodoCustomerId: s
 	return page.items;
 }
 
+/**
+ * Payment events carry the payment; refund and dispute events name it, so fetch it.
+ * Any succeeded refund or any dispute revokes the pack, including a dispute later won.
+ * Subscription payments have no product cart and are skipped.
+ */
+async function syncPayment(
+	ctx: ActionCtx,
+	client: DodoPayments,
+	event: { type: string; data: unknown }
+): Promise<void> {
+	const payment = dodoPayment.parse(
+		event.type.startsWith('payment.')
+			? event.data
+			: await client.payments.retrieve(paymentEventData.parse(event.data).payment_id)
+	);
+
+	if (!payment.product_cart?.length) return;
+
+	await ctx.runMutation(internal.credits.syncPayment, {
+		paymentId: payment.payment_id,
+		succeeded: payment.status === 'succeeded',
+		revoked:
+			event.type === 'refund.succeeded' ||
+			event.type.startsWith('dispute.') ||
+			payment.disputes.length > 0 ||
+			payment.refunds.some(({ status }) => status === 'succeeded'),
+		paidAt: toEpochMs(payment.created_at),
+		dodoCustomerId: payment.customer.customer_id,
+		metadataUserId: checkoutMetadata.parse(payment.metadata).userId,
+		productCart: payment.product_cart.map((item) => ({
+			productId: item.product_id,
+			quantity: item.quantity
+		}))
+	});
+}
+
 /** Throws on anything retryable so the HTTP route answers 500 and Dodo redelivers. */
 export const handleWebhook = internalAction({
 	args: { body: v.string(), headers: v.record(v.string(), v.string()) },
@@ -105,6 +154,8 @@ export const handleWebhook = internalAction({
 
 		if (event.type.startsWith('subscription.')) {
 			await syncSubscription(ctx, client, subscriptionEventData.parse(event.data).subscription_id);
+		} else if (/^(payment|refund|dispute)\./.test(event.type)) {
+			await syncPayment(ctx, client, event);
 		}
 
 		return 'handled';
@@ -174,6 +225,7 @@ export const createCheckout = internalAction({
 		email: v.optional(v.string()),
 		name: v.string(),
 		productId: v.string(),
+		refuseLiveSubscription: v.boolean(),
 		returnUrl: v.string(),
 		cancelUrl: v.string()
 	},
@@ -182,7 +234,7 @@ export const createCheckout = internalAction({
 		const client = createDodoClient();
 		const customer = await ensureCustomer(ctx, client, args);
 
-		if (!customer.created) {
+		if (args.refuseLiveSubscription && !customer.created) {
 			const subscriptions = await listCustomerSubscriptions(client, customer.dodoCustomerId);
 
 			if (subscriptions.some(({ status }) => LIVE_SUBSCRIPTION_STATUSES.has(status))) {
@@ -224,10 +276,12 @@ function checkoutStatus({
 
 export const getCheckoutStatus = internalAction({
 	args: { sessionId: v.string() },
-	returns: vCheckoutAttemptStatus,
+	returns: v.object({ status: vCheckoutAttemptStatus, paymentId: v.union(v.string(), v.null()) }),
 	handler: async (_ctx, { sessionId }) => {
 		try {
-			return checkoutStatus(await createDodoClient().checkoutSessions.retrieve(sessionId));
+			const session = await createDodoClient().checkoutSessions.retrieve(sessionId);
+
+			return { status: checkoutStatus(session), paymentId: session.payment_id ?? null };
 		} catch (error) {
 			if (error instanceof DodoPayments.NotFoundError) {
 				throw new ConvexError('Unknown checkout attempt.');
@@ -284,6 +338,19 @@ async function fetchPrice(
 	};
 }
 
+/** Null when the product isn't a paid one-time product; throws on request failures. */
+async function fetchPackPrice(client: DodoPayments, productId: string): Promise<PackPrice | null> {
+	const { price } = await client.products.retrieve(productId);
+
+	if (price.type !== 'one_time_price' || price.price <= 0) {
+		console.error(`Dodo product ${productId} is not a paid one-time product.`);
+
+		return null;
+	}
+
+	return { amountMinor: price.price, currency: price.currency };
+}
+
 /** Keeps the last price when Dodo can't be reached. */
 export const syncPrices = internalAction({
 	args: {},
@@ -310,6 +377,20 @@ export const syncPrices = internalAction({
 				interval: product.interval,
 				price
 			});
+		}
+
+		for (const productId of await ctx.runQuery(internal.credits.listPackProducts, {})) {
+			let price;
+
+			try {
+				price = await fetchPackPrice(client, productId);
+			} catch (error) {
+				console.error(`Could not load Dodo product ${productId}.`, error);
+
+				continue;
+			}
+
+			await ctx.runMutation(internal.credits.setPackPrice, { productId, price });
 		}
 
 		return null;

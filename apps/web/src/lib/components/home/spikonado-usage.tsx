@@ -6,7 +6,11 @@ import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { formatRemainingDuration } from '$lib/format';
 import { useUsageTime } from '$lib/usage-time';
 
-type UsageMeter = FunctionReturnType<typeof api.usage.getMyUsage>['meters'][number];
+type MyUsage = FunctionReturnType<typeof api.usage.getMyUsage>;
+
+type UsageMeter = MyUsage['meters'][number];
+
+type PackCredits = NonNullable<MyUsage['credits']>;
 
 const dollars = new Intl.NumberFormat('en-US', {
 	style: 'currency',
@@ -80,6 +84,20 @@ function MeterUsage({ meter, now }: { meter: UsageMeter; now: number }) {
 	);
 }
 
+function CreditPackBalance({ credits, now }: { credits: PackCredits; now: number }) {
+	return (
+		<div>
+			<SectionLabel>Credit Packs</SectionLabel>
+			<p className="text-foreground mt-3 text-[13px]">
+				{formatDollars(credits.remaining)} <span className="text-muted-foreground">left</span>
+			</p>
+			<p className="text-muted-foreground mt-1.5 text-[12px]">
+				Next expiry in {formatRemainingDuration(credits.nextExpiresAt - now)}
+			</p>
+		</div>
+	);
+}
+
 function UsageSkeleton() {
 	return (
 		<div className="animate-pulse space-y-10" aria-hidden="true">
@@ -126,6 +144,7 @@ export default function SpikonadoUsage() {
 			{usageQuery.data.meters.map((meter) => (
 				<MeterUsage key={meter.id} meter={meter} now={now} />
 			))}
+			{usageQuery.data.credits && <CreditPackBalance credits={usageQuery.data.credits} now={now} />}
 		</>
 	);
 }

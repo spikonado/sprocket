@@ -1,29 +1,8 @@
 import { v } from 'convex/values';
-import { internalMutation, internalQuery, type MutationCtx } from '@convex/_generated/server';
-import { getUserBySubject } from '@convex/lib/auth';
+import { internalMutation, internalQuery } from '@convex/_generated/server';
+import { resolveCustomerOwner } from '@convex/billingCustomers';
 import { RENEWAL_GRACE_MS } from '@convex/lib/tiers';
 import { vSubscriptionStatus } from '@convex/lib/validators';
-
-/** The customer's linked user, else the checkout's `userId` metadata, which links the customer. */
-async function resolveOwner(
-	ctx: MutationCtx,
-	dodoCustomerId: string,
-	metadataUserId: string | undefined
-): Promise<string | null> {
-	const owner = await ctx.db
-		.query('users')
-		.withIndex('by_dodoCustomerId', (query) => query.eq('dodoCustomerId', dodoCustomerId))
-		.unique();
-
-	if (owner) return owner.subject;
-
-	const user = metadataUserId ? await getUserBySubject(ctx.db, metadataUserId) : null;
-
-	if (!user || user.dodoCustomerId) return null;
-	await ctx.db.patch('users', user._id, { dodoCustomerId });
-
-	return user.subject;
-}
 
 export const sync = internalMutation({
 	args: {
@@ -50,7 +29,8 @@ export const sync = internalMutation({
 
 		if (existing && (existing.syncedAt ?? 0) > fetchedAt) return null;
 
-		const userId = existing?.userId ?? (await resolveOwner(ctx, dodoCustomerId, metadataUserId));
+		const userId =
+			existing?.userId ?? (await resolveCustomerOwner(ctx, dodoCustomerId, metadataUserId));
 
 		if (!userId) {
 			console.error(

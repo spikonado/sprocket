@@ -121,6 +121,56 @@ export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: s
 	});
 }
 
+const DODO_WEBHOOK_SECRET = 'test_webhook_secret';
+
+export function stubDodoEnv() {
+	vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
+	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
+	vi.stubEnv(
+		'DODO_PAYMENTS_WEBHOOK_SECRET',
+		`whsec_${Buffer.from(DODO_WEBHOOK_SECRET).toString('base64url')}`
+	);
+}
+
+/** Posts a webhook signed with the secret `stubDodoEnv` configures. */
+export async function sendDodoWebhook<Data>(
+	t: ConvexTestInstance,
+	type: string,
+	data: Data,
+	{ tamper = false } = {}
+) {
+	const body = JSON.stringify({ business_id: 'business', type, timestamp: new Date(), data });
+	const webhookId = `webhook_${crypto.randomUUID()}`;
+	const timestamp = String(Math.floor(Date.now() / 1_000));
+	const encoder = new TextEncoder();
+
+	const key = await crypto.subtle.importKey(
+		'raw',
+		encoder.encode(DODO_WEBHOOK_SECRET),
+		{ name: 'HMAC', hash: 'SHA-256' },
+		false,
+		['sign']
+	);
+
+	const signature = await crypto.subtle.sign(
+		'HMAC',
+		key,
+		encoder.encode(`${webhookId}.${timestamp}.${body}`)
+	);
+
+	return await t.fetch('/dodopayments-webhook', {
+		method: 'POST',
+		body,
+		headers: {
+			'webhook-id': webhookId,
+			'webhook-timestamp': timestamp,
+			'webhook-signature': tamper
+				? 'v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+				: `v1,${Buffer.from(signature).toString('base64')}`
+		}
+	});
+}
+
 export async function seedTiers(t: ConvexTestInstance): Promise<void> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert('tiers', {

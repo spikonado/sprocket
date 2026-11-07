@@ -1,7 +1,7 @@
 import { vWorkId } from '@convex-dev/workpool';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { vPrice } from '@convex/lib/pricingValidators';
+import { vPackPrice, vPrice } from '@convex/lib/pricingValidators';
 import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
@@ -119,6 +119,26 @@ export default defineSchema({
 		windowStart: v.number(),
 		used: v.number()
 	}).index('by_userId_and_windowStart', ['userId', 'windowStart']),
+	// Operator-managed one-time Dodo products that add usage credit.
+	creditPacks: defineTable({
+		productId: v.string(),
+		label: v.string(),
+		units: v.number(),
+		expiresAfterDays: v.number(),
+		displayOrder: v.optional(v.number()),
+		price: v.optional(vPackPrice)
+	}).index('by_productId', ['productId']),
+	creditGrants: defineTable({
+		userId: v.string(),
+		paymentId: v.string(),
+		productId: v.string(),
+		units: v.number(),
+		used: v.number(),
+		expiresAt: v.number(),
+		revokedAt: v.optional(v.number())
+	})
+		.index('by_paymentId', ['paymentId'])
+		.index('by_userId_and_expiresAt', ['userId', 'expiresAt']),
 	dodoWebhookEvents: defineTable({
 		seq: v.number(),
 		environment: v.string(),

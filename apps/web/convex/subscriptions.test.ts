@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest, insertUser, seedTiers, type ConvexTestInstance } from './test.setup';
+import {
+	initConvexTest,
+	insertUser,
+	seedTiers,
+	sendDodoWebhook as sendWebhook,
+	stubDodoEnv,
+	type ConvexTestInstance
+} from './test.setup';
 
-const WEBHOOK_SECRET = 'test_webhook_secret';
 const DAY = 86_400_000;
 
 type DodoSubscription = {
@@ -34,12 +40,7 @@ function dodoSubscription(overrides: Partial<DodoSubscription> = {}): DodoSubscr
 
 /** Serves Dodo's subscription retrieve and list endpoints from `subscriptions`. */
 function stubDodo(subscriptions: DodoSubscription[]) {
-	vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
-	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
-	vi.stubEnv(
-		'DODO_PAYMENTS_WEBHOOK_SECRET',
-		`whsec_${Buffer.from(WEBHOOK_SECRET).toString('base64url')}`
-	);
+	stubDodoEnv();
 	const requests: URL[] = [];
 
 	vi.stubGlobal('fetch', async (input: Request | string | URL) => {
@@ -62,44 +63,6 @@ function stubDodo(subscriptions: DodoSubscription[]) {
 	});
 
 	return requests;
-}
-
-async function sendWebhook(
-	t: ConvexTestInstance,
-	type: string,
-	data: Partial<DodoSubscription>,
-	{ tamper = false } = {}
-) {
-	const body = JSON.stringify({ business_id: 'business', type, timestamp: new Date(), data });
-	const webhookId = `webhook_${crypto.randomUUID()}`;
-	const timestamp = String(Math.floor(Date.now() / 1_000));
-	const encoder = new TextEncoder();
-
-	const key = await crypto.subtle.importKey(
-		'raw',
-		encoder.encode(WEBHOOK_SECRET),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign']
-	);
-
-	const signature = await crypto.subtle.sign(
-		'HMAC',
-		key,
-		encoder.encode(`${webhookId}.${timestamp}.${body}`)
-	);
-
-	return await t.fetch('/dodopayments-webhook', {
-		method: 'POST',
-		body,
-		headers: {
-			'webhook-id': webhookId,
-			'webhook-timestamp': timestamp,
-			'webhook-signature': tamper
-				? 'v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
-				: `v1,${Buffer.from(signature).toString('base64')}`
-		}
-	});
 }
 
 function readMirror(t: ConvexTestInstance) {
