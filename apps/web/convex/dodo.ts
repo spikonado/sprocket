@@ -1,12 +1,34 @@
 'use node';
 
 import DodoPayments from 'dodopayments';
-import type { Subscription, SubscriptionListResponse } from 'dodopayments/resources';
-import { v } from 'convex/values';
+import type {
+	CheckoutSessionStatus,
+	Subscription,
+	SubscriptionListResponse,
+	SubscriptionStatus
+} from 'dodopayments/resources';
+import { ConvexError, v, type Infer } from 'convex/values';
 import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
 import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
-import { readDodoEnvironment } from '@convex/lib/dodoProducts';
+import {
+	matchesBillingInterval,
+	readDodoEnvironment,
+	type BillingInterval
+} from '@convex/lib/dodoProducts';
+import type { Price } from '@convex/lib/pricingValidators';
+import { vCheckoutAttemptStatus } from '@convex/lib/validators';
+
+export const LIVE_SUBSCRIPTION_CHECKOUT_ERROR =
+	'You already have a subscription. Use "Manage billing" to change it.';
+
+const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<SubscriptionStatus> = new Set([
+	'active',
+	'on_hold',
+	'past_due',
+	'paused',
+	'pending'
+]);
 
 const subscriptionEventData = z.object({ subscription_id: z.string() });
 
@@ -57,6 +79,13 @@ async function syncSubscription(
 	await mirror(ctx, await client.subscriptions.retrieve(dodoSubscriptionId), fetchedAt);
 }
 
+/** One page covers a customer; checkout refuses a second live subscription. */
+async function listCustomerSubscriptions(client: DodoPayments, dodoCustomerId: string) {
+	const page = await client.subscriptions.list({ customer_id: dodoCustomerId, page_size: 100 });
+
+	return page.items;
+}
+
 /** Throws on anything retryable so the HTTP route answers 500 and Dodo redelivers. */
 export const handleWebhook = internalAction({
 	args: { body: v.string(), headers: v.record(v.string(), v.string()) },
@@ -82,19 +111,14 @@ export const handleWebhook = internalAction({
 	}
 });
 
-/** One page covers a customer; checkout refuses a second live subscription. */
 export const syncCustomer = internalAction({
 	args: { dodoCustomerId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, { dodoCustomerId }) => {
 		const fetchedAt = Date.now();
+		const subscriptions = await listCustomerSubscriptions(createDodoClient(), dodoCustomerId);
 
-		const page = await createDodoClient().subscriptions.list({
-			customer_id: dodoCustomerId,
-			page_size: 100
-		});
-
-		for (const subscription of page.items) await mirror(ctx, subscription, fetchedAt);
+		for (const subscription of subscriptions) await mirror(ctx, subscription, fetchedAt);
 
 		return null;
 	}
@@ -114,6 +138,178 @@ export const syncOverdue = internalAction({
 			} catch (error) {
 				console.error(`Could not sync Dodo subscription ${id}.`, error);
 			}
+		}
+
+		return null;
+	}
+});
+
+async function ensureCustomer(
+	ctx: ActionCtx,
+	client: DodoPayments,
+	{ userId, email, name }: { userId: string; email?: string; name: string }
+): Promise<{ dodoCustomerId: string; created: boolean }> {
+	const existing = await ctx.runQuery(internal.billingCustomers.getDodoCustomerId, { userId });
+
+	if (existing) return { dodoCustomerId: existing, created: false };
+
+	if (!email?.trim()) throw new ConvexError('Your account does not have a billing email.');
+
+	const customer = await client.customers.create(
+		{ email: email.trim(), name, metadata: { userId } },
+		{ headers: { 'Idempotency-Key': `sprocket-customer:${userId}` } }
+	);
+
+	const dodoCustomerId = await ctx.runMutation(internal.billingCustomers.remember, {
+		userId,
+		dodoCustomerId: customer.customer_id
+	});
+
+	return { dodoCustomerId, created: true };
+}
+
+export const createCheckout = internalAction({
+	args: {
+		userId: v.string(),
+		email: v.optional(v.string()),
+		name: v.string(),
+		productId: v.string(),
+		returnUrl: v.string(),
+		cancelUrl: v.string()
+	},
+	returns: v.object({ sessionId: v.string(), checkoutUrl: v.string() }),
+	handler: async (ctx, args) => {
+		const client = createDodoClient();
+		const customer = await ensureCustomer(ctx, client, args);
+
+		if (!customer.created) {
+			const subscriptions = await listCustomerSubscriptions(client, customer.dodoCustomerId);
+
+			if (subscriptions.some(({ status }) => LIVE_SUBSCRIPTION_STATUSES.has(status))) {
+				throw new ConvexError(LIVE_SUBSCRIPTION_CHECKOUT_ERROR);
+			}
+		}
+
+		const session = await client.checkoutSessions.create({
+			product_cart: [{ product_id: args.productId, quantity: 1 }],
+			metadata: { userId: args.userId },
+			return_url: args.returnUrl,
+			cancel_url: args.cancelUrl,
+			feature_flags: {
+				allow_discount_code: true,
+				allow_customer_editing_email: false,
+				always_create_new_customer: false
+			},
+			customer: { customer_id: customer.dodoCustomerId }
+		});
+
+		if (!session.checkout_url) throw new Error('Dodo did not return a checkout URL.');
+
+		return { sessionId: session.session_id, checkoutUrl: session.checkout_url };
+	}
+});
+
+function checkoutStatus({
+	payment_id,
+	payment_status
+}: CheckoutSessionStatus): Infer<typeof vCheckoutAttemptStatus> {
+	if (!payment_id || !payment_status) return 'awaiting_payment';
+
+	if (payment_status === 'succeeded') return 'succeeded';
+
+	if (payment_status === 'failed' || payment_status === 'cancelled') return 'failed';
+
+	return 'pending';
+}
+
+export const getCheckoutStatus = internalAction({
+	args: { sessionId: v.string() },
+	returns: vCheckoutAttemptStatus,
+	handler: async (_ctx, { sessionId }) => {
+		try {
+			return checkoutStatus(await createDodoClient().checkoutSessions.retrieve(sessionId));
+		} catch (error) {
+			if (error instanceof DodoPayments.NotFoundError) {
+				throw new ConvexError('Unknown checkout attempt.');
+			}
+
+			throw error;
+		}
+	}
+});
+
+export const createCustomerPortal = internalAction({
+	args: { dodoCustomerId: v.string() },
+	returns: v.string(),
+	handler: async (_ctx, { dodoCustomerId }) => {
+		const session = await createDodoClient().customers.customerPortal.create(dodoCustomerId, {
+			send_email: false
+		});
+
+		if (!session.link) throw new Error('Dodo did not return a customer portal URL.');
+
+		return session.link;
+	}
+});
+
+/** Null when the product can't be sold at `interval`; throws on request failures. */
+async function fetchPrice(
+	client: DodoPayments,
+	productId: string,
+	interval: BillingInterval
+): Promise<Price | null> {
+	const { name, price } = await client.products.retrieve(productId);
+
+	if (
+		price.type !== 'recurring_price' ||
+		price.price <= 0 ||
+		!matchesBillingInterval(
+			interval,
+			price.payment_frequency_count,
+			price.payment_frequency_interval
+		)
+	) {
+		console.error(`Dodo product ${productId} is not a paid ${interval} subscription.`);
+
+		return null;
+	}
+
+	return {
+		productId,
+		name: name ?? null,
+		amountMinor: price.price,
+		currency: price.currency,
+		paymentFrequencyCount: price.payment_frequency_count,
+		paymentFrequencyInterval: price.payment_frequency_interval
+	};
+}
+
+/** Keeps the last price when Dodo can't be reached. */
+export const syncPrices = internalAction({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		if (!env.DODO_PAYMENTS_API_KEY?.trim()) return null;
+
+		const products = await ctx.runQuery(internal.pricing.listTierProducts, {});
+		const client = createDodoClient();
+
+		for (const product of products) {
+			let price;
+
+			try {
+				price = await fetchPrice(client, product.productId, product.interval);
+			} catch (error) {
+				console.error(`Could not load Dodo product ${product.productId}.`, error);
+
+				continue;
+			}
+
+			await ctx.runMutation(internal.pricing.setTierPrice, {
+				tierId: product.tierId,
+				interval: product.interval,
+				price
+			});
 		}
 
 		return null;

@@ -102,12 +102,6 @@ Released agents call `payments:reportOrder` without `outcome`, which means `orde
 
 ## Convex data shims
 
-### Legacy checkout attempts
-
-Legacy ambiguous creates without a frozen request require provider reconciliation. Remove this fail-closed recovery path after all pre-freeze ambiguous attempts resolve.
-
-The checkout tables keep `by_userId` because released readers use it. Remove it once those readers age out and all current-session lookups use the compound indexes. Keep a creation-order history index while history iteration needs it.
-
 ### Migration records
 
 `migrationSchedules` and the `migrations` component's data keep completion records for finished backfills. Remove the table and that data after an operator deletes or archives those records on each deployment.
@@ -120,10 +114,6 @@ Tool parts written by the August 2026 transcript migration, with `migrated-tool:
 
 Older `artifacts` rows carry `type`, so the schema keeps it optional. `migrations:removeArtifactTypes` deletes it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove `type` from the schema and remove the migration.
 
-### Pricing cache keys
-
-Older `dodoPricingCache` rows carry a `cacheKey` that nothing reads, so the schema keeps it optional. `migrations:dropPricingCacheKeys` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
-
 ### Context summary part counts
 
 Older threads store the context summary cutoff as `contextSummaryThroughPartNumber`, the inclusive last covered part with `-1` for an empty prefix. When `contextSummaryPartCount` is missing, `existingContextSummaryPartCount` uses that value plus one. `migrations:countContextSummaryParts` rewrites those rows, and the Convex Production workflow runs it after each deploy. Once it reports done on production, remove the old field, the fallback and the migration.
@@ -134,7 +124,7 @@ Older `subscriptions` rows hold the retired webhook projection, including operat
 
 ### Retired billing tables
 
-`subscriptionReconciliations` and `supersededSubscriptions` are untyped tables kept only so the schema accepts their old rows. `migrations:clearSubscriptionReconciliations` and `migrations:clearSupersededSubscriptions` empty them. Once both report done on production, remove the tables and the migrations, and delete the unmounted `billingWebhookWorkpool` and `billingReconciliationWorkpool` components' data on each deployment.
+`subscriptionReconciliations`, `supersededSubscriptions`, `billingCheckoutSessions`, `billingCheckoutAttempts` and `dodoPricingCache` are untyped tables kept only so the schema accepts their old rows. `clearSubscriptionReconciliations`, `clearSupersededSubscriptions`, `clearCheckoutSessions`, `clearCheckoutAttempts` and `clearPricingCache` in `migrations.ts` delete their rows. Once all five report done on production, remove the tables and the migrations, and delete the unmounted `billingWebhookWorkpool` and `billingReconciliationWorkpool` components' data on each deployment.
 
 ### Dodo webhook ledger
 

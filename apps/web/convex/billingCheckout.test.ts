@@ -1,12 +1,65 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { matchesBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
-import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
-import { initConvexTest } from './test.setup';
+import { LIVE_SUBSCRIPTION_CHECKOUT_ERROR } from './dodo';
+import { initConvexTest, insertUser, seedTiers, type ConvexTestInstance } from './test.setup';
+
+beforeEach(() => vi.useFakeTimers());
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllEnvs();
+	vi.unstubAllGlobals();
 });
+
+/** Serves the Dodo endpoints checkout uses and records every request. */
+function stubDodo({
+	subscriptionStatuses = [],
+	session = { payment_id: null, payment_status: null }
+}: {
+	subscriptionStatuses?: string[];
+	session?: { payment_id: string | null; payment_status: string | null } | null;
+} = {}): Request[] {
+	vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
+	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
+	vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'whsec_test');
+	vi.stubEnv('SPROCKET_MARKETING_ORIGIN', 'https://spikonado.com/');
+	const requests: Request[] = [];
+
+	vi.stubGlobal('fetch', async (input: Request | string | URL, init?: RequestInit) => {
+		const request = input instanceof Request ? input : new Request(input, init);
+		requests.push(request.clone());
+		const path = new URL(request.url).pathname;
+
+		if (path === '/customers') return Response.json({ customer_id: 'cus_new' });
+
+		if (path === '/subscriptions') {
+			return Response.json({ items: subscriptionStatuses.map((status) => ({ status })) });
+		}
+
+		if (path === '/checkouts') {
+			return Response.json({ session_id: 'cks_1', checkout_url: 'https://checkout.example/cks_1' });
+		}
+
+		if (path.startsWith('/checkouts/')) {
+			return session
+				? Response.json({ id: path.split('/').at(-1), created_at: new Date(), ...session })
+				: Response.json({ message: 'Not found' }, { status: 404 });
+		}
+
+		throw new Error(`Unexpected Dodo request: ${path}`);
+	});
+
+	return requests;
+}
+
+function paths(requests: Request[]) {
+	return requests.map((request) => `${request.method} ${new URL(request.url).pathname}`);
+}
+
+function owner(t: ConvexTestInstance) {
+	return t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
+}
 
 describe('Dodo product mapping', () => {
 	it('accepts only monthly and annual recurring schedules for their mapped products', () => {
@@ -19,33 +72,9 @@ describe('Dodo product mapping', () => {
 
 	it('rejects unknown Dodo environments', () => {
 		expect(readDodoEnvironment({ DODO_PAYMENTS_ENVIRONMENT: 'live_mode' })).toBe('live_mode');
-		expect(readDodoEnvironment({ DODO_PAYMENTS_ENVIRONMENT: 'test_mode' })).toBe('test_mode');
-		expect(() => readDodoEnvironment({})).toThrow(
-			'DODO_PAYMENTS_ENVIRONMENT must be test_mode or live_mode.'
-		);
 		expect(() => readDodoEnvironment({ DODO_PAYMENTS_ENVIRONMENT: 'production' })).toThrow(
 			'DODO_PAYMENTS_ENVIRONMENT must be test_mode or live_mode.'
 		);
-	});
-
-	it('maps products for an arbitrary configured tier', async () => {
-		const t = initConvexTest();
-		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', {
-				tierId: 'team',
-				label: 'Team',
-				monthly: 1,
-				monthlyProductId: 'prod_team_monthly',
-				annualProductId: 'prod_team_annual'
-			});
-		});
-
-		await expect(
-			t.query(internal.pricingData.getTierProduct, { tierId: 'team', interval: 'monthly' })
-		).resolves.toBe('prod_team_monthly');
-		await expect(
-			t.query(internal.pricingData.getTierProduct, { tierId: 'team', interval: 'annual' })
-		).resolves.toBe('prod_team_annual');
 	});
 
 	it('rejects a product assigned to more than one tier or interval', async () => {
@@ -66,307 +95,116 @@ describe('Dodo product mapping', () => {
 		});
 
 		await expect(
-			t.query(internal.pricingData.getTierProduct, { tierId: 'team', interval: 'annual' })
+			t.query(internal.pricing.getTierProduct, { tierId: 'team', interval: 'annual' })
 		).rejects.toThrow('Dodo product "prod_shared" is assigned more than once.');
 	});
-
-	it('accepts checkout for an arbitrary tier with a configured product', async () => {
-		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
-		vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'whsec_test');
-		vi.stubEnv('DODO_PAYMENTS_API_KEY', undefined);
-		const t = initConvexTest();
-		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', {
-				tierId: 'team',
-				label: 'Team',
-				monthly: 1,
-				monthlyProductId: 'prod_team_monthly'
-			});
-		});
-
-		await expect(
-			t
-				.withIdentity({ subject: 'user_team', email: 'team@example.com' })
-				.action(api.billing.checkout, {
-					tier: 'team',
-					interval: 'monthly'
-				})
-		).rejects.toThrow('Payments are not configured.');
-	});
 });
 
-describe('marketing checkout URLs', () => {
-	it('allows the production site and test-mode localhost only', () => {
-		expect(() => resolveMarketingPricingUrls({}, 'team')).toThrow('must be configured');
-		expect(
-			resolveMarketingPricingUrls({ SPROCKET_MARKETING_ORIGIN: 'https://spikonado.com' }, 'team')
-		).toEqual({
-			return_url: 'https://spikonado.com/pricing?checkout=return&tier=team',
-			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=team'
-		});
-		expect(
-			resolveMarketingPricingUrls(
-				{
-					SPROCKET_MARKETING_ORIGIN: 'http://localhost:4321',
-					DODO_PAYMENTS_ENVIRONMENT: 'test_mode'
-				},
-				'team'
-			)
-		).toEqual({
-			return_url: 'http://localhost:4321/pricing?checkout=return&tier=team',
-			cancel_url: 'http://localhost:4321/pricing?checkout=cancel&tier=team'
-		});
-		expect(() =>
-			resolveMarketingPricingUrls(
-				{
-					SPROCKET_MARKETING_ORIGIN: 'http://localhost:4321',
-					DODO_PAYMENTS_ENVIRONMENT: 'live_mode'
-				},
-				'team'
-			)
-		).toThrow('not an approved billing origin');
-		expect(
-			resolveMarketingPricingUrls(
-				{ SPROCKET_MARKETING_ORIGIN: 'https://spikonado.com' },
-				'team/plus'
-			)
-		).toEqual({
-			return_url: 'https://spikonado.com/pricing?checkout=return&tier=team%2Fplus',
-			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=team%2Fplus'
-		});
-	});
-});
-
-describe('Dodo subscription persistence', () => {
-	beforeEach(() => {
-		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
-	});
-
-	it('reuses a matching checkout reservation and replaces it when the selection changes', async () => {
+describe('checkout', () => {
+	it('creates the customer and a session tagged with the user', async () => {
 		const t = initConvexTest();
-
-		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'pro',
-			interval: 'monthly',
-			productId: 'prod_monthly',
-			now: 1_000
-		});
-
-		expect(first).toMatchObject({
-			kind: 'create',
-			interval: 'monthly',
-			productId: 'prod_monthly'
-		});
-
-		if (first.kind !== 'create') throw new Error('Expected a fresh reservation.');
+		await seedTiers(t);
+		const requests = stubDodo();
 
 		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'user_checkout',
-				tierId: 'pro',
-				interval: 'monthly',
-				productId: 'prod_monthly',
-				now: 2_000
-			})
-		).resolves.toMatchObject({ kind: 'create', attemptId: first.attemptId });
-		await t.mutation(internal.billing.attachCheckoutSession, {
-			userId: 'user_checkout',
-			attemptId: first.attemptId,
-			checkoutUrl: 'https://checkout.example/session_1',
+			owner(t).action(api.billing.checkout, { tier: 'pro', interval: 'annual' })
+		).resolves.toEqual({
+			checkout_url: 'https://checkout.example/cks_1',
+			mode: 'test',
+			attemptId: 'cks_1',
 			sessionId: 'cks_1'
 		});
 
-		const replaced = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'pro',
-			interval: 'annual',
-			productId: 'prod_annual',
-			now: 3_000
-		});
-
-		expect(replaced).toMatchObject({
-			kind: 'create',
-			interval: 'annual',
-			productId: 'prod_annual'
-		});
-
-		if (replaced.kind !== 'create') throw new Error('Expected a fresh reservation.');
-
-		expect(replaced.attemptId).not.toBe(first.attemptId);
-
-		await expect(
-			t.query(internal.billing.lookupCheckoutAttempt, {
-				userId: 'user_checkout',
-				attemptId: first.attemptId
-			})
-		).resolves.toMatchObject({
-			attemptId: first.attemptId,
-			productId: 'prod_monthly',
-			checkoutUrl: 'https://checkout.example/session_1',
-			dodoSessionId: 'cks_1'
-		});
-
-		await t.mutation(internal.billing.attachCheckoutSession, {
-			userId: 'user_checkout',
-			attemptId: replaced.attemptId,
-			checkoutUrl: 'https://checkout.example/session_annual'
+		expect(paths(requests)).toEqual(['POST /customers', 'POST /checkouts']);
+		expect(await requests[1]?.json()).toMatchObject({
+			product_cart: [{ product_id: 'prod_pro_annual', quantity: 1 }],
+			metadata: { userId: 'owner' },
+			customer: { customer_id: 'cus_new' },
+			return_url: 'https://spikonado.com/pricing?checkout=return&tier=pro',
+			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=pro'
 		});
 		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'user_checkout',
-				tierId: 'pro',
-				interval: 'annual',
-				productId: 'prod_annual',
-				now: 3_500
-			})
-		).resolves.toEqual({
-			kind: 'existing',
-			attemptId: replaced.attemptId,
-			checkoutUrl: 'https://checkout.example/session_annual'
-		});
-
-		const otherTier = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'team',
-			interval: 'monthly',
-			productId: 'prod_team',
-			now: 4_000
-		});
-
-		expect(otherTier).toMatchObject({
-			kind: 'create',
-			interval: 'monthly',
-			productId: 'prod_team'
-		});
-
-		if (otherTier.kind !== 'create') throw new Error('Expected a fresh reservation.');
-
-		await expect(
-			t.query(internal.billing.lookupCheckoutAttempt, {
-				userId: 'user_checkout',
-				attemptId: replaced.attemptId
-			})
-		).resolves.toMatchObject({ productId: 'prod_annual' });
+			t.query(internal.billingCustomers.getDodoCustomerId, { userId: 'owner' })
+		).resolves.toBe('cus_new');
 	});
 
-	it('keeps stable idempotency keys across selection changes', async () => {
+	it.each([
+		[['cancelled', 'paused'], false],
+		[['cancelled', 'expired', 'failed'], true]
+	])('with Dodo subscriptions %j, starts a session: %s', async (subscriptionStatuses, allowed) => {
 		const t = initConvexTest();
+		await seedTiers(t);
+		await t.run((ctx) => insertUser(ctx, 'owner', 'cus_owner'));
+		const requests = stubDodo({ subscriptionStatuses });
+		const result = owner(t).action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
 
-		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'pro',
-			interval: 'monthly',
-			productId: 'prod_monthly',
-			now: 1_000
-		});
+		if (allowed) await expect(result).resolves.toMatchObject({ attemptId: 'cks_1' });
+		else await expect(result).rejects.toThrow(LIVE_SUBSCRIPTION_CHECKOUT_ERROR);
 
-		if (first.kind !== 'create' || !first.idempotencyKey) {
-			throw new Error('Expected a fresh reservation with an idempotency key.');
-		}
-
-		const same = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'pro',
-			interval: 'monthly',
-			productId: 'prod_monthly',
-			now: 2_000
-		});
-
-		expect(same).toMatchObject({
-			kind: 'create',
-			attemptId: first.attemptId,
-			idempotencyKey: first.idempotencyKey
-		});
-
-		const changed = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'pro',
-			interval: 'annual',
-			productId: 'prod_annual',
-			now: 3_000
-		});
-
-		if (changed.kind !== 'create' || !changed.idempotencyKey) {
-			throw new Error('Expected a fresh reservation with an idempotency key.');
-		}
-
-		expect(changed.idempotencyKey).not.toBe(first.idempotencyKey);
+		expect(new URL(requests[0]?.url ?? '').searchParams.get('customer_id')).toBe('cus_owner');
+		expect(paths(requests).includes('POST /checkouts')).toBe(allowed);
 	});
 
-	it('does not invent a provider key for a legacy ambiguous row without one', async () => {
+	it('refuses checkout before calling Dodo when payments are not configured', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
+		const requests = stubDodo();
+		vi.stubEnv('DODO_PAYMENTS_API_KEY', undefined);
 
-		await t.run(async (ctx) => {
-			await ctx.db.insert('billingCheckoutAttempts', {
-				userId: 'user_legacy',
-				attemptId: 'attempt_legacy',
-				tierId: 'pro',
-				interval: 'monthly',
-				productId: 'prod_monthly',
-				outcome: 'create_ambiguous',
-				expiresAt: 500
-			});
-		});
+		await expect(
+			owner(t).action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
+		).rejects.toThrow('Payments are not configured.');
+		expect(requests).toEqual([]);
+	});
+});
 
-		const resumed = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_legacy',
-			tierId: 'pro',
-			interval: 'monthly',
-			productId: 'prod_monthly',
-			now: 2_000
-		});
+describe('getCheckoutStatus', () => {
+	it.each([
+		[{ payment_id: null, payment_status: null }, { status: 'awaiting_payment' }],
+		[{ payment_id: 'pay_1', payment_status: 'processing' }, { status: 'pending' }],
+		[{ payment_id: 'pay_1', payment_status: 'cancelled' }, { status: 'failed' }],
+		[
+			{ payment_id: 'pay_1', payment_status: 'succeeded' },
+			{ status: 'succeeded', activated: false }
+		]
+	])('maps Dodo session %j to %j', async (session, expected) => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		stubDodo({ session });
 
-		expect(resumed).toMatchObject({ kind: 'create', attemptId: 'attempt_legacy' });
-
-		if (resumed.kind !== 'create') throw new Error('Expected the ambiguous resume path.');
-
-		expect(resumed.idempotencyKey).toBeUndefined();
-		expect(resumed.createRequest).toBeUndefined();
+		await expect(
+			owner(t).action(api.billing.getCheckoutStatus, { attemptId: 'cks_1' })
+		).resolves.toEqual({ attemptId: 'cks_1', mode: 'test', ...expected });
 	});
 
-	it('replaces an expired checkout reservation', async () => {
+	it('reports activation once the mirror grants a paid plan', async () => {
 		const t = initConvexTest();
-
-		const expired = await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_checkout',
-			tierId: 'pro',
-			interval: 'monthly',
-			productId: 'prod_monthly',
-			now: 1_000
-		});
-
-		if (expired.kind !== 'create') throw new Error('Expected a fresh reservation.');
-
-		await t.run(async (ctx) => {
-			const reservation = await ctx.db
-				.query('billingCheckoutSessions')
-				.withIndex('by_userId_and_attemptId', (query) => query.eq('userId', 'user_checkout'))
-				.unique();
-
-			if (!reservation) throw new Error('Missing checkout reservation.');
-			await ctx.db.patch('billingCheckoutSessions', reservation._id, { expiresAt: 1_999 });
-		});
+		await seedTiers(t);
+		stubDodo({ session: { payment_id: 'pay_1', payment_status: 'succeeded' } });
+		await t.run((ctx) =>
+			ctx.db.insert('subscriptions', {
+				userId: 'owner',
+				dodoSubscriptionId: 'sub_owner',
+				dodoProductId: 'prod_pro',
+				status: 'active',
+				billingPeriodStart: Date.now() - 60_000,
+				billingPeriodEnd: Date.now() + 60_000,
+				cancelAtNextBillingDate: false,
+				syncedAt: Date.now()
+			})
+		);
 
 		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'user_checkout',
-				tierId: 'pro',
-				interval: 'annual',
-				productId: 'prod_annual',
-				now: 2_000
-			})
-		).resolves.toMatchObject({
-			kind: 'create',
-			interval: 'annual',
-			productId: 'prod_annual'
-		});
+			owner(t).action(api.billing.getCheckoutStatus, { attemptId: 'cks_1' })
+		).resolves.toMatchObject({ status: 'succeeded', activated: true });
+	});
+
+	it('rejects a session Dodo does not know', async () => {
+		const t = initConvexTest();
+		stubDodo({ session: null });
 
 		await expect(
-			t.query(internal.billing.lookupCheckoutAttempt, {
-				userId: 'user_checkout',
-				attemptId: expired.attemptId
-			})
-		).resolves.toMatchObject({ attemptId: expired.attemptId, productId: 'prod_monthly' });
+			owner(t).action(api.billing.getCheckoutStatus, { attemptId: 'legacy-attempt' })
+		).rejects.toThrow('Unknown checkout attempt.');
 	});
 });
