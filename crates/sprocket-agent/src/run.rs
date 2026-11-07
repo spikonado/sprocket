@@ -801,7 +801,7 @@ pub async fn run_agent(
     );
 
     let reasoning_effort = context.run.reasoning_effort.clone();
-    let fast_mode = context.run.fast_mode;
+    let fast_mode = context.run.fast_mode && capabilities.supports_fast;
     let prepare_history =
         load_prior_history(&runtime, &store, &context, &run_id, history_supports_images);
     let prior_history = {

@@ -53,6 +53,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     let vision =
         select_catalog_model(&catalog_payload().sprocket, "vision-model").expect("vision model");
     assert!(vision.supports_images);
+    assert!(vision.supports_fast);
     assert_eq!(vision.label, "Vision Model");
     assert_eq!(vision.vendor, "openai");
     assert_eq!(vision.context_budget.context_window_tokens, 100_000);
@@ -68,6 +69,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     let long_context = select_catalog_model(&catalog_payload().sprocket, "long-context-model")
         .expect("long-context model");
     assert!(!long_context.supports_images);
+    assert!(!long_context.supports_fast);
     assert_eq!(long_context.vendor, "other");
     assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     assert_eq!(long_context.usage_pricing, UsagePricing::default());
@@ -146,14 +148,14 @@ fn removed_handoff_model_filters_the_default_for_the_previous_provider() {
 }
 
 #[test]
-fn listed_handoff_model_keeps_its_settings_when_the_vendor_changes() {
+fn listed_handoff_model_keeps_its_settings_except_unlisted_fast_mode() {
     let (handoff, capabilities) = select_handoff_model(
         &catalog_payload().sprocket,
         ProviderHandoff {
             completion_provider: CompletionProvider::Spikonado,
             selected_model: "long-context-model".to_string(),
             reasoning_effort: "none".to_string(),
-            fast_mode: false,
+            fast_mode: true,
         },
         CompletionProvider::Spikonado,
         "openai",

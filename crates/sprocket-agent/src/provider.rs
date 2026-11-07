@@ -108,7 +108,7 @@ fn usage_source(
     UsageSource {
         provider,
         model: model.clone(),
-        fast: fast && provider.serves_fast_mode(),
+        fast,
         pricing: pricing.clone(),
     }
 }
@@ -449,10 +449,7 @@ impl AgentProvider {
     }
 }
 
-fn completion_parameters(
-    reasoning_effort: &str,
-    fast_mode: bool,
-) -> anyhow::Result<(GenerationOptions, serde_json::Value)> {
+fn generation_options(reasoning_effort: &str) -> anyhow::Result<GenerationOptions> {
     let reasoning = if reasoning_effort == "none" {
         Reasoning::Off
     } else {
@@ -460,16 +457,16 @@ fn completion_parameters(
             .map(Reasoning::from)
             .map_err(|error| anyhow!("invalid reasoning effort: {error}"))?
     };
-    // The gateway's "fast" tier is not Rig's portable Priority tier.
-    let additional_params = if fast_mode {
-        serde_json::json!({ "service_tier": "fast" })
+    Ok(GenerationOptions::default().reasoning(reasoning))
+}
+
+// Tier names differ per provider, so they bypass Rig's portable tiers.
+fn service_tier_params(provider: CompletionProvider, fast_mode: bool) -> serde_json::Value {
+    if fast_mode {
+        serde_json::json!({ "service_tier": provider.fast_service_tier() })
     } else {
         serde_json::json!({})
-    };
-    Ok((
-        GenerationOptions::default().reasoning(reasoning),
-        additional_params,
-    ))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -548,29 +545,23 @@ async fn run_with_completion_model(
     let legacy_origin = model
         .id()
         .map(|id| rig::message::Origin::new("openai.responses", model.name(), id));
-    let (fast_params, standard_params) =
-        match completion_parameters(&request.reasoning_effort, request.fast_mode).and_then(|fast| {
-            Ok((
-                fast,
-                completion_parameters(&request.reasoning_effort, false)?,
-            ))
-        }) {
-            Ok(params) => params,
-            Err(error) => return AgentProviderResult::Failed { error },
-        };
+    let options = match generation_options(&request.reasoning_effort) {
+        Ok(options) => options,
+        Err(error) => return AgentProviderResult::Failed { error },
+    };
+    let fast_mode = request.fast_mode;
     let target_params = |target: &AgentProvider| {
-        if target.completion_provider.serves_fast_mode() {
-            fast_params.clone()
-        } else {
-            standard_params.clone()
-        }
+        (
+            options.clone(),
+            service_tier_params(target.completion_provider, fast_mode),
+        )
     };
     let mut additional_params = if let Some(ProviderSwitchHandoff { handoff, .. }) = &switch {
-        match completion_parameters(
-            &handoff.reasoning_effort,
-            handoff.fast_mode && handoff.completion_provider.serves_fast_mode(),
-        ) {
-            Ok(params) => params,
+        match generation_options(&handoff.reasoning_effort) {
+            Ok(options) => (
+                options,
+                service_tier_params(handoff.completion_provider, handoff.fast_mode),
+            ),
             Err(error) => return AgentProviderResult::Failed { error },
         }
     } else {
