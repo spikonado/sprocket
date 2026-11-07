@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { captureException, setAnalyticsUser, track } from '@/lib/analytics/client';
+	import {
+		captureException,
+		observeSection,
+		setAnalyticsUser,
+		track
+	} from '@/lib/analytics/client';
 	import {
 		clearCheckoutAttempt,
 		fetchCheckoutStatus,
@@ -536,6 +541,7 @@
 		class="mx-auto mt-20 max-w-6xl"
 		aria-labelledby="credit-packs-heading"
 		data-ph-capture-attribute-section="pricing_credit_packs"
+		{@attach observeSection}
 	>
 		<h2 id="credit-packs-heading" class="font-brand text-foreground text-2xl font-semibold">
 			Credit packs

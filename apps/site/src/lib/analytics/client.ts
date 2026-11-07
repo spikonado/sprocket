@@ -11,6 +11,8 @@ const SECTION_ATTRIBUTE = 'data-ph-capture-attribute-section';
 
 let initialized = false;
 
+let sectionObserver: IntersectionObserver | undefined;
+
 // Islands can capture before the layout script runs, so every call initializes on demand.
 function client(): typeof posthog | undefined {
 	if (!initialized) {
@@ -61,6 +63,12 @@ export function captureException(cause: unknown, context: string): void {
 	client()?.captureException(cause, { context });
 }
 
+/** For sections an island mounts after analytics started, like packs from the live catalog. */
+export function observeSection(section: Element): void {
+	client();
+	sectionObserver?.observe(section);
+}
+
 /**
  * The WorkOS user ID is the Sprocket account ID, so it stays stable across devices.
  * `null` only resets identified visitors, so anonymous visitors keep their history.
@@ -90,5 +98,6 @@ function trackSectionViews(): void {
 		{ threshold: 0.35, rootMargin: '0px 0px -10% 0px' }
 	);
 
+	sectionObserver = observer;
 	document.querySelectorAll(`main [${SECTION_ATTRIBUTE}]`).forEach((el) => observer.observe(el));
 }
