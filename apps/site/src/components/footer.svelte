@@ -5,6 +5,8 @@
 	import youtube_logo from '@/assets/youtube_logo.svg';
 	import instagram_logo from '@/assets/instagram_logo.svg';
 	import facebook_logo from '@/assets/facebook_logo.svg';
+	import { ORGANIZATION_NAME, ORGANIZATION_URL } from '@/lib/seo';
+	import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
 	import { cn } from '@/utils';
 	import {
 		marketingBrandClass,
@@ -12,15 +14,17 @@
 		marketingSectionShellClass
 	} from '@/styles/marketing';
 
-	const productLinks = [
-		{ label: 'Sprocket', path: '/sprocket' },
-		{ label: 'Vario', path: '/#vario' }
+	const sprocketLinks = [
+		{ label: 'Home', href: '/' },
+		{ label: 'Pricing', href: '/pricing' },
+		{ label: 'Download', href: '/#download' },
+		{ label: 'GitHub', href: SPROCKET_GITHUB_URL }
 	] as const;
 
 	const companyLinks = [
-		{ label: 'Pricing', path: '/pricing' },
-		{ label: 'Build log', path: '/#build-log' },
-		{ label: 'Privacy Policy', path: '/privacy' }
+		{ label: ORGANIZATION_NAME, href: ORGANIZATION_URL },
+		{ label: 'Build log', href: `${ORGANIZATION_URL}/#build-log` },
+		{ label: 'Privacy Policy', href: `${ORGANIZATION_URL}/privacy` }
 	] as const;
 
 	const socialLinks = [
@@ -32,8 +36,10 @@
 	] as const;
 
 	const linkListClass = 'space-y-3';
+
 	const linkClass =
 		'font-sans text-base text-foreground transition-colors hover:text-muted-foreground md:text-lg';
+
 	const columnLabelClass =
 		'font-sans text-xs font-medium tracking-wide text-muted-foreground uppercase';
 </script>
@@ -41,7 +47,7 @@
 <footer
 	class={cn(
 		marketingSectionShellClass,
-		'border-t border-border/60 px-4 pt-20 pb-10 sm:px-6 sm:pt-24 lg:px-8'
+		'border-border/60 border-t px-4 pt-20 pb-10 sm:px-6 sm:pt-24 lg:px-8'
 	)}
 	data-ph-capture-attribute-section="footer"
 >
@@ -51,17 +57,17 @@
 		<div class="flex flex-col items-center gap-5 md:items-start">
 			<a href="/" class="flex items-center gap-3 transition-transform duration-150 hover:scale-105">
 				<img loading="lazy" src={logo.src} alt="" class="h-9 w-9" />
-				<span class={cn(marketingBrandClass, 'text-2xl sm:text-3xl')}>Spikonado</span>
+				<span class={cn(marketingBrandClass, 'text-2xl sm:text-3xl')}>Sprocket</span>
 			</a>
 			<p class={cn(marketingSectionBodyClass, 'text-base md:text-lg')}>Build more tech, faster.</p>
 		</div>
 
 		<div class="flex flex-col items-center gap-4 md:items-start">
-			<h3 class={columnLabelClass}>Products</h3>
+			<h3 class={columnLabelClass}>Sprocket</h3>
 			<ul class={linkListClass}>
-				{#each productLinks as link (link.label)}
+				{#each sprocketLinks as link (link.label)}
 					<li>
-						<a href={link.path} class={cn(linkClass, 'font-brand')}>
+						<a href={link.href} class={linkClass}>
 							{link.label}
 						</a>
 					</li>
@@ -74,7 +80,7 @@
 			<ul class={linkListClass}>
 				{#each companyLinks as link (link.label)}
 					<li>
-						<a href={link.path} class={linkClass}>
+						<a href={link.href} class={linkClass}>
 							{link.label}
 						</a>
 					</li>
@@ -84,11 +90,10 @@
 	</div>
 
 	<div
-		class="relative mx-auto mt-16 flex w-full max-w-6xl flex-col items-center justify-between gap-6 border-t border-border/50 pt-8 text-sm text-muted-foreground md:flex-row"
+		class="border-border/50 text-muted-foreground relative mx-auto mt-16 flex w-full max-w-6xl flex-col items-center justify-between gap-6 border-t pt-8 text-sm md:flex-row"
 	>
 		<p class="font-sans">&copy; {new Date().getFullYear()} Spikonado</p>
 		<div class="flex items-center gap-6">
-			<!-- eslint-disable svelte/no-navigation-without-resolve -->
 			{#each socialLinks as link (link.label)}
 				<a
 					href={link.href}
@@ -99,7 +104,6 @@
 					<img loading="lazy" src={link.src} alt={link.label} class="h-7 w-7" />
 				</a>
 			{/each}
-			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		</div>
 	</div>
 </footer>

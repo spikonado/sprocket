@@ -47,14 +47,14 @@
 	>
 		<button
 			type="button"
-			class="absolute inset-0 bg-ink/90"
+			class="bg-ink/90 absolute inset-0"
 			aria-label="Close full size image"
 			onclick={closeLightbox}
 		></button>
 
 		<button
 			type="button"
-			class="absolute top-4 right-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-ink/60 text-white transition-colors hover:bg-ink/80 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
+			class="bg-ink/60 hover:bg-ink/80 absolute top-4 right-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 text-white transition-colors focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
 			aria-label="Close full size image"
 			onclick={closeLightbox}
 		>

@@ -1,11 +1,14 @@
 // @ts-check
 
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import svelte from '@astrojs/svelte';
 import posthog from '@posthog/rollup-plugin';
 import tailwindcss from '@tailwindcss/vite';
 import vercel from '@astrojs/vercel';
+import { SITE_URL } from './src/lib/seo.ts';
 
 const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, VERCEL_GIT_COMMIT_SHA } = process.env;
 
@@ -17,14 +20,22 @@ const posthogSourceMaps =
 					personalApiKey: POSTHOG_PERSONAL_API_KEY,
 					projectId: POSTHOG_PROJECT_ID,
 					host: 'https://eu.i.posthog.com',
-					sourcemaps: { releaseName: 'spikonado.com', releaseVersion: VERCEL_GIT_COMMIT_SHA }
+					sourcemaps: { releaseName: 'usesprocket.dev', releaseVersion: VERCEL_GIT_COMMIT_SHA }
 				})
 			]
 		: [];
 
+const monorepoRoot = path.resolve(import.meta.dirname, '../..');
+
+// Bun's global store keeps the font files outside the repo, at `<store>/<entry>/node_modules/@fontsource/ibm-plex-mono`.
+const bunGlobalStore = path.resolve(
+	realpathSync(path.join(import.meta.dirname, 'node_modules/@fontsource/ibm-plex-mono')),
+	'../../../..'
+);
+
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://spikonado.com',
+	site: SITE_URL,
 	// No Astro.session usage on this site, so leave the session runtime out of the SSR bundle.
 	session: false,
 	integrations: [
@@ -36,6 +47,7 @@ export default defineConfig({
 	adapter: vercel(),
 
 	vite: {
-		plugins: [tailwindcss(), ...posthogSourceMaps]
+		plugins: [tailwindcss(), ...posthogSourceMaps],
+		server: { fs: { allow: [monorepoRoot, bunGlobalStore] } }
 	}
 });

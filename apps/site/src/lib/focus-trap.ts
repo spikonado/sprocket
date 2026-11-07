@@ -14,6 +14,7 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
 		if (element.closest('[disabled], [hidden], [aria-hidden="true"]')) {
 			return false;
 		}
+
 		return element.getClientRects().length > 0 || element === document.activeElement;
 	});
 }
@@ -36,9 +37,11 @@ export const trapFocus: Attachment<HTMLElement> = (container) => {
 		}
 
 		const items = getFocusable(container);
+
 		if (items.length === 0) {
 			event.preventDefault();
 			container.focus({ preventScroll: true });
+
 			return;
 		}
 
@@ -49,6 +52,7 @@ export const trapFocus: Attachment<HTMLElement> = (container) => {
 		if (!(active instanceof Node) || !container.contains(active)) {
 			event.preventDefault();
 			(event.shiftKey ? last : first).focus();
+
 			return;
 		}
 
@@ -57,6 +61,7 @@ export const trapFocus: Attachment<HTMLElement> = (container) => {
 				event.preventDefault();
 				last.focus();
 			}
+
 			return;
 		}
 
@@ -88,9 +93,11 @@ export const inertBackground: Attachment<HTMLElement> = (keep) => {
 		if (!(element instanceof HTMLElement)) {
 			return false;
 		}
+
 		if (!keep) {
 			return true;
 		}
+
 		return element !== keep && !element.contains(keep) && !keep.contains(element);
 	});
 
@@ -108,6 +115,7 @@ export const inertBackground: Attachment<HTMLElement> = (keep) => {
 /** Render a node as a direct child of document.body. */
 export function portal(node: HTMLElement) {
 	document.body.appendChild(node);
+
 	return {
 		destroy() {
 			node.remove();
@@ -119,6 +127,7 @@ export function portal(node: HTMLElement) {
 export const lockBodyScroll: Attachment = () => {
 	const previousOverflow = document.body.style.overflow;
 	document.body.style.overflow = 'hidden';
+
 	return () => {
 		document.body.style.overflow = previousOverflow;
 	};
@@ -132,7 +141,9 @@ export function closeOnEscape(onClose: () => void): Attachment {
 				onClose();
 			}
 		};
+
 		window.addEventListener('keydown', onKeyDown);
+
 		return () => {
 			window.removeEventListener('keydown', onKeyDown);
 		};

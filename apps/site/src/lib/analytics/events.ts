@@ -1,4 +1,4 @@
-import type { BillingInterval } from '@/lib/convex/api';
+import type { BillingInterval } from '@/lib/pricing/convex-types';
 
 type Checkout = { plan: string; interval: BillingInterval };
 
@@ -13,9 +13,6 @@ export type AnalyticsEvents = {
 	};
 	install_command_copied: { command: string };
 	product_media_opened: { media: 'sprocket_screenshot' };
-	newsletter_subscribe_submitted: Record<string, never>;
-	newsletter_subscribed: Record<string, never>;
-	newsletter_subscribe_failed: { reason: string; source: 'client' | 'server' };
 	pricing_interval_selected: { interval: BillingInterval };
 	pricing_plan_selected: Checkout & { signed_in: boolean };
 	pricing_checkout_started: Checkout;

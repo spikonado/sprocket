@@ -2,14 +2,13 @@
 	import logo from '@/assets/logo.svg';
 	import github from '@/assets/github_logo.svg';
 	import { lockOverlay } from '@/lib/focus-trap';
+	import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
 	import { marketingBrandClass, marketingButtonPrimaryClass } from '@/styles/marketing';
 	import { cn } from '@/utils';
 
 	const navLinks = [
-		{ label: 'Sprocket', href: '/sprocket' },
-		{ label: 'Vario', href: '/#vario' },
-		{ label: 'Pricing', href: '/pricing' },
-		{ label: 'Build log', href: '/#build-log' }
+		{ label: 'Home', href: '/' },
+		{ label: 'Pricing', href: '/pricing' }
 	] as const;
 
 	let menuOpen = $state(false);
@@ -26,7 +25,7 @@
 
 <header
 	{@attach menuOpen && lockOverlay(closeMenu)}
-	class="fixed top-0 z-50 w-full border-b border-border/40 bg-background/95"
+	class="border-border/40 bg-background/95 fixed top-0 z-50 w-full border-b"
 	data-ph-capture-attribute-section="navbar"
 >
 	<div
@@ -38,7 +37,7 @@
 			onclick={closeMenu}
 		>
 			<img src={logo.src} alt="" class="h-8 w-8 shrink-0" />
-			<span class={cn(marketingBrandClass, 'truncate text-xl sm:text-2xl')}>Spikonado</span>
+			<span class={cn(marketingBrandClass, 'truncate text-xl sm:text-2xl')}>Sprocket</span>
 		</a>
 
 		<nav
@@ -48,7 +47,7 @@
 			{#each navLinks as link (link.label)}
 				<a
 					href={link.href}
-					class="font-sans text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+					class="text-muted-foreground hover:text-foreground font-sans text-sm font-medium transition-colors"
 				>
 					{link.label}
 				</a>
@@ -57,25 +56,25 @@
 
 		<div class="flex shrink-0 items-center gap-2 sm:gap-3">
 			<a
-				href="https://github.com/spikonado"
+				href={SPROCKET_GITHUB_URL}
 				target="_blank"
 				rel="noopener noreferrer"
-				class="hidden items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-sans text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent-soft md:inline-flex"
+				class="border-border bg-surface text-foreground hover:bg-accent-soft hidden items-center gap-2 rounded-lg border px-2.5 py-1.5 font-sans text-sm font-medium shadow-sm transition-colors md:inline-flex"
 			>
 				<img src={github.src} alt="" class="h-4 w-4" />
 				<span>GitHub</span>
 			</a>
 			<a
-				href="/#sprocket"
+				href="/#download"
 				class={cn(marketingButtonPrimaryClass, 'hidden text-sm whitespace-nowrap md:inline-flex')}
 			>
-				Start building
+				Download
 			</a>
 
 			<button
 				bind:this={menuButton}
 				type="button"
-				class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface text-foreground transition-colors hover:bg-accent-soft focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none md:hidden"
+				class="border-border bg-surface text-foreground hover:bg-accent-soft focus-visible:ring-ring/50 inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors focus-visible:ring-2 focus-visible:outline-none md:hidden"
 				aria-label={menuOpen ? 'Close menu' : 'Open menu'}
 				aria-expanded={menuOpen}
 				aria-controls="mobile-nav"
@@ -115,7 +114,7 @@
 	{#if menuOpen}
 		<div
 			id="mobile-nav"
-			class="border-t border-border/40 bg-background md:hidden"
+			class="border-border/40 bg-background border-t md:hidden"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Site navigation"
@@ -126,30 +125,30 @@
 				{#each navLinks as link (link.label)}
 					<a
 						href={link.href}
-						class="rounded-xl px-3 py-3 font-sans text-base font-medium text-foreground transition-colors hover:bg-accent-soft"
+						class="text-foreground hover:bg-accent-soft rounded-xl px-3 py-3 font-sans text-base font-medium transition-colors"
 						onclick={closeMenu}
 					>
 						{link.label}
 					</a>
 				{/each}
 
-				<div class="mt-3 flex flex-col gap-3 border-t border-border/50 pt-4">
+				<div class="border-border/50 mt-3 flex flex-col gap-3 border-t pt-4">
 					<a
-						href="https://github.com/spikonado"
+						href={SPROCKET_GITHUB_URL}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 font-sans text-base font-medium text-foreground transition-colors hover:bg-accent-soft"
+						class="border-border bg-surface text-foreground hover:bg-accent-soft inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 font-sans text-base font-medium transition-colors"
 						onclick={closeMenu}
 					>
 						<img src={github.src} alt="" class="h-5 w-5" />
 						<span>GitHub</span>
 					</a>
 					<a
-						href="/#sprocket"
+						href="/#download"
 						class={cn(marketingButtonPrimaryClass, 'w-full py-3 text-base')}
 						onclick={closeMenu}
 					>
-						Start building
+						Download
 					</a>
 				</div>
 			</nav>

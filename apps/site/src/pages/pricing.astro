@@ -2,16 +2,18 @@
 import Footer from '@/components/footer.svelte';
 import PricingPlans from '@/components/pricing-plans.svelte';
 import BaseLayout from '@/layouts/base-layout.astro';
-import type { PublicPricingCatalog } from '@/lib/convex/api';
 import { fetchPricingCatalog } from '@/lib/pricing/billing';
 import { pricingFaqs } from '@/lib/pricing/catalog';
-import { SITE_URL, titleWithBrand } from '@/lib/seo';
+import type { PublicPricingCatalog } from '@/lib/pricing/convex-types';
+import { ORGANIZATION_NAME, SITE_URL, titleWithBrand } from '@/lib/seo';
 
 const title = titleWithBrand('Pricing');
+
 const description =
 	'Compare Sprocket plans and choose the AI usage limits that fit your engineering work.';
 
 let initialCatalog: PublicPricingCatalog | null = null;
+
 try {
 	initialCatalog = await fetchPricingCatalog();
 } catch {
@@ -22,7 +24,7 @@ const productLd = {
 	'@type': 'Product',
 	name: 'Sprocket',
 	description,
-	brand: { '@type': 'Brand', name: 'Spikonado' },
+	brand: { '@type': 'Brand', name: ORGANIZATION_NAME },
 	url: `${SITE_URL}/pricing`,
 	// Paid prices can change after this static page is built, so only the free plan is listed.
 	offers: [{ '@type': 'Offer', name: 'Sprocket Free', price: '0', priceCurrency: 'USD' }]

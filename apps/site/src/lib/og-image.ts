@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import satori from 'satori';
 import sharp from 'sharp';
-import { SITE_NAME } from '@/lib/seo';
+import { SITE_NAME, SITE_URL } from '@/lib/seo';
 
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
@@ -18,11 +18,13 @@ const colors = {
 
 async function loadFont(relativePath: string): Promise<ArrayBuffer> {
 	const buffer = await readFile(join(process.cwd(), 'node_modules', relativePath));
+
 	return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 }
 
 async function loadLogoDataUrl(): Promise<string> {
 	const buffer = await readFile(join(process.cwd(), 'src/assets/logo.svg'));
+
 	return `data:image/svg+xml;base64,${buffer.toString('base64')}`;
 }
 
@@ -109,7 +111,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 											{
 												type: 'span',
 												props: {
-													children: 'A way for anyone to build '
+													children: 'The best AI agent for '
 												}
 											},
 											{
@@ -122,7 +124,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 														borderRadius: '10px',
 														display: 'flex'
 													},
-													children: 'any kind of technology'
+													children: 'hardware and software'
 												}
 											}
 										]
@@ -139,7 +141,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 											maxWidth: 720
 										},
 										children:
-											'Build apps, robots, devices, and the systems that glue them together.'
+											"Sprocket designs electronics, writes and tests code, and can buy anything that's needed for your project."
 									}
 								}
 							]
@@ -158,7 +160,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 							children: [
 								{
 									type: 'span',
-									props: { children: 'spikonado.com' }
+									props: { children: new URL(SITE_URL).host }
 								},
 								{
 									type: 'span',

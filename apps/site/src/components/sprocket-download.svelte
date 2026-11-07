@@ -44,6 +44,7 @@
 			if (cancelled) {
 				return;
 			}
+
 			osLabel = target.osLabel;
 			osFamily = target.osFamily;
 			primaryAsset = pickDesktopAsset(assets, target.platform);
@@ -57,9 +58,11 @@
 	});
 
 	const knownDesktop = $derived(detected && osFamily !== null);
+
 	const downloadHref = $derived(
 		knownDesktop && primaryAsset ? primaryAsset.url : SPROCKET_RELEASES_LATEST_URL
 	);
+
 	const downloadLabel = $derived(knownDesktop ? `Download for ${osLabel}` : 'Download desktop app');
 
 	const iconClass = 'h-4 w-4 shrink-0';
@@ -126,7 +129,7 @@
 	{#if showAlternates && detected}
 		{#if alternateAssets.length > 0}
 			<p
-				class={cn('mt-3 font-sans text-xs leading-relaxed text-muted-foreground', alternatesClass)}
+				class={cn('text-muted-foreground mt-3 font-sans text-xs leading-relaxed', alternatesClass)}
 			>
 				<span class="sr-only">Other platforms: </span>
 				Also
@@ -148,7 +151,7 @@
 				{/each}
 			</p>
 		{:else if !release}
-			<p class="mt-3 font-sans text-xs text-muted-foreground">
+			<p class="text-muted-foreground mt-3 font-sans text-xs">
 				<a
 					href={SPROCKET_RELEASES_LATEST_URL}
 					class={cn(marketingTextLinkClass, 'text-xs')}

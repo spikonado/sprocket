@@ -1,36 +1,54 @@
-import { expect, mock, test } from 'bun:test';
-import type { AstroCookies } from 'astro';
-import { beginPricingSignIn, completePricingSignIn, type PricingAuthServer } from './auth-server';
+import { expect, spyOn, test } from 'bun:test';
+import { beginPricingSignIn, completePricingSignIn, createPricingAuthServer } from './auth-server';
 
 function fakeCookies() {
 	const jar = new Map<string, string>();
+
 	const cookies = {
 		get: (name: string) => {
 			const value = jar.get(name);
-			return value === undefined ? undefined : { value, json: () => JSON.parse(value) };
+
+			return value === undefined ? undefined : { value };
 		},
-		set: (name: string, value: string | object) =>
-			jar.set(name, typeof value === 'string' ? value : JSON.stringify(value)),
+		set: (name: string, value: string) => jar.set(name, value),
 		delete: (name: string) => jar.delete(name)
-	} as unknown as Pick<AstroCookies, 'get' | 'set' | 'delete'>;
+	};
+
 	return { jar, cookies };
 }
 
 function fakeServer() {
-	const authenticateWithCode = mock(async () => ({ sealedSession: 'sealed-session' }));
-	const server = {
-		cookiePassword: 'x'.repeat(32),
-		workos: {
-			userManagement: {
-				getAuthorizationUrlWithPKCE: async () => ({
-					url: 'https://api.workos.com/authorize',
-					state: 'state-1',
-					codeVerifier: 'verifier-1'
-				}),
-				authenticateWithCode
-			}
-		}
-	} as unknown as PricingAuthServer;
+	const server = createPricingAuthServer('sk_test', 'x'.repeat(32), 'client_test');
+	const { userManagement } = server.workos;
+
+	spyOn(userManagement, 'getAuthorizationUrlWithPKCE').mockResolvedValue({
+		url: 'https://api.workos.com/authorize',
+		state: 'state-1',
+		codeVerifier: 'verifier-1'
+	});
+
+	const authenticateWithCode = spyOn(userManagement, 'authenticateWithCode').mockResolvedValue({
+		user: {
+			object: 'user',
+			id: 'user_1',
+			email: 'ada@example.com',
+			emailVerified: true,
+			profilePictureUrl: null,
+			name: null,
+			firstName: null,
+			lastName: null,
+			lastSignInAt: null,
+			locale: null,
+			createdAt: '2026-01-01T00:00:00.000Z',
+			updatedAt: '2026-01-01T00:00:00.000Z',
+			externalId: null,
+			metadata: {}
+		},
+		accessToken: 'access-token',
+		refreshToken: 'refresh-token',
+		sealedSession: 'sealed-session'
+	});
+
 	return { server, authenticateWithCode };
 }
 
@@ -41,32 +59,33 @@ test('sign-in returns to the plan chosen before signing in', async () => {
 	await beginPricingSignIn(
 		server,
 		cookies,
-		new URL('https://spikonado.com/api/pricing/sign-in?tier=pro&interval=annual')
+		new URL('https://usesprocket.dev/api/pricing/sign-in?tier=pro&interval=annual')
 	);
+
 	const returnTo = await completePricingSignIn(
 		server,
 		cookies,
-		new URL('https://spikonado.com/pricing/callback?code=code-1&state=state-1')
+		new URL('https://usesprocket.dev/pricing/callback?code=code-1&state=state-1')
 	);
 
 	expect(returnTo).toBe('/pricing?checkout=resume&tier=pro&interval=annual');
 	expect(authenticateWithCode).toHaveBeenCalledWith(
 		expect.objectContaining({ code: 'code-1', codeVerifier: 'verifier-1' })
 	);
-	expect(jar.get('__Host-spikonado-pricing-session')).toBe('sealed-session');
-	expect(jar.has('__Host-spikonado-pricing-login')).toBe(false);
+	expect(jar.get('__Host-sprocket-pricing-session')).toBe('sealed-session');
+	expect(jar.has('__Host-sprocket-pricing-login')).toBe(false);
 });
 
 test('sign-in completion requires the state issued to this browser', async () => {
 	const { server, authenticateWithCode } = fakeServer();
 	const { cookies } = fakeCookies();
 
-	await beginPricingSignIn(server, cookies, new URL('https://spikonado.com/api/pricing/sign-in'));
+	await beginPricingSignIn(server, cookies, new URL('https://usesprocket.dev/api/pricing/sign-in'));
 	await expect(
 		completePricingSignIn(
 			server,
 			cookies,
-			new URL('https://spikonado.com/pricing/callback?code=code-1&state=other')
+			new URL('https://usesprocket.dev/pricing/callback?code=code-1&state=other')
 		)
 	).rejects.toThrow('Sign-in could not be completed.');
 	expect(authenticateWithCode).not.toHaveBeenCalled();

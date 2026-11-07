@@ -1,4 +1,4 @@
-import type { BillingInterval, DodoPrice, PublicPricingCatalog } from '@/lib/convex/api';
+import type { BillingInterval, DodoPrice, PublicPricingCatalog } from './convex-types';
 
 export type PlanCard = {
 	id: string;
@@ -64,7 +64,9 @@ export function formatPrice({ amountMinor, currency }: DodoPrice): string {
 	const digits =
 		new Intl.NumberFormat('en-US', { style: 'currency', currency }).resolvedOptions()
 			.maximumFractionDigits ?? 2;
+
 	const amount = amountMinor / 10 ** digits;
+
 	return new Intl.NumberFormat('en-US', {
 		style: 'currency',
 		currency,
@@ -77,18 +79,21 @@ function annualDiscountPercent(monthly: DodoPrice | null, annual: DodoPrice | nu
 	if (!monthly || !annual || monthly.currency !== annual.currency || monthly.amountMinor <= 0)
 		return 0;
 	const yearOfMonthly = monthly.amountMinor * 12;
+
 	return Math.max(0, Math.round(((yearOfMonthly - annual.amountMinor) / yearOfMonthly) * 100));
 }
 
 export function buildPlanCards(catalog: PublicPricingCatalog): PlanCard[] {
 	const free = formatPrice({ amountMinor: 0, currency: 'USD' });
 	let previous: { name: string; labels: Set<string> } | null = null;
+
 	return catalog.plans.map((plan) => {
 		const isFree = plan.id === 'free';
 		const { monthly, annual } = plan.prices;
 		const features = planFeatures(plan, isFree);
 		const inherited = previous;
 		previous = { name: plan.label, labels: new Set(features.map(({ label }) => label)) };
+
 		return {
 			id: plan.id,
 			name: plan.label,
