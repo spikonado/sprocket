@@ -130,7 +130,7 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 	vi.useFakeTimers();
 	const t = initConvexTest();
 
-	const { grantUserId, paidId, checkId } = await t.run(async (ctx) => {
+	const { grantUserId, revokedUserId, paidId, checkId } = await t.run(async (ctx) => {
 		const checkId = await ctx.scheduler.runAfter(
 			DAY,
 			internal.billingAudit.deleteWebhookEvents,
@@ -139,6 +139,19 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 
 		const grantUserId = await insertUser(ctx, 'grant');
 		await ctx.db.insert('subscriptions', { userId: 'grant', tier: 'pro', status: 'active' });
+		const revokedUserId = await insertUser(ctx, 'revoked');
+		await ctx.db.insert('subscriptions', {
+			userId: 'revoked',
+			tier: 'max',
+			status: 'cancelled',
+			eventAt: 2
+		});
+		await ctx.db.insert('subscriptions', {
+			userId: 'revoked',
+			tier: 'pro',
+			status: 'active',
+			eventAt: 1
+		});
 		await ctx.db.insert('subscriptions', { userId: 'bootstrap', tier: 'free', status: 'active' });
 		await ctx.db.insert('subscriptionReconciliations', { subscriptionId: 'retired' });
 		await ctx.db.insert('supersededSubscriptions', { dodoSubscriptionId: 'sub_retired' });
@@ -159,7 +172,7 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 			quotaGeneration: 2
 		});
 
-		return { grantUserId, paidId, checkId };
+		return { grantUserId, revokedUserId, paidId, checkId };
 	});
 
 	await t.mutation(internal.migrations.run, {});
@@ -171,6 +184,7 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 
 	const state = await t.run(async (ctx) => ({
 		grantUser: await ctx.db.get('users', grantUserId),
+		revokedUser: await ctx.db.get('users', revokedUserId),
 		subscriptions: await ctx.db.query('subscriptions').collect(),
 		paid: await ctx.db.get('subscriptions', paidId),
 		check: await ctx.db.system.get('_scheduled_functions', checkId),
@@ -181,6 +195,7 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 	}));
 
 	expect(state.grantUser?.grantedTier).toBe('pro');
+	expect(state.revokedUser).not.toHaveProperty('grantedTier');
 	expect(state.subscriptions).toHaveLength(1);
 	expect(state.paid).toEqual({
 		_id: paidId,

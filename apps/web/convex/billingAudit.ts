@@ -9,6 +9,15 @@ const LIVE_STATUSES = ['active', 'on_hold', 'past_due', 'paused', 'pending'] as 
 
 const AUDIT_LIMIT = 1_000;
 
+/** Throws instead of truncating, so a partial audit can't hide a double charge. */
+function complete<T>(rows: T[], what: string): T[] {
+	if (rows.length > AUDIT_LIMIT) {
+		throw new Error(`More than ${AUDIT_LIMIT} ${what}; page this audit before trusting it.`);
+	}
+
+	return rows;
+}
+
 const legacyPayload = z.object({
 	data: z.object({ metadata: z.object({ userId: z.string().optional() }).optional() }).optional()
 });
@@ -64,7 +73,8 @@ export const listDoubleCharges = internalQuery({
 					ctx.db
 						.query('dodoWebhookEvents')
 						.withIndex('by_outcome_and_nextAttemptAt', (query) => query.eq('outcome', outcome))
-						.take(AUDIT_LIMIT)
+						.take(AUDIT_LIMIT + 1)
+						.then((rows) => complete(rows, `${outcome} webhook events`))
 				)
 			)
 		).flat();
@@ -89,10 +99,13 @@ export const listDoubleCharges = internalQuery({
 		const liveByUser = new Map<string, string[]>();
 
 		for (const status of LIVE_STATUSES) {
-			const rows = await ctx.db
-				.query('subscriptions')
-				.withIndex('by_status_and_billingPeriodEnd', (query) => query.eq('status', status))
-				.take(AUDIT_LIMIT);
+			const rows = complete(
+				await ctx.db
+					.query('subscriptions')
+					.withIndex('by_status_and_billingPeriodEnd', (query) => query.eq('status', status))
+					.take(AUDIT_LIMIT + 1),
+				`${status} subscriptions`
+			);
 
 			for (const row of rows) {
 				if (!row.dodoSubscriptionId) continue;

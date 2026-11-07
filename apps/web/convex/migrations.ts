@@ -1,6 +1,7 @@
 import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
+import type { MutationCtx } from '@convex/_generated/server';
 import { getUserBySubject } from '@convex/lib/auth';
 import schema from '@convex/schema';
 
@@ -8,6 +9,39 @@ export const migrations = new Migrations(components.migrations, { schema, intern
 
 // Spreads the resync's Dodo list calls so up to ~14k customers stay under Dodo's 240 requests a minute.
 const DODO_RESYNC_SPREAD_MS = 60 * 60 * 1_000;
+
+/** Keeps the legacy pick: the latest grant wins and `active` breaks ties, so a later revoke holds. */
+async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
+	const rows = await ctx.db
+		.query('subscriptions')
+		.withIndex('by_userId', (query) => query.eq('userId', userId))
+		.collect();
+
+	const grants = rows.filter((row) => !row.dodoSubscriptionId && row.tier && row.tier !== 'free');
+
+	// An earlier row in the same batch already moved this user's grants.
+	if (grants.length === 0) return;
+
+	const winner = grants.reduce((best, row) => {
+		const [rowAt, bestAt] = [row.eventAt ?? 0, best.eventAt ?? 0];
+
+		return rowAt > bestAt || (rowAt === bestAt && row.status === 'active') ? row : best;
+	});
+
+	if (winner.status === 'active') {
+		const user = await getUserBySubject(ctx.db, userId);
+
+		if (!user) {
+			console.error(`Tier grant ${winner._id} has no users row; leaving it in place.`);
+
+			return;
+		}
+
+		await ctx.db.patch('users', user._id, { grantedTier: user.grantedTier ?? winner.tier });
+	}
+
+	for (const grant of grants) await ctx.db.delete('subscriptions', grant._id);
+}
 
 export const backfillToolInvocationIds = migrations.define({
 	table: 'threadTranscriptParts',
@@ -64,19 +98,8 @@ export const migrateSubscriptionRows = migrations.define({
 		}
 
 		if (!row.dodoSubscriptionId) {
-			if (row.status === 'active' && row.tier && row.tier !== 'free') {
-				const user = await getUserBySubject(ctx.db, row.userId);
-
-				if (!user) {
-					console.error(`Tier grant ${row._id} has no users row; leaving it in place.`);
-
-					return;
-				}
-
-				await ctx.db.patch('users', user._id, { grantedTier: user.grantedTier ?? row.tier });
-			}
-
-			await ctx.db.delete('subscriptions', row._id);
+			if (row.tier && row.tier !== 'free') await moveGrants(ctx, row.userId);
+			else await ctx.db.delete('subscriptions', row._id);
 
 			return;
 		}

@@ -138,7 +138,7 @@ Older `subscriptions` rows hold the retired webhook projection, including operat
 
 ### Dodo webhook ledger
 
-`dodoWebhookEvents` keeps the retired webhook ledger so an operator can find customers it may have double-charged with `bunx convex run --prod billingAudit:listDoubleCharges`. After those refunds, run `bunx convex run --prod billingAudit:deleteWebhookEvents` on each deployment, then remove the table, `billingAudit.ts`, and the `billingAudit` assertions in `subscriptions.test.ts`.
+`dodoWebhookEvents` keeps the retired webhook ledger so an operator can find customers it may have double-charged with `bunx convex run --prod billingAudit:listDoubleCharges`. Run it once `migrations:resyncDodoCustomers` reports done and the `dodo:syncCustomer` runs it spreads over the next hour have succeeded in the dashboard logs. Rerun any failed one by hand. After those refunds, run `bunx convex run --prod billingAudit:deleteWebhookEvents` on each deployment, then remove the table, `billingAudit.ts`, and the `billingAudit` assertions in `subscriptions.test.ts`.
 
 ### Hosted parse upload URLs
 
