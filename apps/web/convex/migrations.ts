@@ -59,11 +59,41 @@ export const dropQuestionAnsweredAt = migrations.define({
 	}
 });
 
+export const dropQuotaGenerations = migrations.define({
+	table: 'subscriptions',
+	migrateOne: (_ctx, subscription) => {
+		if (
+			subscription.quotaGeneration !== undefined ||
+			subscription.quotaTransitionAt !== undefined
+		) {
+			return { quotaGeneration: undefined, quotaTransitionAt: undefined };
+		}
+	}
+});
+
+export const backfillThreadCompletionProviders = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		if (thread.completionProvider === undefined)
+			return { completionProvider: 'spikonado' as const };
+	}
+});
+
+export const backfillRunCompletionProviders = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (run.completionProvider === undefined) return { completionProvider: 'spikonado' as const };
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
 	internal.migrations.dropPricingCacheKeys,
 	internal.migrations.countContextSummaryParts,
 	internal.migrations.backfillSubscriptionAccess,
-	internal.migrations.dropQuestionAnsweredAt
+	internal.migrations.dropQuestionAnsweredAt,
+	internal.migrations.dropQuotaGenerations,
+	internal.migrations.backfillThreadCompletionProviders,
+	internal.migrations.backfillRunCompletionProviders
 ]);

@@ -724,14 +724,6 @@ export const vRunFailureKind = v.union(v.literal('abandoned'), v.literal('usage_
 
 export type RunFailureKind = Infer<typeof vRunFailureKind>;
 
-export const vDescendantStatusCounts = v.object({
-	queued: v.number(),
-	running: v.number(),
-	completed: v.number(),
-	failed: v.number(),
-	cancelled: v.number()
-});
-
 export const vSubagentSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,

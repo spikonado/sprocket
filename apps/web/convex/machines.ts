@@ -1,8 +1,8 @@
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
-import { v, type Infer } from 'convex/values';
+import { v } from 'convex/values';
 import { getRunWithExecution } from '@convex/lib/runExecution';
-import { executionSecretHash, getUserId } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import {
 	getOwnedMachine,
 	isMachineActive,
@@ -66,99 +66,76 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 	await ctx.db.patch('machines', machine._id, { runIds: [] });
 }
 
-const vMachineMetadata = {
-	machineId: v.string(),
-	friendlyName: v.string(),
-	platform: v.string(),
-	platformVersion: v.string(),
-	architecture: v.string(),
-	hostname: v.string(),
-	appVersion: v.string()
-};
-
-const vRegistration = v.object({ ...vMachineMetadata, processId: v.string() });
-
-const vRegistrationResult = v.union(
-	v.object({ status: v.literal('registered'), machineId: v.string(), userId: v.string() }),
-	v.object({ status: v.literal('busy'), retryAfterMs: v.number() })
-);
-
-async function registerMachine(
-	ctx: MutationCtx,
-	args: Infer<typeof vRegistration>
-): Promise<Infer<typeof vRegistrationResult>> {
-	const userId = await getUserId(ctx);
-	const now = Date.now();
-
-	for (const value of [
-		args.machineId,
-		args.processId,
-		args.friendlyName,
-		args.platform,
-		args.architecture,
-		args.appVersion
-	]) {
-		if (!value.trim()) throw new Error('Machine registration fields cannot be empty.');
-	}
-
-	const existing = await getOwnedMachine(ctx, userId, args.machineId);
-
-	const metadata = {
-		friendlyName: args.friendlyName,
-		platform: args.platform,
-		platformVersion: args.platformVersion,
-		architecture: args.architecture,
-		hostname: args.hostname,
-		appVersion: args.appVersion,
-		processId: args.processId,
-		lastSeenAt: now,
-		updatedAt: now
-	};
-
-	if (existing) {
-		const sameProcess = existing.processId === args.processId;
-
-		if (!sameProcess && existing.lastSeenAt !== undefined && isMachineActive(existing, now)) {
-			return {
-				status: 'busy',
-				retryAfterMs: existing.lastSeenAt + MACHINE_ONLINE_THRESHOLD_MS + 1 - now
-			};
-		}
-
-		if (!sameProcess) {
-			await failMachineRuns(ctx, existing);
-		}
-
-		await ctx.db.patch('machines', existing._id, metadata);
-	} else {
-		await ctx.db.insert('machines', {
-			userId,
-			machineId: args.machineId,
-			runIds: [],
-			...metadata
-		});
-	}
-
-	return { status: 'registered', machineId: args.machineId, userId };
-}
-
-async function heartbeatMachine(ctx: MutationCtx, machine: Doc<'machines'>): Promise<null> {
-	await ctx.db.patch('machines', machine._id, { lastSeenAt: Date.now(), updatedAt: Date.now() });
-
-	return null;
-}
-
-async function endMachine(ctx: MutationCtx, machine: Doc<'machines'>): Promise<null> {
-	await failMachineRuns(ctx, machine);
-	await ctx.db.patch('machines', machine._id, { lastSeenAt: undefined, updatedAt: Date.now() });
-
-	return null;
-}
-
 export const registerProcess = mutation({
-	args: vRegistration.fields,
-	returns: vRegistrationResult,
-	handler: registerMachine
+	args: {
+		machineId: v.string(),
+		friendlyName: v.string(),
+		platform: v.string(),
+		platformVersion: v.string(),
+		architecture: v.string(),
+		hostname: v.string(),
+		appVersion: v.string(),
+		processId: v.string()
+	},
+	returns: v.union(
+		v.object({ status: v.literal('registered'), machineId: v.string(), userId: v.string() }),
+		v.object({ status: v.literal('busy'), retryAfterMs: v.number() })
+	),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const now = Date.now();
+
+		for (const value of [
+			args.machineId,
+			args.processId,
+			args.friendlyName,
+			args.platform,
+			args.architecture,
+			args.appVersion
+		]) {
+			if (!value.trim()) throw new Error('Machine registration fields cannot be empty.');
+		}
+
+		const existing = await getOwnedMachine(ctx, userId, args.machineId);
+
+		const metadata = {
+			friendlyName: args.friendlyName,
+			platform: args.platform,
+			platformVersion: args.platformVersion,
+			architecture: args.architecture,
+			hostname: args.hostname,
+			appVersion: args.appVersion,
+			processId: args.processId,
+			lastSeenAt: now,
+			updatedAt: now
+		};
+
+		if (existing) {
+			const sameProcess = existing.processId === args.processId;
+
+			if (!sameProcess && existing.lastSeenAt !== undefined && isMachineActive(existing, now)) {
+				return {
+					status: 'busy' as const,
+					retryAfterMs: existing.lastSeenAt + MACHINE_ONLINE_THRESHOLD_MS + 1 - now
+				};
+			}
+
+			if (!sameProcess) {
+				await failMachineRuns(ctx, existing);
+			}
+
+			await ctx.db.patch('machines', existing._id, metadata);
+		} else {
+			await ctx.db.insert('machines', {
+				userId,
+				machineId: args.machineId,
+				runIds: [],
+				...metadata
+			});
+		}
+
+		return { status: 'registered' as const, machineId: args.machineId, userId };
+	}
 });
 
 const vProcess = { machineId: v.string(), processId: v.string() };
@@ -166,49 +143,34 @@ const vProcess = { machineId: v.string(), processId: v.string() };
 export const heartbeatProcess = mutation({
 	args: vProcess,
 	returns: v.null(),
-	handler: async (ctx, args) =>
-		await heartbeatMachine(
+	handler: async (ctx, args) => {
+		const machine = await requireMachineProcess(
 			ctx,
-			await requireMachineProcess(ctx, await getUserId(ctx), args.machineId, args.processId)
-		)
+			await getUserId(ctx),
+			args.machineId,
+			args.processId
+		);
+
+		await ctx.db.patch('machines', machine._id, { lastSeenAt: Date.now(), updatedAt: Date.now() });
+
+		return null;
+	}
 });
 
 export const endProcess = mutation({
 	args: vProcess,
 	returns: v.null(),
-	handler: async (ctx, args) =>
-		await endMachine(
+	handler: async (ctx, args) => {
+		const machine = await requireMachineProcess(
 			ctx,
-			await requireMachineProcess(ctx, await getUserId(ctx), args.machineId, args.processId)
-		)
-});
+			await getUserId(ctx),
+			args.machineId,
+			args.processId
+		);
 
-export const tryRegister = mutation({
-	args: { ...vMachineMetadata, credentialHash: v.string() },
-	returns: vRegistrationResult,
-	handler: async (ctx, { credentialHash, ...args }) =>
-		await registerMachine(ctx, { ...args, processId: credentialHash })
-});
+		await failMachineRuns(ctx, machine);
+		await ctx.db.patch('machines', machine._id, { lastSeenAt: undefined, updatedAt: Date.now() });
 
-const vLegacyProcess = { userId: v.string(), machineId: v.string(), credential: v.string() };
-
-async function requireLegacyMachine(
-	ctx: MutationCtx,
-	args: { userId: string; machineId: string; credential: string }
-): Promise<Doc<'machines'>> {
-	const processId = await executionSecretHash(args.credential);
-
-	return await requireMachineProcess(ctx, args.userId, args.machineId, processId);
-}
-
-export const heartbeat = mutation({
-	args: vLegacyProcess,
-	returns: v.null(),
-	handler: async (ctx, args) => await heartbeatMachine(ctx, await requireLegacyMachine(ctx, args))
-});
-
-export const end = mutation({
-	args: vLegacyProcess,
-	returns: v.null(),
-	handler: async (ctx, args) => await endMachine(ctx, await requireLegacyMachine(ctx, args))
+		return null;
+	}
 });

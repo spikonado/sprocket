@@ -87,35 +87,23 @@ impl ArtifactBindings {
                 Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
             }
         }
-        let (bindings, legacy_fields) = self.load().await?;
-        let guard = BindingGuard {
+        let bindings = self.load().await?;
+        Ok(BindingGuard {
             _lock: lock,
             directory: self.directory.clone(),
             bindings,
-        };
-        if legacy_fields {
-            guard.persist().await?;
-        }
-        Ok(guard)
+        })
     }
 
     pub async fn snapshot(&self) -> anyhow::Result<Vec<ArtifactBinding>> {
-        Ok(self.load().await?.0)
+        self.load().await
     }
 
-    async fn load(&self) -> anyhow::Result<(Vec<ArtifactBinding>, bool)> {
+    async fn load(&self) -> anyhow::Result<Vec<ArtifactBinding>> {
         match tokio::fs::read(self.directory.join("bindings.json")).await {
-            Ok(bytes) => {
-                let rows: Vec<serde_json::Value> = serde_json::from_slice(&bytes)
-                    .context("Invalid artifact bindings; refusing to overwrite them")?;
-                let legacy_fields = rows
-                    .iter()
-                    .any(|row| row.get("scope").is_some() || row.get("thread_id").is_some());
-                let bindings = serde_json::from_value(serde_json::Value::Array(rows))
-                    .context("Invalid artifact bindings; refusing to overwrite them")?;
-                Ok((bindings, legacy_fields))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((Vec::new(), false)),
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .context("Invalid artifact bindings; refusing to overwrite them"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(error) => Err(error.into()),
         }
     }

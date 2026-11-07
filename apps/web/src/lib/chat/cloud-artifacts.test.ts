@@ -76,7 +76,6 @@ describe('cloud artifact subscriptions', () => {
 					type: 'markdown',
 					title: 'Notes',
 					revision: 1,
-					createdAt: 1,
 					updatedAt: 1
 				}
 			],

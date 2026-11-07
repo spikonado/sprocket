@@ -240,39 +240,6 @@ export async function appendTranscriptPart(
 	return { part: inserted, inserted: true };
 }
 
-export async function loadTranscriptPartsByNumbers(
-	ctx: MutationCtx | QueryCtx,
-	threadId: Id<'threadRecords'>,
-	numbers: number[]
-): Promise<Doc<'threadTranscriptParts'>[]> {
-	if (numbers.length > MAX_TRANSCRIPT_PARTS_PER_QUERY) {
-		throw new Error(`Request at most ${MAX_TRANSCRIPT_PARTS_PER_QUERY} transcript parts.`);
-	}
-
-	const unique = [...new Set(numbers)].filter((value) => Number.isInteger(value) && value >= 0);
-	const byNumber = new Map<number, Doc<'threadTranscriptParts'>>();
-	await Promise.all(
-		unique.map(async (number) => {
-			const part = await ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_number', (query) =>
-					query.eq('threadId', threadId).eq('number', number)
-				)
-				.unique();
-
-			if (part) {
-				byNumber.set(number, part);
-			}
-		})
-	);
-
-	return numbers.flatMap((number) => {
-		const part = byNumber.get(number);
-
-		return part ? [part] : [];
-	});
-}
-
 export async function loadTranscriptPartsPage(
 	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>,
@@ -343,15 +310,4 @@ export async function hydratePromptUrls(
 	);
 
 	return { ...prompt, imageUploads };
-}
-
-export async function transcriptPartsForClient(
-	ctx: MutationCtx | QueryCtx,
-	parts: Doc<'threadTranscriptParts'>[]
-): Promise<Doc<'threadTranscriptParts'>[]> {
-	return await Promise.all(
-		parts.map(async (part) =>
-			part.prompt ? { ...part, prompt: await hydratePromptUrls(ctx, part.prompt) } : part
-		)
-	);
 }

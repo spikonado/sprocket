@@ -53,18 +53,9 @@ export const getMyConfiguration = action({
 	args: {},
 	returns: v.object({
 		openai: v.boolean(),
-		claude: v.boolean(),
-		chatgpt: v.boolean(),
-		chatgptModelIds: v.union(v.array(v.string()), v.null())
+		claude: v.boolean()
 	}),
-	handler: async (
-		ctx: ActionCtx
-	): Promise<{
-		openai: boolean;
-		claude: boolean;
-		chatgpt: boolean;
-		chatgptModelIds: string[] | null;
-	}> => {
+	handler: async (ctx: ActionCtx): Promise<{ openai: boolean; claude: boolean }> => {
 		const [openAiObject, claudeObject]: Array<VaultObject | null> = await Promise.all([
 			readVaultObject(await userCredentialName(ctx, 'openai')),
 			readVaultObject(await userCredentialName(ctx, 'claude'))
@@ -72,9 +63,7 @@ export const getMyConfiguration = action({
 
 		return {
 			openai: openAiObject !== null,
-			claude: claudeObject !== null,
-			chatgpt: false,
-			chatgptModelIds: null
+			claude: claudeObject !== null
 		};
 	}
 });

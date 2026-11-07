@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
-import { executionSecretHash } from '@convex/lib/auth';
 import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
 import { initConvexTest, insertQueuedRun, seedOwnedThread, tickPastLastCommit } from './test.setup';
 
@@ -201,23 +200,6 @@ describe('machines', () => {
 		await expect(asUser.mutation(api.machines.heartbeatProcess, processArgs)).rejects.toMatchObject(
 			{ data: agentErrorMessages.MACHINE_NOT_ACTIVE }
 		);
-	});
-
-	it('keeps released clients working with their credential', async () => {
-		const t = initConvexTest();
-		const { asUser } = await seedOwnedThread(t);
-		const credentialHash = await executionSecretHash('credential-a');
-		const legacyArgs = { userId: 'user_alice', machineId: machine.machineId };
-		await asUser.mutation(api.machines.tryRegister, { ...machine, credentialHash });
-
-		await expect(
-			t.mutation(api.machines.heartbeat, { ...legacyArgs, credential: credentialHash })
-		).rejects.toMatchObject({ data: agentErrorMessages.MACHINE_NOT_ACTIVE });
-		await expect(
-			t.mutation(api.machines.heartbeat, { ...legacyArgs, credential: 'credential-a' })
-		).resolves.toBeNull();
-		await t.mutation(api.machines.end, { ...legacyArgs, credential: 'credential-a' });
-		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(false);
 	});
 
 	it('allows one local machine identity to register for different users', async () => {

@@ -58,7 +58,6 @@ describe('thread hierarchy', () => {
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false,
 			waitingForInput: false
@@ -84,7 +83,6 @@ describe('thread hierarchy', () => {
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true,
 			waitingForInput: false
@@ -92,7 +90,6 @@ describe('thread hierarchy', () => {
 		expect(await summary(t, children[0])).toEqual({
 			descendantCount: 1,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true,
 			waitingForInput: false
@@ -296,7 +293,6 @@ describe('thread hierarchy', () => {
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 8,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 8, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false,
 			waitingForInput: false
@@ -324,7 +320,6 @@ describe('thread hierarchy', () => {
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 1,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false,
 			waitingForInput: false
@@ -371,7 +366,6 @@ describe('thread hierarchy', () => {
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 5,
 			workingDescendantCount: 1,
-			descendantStatusCounts: { queued: 0, running: 1, completed: 4, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true,
 			waitingForInput: false
@@ -400,7 +394,6 @@ describe('thread hierarchy', () => {
 		expect(await summary(t, queued)).toMatchObject({
 			descendantCount: 1,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false
 		});
@@ -409,7 +402,6 @@ describe('thread hierarchy', () => {
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 5,
 			workingDescendantCount: 0,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 5, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false,
 			waitingForInput: false

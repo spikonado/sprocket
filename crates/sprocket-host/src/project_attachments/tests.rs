@@ -163,7 +163,7 @@ async fn message_recency_survives_reload_validation_and_reconnect() {
 }
 
 #[tokio::test]
-async fn legacy_attachments_gain_message_recency_with_stable_fallback_ordering() {
+async fn attachments_without_message_recency_order_by_last_use() {
     let temp_root = tempfile::tempdir().expect("temp dir");
     let alpha = temp_root.path().join("alpha");
     let beta = temp_root.path().join("beta");
@@ -173,7 +173,7 @@ async fn legacy_attachments_gain_message_recency_with_stable_fallback_ordering()
         attachment_record(alpha.to_string_lossy(), "github.com/example/alpha", 1),
         attachment_record(beta.to_string_lossy(), "github.com/example/beta", 2),
     ])
-    .expect("serialize legacy records");
+    .expect("serialize records");
     for record in records.as_array_mut().expect("records array") {
         record
             .as_object_mut()
@@ -183,22 +183,13 @@ async fn legacy_attachments_gain_message_recency_with_stable_fallback_ordering()
     let store_path = temp_root.path().join(PROJECT_ATTACHMENTS_FILE);
     fs::write(
         &store_path,
-        serde_json::to_vec(&records).expect("legacy JSON"),
+        serde_json::to_vec(&records).expect("records JSON"),
     )
-    .expect("write legacy records");
+    .expect("write records");
 
     let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
-    let listed = store.list().await.expect("load legacy records");
+    let listed = store.list().await.expect("load records");
     assert_eq!(listed[0].workspace_path, beta.to_string_lossy());
-    let persisted: Vec<serde_json::Value> =
-        serde_json::from_slice(&fs::read(&store_path).expect("read migrated records"))
-            .expect("parse migrated records");
-    assert!(persisted.iter().all(|record| {
-        record
-            .get("lastMessageSentAt")
-            .and_then(serde_json::Value::as_u64)
-            == Some(0)
-    }));
 
     store
         .record_message_sent(&listed[1].attachment_key, 10)
@@ -736,8 +727,7 @@ async fn list_replaces_the_repository_key_when_git_identity_changes() {
             "displayName": "checkout",
             "availability": "available",
             "lastValidatedAt": 1,
-            "lastUsedAt": 2,
-            "previousRepositoryKey": "older-key"
+            "lastUsedAt": 2
         }])
         .to_string(),
     )
@@ -759,7 +749,10 @@ async fn list_replaces_the_repository_key_when_git_identity_changes() {
         &fs::read_to_string(temp_root.join(PROJECT_ATTACHMENTS_FILE)).expect("read attachments"),
     )
     .expect("parse attachments");
-    assert_eq!(persisted[0].get("previousRepositoryKey"), None);
+    assert_eq!(
+        persisted[0]["repositoryKey"],
+        "github.com/spikonado/sprocket"
+    );
 
     let _ = fs::remove_dir_all(temp_root);
 }

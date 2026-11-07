@@ -198,9 +198,7 @@ describe('provider credentials', () => {
 		});
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: false,
-			claude: true,
-			chatgpt: false,
-			chatgptModelIds: null
+			claude: true
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
@@ -231,24 +229,20 @@ describe('provider credentials', () => {
 		);
 	}, 30_000);
 
-	it('reports ChatGPT as disconnected while preserving the OpenAI configuration', async () => {
+	it('reports a saved OpenAI key', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
 		vi.stubGlobal('fetch', async () => new Response(null, { status: 404 }));
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: false,
-			claude: false,
-			chatgpt: false,
-			chatgptModelIds: null
+			claude: false
 		});
 
 		stubVaultFetch(new Map());
 		await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: 'sk-user' });
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: true,
-			claude: false,
-			chatgpt: false,
-			chatgptModelIds: null
+			claude: false
 		});
 	});
 });
