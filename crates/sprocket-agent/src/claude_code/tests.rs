@@ -84,7 +84,7 @@ fn tool_results_answer_the_calls_claude_code_holds() {
 }
 
 #[test]
-fn a_finished_turn_resumes_its_session_with_the_new_prompt() {
+fn a_finished_turn_continues_with_the_new_prompt() {
     let first = turn(json!([user("Hi")]));
     let session = live(&first, Awaiting::TurnEnd);
     let reply = json!({ "role": "assistant", "content": [{ "type": "text", "text": "Hello" }] });
@@ -92,10 +92,7 @@ fn a_finished_turn_resumes_its_session_with_the_new_prompt() {
 
     assert_eq!(
         plan(&next, Some(&session), None),
-        Plan::Resume {
-            session_id: "session".to_string(),
-            content: vec![json!({ "type": "text", "text": "Thanks" })],
-        }
+        Plan::Continue(vec![json!({ "type": "text", "text": "Thanks" })])
     );
 }
 

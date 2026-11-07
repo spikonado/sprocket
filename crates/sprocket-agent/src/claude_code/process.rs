@@ -21,13 +21,13 @@ const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 pub(super) enum SessionStart {
     New(String),
-    Fork { from: String, id: String },
+    Resume(String),
 }
 
 impl SessionStart {
     pub(super) fn id(&self) -> &str {
         match self {
-            Self::New(id) | Self::Fork { id, .. } => id,
+            Self::New(id) | Self::Resume(id) => id,
         }
     }
 }
@@ -63,22 +63,47 @@ pub(super) struct Process {
     calls: Arc<Mutex<ToolCalls>>,
     writer: JoinHandle<()>,
     reader: Option<JoinHandle<()>>,
+    /// Set from sending a user message until its turn's `result` is read.
+    turn_open: bool,
 }
 
 impl Drop for Process {
-    /// Closing stdin ends Claude Code after its current turn, so it still saves that turn to
-    /// the session. A process that doesn't exit in time is killed.
+    /// Interrupts an open turn and waits for its `result` before closing stdin, so Claude
+    /// Code stops generating for a stopped run. A process that doesn't exit in time is killed.
     fn drop(&mut self) {
-        self.writer.abort();
-        let (Some(child), Some(reader)) = (self.child.take(), self.reader.take()) else {
+        let writer = self.writer.abort_handle();
+        let (Some(child), Some(reader), Ok(runtime)) = (
+            self.child.take(),
+            self.reader.take(),
+            tokio::runtime::Handle::try_current(),
+        ) else {
+            writer.abort();
             return;
         };
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                let _ = tokio::time::timeout(EXIT_GRACE, reader).await;
-                drop(child);
-            });
+        let interrupted = self.turn_open;
+        if interrupted {
+            self.send(&json!({
+                "type": "control_request",
+                "request_id": "interrupt",
+                "request": { "subtype": "interrupt" },
+            }));
         }
+        let mut events = std::mem::replace(&mut self.events, mpsc::unbounded_channel().1);
+        runtime.spawn(async move {
+            if interrupted {
+                let _ = tokio::time::timeout(EXIT_GRACE, async {
+                    while let Some(event) = events.recv().await {
+                        if matches!(event, Event::Result(_)) {
+                            break;
+                        }
+                    }
+                })
+                .await;
+            }
+            writer.abort();
+            let _ = tokio::time::timeout(EXIT_GRACE, reader).await;
+            drop(child);
+        });
     }
 }
 
@@ -146,6 +171,7 @@ impl Process {
             calls,
             writer: tokio::spawn(write_input(stdin, pending_input)),
             reader: Some(tokio::spawn(output.read(stdout, stderr))),
+            turn_open: false,
         };
         process.send(&json!({
             "type": "control_request",
@@ -159,7 +185,8 @@ impl Process {
         let _ = self.input.send(message.to_string());
     }
 
-    pub(super) fn send_user(&self, content: Vec<Value>) {
+    pub(super) fn send_user(&mut self, content: Vec<Value>) {
+        self.turn_open = true;
         self.send(&json!({
             "type": "user",
             "message": { "role": "user", "content": content },
@@ -184,10 +211,15 @@ impl Process {
     }
 
     pub(super) async fn next_event(&mut self) -> Event {
-        self.events
+        let event = self
+            .events
             .recv()
             .await
-            .unwrap_or_else(|| Event::Exited("Claude Code stopped.".to_string()))
+            .unwrap_or_else(|| Event::Exited("Claude Code stopped.".to_string()));
+        if matches!(event, Event::Result(_)) {
+            self.turn_open = false;
+        }
+        event
     }
 
     /// Waits for the `result` that follows a turn's last message.
@@ -239,11 +271,10 @@ fn arguments(spawn: &Spawn<'_>, system_prompt: &Path) -> Vec<OsString> {
     if let Some(effort) = spawn.effort {
         arguments.push(format!("--effort={effort}").into());
     }
-    if let SessionStart::Fork { from, .. } = &spawn.session {
-        arguments.push(format!("--resume={from}").into());
-        arguments.push("--fork-session".into());
-    }
-    arguments.push(format!("--session-id={}", spawn.session.id()).into());
+    arguments.push(match &spawn.session {
+        SessionStart::New(id) => format!("--session-id={id}").into(),
+        SessionStart::Resume(id) => format!("--resume={id}").into(),
+    });
     arguments
 }
 
