@@ -411,14 +411,14 @@ describe('durable webhook ingestion and projection', () => {
 			const before = await readSubscription(t);
 			await project(productId);
 			expect(await usage()).toBe(0);
-			expect((await readSubscription(t))?.quotaGeneration).toBe(before!.quotaGeneration! + 1);
+			expect((await readSubscription(t))?.quotaResetAt).toBe(before!.quotaResetAt! + 1);
 			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 3 });
 			await project(productId);
 			expect(await usage()).toBe(3);
 		}
 	});
 
-	it('resets usage generation exactly once for an effective tier change', async () => {
+	it('resets usage exactly once for an effective tier change', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 

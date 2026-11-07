@@ -21,13 +21,7 @@ export const getMyUsage = query({
 			usageMeters.map(async (meter) => {
 				const window = await getMeterWindow(ctx, meter.id, userId, limits, subscription, now);
 
-				return {
-					id: meter.id,
-					label: meter.label,
-					description: meter.description,
-					...window,
-					windows: [{ period: 'monthly' as const, ...window }]
-				};
+				return { id: meter.id, label: meter.label, ...window };
 			})
 		);
 

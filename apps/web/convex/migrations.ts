@@ -59,11 +59,24 @@ export const dropQuestionAnsweredAt = migrations.define({
 	}
 });
 
+export const dropQuotaGenerations = migrations.define({
+	table: 'subscriptions',
+	migrateOne: (_ctx, subscription) => {
+		if (
+			subscription.quotaGeneration !== undefined ||
+			subscription.quotaTransitionAt !== undefined
+		) {
+			return { quotaGeneration: undefined, quotaTransitionAt: undefined };
+		}
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
 	internal.migrations.dropPricingCacheKeys,
 	internal.migrations.countContextSummaryParts,
 	internal.migrations.backfillSubscriptionAccess,
-	internal.migrations.dropQuestionAnsweredAt
+	internal.migrations.dropQuestionAnsweredAt,
+	internal.migrations.dropQuotaGenerations
 ]);

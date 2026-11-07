@@ -1,6 +1,6 @@
 # Backwards Compatibility
 
-Clients older than v0.4.0 are unsupported. Each shim below is temporary code with a removal gate. Remove an entry in the PR that removes its shim. Historical formats that stay forever are listed once at the end.
+Clients older than v0.4.2 are unsupported. Each shim below is temporary code with a removal gate. Remove an entry in the PR that removes its shim. Historical formats that stay forever are listed once at the end.
 
 ## Convex API shims
 
@@ -19,10 +19,6 @@ Released clients don't send `completionProvider`, and older thread and run rows 
 ### Retired cloud-held ChatGPT sign-in
 
 `getMyConfiguration` reports `chatgpt: false` and `chatgptModelIds: null`. Remove those fields once no supported client reads them.
-
-### Usage windows array
-
-`usage.getMyUsage` keeps a `windows` array with a single `monthly` entry because released usage pages iterate it. Each meter's `description` is also only rendered by released clients. Drop both from `vMyUsage`, and `description` from `usageMeters`, once those clients age out.
 
 ### Subagent provider choice
 
@@ -106,19 +102,11 @@ Released agents call `payments:reportOrder` without `outcome`, which means `orde
 
 ## Convex data shims
 
-### Usage-generation key
-
-Usage buckets key off `quotaResetAt` while released gateway readers still use it, so old and new servers charge the same bucket. New writes keep `quotaResetAt` as the transition timestamp, advanced by 1ms when transitions share a timestamp, and `quotaGeneration` counts transitions. After those readers age out, migrate outstanding usage into generation-keyed buckets before switching the key. Keep `quotaResetAt` until that migration completes.
-
 ### Legacy checkout attempts
 
 Legacy ambiguous creates without a frozen request require provider reconciliation, and legacy subscription rows without `checkoutAttemptId` never prove activation of a specific attempt. Remove these fail-closed recovery paths after all pre-freeze ambiguous attempts resolve and legacy uncorrelated subscriptions terminate.
 
 The checkout tables keep `by_userId` because released readers use it. Remove it once those readers age out and all current-session lookups use the compound indexes. Keep a creation-order history index while history iteration needs it.
-
-### Calendar usage windows
-
-The quota reader carries usage from old seven-day or thirty-day rate-limiter rows into the current calendar window only when the old window began inside it. Remove that read path once every deployment has run calendar windows for 30 days.
 
 ### Migration records
 
@@ -151,6 +139,10 @@ Older subscription rows, including operator grants and free bootstrap rows, lack
 ### Question settle timestamps
 
 Older `agentQuestions` rows carry an `answeredAt` that nothing reads, so the schema keeps it optional. `migrations:dropQuestionAnsweredAt` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
+
+### Quota generations
+
+Older `subscriptions` rows carry `quotaGeneration` and `quotaTransitionAt`, which nothing reads, so the schema keeps them optional. `migrations:dropQuotaGenerations` unsets them, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop both fields and the migration.
 
 ### Retired Prava mandate rows
 
