@@ -55,6 +55,7 @@ import type * as lib_hostedParse from "../lib/hostedParse.js";
 import type * as lib_imageUploads from "../lib/imageUploads.js";
 import type * as lib_inboxState from "../lib/inboxState.js";
 import type * as lib_json from "../lib/json.js";
+import type * as lib_legacyUsage from "../lib/legacyUsage.js";
 import type * as lib_machineRuns from "../lib/machineRuns.js";
 import type * as lib_models from "../lib/models.js";
 import type * as lib_payments_agentcard from "../lib/payments/agentcard.js";
@@ -165,6 +166,7 @@ declare const fullApi: ApiFromModules<{
   "lib/imageUploads": typeof lib_imageUploads;
   "lib/inboxState": typeof lib_inboxState;
   "lib/json": typeof lib_json;
+  "lib/legacyUsage": typeof lib_legacyUsage;
   "lib/machineRuns": typeof lib_machineRuns;
   "lib/models": typeof lib_models;
   "lib/payments/agentcard": typeof lib_payments_agentcard;
