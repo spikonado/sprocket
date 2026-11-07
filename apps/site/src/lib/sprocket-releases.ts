@@ -35,24 +35,6 @@ export interface DetectedDesktopTarget {
 	osLabel: string;
 }
 
-export function osFamilyForPlatform(
-	platform: SprocketDesktopPlatform | null
-): SprocketOsFamily | null {
-	if (!platform) {
-		return null;
-	}
-
-	if (platform.startsWith('mac-')) {
-		return 'mac';
-	}
-
-	if (platform.startsWith('win-')) {
-		return 'windows';
-	}
-
-	return 'linux';
-}
-
 const DESKTOP_ASSET_RULES: {
 	platform: SprocketDesktopPlatform;
 	match: RegExp;
@@ -91,12 +73,9 @@ const DESKTOP_ASSET_RULES: {
 	}
 ];
 
-export interface GitHubReleaseAsset {
-	name: string;
-	browser_download_url: string;
-}
-
-export function parseSprocketDesktopAssets(assets: GitHubReleaseAsset[]): SprocketDesktopAsset[] {
+export function parseSprocketDesktopAssets(
+	assets: { name: string; browser_download_url: string }[]
+): SprocketDesktopAsset[] {
 	const parsed: SprocketDesktopAsset[] = [];
 
 	for (const rule of DESKTOP_ASSET_RULES) {
@@ -118,38 +97,13 @@ export function parseSprocketDesktopAssets(assets: GitHubReleaseAsset[]): Sprock
 	return parsed;
 }
 
-export function pickDesktopAsset(
-	assets: SprocketDesktopAsset[],
-	platform: SprocketDesktopPlatform | null
-): SprocketDesktopAsset | null {
-	if (!platform) {
-		return null;
-	}
-
-	return assets.find((asset) => asset.platform === platform) ?? null;
-}
-
-export function otherDesktopAssets(
-	assets: SprocketDesktopAsset[],
-	platform: SprocketDesktopPlatform | null
-): SprocketDesktopAsset[] {
-	if (!platform) {
-		return assets;
-	}
-
-	return assets.filter((asset) => asset.platform !== platform);
-}
-
 type NavigatorLike = {
 	userAgent: string;
 	platform: string;
 	maxTouchPoints?: number;
 	userAgentData?: {
 		platform?: string;
-		getHighEntropyValues?: (hints: string[]) => Promise<{
-			architecture?: string;
-			platform?: string;
-		}>;
+		getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>;
 	};
 };
 
@@ -160,13 +114,11 @@ type NavigatorLike = {
  * "Intel Mac OS X" on Apple Silicon, so guessing from the UA is unsafe.
  */
 export function detectDesktopTarget(
-	nav: NavigatorLike = typeof navigator === 'undefined'
-		? { userAgent: '', platform: '' }
-		: navigator,
+	nav: NavigatorLike,
 	architectureHint = ''
 ): DetectedDesktopTarget {
-	const ua = nav.userAgent ?? '';
-	const platform = nav.platform ?? '';
+	const ua = nav.userAgent;
+	const platform = nav.platform;
 	const uaDataPlatform = nav.userAgentData?.platform?.toLowerCase() ?? '';
 	const architecture = architectureHint.toLowerCase();
 
@@ -236,20 +188,15 @@ export function detectDesktopTarget(
 }
 
 export async function detectDesktopTargetAsync(
-	nav: NavigatorLike = typeof navigator === 'undefined'
-		? { userAgent: '', platform: '' }
-		: navigator
+	nav: NavigatorLike = navigator
 ): Promise<DetectedDesktopTarget> {
-	let architecture = '';
+	let architecture: string | undefined;
 
 	try {
-		const values = await nav.userAgentData?.getHighEntropyValues?.(['architecture', 'platform']);
-
-		if (values?.architecture) {
-			architecture = values.architecture;
-		}
+		architecture = (await nav.userAgentData?.getHighEntropyValues?.(['architecture']))
+			?.architecture;
 	} catch {
-		// Keep the empty default when Client Hints are unavailable.
+		// Without Client Hints the architecture stays unknown.
 	}
 
 	return detectDesktopTarget(nav, architecture);

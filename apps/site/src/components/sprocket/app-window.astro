@@ -4,10 +4,9 @@ import logo from '@/assets/logo.svg';
 interface Props {
 	label: string;
 	thread: string;
-	model?: string;
 }
 
-const { label, thread, model = 'Opus 5.5 · High' } = Astro.props;
+const { label, thread } = Astro.props;
 
 const iconProps = {
 	viewBox: '0 0 24 24',
@@ -57,7 +56,7 @@ const iconProps = {
 							d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"
 						></path>
 					</svg>
-					{model}
+					Opus 5.5 · High
 					<svg {...iconProps} class="h-3 w-3 text-muted-foreground">
 						<path d="m6 9 6 6 6-6"></path>
 					</svg>

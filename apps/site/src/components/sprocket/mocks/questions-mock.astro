@@ -27,10 +27,8 @@ const chosen = 1;
 					options.map((option, index) => (
 						<li
 							class={cn(
-								'flex items-center gap-2 rounded-lg border px-2.5 py-1.5',
-								index === chosen
-									? 'question-chosen border-border/80'
-									: 'border-border/80 text-muted-foreground'
+								'flex items-center gap-2 rounded-lg border border-border/80 px-2.5 py-1.5',
+								index === chosen ? 'question-chosen' : 'text-muted-foreground'
 							)}
 						>
 							<span class="font-mono text-xs text-muted-foreground">{index + 1}</span>

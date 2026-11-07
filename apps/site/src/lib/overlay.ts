@@ -19,8 +19,7 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
 	});
 }
 
-/** Trap focus inside a modal container and restore it when disposed. */
-export const trapFocus: Attachment<HTMLElement> = (container) => {
+function trapFocus(container: HTMLElement): () => void {
 	const previouslyFocused =
 		document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
@@ -78,28 +77,21 @@ export const trapFocus: Attachment<HTMLElement> = (container) => {
 		document.removeEventListener('keydown', onKeyDown, true);
 		previouslyFocused?.focus({ preventScroll: true });
 	};
-};
+}
 
-/**
- * Hide page chrome from assistive tech / interaction while a modal is open.
- * The attached node is the subtree that must stay available (dialog or mobile nav header).
- */
-export const inertBackground: Attachment<HTMLElement> = (keep) => {
+/** Makes the page chrome around `keep` inert, leaving `keep` and anything containing it usable. */
+function inertBackground(keep: HTMLElement): () => void {
 	const targets = [
 		document.querySelector('header'),
 		document.getElementById('main'),
 		document.querySelector('footer')
-	].filter((element): element is HTMLElement => {
-		if (!(element instanceof HTMLElement)) {
-			return false;
-		}
-
-		if (!keep) {
-			return true;
-		}
-
-		return element !== keep && !element.contains(keep) && !keep.contains(element);
-	});
+	].filter(
+		(element): element is HTMLElement =>
+			element instanceof HTMLElement &&
+			element !== keep &&
+			!element.contains(keep) &&
+			!keep.contains(element)
+	);
 
 	for (const element of targets) {
 		element.inert = true;
@@ -110,7 +102,28 @@ export const inertBackground: Attachment<HTMLElement> = (keep) => {
 			element.inert = false;
 		}
 	};
-};
+}
+
+function lockBodyScroll(): () => void {
+	const previousOverflow = document.body.style.overflow;
+	document.body.style.overflow = 'hidden';
+
+	return () => {
+		document.body.style.overflow = previousOverflow;
+	};
+}
+
+function closeOnEscape(onClose: () => void): () => void {
+	const onKeyDown = (event: KeyboardEvent) => {
+		if (event.key === 'Escape') {
+			onClose();
+		}
+	};
+
+	window.addEventListener('keydown', onKeyDown);
+
+	return () => window.removeEventListener('keydown', onKeyDown);
+}
 
 /** Render a node as a direct child of document.body. */
 export function portal(node: HTMLElement) {
@@ -123,50 +136,22 @@ export function portal(node: HTMLElement) {
 	};
 }
 
-/** Lock document scrolling while a modal or overlay is open. */
-export const lockBodyScroll: Attachment = () => {
-	const previousOverflow = document.body.style.overflow;
-	document.body.style.overflow = 'hidden';
-
-	return () => {
-		document.body.style.overflow = previousOverflow;
-	};
-};
-
-/** Close on Escape. Pass the closer; the returned function is the attachment. */
-export function closeOnEscape(onClose: () => void): Attachment {
-	return () => {
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				onClose();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	};
-}
-
 /**
- * Overlay open/close as one attachment so cleanup order is not left to
- * sibling `{@attach}` teardown. Unlock scroll and drop `inert` before
- * restoring focus; otherwise the opener (often inside `main`) cannot take it.
+ * Unlock scroll and drop `inert` before restoring focus; otherwise the opener (often inside
+ * `main`) cannot take it.
  */
 export function lockOverlay(onClose: () => void): Attachment<HTMLElement> {
 	return (node) => {
-		const unlockScroll = lockBodyScroll(node);
+		const unlockScroll = lockBodyScroll();
 		const releaseBackground = inertBackground(node);
 		const releaseFocus = trapFocus(node);
-		const stopEscape = closeOnEscape(onClose)(node);
+		const stopEscape = closeOnEscape(onClose);
 
 		return () => {
-			stopEscape?.();
-			unlockScroll?.();
-			releaseBackground?.();
-			releaseFocus?.();
+			stopEscape();
+			unlockScroll();
+			releaseBackground();
+			releaseFocus();
 		};
 	};
 }

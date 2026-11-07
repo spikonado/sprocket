@@ -134,7 +134,6 @@
 	}
 
 	async function checkout(tier: string, planInterval: BillingInterval) {
-		busy = { plan: tier, label: 'Starting checkout…' };
 		notice = null;
 
 		if (!user) {
@@ -144,6 +143,7 @@
 			return;
 		}
 
+		busy = { plan: tier, label: 'Starting checkout…' };
 		const plan = { plan: tier, interval: planInterval };
 		track('pricing_checkout_started', plan);
 

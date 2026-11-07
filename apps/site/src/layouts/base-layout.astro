@@ -9,7 +9,6 @@ import Navbar from '@/components/navbar.svelte';
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH } from '@/lib/og-image';
 import {
 	DEFAULT_DESCRIPTION,
-	DEFAULT_OG_IMAGE,
 	DEFAULT_TITLE,
 	ORGANIZATION_DESCRIPTION,
 	ORGANIZATION_ID,
@@ -18,41 +17,29 @@ import {
 	ORGANIZATION_URL,
 	SITE_NAME,
 	SITE_URL,
-	TWITTER_HANDLE,
-	absoluteUrl,
-	type JsonLdNode
+	TWITTER_HANDLE
 } from '@/lib/seo';
 
 interface Props {
 	title?: string;
 	description?: string;
-	/** Path or absolute URL for social preview image. */
-	image?: string;
-	/** Optional JSON-LD objects merged after the default Organization graph. */
-	jsonLd?: JsonLdNode | JsonLdNode[];
-	noindex?: boolean;
+	/** JSON-LD nodes added after the Organization and WebSite nodes. */
+	jsonLd?: { '@type': string }[];
 }
 
-const {
-	title = DEFAULT_TITLE,
-	description = DEFAULT_DESCRIPTION,
-	image = DEFAULT_OG_IMAGE,
-	jsonLd,
-	noindex = false
-} = Astro.props;
+const { title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION, jsonLd = [] } = Astro.props;
 
-const canonicalURL = absoluteUrl(Astro.url.pathname, Astro.site ?? SITE_URL);
-const imageURL = absoluteUrl(image, Astro.site ?? SITE_URL);
-const robots = noindex ? 'noindex, nofollow' : 'index, follow, max-image-preview:large';
+const canonicalURL = new URL(Astro.url.pathname, SITE_URL).href;
+const imageURL = new URL('/og.png', SITE_URL).href;
 
 const organizationLd = {
 	'@type': 'Organization',
 	'@id': ORGANIZATION_ID,
 	name: ORGANIZATION_NAME,
 	url: ORGANIZATION_URL,
-	logo: absoluteUrl(logoSvg.src, Astro.site ?? SITE_URL),
+	logo: new URL(logoSvg.src, SITE_URL).href,
 	description: ORGANIZATION_DESCRIPTION,
-	sameAs: [...ORGANIZATION_SAME_AS],
+	sameAs: ORGANIZATION_SAME_AS,
 	email: 'privacy@spikonado.com'
 };
 
@@ -66,11 +53,9 @@ const websiteLd = {
 	inLanguage: 'en'
 };
 
-const extraLd = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
-
 const jsonLdDocument = {
 	'@context': 'https://schema.org',
-	'@graph': [organizationLd, websiteLd, ...extraLd]
+	'@graph': [organizationLd, websiteLd, ...jsonLd]
 };
 ---
 
@@ -88,7 +73,7 @@ const jsonLdDocument = {
 
 		<title>{title}</title>
 		<meta name="description" content={description} />
-		<meta name="robots" content={robots} />
+		<meta name="robots" content="index, follow, max-image-preview:large" />
 		<meta name="author" content={ORGANIZATION_NAME} />
 		<meta name="generator" content={Astro.generator} />
 

@@ -5,9 +5,7 @@ import BaseLayout from '@/layouts/base-layout.astro';
 import { fetchPricingCatalog } from '@/lib/pricing/billing';
 import { pricingFaqs } from '@/lib/pricing/catalog';
 import type { PublicPricingCatalog } from '@/lib/pricing/convex-types';
-import { ORGANIZATION_NAME, SITE_URL, titleWithBrand } from '@/lib/seo';
-
-const title = titleWithBrand('Pricing');
+import { ORGANIZATION_NAME, SITE_URL } from '@/lib/seo';
 
 const description =
 	'Compare Sprocket plans and choose the AI usage limits that fit your engineering work.';
@@ -40,7 +38,7 @@ const faqLd = {
 };
 ---
 
-<BaseLayout title={title} description={description} jsonLd={[productLd, faqLd]}>
+<BaseLayout title="Pricing | Sprocket" description={description} jsonLd={[productLd, faqLd]}>
 	<main id="main" class="atmosphere min-h-svh px-4 pt-28 pb-16 sm:px-6 sm:pt-32 lg:px-8">
 		<article class="mx-auto max-w-7xl">
 			<h1
