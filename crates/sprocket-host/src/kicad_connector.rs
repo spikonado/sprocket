@@ -62,7 +62,9 @@ pub struct ConnectorStatus {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Release {
-    version: String,
+    /// Names the install directory; it changes whenever any asset does, even with the same KiCad.
+    #[serde(rename = "release")]
+    name: String,
     platforms: BTreeMap<String, Asset>,
     kipy: Asset,
     /// KiCadRoutingTools, which only some platforms have a router binary for.
@@ -100,7 +102,7 @@ impl KiCadConnector {
 
     /// Deletes what an install interrupted by a restart left behind and resyncs the launchers.
     pub(crate) fn prepare(&self) {
-        let (root, pinned) = (self.root.clone(), self.release.version.clone());
+        let (root, pinned) = (self.root.clone(), self.release.name.clone());
         tokio::task::spawn_blocking(move || {
             if let Err(error) = repair_unless_installing(&root, &pinned) {
                 tracing::warn!("KiCad cleanup failed: {error}");
@@ -109,7 +111,7 @@ impl KiCadConnector {
     }
 
     pub async fn status(&self) -> ConnectorStatus {
-        let installed = installed_version(&self.root, &self.release.version);
+        let installed = installed_version(&self.root, &self.release.name);
         let idle_state = if installed.is_some() {
             ConnectorState::Installed
         } else {
@@ -125,7 +127,7 @@ impl KiCadConnector {
             id: "kicad",
             name: NAME,
             update_available: state == ConnectorState::Installed
-                && installed.is_some_and(|installed| installed != self.release.version),
+                && installed.is_some_and(|installed| installed != self.release.name),
             state,
             error,
         }
@@ -172,10 +174,14 @@ impl KiCadConnector {
     }
 
     pub fn installed(&self) -> Option<InstalledConnector> {
-        let dir = installed_version(&self.root, &self.release.version)?;
+        let dir = installed_version(&self.root, &self.release.name)?;
         let version = fs::read_to_string(self.root.join(&dir).join(USER_KICAD_VERSION_FILE))
             .map(|version| version.trim().to_owned())
-            .unwrap_or(dir);
+            .unwrap_or_else(|_| {
+                dir.split_once('+')
+                    .map_or(dir.as_str(), |(kicad, _)| kicad)
+                    .to_owned()
+            });
         Some(InstalledConnector {
             name: NAME,
             version,
@@ -223,7 +229,7 @@ impl KiCadConnector {
     }
 
     pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {
-        let Some(dir) = installed_version(&self.root, &self.release.version) else {
+        let Some(dir) = installed_version(&self.root, &self.release.name) else {
             return Vec::new();
         };
         let dir = self.root.join(dir);
@@ -243,7 +249,7 @@ impl KiCadConnector {
     }
 
     fn version_dir(&self) -> PathBuf {
-        self.root.join(&self.release.version)
+        self.root.join(&self.release.name)
     }
 
     async fn install_pinned(&self) -> anyhow::Result<()> {
@@ -266,7 +272,7 @@ impl KiCadConnector {
             tokio::task::spawn_blocking(move || drop(staging)).await?;
             published?;
         }
-        let (root, current) = (self.root.clone(), self.release.version.clone());
+        let (root, current) = (self.root.clone(), self.release.name.clone());
         tokio::task::spawn_blocking(move || -> io::Result<()> {
             sync_launchers(&root, Some(&current))?;
             prune_versions(&root, &current);
@@ -293,7 +299,7 @@ impl KiCadConnector {
             }
         };
         let version = cli_version(&cli).await?;
-        // `kicad-cli version` omits the build, so a downloaded pin keeps its directory name.
+        // `kicad-cli version` omits the build, so a downloaded pin reads it from its release name.
         if user_kicad.is_some() {
             tokio::fs::write(staging.join(USER_KICAD_VERSION_FILE), &version).await?;
         }
@@ -488,11 +494,29 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     match lock.try_lock() {
         Ok(()) => {
             remove_leftovers(root)?;
-            sync_launchers(root, installed_version(root, pinned).as_deref())
+            let installed = installed_version(root, pinned);
+            sync_launchers(root, installed.as_deref())?;
+            match installed {
+                Some(dir) => refresh_scripts(&root.join(dir)),
+                None => Ok(()),
+            }
         }
         Err(fs::TryLockError::WouldBlock) => Ok(()),
         Err(fs::TryLockError::Error(error)) => Err(error),
     }
+}
+
+/// The scripts ship with Sprocket rather than the release, so an update reaches installs on start.
+fn refresh_scripts(dir: &Path) -> io::Result<()> {
+    for (name, contents) in [(KIPY_API_FILE, KIPY_API), (KICAD_VIEW_FILE, KICAD_VIEW)] {
+        let path = dir.join(name);
+        if fs::read_to_string(&path).is_ok_and(|current| current != contents) {
+            let temporary = tempfile::NamedTempFile::new_in(dir)?;
+            fs::write(temporary.path(), contents)?;
+            temporary.persist(&path).map_err(|error| error.error)?;
+        }
+    }
+    Ok(())
 }
 
 /// Removes staging directories and tombstones, which are the only hidden directories.

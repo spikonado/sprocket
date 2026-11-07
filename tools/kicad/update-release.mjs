@@ -1,6 +1,7 @@
 // Mirrors the newest KiCad nightly that has every platform's build to a GitHub release of this
 // repository, along with a kipy wheel and KiCadRoutingTools, then pins that release in
-// releases.json.
+// releases.json. A new kipy commit, KiCadRoutingTools release or build change makes a new release
+// even without a new KiCad nightly.
 // Needs bun, curl, gh, git, tar, unzip, uv, minisign, osslsigncode, rcodesign, and dwarfsextract.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -58,6 +59,13 @@ const toolDir = dirname(fileURLToPath(import.meta.url));
 const releasesPath = join(toolDir, 'releases.json');
 
 const requirementsPath = join(toolDir, 'requirements.txt');
+
+// Changing these changes the release's assets.
+const BUILD_FILES = [
+	'update-release.mjs',
+	'kipy-cli-env.patch',
+	'routing-tools-transform-pose.patch'
+];
 
 function run(command, args, options = {}) {
 	return execFileSync(command, args, {
@@ -265,7 +273,7 @@ async function verifyDmg(dmg) {
 	}
 }
 
-function buildKipy(work) {
+function buildKipy(work, expectedCommit) {
 	const source = join(work, 'kicad-python');
 	run('git', [
 		'clone',
@@ -277,6 +285,11 @@ function buildKipy(work) {
 		KIPY_REPOSITORY,
 		source
 	]);
+	const commit = run('git', ['-C', source, 'rev-parse', 'HEAD']).trim();
+	if (commit !== expectedCommit) {
+		throw new Error(`kicad-python moved from ${expectedCommit} to ${commit} meanwhile; rerun`);
+	}
+
 	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-cli-env.patch')]);
 	// Poetry emits a platform wheel; the build script writes the pure one to the source's dist.
 	run(
@@ -291,18 +304,13 @@ function buildKipy(work) {
 
 	const path = join(work, wheel);
 	renameSync(join(source, 'dist', wheel), path);
-	const commit = run('git', ['-C', source, 'rev-parse', 'HEAD']).trim();
 
-	return { path, commit };
+	return path;
 }
 
 // Route.py loads `rust_router/grid_router`, which only the KiCad plugin's loader copies from the
 // platform's binary, so each platform gets its own archive with the binary under that name.
-async function buildRoutingTools(work) {
-	const release = JSON.parse(
-		run('gh', ['api', `repos/${ROUTING_TOOLS_REPOSITORY}/releases/latest`])
-	);
-
+async function buildRoutingTools(work, release) {
 	const version = release.tag_name.replace(/^v/, '');
 	const asset = release.assets.find(({ name }) => name === `KiCadRoutingTools-${version}.zip`);
 	const zip = download(asset.browser_download_url, work);
@@ -341,7 +349,7 @@ async function buildRoutingTools(work) {
 
 	rmSync(tree, { recursive: true });
 
-	return { version, archives };
+	return archives;
 }
 
 function compileRequirements(wheel, path) {
@@ -416,7 +424,9 @@ function smokeTest(work, appImage, wheel, requirements, routingToolsArchive) {
 function publishedRelease(tag) {
 	try {
 		return JSON.parse(
-			run('gh', ['api', `repos/${REPOSITORY}/releases/tags/${tag}`], { stdio: 'pipe' })
+			run('gh', ['api', `repos/${REPOSITORY}/releases/tags/${encodeURIComponent(tag)}`], {
+				stdio: 'pipe'
+			})
 		);
 	} catch (error) {
 		if (error.stdout?.includes('"status":"404"')) {
@@ -427,7 +437,7 @@ function publishedRelease(tag) {
 	}
 }
 
-async function createRelease(build, tag) {
+async function createRelease(tag, build, kipyCommit, routingToolsRelease) {
 	const work = mkdtempSync(join(tmpdir(), 'kicad-'));
 
 	try {
@@ -446,11 +456,11 @@ async function createRelease(build, tag) {
 		const appImage = join(work, `kicad-nightly-${build.fileVersion}-x86_64.AppImage`);
 		verifyAppImage(appImage, signature, build.fileVersion);
 
-		const kipy = buildKipy(work);
+		const kipy = buildKipy(work, kipyCommit);
 		const requirements = join(work, 'requirements.txt');
-		compileRequirements(kipy.path, requirements);
-		const routingTools = await buildRoutingTools(work);
-		smokeTest(work, appImage, kipy.path, requirements, routingTools.archives['linux-x64']);
+		compileRequirements(kipy, requirements);
+		const routingTools = await buildRoutingTools(work, routingToolsRelease);
+		smokeTest(work, appImage, kipy, requirements, routingTools['linux-x64']);
 
 		const exes = ['x86_64', 'arm64'].map((arch) =>
 			download(`${BUCKET}/windows/nightly/kicad-nightly-${build.fileVersion}-${arch}.exe`, work)
@@ -465,9 +475,9 @@ async function createRelease(build, tag) {
 			'',
 			`Corresponding source: https://gitlab.com/kicad/code/kicad/-/tree/${build.commit}`,
 			'',
-			`\`${basename(kipy.path)}\` is kicad-python built from ${KIPY_REPOSITORY}/-/tree/${kipy.commit} with one patch: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path.`,
+			`\`${basename(kipy)}\` is kicad-python built from ${KIPY_REPOSITORY}/-/tree/${kipyCommit} with one patch: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path.`,
 			'',
-			`The \`kicad-routing-tools-*\` archives are https://github.com/${ROUTING_TOOLS_REPOSITORY}/releases/tag/v${routingTools.version} with one patch that reads the footprint poses of board format 20260616 and later, without its example boards. Each holds its platform's \`grid_router\` binary.`,
+			`The \`kicad-routing-tools-*\` archives are https://github.com/${ROUTING_TOOLS_REPOSITORY}/releases/tag/${routingToolsRelease.tag_name} with one patch that reads the footprint poses of board format 20260616 and later, without its example boards. Each holds its platform's \`grid_router\` binary.`,
 			'',
 			'`requirements.txt` pins the Python dependencies of both.'
 		].join('\n');
@@ -484,14 +494,14 @@ async function createRelease(build, tag) {
 				'--prerelease',
 				'--latest=false',
 				'--title',
-				`KiCad ${build.version}`,
+				`KiCad ${tag.slice('kicad-'.length)}`,
 				'--notes',
 				notes,
 				appImage,
 				...exes,
 				dmg,
-				kipy.path,
-				...Object.values(routingTools.archives),
+				kipy,
+				...Object.values(routingTools),
 				requirements
 			],
 			{ stdio: ['ignore', 'inherit', 'inherit'] }
@@ -509,16 +519,32 @@ if (!build) {
 	throw new Error('No KiCad nightly has builds for every platform');
 }
 
+const kipyCommit = run('git', ['ls-remote', KIPY_REPOSITORY, 'HEAD']).split('\t')[0];
+
+const routingToolsRelease = JSON.parse(
+	run('gh', ['api', `repos/${ROUTING_TOOLS_REPOSITORY}/releases/latest`])
+);
+
+const buildFiles = await Promise.all(BUILD_FILES.map((name) => readFile(join(toolDir, name))));
+
+const inputsHash = createHash('sha256')
+	.update(JSON.stringify([build.version, kipyCommit, routingToolsRelease.tag_name]))
+	.update(Buffer.concat(buildFiles))
+	.digest('hex');
+
+const releaseName = `${build.version}+${inputsHash.slice(0, 8)}`;
+
 const pinned = await readFile(releasesPath, 'utf8').then(JSON.parse, () => undefined);
 
-if (pinned?.version === build.version) {
-	console.log(`KiCad ${build.version} is already pinned.`);
+if (pinned?.release === releaseName) {
+	console.log(`KiCad ${releaseName} is already pinned.`);
 	process.exit(0);
 }
 
-const tag = `kicad-${build.version}`;
+const tag = `kicad-${releaseName}`;
 
-const release = publishedRelease(tag) ?? (await createRelease(build, tag));
+const release =
+	publishedRelease(tag) ?? (await createRelease(tag, build, kipyCommit, routingToolsRelease));
 
 function asset(suffix) {
 	const published = release.assets.find((candidate) => candidate.name.endsWith(suffix));
@@ -558,7 +584,7 @@ await writeFile(requirementsPath, await requirements.text());
 
 await writeFile(
 	releasesPath,
-	`${JSON.stringify({ version: build.version, commit: build.commit, platforms, kipy: asset('-py3-none-any.whl'), routingTools }, null, '\t')}\n`
+	`${JSON.stringify({ release: releaseName, version: build.version, commit: build.commit, platforms, kipy: asset('-py3-none-any.whl'), routingTools }, null, '\t')}\n`
 );
 
-console.log(`Pinned KiCad ${build.version}.`);
+console.log(`Pinned KiCad ${releaseName}.`);
