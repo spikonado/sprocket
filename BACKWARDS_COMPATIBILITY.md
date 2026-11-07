@@ -144,6 +144,10 @@ Older `agentQuestions` rows carry an `answeredAt` that nothing reads, so the sch
 
 Older `subscriptions` rows carry `quotaGeneration` and `quotaTransitionAt`, which nothing reads, so the schema keeps them optional. `migrations:dropQuotaGenerations` unsets them, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop both fields and the migration.
 
+### Rate limiter usage buckets
+
+Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of the `rateLimiter` component, so `convex.config.ts` keeps it mounted and `test.setup.ts` keeps registering it. `migrations:copyRateLimiterUsage` adds each user's current-window bucket to their `usage` row, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration, unmount the component (which deletes its data), and drop the `@convex-dev/rate-limiter` dependency.
+
 ### Retired Prava mandate rows
 
 `mandates` and `mandateCharges` are untyped tables kept only so the schema accepts their old rows. Remove both tables after `bunx convex run payments:deleteRetiredMandates` has emptied them on each deployment, and remove that mutation with them. Delete the unmounted `actionRetrier` component's data on each deployment at the same time.

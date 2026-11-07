@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
+import { chargeUsage } from '@convex/lib/quota';
 import { CLEANUP_BATCH_SIZE, MAX_ATTEMPTS } from './billingWebhook';
 import {
 	fixtureWorkId,
@@ -406,13 +407,13 @@ describe('durable webhook ingestion and projection', () => {
 
 		for (const productId of ['prod_pro', 'prod_team']) {
 			const previousUsage = await usage();
-			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 5 });
+			await t.run((ctx) => chargeUsage(ctx, userId, 5));
 			expect(await usage()).toBe(previousUsage + 5);
 			const before = await readSubscription(t);
 			await project(productId);
 			expect(await usage()).toBe(0);
 			expect((await readSubscription(t))?.quotaResetAt).toBe(before!.quotaResetAt! + 1);
-			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 3 });
+			await t.run((ctx) => chargeUsage(ctx, userId, 3));
 			await project(productId);
 			expect(await usage()).toBe(3);
 		}

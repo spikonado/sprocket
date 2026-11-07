@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { FunctionArgs } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
-import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
+import { chargeUsage, gatewayQuotaStatus } from '@convex/lib/quota';
 import { initConvexTest, insertUser, seedTiers, type ConvexTestInstance } from './test.setup';
 
 const now = Date.UTC(2026, 5, 15, 12);
@@ -111,9 +111,7 @@ describe('subscription access phase boundaries', () => {
 
 		vi.setSystemTime(futureStart + 1);
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({ tier: 'pro' });
-		await expect(
-			t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 1 })
-		).resolves.toBeNull();
+		await t.run((ctx) => chargeUsage(ctx, userId, 1));
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: subscription!._id,
 			dodoSubscriptionId: 'sub_future',

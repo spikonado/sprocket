@@ -30,13 +30,6 @@ crons.interval(
 );
 
 crons.interval(
-	'expire completed usage windows',
-	{ hours: 24 },
-	internal.lib.rateLimits.cleanupUsageWindows,
-	{}
-);
-
-crons.interval(
 	'retry failed Dodo webhook processing',
 	{ minutes: 15 },
 	internal.billingWebhook.retryPending,
