@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
+import { LIVE_SUBSCRIPTION_CHECKOUT_ERROR } from './billing';
+import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
 
@@ -13,6 +14,7 @@ afterEach(() => {
 function stubDodo(routes: {
 	onCreateSession?: (request: Request) => Response | Promise<Response>;
 	onSessionStatus?: (sessionId: string) => Response;
+	subscriptionStatuses?: string[];
 }): Request[] {
 	const requests: Request[] = [];
 
@@ -22,6 +24,12 @@ function stubDodo(routes: {
 		const path = new URL(request.url).pathname;
 
 		if (path === '/customers') return Response.json({ customer_id: 'cus_test' });
+
+		if (path === '/subscriptions') {
+			return Response.json({
+				items: (routes.subscriptionStatuses ?? []).map((status) => ({ status }))
+			});
+		}
 
 		if (path.startsWith('/products/')) {
 			return Response.json({
@@ -116,60 +124,26 @@ describe('checkout local purchase delegation', () => {
 		).toHaveLength(1);
 	});
 
-	it('delegates a new checkout to the provider while a paid subscription is active', async () => {
+	it('refuses checkout while Dodo holds a live subscription for the customer', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);
-		const now = Date.now();
-
-		await t.run(async (ctx) => {
-			await ctx.db.insert('subscriptions', {
-				userId: 'owner',
-				tier: 'pro',
-				status: 'active',
-				eventAt: now - 1_000,
-				dodoSubscriptionId: 'sub_1',
-				billingPeriodStart: now - 86_400_000,
-				billingPeriodEnd: now + 86_400_000,
-				accessPhase: 'paid',
-				accessEndsAt: now + 86_400_000
-			});
-		});
-
-		const requests = stubDodo({});
+		await t.run((ctx) => insertUser(ctx, 'owner', 'cus_test'));
+		const requests = stubDodo({ subscriptionStatuses: ['cancelled', 'paused'] });
 		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
 
-		const result = await owner.action(api.billing.checkout, {
-			tier: 'pro',
-			interval: 'monthly'
-		});
-
-		expect(result.mode).toBe('test');
-		expect(result.checkout_url).toBe('https://checkout.example/cks_1');
+		await expect(
+			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
+		).rejects.toThrow(LIVE_SUBSCRIPTION_CHECKOUT_ERROR);
 		expect(
 			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
-		).toHaveLength(1);
+		).toHaveLength(0);
 	});
 
-	it('delegates a new checkout to the provider for an ended recoverable paid row', async () => {
+	it('delegates a new checkout once every Dodo subscription has ended', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);
-		const now = Date.now();
-
-		await t.run(async (ctx) => {
-			await ctx.db.insert('subscriptions', {
-				userId: 'owner',
-				tier: 'pro',
-				status: 'active',
-				eventAt: now - 2 * 86_400_000,
-				dodoSubscriptionId: 'sub_1',
-				billingPeriodStart: now - 2 * 86_400_000,
-				billingPeriodEnd: now - 86_400_000,
-				accessPhase: 'none',
-				accessEndsAt: now - 86_400_000
-			});
-		});
-
-		const requests = stubDodo({});
+		await t.run((ctx) => insertUser(ctx, 'owner', 'cus_test'));
+		const requests = stubDodo({ subscriptionStatuses: ['cancelled', 'expired', 'failed'] });
 		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
 
 		const result = await owner.action(api.billing.checkout, {
@@ -177,11 +151,8 @@ describe('checkout local purchase delegation', () => {
 			interval: 'monthly'
 		});
 
-		expect(result.mode).toBe('test');
 		expect(result.checkout_url).toBe('https://checkout.example/cks_1');
-		expect(
-			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
-		).toHaveLength(1);
+		expect(new URL(requests[0]?.url ?? '').searchParams.get('customer_id')).toBe('cus_test');
 	});
 });
 

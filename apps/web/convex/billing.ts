@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { api, internal } from '@convex/_generated/api';
 import {
 	action,
@@ -64,6 +64,9 @@ function checkoutOutcomeIsTerminal(outcome: string | undefined): boolean {
 const AMBIGUOUS_CREATE_RETRY_MS = 30 * 1_000;
 
 const CHECKOUT_PROVIDER_REQUEST_BUDGET = 8;
+
+export const LIVE_SUBSCRIPTION_CHECKOUT_ERROR =
+	'You already have a subscription. Use "Manage billing" to change it.';
 
 // Public checkout mode; never the raw provider environment name.
 type DodoMode = 'test' | 'live';
@@ -206,6 +209,22 @@ export const checkout = action({
 				throw new Error('Checkout is taking too long to confirm. Try again in a moment.');
 			}
 		};
+
+		const existingCustomerId = await ctx.runQuery(internal.billingCustomers.getDodoCustomerId, {
+			userId: identity.subject
+		});
+
+		if (existingCustomerId) {
+			budget();
+
+			if (
+				await ctx.runAction(internal.pricing.hasLiveSubscription, {
+					dodoCustomerId: existingCustomerId
+				})
+			) {
+				throw new ConvexError(LIVE_SUBSCRIPTION_CHECKOUT_ERROR);
+			}
+		}
 
 		const reserved = await ctx.runMutation(internal.billing.reserveCheckoutSession, {
 			userId: identity.subject,

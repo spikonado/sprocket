@@ -374,29 +374,6 @@ describe('Dodo subscription persistence', () => {
 		).resolves.toMatchObject({ attemptId: expired.attemptId, productId: 'prod_monthly' });
 	});
 
-	it('reserves a checkout even when a paid tier is active', async () => {
-		const t = initConvexTest();
-		await t.run(async (ctx) => {
-			await ctx.db.insert('subscriptions', {
-				userId: 'user_pro',
-				tier: 'pro',
-				status: 'active',
-				eventAt: 1_000
-			});
-		});
-
-		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'user_pro',
-				attemptId: 'attempt_1',
-				tierId: 'pro',
-				interval: 'monthly',
-				productId: 'prod_monthly',
-				now: 2_000
-			})
-		).resolves.toMatchObject({ kind: 'create', productId: 'prod_monthly', interval: 'monthly' });
-	});
-
 	it('activates an arbitrary Dodo tier, links the customer, and ignores an older cancellation', async () => {
 		const t = initConvexTest();
 		const now = Date.now();

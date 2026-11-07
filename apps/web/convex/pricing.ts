@@ -1,6 +1,7 @@
 'use node';
 
 import DodoPayments from 'dodopayments';
+import type { SubscriptionStatus } from 'dodopayments/resources';
 import { Webhook, WebhookVerificationError } from 'standardwebhooks';
 import { v } from 'convex/values';
 import { z } from 'zod';
@@ -239,6 +240,28 @@ export const recoverCheckoutSession = internalAction({
 			default:
 				return { status: 'pending', checkoutUrl: null };
 		}
+	}
+});
+
+const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<SubscriptionStatus> = new Set([
+	'active',
+	'on_hold',
+	'past_due',
+	'paused',
+	'pending'
+]);
+
+// A customer holds a handful of subscriptions, so one page is enough.
+export const hasLiveSubscription = internalAction({
+	args: { dodoCustomerId: v.string() },
+	returns: v.boolean(),
+	handler: async (_ctx, { dodoCustomerId }) => {
+		const page = await createDodoClient().subscriptions.list({
+			customer_id: dodoCustomerId,
+			page_size: 100
+		});
+
+		return page.items.some((subscription) => LIVE_SUBSCRIPTION_STATUSES.has(subscription.status));
 	}
 });
 
