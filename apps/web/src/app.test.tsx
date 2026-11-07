@@ -10,7 +10,6 @@ import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import { stubWebSocket } from '$lib/local/socket-test-support';
-import { LocalResponseError } from '$lib/local/transport';
 import type {
 	ClaudeCodeStatus,
 	LocalApi,
@@ -615,8 +614,7 @@ it('refreshes message recency after a successful send even when another project 
 		sent = true;
 		launch.resolve({
 			runId: fixtureId<'runs'>('run-new'),
-			threadId: fixtureId<'threadRecords'>('thread-new'),
-			stopped: false
+			threadId: fixtureId<'threadRecords'>('thread-new')
 		});
 	});
 	fireEvent.click(await projectTrigger('Alpha'));
@@ -773,8 +771,7 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 
 	const runAgent = vi.fn(async () => ({
 		runId: fixtureId<'runs'>('run-new'),
-		threadId: fixtureId<'threadRecords'>('thread-new'),
-		stopped: false
+		threadId: fixtureId<'threadRecords'>('thread-new')
 	}));
 
 	let listCalls = 0;
@@ -874,7 +871,7 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 		expect(send).toHaveProperty('disabled', true);
 		expect(runAgent).toHaveBeenCalledOnce();
 		await act(async () => {
-			launch.resolve({ runId: nextRunId, threadId: thread._id, stopped: false });
+			launch.resolve({ runId: nextRunId, threadId: thread._id });
 			client.registerQuery(api.chat.selectedThreadLifecycle, {
 				threadId: thread._id,
 				phase: 'running',
@@ -919,8 +916,9 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
 });
 
-it('restores the prompt and shows the usage limit when the server refuses a launch', async () => {
-	const { launch, runAgent } = await renderThreadLaunch();
+it('restores the prompt and shows the usage limit when the run ends before sending it', async () => {
+	const { client, thread, launch, runAgent } = await renderThreadLaunch();
+	const runId = fixtureId<'runs'>('run-new');
 	const composer = screen.getByRole('combobox');
 	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
@@ -928,7 +926,27 @@ it('restores the prompt and shows the usage limit when the server refuses a laun
 	fireEvent.click(send);
 	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
 	await act(async () => {
-		launch.reject(new LocalResponseError('Usage limit reached. Try again in 3h 20m.', 429));
+		launch.resolve({ runId, threadId: thread._id });
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'queued',
+			run: { runId, startedAt: 1, promptUnsent: true }
+		});
+	});
+	expect(composer).toHaveProperty('value', '');
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'failed',
+			run: {
+				runId,
+				startedAt: 1,
+				completedAt: 2,
+				lastError: 'Usage limit reached. Try again in 3h 20m.',
+				failureKind: 'usage_limit',
+				promptUnsent: true
+			}
+		});
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
 	const alert = within(screen.getByRole('group', { name: 'Message composer' })).getByRole('alert');
@@ -996,8 +1014,7 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 	await act(async () => {
 		launch.resolve({
 			runId: fixtureId<'runs'>('run-new'),
-			threadId: thread._id,
-			stopped: false
+			threadId: thread._id
 		});
 		await vi.advanceTimersByTimeAsync(31_000);
 	});
@@ -1332,8 +1349,7 @@ it('launches the continuation prompt after an agent question is answered', async
 
 	const runAgent = vi.fn(async () => ({
 		runId: fixtureId<'runs'>('run-2'),
-		threadId: thread._id,
-		stopped: false
+		threadId: thread._id
 	}));
 
 	const client = createConvexFixtures();

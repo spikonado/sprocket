@@ -8,7 +8,7 @@ import type {
 	ProjectAttachmentRequest,
 	RunState
 } from '$lib/types/sprocket';
-import { isRunFinalStatus } from '@convex/lib/validators';
+import { isRunFinalStatus, type RunFailureKind } from '@convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
 import { areStorageIdsEqual } from '$lib/chat/attachments';
 
@@ -86,7 +86,7 @@ export type RunResumeKind = 'crash' | 'failed' | 'cancelled';
 
 export function lifecycleResumeKind(
 	phase: SelectedThreadLifecyclePhase,
-	failureKind?: 'abandoned'
+	failureKind?: RunFailureKind
 ): RunResumeKind | null {
 	if (phase === 'cancelled') return 'cancelled';
 
@@ -102,7 +102,6 @@ export function launchAgentRun(args: {
 	localApi: LocalApi;
 	onError: (error: Error) => void;
 	onStarted: (runId: Id<'runs'>, threadId: Id<'threadRecords'>) => void;
-	onStopped: () => void;
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
@@ -135,13 +134,7 @@ export function launchAgentRun(args: {
 
 	return args.localApi
 		.runAgent(request)
-		.then(({ runId, threadId, stopped }) => {
-			if (stopped) {
-				args.onStopped();
-			} else {
-				args.onStarted(runId, threadId);
-			}
-		})
+		.then(({ runId, threadId }) => args.onStarted(runId, threadId))
 		.catch((error) => {
 			const failure = error instanceof Error ? error : new Error(String(error));
 			console.error('Failed to run agent', failure);

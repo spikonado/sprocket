@@ -2,7 +2,10 @@ use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
-use sprocket_convex::{Client as ConvexRpcClient, RunStatus, decode_function_result};
+use sprocket_convex::{
+    Client as ConvexRpcClient, ConvexErrorCode, RunStatus, convex_error_code,
+    decode_function_result,
+};
 use sprocket_transcript::sections::WorkAssignment;
 use sprocket_transcript::{
     DownloadOrder, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
@@ -650,9 +653,15 @@ impl RuntimeClient {
         run_id: &str,
         claim_id: &str,
         status: RunStatus,
-        last_error: Option<&str>,
+        error: Option<&anyhow::Error>,
     ) -> anyhow::Result<bool> {
-        self.finalize_run_with_expectations(run_id, status, last_error, Some(claim_id), None)
+        let mut args = self.run_args(run_id);
+        args.insert("expectedClaimId".to_string(), claim_id.to_string().into());
+        if error.and_then(convex_error_code) == Some(ConvexErrorCode::UsageLimitReached) {
+            args.insert("failureKind".to_string(), "usage_limit".into());
+        }
+        let last_error = error.map(ToString::to_string);
+        self.finalize_executor_run(args, status, last_error.as_deref())
             .await
     }
 
@@ -662,37 +671,20 @@ impl RuntimeClient {
         status: RunStatus,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
-        self.finalize_run_with_expectations(
-            run_id,
-            status,
-            last_error,
-            None,
-            Some(RunStatus::Queued),
-        )
-        .await
+        let mut args = self.run_args(run_id);
+        args.insert(
+            "expectedStatus".to_string(),
+            RunStatus::Queued.as_str().into(),
+        );
+        self.finalize_executor_run(args, status, last_error).await
     }
 
-    async fn finalize_run_with_expectations(
+    async fn finalize_executor_run(
         &self,
-        run_id: &str,
+        mut args: BTreeMap<String, Value>,
         status: RunStatus,
         last_error: Option<&str>,
-        expected_claim_id: Option<&str>,
-        expected_status: Option<RunStatus>,
     ) -> anyhow::Result<bool> {
-        let mut args = self.run_args(run_id);
-        if let Some(expected_claim_id) = expected_claim_id {
-            args.insert(
-                "expectedClaimId".to_string(),
-                expected_claim_id.to_string().into(),
-            );
-        }
-        if let Some(expected_status) = expected_status {
-            args.insert(
-                "expectedStatus".to_string(),
-                expected_status.as_str().into(),
-            );
-        }
         args.insert("status".to_string(), status.as_str().into());
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());

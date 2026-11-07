@@ -2,22 +2,9 @@ import { useMemo, useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import type { CatalogModelId } from '$lib/chat/model-catalog';
-import { LocalResponseError } from '$lib/local/transport';
 
-export class UsageLimitError {
-	constructor(readonly message: string) {}
-}
-
-export type ComposerError = string | UsageLimitError;
-
-export function launchError(error: Error): ComposerError {
-	return error instanceof LocalResponseError && error.status === 429
-		? new UsageLimitError(error.message)
-		: error.message;
-}
-
-type ComposerRecovery = {
-	message: ComposerError | null;
+export type ComposerRecovery = {
+	message: string | null;
 	prompt: string;
 	attachments?: ComposerAttachment[];
 	storageIds?: Id<'_storage'>[];
@@ -37,6 +24,11 @@ type RecoveredSubmission = {
 	selectedModel: CatalogModelId;
 	submissionId: string;
 	continuationOfRunId?: Id<'runs'>;
+};
+
+type LaunchedPrompt = {
+	runId: Id<'runs'>;
+	recovery: ComposerRecovery;
 };
 
 export function getComposerRecoveryKey(userId: string, scope: string) {
@@ -61,14 +53,18 @@ function resubmittable(recovery: ComposerRecovery): RecoveredSubmission | null {
 	};
 }
 
-/** Tracks in-flight prompts per composer scope and the drafts to restore when one fails. */
+/**
+ * Tracks in-flight prompts per composer scope and the drafts to restore when one fails.
+ * A launched prompt stays held until its run writes it, so a run that ends first returns it.
+ */
 export function useSubmissionTracker() {
 	const [version, setVersion] = useState(0);
 
 	const [state] = useState(() => ({
 		submittingSequences: new Map<string, number>(),
 		recoveries: new Map<string, ComposerRecovery>(),
-		recoveredSubmissions: new Map<string, RecoveredSubmission>()
+		recoveredSubmissions: new Map<string, RecoveredSubmission>(),
+		launchedPrompts: new Map<string, LaunchedPrompt>()
 	}));
 
 	return useMemo(() => {
@@ -94,6 +90,26 @@ export function useSubmissionTracker() {
 				const recoveryKey = getComposerRecoveryKey(userId, scope);
 				state.recoveries.delete(recoveryKey);
 				state.recoveredSubmissions.delete(recoveryKey);
+				state.launchedPrompts.delete(recoveryKey);
+				changed();
+			},
+			holdLaunchedPrompt(userId: string, scope: string, launched: LaunchedPrompt) {
+				state.launchedPrompts.set(getComposerRecoveryKey(userId, scope), launched);
+			},
+			settleLaunchedPrompt(
+				userId: string,
+				scope: string,
+				run: { runId: Id<'runs'>; promptUnsent?: true },
+				ended: boolean
+			) {
+				const recoveryKey = getComposerRecoveryKey(userId, scope);
+				const launched = state.launchedPrompts.get(recoveryKey);
+
+				if (launched?.runId !== run.runId || (run.promptUnsent && !ended)) return;
+				state.launchedPrompts.delete(recoveryKey);
+
+				if (!run.promptUnsent) return;
+				state.recoveries.set(recoveryKey, launched.recovery);
 				changed();
 			},
 			recovery: (recoveryKey: string) => state.recoveries.get(recoveryKey),

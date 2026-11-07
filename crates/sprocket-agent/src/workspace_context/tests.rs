@@ -5,12 +5,11 @@ use sprocket_workspace::{
 };
 
 use super::{WorkspaceContext, unseen};
-use crate::InstalledConnector;
 
 fn context_with_connectors(
     instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
-    connectors: &[InstalledConnector],
+    connectors: &[String],
 ) -> WorkspaceContext {
     WorkspaceContext::new(
         instructions,
@@ -60,16 +59,13 @@ fn renders_skills_for_model_invocation() {
 
 #[test]
 fn renders_installed_connectors() {
-    let kicad = InstalledConnector {
-        name: "KiCad",
-        version: "10.0.1".to_string(),
-    };
+    let kicad = "KiCad connector v0.1.0 (KiCad 10.0.1)".to_string();
     let [instructions, _] =
         context_with_connectors(&[], &[], &[kicad]).prompts(Path::new("/tmp/project"));
     assert!(
         instructions
             .text
-            .contains("## Installed connectors\n\n- KiCad 10.0.1\n\n")
+            .contains("## Installed connectors\n\n- KiCad connector v0.1.0 (KiCad 10.0.1)\n\n")
     );
 
     assert!(instructions_text(&[], &[]).contains(

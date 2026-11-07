@@ -94,13 +94,8 @@ pub struct RunAgentRequest {
     pub automatic_recovery: bool,
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
-    pub installed_connectors: Vec<InstalledConnector>,
-}
-
-#[derive(Clone)]
-pub struct InstalledConnector {
-    pub name: &'static str,
-    pub version: String,
+    /// One line per installed connector, such as `KiCad connector v0.1.0 (KiCad 10.0.1)`.
+    pub installed_connectors: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -14,4 +14,4 @@ If available, spawn an Opus 5.5 subagent. If not available and you are working i
 
 ### Task
 
-Go through the requested designs/code and implement cleanup opportunities. Look for over-engineering, unnecessary text, unnecessary abstractions, duplication, and tests that don't add useful coverage. When cleaning up a PR, inspect the full PR diff, not individual commits. Remove compatibility added only for earlier revisions of the PR when no supported consumer or existing data needs it.
+Go through the requested designs/code and implement cleanup opportunities. Look for over-engineering, unnecessary text, unnecessary abstractions, implicit state machines, duplication, and tests that don't add useful coverage. When cleaning up a PR, inspect the full PR diff, not individual commits. Remove compatibility added only for earlier revisions of the PR when no supported consumer or existing data needs it.

@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import ComposerNotice from './composer-notice';
 import Button from '$lib/components/ui/button/button';
 import { CATALOG_UNAVAILABLE_MESSAGE } from '$lib/chat/model-catalog';
-import { UsageLimitError, type ComposerError } from '$lib/home/submission-tracker';
 
 type Props = {
-	error: ComposerError | null;
+	error: string | null;
 	runError: string | null;
+	outOfUsage: boolean;
 	reconnecting: boolean;
 	syncing: boolean;
 	catalogError: boolean;
@@ -17,28 +17,29 @@ type Props = {
 export default function ConversationNotices({
 	error,
 	runError,
+	outOfUsage,
 	reconnecting,
 	syncing,
 	catalogError,
 	catalogLoading,
 	onRetryCatalog
 }: Props) {
-	const errorMessage = error instanceof UsageLimitError ? error.message : error;
-
 	return (
 		<>
-			{error instanceof UsageLimitError ? (
-				<ComposerNotice title="You're out of usage">
-					{error.message} Upgrade your subscription or connect another provider in Settings to keep
-					going.
-				</ComposerNotice>
-			) : error ? (
+			{error ? (
 				<ComposerNotice title="Something went wrong" tone="error">
 					{error}
 				</ComposerNotice>
 			) : null}
-			{runError && runError !== errorMessage ? (
-				<ComposerNotice title="Run couldn't continue">{runError}</ComposerNotice>
+			{runError && runError !== error ? (
+				outOfUsage ? (
+					<ComposerNotice title="You're out of usage">
+						{runError} Upgrade your subscription or connect another provider in Settings to keep
+						going.
+					</ComposerNotice>
+				) : (
+					<ComposerNotice title="Run couldn't continue">{runError}</ComposerNotice>
+				)
 			) : null}
 			{reconnecting ? (
 				<ComposerNotice title="Reconnecting" tone="status">

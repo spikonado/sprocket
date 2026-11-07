@@ -6,7 +6,6 @@ use serde::Deserialize;
 use sprocket_agent::{
     CompletionProvider, RunAgentRequest, finalize_failed_start, run_agent, start_agent_run,
 };
-use sprocket_convex::{ConvexErrorCode, convex_error_code};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
@@ -60,39 +59,25 @@ pub struct AgentLaunchRequest {
 pub struct LaunchedRun {
     pub run_id: String,
     pub thread_id: String,
-    /// The run was stopped before it began, so its prompt was never written.
-    pub stopped: bool,
 }
 
 #[derive(Debug)]
 pub enum LaunchError {
     Rejected(anyhow::Error),
     Unauthorized(anyhow::Error),
-    /// Every provider the run could use is out of usage. The prompt was never written.
-    UsageLimitReached(anyhow::Error),
     Internal(anyhow::Error),
 }
 
 impl std::fmt::Display for LaunchError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Rejected(error) | Self::Unauthorized(error) | Self::UsageLimitReached(error) => {
-                write!(formatter, "{error}")
-            }
+            Self::Rejected(error) | Self::Unauthorized(error) => write!(formatter, "{error}"),
             Self::Internal(error) => write!(formatter, "{error:#}"),
         }
     }
 }
 
 impl std::error::Error for LaunchError {}
-
-fn start_failure(error: &anyhow::Error) -> LaunchError {
-    if convex_error_code(error) == Some(ConvexErrorCode::UsageLimitReached) {
-        LaunchError::UsageLimitReached(anyhow!("{error}"))
-    } else {
-        LaunchError::Internal(anyhow!("failed to start agent run: {error:#}"))
-    }
-}
 
 pub async fn launch_agent(
     host: Host,
@@ -252,7 +237,9 @@ async fn launch_agent_inner(
 
     // Detach the complete launch before waiting for its acknowledgement. Hyper
     // may drop this handler when the browser closes the tab; the executor must
-    // still either run or durably reconcile the submitted run.
+    // still either run or durably reconcile the submitted run. The launch is
+    // acknowledged once Convex holds the run; later outcomes reach clients
+    // through the run's lifecycle.
     tokio::spawn(async move {
         let _guard = guard;
         let _recovery_guard = recovery_guard;
@@ -289,6 +276,19 @@ async fn launch_agent_inner(
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
+                if records_message
+                    && let Err(error) = project_attachments
+                        .record_message_sent(&attachment_key, crate::now_ms())
+                        .await
+                {
+                    eprintln!(
+                        "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
+                    );
+                }
+                let _ = start_result_sender.send(Ok(LaunchedRun {
+                    run_id: run_id.clone(),
+                    thread_id: thread_id.clone(),
+                }));
                 let sessions = command_sessions
                     .for_run(
                         &user_id,
@@ -332,15 +332,6 @@ async fn launch_agent_inner(
                         }
                     })
                     .with_lifetime_guard_factory(move || command_lifetime.run_guard());
-                if records_message
-                    && let Err(error) = project_attachments
-                        .record_message_sent(&attachment_key, crate::now_ms())
-                        .await
-                {
-                    eprintln!(
-                        "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
-                    );
-                }
                 let artifact_watch = if artifact_repository_key.is_empty() {
                     None
                 } else {
@@ -351,26 +342,7 @@ async fn launch_agent_inner(
                     )
                 };
                 let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
-                let (prompt_written_sender, mut prompt_written_receiver) = oneshot::channel();
-                let running = run_agent(run, sessions, live, transcript, prompt_written_sender);
-                tokio::pin!(running);
-                let result = tokio::select! {
-                    biased;
-                    Ok(()) = &mut prompt_written_receiver => {
-                        let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone(), false)));
-                        running.await
-                    }
-                    result = &mut running => {
-                        // The run can begin and end within one poll.
-                        let prompt_written = prompt_written_receiver.try_recv().is_ok();
-                        let started = match &result {
-                            Err(error) if !prompt_written => Err(start_failure(error)),
-                            _ => Ok((run_id.clone(), thread_id.clone(), !prompt_written)),
-                        };
-                        let _ = start_result_sender.send(started);
-                        result
-                    }
-                };
+                let result = run_agent(run, sessions, live, transcript).await;
                 if let Some(output) = &output {
                     output.finish(result.as_ref().err().map(ToString::to_string));
                 }
@@ -386,23 +358,20 @@ async fn launch_agent_inner(
                 }
             }
             Err(error) => {
-                if let Err(Err(error)) = start_result_sender.send(Err(start_failure(&error))) {
+                let failure =
+                    LaunchError::Internal(anyhow!("failed to start agent run: {error:#}"));
+                if let Err(Err(error)) = start_result_sender.send(Err(failure)) {
                     eprintln!("sprocket-server: detached agent launch failed: {error}");
                 }
             }
         }
     });
 
-    let (run_id, thread_id, stopped) = start_result_receiver.await.map_err(|_| {
+    start_result_receiver.await.map_err(|_| {
         LaunchError::Internal(anyhow!(
             "failed to start agent run: agent launch task stopped unexpectedly"
         ))
-    })??;
-    Ok(LaunchedRun {
-        run_id,
-        thread_id,
-        stopped,
-    })
+    })?
 }
 
 #[cfg(test)]

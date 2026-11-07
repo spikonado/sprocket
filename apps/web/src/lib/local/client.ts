@@ -7,9 +7,9 @@ import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 
-// The server answers after the prompt is written, which can wait on a model call
-// that writes a context handoff first.
-const agentLaunchTimeoutMs = 10 * 60_000;
+// The server answers once Convex holds the run. Creating it can wait for the
+// thread's previous run to settle.
+const agentLaunchTimeoutMs = 60_000;
 
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 
@@ -117,8 +117,7 @@ const runningCommandsSchema = z.array(
 
 const agentRunStartSchema = z.object({
 	runId: convexId<'runs'>(),
-	threadId: convexId<'threadRecords'>(),
-	stopped: z.boolean()
+	threadId: convexId<'threadRecords'>()
 });
 
 const localTranscriptAttachmentSchema = z.object({

@@ -8,18 +8,22 @@ fn connector(data_dir: &Path) -> KiCadConnector {
 async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     let data_dir = tempfile::tempdir().unwrap();
     let connector = connector(data_dir.path());
-    let old = connector.root.join("10.99.0-1-gabcdef");
+    let old = connector.root.join("v0.0.1");
     fs::create_dir_all(old.join("bin")).unwrap();
     fs::write(old.join("bin/kicad-cli"), "old launcher").unwrap();
-    fs::write(old.join(USER_KICAD_VERSION_FILE), "11.0.1\n").unwrap();
+    fs::write(old.join(KICAD_VERSION_FILE), "11.0.1\n").unwrap();
     fs::write(old.join(LIBRARIES_FILE), "/kicad/share\n").unwrap();
+    fs::write(old.join(KIPY_API_FILE), "old script").unwrap();
     fs::create_dir_all(old.join(ROUTING_TOOLS_DIR)).unwrap();
     fs::create_dir_all(connector.root.join(".staging-interrupted")).unwrap();
 
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);
     assert!(status.update_available);
-    assert_eq!(connector.installed().unwrap().version, "11.0.1");
+    assert_eq!(
+        connector.installed().unwrap(),
+        "KiCad connector v0.0.1 (KiCad 11.0.1)"
+    );
     assert_eq!(
         connector.environment(),
         vec![
@@ -34,11 +38,15 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
         ]
     );
 
-    repair_unless_installing(&connector.root, &connector.release.version).unwrap();
+    repair_unless_installing(&connector.root, &connector.pinned).unwrap();
     assert!(!connector.root.join(".staging-interrupted").exists());
     assert_eq!(
         fs::read_to_string(connector.bin_dir().join("kicad-cli")).unwrap(),
         "old launcher"
+    );
+    assert_eq!(
+        fs::read_to_string(old.join(KIPY_API_FILE)).unwrap(),
+        KIPY_API
     );
 
     *connector.activity() = Activity::Failed("Download failed".into());

@@ -170,7 +170,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
     pub(crate) workspace_context: WorkspaceContext,
-    pub(crate) begin: RunBegin,
+    pub(crate) begin_prompts: Vec<HiddenPrompt>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) cwd: PathBuf,
@@ -190,29 +190,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub(crate) share_conversation_content: bool,
-}
-
-pub(crate) struct RunBegin {
-    pub(crate) workspace_context: Vec<HiddenPrompt>,
-    pub(crate) begun: tokio::sync::oneshot::Sender<()>,
-}
-
-impl RunBegin {
-    async fn write(
-        self,
-        runtime: &RuntimeClient,
-        run_id: &str,
-        claim_id: &str,
-        handoff: Option<&ContextHandoffWrite<'_>>,
-    ) -> anyhow::Result<ClaimStatus> {
-        let status = runtime
-            .begin_run(run_id, claim_id, &self.workspace_context, handoff)
-            .await?;
-        if status == ClaimStatus::Active {
-            let _ = self.begun.send(());
-        }
-        Ok(status)
-    }
 }
 
 pub(crate) enum AgentProviderResult {
@@ -732,7 +709,7 @@ async fn run_with_completion_model(
         crate::types::assign_unidentified_legacy_history_origin(&mut history, origin);
     }
     let mut prompt = request.prompt;
-    let mut pending_begin = Some(request.begin);
+    let mut pending_begin = Some(request.begin_prompts);
     let mut deferred_prompt = None;
     let mut observed_calls = 0;
 
@@ -819,10 +796,10 @@ async fn run_with_completion_model(
         'generations: loop {
             // A handoff before the prompt begins the run once its summary exists.
             if deferred_prompt.is_none()
-                && let Some(begin) = pending_begin.take()
+                && let Some(begin_prompts) = pending_begin.take()
             {
-                match begin
-                    .write(&runtime, &request.run_id, &request.claim_id, None)
+                match runtime
+                    .begin_run(&request.run_id, &request.claim_id, &begin_prompts, None)
                     .await
                 {
                     Ok(ClaimStatus::Active) => {}
@@ -992,20 +969,18 @@ async fn run_with_completion_model(
                                     summary: &summary,
                                     completion_attempt_seq: transcript.attempt_seq(),
                                 };
-                                let begin = if deferred_prompt.is_some() { pending_begin.take() } else { None };
+                                let begins_run = deferred_prompt.is_some() && pending_begin.take().is_some();
                                 let save = async {
-                                    match begin {
-                                        Some(begin) => RunBegin {
-                                            workspace_context: live_context.to_vec(),
-                                            ..begin
-                                        }.write(
-                                            &runtime, &request.run_id, &request.claim_id,
-                                            Some(&handoff),
-                                        ).await,
-                                        None => runtime.save_context_handoff(
+                                    if begins_run {
+                                        runtime.begin_run(
+                                            &request.run_id, &request.claim_id,
+                                            &live_context, Some(&handoff),
+                                        ).await
+                                    } else {
+                                        runtime.save_context_handoff(
                                             &request.run_id, &request.claim_id,
                                             &handoff, &live_context,
-                                        ).await,
+                                        ).await
                                     }
                                 };
                                 let handoff_context =

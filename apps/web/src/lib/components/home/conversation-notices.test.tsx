@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ComponentProps, ReactNode } from 'react';
 import ConversationNotices from './conversation-notices';
 import PromptComposer from './prompt-composer';
-import { UsageLimitError } from '$lib/home/submission-tracker';
 
 const usageLimit =
 	"Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider.";
@@ -14,6 +13,7 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 			key={key}
 			error={null}
 			runError={null}
+			outOfUsage={false}
 			reconnecting={false}
 			syncing={false}
 			catalogError={false}
@@ -113,9 +113,9 @@ describe('Conversation notices', () => {
 		expect(alert.textContent).toContain("Run couldn't continue");
 	});
 
-	it('shows a rejected launch as out of usage instead of the run failure', () => {
+	it('shows a run that ran out of usage as out of usage instead of the run failure', () => {
 		const message = 'Usage limit reached. Try again in 3h 20m.';
-		render(composer(notices({ error: new UsageLimitError(message), runError: message })));
+		render(composer(notices({ runError: message, outOfUsage: true })));
 		const alert = screen.getByRole('alert');
 		expect(alert.textContent).toContain("You're out of usage");
 		expect(alert.textContent).toContain(message);

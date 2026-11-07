@@ -30,7 +30,7 @@ pub use run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resol
 pub use sprocket_convex::AuthTokenFetcher;
 pub use types::CompletionProvider;
 pub use types::RunAgentRequest;
-pub use types::{ChatGptAccess, ChatGptCredentials, ClaudeCodeLocator, InstalledConnector};
+pub use types::{ChatGptAccess, ChatGptCredentials, ClaudeCodeLocator};
 
 pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};

@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
-use sprocket_agent::InstalledConnector;
 use tokio::process::Command;
 
 use crate::python_install::PythonTools;
@@ -34,7 +33,7 @@ const ROUTING_TOOLS_VARIABLE: &str = "SPROCKET_KICAD_ROUTING_TOOLS";
 const NAME: &str = "KiCad";
 const STAGING_PREFIX: &str = ".staging-";
 const LAUNCHER_DIR: &str = "bin";
-const USER_KICAD_VERSION_FILE: &str = "user-kicad-version";
+const KICAD_VERSION_FILE: &str = "kicad-version";
 const REQUIRED_FREE_BYTES: u64 = 10 << 30;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -62,11 +61,23 @@ pub struct ConnectorStatus {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Release {
+    /// The connector's semver, which changes whenever any asset does.
     version: String,
+    kicad: KiCadBuild,
     platforms: BTreeMap<String, Asset>,
     kipy: Asset,
-    /// KiCadRoutingTools, which only some platforms have a router binary for.
-    routing_tools: BTreeMap<String, Asset>,
+    routing_tools: RoutingTools,
+}
+
+#[derive(Deserialize)]
+struct KiCadBuild {
+    version: String,
+}
+
+/// KiCadRoutingTools, which only some platforms have a router binary for.
+#[derive(Deserialize)]
+struct RoutingTools {
+    platforms: BTreeMap<String, Asset>,
 }
 
 enum Activity {
@@ -78,6 +89,8 @@ enum Activity {
 pub struct KiCadConnector {
     root: PathBuf,
     release: Release,
+    /// The pinned release's install directory name.
+    pinned: String,
     python: Arc<PythonTools>,
     client: reqwest::Client,
     activity: Mutex<Activity>,
@@ -88,9 +101,11 @@ pub struct KiCadConnector {
 
 impl KiCadConnector {
     pub(crate) fn new(data_dir: &Path, python: Arc<PythonTools>) -> anyhow::Result<Self> {
+        let release: Release = serde_json::from_str(RELEASES)?;
         Ok(Self {
             root: data_dir.join("connectors").join("kicad"),
-            release: serde_json::from_str(RELEASES)?,
+            pinned: format!("v{}", release.version),
+            release,
             python,
             client: large_download_client()?,
             activity: Mutex::new(Activity::Idle),
@@ -100,7 +115,7 @@ impl KiCadConnector {
 
     /// Deletes what an install interrupted by a restart left behind and resyncs the launchers.
     pub(crate) fn prepare(&self) {
-        let (root, pinned) = (self.root.clone(), self.release.version.clone());
+        let (root, pinned) = (self.root.clone(), self.pinned.clone());
         tokio::task::spawn_blocking(move || {
             if let Err(error) = repair_unless_installing(&root, &pinned) {
                 tracing::warn!("KiCad cleanup failed: {error}");
@@ -109,7 +124,7 @@ impl KiCadConnector {
     }
 
     pub async fn status(&self) -> ConnectorStatus {
-        let installed = installed_version(&self.root, &self.release.version);
+        let installed = installed_version(&self.root, &self.pinned);
         let idle_state = if installed.is_some() {
             ConnectorState::Installed
         } else {
@@ -125,7 +140,7 @@ impl KiCadConnector {
             id: "kicad",
             name: NAME,
             update_available: state == ConnectorState::Installed
-                && installed.is_some_and(|installed| installed != self.release.version),
+                && installed.is_some_and(|installed| installed != self.pinned),
             state,
             error,
         }
@@ -171,15 +186,10 @@ impl KiCadConnector {
         Ok(())
     }
 
-    pub fn installed(&self) -> Option<InstalledConnector> {
-        let dir = installed_version(&self.root, &self.release.version)?;
-        let version = fs::read_to_string(self.root.join(&dir).join(USER_KICAD_VERSION_FILE))
-            .map(|version| version.trim().to_owned())
-            .unwrap_or(dir);
-        Some(InstalledConnector {
-            name: NAME,
-            version,
-        })
+    pub fn installed(&self) -> Option<String> {
+        let dir = installed_version(&self.root, &self.pinned)?;
+        let kicad = fs::read_to_string(self.root.join(&dir).join(KICAD_VERSION_FILE)).ok()?;
+        Some(format!("{NAME} connector {dir} ({NAME} {})", kicad.trim()))
     }
 
     pub(crate) fn bin_dir(&self) -> PathBuf {
@@ -223,7 +233,7 @@ impl KiCadConnector {
     }
 
     pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {
-        let Some(dir) = installed_version(&self.root, &self.release.version) else {
+        let Some(dir) = installed_version(&self.root, &self.pinned) else {
             return Vec::new();
         };
         let dir = self.root.join(dir);
@@ -243,7 +253,7 @@ impl KiCadConnector {
     }
 
     fn version_dir(&self) -> PathBuf {
-        self.root.join(&self.release.version)
+        self.root.join(&self.pinned)
     }
 
     async fn install_pinned(&self) -> anyhow::Result<()> {
@@ -266,7 +276,7 @@ impl KiCadConnector {
             tokio::task::spawn_blocking(move || drop(staging)).await?;
             published?;
         }
-        let (root, current) = (self.root.clone(), self.release.version.clone());
+        let (root, current) = (self.root.clone(), self.pinned.clone());
         tokio::task::spawn_blocking(move || -> io::Result<()> {
             sync_launchers(&root, Some(&current))?;
             prune_versions(&root, &current);
@@ -293,10 +303,13 @@ impl KiCadConnector {
             }
         };
         let version = cli_version(&cli).await?;
-        // `kicad-cli version` omits the build, so a downloaded pin keeps its directory name.
-        if user_kicad.is_some() {
-            tokio::fs::write(staging.join(USER_KICAD_VERSION_FILE), &version).await?;
-        }
+        // `kicad-cli version` omits the build, which the pin records.
+        let kicad_version = if user_kicad.is_some() {
+            &version
+        } else {
+            &self.release.kicad.version
+        };
+        tokio::fs::write(staging.join(KICAD_VERSION_FILE), kicad_version).await?;
         if let Some(libraries) = libraries_dir(&published_cli) {
             tokio::fs::write(
                 staging.join(LIBRARIES_FILE),
@@ -363,7 +376,10 @@ impl KiCadConnector {
     }
 
     fn routing_tools_asset(&self) -> Option<&Asset> {
-        self.release.routing_tools.get(release_platform().ok()?)
+        self.release
+            .routing_tools
+            .platforms
+            .get(release_platform().ok()?)
     }
 
     async fn download_routing_tools(&self, asset: &Asset, staging: &Path) -> anyhow::Result<()> {
@@ -488,11 +504,29 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     match lock.try_lock() {
         Ok(()) => {
             remove_leftovers(root)?;
-            sync_launchers(root, installed_version(root, pinned).as_deref())
+            let installed = installed_version(root, pinned);
+            sync_launchers(root, installed.as_deref())?;
+            match installed {
+                Some(dir) => refresh_scripts(&root.join(dir)),
+                None => Ok(()),
+            }
         }
         Err(fs::TryLockError::WouldBlock) => Ok(()),
         Err(fs::TryLockError::Error(error)) => Err(error),
     }
+}
+
+/// The scripts ship with Sprocket rather than the release, so an update reaches installs on start.
+fn refresh_scripts(dir: &Path) -> io::Result<()> {
+    for (name, contents) in [(KIPY_API_FILE, KIPY_API), (KICAD_VIEW_FILE, KICAD_VIEW)] {
+        let path = dir.join(name);
+        if fs::read_to_string(&path).is_ok_and(|current| current != contents) {
+            let temporary = tempfile::NamedTempFile::new_in(dir)?;
+            fs::write(temporary.path(), contents)?;
+            temporary.persist(&path).map_err(|error| error.error)?;
+        }
+    }
+    Ok(())
 }
 
 /// Removes staging directories and tombstones, which are the only hidden directories.

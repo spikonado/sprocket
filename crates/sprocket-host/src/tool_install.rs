@@ -332,6 +332,7 @@ pub(crate) fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::i
 }
 
 pub(crate) fn is_version(name: &str) -> bool {
+    let name = name.strip_prefix('v').unwrap_or(name);
     name.starts_with(|character: char| character.is_ascii_digit())
         && name.contains('.')
         && name.chars().all(|character| {

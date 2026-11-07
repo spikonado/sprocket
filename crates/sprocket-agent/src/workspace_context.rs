@@ -5,8 +5,6 @@ use serde::Serialize;
 use sprocket_transcript::HiddenPromptKind;
 use sprocket_workspace::{WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill};
 
-use crate::InstalledConnector;
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct HiddenPrompt {
     pub(crate) kind: HiddenPromptKind,
@@ -28,7 +26,7 @@ impl WorkspaceContext {
     pub(crate) fn new(
         workspace_instructions: &[WorkspaceInstruction],
         skills: &[WorkspaceSkill],
-        connectors: &[InstalledConnector],
+        connectors: &[String],
         thread_id: &str,
         transcript_dir: &Path,
         workspace_root: &Path,
@@ -96,14 +94,14 @@ fn skills_section(skills: &[WorkspaceSkill]) -> String {
     }
 }
 
-fn connectors_section(connectors: &[InstalledConnector]) -> String {
+fn connectors_section(connectors: &[String]) -> String {
     if connectors.is_empty() {
         return "No connectors are installed. The user installs connectors in Settings → Connectors."
             .to_string();
     }
     connectors
         .iter()
-        .map(|connector| format!("- {} {}", connector.name, connector.version))
+        .map(|connector| format!("- {connector}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
