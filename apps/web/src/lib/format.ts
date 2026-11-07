@@ -16,6 +16,24 @@ export function formatRemainingDuration(remainingMs: number): string {
 	return `${Math.max(1, Math.ceil(milliseconds / 60_000))}m`;
 }
 
+const DAY_MS = 86_400_000;
+
+function plural(count: number, unit: string) {
+	return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+export function formatExpiresIn(remainingMs: number): string {
+	if (remainingMs < DAY_MS) return 'today';
+	const days = Math.round(remainingMs / DAY_MS);
+
+	if (days < 60) return `in ${plural(days, 'day')}`;
+	const months = Math.round(days / 30.4375);
+
+	if (months < 24) return `in ${plural(months, 'month')}`;
+
+	return `in ${plural(Math.round(days / 365.25), 'year')}`;
+}
+
 function currencyFormat(currency: string) {
 	try {
 		return new Intl.NumberFormat('en-US', { style: 'currency', currency });

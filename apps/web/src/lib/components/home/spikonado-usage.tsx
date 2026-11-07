@@ -3,7 +3,7 @@ import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { usageMeters } from '@convex/lib/usageMeters';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
-import { formatRemainingDuration } from '$lib/format';
+import { formatExpiresIn, formatRemainingDuration } from '$lib/format';
 import { useUsageTime } from '$lib/usage-time';
 
 type MyUsage = FunctionReturnType<typeof api.usage.getMyUsage>;
@@ -85,6 +85,8 @@ function MeterUsage({ meter, now }: { meter: UsageMeter; now: number }) {
 }
 
 function CreditPackBalance({ credits, now }: { credits: PackCredits; now: number }) {
+	const expiresIn = formatExpiresIn(credits.nextExpiresAt - now);
+
 	return (
 		<div>
 			<SectionLabel>Credit Packs</SectionLabel>
@@ -92,7 +94,9 @@ function CreditPackBalance({ credits, now }: { credits: PackCredits; now: number
 				{formatDollars(credits.remaining)} <span className="text-muted-foreground">left</span>
 			</p>
 			<p className="text-muted-foreground mt-1.5 text-[12px]">
-				Next expiry in {formatRemainingDuration(credits.nextExpiresAt - now)}
+				{credits.nextExpiringAmount === credits.remaining
+					? `Expires ${expiresIn}`
+					: `${formatDollars(credits.nextExpiringAmount)} expires ${expiresIn}`}
 			</p>
 		</div>
 	);

@@ -185,7 +185,7 @@ describe('credit pack draw', () => {
 		expect(await usage()).toMatchObject({
 			exhausted: false,
 			meters: [{ used: 15 * DOLLAR, limit: 15 * DOLLAR }],
-			credits: { remaining: 6 * DOLLAR, nextExpiresAt: now + 10 * DAY }
+			credits: { remaining: 6 * DOLLAR, nextExpiresAt: now + 10 * DAY, nextExpiringAmount: DOLLAR }
 		});
 		expect([await used(soon), await used(late)]).toEqual([DOLLAR, 0]);
 

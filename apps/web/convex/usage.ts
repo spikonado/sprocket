@@ -19,9 +19,14 @@ export const getMyUsage = query({
 		const { tier, label: tierLabel, limits } = plan;
 		const { used, window } = await readUsage(ctx, userId, plan, now);
 		const grants = await spendableGrants(ctx, userId, now);
+		const [next] = grants;
 
-		const credits = grants[0]
-			? { remaining: remainingCredits(grants), nextExpiresAt: grants[0].expiresAt }
+		const credits = next
+			? {
+					remaining: remainingCredits(grants),
+					nextExpiresAt: next.expiresAt,
+					nextExpiringAmount: next.units - next.used
+				}
 			: undefined;
 
 		const resetsAt = window.end;

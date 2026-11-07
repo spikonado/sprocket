@@ -110,5 +110,7 @@ export const vMyUsage = v.object({
 		})
 	),
 	// Present while the user has unexpired credit pack units left.
-	credits: v.optional(v.object({ remaining: v.number(), nextExpiresAt: v.number() }))
+	credits: v.optional(
+		v.object({ remaining: v.number(), nextExpiresAt: v.number(), nextExpiringAmount: v.number() })
+	)
 });
