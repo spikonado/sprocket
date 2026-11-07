@@ -171,6 +171,19 @@ describe('provider handoff provenance', () => {
 		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
 	});
 
+	it('hands off from Claude only to callers that include it', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		await historicalRun(t, threadId, 'claude');
+		const run = await currentRun(t, threadId, 'spikonado');
+
+		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
+		expect(
+			(await t.query(api.agentRuntime.getContext, { ...run, includeClaude: true })).providerHandoff
+				?.completionProvider
+		).toBe('claude');
+	});
+
 	it('ignores current-run completions and completions covered by a handoff', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
@@ -205,7 +218,8 @@ describe('provider handoff credential authorization', () => {
 
 	it.each([
 		{ source: 'spikonado', target: 'openai' },
-		{ source: 'openai', target: 'spikonado' }
+		{ source: 'openai', target: 'spikonado' },
+		{ source: 'claude', target: 'spikonado' }
 	] as const)(
 		'authorizes $source only until the handoff is saved, keeps $target authorized',
 		async ({ source, target }) => {
@@ -221,7 +235,10 @@ describe('provider handoff credential authorization', () => {
 			const authorize = (provider: Provider, credentials = args) =>
 				provider === 'spikonado'
 					? t.mutation(api.agentRuntime.issueGatewayCredential, credentials)
-					: t.query(internal.providerCredentials.authorizeOpenAiCredential, credentials);
+					: t.query(internal.providerCredentials.authorizeRunCredential, {
+							...credentials,
+							provider: provider === 'claude' ? 'claude' : 'openai'
+						});
 
 			await expect(authorize(source)).resolves.toBeDefined();
 			await expect(authorize(target)).resolves.toBeDefined();

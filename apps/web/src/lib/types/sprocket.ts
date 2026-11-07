@@ -294,6 +294,20 @@ export type ChatGptBrowserLoginResult = {
 	error?: string;
 };
 
+/** Claude Code installed on this machine, which the Claude Subscription provider runs. */
+export type ClaudeCodeStatus = {
+	state: 'notInstalled' | 'installing' | 'outdated' | 'installed';
+	version: string | null;
+	minimumVersion: string;
+	installCommand: string;
+	error: string | null;
+};
+
+export type ClaudeCodeLoginStart = {
+	loginId: string;
+	url: string;
+};
+
 export type WorkspaceSearchEntry = {
 	path: string;
 	kind: 'file' | 'directory';
@@ -454,6 +468,11 @@ export type LocalApi = {
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
 	installConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
+	fetchClaudeCodeStatus: (userId: string) => Promise<ClaudeCodeStatus>;
+	installClaudeCode: (userId: string) => Promise<ClaudeCodeStatus>;
+	startClaudeCodeLogin: (userId: string) => Promise<ClaudeCodeLoginStart>;
+	finishClaudeCodeLogin: (userId: string, loginId: string, code: string) => Promise<string>;
+	cancelClaudeCodeLogin: (userId: string, loginId: string) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

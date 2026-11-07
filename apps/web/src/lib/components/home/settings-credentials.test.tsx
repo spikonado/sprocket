@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
-import type { ChatGptStatus, LocalApi } from '$lib/types/sprocket';
+import type { ChatGptStatus, ClaudeCodeStatus, LocalApi } from '$lib/types/sprocket';
 import SettingsCredentials from './settings-credentials';
 
 const loginWindow = {
@@ -33,6 +33,17 @@ function statusFixture(overrides: Partial<ChatGptStatus> = {}): ChatGptStatus {
 		accounts: [],
 		activeConnectionId: null,
 		loginAvailable: true,
+		...overrides
+	};
+}
+
+function claudeCodeFixture(overrides: Partial<ClaudeCodeStatus> = {}): ClaudeCodeStatus {
+	return {
+		state: 'installed',
+		version: '2.1.300',
+		minimumVersion: '2.1.257',
+		installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
+		error: null,
 		...overrides
 	};
 }
@@ -88,6 +99,11 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchConnectors: unused,
 		installConnector: unused,
 		uninstallConnector: unused,
+		fetchClaudeCodeStatus: async () => claudeCodeFixture(),
+		installClaudeCode: unused,
+		startClaudeCodeLogin: unused,
+		finishClaudeCodeLogin: unused,
+		cancelClaudeCodeLogin: async () => {},
 		...overrides
 	};
 }
@@ -96,25 +112,34 @@ function mount(
 	client: ConvexTestClient,
 	{
 		openAiConfigured = false,
+		claudeTokenSaved = false,
+		claudeCodeStatus = claudeCodeFixture(),
 		chatGptStatus = statusFixture(),
 		localApi = createChatGptApi()
 	}: {
 		openAiConfigured?: boolean;
+		claudeTokenSaved?: boolean;
+		claudeCodeStatus?: ClaudeCodeStatus;
 		chatGptStatus?: ChatGptStatus;
 		localApi?: LocalApi;
 	} = {}
 ) {
 	const onConfigurationChange = vi.fn();
 	const onChatGptStatusChange = vi.fn();
+	const onClaudeCodeStatusChange = vi.fn();
 
 	function Harness() {
 		const [status, setStatus] = useState(chatGptStatus);
+		const [claudeStatus, setClaudeStatus] = useState(claudeCodeStatus);
 
 		return (
 			<SettingsCredentials
 				userId="user-a"
 				localApi={localApi}
 				openAiConfigured={openAiConfigured}
+				claudeTokenSaved={claudeTokenSaved}
+				claudeCodeStatus={claudeStatus}
+				claudeCodeStatusError={null}
 				chatGptStatus={status}
 				chatGptLoading={false}
 				chatGptStatusError={null}
@@ -123,6 +148,10 @@ function mount(
 				onChatGptStatusChange={(next) => {
 					setStatus(next);
 					onChatGptStatusChange(next);
+				}}
+				onClaudeCodeStatusChange={(next) => {
+					setClaudeStatus(next);
+					onClaudeCodeStatusChange(next);
 				}}
 				onConfigurationChange={onConfigurationChange}
 			/>
@@ -135,7 +164,7 @@ function mount(
 		</ConvexTestProvider>
 	);
 
-	return { ...view, onConfigurationChange, onChatGptStatusChange };
+	return { ...view, onConfigurationChange, onChatGptStatusChange, onClaudeCodeStatusChange };
 }
 
 it('saves an API key, clears the input, and reports the configured provider', async () => {
@@ -153,6 +182,91 @@ it('saves an API key, clears the input, and reports the configured provider', as
 	);
 	expect(save).toHaveBeenCalledWith({ apiKey: 'sk-test-not-a-secret' });
 	expect(screen.getByLabelText('API key')).toHaveProperty('value', '');
+});
+
+it('shows the Claude Code install command and installs it from the button', async () => {
+	const installing = claudeCodeFixture({ state: 'installing', version: null });
+	const install = vi.fn(async () => installing);
+
+	const view = mount(new ConvexTestClient(), {
+		claudeCodeStatus: claudeCodeFixture({ state: 'notInstalled', version: null }),
+		localApi: createChatGptApi({ installClaudeCode: install })
+	});
+
+	expect(screen.getByText('curl -fsSL https://claude.ai/install.sh | bash')).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Install Claude Code' }));
+	expect(await screen.findByRole('button', { name: 'Installing…' })).toHaveProperty(
+		'disabled',
+		true
+	);
+	expect(install).toHaveBeenCalledWith('user-a');
+	expect(view.onClaudeCodeStatusChange).toHaveBeenCalledWith(installing);
+	expect(screen.queryByRole('button', { name: 'Sign in with Claude' })).toBeNull();
+});
+
+it('signs in with Claude and saves the token', async () => {
+	const client = new ConvexTestClient();
+	const save = vi.fn(async () => null);
+	client.handleAction(api.providerCredentials.saveClaudeToken, save);
+	const finish = vi.fn(async () => 'sk-ant-oat01-test');
+
+	const view = mount(client, {
+		localApi: createChatGptApi({
+			startClaudeCodeLogin: async () => ({
+				loginId: 'login-1',
+				url: 'https://claude.test/oauth'
+			}),
+			finishClaudeCodeLogin: finish
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Sign in with Claude' }));
+	});
+	expect(openLoginWindow).toHaveBeenCalledWith('about:blank', '_blank');
+	expect(loginWindow.location.replace).toHaveBeenCalledWith('https://claude.test/oauth');
+	fireEvent.change(screen.getByLabelText('Paste the code Claude shows after you sign in'), {
+		target: { value: 'code-1' }
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+	await waitFor(() =>
+		expect(view.onConfigurationChange).toHaveBeenCalledWith({
+			provider: 'claude',
+			configured: true
+		})
+	);
+	expect(finish).toHaveBeenCalledWith('user-a', 'login-1', 'code-1');
+	expect(save).toHaveBeenCalledWith({ token: 'sk-ant-oat01-test' });
+});
+
+it('shows a rejected Claude code and lets the user sign in again', async () => {
+	mount(new ConvexTestClient(), {
+		localApi: createChatGptApi({
+			startClaudeCodeLogin: async () => ({ loginId: 'login-1', url: 'https://claude.test/oauth' }),
+			finishClaudeCodeLogin: async () => {
+				throw new Error('Claude rejected the code. Sign in again.');
+			}
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Sign in with Claude' }));
+	});
+	fireEvent.change(screen.getByLabelText('Paste the code Claude shows after you sign in'), {
+		target: { value: 'wrong' }
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+	expect((await screen.findByRole('alert')).textContent).toBe(
+		'Claude rejected the code. Sign in again.'
+	);
+	expect(screen.getByRole('button', { name: 'Sign in with Claude' })).toBeTruthy();
+});
+
+it('shows a saved Claude token as connected without a sign-in button', () => {
+	mount(new ConvexTestClient(), { claudeTokenSaved: true });
+	expect(screen.getByText('Connected')).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
+	expect(screen.queryByRole('button', { name: 'Sign in with Claude' })).toBeNull();
 });
 
 it('shows key validation failures and permits a successful retry', async () => {
@@ -428,12 +542,16 @@ it('starts a fresh login after the signed-in user changes', async () => {
 				userId={userId}
 				localApi={localApi}
 				openAiConfigured={false}
+				claudeTokenSaved={false}
+				claudeCodeStatus={claudeCodeFixture()}
+				claudeCodeStatusError={null}
 				chatGptStatus={statusFixture()}
 				chatGptLoading={false}
 				chatGptStatusError={null}
 				loading={false}
 				loadError={null}
 				onChatGptStatusChange={() => {}}
+				onClaudeCodeStatusChange={() => {}}
 				onConfigurationChange={() => {}}
 			/>
 		</ConvexTestProvider>

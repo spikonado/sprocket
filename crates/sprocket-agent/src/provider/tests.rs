@@ -34,6 +34,10 @@ fn fast_mode_sends_each_providers_service_tier() {
             serde_json::json!({})
         );
     }
+    assert_eq!(
+        super::service_tier_params(CompletionProvider::Claude, true),
+        serde_json::json!({})
+    );
 }
 
 #[test]

@@ -46,7 +46,13 @@ fn is_gateway_stream_timeout(error: &PromptError) -> bool {
 }
 
 pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> Option<String> {
-    let response = if let Some(error) = error.downcast_ref::<PromptError>() {
+    provider_response(error)?.machine_code()
+}
+
+pub(crate) fn provider_response<'a>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a rig::ProviderResponseError> {
+    if let Some(error) = error.downcast_ref::<PromptError>() {
         match error {
             PromptError::Provider(error) => error.provider_response(),
             PromptError::Report(report) => report.provider_response.as_ref(),
@@ -59,8 +65,7 @@ pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> 
             .downcast_ref::<ErrorReport>()?
             .provider_response
             .as_ref()
-    };
-    response?.machine_code()
+    }
 }
 
 /// Failures another provider may not have.

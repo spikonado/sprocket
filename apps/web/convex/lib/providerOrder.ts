@@ -24,20 +24,19 @@ export function resolveProviderOrder(
 	return order;
 }
 
-export function enabledProviders(saved: readonly ProviderOrderEntry[] | undefined) {
+export function enabledProviders(
+	saved: readonly ProviderOrderEntry[] | undefined,
+	{ includeClaude }: { includeClaude: boolean }
+) {
 	return resolveProviderOrder(saved)
-		.filter((entry) => entry.enabled)
+		.filter((entry) => entry.enabled && (includeClaude || entry.provider !== 'claude'))
 		.map((entry) => entry.provider);
 }
 
 export function assertValidProviderOrder(order: readonly ProviderOrderEntry[]) {
 	const providers = new Set(order.map((entry) => entry.provider));
 
-	if (
-		providers.size !== order.length ||
-		providers.size !== completionProviderIds.length ||
-		!order.some((entry) => entry.enabled)
-	) {
-		throw new Error('Provider order must list every provider once with at least one enabled.');
+	if (providers.size !== order.length || !order.some((entry) => entry.enabled)) {
+		throw new Error('Provider order must list each provider once with at least one enabled.');
 	}
 }

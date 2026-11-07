@@ -138,7 +138,13 @@ import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sp
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
 import { LocalResponseError } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
-import type { LocalApi, ExecutorJob, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
+import type {
+	ClaudeCodeStatus,
+	LocalApi,
+	ExecutorJob,
+	ThreadSummary,
+	ProjectAttachment
+} from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
 import { syncShareConversationContent } from '$lib/analytics';
 
@@ -158,6 +164,8 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
 const submissionPreparationTimeoutMs = 30_000;
+
+const claudeCodeInstallPollMs = 2_000;
 
 type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
@@ -338,17 +346,25 @@ export default function App({
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const [catalogLoading, setCatalogLoading] = useState(true);
 
-	const [openAiConfiguration, setOpenAiConfiguration] = useAsyncResource(
+	const [providerConfiguration, setProviderConfiguration] = useAsyncResource(
 		authReady ? signedInUserId : null,
-		async () => (await getMyProviderConfiguration({})).openai
+		() => getMyProviderConfiguration({})
 	);
 
-	const openAiConfigured = openAiConfiguration.status === 'loaded' && openAiConfiguration.value;
+	const savedProviders =
+		providerConfiguration.status === 'loaded' ? providerConfiguration.value : null;
 
-	const openAiConfigurationError =
-		openAiConfiguration.status === 'failed'
-			? loadErrorMessage(openAiConfiguration.error, 'Couldn’t load provider settings.')
+	const savedProvidersRef = useLatest(savedProviders);
+	const openAiConfigured = savedProviders?.openai === true;
+	const claudeTokenSaved = savedProviders?.claude === true;
+
+	const providerConfigurationError =
+		providerConfiguration.status === 'failed'
+			? loadErrorMessage(providerConfiguration.error, 'Couldn’t load provider settings.')
 			: null;
+
+	const [claudeCodeStatus, setClaudeCodeStatus] = useState<ClaudeCodeStatus | null>(null);
+	const [claudeCodeStatusError, setClaudeCodeStatusError] = useState<string | null>(null);
 
 	const [localConnection] = useAsyncResource('local-server', async () => {
 		const client = await runtime.resolveLocalApi();
@@ -383,15 +399,6 @@ export default function App({
 			(account) => account.connectionId === chatGptStatus.activeConnectionId
 		)?.connected === true;
 
-	const configuredProviders = useMemo<CompletionProvider[]>(
-		() => [
-			'spikonado',
-			...(openAiConfigured ? (['openai'] as const) : []),
-			...(chatGptConfigured ? (['chatgpt'] as const) : [])
-		],
-		[openAiConfigured, chatGptConfigured]
-	);
-
 	async function loadModelCatalog() {
 		setCatalogLoading(true);
 
@@ -416,6 +423,50 @@ export default function App({
 		ensureSubscriptionAttemptedFor.current = signedInUserId;
 		void ensureMySubscription({}).catch(() => {});
 	}, [authReady, signedInUserId, ensureMySubscription]);
+
+	const claudeCodeStatusGeneration = useRef(0);
+
+	const loadClaudeCodeStatus = useEffectEvent((api: LocalApi, userId: string) => {
+		const generation = ++claudeCodeStatusGeneration.current;
+
+		const current = () =>
+			generation === claudeCodeStatusGeneration.current && signedInUserIdRef.current === userId;
+
+		api
+			.fetchClaudeCodeStatus(userId)
+			.then((status) => {
+				if (current()) handleClaudeCodeStatusChange(status);
+			})
+			.catch((error: Error) => {
+				if (current())
+					setClaudeCodeStatusError(error.message || 'Couldn’t check Claude Code on this computer.');
+			});
+	});
+
+	useEffect(() => {
+		if (claudeCodeStatus?.state !== 'installing' || !localApi || !signedInUserId) return;
+
+		const timer = setTimeout(
+			() => loadClaudeCodeStatus(localApi, signedInUserId),
+			claudeCodeInstallPollMs
+		);
+
+		return () => clearTimeout(timer);
+	}, [claudeCodeStatus, localApi, signedInUserId]);
+
+	// A window without the local server can't see Claude Code, so it trusts the saved token.
+	const claudeConfigured =
+		claudeTokenSaved && (!localApi || claudeCodeStatus?.state === 'installed');
+
+	const configuredProviders = useMemo<CompletionProvider[]>(
+		() => [
+			'spikonado',
+			...(openAiConfigured ? (['openai'] as const) : []),
+			...(chatGptConfigured ? (['chatgpt'] as const) : []),
+			...(claudeConfigured ? (['claude'] as const) : [])
+		],
+		[openAiConfigured, chatGptConfigured, claudeConfigured]
+	);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -476,6 +527,23 @@ export default function App({
 	const [settledInboxOpen, setSettledInboxOpen] = useState(false);
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
 	const [initialProjectLaunchResolved, setInitialProjectLaunchResolved] = useState(false);
+	const credentialsOpen = settingsOpen && settingsPage === 'credentials';
+
+	// Opening BYOK/BYOS checks again, since the user may have installed Claude Code from a terminal.
+	useEffect(() => {
+		if (!authReady || !signedInUserId || !localApi) {
+			setClaudeCodeStatus(null);
+			setClaudeCodeStatusError(null);
+
+			return;
+		}
+
+		loadClaudeCodeStatus(localApi, signedInUserId);
+
+		return () => {
+			claudeCodeStatusGeneration.current += 1;
+		};
+	}, [authReady, signedInUserId, localApi, credentialsOpen]);
 
 	const [createThreadComposerElement, setCreateThreadComposerElement] =
 		useState<HTMLElement | null>(null);
@@ -1329,6 +1397,21 @@ export default function App({
 
 	function reconnectProject(workspacePath: string) {
 		openProjectPicker('reconnect', workspacePath);
+	}
+
+	function handleProviderConfigurationChange(change: {
+		provider: 'openai' | 'claude';
+		configured: boolean;
+	}) {
+		const saved = savedProvidersRef.current;
+
+		if (saved) setProviderConfiguration({ ...saved, [change.provider]: change.configured });
+	}
+
+	function handleClaudeCodeStatusChange(status: ClaudeCodeStatus) {
+		claudeCodeStatusGeneration.current += 1;
+		setClaudeCodeStatus(status);
+		setClaudeCodeStatusError(null);
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {
@@ -2543,13 +2626,17 @@ export default function App({
 								userId={signedInUserId}
 								localApi={localApi}
 								openAiConfigured={openAiConfigured}
+								claudeTokenSaved={claudeTokenSaved}
+								claudeCodeStatus={claudeCodeStatus}
+								claudeCodeStatusError={claudeCodeStatusError}
 								chatGptStatus={chatGptStatus}
 								chatGptLoading={chatGptStatusResource.status === 'loading'}
 								chatGptStatusError={chatGptStatusError}
-								loading={openAiConfiguration.status === 'loading'}
-								loadError={openAiConfigurationError}
+								loading={providerConfiguration.status === 'loading'}
+								loadError={providerConfigurationError}
 								onChatGptStatusChange={setChatGptStatus}
-								onConfigurationChange={(change) => setOpenAiConfiguration(change.configured)}
+								onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
+								onConfigurationChange={handleProviderConfigurationChange}
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments onOpenThread={openPurchaseThread} />

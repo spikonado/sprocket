@@ -1,6 +1,7 @@
 mod analytics;
 mod catalog;
 mod chatgpt;
+mod claude_code;
 mod context_handoff;
 mod convex;
 mod gateway;
@@ -22,13 +23,14 @@ mod usage;
 mod workspace_context;
 
 pub use catalog::model_catalog;
+pub use claude_code::ClaudeCode;
 pub use output::{RunOutcome, RunOutput};
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
 pub use sprocket_convex::AuthTokenFetcher;
 pub use types::CompletionProvider;
 pub use types::RunAgentRequest;
-pub use types::{ChatGptAccess, ChatGptCredentials};
+pub use types::{ChatGptAccess, ChatGptCredentials, ClaudeCodeLocator};
 
 pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};

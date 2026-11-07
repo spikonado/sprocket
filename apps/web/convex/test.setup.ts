@@ -16,6 +16,7 @@ import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { FunctionArgs } from 'convex/server';
+import type { CompletionProvider } from '@convex/lib/validators';
 import { abandonRunRecord } from '@convex/lib/runFinalize';
 import { getRunWithExecution } from '@convex/lib/runExecution';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
@@ -259,7 +260,7 @@ export async function insertQueuedRun(
 		prompt: string;
 		imageUploadIds?: Id<'imageUploads'>[];
 		selectedModel?: string;
-		completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
+		completionProvider?: CompletionProvider;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		fastMode?: boolean;
 		machineId?: string;

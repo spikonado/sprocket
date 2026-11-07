@@ -798,6 +798,8 @@ pub async fn run_agent(
         &gateway_url,
         chatgpt_client,
         request.chatgpt_credentials.clone(),
+        request.claude_code.clone(),
+        cwd.clone(),
     );
 
     let reasoning_effort = context.run.reasoning_effort.clone();

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
@@ -18,17 +19,24 @@ pub enum CompletionProvider {
     Spikonado,
     Openai,
     Chatgpt,
+    Claude,
 }
 
 impl CompletionProvider {
     pub fn serves_vendor(self, vendor: &str) -> bool {
-        self == Self::Spikonado || vendor == "openai"
+        match self {
+            Self::Spikonado => true,
+            Self::Openai | Self::Chatgpt => vendor == "openai",
+            Self::Claude => vendor == "anthropic",
+        }
     }
 
-    pub(crate) fn fast_service_tier(self) -> &'static str {
+    /// None for Claude Code, which picks its own speed.
+    pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
         match self {
-            Self::Spikonado => "fast",
-            Self::Openai | Self::Chatgpt => "priority",
+            Self::Spikonado => Some("fast"),
+            Self::Openai | Self::Chatgpt => Some("priority"),
+            Self::Claude => None,
         }
     }
 
@@ -37,6 +45,7 @@ impl CompletionProvider {
             Self::Spikonado => "spikonado",
             Self::Openai => "openai",
             Self::Chatgpt => "chatgpt",
+            Self::Claude => "claude",
         }
     }
 }
@@ -60,10 +69,16 @@ pub trait ChatGptCredentials: Send + Sync {
     fn credential(&self) -> BoxFuture<'_, anyhow::Result<ChatGptAccess>>;
 }
 
+pub trait ClaudeCodeLocator: Send + Sync {
+    /// Finds the user's Claude Code, or explains how to install or update it.
+    fn executable(&self) -> BoxFuture<'_, anyhow::Result<PathBuf>>;
+}
+
 #[derive(Clone)]
 pub struct RunAgentRequest {
     /// Local ChatGPT credential service handle. Required for ChatGPT runs.
     pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+    pub claude_code: crate::claude_code::ClaudeCode,
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,
@@ -112,6 +127,11 @@ pub struct GatewayCredential {
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiCredential {
     pub api_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ClaudeCredential {
+    pub token: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

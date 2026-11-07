@@ -307,6 +307,18 @@ const chatGptBrowserLoginResultSchema = z.object({
 
 const chatGptDisconnectSchema = z.object({ warning: z.string().nullable() });
 
+const claudeCodeStatusSchema = z.object({
+	state: z.enum(['notInstalled', 'installing', 'outdated', 'installed']),
+	version: z.string().nullable(),
+	minimumVersion: z.string(),
+	installCommand: z.string(),
+	error: z.string().nullable()
+});
+
+const claudeCodeLoginStartSchema = z.object({ loginId: z.string(), url: z.string() });
+
+const claudeCodeLoginFinishSchema = z.object({ token: z.string() });
+
 function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
@@ -756,7 +768,37 @@ export function createLocalClient(baseUrl: string): LocalApi {
 			await request(`/api/connectors/${id}/uninstall`, connectorStatusSchema, {
 				method: 'POST',
 				body: JSON.stringify({ userId })
-			})
+			}),
+		fetchClaudeCodeStatus: async (userId) =>
+			await request(
+				`/api/claude-code?${new URLSearchParams({ userId }).toString()}`,
+				claudeCodeStatusSchema
+			),
+		installClaudeCode: async (userId) =>
+			await request('/api/claude-code/install', claudeCodeStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		startClaudeCodeLogin: async (userId) =>
+			await request('/api/claude-code/login/start', claudeCodeLoginStartSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		finishClaudeCodeLogin: async (userId, loginId, code) => {
+			const { token } = await request(
+				'/api/claude-code/login/finish',
+				claudeCodeLoginFinishSchema,
+				{ method: 'POST', body: JSON.stringify({ userId, loginId, code }) }
+			);
+
+			return token;
+		},
+		cancelClaudeCodeLogin: async (userId, loginId) => {
+			await transport.response('/api/claude-code/login/cancel', {
+				method: 'POST',
+				body: JSON.stringify({ userId, loginId })
+			});
+		}
 	};
 }
 

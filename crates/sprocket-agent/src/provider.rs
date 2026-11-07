@@ -23,6 +23,7 @@ use tokio::time::sleep;
 
 use self::transcript_sink::TranscriptSink;
 use crate::chatgpt::ChatGptClient;
+use crate::claude_code::{ClaudeCode, ResumePoint, resume_point};
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
@@ -84,6 +85,10 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
     }
 }
 
+fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
+    crate::chatgpt::user_facing_error(crate::claude_code::user_facing_error(error))
+}
+
 /// A provider-switch handoff writes on the previous provider.
 fn usage_source(
     target: &AgentProvider,
@@ -108,7 +113,7 @@ fn usage_source(
     UsageSource {
         provider,
         model: model.clone(),
-        fast,
+        fast: fast && provider.fast_service_tier().is_some(),
         pricing: pricing.clone(),
     }
 }
@@ -122,6 +127,9 @@ pub(crate) struct AgentProvider {
     model_vendor: String,
     chatgpt_client: Option<ChatGptClient>,
     chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+    claude_code: ClaudeCode,
+    claude_resume: Option<ResumePoint>,
+    cwd: PathBuf,
 }
 
 #[derive(Default)]
@@ -198,6 +206,8 @@ impl AgentProvider {
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
         chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+        claude_code: ClaudeCode,
+        cwd: PathBuf,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
         let fallback_providers = context
@@ -218,6 +228,9 @@ impl AgentProvider {
             model_vendor: model_vendor.to_string(),
             chatgpt_client,
             chatgpt_credentials,
+            claude_code,
+            claude_resume: None,
+            cwd,
         }
     }
 
@@ -226,6 +239,7 @@ impl AgentProvider {
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
+        self.claude_resume = resume_point(&request.prior_history);
         let mut omit_prior_reasoning = false;
         let switch = match std::mem::take(&mut request.provider_switch) {
             ProviderSwitch::Handoff(switch) => {
@@ -275,17 +289,19 @@ impl AgentProvider {
                     }
                     Err(error) => {
                         return AgentProviderResult::Failed {
-                            error: crate::chatgpt::user_facing_error(error),
+                            error: user_facing_error(error),
                         };
                     }
                 }
             }
         };
+        // Models started later join mid-run, after replies the resumed session didn't write.
+        self.claude_resume = None;
         match run_with_completion_model(model, runtime, request, self, switch, omit_prior_reasoning)
             .await
         {
             AgentProviderResult::Failed { error } => AgentProviderResult::Failed {
-                error: crate::chatgpt::user_facing_error(error),
+                error: user_facing_error(error),
             },
             result => result,
         }
@@ -310,6 +326,9 @@ impl AgentProvider {
             model_vendor: String::new(),
             chatgpt_client: self.chatgpt_client.clone(),
             chatgpt_credentials: self.chatgpt_credentials.clone(),
+            claude_code: self.claude_code.clone(),
+            claude_resume: self.claude_resume.clone(),
+            cwd: self.cwd.clone(),
         };
         let model = source
             .completion_model(runtime, run_id, claim_id, &switch.base_instructions)
@@ -445,6 +464,18 @@ impl AgentProvider {
                     &self.thread_id,
                 ))
             }
+            CompletionProvider::Claude => {
+                let credential = runtime.issue_claude_credential(run_id, claim_id).await?;
+                self.claude_code
+                    .completion_model(
+                        credential.token,
+                        &self.model,
+                        base_instructions,
+                        &self.cwd,
+                        self.claude_resume.clone(),
+                    )
+                    .await
+            }
         }
     }
 }
@@ -462,10 +493,9 @@ fn generation_options(reasoning_effort: &str) -> anyhow::Result<GenerationOption
 
 // Tier names differ per provider, so they bypass Rig's portable tiers.
 fn service_tier_params(provider: CompletionProvider, fast_mode: bool) -> serde_json::Value {
-    if fast_mode {
-        serde_json::json!({ "service_tier": provider.fast_service_tier() })
-    } else {
-        serde_json::json!({})
+    match provider.fast_service_tier() {
+        Some(tier) if fast_mode => serde_json::json!({ "service_tier": tier }),
+        _ => serde_json::json!({}),
     }
 }
 

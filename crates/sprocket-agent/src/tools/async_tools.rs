@@ -34,6 +34,8 @@ pub(crate) fn max_yield_ms(provider: CompletionProvider, cache_write_ttl: Option
             cache_write_ttl.and_then(ttl_ms)
         }
         CompletionProvider::Chatgpt => None,
+        // Claude Code writes its prompt cache at a one-hour TTL.
+        CompletionProvider::Claude => Some(3_600_000),
     };
     retention_ms
         .unwrap_or(UNDOCUMENTED_CACHE_RETENTION_MS)

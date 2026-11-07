@@ -100,6 +100,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::config::routes())
         .merge(routes::auth::routes())
         .merge(routes::chatgpt::routes())
+        .merge(routes::claude_code::routes())
         .merge(routes::github::routes())
         .merge(routes::connectors::routes())
         .merge(routes::cli::routes())

@@ -380,7 +380,8 @@ function getContextResult(args: {
 
 const getContextArgs = {
 	runId: v.id('runs'),
-	executionSecret: v.string()
+	executionSecret: v.string(),
+	includeClaude: v.optional(v.boolean())
 };
 
 export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof getContextArgs>) {
@@ -391,6 +392,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 	const parentThreadId = thread?.parentThreadId;
 	const providerHandoff = await getProviderHandoff(ctx, run, thread);
 	const preferences = await getUiPreferences(ctx.db, run.userId);
+	const includeClaude = args.includeClaude ?? false;
 
 	if (!promptPart?.prompt && !run.pendingPrompt && !run.continuationOfRunId) {
 		throw new Error('Run does not contain a user prompt.');
@@ -402,9 +404,12 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 		prompt: promptPart?.prompt?.text ?? '',
 		pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
 		contextTokens,
-		providerHandoff,
+		providerHandoff:
+			includeClaude || providerHandoff?.completionProvider !== 'claude'
+				? providerHandoff
+				: undefined,
 		providerPreferences: {
-			enabledProviders: enabledProviders(preferences?.providerOrder),
+			enabledProviders: enabledProviders(preferences?.providerOrder, { includeClaude }),
 			restrictSubagentsToProvider: false
 		},
 		cwd: thread?.cwd,

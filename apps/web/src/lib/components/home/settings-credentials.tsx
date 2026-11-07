@@ -6,10 +6,16 @@ import Button from '$lib/components/ui/button/button';
 import ProviderLogo from '$lib/components/provider-logo';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { z } from 'zod';
-import type { ChatGptBrowserLoginStart, ChatGptStatus, LocalApi } from '$lib/types/sprocket';
+import type {
+	ChatGptBrowserLoginStart,
+	ChatGptStatus,
+	ClaudeCodeStatus,
+	LocalApi
+} from '$lib/types/sprocket';
+import ClaudeSubscriptionCard from './claude-subscription-card';
 
 type ProviderConfigurationChange = {
-	provider: 'openai';
+	provider: 'openai' | 'claude';
 	configured: boolean;
 };
 
@@ -22,23 +28,31 @@ export default function SettingsCredentials({
 	userId,
 	localApi,
 	openAiConfigured,
+	claudeTokenSaved,
+	claudeCodeStatus,
+	claudeCodeStatusError,
 	chatGptStatus,
 	chatGptLoading,
 	chatGptStatusError,
 	loading,
 	loadError,
 	onChatGptStatusChange,
+	onClaudeCodeStatusChange,
 	onConfigurationChange
 }: {
 	userId: string;
 	localApi: LocalApi | null;
 	openAiConfigured: boolean;
+	claudeTokenSaved: boolean;
+	claudeCodeStatus: ClaudeCodeStatus | null;
+	claudeCodeStatusError: string | null;
 	chatGptStatus: ChatGptStatus | null;
 	chatGptLoading: boolean;
 	chatGptStatusError: string | null;
 	loading: boolean;
 	loadError: string | null;
 	onChatGptStatusChange: (status: ChatGptStatus) => void;
+	onClaudeCodeStatusChange: (status: ClaudeCodeStatus) => void;
 	onConfigurationChange: (change: ProviderConfigurationChange) => void;
 }) {
 	const saveOpenAiKey = useAction(api.providerCredentials.saveOpenAiKey);
@@ -516,6 +530,20 @@ export default function SettingsCredentials({
 							</p>
 						)}
 					</div>
+
+					<ClaudeSubscriptionCard
+						key={userId}
+						userId={userId}
+						localApi={localApi}
+						tokenSaved={claudeTokenSaved}
+						loading={loading}
+						status={claudeCodeStatus}
+						statusError={claudeCodeStatusError}
+						onStatusChange={onClaudeCodeStatusChange}
+						onTokenSavedChange={(configured) =>
+							onConfigurationChange({ provider: 'claude', configured })
+						}
+					/>
 
 					<div className="border-border rounded-xl border p-5">
 						<div className="flex items-center gap-3">
