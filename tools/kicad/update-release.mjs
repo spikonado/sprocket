@@ -286,6 +286,7 @@ function buildKipy(work, expectedCommit) {
 		source
 	]);
 	const commit = run('git', ['-C', source, 'rev-parse', 'HEAD']).trim();
+
 	if (commit !== expectedCommit) {
 		throw new Error(`kicad-python moved from ${expectedCommit} to ${commit} meanwhile; rerun`);
 	}
