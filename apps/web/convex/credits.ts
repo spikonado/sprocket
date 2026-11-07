@@ -13,15 +13,22 @@ function getPackRow(ctx: QueryCtx, productId: string) {
 		.unique();
 }
 
-export const isPack = internalQuery({
+/** A pack is sellable once the price sync confirmed its product is a paid one-time product. */
+export const getSellablePack = internalQuery({
 	args: { productId: v.string() },
-	returns: v.boolean(),
-	handler: async (ctx, { productId }) => (await getPackRow(ctx, productId)) !== null
+	returns: v.union(v.object({ units: v.number(), expiresAfterDays: v.number() }), v.null()),
+	handler: async (ctx, { productId }) => {
+		const pack = await getPackRow(ctx, productId);
+
+		if (pack?.price?.productId !== productId) return null;
+
+		return { units: pack.units, expiresAfterDays: pack.expiresAfterDays };
+	}
 });
 
 /**
- * Grants a paid pack once per payment and revokes its unused units on any refund or dispute.
- * Grants only move forward, so delivery order doesn't matter.
+ * Grants a paid pack once per payment, on the terms recorded at checkout, and revokes its
+ * unused units on any refund or dispute. Grants only move forward, so delivery order doesn't matter.
  */
 export const syncPayment = internalMutation({
 	args: {
@@ -32,7 +39,8 @@ export const syncPayment = internalMutation({
 		dodoCustomerId: v.string(),
 		metadataUserId: v.optional(v.string()),
 		productId: v.string(),
-		quantity: v.number()
+		units: v.number(),
+		expiresAfterDays: v.number()
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -46,9 +54,7 @@ export const syncPayment = internalMutation({
 			return null;
 		}
 
-		const pack = args.succeeded ? await getPackRow(ctx, args.productId) : null;
-
-		if (!pack) return null;
+		if (!args.succeeded) return null;
 
 		const userId = await resolveCustomerOwner(ctx, args.dodoCustomerId, args.metadataUserId);
 
@@ -63,10 +69,10 @@ export const syncPayment = internalMutation({
 		await ctx.db.insert('creditGrants', {
 			userId,
 			paymentId: args.paymentId,
-			productId: pack.productId,
-			units: pack.units * args.quantity,
+			productId: args.productId,
+			units: args.units,
 			used: 0,
-			expiresAt: args.paidAt + pack.expiresAfterDays * DAY,
+			expiresAt: args.paidAt + args.expiresAfterDays * DAY,
 			revokedAt: args.revoked ? Date.now() : undefined
 		});
 

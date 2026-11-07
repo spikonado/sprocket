@@ -59,9 +59,13 @@ async function startCheckout(
 	identity: UserIdentity,
 	{
 		productId,
-		refuseLiveSubscription,
+		creditPack,
 		pageParams
-	}: { productId: string; refuseLiveSubscription: boolean; pageParams: Record<string, string> }
+	}: {
+		productId: string;
+		creditPack?: { units: number; expiresAfterDays: number };
+		pageParams: Record<string, string>;
+	}
 ): Promise<CheckoutStart> {
 	const mode = paymentsMode();
 
@@ -78,7 +82,7 @@ async function startCheckout(
 		email: identity.email,
 		name: identity.name ?? identity.nickname ?? identity.email ?? identity.subject,
 		productId,
-		refuseLiveSubscription,
+		creditPack,
 		...pricingPageUrls(pageParams)
 	});
 
@@ -156,7 +160,6 @@ export const checkout = action({
 
 		return await startCheckout(ctx, identity, {
 			productId,
-			refuseLiveSubscription: true,
 			pageParams: { tier }
 		});
 	}
@@ -169,13 +172,13 @@ export const buyCredits = action({
 	handler: async (ctx, { productId }): Promise<CheckoutStart> => {
 		const identity = await requireIdentity(ctx);
 
-		if (!(await ctx.runQuery(internal.credits.isPack, { productId }))) {
-			throw new ConvexError('Unknown credit pack.');
-		}
+		const creditPack = await ctx.runQuery(internal.credits.getSellablePack, { productId });
+
+		if (!creditPack) throw new ConvexError('Unknown credit pack.');
 
 		return await startCheckout(ctx, identity, {
 			productId,
-			refuseLiveSubscription: false,
+			creditPack,
 			pageParams: { pack: productId }
 		});
 	}

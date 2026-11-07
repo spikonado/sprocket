@@ -45,7 +45,12 @@ const dodoPayment = z.object({
 	disputes: z.array(z.unknown())
 });
 
-const checkoutMetadata = z.object({ userId: z.string().optional() });
+/** Set by `createCheckout`; a pack checkout also records the pack's terms at purchase time. */
+const checkoutMetadata = z.object({
+	userId: z.string().optional(),
+	creditUnits: z.coerce.number().optional(),
+	creditDays: z.coerce.number().optional()
+});
 
 function createDodoClient(): DodoPayments {
 	return new DodoPayments({
@@ -102,7 +107,7 @@ async function listCustomerSubscriptions(client: DodoPayments, dodoCustomerId: s
 /**
  * Payment events carry the payment; refund and dispute events name it, so fetch it.
  * Any succeeded refund or any dispute revokes the pack, including a dispute later won.
- * Subscription payments have no product cart and are skipped.
+ * Payments without pack terms in their metadata, such as subscription charges, are skipped.
  */
 async function syncPayment(
 	ctx: ActionCtx,
@@ -116,8 +121,9 @@ async function syncPayment(
 	);
 
 	const [item] = payment.product_cart ?? [];
+	const { userId, creditUnits, creditDays } = checkoutMetadata.parse(payment.metadata);
 
-	if (!item) return;
+	if (!item || creditUnits === undefined || creditDays === undefined) return;
 
 	await ctx.runMutation(internal.credits.syncPayment, {
 		paymentId: payment.payment_id,
@@ -129,9 +135,10 @@ async function syncPayment(
 			payment.refunds.some(({ status }) => status === 'succeeded'),
 		paidAt: toEpochMs(payment.created_at),
 		dodoCustomerId: payment.customer.customer_id,
-		metadataUserId: checkoutMetadata.parse(payment.metadata).userId,
+		metadataUserId: userId,
 		productId: item.product_id,
-		quantity: item.quantity
+		units: creditUnits,
+		expiresAfterDays: creditDays
 	});
 }
 
@@ -225,7 +232,8 @@ export const createCheckout = internalAction({
 		email: v.optional(v.string()),
 		name: v.string(),
 		productId: v.string(),
-		refuseLiveSubscription: v.boolean(),
+		// Present for a pack; subscriptions refuse a second live subscription instead.
+		creditPack: v.optional(v.object({ units: v.number(), expiresAfterDays: v.number() })),
 		returnUrl: v.string(),
 		cancelUrl: v.string()
 	},
@@ -234,7 +242,7 @@ export const createCheckout = internalAction({
 		const client = createDodoClient();
 		const customer = await ensureCustomer(ctx, client, args);
 
-		if (args.refuseLiveSubscription && !customer.created) {
+		if (!args.creditPack && !customer.created) {
 			const subscriptions = await listCustomerSubscriptions(client, customer.dodoCustomerId);
 
 			if (subscriptions.some(({ status }) => LIVE_SUBSCRIPTION_STATUSES.has(status))) {
@@ -244,7 +252,13 @@ export const createCheckout = internalAction({
 
 		const session = await client.checkoutSessions.create({
 			product_cart: [{ product_id: args.productId, quantity: 1 }],
-			metadata: { userId: args.userId },
+			metadata: {
+				userId: args.userId,
+				...(args.creditPack && {
+					creditUnits: String(args.creditPack.units),
+					creditDays: String(args.creditPack.expiresAfterDays)
+				})
+			},
 			return_url: args.returnUrl,
 			cancel_url: args.cancelUrl,
 			feature_flags: {
@@ -348,7 +362,7 @@ async function fetchPackPrice(client: DodoPayments, productId: string): Promise<
 		return null;
 	}
 
-	return { amountMinor: price.price, currency: price.currency };
+	return { productId, amountMinor: price.price, currency: price.currency };
 }
 
 /** Keeps the last price when Dodo can't be reached. */

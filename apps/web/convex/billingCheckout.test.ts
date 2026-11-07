@@ -166,14 +166,24 @@ describe('checkout', () => {
 				productId: 'prod_pack',
 				label: 'Pack',
 				units: 1,
+				expiresAfterDays: 30,
+				price: { productId: 'prod_pack', amountMinor: 500, currency: 'USD' }
+			});
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_unpriced',
+				label: 'Pack the price sync has not confirmed',
+				units: 1,
 				expiresAfterDays: 30
 			});
 		});
 		const requests = stubDodo({ subscriptionStatuses: ['active'] });
 
-		await expect(
-			owner(t).action(api.billing.buyCredits, { productId: 'prod_pro' })
-		).rejects.toThrow('Unknown credit pack.');
+		for (const productId of ['prod_pro', 'prod_unpriced']) {
+			await expect(owner(t).action(api.billing.buyCredits, { productId })).rejects.toThrow(
+				'Unknown credit pack.'
+			);
+		}
+
 		await expect(
 			owner(t).action(api.billing.buyCredits, { productId: 'prod_pack' })
 		).resolves.toMatchObject({ attemptId: 'cks_1' });
@@ -181,7 +191,7 @@ describe('checkout', () => {
 		expect(paths(requests)).toEqual(['POST /checkouts']);
 		expect(await requests[0]?.json()).toMatchObject({
 			product_cart: [{ product_id: 'prod_pack', quantity: 1 }],
-			metadata: { userId: 'owner' },
+			metadata: { userId: 'owner', creditUnits: '1', creditDays: '30' },
 			customer: { customer_id: 'cus_owner' },
 			return_url: 'https://spikonado.com/pricing?checkout=return&pack=prod_pack'
 		});

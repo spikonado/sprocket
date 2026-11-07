@@ -11,7 +11,11 @@ export const vPrice = v.object({
 
 export type Price = Infer<typeof vPrice>;
 
-export const vPackPrice = v.object({ amountMinor: v.number(), currency: v.string() });
+export const vPackPrice = v.object({
+	productId: v.string(),
+	amountMinor: v.number(),
+	currency: v.string()
+});
 
 export type PackPrice = Infer<typeof vPackPrice>;
 

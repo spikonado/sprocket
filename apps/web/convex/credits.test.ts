@@ -31,7 +31,7 @@ function dodoPayment(overrides: Partial<DodoPayment> = {}): DodoPayment {
 		status: 'succeeded',
 		created_at: new Date().toISOString(),
 		customer: { customer_id: 'cus_owner' },
-		metadata: { userId: 'owner' },
+		metadata: { userId: 'owner', creditUnits: String(10 * DOLLAR), creditDays: '30' },
 		product_cart: [{ product_id: 'prod_pack', quantity: 1 }],
 		refunds: [],
 		disputes: [],
@@ -50,18 +50,11 @@ function stubPayments(payments: DodoPayment[]) {
 	});
 }
 
+/** No `creditPacks` row: grants use the terms recorded at checkout, so a retired pack still pays out. */
 async function setup() {
 	const t = initConvexTest();
 	await seedTiers(t);
-	await t.run(async (ctx) => {
-		await insertUser(ctx, 'owner', 'cus_owner');
-		await ctx.db.insert('creditPacks', {
-			productId: 'prod_pack',
-			label: '$10 of usage',
-			units: 10 * DOLLAR,
-			expiresAfterDays: 30
-		});
-	});
+	await t.run((ctx) => insertUser(ctx, 'owner', 'cus_owner'));
 
 	return t;
 }
@@ -97,7 +90,7 @@ afterEach(() => {
 });
 
 describe('credit pack grants', () => {
-	it('grants a paid pack once per payment and ignores other payments', async () => {
+	it('grants a paid pack once per payment on its checkout terms and ignores other payments', async () => {
 		const t = await setup();
 		const payment = dodoPayment();
 		stubPayments([]);
@@ -109,8 +102,9 @@ describe('credit pack grants', () => {
 			[
 				'payment.succeeded',
 				dodoPayment({
-					payment_id: 'pay_other',
-					product_cart: [{ product_id: 'prod_x', quantity: 1 }]
+					payment_id: 'pay_subscription',
+					metadata: { userId: 'owner' },
+					product_cart: [{ product_id: 'prod_pro', quantity: 1 }]
 				})
 			],
 			['payment.failed', dodoPayment({ payment_id: 'pay_failed', status: 'failed' })]

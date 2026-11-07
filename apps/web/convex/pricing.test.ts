@@ -50,13 +50,14 @@ describe('public pricing catalog', () => {
 				label: '$50 of usage',
 				units: 50 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				expiresAfterDays: 365,
-				price: { amountMinor: 5_000, currency: 'USD' }
+				price: { productId: 'prod_pack_large', amountMinor: 5_000, currency: 'USD' }
 			});
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_pack_small',
 				label: '$10 of usage',
 				units: 10 * MODEL_USAGE_UNITS_PER_DOLLAR,
-				expiresAfterDays: 90
+				expiresAfterDays: 90,
+				price: { productId: 'prod_pack_retired', amountMinor: 1_000, currency: 'USD' }
 			});
 		});
 
@@ -106,7 +107,7 @@ describe('public pricing catalog', () => {
 					label: '$50 of usage',
 					usageDollars: 50,
 					expiresAfterDays: 365,
-					price: { amountMinor: 5_000, currency: 'USD' }
+					price: { productId: 'prod_pack_large', amountMinor: 5_000, currency: 'USD' }
 				}
 			]
 		});
@@ -177,7 +178,7 @@ describe('public pricing catalog', () => {
 				label: 'Misconfigured pack',
 				units: 1,
 				expiresAfterDays: 30,
-				price: { amountMinor: 1, currency: 'USD' }
+				price: { productId: 'prod_monthly', amountMinor: 1, currency: 'USD' }
 			});
 		});
 
@@ -198,7 +199,10 @@ describe('public pricing catalog', () => {
 		]);
 		expect(creditPacks.map(({ productId, price }) => ({ productId, price }))).toEqual([
 			{ productId: 'prod_monthly', price: null },
-			{ productId: 'prod_pack', price: { amountMinor: 1_000, currency: 'USD' } }
+			{
+				productId: 'prod_pack',
+				price: { productId: 'prod_pack', amountMinor: 1_000, currency: 'USD' }
+			}
 		]);
 	});
 });
