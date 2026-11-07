@@ -95,22 +95,11 @@ async function seedProTier(t: ConvexTestInstance) {
 }
 
 describe('checkout local purchase delegation', () => {
-	it('delegates a new checkout to the provider for an active Free bootstrap row', async () => {
+	it('delegates a first checkout to the provider', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);
 		const requests = stubDodo({});
 		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
-
-		await owner.mutation(api.billing.ensureMySubscription, {});
-
-		const bootstrap = await t.run(async (ctx) =>
-			ctx.db
-				.query('subscriptions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
-				.unique()
-		);
-
-		expect(bootstrap).toMatchObject({ tier: 'free', status: 'active' });
 
 		const result = await owner.action(api.billing.checkout, {
 			tier: 'pro',

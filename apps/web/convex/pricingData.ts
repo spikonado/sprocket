@@ -1,43 +1,12 @@
 import { v } from 'convex/values';
-import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import { internalMutation, internalQuery } from '@convex/_generated/server';
-import type { DataModel } from '@convex/_generated/dataModel';
 import { vDodoPublicPrice, type DodoPublicPrice } from '@convex/lib/dodoProducts';
 import { vTierPricingConfig } from '@convex/lib/pricingValidators';
-import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
+import { getTierRow, MODEL_USAGE_UNITS_PER_DOLLAR, tierForProduct } from '@convex/lib/tiers';
 
 // Durable global bound on concurrent refreshes per provider environment,
 // enforced inside the lease transaction so it holds across action instances.
 const DODO_MAX_ACTIVE_REFRESH_LEASES = 8;
-
-export async function lookupTierForProduct(
-	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
-	productId: string,
-	interval?: 'monthly' | 'annual'
-): Promise<string | null> {
-	const [monthly, annual] = await Promise.all([
-		ctx.db
-			.query('tiers')
-			.withIndex('by_monthlyProductId', (query) => query.eq('monthlyProductId', productId))
-			.take(2),
-		ctx.db
-			.query('tiers')
-			.withIndex('by_annualProductId', (query) => query.eq('annualProductId', productId))
-			.take(2)
-	]);
-
-	const assignments = [...monthly, ...annual];
-
-	if (assignments.length > 1) {
-		throw new Error(`Dodo product "${productId}" is assigned more than once.`);
-	}
-
-	if (interval === 'monthly' && monthly.length === 0) return null;
-
-	if (interval === 'annual' && annual.length === 0) return null;
-
-	return assignments[0]?.tierId ?? null;
-}
 
 export const getProductPricesForEnvironment = internalQuery({
 	args: {
@@ -247,35 +216,16 @@ export const getTierProduct = internalQuery({
 	},
 	returns: v.union(v.string(), v.null()),
 	handler: async (ctx, { tierId, interval }) => {
-		const tier = await lookupTierRow(ctx, tierId);
+		const tier = await getTierRow(ctx, tierId);
 
 		if (!tier) return null;
 		const productId = interval === 'monthly' ? tier.monthlyProductId : tier.annualProductId;
 
 		if (!productId) return null;
 
-		if ((await lookupTierForProduct(ctx, productId)) === null) return null;
+		// Throws when another tier also sells this product.
+		await tierForProduct(ctx, productId);
 
 		return productId;
 	}
-});
-
-async function lookupTierRow(
-	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
-	tierId: string
-) {
-	const rows = await ctx.db
-		.query('tiers')
-		.withIndex('by_tierId', (query) => query.eq('tierId', tierId))
-		.take(2);
-
-	if (rows.length > 1) throw new Error(`Duplicate tiers rows for tier "${tierId}".`);
-
-	return rows[0] ?? null;
-}
-
-export const getTierForProduct = internalQuery({
-	args: { productId: v.string() },
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, { productId }) => await lookupTierForProduct(ctx, productId)
 });

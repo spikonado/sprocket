@@ -9,45 +9,16 @@ import {
 	query
 } from '@convex/_generated/server';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
-import type { Doc, Id } from '@convex/_generated/dataModel';
-import type { WithoutSystemFields } from 'convex/server';
+import type { Doc } from '@convex/_generated/dataModel';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
-import {
-	advanceWatermarks,
-	computeAccess,
-	identityTakeoverAllowed,
-	isStalePayload,
-	isStaleStatus,
-	isStaleTerm,
-	isStaleSchedule,
-	normalizedTerminalOrHold,
-	payloadPosition,
-	projectionMatches,
-	resolveEffectiveTier,
-	type PayloadSource,
-	type SubscriptionPayload
-} from '@convex/lib/subscriptionProjection';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
-import { resetUsage } from '@convex/lib/quota';
-import {
-	accessPhaseAt,
-	displayAccessPhase,
-	displayTier,
-	ensureSubscription,
-	getSubscriptionDoc,
-	getTierLabel,
-	isOperatorGrant,
-	listSubscriptionDocs
-} from '@convex/lib/tiers';
+import { resolvePlan } from '@convex/lib/tiers';
 import {
 	vBillingInterval,
 	vCheckoutAttemptStatus,
 	vDodoMode,
-	vSubscriptionStatus,
 	vSubscriptionTier
 } from '@convex/lib/validators';
-import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
-import { lookupTierForProduct } from '@convex/pricingData';
 import { readDodoEnvironment } from '@convex/lib/dodoProducts';
 
 const CHECKOUT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -99,34 +70,6 @@ function assertPaymentsConfigured(): void {
 	billingApiKey();
 }
 
-type PaidAccessState = 'active' | 'scheduled_cancel' | 'ended' | 'none';
-
-type SubscriptionActivityRow = Pick<
-	Doc<'subscriptions'>,
-	| 'tier'
-	| 'status'
-	| 'dodoSubscriptionId'
-	| 'accessPhase'
-	| 'cancelAtNextBillingDate'
-	| 'terminalConfirmed'
->;
-
-function paidAccessState(subscription: SubscriptionActivityRow | null): PaidAccessState {
-	if (!subscription || subscription.tier === 'free') return 'none';
-
-	const phase = displayAccessPhase(subscription);
-
-	if (phase === 'paid' || phase === 'renewal_processing') {
-		return subscription.cancelAtNextBillingDate === true ? 'scheduled_cancel' : 'active';
-	}
-
-	if (subscription.dodoSubscriptionId) {
-		return subscription.terminalConfirmed === true ? 'none' : 'ended';
-	}
-
-	return 'none';
-}
-
 export const getMySubscription = query({
 	args: {},
 	returns: v.object({
@@ -144,16 +87,17 @@ export const getMySubscription = query({
 	}),
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
-		const subscription = await getSubscriptionDoc(ctx, userId);
-		const tier = displayTier(subscription);
-
+		const plan = await resolvePlan(ctx, userId, Date.now());
 		const user = await getUserBySubject(ctx.db, userId);
 
-		const accessPhase = paidAccessState(subscription);
+		let accessPhase: 'none' | 'scheduled_cancel' | 'active' = 'active';
+
+		if (plan.tier === 'free') accessPhase = 'none';
+		else if (plan.subscription?.cancelAtNextBillingDate) accessPhase = 'scheduled_cancel';
 
 		return {
-			tier,
-			tierLabel: await getTierLabel(ctx, tier),
+			tier: plan.tier,
+			tierLabel: plan.label,
 			billingManaged: user?.dodoCustomerId !== undefined,
 			accessPhase
 		};
@@ -164,9 +108,9 @@ export const ensureMySubscription = mutation({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
-		const userId = await getUserId(ctx);
 		await ensureCurrentUser(ctx);
-		await ensureSubscription(ctx, userId);
+
+		return null;
 	}
 });
 
@@ -870,7 +814,6 @@ export const getCheckoutStatus = action({
 		if (attempt.outcome === 'paid') {
 			const activated = await ctx.runQuery(internal.billing.attemptActivated, {
 				userId: identity.subject,
-				attemptId,
 				tierId: attempt.tierId,
 				interval: attempt.interval,
 				now
@@ -930,7 +873,13 @@ export const getCheckoutStatus = action({
 						attemptId,
 						status: 'succeeded',
 						mode,
-						sessionId: attempt.dodoSessionId
+						sessionId: attempt.dodoSessionId,
+						activated: await ctx.runQuery(internal.billing.attemptActivated, {
+							userId: identity.subject,
+							tierId: attempt.tierId,
+							interval: attempt.interval,
+							now
+						})
 					};
 				case 'failed':
 					await ctx.runMutation(internal.billing.failCheckoutAttempt, {
@@ -1036,31 +985,15 @@ export const lookupCheckoutAttempt = internalQuery({
 export const attemptActivated = internalQuery({
 	args: {
 		userId: v.string(),
-		attemptId: v.string(),
 		tierId: v.string(),
 		interval: vBillingInterval,
 		now: v.number()
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const subscriptions = await listSubscriptionDocs(ctx, args.userId);
+		const plan = await resolvePlan(ctx, args.userId, args.now);
 
-		for (const subscription of subscriptions) {
-			if (accessPhaseAt(subscription, args.now) === 'none') continue;
-
-			if (subscription.checkoutAttemptId !== args.attemptId) continue;
-
-			if (
-				subscription.tier !== args.tierId ||
-				(subscription.billingInterval ?? 'monthly') !== args.interval
-			) {
-				continue;
-			}
-
-			return true;
-		}
-
-		return false;
+		return plan.tier === args.tierId && plan.subscription?.interval === args.interval;
 	}
 });
 
@@ -1084,539 +1017,3 @@ export const customerPortal = action({
 		return { portal_url: portal.portal_url };
 	}
 });
-
-export const upsertDodoSubscription = internalMutation({
-	args: {
-		userId: v.optional(v.string()),
-		tier: v.optional(v.string()),
-		checkoutAttemptId: v.optional(v.string()),
-		dodoSubscriptionId: v.string(),
-		dodoProductId: v.string(),
-		dodoCustomerId: v.string(),
-		status: v.union(
-			vSubscriptionStatus,
-			v.literal('paused'),
-			v.literal('pending'),
-			v.literal('past_due')
-		),
-		eventAt: v.number(),
-		billingInterval: vBillingInterval,
-		billingPeriodStart: v.number(),
-		billingPeriodEnd: v.number(),
-		cancelAtNextBillingDate: v.boolean(),
-		scheduledChange: v.optional(
-			v.union(
-				v.object({ id: v.string(), productId: v.string(), effectiveAt: v.number() }),
-				v.null()
-			)
-		)
-	},
-	returns: v.object({
-		outcome: v.union(
-			v.literal('applied'),
-			v.literal('stale'),
-			v.literal('noop'),
-			v.literal('competing'),
-			v.literal('unresolved')
-		),
-		detail: v.optional(v.string())
-	}),
-	handler: async (ctx, args) =>
-		await applyDodoSubscriptionProjection(ctx, { ...args, source: 'webhook' })
-});
-
-type DodoSubscriptionEventArgs = PayloadSource & {
-	userId?: string;
-	tier?: string;
-	checkoutAttemptId?: string;
-	dodoSubscriptionId: string;
-	dodoProductId: string;
-	dodoCustomerId: string;
-	status: SubscriptionPayload['status'];
-	billingInterval: 'monthly' | 'annual';
-	billingPeriodStart: number;
-	billingPeriodEnd: number;
-	cancelAtNextBillingDate: boolean;
-	scheduledChange?: { id: string; productId: string; effectiveAt: number } | null;
-};
-
-export type ProjectionOutcome = {
-	outcome: 'applied' | 'stale' | 'noop' | 'competing' | 'unresolved';
-	detail?: string;
-};
-
-type ReconcileRequest = {
-	subscriptionId: Id<'subscriptions'>;
-	dodoSubscriptionId: string;
-	projectionRevision: number;
-	force?: boolean;
-};
-
-type ProjectionWrite = {
-	kind: 'write';
-	now: number;
-	existingId: Id<'subscriptions'> | undefined;
-	subscription: WithoutSystemFields<Doc<'subscriptions'>> & {
-		dodoSubscriptionId: string;
-		projectionRevision: number;
-	};
-	paidAttempt: CheckoutAttemptRef | null;
-	linkCustomer: { userId: Id<'users'>; dodoCustomerId: string } | null;
-	supersededDodoSubscriptionId: string | null;
-	reconcileAfterWrite: boolean;
-	resetUsage: boolean;
-	outcome: 'applied' | 'noop';
-};
-
-type ProjectionPlan =
-	| { kind: 'rejected'; result: ProjectionOutcome; reconcile?: ReconcileRequest }
-	| { kind: 'converged'; subscriptionId: Id<'subscriptions'>; observedAt: number | undefined }
-	| ProjectionWrite;
-
-export async function applyDodoSubscriptionProjection(
-	ctx: MutationCtx,
-	args: DodoSubscriptionEventArgs
-): Promise<ProjectionOutcome> {
-	return await writeSubscriptionProjection(
-		ctx,
-		await planSubscriptionProjection(ctx, args, Date.now())
-	);
-}
-
-function forcedReconcile(
-	existing: Doc<'subscriptions'>,
-	dodoSubscriptionId: string
-): ReconcileRequest {
-	return {
-		subscriptionId: existing._id,
-		dodoSubscriptionId,
-		projectionRevision: existing.projectionRevision ?? 0,
-		force: true
-	};
-}
-
-async function planSubscriptionProjection(
-	ctx: QueryCtx,
-	args: DodoSubscriptionEventArgs,
-	now: number
-): Promise<ProjectionPlan> {
-	if (!Number.isFinite(args.billingPeriodStart) || !Number.isFinite(args.billingPeriodEnd)) {
-		throw new Error('Dodo billing period boundaries must be finite.');
-	}
-
-	if (args.billingPeriodEnd <= args.billingPeriodStart) {
-		throw new Error('Dodo billing period must have a positive duration.');
-	}
-
-	if (args.status === 'paused' || args.status === 'pending') {
-		return {
-			kind: 'rejected',
-			result: {
-				outcome: 'unresolved',
-				detail: `Unsupported Dodo subscription status "${args.status}".`
-			}
-		};
-	}
-
-	const knownCustomer = await ctx.db
-		.query('users')
-		.withIndex('by_dodoCustomerId', (query) => query.eq('dodoCustomerId', args.dodoCustomerId))
-		.unique();
-
-	const userId = args.userId ?? knownCustomer?.subject;
-
-	if (!userId) {
-		return {
-			kind: 'rejected',
-			result: {
-				outcome: 'unresolved',
-				detail: `Dodo subscription ${args.dodoSubscriptionId} has no mapped Sprocket user.`
-			}
-		};
-	}
-
-	if (knownCustomer && knownCustomer.subject !== userId) {
-		throw new Error('Dodo subscription customer does not match this account.');
-	}
-
-	const existing = await getSubscriptionDoc(ctx, userId);
-	const sameIdentity = existing?.dodoSubscriptionId === args.dodoSubscriptionId;
-
-	// Dodo's failed status is mandate-creation failure, not a failed upgrade charge.
-	if (sameIdentity && args.status === 'failed' && existing.status !== 'failed') {
-		return {
-			kind: 'rejected',
-			result: {
-				outcome: 'unresolved',
-				detail: 'Mandate failure conflicts with an established subscription.'
-			},
-			reconcile: forcedReconcile(existing, args.dodoSubscriptionId)
-		};
-	}
-
-	if (existing?.status === 'active' && existing.tier !== 'free' && isOperatorGrant(existing)) {
-		return {
-			kind: 'rejected',
-			result: { outcome: 'competing', detail: 'Operator-granted subscription preserved.' }
-		};
-	}
-
-	if (existing?.dodoSubscriptionId !== args.dodoSubscriptionId) {
-		const superseded = await ctx.db
-			.query('supersededSubscriptions')
-			.withIndex('by_dodoSubscriptionId', (query) =>
-				query.eq('dodoSubscriptionId', args.dodoSubscriptionId)
-			)
-			.unique();
-
-		if (superseded) {
-			return {
-				kind: 'rejected',
-				result: {
-					outcome: 'stale',
-					detail: `Superseded Dodo subscription ${args.dodoSubscriptionId}.`
-				}
-			};
-		}
-	}
-
-	const source: PayloadSource =
-		args.source === 'webhook'
-			? { source: 'webhook', eventAt: args.eventAt }
-			: { source: 'observation', observedAt: args.observedAt };
-
-	const payload = {
-		...source,
-		dodoSubscriptionId: args.dodoSubscriptionId,
-		dodoProductId: args.dodoProductId,
-		dodoCustomerId: args.dodoCustomerId,
-		status: args.status,
-		billingInterval: args.billingInterval,
-		billingPeriodStart: args.billingPeriodStart,
-		billingPeriodEnd: args.billingPeriodEnd,
-		cancelAtNextBillingDate: args.cancelAtNextBillingDate,
-		scheduledChange: args.scheduledChange ?? null
-	};
-
-	const normalizedStatus = payload.status === 'past_due' ? 'on_hold' : payload.status;
-
-	const staleStatus = isStaleStatus({ existing, payload });
-	const stalePayload = isStalePayload({ existing, payload });
-	const staleTerm = isStaleTerm(existing, payload);
-	const staleSchedule = isStaleSchedule({ existing, payload });
-
-	if (staleStatus && stalePayload && staleTerm && staleSchedule) {
-		return { kind: 'rejected', result: { outcome: 'stale' } };
-	}
-
-	if (stalePayload && existing) {
-		payload.dodoProductId = existing.dodoProductId ?? payload.dodoProductId;
-		payload.billingInterval = existing.billingInterval ?? payload.billingInterval;
-	}
-
-	if (staleTerm && existing) {
-		payload.billingPeriodStart = existing.billingPeriodStart ?? payload.billingPeriodStart;
-		payload.billingPeriodEnd = existing.billingPeriodEnd ?? payload.billingPeriodEnd;
-	}
-
-	if (staleSchedule && existing) {
-		payload.cancelAtNextBillingDate = existing.cancelAtNextBillingDate ?? false;
-		payload.scheduledChange = existing.scheduledChange ?? null;
-	}
-
-	const incomingStatus =
-		normalizedStatus === 'cancelled' &&
-		payload.cancelAtNextBillingDate &&
-		payloadPosition(payload) < payload.billingPeriodEnd
-			? 'active'
-			: normalizedStatus;
-
-	const historicalFailure = normalizedTerminalOrHold(payload.status) && staleTerm;
-	const keepStatus = staleStatus || historicalFailure;
-	const effectiveStatus = keepStatus && existing ? existing.status : incomingStatus;
-
-	if (
-		payload.source === 'webhook' &&
-		sameIdentity &&
-		existing.observedAt !== undefined &&
-		payload.eventAt < existing.observedAt &&
-		args.billingPeriodStart <= (existing.billingPeriodStart ?? args.billingPeriodStart) &&
-		!projectionMatches(existing, {
-			tier: existing.tier,
-			status: incomingStatus,
-			dodoProductId: args.dodoProductId,
-			billingInterval: args.billingInterval,
-			billingPeriodStart: args.billingPeriodStart,
-			billingPeriodEnd: args.billingPeriodEnd,
-			cancelAtNextBillingDate: args.cancelAtNextBillingDate,
-			scheduledChange: args.scheduledChange ?? null
-		})
-	) {
-		return {
-			kind: 'rejected',
-			result: {
-				outcome: 'unresolved',
-				detail: 'Delayed webhook conflicts with a provider observation; retrieval required.'
-			},
-			reconcile: forcedReconcile(existing, args.dodoSubscriptionId)
-		};
-	}
-
-	if (identityTakeoverAllowed(existing, payload) === 'competing') {
-		return {
-			kind: 'rejected',
-			result: {
-				outcome: 'competing',
-				detail:
-					`Conflicting Dodo subscription ${args.dodoSubscriptionId} while ` +
-					`${existing?.dodoSubscriptionId} is not authoritatively terminal.`
-			}
-		};
-	}
-
-	const user = await getUserBySubject(ctx.db, userId);
-
-	if (user?.dodoCustomerId && user.dodoCustomerId !== args.dodoCustomerId) {
-		throw new Error('Dodo subscription customer does not match this account.');
-	}
-
-	const selectedAttempt = args.checkoutAttemptId
-		? await findCheckoutAttempt(ctx, userId, args.checkoutAttemptId)
-		: null;
-
-	// Only the attempt this subscription actually paid through may be marked
-	// paid; a different open reservation for the same account is untouched.
-	const matchedAttempt =
-		selectedAttempt?.row.productId === args.dodoProductId ? selectedAttempt : null;
-
-	if (matchedAttempt && matchedAttempt.row.interval !== args.billingInterval) {
-		return {
-			kind: 'rejected',
-			result: {
-				outcome: 'unresolved',
-				detail: 'Subscription interval does not match the checkout attempt.'
-			}
-		};
-	}
-
-	const productUnchanged =
-		existing?.dodoSubscriptionId === args.dodoSubscriptionId &&
-		existing.dodoProductId === args.dodoProductId;
-
-	if (
-		!stalePayload &&
-		productUnchanged &&
-		existing.billingInterval !== undefined &&
-		existing.billingInterval !== args.billingInterval
-	) {
-		return {
-			kind: 'rejected',
-			result: { outcome: 'unresolved', detail: 'An established product changed billing interval.' }
-		};
-	}
-
-	const metadataTier = productUnchanged ? (args.tier ?? null) : null;
-
-	const resolvedTier = resolveEffectiveTier({
-		existing,
-		payload,
-		checkoutTier: matchedAttempt?.row.tierId ?? null,
-		metadataTier,
-		configuredTier:
-			productUnchanged || matchedAttempt || stalePayload
-				? null
-				: await lookupTierForProduct(ctx, payload.dodoProductId, payload.billingInterval)
-	});
-
-	if (resolvedTier.unresolved && !stalePayload) {
-		return { kind: 'rejected', result: { outcome: 'unresolved', detail: resolvedTier.detail } };
-	}
-
-	const tier =
-		stalePayload && existing ? existing.tier : resolvedTier.unresolved ? 'free' : resolvedTier.tier;
-
-	const watermarks = advanceWatermarks(existing, payload, {
-		status: keepStatus,
-		payload: stalePayload,
-		term: staleTerm,
-		schedule: staleSchedule
-	});
-
-	const previousTier = sameIdentity ? existing.tier : undefined;
-
-	// Usage resets once per confirmed effective tier change or new subscription.
-	// Renewals, status-only events, scheduled changes, and unchanged-product
-	// remaps keep the current reset. Each reset gets a distinct timestamp so
-	// a changed quotaResetAt marks exactly one usage reset.
-	const isPlanChange = previousTier !== undefined && previousTier !== tier;
-
-	const quotaResetAt =
-		!sameIdentity || (isPlanChange && !stalePayload)
-			? Math.max(payloadPosition(payload), (existing?.quotaResetAt ?? -Infinity) + 1)
-			: existing?.quotaResetAt;
-
-	const terminalConfirmed =
-		effectiveStatus === 'cancelled' ||
-		effectiveStatus === 'expired' ||
-		effectiveStatus === 'failed';
-
-	const projected = {
-		tier,
-		status: effectiveStatus,
-		dodoProductId: payload.dodoProductId,
-		billingInterval: payload.billingInterval,
-		billingPeriodStart: payload.billingPeriodStart,
-		billingPeriodEnd: payload.billingPeriodEnd,
-		cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
-		scheduledChange: payload.scheduledChange
-	};
-
-	const access = computeAccess({ ...payload, status: effectiveStatus }, now);
-
-	// Redelivery of an already-converged projection is a no-op; watermarks
-	// advance only through the applied path.
-	const matches =
-		sameIdentity &&
-		projectionMatches(existing, projected) &&
-		existing.terminalConfirmed === terminalConfirmed;
-
-	if (
-		matches &&
-		watermarks.eventAt === existing.eventAt &&
-		watermarks.payloadEventAt === existing.payloadEventAt &&
-		watermarks.termEventAt === existing.termEventAt &&
-		watermarks.scheduleEventAt === existing.scheduleEventAt
-	) {
-		return {
-			kind: 'converged',
-			subscriptionId: existing._id,
-			observedAt: payload.source === 'observation' ? payload.observedAt : undefined
-		};
-	}
-
-	return {
-		kind: 'write',
-		now,
-		existingId: existing?._id,
-		subscription: {
-			userId,
-			tier,
-			status: effectiveStatus,
-			...watermarks,
-			providerStatus: keepStatus ? (existing?.providerStatus ?? existing?.status) : args.status,
-			projectionRevision: (existing?.projectionRevision ?? 0) + 1,
-			observedAt: payload.source === 'observation' ? payload.observedAt : existing?.observedAt,
-			checkoutAttemptId:
-				matchedAttempt?.row.attemptId ?? (sameIdentity ? existing.checkoutAttemptId : undefined),
-			accessPhase: access.accessPhase,
-			accessEndsAt: access.accessEndsAt,
-			scheduledChange: payload.scheduledChange ?? undefined,
-			billingInterval: payload.billingInterval,
-			billingPeriodStart: payload.billingPeriodStart,
-			billingPeriodEnd: payload.billingPeriodEnd,
-			billingPeriodCheckId: existing?.billingPeriodCheckId,
-			cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
-			quotaResetAt,
-			terminalConfirmed,
-			dodoSubscriptionId: payload.dodoSubscriptionId,
-			dodoProductId: payload.dodoProductId
-		},
-		paidAttempt:
-			matchedAttempt && matchedAttempt.row.outcome !== 'paid' && effectiveStatus === 'active'
-				? matchedAttempt
-				: null,
-		linkCustomer:
-			user && !user.dodoCustomerId
-				? { userId: user._id, dodoCustomerId: args.dodoCustomerId }
-				: null,
-		// Only a webhook-confirmed new identity supersedes; observations never do.
-		supersededDodoSubscriptionId:
-			payload.source === 'webhook' &&
-			existing?.dodoSubscriptionId &&
-			existing.dodoSubscriptionId !== payload.dodoSubscriptionId
-				? existing.dodoSubscriptionId
-				: null,
-		reconcileAfterWrite:
-			payload.source === 'webhook' &&
-			access.accessPhase === 'none' &&
-			!terminalConfirmed &&
-			(!sameIdentity || existing.accessPhase !== 'none' || existing.status !== effectiveStatus),
-		resetUsage: quotaResetAt !== existing?.quotaResetAt,
-		outcome: matches ? 'noop' : 'applied'
-	};
-}
-
-async function writeSubscriptionProjection(
-	ctx: MutationCtx,
-	plan: ProjectionPlan
-): Promise<ProjectionOutcome> {
-	switch (plan.kind) {
-		case 'rejected':
-			if (plan.reconcile) {
-				await ctx.scheduler.runAfter(
-					0,
-					internal.subscriptionReconciliation.queueReconciliation,
-					plan.reconcile
-				);
-			}
-
-			return plan.result;
-		case 'converged':
-			if (plan.observedAt !== undefined) {
-				await ctx.db.patch('subscriptions', plan.subscriptionId, { observedAt: plan.observedAt });
-			}
-
-			return { outcome: 'noop' };
-		case 'write':
-			return await writeProjectedSubscription(ctx, plan);
-	}
-}
-
-async function writeProjectedSubscription(
-	ctx: MutationCtx,
-	plan: ProjectionWrite
-): Promise<ProjectionOutcome> {
-	const { subscription } = plan;
-
-	if (plan.paidAttempt) {
-		await ctx.db.patch(plan.paidAttempt.table, plan.paidAttempt.row._id, {
-			outcome: 'paid',
-			outcomeUpdatedAt: plan.now,
-			checkoutUrl: undefined,
-			createRequest: undefined,
-			idempotencyKey: undefined
-		});
-	}
-
-	if (plan.linkCustomer) {
-		await ctx.db.patch('users', plan.linkCustomer.userId, {
-			dodoCustomerId: plan.linkCustomer.dodoCustomerId
-		});
-	}
-
-	if (plan.supersededDodoSubscriptionId) {
-		await ctx.db.insert('supersededSubscriptions', {
-			userId: subscription.userId,
-			dodoSubscriptionId: plan.supersededDodoSubscriptionId,
-			supersededAt: plan.now
-		});
-	}
-
-	const subscriptionId = plan.existingId ?? (await ctx.db.insert('subscriptions', subscription));
-
-	if (plan.existingId) await ctx.db.replace('subscriptions', subscriptionId, subscription);
-
-	if (plan.resetUsage) await resetUsage(ctx, subscription.userId);
-
-	await scheduleSubscriptionExpiry(ctx, { _id: subscriptionId, ...subscription });
-
-	if (plan.reconcileAfterWrite) {
-		await ctx.scheduler.runAfter(0, internal.subscriptionReconciliation.queueReconciliation, {
-			subscriptionId,
-			dodoSubscriptionId: subscription.dodoSubscriptionId,
-			projectionRevision: subscription.projectionRevision
-		});
-	}
-
-	return { outcome: plan.outcome };
-}

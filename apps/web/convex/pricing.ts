@@ -2,13 +2,10 @@
 
 import DodoPayments from 'dodopayments';
 import type { SubscriptionStatus } from 'dodopayments/resources';
-import { Webhook, WebhookVerificationError } from 'standardwebhooks';
 import { v } from 'convex/values';
-import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
 import { action, env, internalAction } from '@convex/_generated/server';
 import {
-	dodoWebhookEnvelopeSchema,
 	matchesBillingInterval,
 	readDodoEnvironment,
 	type BillingInterval,
@@ -20,7 +17,7 @@ import {
 	type PublicPricingPlan,
 	type TierPricingConfig
 } from '@convex/lib/pricingValidators';
-import { vBillingInterval, vDodoWebhookRejected } from '@convex/lib/validators';
+import { vBillingInterval } from '@convex/lib/validators';
 
 const DODO_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
 
@@ -458,129 +455,5 @@ export const getPublicCatalog = action({
 		);
 
 		return { plans };
-	}
-});
-
-export const retrieveSubscription = internalAction({
-	args: { dodoSubscriptionId: v.string() },
-	returns: v.object({
-		subscriptionId: v.string(),
-		productId: v.string(),
-		status: v.string(),
-		previousBillingDate: v.string(),
-		nextBillingDate: v.string(),
-		cancelAtNextBillingDate: v.boolean(),
-		paymentFrequencyCount: v.number(),
-		paymentFrequencyInterval: v.string(),
-		customerId: v.string(),
-		metadata: v.record(v.string(), v.string()),
-		scheduledChange: v.union(
-			v.object({ id: v.string(), productId: v.string(), effectiveAt: v.string() }),
-			v.null()
-		)
-	}),
-	handler: async (_ctx, { dodoSubscriptionId }) => {
-		const client = createDodoClient();
-
-		const subscription = await withTimeout(
-			client.subscriptions.retrieve(dodoSubscriptionId),
-			DODO_FETCH_TIMEOUT_MS,
-			`Dodo subscription ${dodoSubscriptionId} lookup`
-		);
-
-		const scheduled = subscription.scheduled_change;
-
-		return {
-			subscriptionId: subscription.subscription_id,
-			productId: subscription.product_id,
-			status: subscription.status,
-			previousBillingDate: subscription.previous_billing_date,
-			nextBillingDate: subscription.next_billing_date,
-			cancelAtNextBillingDate: subscription.cancel_at_next_billing_date,
-			paymentFrequencyCount: subscription.payment_frequency_count,
-			paymentFrequencyInterval: subscription.payment_frequency_interval,
-			customerId: subscription.customer.customer_id,
-			metadata: z.record(z.string(), z.string()).parse(subscription.metadata),
-			scheduledChange: scheduled
-				? { id: scheduled.id, productId: scheduled.product_id, effectiveAt: scheduled.effective_at }
-				: null
-		};
-	}
-});
-
-const webhookSecret = (): string => {
-	const secret = env.DODO_PAYMENTS_WEBHOOK_SECRET;
-
-	if (!secret?.trim()) throw new Error('DODO_PAYMENTS_WEBHOOK_SECRET is not configured.');
-
-	return secret.trim();
-};
-
-export const verifyWebhookSignature = internalAction({
-	args: {
-		body: v.string(),
-		webhookId: v.string(),
-		webhookSignature: v.string(),
-		webhookTimestamp: v.string()
-	},
-	returns: v.union(
-		v.object({
-			kind: v.literal('verified'),
-			eventType: v.string(),
-			eventAt: v.optional(v.number()),
-			subscriptionId: v.optional(v.string()),
-			productId: v.optional(v.string()),
-			customerId: v.optional(v.string())
-		}),
-		vDodoWebhookRejected
-	),
-	handler: async (_ctx, args) => {
-		const verifier = new Webhook(webhookSecret());
-		let payload: unknown;
-
-		try {
-			payload = verifier.verify(args.body, {
-				'webhook-id': args.webhookId,
-				'webhook-signature': args.webhookSignature,
-				'webhook-timestamp': args.webhookTimestamp
-			});
-		} catch (error) {
-			if (error instanceof WebhookVerificationError) {
-				return { kind: 'rejected' as const, reason: 'signature' as const };
-			}
-
-			// `verify` JSON-parses the body once the signature matches.
-			if (error instanceof SyntaxError) {
-				return { kind: 'rejected' as const, reason: 'payload' as const };
-			}
-
-			throw error;
-		}
-
-		const envelope = dodoWebhookEnvelopeSchema
-			.extend({
-				data: z
-					.object({
-						subscription_id: z.string().optional(),
-						product_id: z.string().optional(),
-						customer: z.object({ customer_id: z.string().optional() }).optional()
-					})
-					.optional()
-			})
-			.safeParse(payload);
-
-		if (!envelope.success) return { kind: 'rejected' as const, reason: 'payload' as const };
-
-		const { type, timestamp, data } = envelope.data;
-		const eventAt = timestamp ? Date.parse(timestamp) : Number.NaN;
-
-		return {
-			kind: 'verified' as const,
-			eventType: type,
-			eventAt: Number.isFinite(eventAt) ? eventAt : undefined,
-			subscriptionId: data?.subscription_id,
-			productId: data?.product_id,
-			customerId: data?.customer?.customer_id
-		};
 	}
 });

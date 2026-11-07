@@ -62,15 +62,12 @@ export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'
 // environment naming.
 export const vDodoMode = v.union(v.literal('test'), v.literal('live'));
 
-/** A Dodo webhook refused before persistence. `signature` also covers stale timestamps. */
-export const vDodoWebhookRejected = v.object({
-	kind: v.literal('rejected'),
-	reason: v.union(v.literal('signature'), v.literal('payload'))
-});
-
 export const vSubscriptionStatus = v.union(
+	v.literal('pending'),
 	v.literal('active'),
 	v.literal('on_hold'),
+	v.literal('past_due'),
+	v.literal('paused'),
 	v.literal('cancelled'),
 	v.literal('expired'),
 	v.literal('failed')

@@ -1,6 +1,8 @@
 import { expect, test, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread } from '@convex/test.setup';
+import { initConvexTest, insertUser, seedOwnedThread } from '@convex/test.setup';
+
+const DAY = 86_400_000;
 
 test('run backfills tool invocation IDs from source keys', async () => {
 	vi.useFakeTimers();
@@ -124,68 +126,77 @@ test('run converts context summary cutoffs to part counts and drops pricing cach
 	vi.useRealTimers();
 });
 
-test('backfillSubscriptionAccess materializes access on rows without it', async () => {
-	const now = Date.UTC(2026, 5, 15, 12);
+test('run moves tier grants to users and strips projection fields from Dodo rows', async () => {
 	vi.useFakeTimers();
-	vi.setSystemTime(now);
 	const t = initConvexTest();
-	const termEnd = now + 60_000;
 
-	const [grantId, paidId, endedId] = await t.run((ctx) =>
-		Promise.all([
-			ctx.db.insert('subscriptions', {
-				userId: 'grant',
-				tier: 'pro',
-				status: 'active',
-				eventAt: 0
-			}),
-			ctx.db.insert('subscriptions', {
-				userId: 'paid',
-				tier: 'pro',
-				status: 'active',
-				eventAt: now,
-				dodoSubscriptionId: 'sub_paid',
-				billingPeriodStart: now - 60_000,
-				billingPeriodEnd: termEnd
-			}),
-			ctx.db.insert('subscriptions', {
-				userId: 'ended',
-				tier: 'pro',
-				status: 'cancelled',
-				eventAt: now,
-				dodoSubscriptionId: 'sub_ended',
-				billingPeriodStart: now - 60_000,
-				billingPeriodEnd: termEnd
-			})
-		])
-	);
+	const { grantUserId, paidId, checkId } = await t.run(async (ctx) => {
+		const checkId = await ctx.scheduler.runAfter(
+			DAY,
+			internal.billingAudit.deleteWebhookEvents,
+			{}
+		);
+
+		const grantUserId = await insertUser(ctx, 'grant');
+		await ctx.db.insert('subscriptions', { userId: 'grant', tier: 'pro', status: 'active' });
+		await ctx.db.insert('subscriptions', { userId: 'bootstrap', tier: 'free', status: 'active' });
+		await ctx.db.insert('subscriptionReconciliations', { subscriptionId: 'retired' });
+		await ctx.db.insert('supersededSubscriptions', { dodoSubscriptionId: 'sub_retired' });
+
+		const paidId = await ctx.db.insert('subscriptions', {
+			userId: 'paid',
+			tier: 'pro',
+			status: 'active',
+			eventAt: 1,
+			dodoSubscriptionId: 'sub_paid',
+			dodoProductId: 'prod_pro',
+			billingPeriodStart: 1,
+			billingPeriodEnd: 2,
+			cancelAtNextBillingDate: false,
+			accessPhase: 'paid',
+			billingPeriodCheckId: checkId,
+			quotaResetAt: 5,
+			quotaGeneration: 2
+		});
+
+		return { grantUserId, paidId, checkId };
+	});
 
 	await t.mutation(internal.migrations.run, {});
 
-	for (let step = 0; step < 10; step += 1) {
+	for (let step = 0; step < 30; step += 1) {
 		vi.advanceTimersByTime(1);
 		await t.finishInProgressScheduledFunctions();
 	}
 
-	const [grant, paid, ended] = await t.run((ctx) =>
-		Promise.all([
-			ctx.db.get('subscriptions', grantId),
-			ctx.db.get('subscriptions', paidId),
-			ctx.db.get('subscriptions', endedId)
-		])
-	);
+	const state = await t.run(async (ctx) => ({
+		grantUser: await ctx.db.get('users', grantUserId),
+		subscriptions: await ctx.db.query('subscriptions').collect(),
+		paid: await ctx.db.get('subscriptions', paidId),
+		check: await ctx.db.system.get('_scheduled_functions', checkId),
+		retired: [
+			...(await ctx.db.query('subscriptionReconciliations').collect()),
+			...(await ctx.db.query('supersededSubscriptions').collect())
+		]
+	}));
 
-	expect(grant?.accessPhase).toBe('paid');
-	expect(paid).toMatchObject({ accessPhase: 'paid', accessEndsAt: termEnd });
-	expect(ended?.accessPhase).toBe('none');
-
-	const checkId = paid?.billingPeriodCheckId;
-
-	const check = checkId
-		? await t.run((ctx) => ctx.db.system.get('_scheduled_functions', checkId))
-		: null;
-
-	expect(check?.scheduledTime).toBe(termEnd);
+	expect(state.grantUser?.grantedTier).toBe('pro');
+	expect(state.subscriptions).toHaveLength(1);
+	expect(state.paid).toEqual({
+		_id: paidId,
+		_creationTime: expect.any(Number),
+		userId: 'paid',
+		status: 'active',
+		dodoSubscriptionId: 'sub_paid',
+		dodoProductId: 'prod_pro',
+		billingPeriodStart: 1,
+		billingPeriodEnd: 2,
+		cancelAtNextBillingDate: false,
+		quotaResetAt: 5,
+		syncedAt: 0
+	});
+	expect(state.check?.state.kind).toBe('canceled');
+	expect(state.retired).toEqual([]);
 	vi.useRealTimers();
 });
 
@@ -232,32 +243,5 @@ test('run removes stored question settle timestamps', async () => {
 	const question = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
 	expect(question).not.toHaveProperty('answeredAt');
 	expect(question?.status).toBe('skipped');
-	vi.useRealTimers();
-});
-
-test('run removes stored quota generations and keeps the usage reset key', async () => {
-	vi.useFakeTimers();
-	const t = initConvexTest();
-
-	const subscriptionId = await t.run((ctx) =>
-		ctx.db.insert('subscriptions', {
-			userId: 'quota',
-			tier: 'pro',
-			status: 'active',
-			eventAt: 1,
-			accessPhase: 'none',
-			quotaResetAt: 5,
-			quotaGeneration: 2,
-			quotaTransitionAt: 5
-		})
-	);
-
-	await t.mutation(internal.migrations.run, {});
-	await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-	const subscription = await t.run((ctx) => ctx.db.get('subscriptions', subscriptionId));
-	expect(subscription).not.toHaveProperty('quotaGeneration');
-	expect(subscription).not.toHaveProperty('quotaTransitionAt');
-	expect(subscription?.quotaResetAt).toBe(5);
 	vi.useRealTimers();
 });

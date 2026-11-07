@@ -1,9 +1,6 @@
-import type { Doc } from '@convex/_generated/dataModel';
-import { accessPhaseAt, type AccessClock } from '@convex/lib/tiers';
+import type { PaidTerm } from '@convex/lib/tiers';
 
 type UsageWindow = { start: number; end: number };
-
-export type BillingWindowSubscription = AccessClock & Pick<Doc<'subscriptions'>, 'billingInterval'>;
 
 function utcMonth(year: number, month: number, day: number, anchor: Date): number {
 	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
@@ -19,38 +16,20 @@ function utcMonth(year: number, month: number, day: number, anchor: Date): numbe
 	);
 }
 
-export function billingWindow(
-	subscription: BillingWindowSubscription | null,
-	now: number = Date.now()
-): UsageWindow {
+/** Free and granted tiers use calendar months; paid terms use their Dodo billing period. */
+export function billingWindow(term: PaidTerm | null, now: number): UsageWindow {
 	const date = new Date(now);
-	const access = subscription ? accessPhaseAt(subscription, now) : 'none';
-	const paid = subscription !== null && access !== 'none' && !!subscription.dodoSubscriptionId;
 
-	if (paid && subscription.billingInterval === 'monthly') {
-		if (
-			subscription.billingPeriodStart === undefined ||
-			subscription.billingPeriodEnd === undefined
-		) {
-			throw new Error('Monthly subscription is missing its Dodo billing dates.');
-		}
-
-		return { start: subscription.billingPeriodStart, end: subscription.billingPeriodEnd };
+	if (term?.interval === 'monthly') {
+		return { start: term.billingPeriodStart, end: term.billingPeriodEnd };
 	}
 
-	if (paid && subscription.billingInterval === 'annual') {
-		if (
-			subscription.billingPeriodStart === undefined ||
-			subscription.billingPeriodEnd === undefined
-		) {
-			throw new Error('Annual subscription is missing its Dodo billing date.');
-		}
-
-		const termEnd = subscription.billingPeriodEnd;
-
-		const anchor = new Date(subscription.billingPeriodStart);
+	if (term?.interval === 'annual') {
+		const termEnd = term.billingPeriodEnd;
+		const anchor = new Date(term.billingPeriodStart);
 		const firstMonth = anchor.getUTCFullYear() * 12 + anchor.getUTCMonth();
-		const effectiveNow = access === 'renewal_processing' ? Math.min(now, termEnd - 1) : now;
+		// During renewal grace the last subwindow stays open.
+		const effectiveNow = Math.min(now, termEnd - 1);
 		const effectiveDate = new Date(effectiveNow);
 		const currentMonth = effectiveDate.getUTCFullYear() * 12 + effectiveDate.getUTCMonth();
 
@@ -72,8 +51,8 @@ export function billingWindow(
 			if (offset <= 0) {
 				// The whole confirmed term is shorter than one subwindow; report the
 				// positive term itself.
-				if (termEnd > subscription.billingPeriodStart) {
-					return { start: subscription.billingPeriodStart, end: termEnd };
+				if (termEnd > term.billingPeriodStart) {
+					return { start: term.billingPeriodStart, end: termEnd };
 				}
 
 				throw new Error('Annual subscription term is not positive.');

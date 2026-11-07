@@ -176,8 +176,6 @@ export function initConvexTest(): ConvexTestInstance {
 	workpoolTest.register(t, 'webSearchWorkpool');
 	workpoolTest.register(t, 'contextDevWorkpool');
 	workpoolTest.register(t, 'firecrawlScrapeWorkpool');
-	workpoolTest.register(t, 'billingWebhookWorkpool');
-	workpoolTest.register(t, 'billingReconciliationWorkpool');
 	posthogTest.register(t);
 
 	return t;

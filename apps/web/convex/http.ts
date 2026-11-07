@@ -5,45 +5,19 @@ import { parseAgentcardWebhook, verifyAgentcardSignature } from '@convex/lib/pay
 
 const http = httpRouter();
 
-// Acknowledge only after the signed event is durably persisted; processing
-// continues asynchronously from the ledger. Invalid signatures are rejected
-// before persistence.
+// Handles the event before acknowledging. Any throw answers 500, so Dodo redelivers.
 http.route({
 	path: '/dodopayments-webhook',
 	method: 'POST',
 	handler: httpAction(async (ctx, request) => {
-		const webhookId = request.headers.get('webhook-id');
-		const webhookSignature = request.headers.get('webhook-signature');
-		const webhookTimestamp = request.headers.get('webhook-timestamp');
-
-		if (!webhookId || !webhookSignature || !webhookTimestamp) {
-			return new Response('Missing webhook headers.', { status: 400 });
-		}
-
-		const body = await request.text();
-
-		const result = await ctx
-			.runAction(internal.billingWebhook.ingest, {
-				body,
-				webhookId,
-				webhookSignature,
-				webhookTimestamp
-			})
-			.catch(() => null);
-
-		// Our misconfiguration or a transient storage failure: 500 so Dodo retries.
-		if (!result) return new Response('Webhook ingestion failed.', { status: 500 });
-
-		if (result.kind === 'rejected') {
-			return result.reason === 'signature'
-				? new Response('Webhook verification failed.', { status: 401 })
-				: new Response('Malformed webhook payload.', { status: 400 });
-		}
-
-		return new Response(JSON.stringify({ received: true }), {
-			status: 200,
-			headers: { 'Content-Type': 'application/json' }
+		const result = await ctx.runAction(internal.dodo.handleWebhook, {
+			body: await request.text(),
+			headers: Object.fromEntries(request.headers.entries())
 		});
+
+		return result === 'invalid'
+			? new Response('Webhook verification failed.', { status: 401 })
+			: new Response(null, { status: 204 });
 	})
 });
 

@@ -1,22 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { billingWindow, type BillingWindowSubscription } from './billingWindows';
+import { billingWindow } from './billingWindows';
 
 const timestamp = (value: string) => Date.parse(value);
 
-function paidSubscription(
-	interval: 'monthly' | 'annual',
-	start: string,
-	end: string,
-	overrides: Partial<BillingWindowSubscription> = {}
-) {
-	return {
-		status: 'active' as const,
-		dodoSubscriptionId: 'sub_test',
-		billingInterval: interval,
-		billingPeriodStart: timestamp(start),
-		billingPeriodEnd: timestamp(end),
-		...overrides
-	};
+function paidSubscription(interval: 'monthly' | 'annual', start: string, end: string) {
+	return { interval, billingPeriodStart: timestamp(start), billingPeriodEnd: timestamp(end) };
 }
 
 describe('UTC usage windows', () => {
@@ -52,17 +40,6 @@ describe('UTC usage windows', () => {
 		});
 	});
 
-	it('keeps operator grants on calendar windows even with billing dates present', () => {
-		const grant = paidSubscription('annual', '2026-01-31T18:45:11Z', '2027-01-31T18:45:11Z', {
-			dodoSubscriptionId: undefined
-		});
-
-		expect(billingWindow(grant, timestamp('2026-02-28T18:45:10Z'))).toEqual({
-			start: timestamp('2026-02-01T00:00:00Z'),
-			end: timestamp('2026-03-01T00:00:00Z')
-		});
-	});
-
 	it('clamps annual subwindows to the confirmed term end and stays positive', () => {
 		const paid = paidSubscription('annual', '2026-01-15T00:00:00Z', '2027-01-15T00:00:00Z');
 
@@ -80,12 +57,18 @@ describe('UTC usage windows', () => {
 		expect(shortWindow.end).toBeGreaterThan(shortWindow.start);
 	});
 
-	it('freezes the paid monthly window during renewal-processing grace', () => {
+	it('keeps the last paid window open during renewal grace', () => {
 		const paid = paidSubscription('monthly', '2026-01-15T00:00:00Z', '2026-02-15T00:00:00Z');
 
 		expect(billingWindow(paid, timestamp('2026-02-15T00:30:00Z'))).toEqual({
 			start: timestamp('2026-01-15T00:00:00Z'),
 			end: timestamp('2026-02-15T00:00:00Z')
+		});
+
+		const annual = paidSubscription('annual', '2026-01-15T00:00:00Z', '2027-01-15T00:00:00Z');
+		expect(billingWindow(annual, timestamp('2027-01-15T00:30:00Z'))).toEqual({
+			start: timestamp('2026-12-15T00:00:00Z'),
+			end: timestamp('2027-01-15T00:00:00Z')
 		});
 	});
 });
