@@ -4,10 +4,8 @@ import {
 	MINUTE,
 	RateLimiter,
 	SECOND,
-	calculateRateLimit,
 	type MutationCtx,
-	type QueryCtx,
-	type RateLimitConfig
+	type QueryCtx
 } from '@convex-dev/rate-limiter';
 import { components } from '@convex/_generated/api';
 import type { DataModel } from '@convex/_generated/dataModel';
@@ -32,14 +30,7 @@ const METER_CAPACITY = 4_000_000_000_000_000;
 
 const STORAGE_PERIOD = 365 * DAY;
 
-type MeterWindowSubscription = BillingWindowSubscription & {
-	quotaGeneration?: number;
-	quotaResetAt?: number;
-};
-
-function quotaGenerationOf(subscription: MeterWindowSubscription | null): number | undefined {
-	return subscription?.quotaResetAt ?? subscription?.quotaGeneration;
-}
+type MeterWindowSubscription = BillingWindowSubscription & { quotaResetAt?: number };
 
 // The stored limit names and window keys keep their "monthly" component so
 // existing buckets stay readable after weekly limits were removed.
@@ -59,7 +50,7 @@ function meterWindowConfig(
 	const { start, end } = billingWindow(subscription, now);
 
 	return {
-		key: windowKey(userId, start, quotaGenerationOf(subscription)),
+		key: windowKey(userId, start, subscription?.quotaResetAt),
 		config: { kind: 'fixed window' as const, period: STORAGE_PERIOD, rate: METER_CAPACITY, start },
 		start,
 		end
@@ -70,7 +61,6 @@ async function usedInWindow(
 	ctx: QueryCtx,
 	meterId: UsageMeterId,
 	userId: string,
-	limits: TierLimits,
 	subscription: MeterWindowSubscription | null,
 	now: number
 ) {
@@ -81,35 +71,7 @@ async function usedInWindow(
 		config: window.config
 	});
 
-	if (stored.ts !== 0) {
-		return { used: Math.max(0, METER_CAPACITY - stored.value), window, migrated: true };
-	}
-
-	if (quotaGenerationOf(subscription) !== undefined) return { used: 0, window, migrated: true };
-
-	const oldConfig: RateLimitConfig = {
-		kind: 'fixed window',
-		period: 30 * DAY,
-		rate: limits[meterId]
-	};
-
-	const old = await rateLimiter.getValue(ctx, meterLimitName(meterId), {
-		key: userId,
-		config: oldConfig
-	});
-
-	if (old.ts === 0) return { used: 0, window, migrated: true };
-
-	const current = calculateRateLimit({ value: old.value, ts: old.ts }, oldConfig, now);
-
-	return {
-		used:
-			current.ts >= window.start && current.ts < window.end
-				? Math.max(0, oldConfig.rate - current.value)
-				: 0,
-		window,
-		migrated: false
-	};
+	return { used: stored.ts === 0 ? 0 : Math.max(0, METER_CAPACITY - stored.value), window };
 }
 
 function meterLimitLabel(meterId: UsageMeterId): string {
@@ -150,7 +112,7 @@ async function blockedMeterLimit(
 	subscription: MeterWindowSubscription | null,
 	now: number
 ): Promise<{ retryAfter: number } | undefined> {
-	const { window, used } = await usedInWindow(ctx, meterId, userId, limits, subscription, now);
+	const { window, used } = await usedInWindow(ctx, meterId, userId, subscription, now);
 
 	if (used < limits[meterId]) return undefined;
 
@@ -205,19 +167,12 @@ async function chargeMeterLimits(
 	now: number,
 	count: number
 ): Promise<boolean> {
-	const { window, used, migrated } = await usedInWindow(
-		ctx,
-		meterId,
-		userId,
-		limits,
-		subscription,
-		now
-	);
+	const { window, used } = await usedInWindow(ctx, meterId, userId, subscription, now);
 
 	await rateLimiter.limit(ctx, meterLimitName(meterId), {
 		key: window.key,
 		config: window.config,
-		count: count + (migrated ? 0 : used),
+		count,
 		reserve: true
 	});
 
@@ -232,7 +187,7 @@ export async function getMeterWindow(
 	subscription: MeterWindowSubscription | null,
 	now: number = Date.now()
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
-	const { used, window } = await usedInWindow(ctx, meterId, userId, limits, subscription, now);
+	const { used, window } = await usedInWindow(ctx, meterId, userId, subscription, now);
 
 	return {
 		used,

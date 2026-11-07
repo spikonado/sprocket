@@ -120,8 +120,8 @@ describe('subscription projection ordering', () => {
 		const forward = await converge(winner, loser);
 		const reverse = await converge(loser, winner);
 
-		expect(forward.quotaGeneration).toBe(1);
-		expect(reverse.quotaGeneration).toBe(2);
+		expect(forward.quotaResetAt).toBe(now);
+		expect(reverse.quotaResetAt).toBe(now + 1);
 		expect(reverse).toMatchObject({
 			status: forward.status,
 			dodoProductId: forward.dodoProductId,
@@ -147,7 +147,7 @@ describe('subscription projection ordering', () => {
 		expect(afterRenew).toMatchObject({
 			eventAt: now + 5_000,
 			payloadEventAt: now + 5_000,
-			quotaGeneration: 1
+			quotaResetAt: now
 		});
 
 		const stale = await t.mutation(
@@ -169,7 +169,7 @@ describe('subscription projection ordering', () => {
 			eventAt: now + 5_000,
 			cancelAtNextBillingDate: false,
 			billingPeriodEnd: termEnd,
-			quotaGeneration: 1
+			quotaResetAt: now
 		});
 	});
 
@@ -179,7 +179,7 @@ describe('subscription projection ordering', () => {
 
 		await t.mutation(internal.billing.upsertDodoSubscription, webhookArgs());
 		const before = (await readSubscription(t))!;
-		expect(before.quotaGeneration).toBe(1);
+		expect(before.quotaResetAt).toBe(now);
 
 		const observedAt = now + 60_000;
 
@@ -195,8 +195,7 @@ describe('subscription projection ordering', () => {
 		expect(afterObservation).toMatchObject({
 			tier: 'max',
 			dodoProductId: 'prod_max',
-			quotaGeneration: 2,
-			quotaTransitionAt: observedAt,
+			quotaResetAt: observedAt,
 			observedAt,
 			eventAt: now,
 			payloadEventAt: now,
@@ -217,8 +216,7 @@ describe('subscription projection ordering', () => {
 		const afterWebhook = (await readSubscription(t))!;
 		expect(afterWebhook).toMatchObject({
 			tier: 'max',
-			quotaGeneration: 2,
-			quotaTransitionAt: observedAt,
+			quotaResetAt: observedAt,
 			eventAt: now + 1_000,
 			payloadEventAt: now + 1_000,
 			termEventAt: now + 1_000
@@ -287,7 +285,6 @@ describe('subscription projection ordering', () => {
 			expect(await readSubscription(t)).toMatchObject({
 				tier: 'max',
 				status: 'on_hold',
-				quotaGeneration: 2,
 				quotaResetAt: now + 1_000
 			});
 			await t.mutation(
@@ -297,7 +294,6 @@ describe('subscription projection ordering', () => {
 			expect(await readSubscription(t)).toMatchObject({
 				tier: 'max',
 				status: 'active',
-				quotaGeneration: 2,
 				quotaResetAt: now + 1_000
 			});
 		}
@@ -320,7 +316,7 @@ describe('subscription projection ordering', () => {
 		expect(result.outcome).toBe('unresolved');
 		expect(await readSubscription(t)).toMatchObject({
 			tier: 'max',
-			quotaGeneration: 2,
+			quotaResetAt: now + 60_000,
 			payloadEventAt: now
 		});
 	});

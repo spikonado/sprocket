@@ -1423,26 +1423,16 @@ async function planSubscriptionProjection(
 
 	const previousTier = sameIdentity ? existing.tier : undefined;
 
-	// Usage generation resets once per confirmed effective tier change or new
-	// subscription. Renewals, status-only events, scheduled changes, and
-	// unchanged-product remaps never mint a fresh generation.
+	// Usage resets once per confirmed effective tier change or new subscription.
+	// Renewals, status-only events, scheduled changes, and unchanged-product
+	// remaps keep the current reset. Each reset gets a distinct timestamp
+	// because it keys the usage bucket.
 	const isPlanChange = previousTier !== undefined && previousTier !== tier;
 
-	const priorGeneration = existing?.quotaGeneration ?? existing?.quotaResetAt;
-	const transitionAt = payloadPosition(payload);
-
-	const resets =
+	const quotaResetAt =
 		!sameIdentity || (isPlanChange && !stalePayload)
-			? {
-					generation: (priorGeneration ?? 0) + 1,
-					transitionAt,
-					resetAt: Math.max(transitionAt, (existing?.quotaResetAt ?? -Infinity) + 1)
-				}
-			: {
-					generation: priorGeneration,
-					transitionAt: existing?.quotaTransitionAt,
-					resetAt: existing?.quotaResetAt
-				};
+			? Math.max(payloadPosition(payload), (existing?.quotaResetAt ?? -Infinity) + 1)
+			: existing?.quotaResetAt;
 
 	const terminalConfirmed =
 		effectiveStatus === 'cancelled' ||
@@ -1505,9 +1495,7 @@ async function planSubscriptionProjection(
 			billingPeriodEnd: payload.billingPeriodEnd,
 			billingPeriodCheckId: existing?.billingPeriodCheckId,
 			cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
-			quotaGeneration: resets.generation ?? existing?.quotaGeneration,
-			quotaTransitionAt: resets.transitionAt ?? existing?.quotaTransitionAt,
-			quotaResetAt: resets.resetAt,
+			quotaResetAt,
 			terminalConfirmed,
 			dodoSubscriptionId: payload.dodoSubscriptionId,
 			dodoProductId: payload.dodoProductId

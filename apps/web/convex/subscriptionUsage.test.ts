@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, components, internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { initConvexTest, seedTiers, type ConvexTestInstance } from './test.setup';
@@ -84,7 +84,7 @@ describe('subscription and usage backend', () => {
 		});
 	});
 
-	it('gives Max $500 of monthly usage and mirrors it in the released windows shape', async () => {
+	it('gives Max $500 of monthly usage', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 		const userId = 'user_max';
@@ -104,14 +104,11 @@ describe('subscription and usage backend', () => {
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
 
-		const window = {
+		expect(usage.meters[0]).toMatchObject({
 			used: 0,
 			limit: 500 * MODEL_USAGE_UNITS_PER_DOLLAR,
 			resetsAt: expect.any(Number)
-		};
-
-		expect(usage.meters[0]).toMatchObject(window);
-		expect(usage.meters[0]?.windows).toEqual([{ period: 'monthly', ...window }]);
+		});
 	});
 
 	it('reports usage overdraft and preserves it', async () => {
@@ -135,37 +132,6 @@ describe('subscription and usage backend', () => {
 				userId
 			})
 		).rejects.toThrow(/Usage limit reached/);
-	});
-
-	it('carries old first-use usage into the calendar window on the first new charge', async () => {
-		vi.setSystemTime(Date.parse('2026-02-10T00:00:00Z'));
-		const t = initConvexTest();
-		await seedTiers(t);
-		const userId = 'user_legacy_usage';
-
-		await t.mutation(components.rateLimiter.lib.rateLimit, {
-			name: 'modelUsageMonthly',
-			key: userId,
-			config: {
-				kind: 'fixed window',
-				rate: 15 * MODEL_USAGE_UNITS_PER_DOLLAR,
-				period: 30 * 86_400_000,
-				start: Date.parse('2026-02-03T00:00:00Z')
-			},
-			count: 2 * MODEL_USAGE_UNITS_PER_DOLLAR,
-			reserve: true
-		});
-		const asUser = t.withIdentity({ subject: userId });
-
-		const used = async () =>
-			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.used;
-
-		expect(await used()).toBe(2 * MODEL_USAGE_UNITS_PER_DOLLAR);
-		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
-			userId,
-			count: MODEL_USAGE_UNITS_PER_DOLLAR
-		});
-		expect(await used()).toBe(3 * MODEL_USAGE_UNITS_PER_DOLLAR);
 	});
 
 	it('rolls the monthly usage window when the client supplies a later now', async () => {
@@ -505,7 +471,7 @@ describe('subscription and usage backend', () => {
 
 		expect(await monthlyUsage()).toBe(8 * MODEL_USAGE_UNITS_PER_DOLLAR);
 
-		const quotaGeneration = async () =>
+		const quotaResetAt = async () =>
 			(
 				await t.run((ctx) =>
 					ctx.db
@@ -513,9 +479,9 @@ describe('subscription and usage backend', () => {
 						.withIndex('by_userId', (query) => query.eq('userId', subscription.userId))
 						.unique()
 				)
-			)?.quotaGeneration;
+			)?.quotaResetAt;
 
-		const generationBefore = await quotaGeneration();
+		const resetBefore = await quotaResetAt();
 
 		const renewed = await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
@@ -526,7 +492,7 @@ describe('subscription and usage backend', () => {
 
 		expect(renewed.outcome).toBe('applied');
 		expect(await monthlyUsage()).toBe(0);
-		expect(await quotaGeneration()).toBe(generationBefore);
+		expect(await quotaResetAt()).toBe(resetBefore);
 
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
@@ -540,7 +506,7 @@ describe('subscription and usage backend', () => {
 			billingPeriodStart: now + 30 * 86_400_000,
 			billingPeriodEnd: now + 60 * 86_400_000
 		});
-		expect(await quotaGeneration()).toBe(generationBefore);
+		expect(await quotaResetAt()).toBe(resetBefore);
 	});
 
 	it('an older redelivered plan-change event cannot mint a second reset', async () => {
