@@ -471,6 +471,7 @@ function createMainWindow() {
 	});
 
 	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
+		if (mainWindow.isDestroyed() || mainWindow !== mainWindowRef) return;
 		fatalQuit('Failed to load Sprocket', error);
 	});
 
