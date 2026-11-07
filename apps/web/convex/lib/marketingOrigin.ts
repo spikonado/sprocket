@@ -28,7 +28,7 @@ export function resolveMarketingPricingUrls(
 	tierId: string,
 	attemptId?: string
 ) {
-	const allowed = new Set(['https://spikonado.com']);
+	const allowed = new Set(['https://spikonado.com', 'https://usesprocket.dev']);
 
 	if (env.DODO_PAYMENTS_ENVIRONMENT === 'test_mode') {
 		allowed.add('http://localhost:4321');
