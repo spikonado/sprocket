@@ -12,6 +12,7 @@ import type { UserIdentity } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
 import { grantForPayment } from '@convex/lib/credits';
 import { readDodoEnvironment } from '@convex/lib/dodoProducts';
+import type { CreditPackTerms } from '@convex/lib/pricingValidators';
 import { resolvePlan } from '@convex/lib/tiers';
 import {
 	vBillingInterval,
@@ -63,7 +64,7 @@ async function startCheckout(
 		pageParams
 	}: {
 		productId: string;
-		creditPack?: { units: number; expiresAfterDays: number };
+		creditPack?: CreditPackTerms;
 		pageParams: Record<string, string>;
 	}
 ): Promise<CheckoutStart> {

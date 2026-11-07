@@ -1,5 +1,19 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import { utcMonth } from '@convex/lib/billingWindows';
+import type { CreditPackExpiry } from '@convex/lib/pricingValidators';
+
+const DAY = 24 * 60 * 60 * 1_000;
+
+/** Months and years land on the same UTC day, or the last day of a shorter month. */
+export function creditExpiresAt(paidAt: number, { count, unit }: CreditPackExpiry): number {
+	if (unit === 'day') return paidAt + count * DAY;
+
+	const paid = new Date(paidAt);
+	const months = unit === 'year' ? count * 12 : count;
+
+	return utcMonth(paid.getUTCFullYear(), paid.getUTCMonth() + months, paid.getUTCDate(), paid);
+}
 
 export function grantForPayment(ctx: QueryCtx, paymentId: string) {
 	return ctx.db

@@ -16,7 +16,7 @@ import {
 	readDodoEnvironment,
 	type BillingInterval
 } from '@convex/lib/dodoProducts';
-import type { PackPrice, Price } from '@convex/lib/pricingValidators';
+import { vCreditPackTerms, type PackPrice, type Price } from '@convex/lib/pricingValidators';
 import { vCheckoutAttemptStatus } from '@convex/lib/validators';
 
 export const LIVE_SUBSCRIPTION_CHECKOUT_ERROR =
@@ -49,7 +49,8 @@ const dodoPayment = z.object({
 const checkoutMetadata = z.object({
 	userId: z.string().optional(),
 	creditUnits: z.coerce.number().optional(),
-	creditDays: z.coerce.number().optional()
+	creditExpiresAfterCount: z.coerce.number().optional(),
+	creditExpiresAfterUnit: z.enum(['day', 'month', 'year']).optional()
 });
 
 function createDodoClient(): DodoPayments {
@@ -121,9 +122,15 @@ async function syncPayment(
 	);
 
 	const [item] = payment.product_cart ?? [];
-	const { userId, creditUnits, creditDays } = checkoutMetadata.parse(payment.metadata);
 
-	if (!item || creditUnits === undefined || creditDays === undefined) return;
+	const {
+		userId,
+		creditUnits,
+		creditExpiresAfterCount: count,
+		creditExpiresAfterUnit: unit
+	} = checkoutMetadata.parse(payment.metadata);
+
+	if (!item || creditUnits === undefined || count === undefined || unit === undefined) return;
 
 	await ctx.runMutation(internal.credits.syncPayment, {
 		paymentId: payment.payment_id,
@@ -138,7 +145,7 @@ async function syncPayment(
 		metadataUserId: userId,
 		productId: item.product_id,
 		units: creditUnits,
-		expiresAfterDays: creditDays
+		expiresAfter: { count, unit }
 	});
 }
 
@@ -233,7 +240,7 @@ export const createCheckout = internalAction({
 		name: v.string(),
 		productId: v.string(),
 		// Present for a pack; subscriptions refuse a second live subscription instead.
-		creditPack: v.optional(v.object({ units: v.number(), expiresAfterDays: v.number() })),
+		creditPack: v.optional(vCreditPackTerms),
 		returnUrl: v.string(),
 		cancelUrl: v.string()
 	},
@@ -256,12 +263,14 @@ export const createCheckout = internalAction({
 				userId: args.userId,
 				...(args.creditPack && {
 					creditUnits: String(args.creditPack.units),
-					creditDays: String(args.creditPack.expiresAfterDays)
+					creditExpiresAfterCount: String(args.creditPack.expiresAfter.count),
+					creditExpiresAfterUnit: args.creditPack.expiresAfter.unit
 				})
 			},
 			return_url: args.returnUrl,
 			cancel_url: args.cancelUrl,
 			feature_flags: {
+				single_page: true,
 				allow_discount_code: true,
 				allow_customer_editing_email: false,
 				always_create_new_customer: false

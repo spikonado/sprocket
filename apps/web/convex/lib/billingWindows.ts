@@ -2,7 +2,7 @@ import type { PaidTerm } from '@convex/lib/tiers';
 
 type UsageWindow = { start: number; end: number };
 
-function utcMonth(year: number, month: number, day: number, anchor: Date): number {
+export function utcMonth(year: number, month: number, day: number, anchor: Date): number {
 	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 
 	return Date.UTC(

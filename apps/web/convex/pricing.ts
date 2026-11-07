@@ -64,9 +64,8 @@ export const getCatalog = internalQuery({
 
 		const creditPacks = packs.map((pack) => ({
 			productId: pack.productId,
-			label: pack.label,
 			usageDollars: pack.units / MODEL_USAGE_UNITS_PER_DOLLAR,
-			expiresAfterDays: pack.expiresAfterDays,
+			expiresAfter: pack.expiresAfter,
 			price: currentPrice(pack.productId, pack.price)
 		}));
 

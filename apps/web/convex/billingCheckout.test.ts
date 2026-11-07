@@ -164,16 +164,14 @@ describe('checkout', () => {
 			await insertUser(ctx, 'owner', 'cus_owner');
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_pack',
-				label: 'Pack',
 				units: 1,
-				expiresAfterDays: 30,
+				expiresAfter: { count: 3, unit: 'month' },
 				price: { productId: 'prod_pack', amountMinor: 500, currency: 'USD' }
 			});
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_unpriced',
-				label: 'Pack the price sync has not confirmed',
 				units: 1,
-				expiresAfterDays: 30
+				expiresAfter: { count: 30, unit: 'day' }
 			});
 		});
 		const requests = stubDodo({ subscriptionStatuses: ['active'] });
@@ -191,7 +189,12 @@ describe('checkout', () => {
 		expect(paths(requests)).toEqual(['POST /checkouts']);
 		expect(await requests[0]?.json()).toMatchObject({
 			product_cart: [{ product_id: 'prod_pack', quantity: 1 }],
-			metadata: { userId: 'owner', creditUnits: '1', creditDays: '30' },
+			metadata: {
+				userId: 'owner',
+				creditUnits: '1',
+				creditExpiresAfterCount: '3',
+				creditExpiresAfterUnit: 'month'
+			},
 			customer: { customer_id: 'cus_owner' },
 			return_url: 'https://spikonado.com/pricing?checkout=return&pack=prod_pack'
 		});

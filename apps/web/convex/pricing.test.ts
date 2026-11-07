@@ -47,16 +47,14 @@ describe('public pricing catalog', () => {
 			});
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_pack_large',
-				label: '$50 of usage',
 				units: 50 * MODEL_USAGE_UNITS_PER_DOLLAR,
-				expiresAfterDays: 365,
+				expiresAfter: { count: 1, unit: 'year' },
 				price: { productId: 'prod_pack_large', amountMinor: 5_000, currency: 'USD' }
 			});
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_pack_small',
-				label: '$10 of usage',
 				units: 10 * MODEL_USAGE_UNITS_PER_DOLLAR,
-				expiresAfterDays: 90,
+				expiresAfter: { count: 90, unit: 'day' },
 				price: { productId: 'prod_pack_retired', amountMinor: 1_000, currency: 'USD' }
 			});
 		});
@@ -97,16 +95,14 @@ describe('public pricing catalog', () => {
 			creditPacks: [
 				{
 					productId: 'prod_pack_small',
-					label: '$10 of usage',
 					usageDollars: 10,
-					expiresAfterDays: 90,
+					expiresAfter: { count: 90, unit: 'day' },
 					price: null
 				},
 				{
 					productId: 'prod_pack_large',
-					label: '$50 of usage',
 					usageDollars: 50,
-					expiresAfterDays: 365,
+					expiresAfter: { count: 1, unit: 'year' },
 					price: { productId: 'prod_pack_large', amountMinor: 5_000, currency: 'USD' }
 				}
 			]
@@ -169,15 +165,13 @@ describe('public pricing catalog', () => {
 			});
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_pack',
-				label: 'Pack',
 				units: 1,
-				expiresAfterDays: 30
+				expiresAfter: { count: 30, unit: 'day' }
 			});
 			await ctx.db.insert('creditPacks', {
 				productId: 'prod_monthly',
-				label: 'Misconfigured pack',
 				units: 1,
-				expiresAfterDays: 30,
+				expiresAfter: { count: 30, unit: 'day' },
 				price: { productId: 'prod_monthly', amountMinor: 1, currency: 'USD' }
 			});
 		});

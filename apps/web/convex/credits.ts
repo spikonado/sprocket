@@ -1,10 +1,8 @@
 import { v } from 'convex/values';
 import { internalMutation, internalQuery, type QueryCtx } from '@convex/_generated/server';
 import { resolveCustomerOwner } from '@convex/billingCustomers';
-import { grantForPayment } from '@convex/lib/credits';
-import { vPackPrice } from '@convex/lib/pricingValidators';
-
-const DAY = 24 * 60 * 60 * 1_000;
+import { creditExpiresAt, grantForPayment } from '@convex/lib/credits';
+import { vCreditPackExpiry, vCreditPackTerms, vPackPrice } from '@convex/lib/pricingValidators';
 
 function getPackRow(ctx: QueryCtx, productId: string) {
 	return ctx.db
@@ -16,13 +14,13 @@ function getPackRow(ctx: QueryCtx, productId: string) {
 /** A pack is sellable once the price sync confirmed its product is a paid one-time product. */
 export const getSellablePack = internalQuery({
 	args: { productId: v.string() },
-	returns: v.union(v.object({ units: v.number(), expiresAfterDays: v.number() }), v.null()),
+	returns: v.union(vCreditPackTerms, v.null()),
 	handler: async (ctx, { productId }) => {
 		const pack = await getPackRow(ctx, productId);
 
 		if (pack?.price?.productId !== productId) return null;
 
-		return { units: pack.units, expiresAfterDays: pack.expiresAfterDays };
+		return { units: pack.units, expiresAfter: pack.expiresAfter };
 	}
 });
 
@@ -40,7 +38,7 @@ export const syncPayment = internalMutation({
 		metadataUserId: v.optional(v.string()),
 		productId: v.string(),
 		units: v.number(),
-		expiresAfterDays: v.number()
+		expiresAfter: vCreditPackExpiry
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -72,7 +70,7 @@ export const syncPayment = internalMutation({
 			productId: args.productId,
 			units: args.units,
 			used: 0,
-			expiresAt: args.paidAt + args.expiresAfterDays * DAY,
+			expiresAt: creditExpiresAt(args.paidAt, args.expiresAfter),
 			revokedAt: args.revoked ? Date.now() : undefined
 		});
 

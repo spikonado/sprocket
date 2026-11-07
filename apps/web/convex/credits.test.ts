@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
+import { creditExpiresAt } from '@convex/lib/credits';
 import { chargeUsage, gatewayQuotaStatus } from '@convex/lib/quota';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import {
@@ -31,7 +32,12 @@ function dodoPayment(overrides: Partial<DodoPayment> = {}): DodoPayment {
 		status: 'succeeded',
 		created_at: new Date().toISOString(),
 		customer: { customer_id: 'cus_owner' },
-		metadata: { userId: 'owner', creditUnits: String(10 * DOLLAR), creditDays: '30' },
+		metadata: {
+			userId: 'owner',
+			creditUnits: String(10 * DOLLAR),
+			creditExpiresAfterCount: '30',
+			creditExpiresAfterUnit: 'day'
+		},
 		product_cart: [{ product_id: 'prod_pack', quantity: 1 }],
 		refunds: [],
 		disputes: [],
@@ -90,6 +96,15 @@ afterEach(() => {
 });
 
 describe('credit pack grants', () => {
+	it.each([
+		['2027-01-31T12:00:00.000Z', 30, 'day', '2027-03-02T12:00:00.000Z'],
+		['2027-01-31T12:00:00.000Z', 1, 'month', '2027-02-28T12:00:00.000Z'],
+		['2027-11-15T08:30:00.000Z', 3, 'month', '2028-02-15T08:30:00.000Z'],
+		['2028-02-29T00:00:00.000Z', 1, 'year', '2029-02-28T00:00:00.000Z']
+	] as const)('expires a pack paid at %s after %i %s at %s', (paidAt, count, unit, expected) => {
+		expect(creditExpiresAt(Date.parse(paidAt), { count, unit })).toBe(Date.parse(expected));
+	});
+
 	it('grants a paid pack once per payment on its checkout terms and ignores other payments', async () => {
 		const t = await setup();
 		const payment = dodoPayment();

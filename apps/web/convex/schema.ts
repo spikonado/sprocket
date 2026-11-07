@@ -1,7 +1,7 @@
 import { vWorkId } from '@convex-dev/workpool';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { vPackPrice, vPrice } from '@convex/lib/pricingValidators';
+import { vCreditPackExpiry, vPackPrice, vPrice } from '@convex/lib/pricingValidators';
 import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
@@ -122,9 +122,8 @@ export default defineSchema({
 	// Operator-managed one-time Dodo products that add usage credit.
 	creditPacks: defineTable({
 		productId: v.string(),
-		label: v.string(),
 		units: v.number(),
-		expiresAfterDays: v.number(),
+		expiresAfter: vCreditPackExpiry,
 		price: v.optional(vPackPrice)
 	}).index('by_productId', ['productId']),
 	creditGrants: defineTable({
