@@ -61,49 +61,27 @@ pub(super) struct Process {
     input: mpsc::UnboundedSender<String>,
     events: mpsc::UnboundedReceiver<Event>,
     calls: Arc<Mutex<ToolCalls>>,
-    writer: JoinHandle<()>,
     reader: Option<JoinHandle<()>>,
-    /// Set from sending a user message until its turn's `result` is read.
-    turn_open: bool,
 }
 
 impl Drop for Process {
-    /// Interrupts an open turn and waits for its `result` before closing stdin, so Claude
-    /// Code stops generating for a stopped run. A process that doesn't exit in time is killed.
+    /// Closing stdin alone lets Claude Code finish an open turn, so this sends an interrupt
+    /// first, a no-op when idle. A process that doesn't exit in time is killed.
     fn drop(&mut self) {
-        let writer = self.writer.abort_handle();
-        let (Some(child), Some(reader), Ok(runtime)) = (
-            self.child.take(),
-            self.reader.take(),
-            tokio::runtime::Handle::try_current(),
-        ) else {
-            writer.abort();
+        self.send(&json!({
+            "type": "control_request",
+            "request_id": "interrupt",
+            "request": { "subtype": "interrupt" },
+        }));
+        let (Some(child), Some(reader)) = (self.child.take(), self.reader.take()) else {
             return;
         };
-        let interrupted = self.turn_open;
-        if interrupted {
-            self.send(&json!({
-                "type": "control_request",
-                "request_id": "interrupt",
-                "request": { "subtype": "interrupt" },
-            }));
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = tokio::time::timeout(EXIT_GRACE, reader).await;
+                drop(child);
+            });
         }
-        let mut events = std::mem::replace(&mut self.events, mpsc::unbounded_channel().1);
-        runtime.spawn(async move {
-            if interrupted {
-                let _ = tokio::time::timeout(EXIT_GRACE, async {
-                    while let Some(event) = events.recv().await {
-                        if matches!(event, Event::Result(_)) {
-                            break;
-                        }
-                    }
-                })
-                .await;
-            }
-            writer.abort();
-            let _ = tokio::time::timeout(EXIT_GRACE, reader).await;
-            drop(child);
-        });
     }
 }
 
@@ -158,20 +136,19 @@ impl Process {
         let (sender, events) = mpsc::unbounded_channel();
         let calls = Arc::<Mutex<ToolCalls>>::default();
         let output = Output {
-            input: input.clone(),
+            input: input.downgrade(),
             events: sender,
             calls: Arc::clone(&calls),
             tools: spawn.tools,
         };
+        tokio::spawn(write_input(stdin, pending_input));
         let process = Self {
             child: Some(child),
             _system_prompt: system_prompt,
             input,
             events,
             calls,
-            writer: tokio::spawn(write_input(stdin, pending_input)),
             reader: Some(tokio::spawn(output.read(stdout, stderr))),
-            turn_open: false,
         };
         process.send(&json!({
             "type": "control_request",
@@ -185,8 +162,7 @@ impl Process {
         let _ = self.input.send(message.to_string());
     }
 
-    pub(super) fn send_user(&mut self, content: Vec<Value>) {
-        self.turn_open = true;
+    pub(super) fn send_user(&self, content: Vec<Value>) {
         self.send(&json!({
             "type": "user",
             "message": { "role": "user", "content": content },
@@ -211,15 +187,10 @@ impl Process {
     }
 
     pub(super) async fn next_event(&mut self) -> Event {
-        let event = self
-            .events
+        self.events
             .recv()
             .await
-            .unwrap_or_else(|| Event::Exited("Claude Code stopped.".to_string()));
-        if matches!(event, Event::Result(_)) {
-            self.turn_open = false;
-        }
-        event
+            .unwrap_or_else(|| Event::Exited("Claude Code stopped.".to_string()))
     }
 
     /// Waits for the `result` that follows a turn's last message.
@@ -373,7 +344,8 @@ fn mcp_reply(message: &Value, tools: &[Value]) -> McpReply {
 }
 
 struct Output {
-    input: mpsc::UnboundedSender<String>,
+    /// Weak, so the writer closes stdin once the `Process` is dropped.
+    input: mpsc::WeakUnboundedSender<String>,
     events: mpsc::UnboundedSender<Event>,
     calls: Arc<Mutex<ToolCalls>>,
     tools: Vec<Value>,
@@ -402,7 +374,9 @@ impl Output {
     }
 
     fn send(&self, message: &Value) {
-        let _ = self.input.send(message.to_string());
+        if let Some(input) = self.input.upgrade() {
+            let _ = input.send(message.to_string());
+        }
     }
 
     fn handle(&self, mut message: Value) {

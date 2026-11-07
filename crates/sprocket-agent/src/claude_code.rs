@@ -846,7 +846,7 @@ fn spawn(
 ) -> anyhow::Result<()> {
     state.reset();
     let id = session.id().to_string();
-    let mut process = Process::spawn(Spawn {
+    let process = Process::spawn(Spawn {
         executable: &run.executable,
         config_dir: &run.config_dir,
         cwd: &run.cwd,
