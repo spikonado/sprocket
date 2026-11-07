@@ -16,7 +16,7 @@ import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@conve
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
-import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
+import { gatewayQuotaStatus } from '@convex/lib/quota';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,

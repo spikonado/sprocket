@@ -2,7 +2,7 @@ import { v, ConvexError, type Infer } from 'convex/values';
 import { mutation } from '@convex/_generated/server';
 import { modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { verifyGatewayToken } from '@convex/lib/gatewayToken';
-import { applyGatewayUsageCharge, gatewayQuotaStatus } from '@convex/lib/rateLimits';
+import { chargeUsage, gatewayQuotaStatus } from '@convex/lib/quota';
 import { vSubscriptionTier } from '@convex/lib/validators';
 
 const vQuota = v.object({
@@ -62,7 +62,7 @@ export const consumeQuota = mutation({
 			throw new ConvexError('Quota charge exceeds the per-call limit.');
 		}
 
-		await applyGatewayUsageCharge(ctx, payload.userId, Math.ceil(args.units));
+		await chargeUsage(ctx, payload.userId, Math.ceil(args.units));
 
 		return null;
 	}

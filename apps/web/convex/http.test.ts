@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
+import { chargeUsage } from '@convex/lib/quota';
 import { initConvexTest, insertUser, type ConvexTestInstance } from './test.setup';
 import {
 	drainWebhookJobs,
@@ -45,7 +46,7 @@ async function planChangeFixture() {
 	const data = subscriptionPayload();
 	expect((await sendSubscriptionWebhook(t, 'subscription.active', data)).status).toBe(200);
 	await drainWebhookJobs(t);
-	await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId: 'owner', count: 5 });
+	await t.run((ctx) => chargeUsage(ctx, 'owner', 5));
 
 	const usage = async () =>
 		(await t.withIdentity({ subject: 'owner' }).query(api.usage.getMyUsage, { now: Date.now() }))
@@ -268,7 +269,7 @@ describe('Dodo subscription webhooks', () => {
 		await drainWebhookJobs(t);
 		expect(await readSubscription(t)).toMatchObject({ tier: 'team', quotaResetAt: now + 1 });
 		expect(await usage()).toBe(0);
-		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId: 'owner', count: 3 });
+		await t.run((ctx) => chargeUsage(ctx, 'owner', 3));
 		expect(
 			(await sendSubscriptionWebhook(t, 'subscription.updated', changed, now + 2)).status
 		).toBe(200);
