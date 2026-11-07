@@ -207,6 +207,11 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
+	usage: defineTable({
+		userId: v.string(),
+		windowStart: v.number(),
+		used: v.number()
+	}).index('by_userId_and_windowStart', ['userId', 'windowStart']),
 	dodoWebhookEvents: defineTable({
 		seq: v.number(),
 		environment: v.string(),

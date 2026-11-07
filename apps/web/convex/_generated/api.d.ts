@@ -60,7 +60,7 @@ import type * as lib_payments_agentcard from "../lib/payments/agentcard.js";
 import type * as lib_pricingValidators from "../lib/pricingValidators.js";
 import type * as lib_providerOrder from "../lib/providerOrder.js";
 import type * as lib_providerRetry from "../lib/providerRetry.js";
-import type * as lib_rateLimits from "../lib/rateLimits.js";
+import type * as lib_quota from "../lib/quota.js";
 import type * as lib_runCancellation from "../lib/runCancellation.js";
 import type * as lib_runCreate from "../lib/runCreate.js";
 import type * as lib_runExecution from "../lib/runExecution.js";
@@ -172,7 +172,7 @@ declare const fullApi: ApiFromModules<{
   "lib/pricingValidators": typeof lib_pricingValidators;
   "lib/providerOrder": typeof lib_providerOrder;
   "lib/providerRetry": typeof lib_providerRetry;
-  "lib/rateLimits": typeof lib_rateLimits;
+  "lib/quota": typeof lib_quota;
   "lib/runCancellation": typeof lib_runCancellation;
   "lib/runCreate": typeof lib_runCreate;
   "lib/runExecution": typeof lib_runExecution;
