@@ -36,12 +36,7 @@ crons.interval(
 	{}
 );
 
-crons.interval(
-	'prune expired Dodo checkout history',
-	{ hours: 24 },
-	internal.billing.cleanupCheckoutHistory,
-	{}
-);
+crons.interval('sync Dodo prices onto tiers', { minutes: 30 }, internal.dodo.syncPrices, {});
 
 crons.daily(
 	'send daily usage to PostHog',

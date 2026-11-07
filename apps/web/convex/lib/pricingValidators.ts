@@ -1,5 +1,15 @@
 import { v, type Infer } from 'convex/values';
-import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
+
+export const vPrice = v.object({
+	productId: v.string(),
+	name: v.union(v.string(), v.null()),
+	amountMinor: v.number(),
+	currency: v.string(),
+	paymentFrequencyCount: v.number(),
+	paymentFrequencyInterval: v.string()
+});
+
+export type Price = Infer<typeof vPrice>;
 
 export const vPublicPricingPlan = v.object({
 	id: v.string(),
@@ -10,8 +20,8 @@ export const vPublicPricingPlan = v.object({
 	displayOrder: v.number(),
 	highlighted: v.boolean(),
 	prices: v.object({
-		monthly: v.union(vDodoPublicPrice, v.null()),
-		annual: v.union(vDodoPublicPrice, v.null())
+		monthly: v.union(vPrice, v.null()),
+		annual: v.union(vPrice, v.null())
 	})
 });
 
@@ -22,10 +32,3 @@ export const vPublicPricingCatalog = v.object({
 });
 
 export type PublicPricingCatalog = Infer<typeof vPublicPricingCatalog>;
-
-export const vTierPricingConfig = vPublicPricingPlan.omit('prices').extend({
-	monthlyProductId: v.union(v.string(), v.null()),
-	annualProductId: v.union(v.string(), v.null())
-});
-
-export type TierPricingConfig = Infer<typeof vTierPricingConfig>;

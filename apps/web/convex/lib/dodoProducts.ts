@@ -1,19 +1,6 @@
-import { v, type Infer } from 'convex/values';
-
 export const billingIntervalIds = ['monthly', 'annual'] as const;
 
 export type BillingInterval = (typeof billingIntervalIds)[number];
-
-export const vDodoPublicPrice = v.object({
-	productId: v.string(),
-	name: v.union(v.string(), v.null()),
-	amountMinor: v.number(),
-	currency: v.string(),
-	paymentFrequencyCount: v.number(),
-	paymentFrequencyInterval: v.string()
-});
-
-export type DodoPublicPrice = Infer<typeof vDodoPublicPrice>;
 
 export type DodoEnvironment = 'test_mode' | 'live_mode';
 

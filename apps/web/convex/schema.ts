@@ -1,7 +1,7 @@
 import { vWorkId } from '@convex-dev/workpool';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
+import { vPrice } from '@convex/lib/pricingValidators';
 import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
@@ -64,91 +64,16 @@ export default defineSchema({
 		displayOrder: v.optional(v.number()),
 		highlighted: v.optional(v.boolean()),
 		monthlyProductId: v.optional(v.string()),
-		annualProductId: v.optional(v.string())
+		annualProductId: v.optional(v.string()),
+		monthlyPrice: v.optional(vPrice),
+		annualPrice: v.optional(vPrice)
 	})
 		.index('by_tierId', ['tierId'])
 		.index('by_monthlyProductId', ['monthlyProductId'])
 		.index('by_annualProductId', ['annualProductId']),
-	billingCheckoutSessions: defineTable({
-		userId: v.string(),
-		attemptId: v.string(),
-		tierId: v.string(),
-		interval: vBillingInterval,
-		productId: v.string(),
-		checkoutUrl: v.optional(v.string()),
-		dodoSessionId: v.optional(v.string()),
-		idempotencyKey: v.optional(v.string()),
-		outcome: v.optional(
-			v.union(
-				v.literal('reserved'),
-				v.literal('created'),
-				v.literal('create_ambiguous'),
-				v.literal('paid'),
-				v.literal('failed')
-			)
-		),
-		outcomeUpdatedAt: v.optional(v.number()),
-		createStartedAt: v.optional(v.number()),
-		createRequest: v.optional(
-			v.object({
-				productId: v.string(),
-				returnUrl: v.string(),
-				cancelUrl: v.string(),
-				dodoCustomerId: v.string()
-			})
-		),
-		expiresAt: v.number()
-	})
-		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
-		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
-	// Older checkout attempts kept after a selection change so their provider
-	// idempotency keys survive and already-created links stay payable.
-	billingCheckoutAttempts: defineTable({
-		userId: v.string(),
-		attemptId: v.string(),
-		tierId: v.string(),
-		interval: vBillingInterval,
-		productId: v.string(),
-		checkoutUrl: v.optional(v.string()),
-		dodoSessionId: v.optional(v.string()),
-		idempotencyKey: v.optional(v.string()),
-		outcome: v.optional(v.string()),
-		outcomeUpdatedAt: v.optional(v.number()),
-		createStartedAt: v.optional(v.number()),
-		createRequest: v.optional(
-			v.object({
-				productId: v.string(),
-				returnUrl: v.string(),
-				cancelUrl: v.string(),
-				dodoCustomerId: v.string()
-			})
-		),
-		expiresAt: v.number()
-	})
-		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.
-		.index('by_userId', ['userId'])
-		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
-		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
-	dodoPricingCache: defineTable({
-		cacheKey: v.optional(v.string()),
-		environment: v.string(),
-		productId: v.string(),
-		price: v.optional(vDodoPublicPrice),
-		// Set on rows whose last refresh failed: transient errors retry after
-		// retryAt; definitive failures (missing/invalid/ambiguous) hold the
-		// null price until expiresAt.
-		refreshFailed: v.optional(v.boolean()),
-		retryAt: v.optional(v.number()),
-		// Wall time the cached price was last confirmed by the provider. Stale
-		// display is bounded from this, never from retry deadlines, so repeated
-		// transient failures cannot extend display indefinitely.
-		validatedAt: v.optional(v.number()),
-		leaseOwner: v.optional(v.string()),
-		leaseExpiresAt: v.optional(v.number()),
-		expiresAt: v.number()
-	})
-		.index('by_environment_and_productId', ['environment', 'productId'])
-		.index('by_environment_and_leaseExpiresAt', ['environment', 'leaseExpiresAt']),
+	billingCheckoutSessions: defineTable(v.any()),
+	billingCheckoutAttempts: defineTable(v.any()),
+	dodoPricingCache: defineTable(v.any()),
 	subscriptionReconciliations: defineTable(v.any()),
 	// Mirror of Dodo subscriptions; Dodo is the source of truth.
 	subscriptions: defineTable({

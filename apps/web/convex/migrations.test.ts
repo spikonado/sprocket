@@ -84,13 +84,13 @@ test('run removes stored artifact types', async () => {
 	vi.useRealTimers();
 });
 
-test('run converts context summary cutoffs to part counts and drops pricing cache keys', async () => {
+test('run converts context summary cutoffs to part counts', async () => {
 	vi.useFakeTimers();
 	const t = initConvexTest();
 	const { threadId: emptyPrefixThreadId } = await seedOwnedThread(t);
 	const { threadId: summarizedThreadId } = await seedOwnedThread(t);
 
-	const pricingRowId = await t.run(async (ctx) => {
+	await t.run(async (ctx) => {
 		await ctx.db.patch('threadRecords', emptyPrefixThreadId, {
 			contextSummary: 'Nothing yet',
 			contextSummaryThroughPartNumber: -1
@@ -99,34 +99,25 @@ test('run converts context summary cutoffs to part counts and drops pricing cach
 			contextSummary: 'Covered work',
 			contextSummaryThroughPartNumber: 4
 		});
-
-		return ctx.db.insert('dodoPricingCache', {
-			cacheKey: 'live_mode:prod_1',
-			environment: 'live_mode',
-			productId: 'prod_1',
-			expiresAt: 0
-		});
 	});
 
 	await t.mutation(internal.migrations.run, {});
 	await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-	const [emptyPrefix, summarized, pricingRow] = await t.run((ctx) =>
+	const [emptyPrefix, summarized] = await t.run((ctx) =>
 		Promise.all([
 			ctx.db.get('threadRecords', emptyPrefixThreadId),
-			ctx.db.get('threadRecords', summarizedThreadId),
-			ctx.db.get('dodoPricingCache', pricingRowId)
+			ctx.db.get('threadRecords', summarizedThreadId)
 		])
 	);
 
 	expect(emptyPrefix).toMatchObject({ contextSummaryPartCount: 0 });
 	expect(emptyPrefix).not.toHaveProperty('contextSummaryThroughPartNumber');
 	expect(summarized).toMatchObject({ contextSummaryPartCount: 5 });
-	expect(pricingRow).not.toHaveProperty('cacheKey');
 	vi.useRealTimers();
 });
 
-test('run moves tier grants to users and strips projection fields from Dodo rows', async () => {
+test('run moves tier grants to users, strips projection fields and empties retired billing tables', async () => {
 	vi.useFakeTimers();
 	const t = initConvexTest();
 
@@ -155,6 +146,9 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 		await ctx.db.insert('subscriptions', { userId: 'bootstrap', tier: 'free', status: 'active' });
 		await ctx.db.insert('subscriptionReconciliations', { subscriptionId: 'retired' });
 		await ctx.db.insert('supersededSubscriptions', { dodoSubscriptionId: 'sub_retired' });
+		await ctx.db.insert('billingCheckoutSessions', { attemptId: 'retired' });
+		await ctx.db.insert('billingCheckoutAttempts', { attemptId: 'retired' });
+		await ctx.db.insert('dodoPricingCache', { productId: 'prod_retired' });
 
 		const paidId = await ctx.db.insert('subscriptions', {
 			userId: 'paid',
@@ -190,7 +184,10 @@ test('run moves tier grants to users and strips projection fields from Dodo rows
 		check: await ctx.db.system.get('_scheduled_functions', checkId),
 		retired: [
 			...(await ctx.db.query('subscriptionReconciliations').collect()),
-			...(await ctx.db.query('supersededSubscriptions').collect())
+			...(await ctx.db.query('supersededSubscriptions').collect()),
+			...(await ctx.db.query('billingCheckoutSessions').collect()),
+			...(await ctx.db.query('billingCheckoutAttempts').collect()),
+			...(await ctx.db.query('dodoPricingCache').collect())
 		]
 	}));
 

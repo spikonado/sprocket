@@ -2,6 +2,7 @@ import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import type { MutationCtx } from '@convex/_generated/server';
+import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import schema from '@convex/schema';
 
@@ -43,6 +44,15 @@ async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
 	for (const grant of grants) await ctx.db.delete('subscriptions', grant._id);
 }
 
+function deleteEveryRow(table: TableNames) {
+	return migrations.define({
+		table,
+		migrateOne: async (ctx, row) => {
+			await ctx.db.delete(table, row._id);
+		}
+	});
+}
+
 export const backfillToolInvocationIds = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: (_ctx, part) => {
@@ -58,13 +68,6 @@ export const removeArtifactTypes = migrations.define({
 		if (artifact.type === undefined) return;
 
 		return { type: undefined };
-	}
-});
-
-export const dropPricingCacheKeys = migrations.define({
-	table: 'dodoPricingCache',
-	migrateOne: (_ctx, row) => {
-		if (row.cacheKey !== undefined) return { cacheKey: undefined };
 	}
 });
 
@@ -120,19 +123,15 @@ export const migrateSubscriptionRows = migrations.define({
 	}
 });
 
-export const clearSubscriptionReconciliations = migrations.define({
-	table: 'subscriptionReconciliations',
-	migrateOne: async (ctx, row) => {
-		await ctx.db.delete('subscriptionReconciliations', row._id);
-	}
-});
+export const clearSubscriptionReconciliations = deleteEveryRow('subscriptionReconciliations');
 
-export const clearSupersededSubscriptions = migrations.define({
-	table: 'supersededSubscriptions',
-	migrateOne: async (ctx, row) => {
-		await ctx.db.delete('supersededSubscriptions', row._id);
-	}
-});
+export const clearSupersededSubscriptions = deleteEveryRow('supersededSubscriptions');
+
+export const clearCheckoutSessions = deleteEveryRow('billingCheckoutSessions');
+
+export const clearCheckoutAttempts = deleteEveryRow('billingCheckoutAttempts');
+
+export const clearPricingCache = deleteEveryRow('dodoPricingCache');
 
 /** Mirrors every Dodo subscription, including duplicates the old webhook rejected. */
 export const resyncDodoCustomers = migrations.define({
@@ -153,11 +152,13 @@ export const resyncDodoCustomers = migrations.define({
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
-	internal.migrations.dropPricingCacheKeys,
 	internal.migrations.countContextSummaryParts,
 	internal.migrations.dropQuestionAnsweredAt,
 	internal.migrations.migrateSubscriptionRows,
 	internal.migrations.clearSubscriptionReconciliations,
 	internal.migrations.clearSupersededSubscriptions,
+	internal.migrations.clearCheckoutSessions,
+	internal.migrations.clearCheckoutAttempts,
+	internal.migrations.clearPricingCache,
 	internal.migrations.resyncDodoCustomers
 ]);
