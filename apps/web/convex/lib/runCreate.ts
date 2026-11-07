@@ -50,7 +50,7 @@ export type QueuedRunRequest = {
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
-	completionProvider?: CompletionProvider;
+	completionProvider: CompletionProvider;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	fastMode: boolean;
 	executionSecret: string;
@@ -117,7 +117,6 @@ export async function createQueuedRunRecord(
 	}
 
 	const secretHash = await executionSecretHash(args.executionSecret);
-	const completionProvider = args.completionProvider ?? 'spikonado';
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
 
@@ -182,7 +181,7 @@ export async function createQueuedRunRecord(
 			repositoryKey,
 			title: fallbackTitle,
 			selectedModel: args.selectedModel,
-			completionProvider,
+			completionProvider: args.completionProvider,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
 			cwd: parentThread?.cwd,
@@ -200,7 +199,7 @@ export async function createQueuedRunRecord(
 				$ai_session_id: sessionId,
 				parent_session_id: args.parentThreadId ? await analyticsId(args.parentThreadId) : null,
 				model: args.selectedModel,
-				provider: completionProvider
+				provider: args.completionProvider
 			}
 		});
 
@@ -279,7 +278,7 @@ export async function createQueuedRunRecord(
 		submissionId: args.submissionId,
 		executionSecretHash: secretHash,
 		selectedModel: args.selectedModel,
-		completionProvider,
+		completionProvider: args.completionProvider,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode
 	};
@@ -329,7 +328,7 @@ export async function createQueuedRunRecord(
 	const threadUpdates = {
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
-		completionProvider,
+		completionProvider: args.completionProvider,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
 		lastMessageAt: Date.now()
@@ -426,7 +425,7 @@ export async function finalizeFailedQueuedStart(
 		submissionId: string;
 		threadId?: Id<'threadRecords'>;
 		selectedModel: string;
-		completionProvider?: CompletionProvider;
+		completionProvider: CompletionProvider;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
 		fastMode: boolean;
 		lastError: string;
@@ -468,7 +467,7 @@ export async function finalizeFailedQueuedStart(
 		run.status !== 'queued' ||
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
-		(run.completionProvider ?? 'spikonado') !== (args.completionProvider ?? 'spikonado') ||
+		(run.completionProvider ?? 'spikonado') !== args.completionProvider ||
 		run.reasoningEffort !== args.reasoningEffort ||
 		run.fastMode !== args.fastMode
 	) {

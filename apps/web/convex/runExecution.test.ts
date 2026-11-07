@@ -17,6 +17,7 @@ import { registerChildThread } from '@convex/lib/threadHierarchy';
 import {
 	createQueuedRun,
 	initConvexTest,
+	readTranscriptRange,
 	seedOwnedThread,
 	toolTranscriptAssignment
 } from './test.setup';
@@ -164,10 +165,7 @@ describe('run execution state', () => {
 			expect((await getRunWithExecution(ctx.db, auth.runId))?.activeJobId).toBeUndefined();
 		});
 
-		const { parts } = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [0, 1, 2]
-		});
+		const { parts } = await readTranscriptRange(asUser, threadId, 0, 3);
 
 		expect(parts.filter((part) => part.kind === 'tool').map((part) => part.tool)).toEqual([
 			expect.objectContaining({ callId, name: kind, status: 'started' }),

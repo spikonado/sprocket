@@ -19,9 +19,6 @@ export const PAYMENTS_MOVED_TO_AGENTCARD =
 
 export const RUN_ABANDONED_BY_MACHINE = 'The machine stopped responding before this run finished.';
 
-export const LEGACY_RUN_ABANDONED_BY_AGENT =
-	'The local agent stopped responding before this run finished.';
-
 export function assertRunAcceptsModelCompletion(run: {
 	status: Infer<typeof vRunStatus>;
 	cancellationRequestedAt?: number;

@@ -71,6 +71,21 @@ export const dropQuotaGenerations = migrations.define({
 	}
 });
 
+export const backfillThreadCompletionProviders = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		if (thread.completionProvider === undefined)
+			return { completionProvider: 'spikonado' as const };
+	}
+});
+
+export const backfillRunCompletionProviders = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (run.completionProvider === undefined) return { completionProvider: 'spikonado' as const };
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
@@ -78,5 +93,7 @@ export const run = migrations.runner([
 	internal.migrations.countContextSummaryParts,
 	internal.migrations.backfillSubscriptionAccess,
 	internal.migrations.dropQuestionAnsweredAt,
-	internal.migrations.dropQuotaGenerations
+	internal.migrations.dropQuotaGenerations,
+	internal.migrations.backfillThreadCompletionProviders,
+	internal.migrations.backfillRunCompletionProviders
 ]);

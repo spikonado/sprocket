@@ -92,6 +92,7 @@ function createArgs(
 		model: 'gpt-5.6-sol',
 		reasoning: 'medium',
 		fast: false,
+		completionProvider: 'spikonado',
 		...overrides
 	};
 }
@@ -471,15 +472,11 @@ describe('subagents.createOrSend', () => {
 		expect(after?.selectedModel).toBe(before?.selectedModel);
 	});
 
-	it('follow-up keeps the target saved provider and persists resolved settings', async () => {
+	it('follow-up persists the settings its runner chose', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
 		const childArgs = createArgs(caller);
 		const child = await t.mutation(api.subagents.createOrSend, childArgs);
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', child.threadId, { completionProvider: 'openai' });
-		});
 
 		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
 		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -496,7 +493,8 @@ describe('subagents.createOrSend', () => {
 				prompt: 'Follow-up task',
 				model: 'gpt-5.6-sol',
 				reasoning: 'high',
-				fast: true
+				fast: true,
+				completionProvider: 'openai'
 			})
 		);
 
@@ -901,46 +899,6 @@ describe('subagents transcript pages', () => {
 		}
 	);
 
-	it('hydrates attachment URLs for number reads but not page reads', async () => {
-		const t = initConvexTest();
-		const { args } = await seedChildParts(t, 1);
-
-		const storageId = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
-
-			const part = await ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', args.threadId).eq('number', 0))
-				.unique();
-
-			if (!part?.prompt) throw new Error('Missing fixture prompt.');
-			await ctx.db.patch('threadTranscriptParts', part._id, {
-				prompt: {
-					...part.prompt,
-					imageUploads: [{ storageId, name: 'file.txt', mediaType: 'text/plain', size: 4 }]
-				}
-			});
-
-			return storageId;
-		});
-
-		const metadata = { storageId, name: 'file.txt', mediaType: 'text/plain', size: 4 };
-		const page = await t.mutation(api.subagents.transcriptPartsPage, args);
-		expect(page.parts[0]?.prompt?.imageUploads).toEqual([metadata]);
-
-		const legacy = await t.mutation(api.subagents.transcriptParts, {
-			runId: args.runId,
-			claimId: args.claimId,
-			executionSecret: args.executionSecret,
-			threadId: args.threadId,
-			numbers: [0]
-		});
-
-		expect(legacy.parts[0]?.prompt?.imageUploads).toEqual([
-			{ ...metadata, url: expect.any(String) }
-		]);
-	});
-
 	it('requires a live claim and descendant access, including for grandchild pages', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
@@ -1284,7 +1242,7 @@ describe('subagents.control', () => {
 				})
 			).toMatchObject({
 				descendantsActive: true,
-				descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+				descendantCount: 1
 			});
 
 			const controlled = await t.mutation(api.subagents.control, {
@@ -1323,7 +1281,7 @@ describe('subagents.control', () => {
 				})
 			).toMatchObject({
 				descendantsActive: false,
-				descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+				descendantCount: 1
 			});
 		}
 	);

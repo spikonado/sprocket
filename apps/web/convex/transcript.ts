@@ -10,12 +10,7 @@ import {
 	vTranscriptStateResult
 } from '@convex/lib/docs';
 import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
-import {
-	getTranscriptState,
-	loadTranscriptPartsByNumbers,
-	loadTranscriptPartsPage,
-	transcriptPartsForClient
-} from '@convex/lib/transcriptParts';
+import { getTranscriptState, loadTranscriptPartsPage } from '@convex/lib/transcriptParts';
 
 export async function transcriptStateResult(
 	ctx: QueryCtx | MutationCtx,
@@ -42,24 +37,6 @@ export const getState = query({
 		const thread = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
 
 		return await transcriptStateResult(ctx, args.threadId, thread);
-	}
-});
-
-export const getParts = query({
-	args: {
-		threadId: v.id('threadRecords'),
-		numbers: v.array(v.number())
-	},
-	returns: vTranscriptPartsResult,
-	handler: async (ctx, args) => {
-		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
-
-		const parts = await transcriptPartsForClient(
-			ctx,
-			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
-		);
-
-		return { threadId: args.threadId, parts };
 	}
 });
 
@@ -97,25 +74,6 @@ export const getStateForRun = query({
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 
 		return await transcriptStateResult(ctx, run.threadId, thread);
-	}
-});
-
-export const getPartsForRun = query({
-	args: {
-		runId: v.id('runs'),
-		executionSecret: v.string(),
-		numbers: v.array(v.number())
-	},
-	returns: vTranscriptPartsResult,
-	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-
-		const parts = await transcriptPartsForClient(
-			ctx,
-			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)
-		);
-
-		return { threadId: run.threadId, parts };
 	}
 });
 

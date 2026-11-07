@@ -202,10 +202,6 @@ async fn post<T: DeserializeOwned>(
             .unwrap_or_else(|_| format!("local server returned {status}"));
         let message = if status == reqwest::StatusCode::NOT_FOUND {
             format!("{message}. Update and restart the local Sprocket server to use CLI commands.")
-        } else if operation == "bootstrap" && status == reqwest::StatusCode::UNAUTHORIZED {
-            format!(
-                "{message}. Older Sprocket servers also report this when the CLI version or Convex deployment differs. If you updated Sprocket, restart the running app or server. Otherwise, check that both use the same PUBLIC_CONVEX_URL and SPROCKET_DATA_DIR."
-            )
         } else {
             message
         };

@@ -40,9 +40,7 @@ import {
 	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
-	LEGACY_RUN_ABANDONED_BY_AGENT,
 	PAYMENTS_MOVED_TO_AGENTCARD,
-	RUN_ABANDONED_BY_MACHINE,
 	agentError,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
@@ -153,7 +151,7 @@ export const insertGatewayRun = internalMutation({
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
-		completionProvider: v.optional(vCompletionProvider),
+		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
@@ -177,7 +175,7 @@ export const createGatewayRun = action({
 		prompt: v.string(),
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
-		completionProvider: v.optional(vCompletionProvider),
+		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
@@ -999,7 +997,7 @@ export const finalizeFailedStart = mutation({
 		prompt: v.optional(v.string()),
 		storageIds: v.optional(v.array(v.id('_storage'))),
 		selectedModel: v.string(),
-		completionProvider: v.optional(vCompletionProvider),
+		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		text: v.optional(v.string()),
@@ -1027,15 +1025,10 @@ export const finalizeClaimFailure = mutation({
 	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const abandoned = args.lastError === LEGACY_RUN_ABANDONED_BY_AGENT;
 
 		const accepted =
 			canFinalizeAfterClaimFailure(run, args.claimId) &&
-			(await finalizeRunRecord(ctx, run, {
-				status: 'failed',
-				lastError: abandoned ? RUN_ABANDONED_BY_MACHINE : args.lastError,
-				failureKind: abandoned ? 'abandoned' : undefined
-			}));
+			(await finalizeRunRecord(ctx, run, { status: 'failed', lastError: args.lastError }));
 
 		return executorFinalizationResult(ctx, run, accepted);
 	}

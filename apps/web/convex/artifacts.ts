@@ -356,7 +356,7 @@ export const listArtifacts = query({
 	},
 	returns: v.object({
 		...pageFields,
-		page: v.array(vProjectArtifact.extend({ createdAt: v.number() }))
+		page: v.array(vProjectArtifact)
 	}),
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
@@ -365,10 +365,7 @@ export const listArtifacts = query({
 
 		return {
 			...result,
-			page: result.page.map((artifact) => ({
-				...withLegacyType(artifact),
-				createdAt: Math.floor(artifact._creationTime)
-			}))
+			page: result.page.map(withLegacyType)
 		};
 	}
 });

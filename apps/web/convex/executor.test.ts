@@ -8,6 +8,7 @@ import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
 	initConvexTest,
+	readTranscriptRange,
 	seedOwnedThread,
 	toolTranscriptAssignment,
 	type ConvexTestInstance
@@ -165,7 +166,7 @@ describe('executor', () => {
 								}
 				})
 			).resolves.toBe(true);
-			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+			const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 			expect(
 				parts.parts.some(
 					(part) => part.tool?.name === 'parse_file' && part.tool.status === 'completed'
@@ -275,7 +276,7 @@ describe('executor', () => {
 			).resolves.toBe(true);
 			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 			expect(job?.result).toEqual(result);
-			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+			const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 			expect(parts.parts.find((part) => part.tool?.status === 'completed')?.tool?.output).toEqual(
 				result
 			);
@@ -377,7 +378,7 @@ describe('executor', () => {
 		expect(job).toMatchObject({ kind, payload, status: 'completed', result });
 		expect(job?.result).not.toHaveProperty('sessionId');
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 		expect(parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)).toEqual(
 			[
 				expect.objectContaining({ status: 'started', input: displayInput, callId: `call-${kind}` }),
@@ -459,7 +460,7 @@ describe('executor', () => {
 			error: 'unknown command session: 1'
 		});
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 		expect(parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)).toEqual(
 			[
 				expect.objectContaining({ status: 'started', input: payload }),
