@@ -204,12 +204,11 @@ it('shows the Claude Code install command and installs it from the button', asyn
 	expect(screen.queryByRole('button', { name: 'Sign in with Claude' })).toBeNull();
 });
 
-it('signs in with Claude, saves the token, and refreshes Claude Code status', async () => {
+it('signs in with Claude and saves the token', async () => {
 	const client = new ConvexTestClient();
 	const save = vi.fn(async () => null);
 	client.handleAction(api.providerCredentials.saveClaudeToken, save);
 	const finish = vi.fn(async () => 'sk-ant-oat01-test');
-	const fetchStatus = vi.fn(async () => claudeCodeFixture());
 
 	const view = mount(client, {
 		localApi: createChatGptApi({
@@ -217,8 +216,7 @@ it('signs in with Claude, saves the token, and refreshes Claude Code status', as
 				loginId: 'login-1',
 				url: 'https://claude.test/oauth'
 			}),
-			finishClaudeCodeLogin: finish,
-			fetchClaudeCodeStatus: fetchStatus
+			finishClaudeCodeLogin: finish
 		})
 	});
 
@@ -239,7 +237,6 @@ it('signs in with Claude, saves the token, and refreshes Claude Code status', as
 	);
 	expect(finish).toHaveBeenCalledWith('user-a', 'login-1', 'code-1');
 	expect(save).toHaveBeenCalledWith({ token: 'sk-ant-oat01-test' });
-	expect(fetchStatus).toHaveBeenCalledWith('user-a');
 });
 
 it('shows a rejected Claude code and lets the user sign in again', async () => {

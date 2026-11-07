@@ -2,7 +2,7 @@ mod process;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -89,8 +89,10 @@ impl ClaudeCode {
             token,
             instructions: instructions.to_string(),
             cwd: cwd.to_path_buf(),
-            resume: Mutex::new(resume),
-            state: Arc::default(),
+            state: Arc::new(tokio::sync::Mutex::new(RunState {
+                resume,
+                session: None,
+            })),
         }));
         Ok(Model::new(wire, transport).erase())
     }
@@ -139,22 +141,18 @@ struct Run {
     token: String,
     instructions: String,
     cwd: PathBuf,
-    /// Taken by the run's first turn, the only one whose history ends at that reply.
-    resume: Mutex<Option<ResumePoint>>,
     state: Arc<tokio::sync::Mutex<RunState>>,
 }
 
-#[derive(Default)]
 struct RunState {
-    process: Option<Process>,
-    live: Option<LiveSession>,
+    /// Taken by the run's first turn, the only one whose history ends at that reply.
+    resume: Option<ResumePoint>,
+    session: Option<Session>,
 }
 
-impl RunState {
-    fn reset(&mut self) {
-        self.process = None;
-        self.live = None;
-    }
+struct Session {
+    process: Process,
+    live: LiveSession,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,6 +169,13 @@ struct LiveSession {
     launch: Launch,
     messages: Vec<Digest32>,
     awaiting: Awaiting,
+}
+
+impl LiveSession {
+    fn expect_turn(&mut self, turn: &Turn) {
+        self.messages = turn.hashes.clone();
+        self.awaiting = Awaiting::TurnEnd;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,10 +668,10 @@ impl TurnStream {
         mut state: OwnedMutexGuard<RunState>,
         turn: Turn,
     ) -> anyhow::Result<Self> {
-        let resume = run.resume.lock().ok().and_then(|mut resume| resume.take());
+        let resume = state.resume.take();
         let planned = plan(
             &turn,
-            state.process.as_ref().and(state.live.as_ref()),
+            state.session.as_ref().map(|session| &session.live),
             resume.as_ref(),
         );
         let resumed = matches!(planned, Plan::Resume { .. });
@@ -677,21 +682,25 @@ impl TurnStream {
                     inline_image_urls(&mut result).await;
                     answers.push((tool_use_id, mcp_tool_result(&result)));
                 }
-                let process = state
-                    .process
-                    .as_ref()
-                    .expect("a live session has a process");
+                let session = state
+                    .session
+                    .as_mut()
+                    .expect("a planned answer has a live session");
                 for (tool_use_id, answer) in answers {
-                    process.answer(&tool_use_id, answer);
+                    session.process.answer(&tool_use_id, answer);
                 }
+                session.live.expect_turn(&turn);
             }
             Plan::Continue(content) => {
-                let process = state
-                    .process
+                let session = state
+                    .session
                     .as_mut()
-                    .expect("a live session has a process");
-                match process.finish_turn().await {
-                    Ok(()) => process.send_user(content),
+                    .expect("a planned continuation has a live session");
+                match session.process.finish_turn().await {
+                    Ok(()) => {
+                        session.process.send_user(content);
+                        session.live.expect_turn(&turn);
+                    }
                     Err(error) => {
                         eprintln!(
                             "sprocket-agent: {error:#}; replaying the conversation in a new Claude Code session"
@@ -712,7 +721,6 @@ impl TurnStream {
             )?,
             Plan::Fresh => spawn_fresh(&run, &mut state, &turn)?,
         }
-        expect_turn(&mut state, &turn);
         Ok(Self {
             run,
             state,
@@ -738,8 +746,8 @@ impl TurnStream {
             return None;
         }
         loop {
-            let event = match self.state.process.as_mut() {
-                Some(process) => process.next_event().await,
+            let event = match self.state.session.as_mut() {
+                Some(session) => session.process.next_event().await,
                 None => Event::Exited("Claude Code is not running.".to_string()),
             };
             match event {
@@ -805,24 +813,24 @@ impl TurnStream {
     /// The transcript keeps the reply's response ID, so the session outlives this run and host.
     fn stamp_session(&self, event: &mut Value) {
         if event["type"] == "message_start"
-            && let Some(live) = &self.state.live
+            && let Some(session) = &self.state.session
         {
-            event["message"]["id"] = Value::String(live.id.clone());
+            event["message"]["id"] = Value::String(session.live.id.clone());
         }
     }
 
     fn finish(&mut self) {
         self.finished = true;
         if self.stop_reason.as_deref() == Some("tool_use")
-            && let Some(live) = self.state.live.as_mut()
+            && let Some(session) = self.state.session.as_mut()
         {
-            live.awaiting = Awaiting::ToolResults(std::mem::take(&mut self.tool_uses));
+            session.live.awaiting = Awaiting::ToolResults(std::mem::take(&mut self.tool_uses));
         }
     }
 
     fn fail(&mut self, error: &Value) -> Bytes {
         self.finished = true;
-        self.state.reset();
+        self.state.session = None;
         sse(error)
     }
 
@@ -834,35 +842,25 @@ impl TurnStream {
         if let Err(error) = spawn_fresh(&self.run, &mut self.state, &self.turn) {
             return Some(self.fail(&error_event(ERROR_CODE, &format!("{error:#}"))));
         }
-        expect_turn(&mut self.state, &self.turn);
         None
     }
 }
 
-fn expect_turn(state: &mut RunState, turn: &Turn) {
-    let live = state
-        .live
-        .as_mut()
-        .expect("a planned turn has a live session");
-    live.messages = turn.hashes.clone();
-    live.awaiting = Awaiting::TurnEnd;
-}
-
 /// Starts a new session that replays the conversation from a checkpoint.
 fn spawn_fresh(run: &Run, state: &mut RunState, turn: &Turn) -> anyhow::Result<()> {
-    let session = SessionStart::New(uuid::Uuid::new_v4().to_string());
-    spawn(run, state, turn, session, checkpoint(&turn.messages))
+    let start = SessionStart::New(uuid::Uuid::new_v4().to_string());
+    spawn(run, state, turn, start, checkpoint(&turn.messages))
 }
 
 fn spawn(
     run: &Run,
     state: &mut RunState,
     turn: &Turn,
-    session: SessionStart,
+    start: SessionStart,
     content: Vec<Value>,
 ) -> anyhow::Result<()> {
-    state.reset();
-    let id = session.id().to_string();
+    state.session = None;
+    let id = start.id().to_string();
     let process = Process::spawn(Spawn {
         executable: &run.executable,
         config_dir: &run.config_dir,
@@ -871,16 +869,18 @@ fn spawn(
         model: &turn.launch.model,
         effort: turn.launch.effort.as_deref(),
         system_prompt: &turn.system_prompt,
-        session,
+        session: start,
         tools: turn.tools.clone(),
     })?;
     process.send_user(content);
-    state.process = Some(process);
-    state.live = Some(LiveSession {
-        id,
-        launch: turn.launch.clone(),
-        messages: Vec::new(),
-        awaiting: Awaiting::TurnEnd,
+    state.session = Some(Session {
+        process,
+        live: LiveSession {
+            id,
+            launch: turn.launch.clone(),
+            messages: turn.hashes.clone(),
+            awaiting: Awaiting::TurnEnd,
+        },
     });
     Ok(())
 }

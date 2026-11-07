@@ -139,10 +139,6 @@ export default function ClaudeSubscriptionCard({
 
 			if (attempt !== attemptRef.current) return;
 			trackLogin(null);
-			localApi
-				.fetchClaudeCodeStatus(userId)
-				.then(onStatusChange)
-				.catch(() => {});
 		} catch (caught) {
 			if (attempt !== attemptRef.current) return;
 
