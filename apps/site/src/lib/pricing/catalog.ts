@@ -18,16 +18,19 @@ export type PlanFeature = { label: string; href?: string };
 
 export type CreditPackCard = {
 	productId: string;
-	label: string;
 	price: string;
 	usage: string;
-	expiresAfterDays: number;
+	expiresAfter: string;
 };
 
 export type Purchase = { tier: string; interval: BillingInterval } | { pack: string };
 
 function usd(dollars: number): string {
 	return formatPrice({ amountMinor: Math.round(dollars * 100), currency: 'USD' });
+}
+
+function duration({ count, unit }: PublicPricingCatalog['creditPacks'][number]['expiresAfter']) {
+	return `${count} ${unit}${count === 1 ? '' : 's'}`;
 }
 
 function planFeatures(plan: PublicPricingCatalog['plans'][number], isFree: boolean): PlanFeature[] {
@@ -143,18 +146,16 @@ export function buildPlanCards(catalog: PublicPricingCatalog): PlanCard[] {
 
 /** Packs without a synced price can't be bought yet. */
 export function buildCreditPackCards(catalog: PublicPricingCatalog): CreditPackCard[] {
-	return catalog.creditPacks.flatMap(
-		({ productId, label, usageDollars, expiresAfterDays, price }) =>
-			price
-				? [
-						{
-							productId,
-							label,
-							price: formatPrice(price),
-							usage: usd(usageDollars),
-							expiresAfterDays
-						}
-					]
-				: []
+	return catalog.creditPacks.flatMap(({ productId, usageDollars, expiresAfter, price }) =>
+		price
+			? [
+					{
+						productId,
+						price: formatPrice(price),
+						usage: usd(usageDollars),
+						expiresAfter: duration(expiresAfter)
+					}
+				]
+			: []
 	);
 }

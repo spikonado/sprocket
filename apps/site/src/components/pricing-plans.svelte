@@ -80,7 +80,7 @@
 		'font-medium text-accent-strong underline decoration-accent-strong/30 underline-offset-4 disabled:opacity-60';
 
 	const ctaClass =
-		'focus-visible:ring-ring/50 mt-8 inline-flex min-h-11 w-full items-center justify-center rounded-full px-5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60';
+		'focus-visible:ring-ring/50 inline-flex min-h-11 items-center justify-center rounded-full px-5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60';
 
 	const secondaryCtaClass = 'border-border bg-surface text-foreground hover:bg-action-soft border';
 
@@ -122,7 +122,7 @@
 		const pack = packs.find((card) => card.productId === purchase.pack);
 
 		return pack
-			? `${pack.usage} of AI usage was added to your account. It expires ${pack.expiresAfterDays} days after purchase.`
+			? `${pack.usage} of AI usage was added to your account. It expires ${pack.expiresAfter} after purchase.`
 			: 'Your credit pack was added to your account.';
 	}
 
@@ -515,6 +515,7 @@
 						type="button"
 						class={cn(
 							ctaClass,
+							'mt-8 w-full',
 							card.primaryCta
 								? 'bg-foreground text-background hover:bg-foreground/90'
 								: secondaryCtaClass
@@ -539,33 +540,36 @@
 		<h2 id="credit-packs-heading" class="font-brand text-foreground text-2xl font-semibold">
 			Credit packs
 		</h2>
-		<p class="text-muted-foreground mt-3 max-w-2xl text-base leading-relaxed">
+		<p class="text-muted-foreground mt-3 text-base leading-relaxed">
 			Packs add AI usage on top of any plan. Sprocket uses them after your monthly allowance runs
-			out, and each pack expires a set number of days after purchase.
+			out, until each pack expires.
 		</p>
-		<div class="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+		<ul
+			class="border-border/70 bg-surface/90 divide-border/70 mt-6 divide-y rounded-2xl border"
+			role="list"
+		>
 			{#each packs as pack (pack.productId)}
-				<article class="border-border/70 bg-surface/90 flex flex-col rounded-2xl border p-6 sm:p-7">
-					<h3 class="font-brand text-foreground text-xl font-semibold">{pack.label}</h3>
-					<p class="font-brand text-foreground mt-3 text-3xl font-semibold tracking-tight">
-						{pack.price}
-					</p>
-					<p class="text-muted-foreground mt-1 text-sm">one-time payment</p>
-					<ul class="mt-6 flex-1 space-y-2.5">
-						{#each [`${pack.usage} of AI usage`, `Expires ${pack.expiresAfterDays} days after purchase`] as line (line)}
-							{@render featureItem({ label: line })}
-						{/each}
-					</ul>
+				<li class="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:gap-6 sm:px-7">
+					<div class="flex min-w-0 flex-1 flex-col gap-1 lg:flex-row lg:items-baseline lg:gap-8">
+						<p
+							id={`pack-${pack.productId}`}
+							class="font-brand text-foreground text-xl font-semibold tracking-tight lg:w-56"
+						>
+							{pack.usage} of AI usage
+						</p>
+						<p class="text-muted-foreground text-sm">Expires {pack.expiresAfter} after purchase</p>
+					</div>
 					<button
 						type="button"
-						class={cn(ctaClass, secondaryCtaClass)}
+						class={cn(ctaClass, secondaryCtaClass, 'w-full sm:w-auto sm:min-w-40')}
+						aria-describedby={`pack-${pack.productId}`}
 						disabled={loading || !!busy}
 						onclick={() => buyPack(pack.productId)}
 					>
-						{busy?.id === pack.productId ? busy.label : `Buy ${pack.label}`}
+						{busy?.id === pack.productId ? busy.label : `Buy for ${pack.price}`}
 					</button>
-				</article>
+				</li>
 			{/each}
-		</div>
+		</ul>
 	</section>
 {/if}

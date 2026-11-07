@@ -87,27 +87,34 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 });
 
 test('buildCreditPackCards lists only packs with a synced price', () => {
-	const pack = { label: '$10 of usage', usageDollars: 10, expiresAfterDays: 90 };
+	const price = (productId: string) => ({ productId, amountMinor: 999, currency: 'USD' });
 
 	expect(
 		buildCreditPackCards({
 			plans: [],
 			creditPacks: [
-				{ ...pack, productId: 'pdt_new', price: null },
 				{
-					...pack,
+					productId: 'pdt_new',
+					usageDollars: 10,
+					expiresAfter: { count: 30, unit: 'day' },
+					price: null
+				},
+				{
 					productId: 'pdt_10',
-					price: { productId: 'pdt_10', amountMinor: 999, currency: 'USD' }
+					usageDollars: 10,
+					expiresAfter: { count: 30, unit: 'day' },
+					price: price('pdt_10')
+				},
+				{
+					productId: 'pdt_year',
+					usageDollars: 50,
+					expiresAfter: { count: 1, unit: 'year' },
+					price: price('pdt_year')
 				}
 			]
 		})
 	).toEqual([
-		{
-			productId: 'pdt_10',
-			label: '$10 of usage',
-			price: '$9.99',
-			usage: '$10',
-			expiresAfterDays: 90
-		}
+		{ productId: 'pdt_10', price: '$9.99', usage: '$10', expiresAfter: '30 days' },
+		{ productId: 'pdt_year', price: '$9.99', usage: '$50', expiresAfter: '1 year' }
 	]);
 });
