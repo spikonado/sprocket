@@ -113,7 +113,7 @@ fn usage_source(
     UsageSource {
         provider,
         model: model.clone(),
-        fast,
+        fast: fast && provider.fast_service_tier().is_some(),
         pricing: pricing.clone(),
     }
 }
@@ -493,10 +493,9 @@ fn generation_options(reasoning_effort: &str) -> anyhow::Result<GenerationOption
 
 // Tier names differ per provider, so they bypass Rig's portable tiers.
 fn service_tier_params(provider: CompletionProvider, fast_mode: bool) -> serde_json::Value {
-    if fast_mode {
-        serde_json::json!({ "service_tier": provider.fast_service_tier() })
-    } else {
-        serde_json::json!({})
+    match provider.fast_service_tier() {
+        Some(tier) if fast_mode => serde_json::json!({ "service_tier": tier }),
+        _ => serde_json::json!({}),
     }
 }
 

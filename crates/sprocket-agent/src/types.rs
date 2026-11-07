@@ -31,10 +31,12 @@ impl CompletionProvider {
         }
     }
 
-    pub(crate) fn fast_service_tier(self) -> &'static str {
+    /// None for Claude Code, which picks its own speed.
+    pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
         match self {
-            Self::Spikonado => "fast",
-            Self::Openai | Self::Chatgpt => "priority",
+            Self::Spikonado => Some("fast"),
+            Self::Openai | Self::Chatgpt => Some("priority"),
+            Self::Claude => None,
         }
     }
 
