@@ -23,14 +23,26 @@ const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SUBSCRIPTION_USAGE_LIMIT_CODE: &str = "subscription_sharing_usage_limit_exceeded";
+// Undocumented; ChatGPT Business returns it when a workspace admin's per-user limit is hit.
+const WORKSPACE_USAGE_LIMIT_CODE: &str =
+    "subscription_sharing_workplace_individual_usage_limit_exceeded";
 
 #[derive(Debug, thiserror::Error)]
-#[error(
-    "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider."
-)]
-struct SubscriptionUsageLimit {
-    #[source]
-    source: anyhow::Error,
+enum UsageLimit {
+    #[error(
+        "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider."
+    )]
+    Subscription {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error(
+        "Your ChatGPT workspace's usage limit has been reached. Ask your workspace admin to raise it, or switch to another provider."
+    )]
+    Workspace {
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,14 +50,22 @@ struct SubscriptionUsageLimit {
 pub(crate) struct ChatGptNotConnected;
 
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    let usage_limit = error
-        .chain()
-        .any(|cause| provider_error_code(cause).as_deref() == Some(SUBSCRIPTION_USAGE_LIMIT_CODE));
-    if usage_limit {
-        SubscriptionUsageLimit { source: error }.into()
-    } else {
-        error
+    let code = error.chain().find_map(|cause| {
+        provider_error_code(cause)
+            .as_deref()
+            .and_then(usage_limit_code)
+    });
+    match code {
+        Some(SUBSCRIPTION_USAGE_LIMIT_CODE) => UsageLimit::Subscription { source: error }.into(),
+        Some(WORKSPACE_USAGE_LIMIT_CODE) => UsageLimit::Workspace { source: error }.into(),
+        _ => error,
     }
+}
+
+fn usage_limit_code(code: &str) -> Option<&'static str> {
+    [SUBSCRIPTION_USAGE_LIMIT_CODE, WORKSPACE_USAGE_LIMIT_CODE]
+        .into_iter()
+        .find(|known| *known == code)
 }
 
 const UNSUPPORTED_FIELDS: &[&str] = &[
@@ -350,10 +370,10 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
         .and_then(|value| value.to_str().ok())
         .map(|value| diagnostic_text(value, access_token));
     let mut message = format!("ChatGPT inference returned HTTP {status}.");
-    let mut usage_limit = false;
+    let mut usage_limit = None;
     match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
         Ok(Ok(body)) => {
-            usage_limit = body["error"]["code"].as_str() == Some(SUBSCRIPTION_USAGE_LIMIT_CODE);
+            usage_limit = body["error"]["code"].as_str().and_then(usage_limit_code);
             let recognized = [
                 ("error.message", body["error"]["message"].as_str()),
                 ("error.code", body["error"]["code"].as_str()),
@@ -380,11 +400,11 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
     if let Some(request_id) = request_id {
         message.push_str(&format!(" request_id={request_id}"));
     }
-    if usage_limit {
+    if let Some(code) = usage_limit {
         // Rig must retain a structured code when it wraps this HTTP failure.
         message = serde_json::json!({
             "error": {
-                "code": SUBSCRIPTION_USAGE_LIMIT_CODE,
+                "code": code,
                 "message": message,
             }
         })

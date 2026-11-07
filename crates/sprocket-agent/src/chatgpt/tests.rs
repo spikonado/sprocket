@@ -593,11 +593,26 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
 }
 
 #[tokio::test]
-async fn subscription_usage_limit_has_actionable_message_and_preserves_diagnostics() {
+async fn usage_limits_have_actionable_messages_and_preserve_diagnostics() {
+    for (code, expected) in [
+        (
+            "subscription_sharing_usage_limit_exceeded",
+            "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider.",
+        ),
+        (
+            "subscription_sharing_workplace_individual_usage_limit_exceeded",
+            "Your ChatGPT workspace's usage limit has been reached. Ask your workspace admin to raise it, or switch to another provider.",
+        ),
+    ] {
+        assert_usage_limit_message(code, expected).await;
+    }
+}
+
+async fn assert_usage_limit_message(code: &str, expected: &str) {
     let error = json!({
         "type": "invalid_request_error",
-        "code": "subscription_sharing_usage_limit_exceeded",
-        "message": "The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.",
+        "code": code,
+        "message": "The ChatGPT user has reached their Subscription Sharing usage limit.",
         "param": null,
     });
     for (status, body) in [
@@ -648,10 +663,7 @@ async fn subscription_usage_limit_has_actionable_message_and_preserves_diagnosti
             let error = user_facing_error(
                 error.context("Context handoff failed. Retry to continue the conversation."),
             );
-            assert_eq!(
-                error.to_string(),
-                "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider."
-            );
+            assert_eq!(error.to_string(), expected);
             assert!(
                 error
                     .chain()
