@@ -31,8 +31,11 @@ impl CompletionProvider {
         }
     }
 
-    pub(crate) fn serves_fast_mode(self) -> bool {
-        self == Self::Spikonado
+    pub(crate) fn fast_service_tier(self) -> &'static str {
+        match self {
+            Self::Spikonado => "fast",
+            Self::Openai | Self::Chatgpt => "priority",
+        }
     }
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -209,6 +212,7 @@ pub struct CatalogModelCapabilities {
     pub vendor: String,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
+    pub supports_fast: bool,
     pub usage_pricing: UsagePricing,
 }
 

@@ -7,16 +7,33 @@ use super::{ProviderErrorDisposition, RunNoLongerActive, classify_provider_error
 use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 #[test]
-fn generation_options_keep_gateway_fast_tier_separate() {
-    let (options, params) = super::completion_parameters("xhigh", true).unwrap();
+fn generation_options_map_reasoning_effort() {
+    let options = super::generation_options("xhigh").unwrap();
     assert_eq!(
         options.reasoning,
         Some(rig::completion::Effort::XHigh.into())
     );
-    assert_eq!(params, serde_json::json!({ "service_tier": "fast" }));
-    let (options, params) = super::completion_parameters("none", false).unwrap();
+    let options = super::generation_options("none").unwrap();
     assert_eq!(options.reasoning, Some(rig::completion::Reasoning::Off));
-    assert_eq!(params, serde_json::json!({}));
+}
+
+#[test]
+fn fast_mode_sends_each_providers_service_tier() {
+    use crate::types::CompletionProvider;
+    for (provider, tier) in [
+        (CompletionProvider::Spikonado, "fast"),
+        (CompletionProvider::Openai, "priority"),
+        (CompletionProvider::Chatgpt, "priority"),
+    ] {
+        assert_eq!(
+            super::service_tier_params(provider, true),
+            serde_json::json!({ "service_tier": tier })
+        );
+        assert_eq!(
+            super::service_tier_params(provider, false),
+            serde_json::json!({})
+        );
+    }
 }
 
 #[test]

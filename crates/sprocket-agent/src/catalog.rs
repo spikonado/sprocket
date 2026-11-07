@@ -99,8 +99,12 @@ pub struct CatalogModel {
 
 impl CatalogModel {
     pub fn supports_fast(&self) -> bool {
-        self.service_tiers.iter().any(|tier| tier == "fast")
+        lists_fast_tier(&self.service_tiers)
     }
+}
+
+fn lists_fast_tier(service_tiers: &[String]) -> bool {
+    service_tiers.iter().any(|tier| tier == "fast")
 }
 
 pub(crate) struct SubagentModelChoices {
@@ -191,6 +195,7 @@ fn select_catalog_model(
             auto_handoff_token_limit: model.auto_handoff_token_limit,
         },
         supports_images: model.supports_images,
+        supports_fast: lists_fast_tier(&model.service_tiers),
         usage_pricing: UsagePricing {
             long_context_threshold_tokens: model
                 .direct_api_pricing
@@ -253,9 +258,9 @@ fn select_handoff_model(
         if !model.reasoning_efforts.contains(&handoff.reasoning_effort) {
             handoff.reasoning_effort = model.default_reasoning_effort.clone();
         }
-        handoff.fast_mode &= model.service_tiers.iter().any(|tier| tier == "fast");
     }
     let capabilities = select_catalog_model(catalog, &handoff.selected_model)?;
+    handoff.fast_mode &= capabilities.supports_fast;
     // A fallback cannot establish the historical vendor, so summarize instead of replaying it.
     Ok((removed
         || handoff.completion_provider != target_provider
