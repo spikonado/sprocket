@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { MediaQuery } from 'svelte/reactivity';
 	import logo from '@/assets/logo.svg';
 	import github from '@/assets/github_logo.svg';
 	import { lockOverlay } from '@/lib/overlay';
@@ -12,6 +13,11 @@
 	] as const;
 
 	let menuOpen = $state(false);
+	const desktop = new MediaQuery('min-width: 48rem');
+
+	$effect(() => {
+		if (desktop.current) menuOpen = false;
+	});
 
 	function closeMenu() {
 		menuOpen = false;
