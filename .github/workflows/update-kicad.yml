@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          # update-release.mjs compares when the build files and the pin last changed.
+          # update-release.mjs diffs the build files against the commit that last changed the pin.
           fetch-depth: 0
 
       - uses: ./.github/actions/setup-nix-shell

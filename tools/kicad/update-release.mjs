@@ -441,14 +441,12 @@ function lastCommit(paths) {
 	return run('git', ['log', '-1', '--format=%H', '--', ...paths], { cwd: toolDir }).trim();
 }
 
-function isAncestor(commit, of) {
-	try {
-		run('git', ['merge-base', '--is-ancestor', commit, of], { cwd: toolDir });
+function changedSince(commit, paths) {
+	const changed = run('git', ['diff', '--name-only', commit, 'HEAD', '--', ...paths], {
+		cwd: toolDir
+	});
 
-		return true;
-	} catch {
-		return false;
-	}
+	return changed.trim() !== '';
 }
 
 function nextVersion(pinned, bump) {
@@ -556,7 +554,7 @@ const pinned = JSON.parse(await readFile(releasesPath, 'utf8'));
 const buildCommit = lastCommit(BUILD_FILES);
 
 const buildChanged =
-	!isAncestor(buildCommit, lastCommit(['releases.json'])) ||
+	changedSince(lastCommit(['releases.json']), BUILD_FILES) ||
 	pinned.kipy.commit !== kipyCommit ||
 	pinned.routingTools.version !== routingToolsVersion;
 
