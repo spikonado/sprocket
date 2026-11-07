@@ -95,12 +95,6 @@ export {
 	vSelectedThreadLifecycleRun
 } from '@convex/lib/runCancellation';
 
-const usageMeterWindowFields = {
-	used: v.number(),
-	limit: v.number(),
-	resetsAt: v.union(v.number(), v.null())
-};
-
 export const vMyUsage = v.object({
 	tier: vSubscriptionTier,
 	tierLabel: v.string(),
@@ -110,9 +104,9 @@ export const vMyUsage = v.object({
 		v.object({
 			id: v.literal('modelUsage'),
 			label: v.string(),
-			description: v.string(),
-			...usageMeterWindowFields,
-			windows: v.array(v.object({ period: v.literal('monthly'), ...usageMeterWindowFields }))
+			used: v.number(),
+			limit: v.number(),
+			resetsAt: v.union(v.number(), v.null())
 		})
 	)
 });
