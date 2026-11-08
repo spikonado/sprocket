@@ -4,6 +4,14 @@ import satori from 'satori';
 import sharp from 'sharp';
 import { SITE_NAME, SITE_URL } from '@/lib/seo';
 
+declare module 'react' {
+	// Satori renders `corner-shape`, which csstype doesn't list yet.
+	interface CSSProperties {
+		// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names
+		cornerShape?: string;
+	}
+}
+
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
 
@@ -51,12 +59,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 			}}
 		>
 			<div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-				<img
-					src={`data:image/svg+xml;base64,${logo.toString('base64')}`}
-					width={56}
-					height={56}
-					style={{ borderRadius: '12px' }}
-				/>
+				<img src={`data:image/svg+xml;base64,${logo.toString('base64')}`} width={56} height={56} />
 				<div style={{ fontSize: 36, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1 }}>
 					{SITE_NAME}
 				</div>
@@ -78,7 +81,9 @@ export async function renderOgImagePng(): Promise<Buffer> {
 							color: colors.accentStrong,
 							backgroundColor: colors.accentSoft,
 							padding: '0 12px 6px',
-							borderRadius: '10px',
+							borderRadius: '14px',
+							// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names
+							cornerShape: 'squircle',
 							display: 'flex'
 						}}
 					>
