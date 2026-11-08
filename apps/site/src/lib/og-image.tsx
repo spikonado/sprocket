@@ -51,6 +51,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 			style={{
 				width: '100%',
 				height: '100%',
+				boxSizing: 'border-box',
 				display: 'flex',
 				flexDirection: 'column',
 				justifyContent: 'space-between',
@@ -70,7 +71,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 						flexWrap: 'wrap',
 						fontSize: 68,
 						fontWeight: 600,
-						letterSpacing: '-0.035em',
+						letterSpacing: '-0.025em',
 						lineHeight: 1.12
 					}}
 				>
