@@ -54,8 +54,7 @@ export default defineConfig({
 		}),
 		react()
 	],
-	// Without staticHeaders, prerendered pages only get the policy as a <meta> tag.
-	adapter: vercel({ staticHeaders: true }),
+	adapter: vercel(),
 
 	vite: {
 		plugins: [tailwindcss(), ...posthogSourceMaps],
