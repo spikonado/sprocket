@@ -106,28 +106,38 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     use crate::types::{
         AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
     };
-    use base64::Engine;
+    use rig::message::{ImageMediaType, ToolResultContent};
 
     let path = Path::new(metadata["path"].as_str().unwrap());
     assert_eq!(path.parent().unwrap(), cache.canonicalize().unwrap());
     assert_eq!(tokio::fs::read(path).await.unwrap(), png());
     assert!(!metadata.to_string().contains("iVBORw0KGgo"));
-    let output = replay_tool_output(&metadata, None).await.unwrap();
     let saved_path = format!("Image saved to: {}", path.display());
-    let expected = rig::message::ToolResultContent::image_base64(
-        base64::engine::general_purpose::STANDARD.encode(png()),
-        Some(rig::message::ImageMediaType::PNG),
-        None,
-    );
-    assert_eq!(
-        serde_json::to_value(output.into_content()).unwrap(),
-        json!([
-            rig::message::ToolResultContent::text(saved_path.clone()),
-            expected
-        ])
-    );
 
     metadata["url"] = json!("http://127.0.0.1:1/unavailable");
+    let url = "https://example.convex.cloud/api/storage/image";
+    let stored = ImageUrlMap::from([(
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(png())),
+        Ok(url.to_string()),
+    )]);
+    let items = super::super::convert::replay_local_tool_output(&metadata)
+        .await
+        .unwrap()
+        .into_history_items(&stored)
+        .unwrap();
+    let ToolResultContent::Image(by_url) =
+        ToolResultContent::image_url(url, Some(ImageMediaType::PNG), None)
+    else {
+        unreachable!()
+    };
+    assert!(matches!(
+        items.as_slice(),
+        [
+            AgentHistoryToolResultItem::Text { text },
+            AgentHistoryToolResultItem::Image { image_json },
+        ] if text == &saved_path && image_json == &serde_json::to_string(&by_url).unwrap()
+    ));
+
     let part = serde_json::from_value(json!({
         "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
         "tool": {"toolInvocationId": "inv-1", "callId": "call", "name": name, "status": "completed", "output": metadata}
@@ -145,44 +155,9 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
         }],
     }];
     super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), true, None).await;
-    let AgentHistoryContent::ToolResult { items, .. } = &history[0].contents[0] else {
-        panic!("missing result")
-    };
-    let [
-        AgentHistoryToolResultItem::Text { text },
-        AgentHistoryToolResultItem::Image { image_json },
-    ] = items.as_slice()
-    else {
-        panic!("missing saved path and image")
-    };
-    assert_eq!(text, &saved_path);
-    let rig::message::ToolResultContent::Image(expected) = expected else {
-        unreachable!()
-    };
-    assert_eq!(image_json, &serde_json::to_string(&expected).unwrap());
-
-    let url = "https://example.convex.cloud/api/storage/image";
-    let stored = ImageUrlMap::from([(
-        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(png())),
-        url.to_string(),
-    )]);
-    let items = super::super::convert::replay_local_tool_output(&metadata)
-        .await
-        .unwrap()
-        .into_history_items(&stored)
-        .unwrap();
-    let rig::message::ToolResultContent::Image(by_url) = rig::message::ToolResultContent::image_url(
-        url,
-        Some(rig::message::ImageMediaType::PNG),
-        None,
-    ) else {
-        unreachable!()
-    };
-    assert!(matches!(
-        &items[1],
-        AgentHistoryToolResultItem::Image { image_json }
-            if image_json == &serde_json::to_string(&by_url).unwrap()
-    ));
+    let serialized = serde_json::to_string(&history).unwrap();
+    assert!(serialized.contains("could not be sent to the model"));
+    assert!(!serialized.contains("imageJson"));
 
     super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), false, None)
         .await;

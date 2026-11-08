@@ -133,14 +133,16 @@ pub(crate) async fn hydrate_tool_history(
         Some(source) => source.urls(&images).await,
         None => ImageUrlMap::new(),
     };
+    let text_item = |text| vec![AgentHistoryToolResultItem::Text { text }];
     for (items, output, replayed) in replays {
-        *items = match replayed.and_then(|replayed| replayed.into_history_items(&urls)) {
-            Ok(items) => items,
-            Err(error) => vec![AgentHistoryToolResultItem::Text {
-                text: format!(
-                    "Previous tool output is not available in the local cache: {error}. Original result: {output}"
-                ),
-            }],
+        *items = match replayed.map(|replayed| replayed.into_history_items(&urls)) {
+            Ok(Ok(items)) => items,
+            Ok(Err(error)) => text_item(format!(
+                "Previous tool output could not be sent to the model: {error:#}. Original result: {output}"
+            )),
+            Err(error) => text_item(format!(
+                "Previous tool output is not available in the local cache: {error}. Original result: {output}"
+            )),
         };
     }
 }
