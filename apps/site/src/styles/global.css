@@ -48,6 +48,10 @@
 		scroll-behavior: smooth;
 	}
 
+	html:has(dialog[open]) {
+		overflow: hidden;
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		html {
 			scroll-behavior: auto;

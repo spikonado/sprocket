@@ -1,0 +1,130 @@
+---
+import github from '@/assets/github_logo.svg';
+import logo from '@/assets/logo.svg';
+import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
+import { marketingBrandClass, marketingButtonPrimaryClass } from '@/styles/marketing';
+import { cn } from '@/utils';
+
+const navLinks = [
+	{ label: 'Home', href: '/' },
+	{ label: 'Pricing', href: '/pricing' }
+] as const;
+
+const iconProps = {
+	viewBox: '0 0 24 24',
+	fill: 'none',
+	stroke: 'currentColor',
+	'stroke-width': '2',
+	'stroke-linecap': 'round',
+	'aria-hidden': 'true'
+} as const;
+---
+
+<header
+	class="group/header fixed top-0 z-50 w-full border-b border-border/40 bg-background/95"
+	data-ph-capture-attribute-section="navbar"
+>
+	<div
+		class="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8"
+	>
+		<a
+			href="/"
+			class="flex min-w-0 items-center gap-2 transition-transform duration-150 hover:scale-[1.02]"
+		>
+			<img src={logo.src} alt="" class="h-8 w-8 shrink-0" />
+			<span class={cn(marketingBrandClass, 'truncate text-xl sm:text-2xl')}>Sprocket</span>
+		</a>
+
+		<nav
+			class="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 md:flex"
+			aria-label="Primary"
+		>
+			{
+				navLinks.map((link) => (
+					<a
+						href={link.href}
+						class="font-sans text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+					>
+						{link.label}
+					</a>
+				))
+			}
+		</nav>
+
+		<div class="flex shrink-0 items-center gap-2 sm:gap-3">
+			<a
+				href={SPROCKET_GITHUB_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="hidden items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-sans text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent-soft md:inline-flex"
+			>
+				<img src={github.src} alt="" class="h-4 w-4" />
+				<span>GitHub</span>
+			</a>
+			<a
+				href="/#download"
+				class={cn(marketingButtonPrimaryClass, 'hidden text-sm whitespace-nowrap md:inline-flex')}
+			>
+				Download
+			</a>
+
+			<button
+				type="button"
+				popovertarget="mobile-nav"
+				class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface text-foreground transition-colors hover:bg-accent-soft focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none md:hidden"
+				aria-label="Menu"
+			>
+				<svg {...iconProps} class="h-5 w-5 group-has-[#mobile-nav:popover-open]/header:hidden">
+					<path d="M4 7h16M4 12h16M4 17h16"></path>
+				</svg>
+				<svg {...iconProps} class="hidden h-5 w-5 group-has-[#mobile-nav:popover-open]/header:block">
+					<path d="M6 6l12 12M18 6L6 18"></path>
+				</svg>
+			</button>
+		</div>
+	</div>
+
+	<div
+		id="mobile-nav"
+		popover
+		class="inset-x-0 top-14 bottom-auto m-0 w-full border-t border-border/40 bg-background text-foreground md:hidden"
+		data-ph-capture-attribute-section="navbar_mobile"
+	>
+		<nav class="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-4 sm:px-6" aria-label="Mobile">
+			{
+				navLinks.map((link) => (
+					<a
+						href={link.href}
+						class="rounded-xl px-3 py-3 font-sans text-base font-medium text-foreground transition-colors hover:bg-accent-soft"
+					>
+						{link.label}
+					</a>
+				))
+			}
+
+			<div class="mt-3 flex flex-col gap-3 border-t border-border/50 pt-4">
+				<a
+					href={SPROCKET_GITHUB_URL}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 font-sans text-base font-medium text-foreground transition-colors hover:bg-accent-soft"
+				>
+					<img src={github.src} alt="" class="h-5 w-5" />
+					<span>GitHub</span>
+				</a>
+				<a href="/#download" class={cn(marketingButtonPrimaryClass, 'w-full py-3 text-base')}>
+					Download
+				</a>
+			</div>
+		</nav>
+	</div>
+</header>
+
+<script>
+	// In-page links like /#download don't navigate away, so they would leave the menu open.
+	const menu = document.getElementById('mobile-nav');
+
+	menu?.addEventListener('click', (event) => {
+		if (event.target instanceof Element && event.target.closest('a')) menu.hidePopover();
+	});
+</script>

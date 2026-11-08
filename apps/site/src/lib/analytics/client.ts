@@ -67,9 +67,11 @@ export function captureException(cause: unknown, context: string): void {
 }
 
 /** For sections an island mounts after analytics started, like packs from the live catalog. */
-export function observeSection(section: Element): void {
+export function observeSection(section: Element): () => void {
 	client();
 	sectionObserver?.observe(section);
+
+	return () => sectionObserver?.unobserve(section);
 }
 
 /**

@@ -1,6 +1,6 @@
 ---
-import Footer from '@/components/footer.svelte';
-import PricingPlans from '@/components/pricing-plans.svelte';
+import Footer from '@/components/footer.astro';
+import PricingPlans from '@/components/pricing-plans';
 import BaseLayout from '@/layouts/base-layout.astro';
 import { fetchPricingCatalog } from '@/lib/pricing/billing';
 import { pricingFaqs } from '@/lib/pricing/catalog';
@@ -18,6 +18,8 @@ try {
 	// The island fetches the live catalog in the browser.
 }
 
+const freePlan = initialCatalog?.plans.find((plan) => plan.id === 'free');
+
 const productLd = {
 	'@type': 'Product',
 	name: 'Sprocket',
@@ -25,7 +27,9 @@ const productLd = {
 	brand: { '@type': 'Brand', name: ORGANIZATION_NAME },
 	url: `${SITE_URL}/pricing`,
 	// Paid prices can change after this static page is built, so only the free plan is listed.
-	offers: [{ '@type': 'Offer', name: 'Sprocket Free', price: '0', priceCurrency: 'USD' }]
+	offers: freePlan
+		? [{ '@type': 'Offer', name: `Sprocket ${freePlan.label}`, price: '0', priceCurrency: 'USD' }]
+		: []
 };
 
 const faqLd = {
