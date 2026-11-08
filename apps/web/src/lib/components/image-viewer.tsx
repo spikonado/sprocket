@@ -1,6 +1,6 @@
 import { Check, Copy, Download, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useLatest } from '$lib/use-latest';
+import { useEscapeLayer } from '$lib/use-escape-layer';
 import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 
 export type ViewerImage = {
@@ -115,7 +115,8 @@ export default function ImageViewer({
 	const [downloading, setDownloading] = useState(false);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const generationRef = useRef(0);
-	const onCloseRef = useLatest(onClose);
+
+	useEscapeLayer(onClose, image !== null);
 
 	useEffect(() => {
 		generationRef.current += 1;
@@ -142,19 +143,12 @@ export default function ImageViewer({
 		const previousBodyOverflow = document.body.style.overflow;
 		document.body.style.overflow = 'hidden';
 
-		if (document.fullscreenElement && document.querySelector('[data-artifact-screen-fullscreen]')) {
+		// Browser fullscreen consumes Escape, which must close this viewer instead.
+		if (document.fullscreenElement) {
 			void document.exitFullscreen?.().catch(() => {});
 		}
 
 		function handleWindowKeydown(event: KeyboardEvent) {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				event.stopPropagation();
-				onCloseRef.current();
-
-				return;
-			}
-
 			const dialogEl = dialogRef.current;
 
 			if (event.key !== 'Tab' || !dialogEl) {
@@ -204,7 +198,7 @@ export default function ImageViewer({
 				previouslyFocused.focus();
 			}
 		};
-	}, [image, onCloseRef, resetCopied]);
+	}, [image, resetCopied]);
 
 	async function copyImage(current: ViewerImage) {
 		if (copying) {
@@ -285,7 +279,6 @@ export default function ImageViewer({
 	return (
 		<div
 			className="bg-background/92 fixed inset-0 z-300 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-12"
-			data-image-viewer=""
 			role="presentation"
 			onClick={(event) => {
 				if (event.target === event.currentTarget) {

@@ -4,23 +4,43 @@ import ChatMarkdown from '$lib/components/chat-markdown';
 import LazyJsonRender from '$lib/components/lazy-json-render';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
+import { useEscapeLayer } from '$lib/use-escape-layer';
 import { useLatest } from '$lib/use-latest';
 
 type Props = {
 	artifact: ArtifactEntry;
 	workspacePath?: string;
+	fullscreenRequest: Promise<boolean>;
 	onClose: () => void;
 };
 
-export default function ArtifactScreenFullscreen({ artifact, workspacePath, onClose }: Props) {
+/** Call from the opening click: Firefox denies fullscreen requests made outside the gesture. */
+export function requestArtifactFullscreen(): Promise<boolean> {
+	if (document.fullscreenElement) return Promise.resolve(true);
+
+	return (
+		document.documentElement.requestFullscreen?.().then(
+			() => true,
+			() => false
+		) ?? Promise.resolve(false)
+	);
+}
+
+export default function ArtifactScreenFullscreen({
+	artifact,
+	workspacePath,
+	fullscreenRequest,
+	onClose
+}: Props) {
 	const previewDocument = useMemo(
 		() => buildArtifactPreviewDocument(artifact.artifactType, artifact.content),
 		[artifact.artifactType, artifact.content]
 	);
 
 	const rootRef = useRef<HTMLDivElement | null>(null);
-	/** Shown only when the Fullscreen API is unavailable or rejects (iframe Escape cannot reach us). */
+	// Escape pressed inside the preview iframe never reaches this page.
 	const [showFallbackClose, setShowFallbackClose] = useState(false);
+	const isTopLayer = useEscapeLayer(onClose);
 	const onCloseRef = useLatest(onClose);
 
 	useEffect(() => {
@@ -29,72 +49,30 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 		if (!el) return;
 
 		let active = true;
-		// Click handler requests FS on documentElement before this mounts; treat any
-		// current fullscreen session as ours so we don't re-request (and bounce) later.
-		let wasFullscreen = Boolean(document.fullscreenElement);
 
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
-		const close = () => {
-			if (!active) return;
-			active = false;
-			onCloseRef.current();
-		};
+		void fullscreenRequest.then((entered) => {
+			if (active && !entered) setShowFallbackClose(true);
+		});
 
 		const onFullscreenChange = () => {
-			if (document.fullscreenElement) {
-				wasFullscreen = true;
-				setShowFallbackClose(false);
+			if (document.fullscreenElement) return;
 
-				return;
-			}
-
-			if (wasFullscreen) {
-				if (document.querySelector('[data-image-viewer]')) {
-					wasFullscreen = false;
-					setShowFallbackClose(true);
-
-					return;
-				}
-
-				close();
-			}
-		};
-
-		const onKeyDown = (event: globalThis.KeyboardEvent) => {
-			if (document.querySelector('[data-image-viewer]')) return;
-
-			if (event.key !== 'Escape') return;
-			// Claim Escape so an expanded workspace panel underneath does not also collapse.
-			event.stopImmediatePropagation();
-
-			// Browser fullscreen already exits on Escape; fullscreenchange handles close.
-			if (document.fullscreenElement || wasFullscreen) return;
-			event.preventDefault();
-			close();
+			if (isTopLayer()) onCloseRef.current();
+			else setShowFallbackClose(true);
 		};
 
 		document.addEventListener('fullscreenchange', onFullscreenChange);
-		window.addEventListener('keydown', onKeyDown, true);
 
 		queueMicrotask(() => {
 			if (active) el.focus();
 		});
 
-		// Parent requests fullscreen in the user-gesture click handler. If that
-		// failed or was skipped, expose a dismiss control; do not re-request here
-		// (Firefox will deny it outside the gesture and can bounce the session).
-		const fallbackTimer = window.setTimeout(() => {
-			if (!active || document.fullscreenElement) return;
-			setShowFallbackClose(true);
-		}, 250);
-
 		return () => {
 			active = false;
-			window.clearTimeout(fallbackTimer);
 			document.removeEventListener('fullscreenchange', onFullscreenChange);
-			window.removeEventListener('keydown', onKeyDown, true);
 
 			if (document.fullscreenElement) {
 				void document.exitFullscreen?.().catch(() => {});
@@ -105,12 +83,11 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 				if (focusTarget?.isConnected) focusTarget.focus();
 			});
 		};
-	}, [onCloseRef]);
+	}, [fullscreenRequest, isTopLayer, onCloseRef]);
 
 	return (
 		<div
 			ref={rootRef}
-			data-artifact-screen-fullscreen=""
 			className="bg-background fixed inset-0 z-200 flex flex-col outline-none"
 			role="dialog"
 			aria-modal="true"

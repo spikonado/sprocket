@@ -1,6 +1,7 @@
 import { Ellipsis, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useEscapeLayer } from '$lib/use-escape-layer';
 
 type Props = {
 	title: string;
@@ -33,6 +34,8 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 		else menuRef.current?.focus();
 	}, [position, busy]);
 
+	useEscapeLayer(close, position !== null);
+
 	useEffect(() => {
 		if (!position) return;
 
@@ -46,13 +49,7 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 		}
 
 		function keydown(event: KeyboardEvent) {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				event.stopImmediatePropagation();
-				close();
-			} else if (event.key === 'Tab') {
-				close();
-			}
+			if (event.key === 'Tab') close();
 		}
 
 		function blur() {

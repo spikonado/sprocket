@@ -63,7 +63,9 @@ import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle
 import { minLayoutSize } from '$lib/chat/side-panel';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
 import { useExistingThreadCwd } from '$lib/home/thread-cwd';
-import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
+import ArtifactScreenFullscreen, {
+	requestArtifactFullscreen
+} from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
 import {
@@ -548,6 +550,10 @@ export default function App({
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
+
+	const [artifactFullscreenRequest, setArtifactFullscreenRequest] =
+		useState<Promise<boolean> | null>(null);
+
 	const phoneViewport = viewportWidth > 0 && viewportWidth < 768;
 	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
 	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
@@ -2822,13 +2828,8 @@ export default function App({
 							}
 							onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
 							onOpenFullscreen={(key) => {
+								setArtifactFullscreenRequest(requestArtifactFullscreen());
 								artifactPanel.setFullscreenKey(key);
-
-								// Request in the click gesture so Firefox keeps true browser
-								// fullscreen; the overlay only observes/exits the session.
-								if (!document.fullscreenElement) {
-									void document.documentElement.requestFullscreen?.().catch(() => {});
-								}
 							}}
 							onToggleExpanded={
 								phoneViewport
@@ -2840,10 +2841,11 @@ export default function App({
 					</div>
 				)}
 
-				{artifactPanel.fullscreenArtifact && (
+				{artifactPanel.fullscreenArtifact && artifactFullscreenRequest && (
 					<ArtifactScreenFullscreen
 						workspacePath={localApi ? currentProject?.workspacePath : undefined}
 						artifact={artifactPanel.fullscreenArtifact}
+						fullscreenRequest={artifactFullscreenRequest}
 						onClose={() => artifactPanel.setFullscreenKey(null)}
 					/>
 				)}

@@ -24,6 +24,7 @@ import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
+import { useEscapeLayer } from '$lib/use-escape-layer';
 import {
 	layoutRects,
 	leafName,
@@ -182,29 +183,7 @@ export default function SidePanel(props: Props) {
 		else onCloseTab(id);
 	}
 
-	useEffect(() => {
-		if (!expanded || !onToggleExpanded) return;
-
-		const onKeyDown = (event: globalThis.KeyboardEvent) => {
-			if (event.key !== 'Escape') return;
-
-			// Artifact screen-fullscreen (browser FS or CSS fallback) owns Escape.
-			if (
-				document.fullscreenElement ||
-				document.querySelector('[data-artifact-screen-fullscreen]') ||
-				document.querySelector('[data-image-viewer]')
-			) {
-				return;
-			}
-
-			event.preventDefault();
-			onToggleExpanded();
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-
-		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [expanded, onToggleExpanded]);
+	useEscapeLayer(() => onToggleExpanded?.(), Boolean(expanded && onToggleExpanded));
 
 	return (
 		<aside
