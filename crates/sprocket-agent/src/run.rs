@@ -45,6 +45,8 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 const CONTINUE_PROMPT: &str = "continue";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
+const COMMIT_CO_AUTHOR_PLACEHOLDER: &str = "{{COMMIT_CO_AUTHOR}}";
+const COMMIT_CO_AUTHOR_LINE: &str = "- End the message of each git commit you make with the trailer `Co-authored-by: usesprocket[bot] <306702232+usesprocket[bot]@users.noreply.github.com>`.";
 
 pub struct AgentRun {
     request: RunAgentRequest,
@@ -98,11 +100,19 @@ fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
-fn base_instructions(model_label: &str, model_id: &str) -> String {
-    SYSTEM_PROMPT_TEMPLATE.trim_end().replace(
-        MODEL_IDENTITY_PLACEHOLDER,
-        &format!("Your model is {model_label} ({model_id})."),
-    )
+fn base_instructions(model_label: &str, model_id: &str, co_author_commits: bool) -> String {
+    let co_author = if co_author_commits {
+        format!("\n{COMMIT_CO_AUTHOR_LINE}")
+    } else {
+        String::new()
+    };
+    SYSTEM_PROMPT_TEMPLATE
+        .trim_end()
+        .replace(
+            MODEL_IDENTITY_PLACEHOLDER,
+            &format!("Your model is {model_label} ({model_id})."),
+        )
+        .replace(&format!("\n{COMMIT_CO_AUTHOR_PLACEHOLDER}"), &co_author)
 }
 
 async fn cleanup_twice<T, F, Fut>(
@@ -778,6 +788,7 @@ pub async fn run_agent(
                 base_instructions: base_instructions(
                     &handoff_capabilities.label,
                     &handoff.selected_model,
+                    context.co_author_commits,
                 ),
                 usage_pricing: handoff_capabilities.usage_pricing,
                 route: handoff_capabilities.route,
@@ -874,7 +885,11 @@ pub async fn run_agent(
             &transcript_dir,
             &workspace_root,
         );
-        let system_prompt = base_instructions(&capabilities.label, &context.run.selected_model);
+        let system_prompt = base_instructions(
+            &capabilities.label,
+            &context.run.selected_model,
+            context.co_author_commits,
+        );
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,

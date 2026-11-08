@@ -90,7 +90,7 @@ fn prompted_continuations_use_their_user_prompt() {
 
 #[test]
 fn base_instructions_include_the_selected_model_identity() {
-    let instructions = base_instructions(MODEL_LABEL, MODEL_ID);
+    let instructions = base_instructions(MODEL_LABEL, MODEL_ID, false);
 
     assert!(
         instructions
@@ -98,6 +98,15 @@ fn base_instructions_include_the_selected_model_identity() {
             .any(|line| line == "- Your model is GPT-5.6 Sol (gpt-5.6-sol).")
     );
     assert!(!instructions.contains(super::MODEL_IDENTITY_PLACEHOLDER));
+}
+
+#[test]
+fn base_instructions_follow_the_co_author_preference() {
+    let with = base_instructions(MODEL_LABEL, MODEL_ID, true);
+    let without = base_instructions(MODEL_LABEL, MODEL_ID, false);
+
+    assert!(with.contains("PRs you or your subagents are working on to your thread.\n- End the message of each git commit"));
+    assert!(without.contains("PRs you or your subagents are working on to your thread.\n\n## "));
 }
 
 #[test]

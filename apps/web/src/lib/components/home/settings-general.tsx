@@ -39,6 +39,8 @@ export default function SettingsGeneral() {
 
 	const setShareConversationContent = useMutation(api.uiPreferences.setShareConversationContent);
 
+	const setCoAuthorCommits = useMutation(api.uiPreferences.setCoAuthorCommits);
+
 	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
 	const disabled = preferencesQuery.status !== 'success';
 
@@ -67,6 +69,12 @@ export default function SettingsGeneral() {
 						savedEnabled={preferences?.settleMergedThreads ?? false}
 						disabled={disabled}
 						save={setSettleMergedThreads}
+					/>
+					<PreferenceToggle
+						title="Add Sprocket as a co-author on agent commits"
+						savedEnabled={preferences?.coAuthorCommits ?? true}
+						disabled={disabled}
+						save={setCoAuthorCommits}
 					/>
 					<PreferenceToggle
 						title="Share anonymous conversation data to help improve Sprocket for everyone"

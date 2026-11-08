@@ -62,6 +62,7 @@ describe('provider fallback', () => {
 			]
 		});
 		await asUser.mutation(api.uiPreferences.setShareConversationContent, { enabled: false });
+		await asUser.mutation(api.uiPreferences.setCoAuthorCommits, { enabled: false });
 
 		const { runId } = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -86,5 +87,6 @@ describe('provider fallback', () => {
 			).providerPreferences.enabledProviders
 		).toEqual(['chatgpt', 'openai', 'claude', 'vercel']);
 		expect(context.shareConversationContent).toBe(false);
+		expect(context.coAuthorCommits).toBe(false);
 	});
 });
