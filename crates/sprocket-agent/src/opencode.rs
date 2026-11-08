@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
+use rig::completion::{CompletionRequest, Message};
+use rig::error::EncodeError;
 use rig::http_client::{
     self, DynHttpClient, HeaderValue, HttpClientExt, LazyBody, MultipartForm, Request, Response,
     StatusCode, StreamingResponse,
@@ -10,7 +12,9 @@ use rig::operation::Completion;
 use rig::providers::anthropic::AnthropicConfig;
 use rig::providers::openai::OpenAIConfig;
 use rig::providers::openai::responses_api::wire::Responses;
+use rig::providers::openai::wire::{Chat, OPENCODE_GO};
 use rig::wasm_compat::WasmCompatSend;
+use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
 
 use crate::anthropic::claude_messages;
@@ -21,12 +25,13 @@ const PAY_AS_YOU_GO_URL: &str = "https://opencode.ai/inference";
 const USER_AGENT: &str = concat!("sprocket/", env!("CARGO_PKG_VERSION"));
 const SESSION_HEADER: &str = "x-opencode-session";
 
-/// Claude runs on OpenCode's Messages endpoint and every other model on its Responses one.
+/// OpenCode serves Claude only on Messages, OpenAI models only on Responses, and open models
+/// only on Chat Completions.
 /// `session_id` keeps a thread on one route and prompt cache, which Go requires.
 pub(crate) fn completion_model(
     api_key: String,
     model: &str,
-    claude: bool,
+    vendor: &str,
     cache_write_ttl: Option<&str>,
     instructions: &str,
     session_id: &str,
@@ -36,19 +41,58 @@ pub(crate) fn completion_model(
         session: HeaderValue::from_str(session_id)?,
         pay_as_you_go: Arc::default(),
     };
-    Ok(if claude {
-        let config = AnthropicConfig::new(api_key).with_base_url(format!("{GO_URL}/anthropic"));
-        Model::new(
-            claude_messages(config, model, instructions, cache_write_ttl),
-            transport,
-        )
-        .erase()
-    } else {
-        let config = OpenAIConfig::new(api_key)
-            .with_base_url(format!("{GO_URL}/openai/v1"))
-            .with_instructions(instructions);
-        Model::new(StatelessResponses(Responses::new(config, model)), transport).erase()
+    Ok(match vendor {
+        "anthropic" => {
+            let config = AnthropicConfig::new(api_key).with_base_url(format!("{GO_URL}/anthropic"));
+            Model::new(
+                claude_messages(config, model, instructions, cache_write_ttl),
+                transport,
+            )
+            .erase()
+        }
+        "openai" => {
+            let config = OpenAIConfig::new(api_key)
+                .with_base_url(format!("{GO_URL}/openai/v1"))
+                .with_instructions(instructions);
+            Model::new(StatelessResponses(Responses::new(config, model)), transport).erase()
+        }
+        _ => {
+            // Go's dialect names the field each model replays its reasoning under.
+            let wire = OpenAIConfig::with_key(&OPENCODE_GO, api_key).chat(model);
+            let instructions = instructions.to_string();
+            Model::new(InstructedChat { wire, instructions }, transport).erase()
+        }
     })
+}
+
+#[derive(Clone)]
+struct InstructedChat {
+    wire: Chat,
+    instructions: String,
+}
+
+impl Wire for InstructedChat {
+    type Op = Completion;
+    type Payload = Encoded;
+    type Frame = WireFrame;
+    type Event = <Chat as Wire>::Event;
+    type Decoder<'id> = <Chat as Wire>::Decoder<'id>;
+    type Reassembler = <Chat as Wire>::Reassembler;
+
+    fn describe(&self) -> Descriptor<'_> {
+        self.wire.describe()
+    }
+
+    fn encode(&self, mut request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
+        request
+            .chat_history
+            .insert(0, Arc::new(Message::system(self.instructions.clone())));
+        self.wire.encode(request, mode)
+    }
+
+    fn decoder<'id>(&self) -> Self::Decoder<'id> {
+        self.wire.decoder()
+    }
 }
 
 /// One OpenCode key may hold a Go subscription, pay-as-you-go credits, or both. Requests go

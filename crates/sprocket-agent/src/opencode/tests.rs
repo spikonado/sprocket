@@ -76,3 +76,26 @@ async fn requests_stay_on_pay_as_you_go_once_go_refuses_one() {
         .collect();
     assert_eq!(*inner.0.lock().unwrap(), sent);
 }
+
+#[test]
+fn open_models_use_go_chat_completions_with_instructions_first() {
+    let wire = InstructedChat {
+        wire: OpenAIConfig::with_key(&OPENCODE_GO, "key").chat("deepseek-v4.1-flash"),
+        instructions: "Be brief.".to_string(),
+    };
+    let encoded = wire
+        .encode(CompletionRequest::new("next"), Mode::Streaming)
+        .unwrap();
+    assert_eq!(
+        encoded.request.uri().to_string(),
+        format!("{GO_URL}/openai/v1/chat/completions")
+    );
+    let rig::wire::Body::Bytes(bytes) = encoded.request.into_body() else {
+        panic!("Chat Completions uses JSON");
+    };
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        body["messages"][0],
+        serde_json::json!({"role": "system", "content": "Be brief."})
+    );
+}

@@ -477,7 +477,7 @@ impl AgentProvider {
                     gateway,
                     credential.api_key,
                     model,
-                    self.model_route.vendor == "anthropic",
+                    &self.model_route.vendor,
                     self.cache_write_ttl.as_deref(),
                     base_instructions,
                 ))
