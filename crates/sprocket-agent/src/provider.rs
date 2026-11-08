@@ -34,6 +34,7 @@ use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::openai::stateless_responses_model;
 use crate::request_compression::ZstdResponsesRequests;
+use crate::responses_gateway::{ResponsesGateway, gateway_responses_model};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
@@ -459,38 +460,25 @@ impl AgentProvider {
             CompletionProvider::Anthropic => {
                 let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
                 Ok(anthropic::messages_model(
-                    &anthropic::ANTHROPIC,
                     credential.api_key,
                     model,
-                    None,
                     base_instructions,
                     self.cache_write_ttl.as_deref(),
                 ))
             }
             CompletionProvider::Vercel | CompletionProvider::Openrouter => {
                 let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
-                let (messages_host, responses_url) = match provider {
-                    CompletionProvider::Vercel => {
-                        (&anthropic::VERCEL, "https://ai-gateway.vercel.sh/v1")
-                    }
-                    _ => (&anthropic::OPENROUTER, "https://openrouter.ai/api/v1"),
+                let gateway = match provider {
+                    CompletionProvider::Vercel => ResponsesGateway::Vercel,
+                    _ => ResponsesGateway::Openrouter,
                 };
-                if self.model_route.vendor == "anthropic" {
-                    return Ok(anthropic::messages_model(
-                        messages_host,
-                        credential.api_key,
-                        model,
-                        CompletionProvider::Anthropic.model_id(&self.model, &self.model_route),
-                        base_instructions,
-                        self.cache_write_ttl.as_deref(),
-                    ));
-                }
-                Ok(stateless_responses_model(
-                    openai::OpenAIConfig::new(credential.api_key)
-                        .with_base_url(responses_url)
-                        .with_instructions(base_instructions)
-                        .connect(rig::rig_reqwest::shared()),
+                Ok(gateway_responses_model(
+                    gateway,
+                    credential.api_key,
                     model,
+                    self.model_route.vendor == "anthropic",
+                    self.cache_write_ttl.as_deref(),
+                    base_instructions,
                 ))
             }
             CompletionProvider::Chatgpt => {

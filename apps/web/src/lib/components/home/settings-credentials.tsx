@@ -17,7 +17,7 @@ type ProviderConfigurationChange = {
 	configured: boolean;
 };
 
-const apiKeyProviders: readonly ApiKeyProvider[] = ['openai', 'anthropic', 'vercel', 'openrouter'];
+const apiKeyProviders: readonly ApiKeyProvider[] = ['anthropic', 'openai', 'openrouter', 'vercel'];
 
 type PendingBrowserLogin = {
 	userId: string;
