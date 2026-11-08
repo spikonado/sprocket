@@ -580,29 +580,24 @@ fn host_fontconfig(host: &Path) -> String {
     // Without a host config, fontconfig falls back to this directory.
     let fonts_conf = fs::read_to_string(host.join("fonts.conf"))
         .unwrap_or_else(|_| "<fontconfig><dir>/usr/share/fonts</dir></fontconfig>\n".to_owned());
-    let close = "</include>";
-    let mut config = String::new();
-    let mut rest = fonts_conf.as_str();
-    while let Some(start) = rest.find("<include") {
-        let Some(length) = rest[start..].find(close) else {
-            break;
-        };
-        let end = start + length + close.len();
-        let element = &rest[start..end];
-        let target = element[..element.len() - close.len()]
-            .rsplit('>')
-            .next()
-            .unwrap_or_default();
-        config.push_str(&rest[..start]);
-        config.push_str(if target.trim().ends_with("conf.d") {
-            includes.as_str()
-        } else {
-            element
-        });
-        rest = &rest[end..];
-    }
-    config.push_str(rest);
-    config
+    const CLOSE: &str = "</include>";
+    fonts_conf
+        .split_inclusive(CLOSE)
+        .map(|piece| {
+            let conf_d_include = piece
+                .strip_suffix(CLOSE)
+                .and_then(|element| element.rsplit_once("<include"))
+                .filter(|(_, include)| {
+                    include
+                        .rsplit_once('>')
+                        .is_some_and(|(_, target)| target.trim().ends_with("conf.d"))
+                });
+            match conf_d_include {
+                Some((before, _)) => format!("{before}{includes}"),
+                None => piece.to_owned(),
+            }
+        })
+        .collect()
 }
 
 /// Removes staging directories and tombstones, which are the only hidden directories.

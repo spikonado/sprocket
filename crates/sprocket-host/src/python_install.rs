@@ -100,17 +100,15 @@ impl PythonTools {
 
 /// uv's Python builds look for CAs only in `/etc/ssl/cert.pem` and a hashed `/etc/ssl/certs`,
 /// which NixOS lacks, so their HTTPS fails there without `SSL_CERT_FILE`.
-pub(crate) fn certificate_environment() -> Vec<(OsString, OsString)> {
+pub(crate) fn certificate_environment() -> Option<(OsString, OsString)> {
     if !cfg!(target_os = "linux") || std::env::var_os("SSL_CERT_FILE").is_some() {
-        return Vec::new();
+        return None;
     }
     CA_BUNDLES
         .into_iter()
         .map(Path::new)
         .find(|bundle| bundle.is_file())
         .map(|bundle| ("SSL_CERT_FILE".into(), bundle.into()))
-        .into_iter()
-        .collect()
 }
 
 fn unpack(archive: &Path, bin: &Path) -> anyhow::Result<()> {
