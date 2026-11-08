@@ -53,6 +53,8 @@ const price = z.number().nonnegative();
 
 const multiplier = z.number().positive();
 
+const labelCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
 const directApiPricingSchema = z.object({
 	input: price,
 	cacheRead: price,
@@ -104,19 +106,21 @@ function catalogFromGatewayPayload(
 		catalogVersion: sprocket.catalogVersion,
 		defaultModelId: sprocket.defaultModelId,
 		defaultReasoningEffort: sprocket.defaultReasoningEffort,
-		models: sprocket.models.map((model) => ({
-			id: model.id,
-			label: model.label,
-			provider: model.provider,
-			supportsImages: model.supportsImages,
-			contextWindowTokens: model.contextWindowTokens,
-			autoHandoffTokenLimit: model.autoCompactTokenLimit,
-			reasoningEfforts: model.reasoningEfforts,
-			defaultReasoningEffort: model.defaultReasoningEffort,
-			supportsFastMode: model.serviceTiers.includes('fast'),
-			usagePolicy: model.usagePolicy,
-			directApiPricing: model.directApiPricing
-		}))
+		models: sprocket.models
+			.map((model) => ({
+				id: model.id,
+				label: model.label,
+				provider: model.provider,
+				supportsImages: model.supportsImages,
+				contextWindowTokens: model.contextWindowTokens,
+				autoHandoffTokenLimit: model.autoCompactTokenLimit,
+				reasoningEfforts: model.reasoningEfforts,
+				defaultReasoningEffort: model.defaultReasoningEffort,
+				supportsFastMode: model.serviceTiers.includes('fast'),
+				usagePolicy: model.usagePolicy,
+				directApiPricing: model.directApiPricing
+			}))
+			.sort((a, b) => labelCollator.compare(a.label, b.label))
 	};
 }
 
