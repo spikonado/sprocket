@@ -9,6 +9,7 @@ use fff_search::types::MixedItemRef;
 use fff_search::{MixedSearchConfig, PaginationArgs, QueryParser, SharedFilePicker};
 use git2::Status;
 use serde::Serialize;
+use sprocket_workspace::WorkspaceEntryKind;
 
 pub const SEARCH_RESULT_LIMIT: usize = 30;
 pub const MAX_QUERY_CHARS: usize = 128;
@@ -16,13 +17,13 @@ pub const MAX_LISTED_PATHS: usize = 50_000;
 const MAX_CACHED_WORKSPACES: usize = 8;
 const PICKER_TTL: Duration = Duration::from_secs(30 * 60);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkspaceSearchEntry {
     pub path: String,
-    pub is_dir: bool,
+    pub kind: WorkspaceEntryKind,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct SearchOutcome {
     pub entries: Vec<WorkspaceSearchEntry>,
     pub scanning: bool,
@@ -108,21 +109,50 @@ struct CachedPicker {
     last_used: Instant,
 }
 
-// Call through spawn_blocking. fff uses blocking locks and background scan threads.
 pub struct WorkspaceSearchIndex {
     pickers: Mutex<HashMap<PathBuf, CachedPicker>>,
-    pub search_slots: Arc<tokio::sync::Semaphore>,
+    blocking_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl WorkspaceSearchIndex {
     pub fn new() -> Self {
         Self {
             pickers: Mutex::new(HashMap::new()),
-            search_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            blocking_slots: Arc::new(tokio::sync::Semaphore::new(4)),
         }
     }
 
-    pub fn search(&self, workspace_root: &Path, query: &str) -> anyhow::Result<SearchOutcome> {
+    pub async fn search(
+        self: &Arc<Self>,
+        workspace_root: PathBuf,
+        query: String,
+    ) -> anyhow::Result<SearchOutcome> {
+        self.run_blocking(move |index| index.search_blocking(&workspace_root, &query))
+            .await
+    }
+
+    pub async fn list_paths(
+        self: &Arc<Self>,
+        workspace_root: PathBuf,
+    ) -> anyhow::Result<PathListing> {
+        self.run_blocking(move |index| index.list_paths_blocking(&workspace_root))
+            .await
+    }
+
+    async fn run_blocking<T: Send + 'static>(
+        self: &Arc<Self>,
+        work: impl FnOnce(&Self) -> anyhow::Result<T> + Send + 'static,
+    ) -> anyhow::Result<T> {
+        let permit = Arc::clone(&self.blocking_slots).acquire_owned().await?;
+        let index = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            work(&index)
+        })
+        .await?
+    }
+
+    fn search_blocking(&self, workspace_root: &Path, query: &str) -> anyhow::Result<SearchOutcome> {
         anyhow::ensure!(
             query.chars().count() <= MAX_QUERY_CHARS,
             "workspace search query is too long"
@@ -162,11 +192,11 @@ impl WorkspaceSearchIndex {
             .map(|item| match item {
                 MixedItemRef::File(file) => WorkspaceSearchEntry {
                     path: to_forward_slashes(file.relative_path(searcher)),
-                    is_dir: false,
+                    kind: WorkspaceEntryKind::File,
                 },
                 MixedItemRef::Dir(dir) => WorkspaceSearchEntry {
                     path: directory_path(dir.relative_path(searcher)),
-                    is_dir: true,
+                    kind: WorkspaceEntryKind::Directory,
                 },
             })
             .collect();
@@ -174,7 +204,7 @@ impl WorkspaceSearchIndex {
         Ok(SearchOutcome { entries, scanning })
     }
 
-    pub fn list_paths(&self, workspace_root: &Path) -> anyhow::Result<PathListing> {
+    fn list_paths_blocking(&self, workspace_root: &Path) -> anyhow::Result<PathListing> {
         let picker = self.picker_for(workspace_root)?;
 
         let guard = picker.0.read().map_err(|error| anyhow::anyhow!(error))?;

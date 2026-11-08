@@ -1,5 +1,6 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use sprocket_host::workspace_search::MAX_QUERY_CHARS;
 use tower::ServiceExt;
 
 use super::*;

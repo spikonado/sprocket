@@ -19,7 +19,7 @@ use crate::routes::session::MachineSession;
 use sprocket_host::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
-use sprocket_host::workspace_search::{MAX_QUERY_CHARS, PathListing, SearchOutcome};
+use sprocket_host::workspace_search::{PathListing, SearchOutcome};
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceEntryKind,
     WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
@@ -65,18 +65,6 @@ struct RemoveProjectRequest {
 struct WorkspaceSearchRequest {
     workspace_path: String,
     query: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WorkspaceSearchResponse {
-    entries: Vec<WorkspaceSearchEntry>,
-    scanning: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct WorkspaceSearchEntry {
-    path: String,
-    kind: &'static str,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,6 +170,10 @@ async fn in_workspace<T: Send + 'static>(
     .map_err(ApiError::bad_request)
 }
 
+async fn workspace_root(workspace_path: String) -> Result<std::path::PathBuf, ApiError> {
+    in_workspace(workspace_path, |root| Ok(root.to_path_buf())).await
+}
+
 async fn entry_kind(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceEntryRequest>,
@@ -218,15 +210,8 @@ pub(crate) fn file_list_events(
             let search = Arc::clone(&search);
             let workspace_path = request.workspace_path.clone();
             async move {
-                let permit = Arc::clone(&search.search_slots)
-                    .acquire_owned()
-                    .await
-                    .map_err(|error| ApiError::internal(error.into()))?;
-                in_workspace(workspace_path, move |root| {
-                    let _permit = permit;
-                    search.list_paths(root)
-                })
-                .await
+                let root = workspace_root(workspace_path).await?;
+                search.list_paths(root).await.map_err(ApiError::bad_request)
             }
         },
         |listing| {
@@ -367,37 +352,15 @@ async fn search_workspace(
     State(state): State<AppState>,
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceSearchRequest>,
-) -> Result<Json<WorkspaceSearchResponse>, ApiError> {
-    if payload.query.chars().count() > MAX_QUERY_CHARS {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "workspace search query is too long"
-        )));
-    }
-    let permit = std::sync::Arc::clone(&state.host.workspace_search.search_slots)
-        .acquire_owned()
+) -> Result<Json<SearchOutcome>, ApiError> {
+    let root = workspace_root(payload.workspace_path).await?;
+    state
+        .host
+        .workspace_search
+        .search(root, payload.query)
         .await
-        .map_err(|error| ApiError::internal(error.into()))?;
-    let SearchOutcome { entries, scanning } = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        let resolution = resolve_workspace_path(&payload.workspace_path, false)?;
-        state.host.workspace_search.search(
-            std::path::Path::new(&resolution.workspace_path),
-            &payload.query,
-        )
-    })
-    .await
-    .map_err(|error| ApiError::internal(error.into()))?
-    .map_err(ApiError::bad_request)?;
-    Ok(Json(WorkspaceSearchResponse {
-        entries: entries
-            .into_iter()
-            .map(|entry| WorkspaceSearchEntry {
-                path: entry.path,
-                kind: if entry.is_dir { "directory" } else { "file" },
-            })
-            .collect(),
-        scanning,
-    }))
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 async fn list_projects(
