@@ -203,7 +203,7 @@ const chips = [
 ] as const;
 
 const subheadingClass =
-	'font-brand text-3xl font-semibold tracking-tight text-foreground sm:text-4xl';
+	'text-3xl font-semibold tracking-tight text-foreground sm:text-4xl';
 ---
 
 <BaseLayout jsonLd={[softwareLd]}>
@@ -213,10 +213,10 @@ const subheadingClass =
 			data-ph-capture-attribute-section="sprocket_hero"
 		>
 			<div class="hero-mesh pointer-events-none absolute inset-0" aria-hidden="true"></div>
-			<div class="relative mx-auto max-w-3xl">
+			<div class="relative mx-auto max-w-4xl">
 				<ReleaseBadge release={release} />
 				<h1
-					class="mt-6 font-brand text-5xl leading-[1.05] font-semibold tracking-tight text-foreground sm:text-6xl md:text-7xl"
+					class="mt-6 text-5xl leading-[1.05] font-semibold tracking-tight text-foreground sm:text-6xl md:text-7xl"
 				>
 					The best AI agent for hardware and software.
 				</h1>
@@ -302,7 +302,7 @@ const subheadingClass =
 			<div class="mx-auto max-w-6xl">
 				<h2
 					id="capabilities-heading"
-					class="font-brand text-4xl font-semibold tracking-tight text-foreground sm:text-5xl"
+					class="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl"
 				>
 					Everything you need to invent
 				</h2>

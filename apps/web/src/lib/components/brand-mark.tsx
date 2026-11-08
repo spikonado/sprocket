@@ -1,3 +1,4 @@
+import sprocketLockup from '$lib/assets/sprocket-lockup.svg?raw';
 import { cn } from '$lib/utils';
 
 export default function BrandMark({
@@ -11,36 +12,30 @@ export default function BrandMark({
 	onclick?: () => void;
 	label?: string;
 }) {
-	const sizeClass = size === 'sm' ? 'h-6 w-6' : 'h-7 w-7';
-	const textClass = size === 'sm' ? 'text-lg' : 'text-[1.15rem]';
-
-	const content = (
-		<>
-			<img src="/logo.svg" alt="" className={cn('shrink-0', sizeClass)} />
-			<span
-				className={cn(
-					'font-brand text-foreground truncate font-semibold tracking-tight',
-					textClass
-				)}
-			>
-				Sprocket
-			</span>
-		</>
+	const mark = (
+		<span
+			role="img"
+			aria-label="Sprocket"
+			className={cn(
+				'text-foreground flex shrink-0 [&>svg]:h-full [&>svg]:w-auto',
+				size === 'sm' ? 'h-6' : 'h-7',
+				!onclick && className
+			)}
+			dangerouslySetInnerHTML={{ __html: sprocketLockup }}
+		/>
 	);
 
-	if (onclick) {
-		return (
-			<button
-				type="button"
-				className={cn('flex min-w-0 items-center gap-2', className)}
-				aria-label={label}
-				title={label}
-				onClick={onclick}
-			>
-				{content}
-			</button>
-		);
-	}
+	if (!onclick) return mark;
 
-	return <div className={cn('flex min-w-0 items-center gap-2', className)}>{content}</div>;
+	return (
+		<button
+			type="button"
+			className={cn('flex items-center', className)}
+			aria-label={label}
+			title={label}
+			onClick={onclick}
+		>
+			{mark}
+		</button>
+	);
 }

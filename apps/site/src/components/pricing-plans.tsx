@@ -505,9 +505,9 @@ export default function PricingPlans({
 											Most popular
 										</span>
 									)}
-									<h2 className="font-brand text-foreground text-xl font-semibold">{card.name}</h2>
+									<h2 className="text-foreground text-xl font-semibold">{card.name}</h2>
 									<div className="mt-3 min-h-16">
-										<p className="font-brand text-foreground text-3xl font-semibold tracking-tight">
+										<p className="text-foreground text-3xl font-semibold tracking-tight">
 											{(yearly ? card.annualPerMonth : price) ?? 'Unavailable'}
 										</p>
 										{price && (
@@ -588,10 +588,7 @@ export default function PricingPlans({
 					aria-labelledby="credit-packs-heading"
 					data-ph-capture-attribute-section="pricing_credit_packs"
 				>
-					<h2
-						id="credit-packs-heading"
-						className="font-brand text-foreground text-2xl font-semibold"
-					>
+					<h2 id="credit-packs-heading" className="text-foreground text-2xl font-semibold">
 						Credit packs
 					</h2>
 					<p className="text-muted-foreground mt-3 text-base leading-relaxed">
@@ -610,7 +607,7 @@ export default function PricingPlans({
 								<div className="flex min-w-0 flex-1 flex-col gap-1 lg:flex-row lg:items-baseline lg:gap-8">
 									<p
 										id={`pack-${pack.productId}`}
-										className="font-brand text-foreground text-xl font-semibold tracking-tight lg:w-56"
+										className="text-foreground text-xl font-semibold tracking-tight lg:w-56"
 									>
 										{pack.usage} of AI usage
 									</p>

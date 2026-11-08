@@ -66,18 +66,16 @@ export default defineConfig({
 			})
 		}
 	},
-	// The Fontsource provider's variable files add opsz and wdth axes that change DM Sans glyph
-	// metrics, so fonts load from the pinned @fontsource packages.
 	fonts: [
 		{
 			provider: fontProviders.local(),
-			name: 'DM Sans',
-			cssVariable: '--font-dm-sans',
+			name: 'Geist',
+			cssVariable: '--font-geist-sans',
 			options: {
 				variants: [
 					{
-						src: ['@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2'],
-						weight: '100 1000',
+						src: ['@fontsource-variable/geist/files/geist-latin-wght-normal.woff2'],
+						weight: '100 900',
 						style: 'normal'
 					}
 				]
@@ -85,33 +83,14 @@ export default defineConfig({
 		},
 		{
 			provider: fontProviders.local(),
-			name: 'IBM Plex Sans',
-			cssVariable: '--font-ibm-plex-sans',
-			options: {
-				variants: [
-					{
-						src: ['@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2'],
-						weight: '100 700',
-						style: 'normal'
-					}
-				]
-			}
-		},
-		{
-			provider: fontProviders.local(),
-			name: 'IBM Plex Mono',
-			cssVariable: '--font-ibm-plex-mono',
+			name: 'Geist Mono',
+			cssVariable: '--font-geist-mono',
 			fallbacks: ['monospace'],
 			options: {
 				variants: [
 					{
-						src: ['@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2'],
-						weight: 400,
-						style: 'normal'
-					},
-					{
-						src: ['@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2'],
-						weight: 500,
+						src: ['@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2'],
+						weight: '100 900',
 						style: 'normal'
 					}
 				]

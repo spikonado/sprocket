@@ -1,8 +1,8 @@
 ---
 import github from '@/assets/github_logo.svg';
-import logo from '@/assets/logo.svg';
+import SprocketLockup from '@/assets/sprocket-lockup.svg';
 import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
-import { marketingBrandClass, marketingButtonPrimaryClass } from '@/styles/marketing';
+import { marketingButtonPrimaryClass } from '@/styles/marketing';
 import { cn } from '@/utils';
 
 const navLinks = [
@@ -29,10 +29,10 @@ const iconProps = {
 	>
 		<a
 			href="/"
-			class="flex min-w-0 items-center gap-2 transition-transform duration-150 hover:scale-[1.02]"
+			aria-label="Sprocket"
+			class="flex shrink-0 items-center text-foreground transition-transform duration-150 hover:scale-[1.02]"
 		>
-			<img src={logo.src} alt="" class="h-8 w-8 shrink-0" />
-			<span class={cn(marketingBrandClass, 'truncate text-xl sm:text-2xl')}>Sprocket</span>
+			<SprocketLockup class="h-8 w-auto" aria-hidden="true" />
 		</a>
 
 		<nav

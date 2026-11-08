@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import satori from 'satori';
 import sharp from 'sharp';
-import { SITE_NAME, SITE_URL } from '@/lib/seo';
+import { SITE_URL } from '@/lib/seo';
 
 declare module 'react' {
 	// Satori renders `corner-shape`, which csstype doesn't list yet.
@@ -25,10 +25,10 @@ const colors = {
 } as const;
 
 async function loadFont(weight: 400 | 600) {
-	const path = `@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-${weight}-normal.woff`;
+	const path = `@fontsource/geist/files/geist-latin-${weight}-normal.woff`;
 
 	return {
-		name: 'IBM Plex Sans',
+		name: 'Geist',
 		data: await readFile(join(process.cwd(), 'node_modules', path)),
 		weight,
 		style: 'normal'
@@ -36,17 +36,22 @@ async function loadFont(weight: 400 | 600) {
 }
 
 export async function renderOgImagePng(): Promise<Buffer> {
-	const [regular, semibold, logo] = await Promise.all([
+	const [regular, semibold, lockup] = await Promise.all([
 		loadFont(400),
 		loadFont(600),
-		readFile(join(process.cwd(), 'src/assets/logo.svg'))
+		readFile(join(process.cwd(), 'src/assets/sprocket-lockup.svg'), 'utf8')
 	]);
+
+	const lockupSrc = `data:image/svg+xml;base64,${Buffer.from(
+		lockup.replace('currentColor', colors.foreground)
+	).toString('base64')}`;
 
 	const svg = await satori(
 		<div
 			style={{
 				width: '100%',
 				height: '100%',
+				boxSizing: 'border-box',
 				display: 'flex',
 				flexDirection: 'column',
 				justifyContent: 'space-between',
@@ -55,15 +60,10 @@ export async function renderOgImagePng(): Promise<Buffer> {
 				backgroundImage:
 					'radial-gradient(ellipse 55% 70% at 88% 42%, rgba(203, 234, 251, 0.85) 0%, rgba(237, 242, 232, 0) 68%), radial-gradient(ellipse 40% 50% at 12% 88%, rgba(203, 234, 251, 0.35) 0%, rgba(237, 242, 232, 0) 70%)',
 				color: colors.foreground,
-				fontFamily: 'IBM Plex Sans'
+				fontFamily: 'Geist'
 			}}
 		>
-			<div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-				<img src={`data:image/svg+xml;base64,${logo.toString('base64')}`} width={56} height={56} />
-				<div style={{ fontSize: 36, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1 }}>
-					{SITE_NAME}
-				</div>
-			</div>
+			<img src={lockupSrc} height={56} style={{ alignSelf: 'flex-start' }} />
 			<div style={{ display: 'flex', flexDirection: 'column', gap: '28px', maxWidth: 920 }}>
 				<div
 					style={{
@@ -71,7 +71,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 						flexWrap: 'wrap',
 						fontSize: 68,
 						fontWeight: 600,
-						letterSpacing: '-0.035em',
+						letterSpacing: '-0.025em',
 						lineHeight: 1.12
 					}}
 				>

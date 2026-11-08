@@ -717,10 +717,6 @@
 	height: 32px;
 }
 
-.inbox-floating-controls .inbox-icon span {
-	display: none;
-}
-
 @media (max-width: 767px) {
 	.inbox-layout {
 		display: block;
