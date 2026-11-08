@@ -181,7 +181,7 @@ export default function BrowserSignInOverlay({
 
 				<h2
 					id="browser-signin-title"
-					className="font-brand text-foreground text-[1.35rem] font-semibold tracking-tight"
+					className="text-foreground text-[1.35rem] font-semibold tracking-tight"
 				>
 					{overlayCopy.title}
 				</h2>

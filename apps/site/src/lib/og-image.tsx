@@ -25,10 +25,10 @@ const colors = {
 } as const;
 
 async function loadFont(weight: 400 | 600) {
-	const path = `@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-${weight}-normal.woff`;
+	const path = `@fontsource/geist/files/geist-latin-${weight}-normal.woff`;
 
 	return {
-		name: 'IBM Plex Sans',
+		name: 'Geist',
 		data: await readFile(join(process.cwd(), 'node_modules', path)),
 		weight,
 		style: 'normal'
@@ -59,7 +59,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 				backgroundImage:
 					'radial-gradient(ellipse 55% 70% at 88% 42%, rgba(203, 234, 251, 0.85) 0%, rgba(237, 242, 232, 0) 68%), radial-gradient(ellipse 40% 50% at 12% 88%, rgba(203, 234, 251, 0.35) 0%, rgba(237, 242, 232, 0) 70%)',
 				color: colors.foreground,
-				fontFamily: 'IBM Plex Sans'
+				fontFamily: 'Geist'
 			}}
 		>
 			<img src={lockupSrc} height={56} style={{ alignSelf: 'flex-start' }} />

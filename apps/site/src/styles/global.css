@@ -22,9 +22,8 @@
 }
 
 @theme inline {
-	--font-sans: var(--font-dm-sans);
-	--font-brand: var(--font-ibm-plex-sans);
-	--font-mono: var(--font-ibm-plex-mono);
+	--font-sans: var(--font-geist-sans);
+	--font-mono: var(--font-geist-mono);
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-surface: var(--surface);

@@ -1,7 +1,5 @@
-@import '@fontsource/dm-sans';
-@import '@fontsource-variable/ibm-plex-sans/wght.css';
-@import '@fontsource/ibm-plex-mono/400.css';
-@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource-variable/geist/wght.css';
+@import '@fontsource-variable/geist-mono/wght.css';
 @import 'katex/dist/katex.min.css';
 @import 'tailwindcss';
 
@@ -12,9 +10,8 @@
 @custom-variant coarse (@media (pointer: coarse));
 
 @theme inline {
-	--font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
-	--font-brand: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+	--font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'Geist Mono Variable', ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-surface: var(--surface);

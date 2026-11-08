@@ -35,9 +35,7 @@ export default function CalmCentered({
 				<div className="mb-8 flex justify-center">
 					<BrandMark />
 				</div>
-				<h1 className="font-brand text-foreground text-[1.5rem] font-semibold tracking-tight">
-					{title}
-				</h1>
+				<h1 className="text-foreground text-[1.5rem] font-semibold tracking-tight">{title}</h1>
 				{description && (
 					<p className="text-muted-foreground mt-3 text-sm leading-[1.55]">{description}</p>
 				)}

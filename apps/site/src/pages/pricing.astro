@@ -46,7 +46,7 @@ const faqLd = {
 	<main id="main" class="atmosphere min-h-svh px-4 pt-28 pb-16 sm:px-6 sm:pt-32 lg:px-8">
 		<article class="mx-auto max-w-7xl">
 			<h1
-				class="mb-8 text-center font-brand text-5xl font-semibold tracking-tight text-foreground sm:text-6xl"
+				class="mb-8 text-center text-5xl font-semibold tracking-tight text-foreground sm:text-6xl"
 			>
 				Pricing
 			</h1>
@@ -57,14 +57,14 @@ const faqLd = {
 				aria-labelledby="pricing-faq-heading"
 				data-ph-capture-attribute-section="pricing_faq"
 			>
-				<h2 id="pricing-faq-heading" class="font-brand text-2xl font-semibold text-foreground">
+				<h2 id="pricing-faq-heading" class="text-2xl font-semibold text-foreground">
 					FAQ
 				</h2>
 				<div class="mt-6 space-y-4">
 					{
 						pricingFaqs.map((faq) => (
 							<details class="group rounded-2xl border border-border/70 bg-surface/90 p-5">
-								<summary class="cursor-pointer list-none font-brand text-lg font-semibold text-foreground marker:content-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none">
+								<summary class="cursor-pointer list-none text-lg font-semibold text-foreground marker:content-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none">
 									<span class="flex items-center justify-between gap-3">
 										{faq.question}
 										<span
