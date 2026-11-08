@@ -5,8 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use sprocket_workspace::{CommandContainer, CommandSessionManager, RunningCommand};
 use tokio::sync::{Mutex, watch};
 
-/// Owns command processes independently of the run that launched them. Scopes
-/// come from authenticated run creation, never from a command tool argument.
 #[derive(Default)]
 pub struct ThreadCommandSessions {
     threads: Mutex<HashMap<(String, String), CommandSessionManager>>,
@@ -16,8 +14,6 @@ pub struct ThreadCommandSessions {
 }
 
 impl ThreadCommandSessions {
-    /// Processes that leave a command's process group, such as agent-browser's daemon, must
-    /// outlive their command. `stop_all` kills them when the OS can contain them.
     pub fn new() -> Self {
         let container = CommandContainer::create().unwrap_or_else(|error| {
             tracing::warn!(
@@ -75,17 +71,19 @@ impl ThreadCommandSessions {
     }
 
     pub async fn prune(&self) {
-        let snapshot = self
+        let managers = self
             .threads
             .lock()
             .await
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        futures::future::join_all(snapshot.iter().map(CommandSessionManager::prune_completed))
-            .await;
-        // Clones inflate Arc::strong_count, so try_is_unused would keep every manager.
-        drop(snapshot);
+        futures::future::join_all(
+            managers
+                .into_iter()
+                .map(|sessions| async move { sessions.prune_completed().await }),
+        )
+        .await;
         self.threads
             .lock()
             .await
