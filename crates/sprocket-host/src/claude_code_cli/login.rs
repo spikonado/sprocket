@@ -26,7 +26,6 @@ pub struct LoginStart {
     pub url: String,
 }
 
-/// Holds one sign-in at a time. Starting another replaces it.
 #[derive(Default)]
 pub(super) struct Logins {
     current: Mutex<Option<(String, Session)>>,
@@ -144,7 +143,6 @@ impl Session {
             .context("Couldn't send the code to Claude Code")
     }
 
-    /// Reads output until `parse` finds what it wants in the output after `from`.
     async fn wait_for<T>(
         &mut self,
         from: usize,

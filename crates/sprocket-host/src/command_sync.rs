@@ -27,14 +27,10 @@ enum SyncOutcome {
     Pending,
 }
 
-/// Ordered so a directory pass reports the most urgent state of any record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum RecordSync {
-    /// Nothing for this machine to upload now.
     Settled,
-    /// Waiting for new output, or for a failed upload to be retried.
     Waiting,
-    /// More log batches are ready to upload.
     Uploading,
 }
 

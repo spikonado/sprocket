@@ -1,5 +1,3 @@
-//! Finds, checks and installs the coding CLIs that subscription providers run through.
-
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -53,10 +51,8 @@ enum Activity {
 }
 
 pub(crate) struct Cli {
-    /// The product name the user knows, such as `Claude Code`.
     pub(crate) name: &'static str,
     pub(crate) command: &'static str,
-    /// The oldest release with everything Sprocket's runs use.
     pub(crate) minimum_version: Version,
     pub(crate) install_command: &'static str,
 }
@@ -67,7 +63,6 @@ enum Detected {
     Missing,
 }
 
-/// One CLI on this computer and the install Sprocket runs for it.
 pub(crate) struct CliInstall {
     cli: Cli,
     activity: Mutex<Activity>,
@@ -150,7 +145,6 @@ impl CliInstall {
         }
     }
 
-    /// The first install new enough to use, or the newest outdated one.
     async fn detect(&self) -> Detected {
         let mut newest_outdated = None;
         for candidate in candidates(self.cli.command) {

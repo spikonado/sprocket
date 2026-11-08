@@ -161,7 +161,6 @@ impl RefreshTokenStore for ProfileCredentials {
             Some(CredentialStore::File) => self.load_file(),
             Some(CredentialStore::Keyring) => self.keyring.load(),
             None => match self.keyring.load() {
-                // A failed status read must not abandon a session in a temporarily unavailable keyring.
                 Err(error) if keyring_unavailable(&error) => Ok(None),
                 result => result,
             },
