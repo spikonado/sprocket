@@ -10,6 +10,7 @@ import { REQUEST_TTL_MS } from '@convex/webRequests';
 import {
 	CONTEXT_DEV_CREDITS_EXHAUSTED,
 	HIGHLIGHTS_MAX_CHARS,
+	SCRAPE_CACHE_MAX_AGE_MS,
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
 	SCRAPE_TIMEOUT_MS,
@@ -256,7 +257,7 @@ describe('context.dev scrape', () => {
 				formats: { markdown: true },
 				markdownParams: { includeImages: true },
 				sharedParams: { mainContentOnly: true },
-				maxAgeMs: 0,
+				maxAgeMs: SCRAPE_CACHE_MAX_AGE_MS,
 				timeoutOpts: { milliseconds: SCRAPE_TIMEOUT_MS, behavior: 'fail' }
 			});
 			expect(options?.timeout).toBeGreaterThan(SCRAPE_TIMEOUT_MS);
@@ -539,7 +540,7 @@ describe('raw document fetch', () => {
 		expect(lastScrapeCall().body).toEqual({
 			url: 'https://example.com/report.pdf',
 			formats: { bytes: true },
-			maxAgeMs: 0,
+			maxAgeMs: SCRAPE_CACHE_MAX_AGE_MS,
 			timeoutOpts: { milliseconds: SCRAPE_TIMEOUT_MS, behavior: 'fail' }
 		});
 		expect(result).toEqual({

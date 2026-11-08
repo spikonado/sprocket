@@ -30,6 +30,9 @@ export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
 /** context.dev's own deadline for one scrape attempt. */
 export const SCRAPE_TIMEOUT_MS = 60_000;
 
+/** Long enough to reuse pages that sibling subagents re-read, short enough for distributor stock. */
+export const SCRAPE_CACHE_MAX_AGE_MS = 30 * 60 * 1_000;
+
 /** The SDK must outwait the API deadline so the API reports the timeout. */
 const SDK_TIMEOUT_MARGIN_MS = 10_000;
 
@@ -199,7 +202,11 @@ async function requestContextDevScrape(
 		maxAttemptMs: SCRAPE_TIMEOUT_MS,
 		attempt: async (timeoutMs) =>
 			await contextDevClient().web.scrape(
-				{ ...params, maxAgeMs: 0, timeoutOpts: { milliseconds: timeoutMs, behavior: 'fail' } },
+				{
+					...params,
+					maxAgeMs: SCRAPE_CACHE_MAX_AGE_MS,
+					timeoutOpts: { milliseconds: timeoutMs, behavior: 'fail' }
+				},
 				{ timeout: timeoutMs + SDK_TIMEOUT_MARGIN_MS }
 			),
 		retryAfterMs: contextDevRetryAfterMs,
