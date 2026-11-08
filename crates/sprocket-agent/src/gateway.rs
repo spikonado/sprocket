@@ -14,9 +14,15 @@ use tokio::time::Instant;
 use crate::now_ms;
 use crate::openai::{DeveloperResponses, transport_auth_config};
 use crate::request_compression::ZstdResponsesRequests;
+use crate::stream_recovery::with_provider_message;
 use crate::types::GatewayCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
+
+/// Shows the gateway's message for a catalog model that only BYOK providers serve.
+pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
+    with_provider_message(error, &["own_provider_required"])
+}
 
 struct CachedCredential {
     token: String,

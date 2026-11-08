@@ -282,3 +282,49 @@ async fn credential_failures_reach_both_inference_paths() {
         other => panic!("a cancelled claim cannot start inference: {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn own_provider_required_shows_the_gateway_message() {
+    let message = "Bring your own provider to use Kimi K3.1 Pro. Connect one in Sprocket's provider settings.";
+    let body = json!({"error": {
+        "message": message,
+        "type": "invalid_request_error",
+        "param": "model",
+        "code": "own_provider_required",
+    }})
+    .to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 4096];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = socket.read(&mut chunk).await.unwrap();
+            request.extend_from_slice(&chunk[..read]);
+        }
+        let response = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
+    });
+    let credential = GatewayCredential {
+        token: "token".into(),
+        expires_at: now_ms() + 3_600_000,
+    };
+    let client = GatewayClient::new(base_url, credential.clone(), move || {
+        let credential = credential.clone();
+        async move { Ok::<_, anyhow::Error>(credential) }
+    });
+    let model = client.completion_model("kimi-k3.1-pro", "Base instructions.");
+    let error = timeout(TEST_TIMEOUT, model.stream(request()).unwrap().finish())
+        .await
+        .unwrap()
+        .expect_err("the gateway rejects the model");
+    let diagnostic = error.to_string();
+    let error = user_facing_error(anyhow::Error::new(error));
+    assert_eq!(error.to_string(), message);
+    assert!(error.chain().any(|cause| cause.to_string() == diagnostic));
+    server.await.unwrap();
+}

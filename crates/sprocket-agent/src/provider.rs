@@ -88,6 +88,7 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
 }
 
 fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
+    let error = crate::gateway::user_facing_error(error);
     crate::chatgpt::user_facing_error(crate::claude_code::user_facing_error(error))
 }
 
