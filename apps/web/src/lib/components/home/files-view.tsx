@@ -65,7 +65,7 @@ const ROOTS: { id: FilesRoot; label: string }[] = [
 const RECONNECT_MS = 1_000;
 
 const TOOL_BUTTON =
-	'touch-target relative text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
+	'touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring shrink-0 rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50';
 
 type TreeModel = UseFileTreeResult['model'];
 
