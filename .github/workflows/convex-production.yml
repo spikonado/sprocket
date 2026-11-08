@@ -56,7 +56,7 @@ jobs:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           tested_is_main() {
-            git fetch --quiet origin main
+            git fetch --quiet origin main || exit 1
             [[ "$TESTED_SHA" == "$(git rev-parse origin/main)" ]]
           }
 
