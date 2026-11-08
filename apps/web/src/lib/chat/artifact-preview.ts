@@ -169,13 +169,35 @@ export function readVisualThemeCss(): string {
 	return `:root{color-scheme:${colorScheme};${tokens}${VISUAL_FONT_TOKENS}}${VISUAL_BASE_CSS}`;
 }
 
-// Restyles on theme messages and reports the page height so the frame can fit it.
-const VISUAL_SCRIPT = `(function(){var s=document.getElementById('sprocket-theme'),r=document.documentElement;
-addEventListener('message',function(e){var d=e.data;if(e.source===parent&&d&&d.type==='${VISUAL_THEME_MESSAGE}')s.textContent=d.css;});
-new ResizeObserver(function(){parent.postMessage({type:'${VISUAL_HEIGHT_MESSAGE}',height:Math.ceil(r.getBoundingClientRect().height)},'*');}).observe(r);})();`;
+const VISUAL_THEME_STYLE_ID = 'sprocket-theme';
+
+/** Runs inside the visual's frame, so it may only use its arguments and browser globals. */
+function visualFrameScript(themeStyleId: string, themeMessage: string, heightMessage: string) {
+	const theme = document.getElementById(themeStyleId);
+	const root = document.documentElement;
+
+	addEventListener('message', (event: MessageEvent<{ type: string; css: string } | null>) => {
+		if (theme && event.source === parent && event.data?.type === themeMessage) {
+			theme.textContent = event.data.css;
+		}
+	});
+
+	new ResizeObserver(() => {
+		parent.postMessage(
+			{ type: heightMessage, height: Math.ceil(root.getBoundingClientRect().height) },
+			'*'
+		);
+	}).observe(root);
+}
+
+const VISUAL_SCRIPT = `(${visualFrameScript.toString()})(...${JSON.stringify([
+	VISUAL_THEME_STYLE_ID,
+	VISUAL_THEME_MESSAGE,
+	VISUAL_HEIGHT_MESSAGE
+])});`;
 
 function visualPrelude(themeCss: string): string {
-	return `<style id="sprocket-theme">${themeCss}</style>\n<script>${VISUAL_SCRIPT}</script>\n`;
+	return `<style id="${VISUAL_THEME_STYLE_ID}">${themeCss}</style>\n<script>${VISUAL_SCRIPT}</script>\n`;
 }
 
 export function buildVisualDocument(kind: VisualKind, source: string, themeCss: string): string {
