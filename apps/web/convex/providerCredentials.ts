@@ -1,6 +1,6 @@
 import { action, internalQuery, type ActionCtx } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
-import { v, type ObjectType } from 'convex/values';
+import { ConvexError, v, type ObjectType } from 'convex/values';
 import { getExecutionRun } from '@convex/lib/auth';
 import { runAcceptsNewWork } from '@convex/lib/runLease';
 import { agentError } from '@convex/lib/agentErrors';
@@ -96,15 +96,15 @@ async function saveApiKeyHandler(ctx: ActionCtx, provider: ApiKeyProvider, rawAp
 	const name = await userCredentialName(ctx, provider);
 	const apiKey = rawApiKey.trim();
 
-	if (!apiKey || apiKey.length > 512) throw new Error(`Enter a valid ${label} API key.`);
+	if (!apiKey || apiKey.length > 512) throw new ConvexError(`Enter a valid ${label} API key.`);
 	const response = await providerFetch(validationUrl, { headers: headers(apiKey) });
 
 	if (response.status === 401 || response.status === 403) {
-		throw new Error(`${label} rejected this API key.`);
+		throw new ConvexError(`${label} rejected this API key.`);
 	}
 
 	if (!response.ok) {
-		throw new Error(`${label} could not validate this API key. Try again in a moment.`);
+		throw new ConvexError(`${label} could not validate this API key. Try again in a moment.`);
 	}
 
 	await storeVaultObject(name, apiKey);
