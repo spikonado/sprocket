@@ -45,6 +45,10 @@ Use `kicad-cli` for checks and exports.
 
 ## Designing the schematic
 
+Treat datasheet and app note advice as describing the vendor's own evaluation board.
+Follow a recommendation when you can explain why it works on this board.
+When one conflicts with this board's return current paths or with this skill, tell the user which one you chose and why.
+
 - Write values with units, like `10 kΩ` or `1 µF`.
 - Give every placed part hidden `Manufacturer` and `MPN` fields and set `Datasheet` to the manufacturer's datasheet URL.
   Add hidden `Digikey Part #`, `Mouser Part #`, `LCSC Part #`, and `JLCPCB Part #` fields if that distributor sells the part.
@@ -55,6 +59,17 @@ Use `kicad-cli` for checks and exports.
 Before laying out a board, ask the user which manufacturer and service tier they will order from, and read its capabilities page.
 Write its minimums with `board.set_design_rules()`, which saves them in the `.kicad_pro`.
 Keep net class widths and clearances above them.
+
+## Grounding
+
+- Use one unbroken ground plane under the whole board.
+  Above tens of kHz, return current flows in the plane directly under its trace, so placement keeps noisy currents away from quiet ones.
+  Place the power stage, digital, and analog parts in separate areas, and route each area's signals only over that area, on every layer.
+- Connect pins labeled AGND, DGND, PGND, or SGND to that plane right at the pin. The labels name currents inside the chip.
+- When a switching regulator's datasheet asks for separate AGND and PGND, put the controller's quiet parts, like the feedback divider and compensation, on a small top-layer AGND island.
+  Join the island to PGND at one point, usually the exposed pad, through a net tie.
+- Split ground only for galvanic isolation, like mains or patient connections, and cross the gap only with isolators, optocouplers, or transformers.
+- Give every high-speed trace a continuous reference plane along its whole length. Power planes may be split when no trace on an adjacent layer crosses the split.
 
 ## Copper pours
 
