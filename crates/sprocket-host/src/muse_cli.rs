@@ -147,8 +147,8 @@ impl MuseCli {
         Msp::start(&executable, ["--no-session-log"], &home()).await
     }
 
-    pub fn install(&self) {
-        self.install.install();
+    pub fn start_install_or_update(&self) {
+        self.install.start_install_or_update();
     }
 
     /// Starts Muse's device-code sign-in. Status turns `ready` or `planRequired` once the user

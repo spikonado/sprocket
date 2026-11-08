@@ -104,8 +104,7 @@ impl CliInstall {
         }
     }
 
-    /// Runs the CLI's official installer in the background. It also updates an old install.
-    pub(crate) fn install(self: &Arc<Self>) {
+    pub(crate) fn start_install_or_update(self: &Arc<Self>) {
         {
             let mut activity = self.activity();
             if matches!(*activity, Activity::Installing) {

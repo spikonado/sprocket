@@ -52,7 +52,7 @@ impl UserScoped for CancelLoginRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/claude-code", get(status))
-        .route("/claude-code/install", post(install))
+        .route("/claude-code/install", post(start_install_or_update))
         .route("/claude-code/login/start", post(start_login))
         .route("/claude-code/login/finish", post(finish_login))
         .route("/claude-code/login/cancel", post(cancel_login))
@@ -65,12 +65,11 @@ async fn status(
     Json(state.host.claude_code_cli.status().await)
 }
 
-/// Also updates or retries. The install keeps running after the response.
-async fn install(
+async fn start_install_or_update(
     State(state): State<AppState>,
     AuthorizedJson(_): AuthorizedJson<UserRequest>,
 ) -> Json<ClaudeCodeStatus> {
-    state.host.claude_code_cli.install();
+    state.host.claude_code_cli.start_install_or_update();
     Json(state.host.claude_code_cli.status().await)
 }
 

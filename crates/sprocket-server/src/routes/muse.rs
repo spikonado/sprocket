@@ -37,7 +37,7 @@ impl UserScoped for CancelLoginRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/muse", get(status))
-        .route("/muse/install", post(install))
+        .route("/muse/install", post(start_install_or_update))
         .route("/muse/login/start", post(start_login))
         .route("/muse/login/cancel", post(cancel_login))
 }
@@ -49,12 +49,11 @@ async fn status(
     Json(state.host.muse_cli.status().await)
 }
 
-/// Also updates or retries. The install keeps running after the response.
-async fn install(
+async fn start_install_or_update(
     State(state): State<AppState>,
     AuthorizedJson(_): AuthorizedJson<UserRequest>,
 ) -> Json<MuseStatus> {
-    state.host.muse_cli.install();
+    state.host.muse_cli.start_install_or_update();
     Json(state.host.muse_cli.status().await)
 }
 

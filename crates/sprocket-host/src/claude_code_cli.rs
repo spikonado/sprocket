@@ -71,9 +71,8 @@ impl ClaudeCodeCli {
         }
     }
 
-    /// Runs Claude Code's official installer in the background. It also updates an old install.
-    pub fn install(&self) {
-        self.install.install();
+    pub fn start_install_or_update(&self) {
+        self.install.start_install_or_update();
     }
 
     /// Starts `claude setup-token` and returns the sign-in URL it prints.

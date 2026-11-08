@@ -145,7 +145,7 @@ impl KiCadConnector {
         }
     }
 
-    pub fn install(self: &Arc<Self>) {
+    pub fn start_install_or_update(self: &Arc<Self>) {
         {
             let mut activity = self.activity();
             if matches!(*activity, Activity::Installing) {
