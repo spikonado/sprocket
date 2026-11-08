@@ -35,6 +35,8 @@ function client(): typeof posthog | undefined {
 			api_host: 'https://kpg.spikonado.com',
 			ui_host: 'https://eu.posthog.com',
 			defaults: '2026-08-30',
+			// The navbar links to /#download, so keep hashes that 2026-06-25 and later strip.
+			disable_capture_url_hashes: false,
 			strict_script_versioning: true,
 			capture_exceptions: true,
 			capture_performance: { web_vitals: true, network_timing: true },
