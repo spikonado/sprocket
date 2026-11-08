@@ -19,7 +19,8 @@ git -C "$src" checkout --quiet "$commit"
 # `(transform (translate x y) (rotate r) (scale sx sy))` instead of `(at x y r)`.
 # fresh-apps: builds new document apps when the set of documents changes, since moving
 # the old ones into the new tabs breaks their nested elements.
-# inset-board-warmup: lays out a never-shown PCB tab so schematic insets can draw the board.
+# hidden-tab-layout: lays out the board and schematic on hidden tabs, so their loads
+# finish and schematic insets can draw a board that was never shown.
 # parser-unclosed: fails on a file whose parentheses never close, such as one read
 # mid-write, instead of loading an empty document.
 # relative-sheets: loads sheets outside the opened file's folder, such as `../shared/x.kicad_sch`.

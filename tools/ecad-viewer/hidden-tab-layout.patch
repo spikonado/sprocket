@@ -1,13 +1,14 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index a7b5372..4ce88d7 100644
+index d60d01f..b927ca2 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-@@ -514,6 +514,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+@@ -514,6 +514,17 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                  display: inherit;
              }
 
-+            /* Laid out but unseen, so a board that was never shown paints
-+               for insets. */
++            /* Laid out but unseen, so a document app on a hidden tab still
++               finishes loading, and a board that was never shown paints for
++               insets. */
 +            .tab-content.warm:not(.active) {
 +                display: inherit;
 +                position: absolute;
@@ -19,14 +20,22 @@ index a7b5372..4ce88d7 100644
              .bottom-left-icon {
                  position: absolute;
                  bottom: 16px;
-@@ -4456,6 +4466,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
-     public insetProvider(kind: InsetKind): InsetProvider | null {
-         if (kind === "pcb") {
-             if (!this.has_pcb) return null;
-+            this.#tab_contents[TabKind.pcb]?.classList.add("warm");
-             if (!this.#board_inset_provider) {
-                 this.#board_inset_provider = new BoardInsetProvider(() =>
-                     this.#safe_board_viewer(),
+@@ -5042,6 +5053,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+                 });
+             }
+             this.#board_app.showPropertyPanel = this.showSelectionPanel;
++            this.#board_app.classList.add("warm");
+             embed_to_tab(this.#board_app, TabKind.pcb);
+         }
+
+@@ -5073,6 +5085,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+                 );
+             }
+             this.#schematic_app.showPropertyPanel = this.showSelectionPanel;
++            this.#schematic_app.classList.add("warm");
+             this.#tab_contents[TabKind.sch] = this.#schematic_app;
+             embed_to_tab(this.#schematic_app, TabKind.sch);
+         }
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/insets/board-provider.ts b/packages/ecad-viewer-app/src/ecad-viewer/insets/board-provider.ts
 index f89c424..2ce796d 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/insets/board-provider.ts
