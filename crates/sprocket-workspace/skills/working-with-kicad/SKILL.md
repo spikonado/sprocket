@@ -66,8 +66,8 @@ Keep net class widths and clearances above them.
   Above tens of kHz, return current flows in the plane directly under its trace, so placement keeps noisy currents away from quiet ones.
   Place the power stage, digital, and analog parts in separate areas, and route each area's signals only over that area, on every layer.
 - Connect pins labeled AGND, DGND, PGND, or SGND to that plane right at the pin. The labels name currents inside the chip.
-- When a switching regulator's datasheet asks for separate AGND and PGND, put the controller's quiet parts, like the feedback divider and compensation, on a small top-layer AGND island.
-  Join the island to PGND at one point, usually the exposed pad, through a net tie.
+  The exception is a switching regulator whose datasheet asks for separate AGND and PGND: put its AGND pin and the controller's quiet parts, like the feedback divider and compensation, on a small top-layer AGND island.
+  Join the island to PGND at one point, usually the exposed pad, through a net tie, and give the island no other connection to the plane.
 - Split ground only for galvanic isolation, like mains or patient connections, and cross the gap only with isolators, optocouplers, or transformers.
 - Give every high-speed trace a continuous reference plane along its whole length. Power planes may be split when no trace on an adjacent layer crosses the split.
 
