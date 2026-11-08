@@ -96,9 +96,7 @@ export default function SettingsVersionControl({
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">
-					Version Control
-				</h1>
+				<h1 className="text-foreground text-[1rem] tracking-[-0.03em]">Version Control</h1>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -113,7 +111,7 @@ export default function SettingsVersionControl({
 							<div className="flex items-start gap-3 p-5">
 								<GitHubMark className="text-foreground mt-0.5 size-5 shrink-0" />
 								<div className="min-w-0 flex-1">
-									<p className="text-foreground text-[15px] font-medium">GitHub</p>
+									<p className="text-foreground text-[15px]">GitHub</p>
 									<p className="text-muted-foreground mt-0.5 text-[12px]">
 										{status === null ? (
 											checking ? (
@@ -353,7 +351,7 @@ function AddHost({
 				onSubmit={(event) => void submit(event)}
 			>
 				<div className="flex items-center justify-between">
-					<p className="text-foreground text-[13px] font-medium">GitHub Enterprise host</p>
+					<p className="text-foreground text-[13px]">GitHub Enterprise host</p>
 					<button
 						type="button"
 						className="text-muted-foreground hover:text-foreground text-[12px] transition"
@@ -386,7 +384,7 @@ function AddHost({
 					/>
 					<button
 						type="submit"
-						className="bg-primary text-primary-foreground h-9 shrink-0 rounded-lg px-3.5 text-[13px] font-medium transition hover:opacity-90 disabled:opacity-50"
+						className="bg-primary text-primary-foreground h-9 shrink-0 rounded-lg px-3.5 text-[13px] transition hover:opacity-90 disabled:opacity-50"
 						disabled={disabled || !ready}
 					>
 						{saving ? 'Checking…' : 'Add'}
@@ -470,7 +468,7 @@ function TokenEditor({
 				</div>
 				<button
 					type="submit"
-					className="bg-primary text-primary-foreground h-9 rounded-lg px-3.5 text-[13px] font-medium transition hover:opacity-90 disabled:opacity-50"
+					className="bg-primary text-primary-foreground h-9 rounded-lg px-3.5 text-[13px] transition hover:opacity-90 disabled:opacity-50"
 					disabled={disabled || !token.trim()}
 				>
 					{saving ? 'Checking…' : 'Save'}

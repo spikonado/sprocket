@@ -294,7 +294,7 @@ export default function KicadViewer({
 					<div
 						role="group"
 						aria-label="Board view"
-						className="bg-muted absolute top-3 left-3 z-30 flex rounded-full p-0.5 text-xs font-medium shadow-sm"
+						className="bg-muted absolute top-3 left-3 z-30 flex rounded-full p-0.5 text-xs shadow-sm"
 					>
 						{VIEWS.map((item) => (
 							<button

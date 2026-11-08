@@ -52,13 +52,13 @@ export function ReferenceCard({
 				{icon}
 			</div>
 			<div className="min-w-0 flex-1">
-				<div className="text-foreground truncate text-sm font-medium">{title}</div>
+				<div className="text-foreground truncate text-sm">{title}</div>
 				<div className="text-muted-foreground mt-0.5 text-xs">{kind}</div>
 			</div>
 			{onOpen ? (
 				<button
 					type="button"
-					className="bg-background text-foreground hover:bg-muted shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium transition"
+					className="bg-background text-foreground hover:bg-muted shrink-0 rounded-md border px-3 py-1.5 text-sm transition"
 					onClick={onOpen}
 					aria-label={`View ${title}`}
 				>

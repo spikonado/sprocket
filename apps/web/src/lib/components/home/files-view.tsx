@@ -447,7 +447,7 @@ export default function FilesView({
 					<div
 						role="group"
 						aria-label="Files root"
-						className="bg-muted mr-1 flex shrink-0 rounded-full p-0.5 text-xs font-medium"
+						className="bg-muted mr-1 flex shrink-0 rounded-full p-0.5 text-xs"
 					>
 						{ROOTS.map((item) => {
 							const pressed = rootPath === (item.id === 'thread' ? threadCwd : projectPath);

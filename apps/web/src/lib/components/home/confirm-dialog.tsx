@@ -40,7 +40,7 @@ export default function ConfirmDialog({
 			className="bg-background text-foreground fixed inset-0 m-auto w-[min(28rem,calc(100%-2rem))] rounded-2xl border p-6 shadow-xl backdrop:bg-black/40"
 			onCancel={onCancel}
 		>
-			<h2 id={`${id}-title`} className="text-lg font-medium">
+			<h2 id={`${id}-title`} className="text-lg">
 				{title}
 			</h2>
 			<p id={`${id}-description`} className="text-muted-foreground mt-3 text-sm">

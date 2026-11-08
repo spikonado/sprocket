@@ -68,7 +68,7 @@ export function Table({ props }: TableProps) {
 				<thead className="text-muted-foreground">
 					<tr className="border-b">
 						{(props.columns ?? []).map((column, index) => (
-							<th key={index} className="px-2.5 py-2 font-medium first:pl-0">
+							<th key={index} className="px-2.5 py-2 font-normal first:pl-0">
 								{column}
 							</th>
 						))}
@@ -169,7 +169,7 @@ export function Alert({ props }: AlertProps) {
 			role="alert"
 			className={cn('rounded-lg border px-3.5 py-3', ALERT_TONES[props.type ?? 'info'])}
 		>
-			<p className="font-medium">{props.title}</p>
+			<p>{props.title}</p>
 			{props.message ? <p className="opacity-90">{props.message}</p> : null}
 		</div>
 	);
@@ -182,7 +182,7 @@ export function Link({ props, on }: LinkProps) {
 	const { href } = props;
 
 	if (!href || !DOMPurify.isValidAttribute('a', 'href', href)) {
-		return <span className="font-medium">{props.label}</span>;
+		return <span>{props.label}</span>;
 	}
 
 	return (
@@ -190,7 +190,7 @@ export function Link({ props, on }: LinkProps) {
 			href={href}
 			target="_blank"
 			rel="noopener noreferrer"
-			className="text-accent-strong font-medium underline-offset-4 hover:underline"
+			className="text-accent-strong underline-offset-4 hover:underline"
 			onClick={(event) => {
 				const press = on('press');
 
@@ -213,7 +213,7 @@ const CHART_HEIGHT = 140;
 function ChartFrame({ title, children }: { title: string | null; children: ReactNode }) {
 	return (
 		<figure className="m-0 flex min-w-0 flex-col gap-2">
-			{title ? <figcaption className="font-medium">{title}</figcaption> : null}
+			{title ? <figcaption>{title}</figcaption> : null}
 			{children}
 		</figure>
 	);

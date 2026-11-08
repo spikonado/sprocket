@@ -171,7 +171,7 @@ function ThreadUsagePanel({
 
 	return (
 		<div className="space-y-4">
-			<p className="text-foreground text-[14px] font-medium">AI usage</p>
+			<p className="text-foreground text-[14px]">AI usage</p>
 
 			{subagents.length > 0 ? (
 				<UsageSegmented

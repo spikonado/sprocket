@@ -118,7 +118,7 @@ export default function ArtifactDisplay({
 				) : null}
 				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<div className="flex min-w-0 items-center gap-2">
-						<span className="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
+						<span className="text-foreground min-w-0 truncate text-sm">{title}</span>
 						<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
 					</div>
 					{localPath ? (

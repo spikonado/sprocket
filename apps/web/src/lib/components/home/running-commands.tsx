@@ -41,7 +41,7 @@ function ScopedRunningCommands({ api, scope, collapseWhen = false }: RunningComm
 						className={`size-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
 						aria-hidden="true"
 					/>
-					<span className="font-medium">Running commands</span>
+					<span>Running commands</span>
 					<span className="bg-muted rounded px-1.5 py-0.5 text-[10px] tabular-nums">
 						{commands.length}
 					</span>

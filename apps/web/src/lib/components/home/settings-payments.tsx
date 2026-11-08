@@ -22,12 +22,12 @@ const statuses: Record<ListedPurchaseStatus, { label: string; dot: string }> = {
 	settled: { label: 'Completed', dot: 'bg-emerald-500' }
 };
 
-const sectionHeadingClass = 'text-foreground text-[15px] font-medium tracking-[-0.01em]';
+const sectionHeadingClass = 'text-foreground text-[15px] tracking-[-0.01em]';
 
 const paymentCardClass = 'aspect-[85.6/53.98] w-52 rounded-[8px]';
 
 const rowButtonClass =
-	'border-border text-foreground hover:bg-hover-fill focus-visible:ring-ring/50 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none';
+	'border-border text-foreground hover:bg-hover-fill focus-visible:ring-ring/50 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs transition focus-visible:ring-2 focus-visible:outline-none';
 
 const purchaseDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
@@ -91,7 +91,7 @@ export default function SettingsPayments({
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Payments</h1>
+				<h1 className="text-foreground text-[1rem] tracking-[-0.03em]">Payments</h1>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -160,7 +160,7 @@ export default function SettingsPayments({
 								<ul className="divide-hairline mt-3 max-w-xl divide-y">
 									{purchases.data.map((purchase) => (
 										<li key={purchase._id} className="flex items-center gap-4 py-3">
-											<p className="text-foreground w-16 shrink-0 text-[14px] font-medium tabular-nums">
+											<p className="text-foreground w-16 shrink-0 text-[14px] tabular-nums">
 												{formatMinorAmount(purchase.amount, purchase.currency)}
 											</p>
 											<div className="min-w-0 flex-1">
