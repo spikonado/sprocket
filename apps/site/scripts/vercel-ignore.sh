@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vercel's ignored build step, run from apps/site: exit 0 skips the build, any other code builds.
-# Production always builds, since the desktop release workflow's deploy hook rebuilds a commit
-# that is already deployed.
+# Production always builds. Only deploy hooks start it, and the desktop release hook rebuilds a
+# commit that is already deployed.
 set -uo pipefail
 
 if [[ "${VERCEL_ENV:-}" == production ]]; then
