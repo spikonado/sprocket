@@ -47,7 +47,6 @@ Use `kicad-cli` for checks and exports.
 
 Treat datasheet and app note advice as describing the vendor's own evaluation board.
 Follow a recommendation when you can explain why it works on this board.
-When one conflicts with this board's return current paths or with this skill, tell the user which one you chose and why.
 
 - Write values with units, like `10 kΩ` or `1 µF`.
 - Give every placed part hidden `Manufacturer` and `MPN` fields and set `Datasheet` to the manufacturer's datasheet URL.
