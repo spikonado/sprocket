@@ -26,6 +26,18 @@ fn providers_address_catalog_models_by_their_own_ids() {
 }
 
 #[test]
+fn the_gateway_skips_models_it_publishes_without_usage_weights() {
+    let route: ModelRoute = serde_json::from_value(serde_json::json!({
+        "provider": "moonshotai",
+        "providerModelIds": {"vercel": "moonshotai/kimi-k3.1-pro"},
+        "usageWeights": null,
+    }))
+    .unwrap();
+    assert!(!CompletionProvider::Spikonado.serves(&route));
+    assert!(CompletionProvider::Vercel.serves(&route));
+}
+
+#[test]
 fn legacy_origin_fallback_preserves_known_origins() {
     let original = rig::message::Origin::new("openai.responses", "openai", "old-model");
     let history = serde_json::from_value(serde_json::json!([

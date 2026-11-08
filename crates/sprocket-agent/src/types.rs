@@ -53,7 +53,7 @@ impl CompletionProvider {
     /// The ID this provider addresses catalog model `model` by, or None when it doesn't serve it.
     pub(crate) fn model_id<'a>(self, model: &'a str, route: &'a ModelRoute) -> Option<&'a str> {
         let catalog_key = match self {
-            Self::Spikonado => return Some(model),
+            Self::Spikonado => return route.served_by_gateway.then_some(model),
             Self::Openai | Self::Chatgpt => return (route.vendor == "openai").then_some(model),
             Self::Claude | Self::Anthropic => "anthropic",
             Self::Vercel => "vercel",
@@ -94,6 +94,23 @@ pub struct ModelRoute {
     pub vendor: String,
     #[serde(default, rename = "providerModelIds")]
     pub provider_model_ids: HashMap<String, String>,
+    /// The gateway publishes null `usageWeights` for models only BYOK providers serve.
+    #[serde(
+        default = "served_by_gateway_default",
+        rename = "usageWeights",
+        deserialize_with = "deserialize_non_null"
+    )]
+    pub served_by_gateway: bool,
+}
+
+const fn served_by_gateway_default() -> bool {
+    true
+}
+
+fn deserialize_non_null<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bool, D::Error> {
+    Ok(Option::<serde::de::IgnoredAny>::deserialize(deserializer)?.is_some())
 }
 
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
