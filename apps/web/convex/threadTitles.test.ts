@@ -85,7 +85,7 @@ describe('automatic thread titles', () => {
 				completion: {
 					items: [
 						{ type: 'text', id: 'text', text: 'The robot uses two motors.' },
-						{ type: 'reasoning', id: 'reasoning', text: 'Private reasoning' },
+						{ type: 'reasoning', id: 'reasoning', text: 'Choosing motors' },
 						{ type: 'tool-call', callId: 'call', name: 'exec_cmd', input: { cmd: 'secret' } }
 					]
 				},
@@ -149,7 +149,7 @@ describe('automatic thread titles', () => {
 			model: 'gpt-6-luna',
 			reasoning: { effort: 'high' },
 			input:
-				'User:\nBuild a robot\n\nAssistant:\nThe robot uses two motors.\n\nUser:\nAdd obstacle avoidance\n\nAssistant:\nLater response'
+				'User:\nBuild a robot\n\nAssistant:\nThe robot uses two motors.\n\nAssistant reasoning:\nChoosing motors\n\nUser:\nAdd obstacle avoidance\n\nAssistant:\nLater response'
 		});
 		const token = new Headers(options?.headers).get('Authorization')!.slice('Bearer '.length);
 		expect(await verifyGatewayToken(secret, token)).toMatchObject({ userId: 'alice' });
@@ -277,7 +277,7 @@ describe('automatic thread titles', () => {
 			paginationOpts: { numItems: 10, cursor: null }
 		});
 
-		expect(transcript.messages).toEqual([{ role: 'user', content: 'Build a robot' }]);
+		expect(transcript.messages).toEqual(['User:\nBuild a robot']);
 		await finishTitle(t);
 	});
 
