@@ -14,10 +14,10 @@ export const DEFAULT_TITLE = 'Sprocket - The best AI agent for hardware and soft
 export const DEFAULT_DESCRIPTION =
 	'Sprocket is the best AI agent for hardware and software. Create schematics, write and test code, use rich web and file context, and buy anything your project needs within approved limits.';
 
-export const ORGANIZATION_SAME_AS = [
-	'https://github.com/spikonado',
-	'https://x.com/spikonado',
-	'https://youtube.com/spikonado',
-	'https://instagram.com/spikonado',
-	'https://facebook.com/spikonado'
-];
+export const ORGANIZATION_SOCIALS = [
+	{ label: 'GitHub', href: 'https://github.com/spikonado' },
+	{ label: 'X', href: 'https://x.com/spikonado' },
+	{ label: 'YouTube', href: 'https://youtube.com/spikonado' },
+	{ label: 'Instagram', href: 'https://instagram.com/spikonado' },
+	{ label: 'Facebook', href: 'https://facebook.com/spikonado' }
+] as const;

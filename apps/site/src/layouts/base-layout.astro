@@ -5,7 +5,7 @@ import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import '@/styles/global.css';
 import logoSvg from '@/assets/logo.svg';
-import Navbar from '@/components/navbar.svelte';
+import Navbar from '@/components/navbar.astro';
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH } from '@/lib/og-image';
 import {
 	DEFAULT_DESCRIPTION,
@@ -13,7 +13,7 @@ import {
 	ORGANIZATION_DESCRIPTION,
 	ORGANIZATION_ID,
 	ORGANIZATION_NAME,
-	ORGANIZATION_SAME_AS,
+	ORGANIZATION_SOCIALS,
 	ORGANIZATION_URL,
 	SITE_NAME,
 	SITE_URL,
@@ -39,7 +39,7 @@ const organizationLd = {
 	url: ORGANIZATION_URL,
 	logo: new URL(logoSvg.src, SITE_URL).href,
 	description: ORGANIZATION_DESCRIPTION,
-	sameAs: ORGANIZATION_SAME_AS,
+	sameAs: ORGANIZATION_SOCIALS.map(({ href }) => href),
 	email: 'privacy@spikonado.com'
 };
 
@@ -112,7 +112,7 @@ const jsonLdDocument = {
 		>
 			Skip to content
 		</a>
-		<Navbar client:idle />
+		<Navbar />
 		<slot />
 	</body>
 </html>
