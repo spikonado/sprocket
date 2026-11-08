@@ -13,6 +13,9 @@ let initialized = false;
 
 let sectionObserver: IntersectionObserver | undefined;
 
+// Hydration can hand `observeSection` a section the observer already reported and dropped.
+const viewedSections = new Set<string>();
+
 // Islands can capture before the layout script runs, so every call initializes on demand.
 function client(): typeof posthog | undefined {
 	if (!initialized) {
@@ -92,6 +95,9 @@ function trackSectionViews(): void {
 
 				if (!entry.isIntersecting || !section) continue;
 				observer.unobserve(entry.target);
+
+				if (viewedSections.has(section)) continue;
+				viewedSections.add(section);
 				posthog.capture('section_viewed', { section } satisfies AnalyticsEvents['section_viewed']);
 			}
 		},
