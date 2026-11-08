@@ -17,7 +17,7 @@ fn encode(
         Some("1h"),
     );
     let mut request = CompletionRequest::new("next");
-    request.options = GenerationOptions::default().reasoning(Effort::High.into());
+    request.options = GenerationOptions::default().reasoning(Effort::High);
     request.tools.push(Arc::new(ToolDefinition::new(
         ToolName::new("exec").unwrap(),
         "Run a command.",
