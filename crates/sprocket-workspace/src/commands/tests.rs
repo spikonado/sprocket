@@ -1138,7 +1138,14 @@ async fn cleanup_releases_only_unobserved_saved_sessions() {
     let unsaved = stub_session(&root).await;
     let unsaved_id = unsaved.session.id.clone();
     unsaved.history.save(&unsaved.history_path).await.unwrap();
-    unsaved.complete();
+    unsaved
+        .completion
+        .send(Some(CommandCompletion {
+            success: false,
+            error: Some("failed to save command result: disk full".into()),
+            ..completed_ok()
+        }))
+        .unwrap();
     sessions
         .sessions
         .lock()
@@ -1152,7 +1159,10 @@ async fn cleanup_releases_only_unobserved_saved_sessions() {
     assert!(retained.contains_key(&unsaved_id));
     drop(retained);
     assert_eq!(poll(&sessions, &completed_id, 0).await.output, "unreturned");
-    assert!(poll(&sessions, &unsaved_id, 0).await.success);
+    assert_eq!(
+        poll(&sessions, &unsaved_id, 0).await.error.as_deref(),
+        Some("failed to save command result: disk full")
+    );
     drop(observed);
     sessions.prune_completed().await;
     assert!(!sessions.sessions.lock().await.contains_key(&observed_id));
