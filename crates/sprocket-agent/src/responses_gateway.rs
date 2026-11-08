@@ -15,6 +15,7 @@ use crate::openai::StatelessResponses;
 
 const APP_URL: &str = "https://usesprocket.dev";
 const APP_TITLE: &str = "Sprocket";
+const OPENROUTER_APP_CATEGORIES: &str = "programming-app,cloud-agent";
 
 /// A third-party gateway serving the Responses API for every vendor's models.
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -154,6 +155,12 @@ impl Wire for GatewayResponses {
         let headers = encoded.request.headers_mut();
         headers.insert("http-referer", http::HeaderValue::from_static(APP_URL));
         headers.insert("x-title", http::HeaderValue::from_static(APP_TITLE));
+        if self.gateway == ResponsesGateway::Openrouter {
+            headers.insert(
+                "x-openrouter-categories",
+                http::HeaderValue::from_static(OPENROUTER_APP_CATEGORIES),
+            );
+        }
         Ok(encoded)
     }
 
