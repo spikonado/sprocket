@@ -22,9 +22,9 @@
 }
 
 @theme inline {
-	--font-sans: 'DM Sans Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-brand: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+	--font-sans: var(--font-dm-sans);
+	--font-brand: var(--font-ibm-plex-sans);
+	--font-mono: var(--font-ibm-plex-mono);
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-surface: var(--surface);

@@ -1,8 +1,6 @@
 // @ts-check
 
-import { realpathSync } from 'node:fs';
-import path from 'node:path';
-import { defineConfig, envField } from 'astro/config';
+import { defineConfig, envField, fontProviders } from 'astro/config';
 import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
 import posthog from '@posthog/rollup-plugin';
@@ -24,14 +22,6 @@ const posthogSourceMaps =
 				})
 			]
 		: [];
-
-const monorepoRoot = path.resolve(import.meta.dirname, '../..');
-
-// Bun's global store keeps the font files outside the repo, at `<store>/<entry>/node_modules/@fontsource/ibm-plex-mono`.
-const bunGlobalStore = path.resolve(
-	realpathSync(path.join(import.meta.dirname, 'node_modules/@fontsource/ibm-plex-mono')),
-	'../../../..'
-);
 
 // https://astro.build/config
 export default defineConfig({
@@ -76,9 +66,60 @@ export default defineConfig({
 			})
 		}
 	},
+	// The Fontsource provider's variable files add opsz and wdth axes that change DM Sans glyph
+	// metrics, so fonts load from the pinned @fontsource packages.
+	fonts: [
+		{
+			provider: fontProviders.local(),
+			name: 'DM Sans',
+			cssVariable: '--font-dm-sans',
+			options: {
+				variants: [
+					{
+						src: ['@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2'],
+						weight: '100 1000',
+						style: 'normal'
+					}
+				]
+			}
+		},
+		{
+			provider: fontProviders.local(),
+			name: 'IBM Plex Sans',
+			cssVariable: '--font-ibm-plex-sans',
+			options: {
+				variants: [
+					{
+						src: ['@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2'],
+						weight: '100 700',
+						style: 'normal'
+					}
+				]
+			}
+		},
+		{
+			provider: fontProviders.local(),
+			name: 'IBM Plex Mono',
+			cssVariable: '--font-ibm-plex-mono',
+			fallbacks: ['monospace'],
+			options: {
+				variants: [
+					{
+						src: ['@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2'],
+						weight: 400,
+						style: 'normal'
+					},
+					{
+						src: ['@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2'],
+						weight: 500,
+						style: 'normal'
+					}
+				]
+			}
+		}
+	],
 
 	vite: {
-		plugins: [tailwindcss(), ...posthogSourceMaps],
-		server: { fs: { allow: [monorepoRoot, bunGlobalStore] } }
+		plugins: [tailwindcss(), ...posthogSourceMaps]
 	}
 });

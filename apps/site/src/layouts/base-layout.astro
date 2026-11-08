@@ -1,8 +1,5 @@
 ---
-import '@fontsource-variable/dm-sans/wght.css';
-import '@fontsource-variable/ibm-plex-sans/wght.css';
-import '@fontsource/ibm-plex-mono/400.css';
-import '@fontsource/ibm-plex-mono/500.css';
+import { Font } from 'astro:assets';
 import '@/styles/global.css';
 import logoSvg from '@/assets/logo.svg';
 import Navbar from '@/components/navbar.astro';
@@ -66,6 +63,9 @@ const jsonLdDocument = {
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="light" />
 		<meta name="theme-color" content="#f0f4eb" />
+		<Font cssVariable="--font-dm-sans" preload />
+		<Font cssVariable="--font-ibm-plex-sans" preload />
+		<Font cssVariable="--font-ibm-plex-mono" preload />
 		<link rel="icon" type="image/svg+xml" href={logoSvg.src} />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<link rel="canonical" href={canonicalURL} />
