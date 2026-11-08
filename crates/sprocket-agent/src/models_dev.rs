@@ -39,8 +39,8 @@ struct Entry {
 }
 
 struct Cache {
-    checked_at: Instant,
-    index: Option<Arc<Index>>,
+    attempted_at: Instant,
+    fetched: Option<(Instant, Arc<Index>)>,
 }
 
 static CACHE: Mutex<Option<Cache>> = Mutex::const_new(None);
@@ -60,24 +60,24 @@ pub(crate) async fn resolve<'a>(routes: impl IntoIterator<Item = &'a mut ModelRo
 
 async fn cached_index() -> Option<Arc<Index>> {
     let mut cache = CACHE.lock().await;
-    let stale = match cache.as_ref() {
-        Some(cache) if cache.index.is_some() && cache.checked_at.elapsed() < REFRESH_AFTER => {
-            return cache.index.clone();
+    let stale = cache.as_ref().and_then(|cache| cache.fetched.clone());
+    if let Some(cache) = cache.as_ref() {
+        let fresh = matches!(&cache.fetched, Some((at, _)) if at.elapsed() < REFRESH_AFTER);
+        if fresh || cache.attempted_at.elapsed() < RETRY_AFTER {
+            return stale.map(|(_, index)| index);
         }
-        Some(cache) if cache.checked_at.elapsed() < RETRY_AFTER => return cache.index.clone(),
-        Some(cache) => cache.index.clone(),
-        None => None,
-    };
-    let index = match fetch_index().await {
-        Ok(index) => Some(Arc::new(index)),
+    }
+    let fetched = match fetch_index().await {
+        Ok(index) => Some((Instant::now(), Arc::new(index))),
         Err(error) => {
             eprintln!("sprocket-agent: models.dev lookup failed: {error:#}");
             stale
         }
     };
+    let index = fetched.as_ref().map(|(_, index)| index.clone());
     *cache = Some(Cache {
-        checked_at: Instant::now(),
-        index: index.clone(),
+        attempted_at: Instant::now(),
+        fetched,
     });
     index
 }
