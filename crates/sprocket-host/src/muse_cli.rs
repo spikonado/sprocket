@@ -188,14 +188,16 @@ impl MuseCli {
                 }
                 Value::Null
             })
-            .await;
-            if let Ok(params) = completed
-                && params["outcome"] != "granted"
-                && params["outcome"] != "cancelled"
+            .await
+            .unwrap_or_else(|_| {
+                json!({ "outcome": "expired", "message": "The Muse Code sign-in expired. Sign in again." })
+            });
+            if completed["outcome"] != "granted"
+                && completed["outcome"] != "cancelled"
                 && let Ok(mut error) = login_error.lock()
             {
                 *error = Some(
-                    params["message"]
+                    completed["message"]
                         .as_str()
                         .unwrap_or("Muse Code sign-in didn't finish.")
                         .to_string(),

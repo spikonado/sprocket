@@ -33,7 +33,8 @@ pub enum Incoming {
     Exited(String),
 }
 
-type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>>>;
+/// The calls awaiting replies, or None once Muse has stopped.
+type Pending = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>>>>;
 
 /// One `muse serve` process. Dropping it kills the process.
 pub struct Msp {
@@ -75,7 +76,7 @@ impl Msp {
 
         let (input, pending_input) = mpsc::unbounded_channel();
         let (incoming, notifications) = mpsc::unbounded_channel();
-        let pending = Pending::default();
+        let pending = Pending::new(Mutex::new(Some(HashMap::new())));
         tokio::spawn(write_input(stdin, pending_input));
         tokio::spawn(read_output(
             stdout,
@@ -106,20 +107,16 @@ impl Msp {
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.insert(id, sender);
+        {
+            let mut pending = self.pending.lock().map_err(|_| stopped())?;
+            pending.as_mut().ok_or_else(stopped)?.insert(id, sender);
         }
         let mut request = json!({ "jsonrpc": "2.0", "id": id, "method": method });
         if !params.is_null() {
             request["params"] = params;
         }
         let _ = self.input.send(request.to_string());
-        receiver.await.unwrap_or_else(|_| {
-            Err(RpcError {
-                message: "Muse stopped.".to_string(),
-                data: Value::Null,
-            })
-        })
+        receiver.await.unwrap_or_else(|_| Err(stopped()))
     }
 
     pub fn notify(&self, method: &str, params: Value) {
@@ -128,6 +125,13 @@ impl Msp {
             notification["params"] = params;
         }
         let _ = self.input.send(notification.to_string());
+    }
+}
+
+fn stopped() -> RpcError {
+    RpcError {
+        message: "Muse stopped.".to_string(),
+        data: Value::Null,
     }
 }
 
@@ -186,7 +190,11 @@ async fn read_output(
                 });
             }
             (None, Some(id)) => {
-                let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(&id)) else {
+                let sender = pending
+                    .lock()
+                    .ok()
+                    .and_then(|mut calls| calls.as_mut()?.remove(&id));
+                let Some(sender) = sender else {
                     continue;
                 };
                 let error = message["error"].take();
@@ -209,7 +217,7 @@ async fn read_output(
         .map(|tail| tail.trim().to_string())
         .unwrap_or_default();
     if let Ok(mut pending) = pending.lock() {
-        pending.clear();
+        *pending = None;
     }
     let _ = incoming.send(Incoming::Exited(if reason.is_empty() {
         "it exited without an error message".to_string()
