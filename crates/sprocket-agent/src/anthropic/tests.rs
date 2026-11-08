@@ -6,7 +6,7 @@ use rig::wire::Body;
 #[test]
 fn requests_carry_instructions_summarized_thinking_and_claude_safe_tool_schemas() {
     let wire = claude_messages(
-        AnthropicConfig::new("key"),
+        "key".to_string(),
         "claude-opus-5-5",
         "Be brief.",
         Some("1h"),

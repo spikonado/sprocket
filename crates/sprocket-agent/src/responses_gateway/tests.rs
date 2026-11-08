@@ -13,7 +13,9 @@ fn encode(gateway: ResponsesGateway) -> (http::HeaderMap, Value) {
         true,
         Some("1h"),
         "Be brief.",
-    );
+        "thread-1",
+    )
+    .unwrap();
     let mut request = CompletionRequest::new("next");
     request.options = GenerationOptions::default().reasoning(Effort::High);
     request.tools.push(Arc::new(ToolDefinition::new(
@@ -68,6 +70,12 @@ fn openrouter_claude_requests_cache_without_asking_for_ciphertext() {
         json!({"type": "ephemeral", "ttl": "1h"})
     );
     assert!(body.get("include").is_none());
+}
+
+#[test]
+fn opencode_go_requests_carry_the_thread_as_session() {
+    let (headers, _) = encode(ResponsesGateway::OpencodeGo);
+    assert_eq!(headers["x-opencode-session"], "thread-1");
 }
 
 #[test]

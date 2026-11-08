@@ -10,7 +10,6 @@ mod history;
 mod hooks;
 mod models_dev;
 mod openai;
-mod opencode;
 mod output;
 mod provider;
 mod reasoning;

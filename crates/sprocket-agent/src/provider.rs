@@ -33,7 +33,6 @@ use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::openai::stateless_responses_model;
-use crate::opencode;
 use crate::request_compression::ZstdResponsesRequests;
 use crate::responses_gateway::{ResponsesGateway, gateway_responses_model};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
@@ -467,32 +466,22 @@ impl AgentProvider {
                     self.cache_write_ttl.as_deref(),
                 ))
             }
-            CompletionProvider::Vercel | CompletionProvider::Openrouter => {
+            CompletionProvider::Vercel
+            | CompletionProvider::Openrouter
+            | CompletionProvider::Opencode
+            | CompletionProvider::OpencodeGo => {
                 let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
                 let gateway = match provider {
                     CompletionProvider::Vercel => ResponsesGateway::Vercel,
+                    CompletionProvider::Opencode => ResponsesGateway::Opencode,
+                    CompletionProvider::OpencodeGo => ResponsesGateway::OpencodeGo,
                     _ => ResponsesGateway::Openrouter,
                 };
-                Ok(gateway_responses_model(
+                gateway_responses_model(
                     gateway,
                     credential.api_key,
                     model,
                     self.model_route.vendor == "anthropic",
-                    self.cache_write_ttl.as_deref(),
-                    base_instructions,
-                ))
-            }
-            CompletionProvider::Opencode | CompletionProvider::OpencodeGo => {
-                let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
-                let dialect = match provider {
-                    CompletionProvider::OpencodeGo => &openai::wire::OPENCODE_GO,
-                    _ => &openai::wire::OPENCODE,
-                };
-                opencode::completion_model(
-                    dialect,
-                    credential.api_key,
-                    model,
-                    &self.model_route.vendor,
                     self.cache_write_ttl.as_deref(),
                     base_instructions,
                     &self.thread_id,
