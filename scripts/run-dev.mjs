@@ -92,6 +92,7 @@ const build = spawnSync('cargo', ['build', '-p', 'sprocket-cli'], {
 });
 
 if (build.status !== 0) {
+	if (build.error) console.error('Failed to build sprocket-cli:', build.error);
 	process.exit(build.status ?? 1);
 }
 
