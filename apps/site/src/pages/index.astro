@@ -26,12 +26,12 @@ const showcases = [
 	{
 		id: 'electronics',
 		heading: 'Designs electronics',
-		body: 'Describe a device, and Sprocket designs the circuit around real parts.',
+		body: 'Describe a device, and Sprocket designs the circuit board around real parts.',
 		points: [
-			'Draws clear schematics from the datasheets of the parts it picks',
-			'Designs custom boards in KiCad, from the schematic to the routed PCB',
-			'Writes the BOM, pin maps, and step-by-step assembly guides',
-			'Writes and tests the firmware that runs on the board'
+			'Picks parts by reading their datasheets and checking distributor stock',
+			'Designs boards in KiCad, from the schematic to the routed multi-layer PCB',
+			'Exports Gerbers, BOMs, and pick-and-place files ready to order',
+			'Writes the assembly guide and the firmware that runs on the board'
 		],
 		mock: HardwareMock
 	},
@@ -84,18 +84,18 @@ const showcases = [
 const capabilities = [
 	{
 		icon: 'chip',
-		name: 'Schematics',
-		body: 'Readable circuit schematics for builds made from modules and dev boards'
+		name: 'PCB design',
+		body: 'Schematics and routed multi-layer boards, checked with ERC and DRC'
 	},
 	{
 		icon: 'board',
 		name: 'KiCad',
-		body: 'Designs schematics and boards in KiCad on your computer, then routes them'
+		body: 'Edits your KiCad projects on your computer and renders the boards in 3D'
 	},
 	{
 		icon: 'list',
-		name: 'BOMs and pin maps',
-		body: 'Parts lists and wiring tables for every board'
+		name: 'BOMs and fab files',
+		body: 'Parts lists with distributor numbers, Gerbers, and pick-and-place files'
 	},
 	{
 		icon: 'wrench',
