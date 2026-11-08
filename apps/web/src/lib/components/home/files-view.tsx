@@ -75,6 +75,10 @@ function parentDirectory(path: string) {
 	return trimmed.slice(0, trimmed.lastIndexOf('/') + 1);
 }
 
+function treePaths({ directories, files }: WorkspaceFilesResult) {
+	return [...directories.map((directory) => `${directory}/`), ...files];
+}
+
 function samePaths(a: readonly string[], b: readonly string[]) {
 	return a.length === b.length && a.every((path, index) => path === b[index]);
 }
@@ -183,20 +187,21 @@ export default function FilesView({
 		if (!next || mutations.current > 0 || pendingCreate.current) return;
 		unapplied.current = null;
 		const known = shown.current?.path === next.path ? shown.current : null;
+		const paths = treePaths(next.listing);
 
-		if (forceReset.current || !known || !samePaths(known.paths, next.listing.paths)) {
+		if (forceReset.current || !known || !samePaths(known.paths, paths)) {
 			model.resetPaths({
-				preparedInput: prepareFileTreeInput(next.listing.paths, { flattenEmptyDirectories: true }),
+				preparedInput: prepareFileTreeInput(paths, { flattenEmptyDirectories: true }),
 				initialExpandedPaths: known ? expandedDirectories(model, known.paths) : []
 			});
 		}
 
 		model.setGitStatus(next.listing.gitStatus);
-		shown.current = { path: next.path, paths: next.listing.paths };
+		shown.current = { path: next.path, paths };
 		forceReset.current = false;
 		setListing({
 			path: next.path,
-			count: next.listing.paths.length,
+			count: paths.length,
 			scanning: next.listing.scanning,
 			truncated: next.listing.truncated,
 			error: null

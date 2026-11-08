@@ -4,7 +4,8 @@ import FilesView, { type FilesApi } from './files-view';
 import type { DiskEvent, WorkspaceFileTarget, WorkspaceFilesResult } from '$lib/types/sprocket';
 
 const listing: WorkspaceFilesResult = {
-	paths: ['src/', 'src/main.rs', 'README.md'],
+	directories: ['src'],
+	files: ['src/main.rs', 'README.md'],
 	gitStatus: [{ path: 'src/main.rs', status: 'modified' }],
 	scanning: false,
 	truncated: false
@@ -106,7 +107,7 @@ it('applies pushed changes, keeping expanded folders, and opens clicked files', 
 	fireEvent.click(row('src/')!);
 	await waitFor(() => expect(row('src/main.rs')).toBeTruthy());
 
-	act(() => push({ kind: 'snapshot', ...listing, paths: [...listing.paths, 'src/lib.rs'] }));
+	act(() => push({ kind: 'snapshot', ...listing, files: [...listing.files, 'src/lib.rs'] }));
 	await waitFor(() => expect(row('src/lib.rs')).toBeTruthy());
 	expect(row('src/')?.getAttribute('aria-expanded')).toBe('true');
 

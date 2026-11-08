@@ -29,11 +29,11 @@ pub struct SearchOutcome {
     pub scanning: bool,
 }
 
-/// Directory paths end with `/`.
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathListing {
-    pub paths: Vec<String>,
+    pub directories: Vec<String>,
+    pub files: Vec<String>,
     pub git_status: Vec<GitStatusEntry>,
     pub scanning: bool,
     pub truncated: bool,
@@ -43,7 +43,8 @@ impl PathListing {
     /// Stable within a server version, which is all clients compare against.
     pub fn content_hash(&self) -> String {
         let mut hasher = DefaultHasher::new();
-        self.paths.hash(&mut hasher);
+        self.directories.hash(&mut hasher);
+        self.files.hash(&mut hasher);
         self.git_status.hash(&mut hasher);
         self.truncated.hash(&mut hasher);
         format!("{:016x}", hasher.finish())
@@ -215,14 +216,14 @@ impl WorkspaceSearchIndex {
             });
         };
 
-        let dirs = searcher
+        let mut dirs = searcher
             .get_dirs()
             .iter()
             .filter(|dir| !dir.is_deleted())
             .map(|dir| directory_path(dir.relative_path(searcher)))
             .filter(|path| path != ".")
-            .map(|path| (format!("{path}/"), None));
-        let files = searcher
+            .peekable();
+        let mut files = searcher
             .get_files()
             .iter()
             .filter(|file| !file.is_deleted())
@@ -231,11 +232,15 @@ impl WorkspaceSearchIndex {
                     to_forward_slashes(file.relative_path(searcher)),
                     file.git_status.and_then(GitFileStatus::from_git),
                 )
-            });
-        let mut entries: Vec<_> = dirs.chain(files).take(MAX_LISTED_PATHS + 1).collect();
-        let truncated = entries.len() > MAX_LISTED_PATHS;
-        entries.truncate(MAX_LISTED_PATHS);
-        let git_status = entries
+            })
+            .peekable();
+        let directories: Vec<_> = dirs.by_ref().take(MAX_LISTED_PATHS).collect();
+        let listed_files: Vec<_> = files
+            .by_ref()
+            .take(MAX_LISTED_PATHS - directories.len())
+            .collect();
+        let truncated = dirs.peek().is_some() || files.peek().is_some();
+        let git_status = listed_files
             .iter()
             .filter_map(|(path, status)| {
                 status.map(|status| GitStatusEntry {
@@ -244,10 +249,10 @@ impl WorkspaceSearchIndex {
                 })
             })
             .collect();
-        let paths = entries.into_iter().map(|(path, _)| path).collect();
 
         Ok(PathListing {
-            paths,
+            directories,
+            files: listed_files.into_iter().map(|(path, _)| path).collect(),
             git_status,
             scanning: searcher.is_scan_active(),
             truncated,

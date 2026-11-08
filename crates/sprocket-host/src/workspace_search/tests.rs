@@ -134,17 +134,15 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
     let listing = index.list_paths_blocking(&root).expect("list paths");
     assert!(!listing.scanning && !listing.truncated);
     assert_eq!(
-        listing
-            .paths
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>(),
+        BTreeSet::from_iter(listing.directories.iter().map(String::as_str)),
+        BTreeSet::from(["src", "src/nested"])
+    );
+    assert_eq!(
+        BTreeSet::from_iter(listing.files.iter().map(String::as_str)),
         BTreeSet::from([
             ".gitignore",
-            "src/",
             "src/main.rs",
             "src/notes.txt",
-            "src/nested/",
             "src/nested/.gitignore",
             "src/nested/keep.rs",
             "src/nested/important.tmp",

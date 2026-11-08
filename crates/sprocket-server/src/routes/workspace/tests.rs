@@ -215,7 +215,7 @@ async fn file_list_events_follow_new_files() {
         },
     );
     let lists = |listing: &serde_json::Value, path: &str| {
-        listing["paths"]
+        listing["files"]
             .as_array()
             .is_some_and(|paths| paths.iter().any(|entry| entry == path))
     };
