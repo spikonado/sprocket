@@ -10,6 +10,8 @@ import {
 } from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
 
+const MAX_HIGHLIGHTED_CODE_LENGTH = 50_000;
+
 type CodeControl = {
 	target: HTMLElement;
 	wrapper: HTMLDivElement;
@@ -78,8 +80,7 @@ export default function MarkdownHtml({
 
 			if (!language) continue;
 
-			// Keep very large pasted files readable without creating a span for every token.
-			if (code.length > 50_000) continue;
+			if (code.length > MAX_HIGHLIGHTED_CODE_LENGTH) continue;
 
 			void import('$lib/chat/code-highlighting-client')
 				.then(({ highlightCodeInWorker }) =>

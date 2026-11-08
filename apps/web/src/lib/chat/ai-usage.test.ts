@@ -37,10 +37,15 @@ const catalog: ModelCatalog = {
 };
 
 describe('apiCost', () => {
-	// Standard 0.8 + 0.05 + writes + 1, long context 4 + 1.5, all doubled for fast.
+	const standardUsd = (1 - 0.5 - 0.1) * 2 + 0.5 * 0.1 + 0.1 * 10;
+	const longContextUsd = 1 * 2 * 2 + 0.1 * 10 * 1.5;
+
+	const fastUsd = (cacheWriteUsdPerMTok: number) =>
+		(standardUsd + 0.1 * cacheWriteUsdPerMTok + longContextUsd) * 2;
+
 	it.each([
-		['30m', 15.2],
-		['12h', 15.7],
+		['30m', fastUsd(2.5)],
+		['12h', fastUsd(5)],
 		['5m', null],
 		[null, null]
 	])(

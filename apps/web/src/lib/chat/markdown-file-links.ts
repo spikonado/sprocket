@@ -3,11 +3,9 @@ import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 import { isAbsoluteImagePath, isWindowsImagePath } from './markdown-image-path';
 import { decodeImagePath, type MarkdownImageScope } from './markdown-images';
 
-/** `directory` is true when the link itself shows a folder; otherwise the machine is asked. */
-export type MarkdownLinkTarget = WorkspaceFileTarget & { directory: boolean };
+export type MarkdownLinkTarget = WorkspaceFileTarget & { knownDirectory: boolean };
 
 export type MarkdownFileLinks = {
-	/** Workspaces whose tree shows linked entries, with relative links resolving against the first. */
 	roots: readonly string[];
 	open: (target: MarkdownLinkTarget) => void;
 };
@@ -80,10 +78,11 @@ export function fileLinkTarget(
 	scope?: MarkdownImageScope
 ): MarkdownLinkTarget | null {
 	const documentPath = scope?.documentPath;
+	const [baseRoot] = roots;
 
 	const base = documentPath
-		? resolvePath(scope?.workspacePath ?? roots[0], `${documentPath}/..`)
-		: roots[0];
+		? resolvePath(scope?.workspacePath ?? baseRoot, `${documentPath}/..`)
+		: baseRoot;
 
 	const absolute = resolvePath(base, path);
 
@@ -95,24 +94,24 @@ export function fileLinkTarget(
 		const relative = relativePath(root, absolute);
 
 		if (relative !== null && (!target || relative.length < target.path.length)) {
-			target = { workspacePath: root, path: relative, directory: false };
+			target = { workspacePath: root, path: relative, knownDirectory: false };
 		}
 	}
 
-	const directory = /[\\/]$/.test(path) || target?.path === '';
+	const knownDirectory = /[\\/]$/.test(path) || target?.path === '';
 
-	if (target) return { ...target, directory };
+	if (target) return { ...target, knownDirectory };
 
 	const split = absolute.lastIndexOf('/') + 1;
 	const parent = absolute.slice(0, split - 1);
 
 	// Outside the workspaces, a folder becomes its own tree root and a file opens from its folder.
-	return directory || split === absolute.length
-		? { workspacePath: absolute, path: '', directory: true }
+	return knownDirectory || split === absolute.length
+		? { workspacePath: absolute, path: '', knownDirectory: true }
 		: {
 				workspacePath: /^(?:[a-z]:)?$/i.test(parent) ? absolute.slice(0, split) : parent,
 				path: absolute.slice(split),
-				directory: false
+				knownDirectory: false
 			};
 }
 
@@ -131,7 +130,7 @@ export async function openMarkdownLink(
 	}
 ) {
 	const { workspacePath, path } = target;
-	let directory = target.directory;
+	let directory = target.knownDirectory;
 
 	if (!directory) {
 		try {

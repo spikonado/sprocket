@@ -31,7 +31,7 @@ import {
 	MIN_PANE_SIZE,
 	topRightPane,
 	type FileDraft,
-	type LayoutRect,
+	type FractionalRect,
 	type SidePanelLayout,
 	type SidePanelPane,
 	type SidePanelTab,
@@ -268,7 +268,7 @@ function Pane({
 	onClose
 }: Props & {
 	pane: SidePanelPane;
-	rect: LayoutRect;
+	rect: FractionalRect;
 	/** Whether chat links open here; only shown when the panel is split. */
 	focused: boolean;
 	showsPanelButtons: boolean;
@@ -495,7 +495,7 @@ function Pane({
 						<FileEditor
 							api={filesApi}
 							file={tab.file}
-							draft={tab.draft}
+							initialDraft={tab.draft}
 							active={tab.id === activeTabId}
 							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
 						/>

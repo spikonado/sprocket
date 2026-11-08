@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { LocalServerMessage } from './socket';
+import { resetLocalSockets, type LocalServerMessage } from './socket';
 
 export class FakeWebSocket {
 	static readonly CONNECTING = 0;
@@ -37,6 +37,7 @@ export class FakeWebSocket {
 }
 
 export function stubWebSocket(): FakeWebSocket[] {
+	resetLocalSockets();
 	FakeWebSocket.instances = [];
 	vi.stubGlobal('WebSocket', FakeWebSocket);
 

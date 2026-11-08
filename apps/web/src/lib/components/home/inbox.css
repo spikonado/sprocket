@@ -635,7 +635,8 @@
 
 .inbox-layout {
 	--sidebar-width: 260px;
-	--sidebar-motion: 220ms cubic-bezier(0.2, 0, 0, 1);
+	--sidebar-motion-duration: 220ms;
+	--sidebar-motion: var(--sidebar-motion-duration) cubic-bezier(0.2, 0, 0, 1);
 	position: relative;
 	display: grid;
 	height: 100dvh;
@@ -661,12 +662,11 @@
 	border-right: 1px solid var(--sidebar-border);
 }
 
-/* Hide only after the slide finishes, so the panel stays painted while it moves out. */
 .sidebar-hidden .inbox-sidebar-host {
 	visibility: hidden;
 	transition:
 		transform var(--sidebar-motion),
-		visibility 0s 220ms;
+		visibility 0s var(--sidebar-motion-duration);
 }
 
 .inbox-sidebar-host > * {

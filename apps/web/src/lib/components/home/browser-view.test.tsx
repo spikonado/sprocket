@@ -10,7 +10,7 @@ function createBrowserApi() {
 
 	const api = {
 		browserDashboardUrl: 'http://localhost:7731/api/browser/dashboard/',
-		startBrowser: vi.fn<BrowserApi['startBrowser']>(async () => ({
+		ensureBrowser: vi.fn<BrowserApi['ensureBrowser']>(async () => ({
 			state: 'installing',
 			error: null
 		})),
@@ -41,7 +41,7 @@ it('starts setup, then follows pushed status into the ready dashboard', async ()
 	const { api, push } = createBrowserApi();
 	render(<BrowserView browserApi={api} />);
 	await act(async () => {});
-	expect(api.startBrowser).toHaveBeenCalledOnce();
+	expect(api.ensureBrowser).toHaveBeenCalledOnce();
 	expect(api.watchBrowserStatus).toHaveBeenCalledOnce();
 	expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
 
@@ -64,7 +64,7 @@ it('reports a pushed dashboard error and retries through setup', async () => {
 
 	fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
 	await act(async () => {});
-	expect(api.startBrowser).toHaveBeenCalledTimes(2);
+	expect(api.ensureBrowser).toHaveBeenCalledTimes(2);
 	expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
 	await push({ state: 'ready', error: null });
 	expect(screen.getByTitle('Agent browser dashboard')).toBeTruthy();
@@ -75,7 +75,7 @@ it.each<[string, () => Promise<BrowserStatus>]>([
 	['fails', async () => ({ state: 'error', error: 'The Sprocket server disconnected.' })]
 ])('shows a retry action when starting %s', async (_, start) => {
 	const { api } = createBrowserApi();
-	api.startBrowser.mockImplementationOnce(start);
+	api.ensureBrowser.mockImplementationOnce(start);
 	render(<BrowserView browserApi={api} />);
 	await act(async () => {});
 	expect(api.watchBrowserStatus).not.toHaveBeenCalled();
@@ -91,7 +91,7 @@ it('restarts and resubscribes after the subscription drops, and stops on unmount
 	expect(api.watchBrowserStatus).toHaveBeenCalledOnce();
 
 	await act(() => vi.advanceTimersByTimeAsync(1000));
-	expect(api.startBrowser).toHaveBeenCalledTimes(2);
+	expect(api.ensureBrowser).toHaveBeenCalledTimes(2);
 	expect(api.watchBrowserStatus).toHaveBeenCalledTimes(2);
 
 	view.unmount();

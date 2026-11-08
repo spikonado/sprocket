@@ -152,9 +152,9 @@ describe('links', () => {
 		}
 
 		expect(open.mock.calls).toEqual([
-			[{ workspacePath: '/repo', path: 'src/main.rs', directory: false }],
-			[{ workspacePath: '/repo', path: 'src/lib.rs', directory: false }],
-			[{ workspacePath: '/repo', path: 'full.png', directory: false }]
+			[{ workspacePath: '/repo', path: 'src/main.rs', knownDirectory: false }],
+			[{ workspacePath: '/repo', path: 'src/lib.rs', knownDirectory: false }],
+			[{ workspacePath: '/repo', path: 'full.png', knownDirectory: false }]
 		]);
 	});
 });
@@ -387,7 +387,7 @@ it('opens a KiCad project card in the side panel', () => {
 	expect(open).toHaveBeenCalledWith({
 		workspacePath: '/repo',
 		path: 'boards/amp board/amp.kicad_pro',
-		directory: false
+		knownDirectory: false
 	});
 });
 

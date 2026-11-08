@@ -230,6 +230,10 @@ function abortableDelay(milliseconds: number, signal: AbortSignal) {
 
 const sockets = new Map<string, LocalSocket>();
 
+export function resetLocalSockets() {
+	sockets.clear();
+}
+
 export function localSocket(baseUrl: string): LocalSocket {
 	let socket = sockets.get(baseUrl);
 

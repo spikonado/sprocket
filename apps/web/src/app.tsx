@@ -1763,17 +1763,16 @@ export default function App({
 			submissionId
 		});
 
-		const recoverSubmission = (message: string | null, submissionId?: string) => {
+		const recoverSubmission = (message: string | null, { freshSubmission = false } = {}) => {
+			const reusedSubmissionId =
+				!selectedThreadId && recoveryScope === originatingRecoveryScope
+					? threadSubmissionId
+					: runSubmissionId;
+
 			submissions.storeRecovery(
 				submittedUserId,
 				recoveryScope,
-				submissionRecovery(
-					message,
-					submissionId ??
-						(!selectedThreadId && recoveryScope === originatingRecoveryScope
-							? threadSubmissionId
-							: runSubmissionId)
-				)
+				submissionRecovery(message, freshSubmission ? crypto.randomUUID() : reusedSubmissionId)
 			);
 		};
 
@@ -1882,10 +1881,7 @@ export default function App({
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					clearLaunch();
-					recoverSubmission(
-						error.message,
-						isServerRejection(error) ? crypto.randomUUID() : undefined
-					);
+					recoverSubmission(error.message, { freshSubmission: isServerRejection(error) });
 				},
 				onStarted: (runId, createdThreadId) => {
 					if (isSubmittedUserCurrent()) {

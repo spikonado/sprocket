@@ -32,7 +32,7 @@ const recoveredSubmission = {
 
 function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 	return {
-		startBrowser: unusedDesktopCall,
+		ensureBrowser: unusedDesktopCall,
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
 		watchBrowserStatus: unusedDesktopCall,
 		watchRunningCommands: vi.fn(() => new Promise<void>(() => {})),
@@ -77,7 +77,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		fetchGitHubStatus: unusedDesktopCall,
 		updateGitHubSettings: unusedDesktopCall,
 		fetchConnectors: unusedDesktopCall,
-		installConnector: unusedDesktopCall,
+		installOrUpdateConnector: unusedDesktopCall,
 		uninstallConnector: unusedDesktopCall,
 		fetchClaudeCodeStatus: unusedDesktopCall,
 		installClaudeCode: unusedDesktopCall,

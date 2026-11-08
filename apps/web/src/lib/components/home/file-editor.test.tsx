@@ -63,20 +63,20 @@ it('reopens with the draft it reported, before the file is read again', async ()
 		}
 	};
 
-	const first = render(<FileEditor {...props} api={editorApi(saved).api} draft={undefined} />);
+	const first = render(<FileEditor {...props} api={editorApi(saved).api} />);
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	editorView().dispatch({ changes: { from: 5, insert: ' and edited' } });
 	first.unmount();
 
-	render(<FileEditor {...props} api={editorApi(null).api} draft={draft} />);
+	render(<FileEditor {...props} api={editorApi(null).api} initialDraft={draft} />);
 
 	expect(editorView().state.doc.toString()).toBe('saved and edited');
 });
 
 it('follows disk changes until there are unsaved edits, then offers a reload', async () => {
 	const { api, push } = editorApi(saved);
-	render(<FileEditor api={api} file={file} draft={undefined} active onDraftChange={vi.fn()} />);
+	render(<FileEditor api={api} file={file} active onDraftChange={vi.fn()} />);
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	push({ kind: 'snapshot', ...saved, content: 'outside', version: 'v2' });
@@ -99,7 +99,7 @@ it('ignores snapshots during a save and watches again once it settles', async ()
 			finishWrite = resolve;
 		})
 	);
-	render(<FileEditor api={api} file={file} draft={undefined} active onDraftChange={vi.fn()} />);
+	render(<FileEditor api={api} file={file} active onDraftChange={vi.fn()} />);
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	editorView().dispatch({ changes: { from: 5, insert: '!' } });
@@ -124,7 +124,7 @@ it('ignores snapshots during a save and watches again once it settles', async ()
 it('keeps a failed save error after the file is read again', async () => {
 	const { api } = editorApi(saved);
 	vi.mocked(api.writeWorkspaceFile).mockRejectedValue(new Error('Disk full'));
-	render(<FileEditor api={api} file={file} draft={undefined} active onDraftChange={vi.fn()} />);
+	render(<FileEditor api={api} file={file} active onDraftChange={vi.fn()} />);
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	editorView().dispatch({ changes: { from: 5, insert: '!' } });
@@ -139,7 +139,7 @@ it('offers a reload only once the conflicting disk state is read', async () => {
 	vi.mocked(api.writeWorkspaceFile)
 		.mockRejectedValueOnce(new Error('Disk full'))
 		.mockResolvedValueOnce({ status: 'conflict', version: 'v2' });
-	render(<FileEditor api={api} file={file} draft={undefined} active onDraftChange={vi.fn()} />);
+	render(<FileEditor api={api} file={file} active onDraftChange={vi.fn()} />);
 
 	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
 	editorView().dispatch({ changes: { from: 5, insert: '!' } });

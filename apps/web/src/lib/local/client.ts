@@ -458,7 +458,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 	const socket = localSocket(baseUrl);
 
 	return {
-		startBrowser: (signal) =>
+		ensureBrowser: (signal) =>
 			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
 		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
 		watchBrowserStatus: (handlers) =>
@@ -775,7 +775,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				`/api/connectors?${new URLSearchParams({ userId }).toString()}`,
 				z.array(connectorStatusSchema)
 			),
-		installConnector: async (userId, id) =>
+		installOrUpdateConnector: async (userId, id) =>
 			await request(`/api/connectors/${id}/install`, connectorStatusSchema, {
 				method: 'POST',
 				body: JSON.stringify({ userId })

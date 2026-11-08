@@ -280,7 +280,6 @@ export type GitHubSettingsUpdate = {
 	host?: { host: string; enabled: boolean };
 };
 
-/** A connector on this machine. Install also updates and retries. */
 export type ConnectorStatus = {
 	id: 'kicad';
 	name: string;
@@ -376,7 +375,7 @@ export type BrowserStatus = {
 };
 
 export type LocalApi = {
-	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
+	ensureBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;
 	watchBrowserStatus: (handlers: WatchHandlers<BrowserStatus>) => Promise<void>;
 	watchRunningCommands: (
@@ -482,7 +481,7 @@ export type LocalApi = {
 	fetchGitHubStatus: (userId: string) => Promise<GitHubStatus>;
 	updateGitHubSettings: (userId: string, update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
-	installConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
+	installOrUpdateConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	fetchClaudeCodeStatus: (userId: string) => Promise<ClaudeCodeStatus>;
 	installClaudeCode: (userId: string) => Promise<ClaudeCodeStatus>;

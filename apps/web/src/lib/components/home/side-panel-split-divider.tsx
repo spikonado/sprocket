@@ -1,10 +1,9 @@
 import { useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import { minLayoutSize, type LayoutRect, type SidePanelSplit } from '$lib/chat/side-panel';
+import { minLayoutSize, type FractionalRect, type SidePanelSplit } from '$lib/chat/side-panel';
 
 type Props = {
 	split: SidePanelSplit;
-	/** Area the split divides, as fractions of `container`. */
-	rect: LayoutRect;
+	rect: FractionalRect;
 	container: RefObject<HTMLElement | null>;
 	onResize: (ratio: number) => void;
 };

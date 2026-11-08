@@ -20,7 +20,7 @@ function kicad(overrides: Partial<ConnectorStatus>): ConnectorStatus {
 }
 
 function mount(fetchConnectors: LocalApi['fetchConnectors']) {
-	const installConnector = vi.fn<LocalApi['installConnector']>(async () =>
+	const installOrUpdateConnector = vi.fn<LocalApi['installOrUpdateConnector']>(async () =>
 		kicad({ state: 'installing' })
 	);
 
@@ -29,11 +29,11 @@ function mount(fetchConnectors: LocalApi['fetchConnectors']) {
 	render(
 		<SettingsConnectors
 			userId="user-a"
-			localApi={{ fetchConnectors, installConnector, uninstallConnector }}
+			localApi={{ fetchConnectors, installOrUpdateConnector, uninstallConnector }}
 		/>
 	);
 
-	return { installConnector };
+	return { installOrUpdateConnector };
 }
 
 it('installs KiCad and flips the card once the install finishes', async () => {
@@ -44,11 +44,11 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 		.mockResolvedValueOnce([kicad({})])
 		.mockResolvedValue([kicad({ state: 'installed', updateAvailable: true })]);
 
-	const { installConnector } = mount(fetchConnectors);
+	const { installOrUpdateConnector } = mount(fetchConnectors);
 
 	fireEvent.click(await screen.findByRole('button', { name: 'Install' }));
 
-	expect(installConnector).toHaveBeenCalledWith('user-a', 'kicad');
+	expect(installOrUpdateConnector).toHaveBeenCalledWith('user-a', 'kicad');
 	expect(
 		(await screen.findByRole<HTMLButtonElement>('button', { name: 'Installing…' })).disabled
 	).toBe(true);
