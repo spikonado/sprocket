@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
-import { CookieSession, type User } from '@workos-inc/node';
+import { CookieSession, type AccessTokenClaims, type User } from '@workos-inc/node';
 import {
 	beginPricingSignIn,
 	completePricingSignIn,
@@ -153,10 +153,9 @@ test('session expiry comes from the verified access token', async () => {
 	});
 });
 
-test('a rejected access token is refreshed and the new session cookie is kept', async () => {
+function refreshingServer(verifyFreshToken: () => Promise<AccessTokenClaims>) {
 	const { server } = fakeServer();
 	const { jar, cookies } = fakeCookies();
-	const exp = Math.floor(Date.now() / 1000) + 3600;
 	const { userManagement } = server.workos;
 	const sealed = new CookieSession(userManagement, 'sealed-session', server.cookiePassword);
 
@@ -167,7 +166,7 @@ test('a rejected access token is refreshed and the new session cookie is kept', 
 		refreshToken: 'refresh-token'
 	});
 	spyOn(userManagement, 'verifyAccessToken').mockImplementation(async (token) =>
-		token === 'fresh-token' ? verifiedClaims(exp) : null
+		token === 'fresh-token' ? verifyFreshToken() : null
 	);
 	spyOn(sealed, 'refresh').mockResolvedValue({
 		authenticated: true,
@@ -179,13 +178,27 @@ test('a rejected access token is refreshed and the new session cookie is kept', 
 	});
 	spyOn(userManagement, 'loadSealedSession').mockReturnValue(sealed);
 
-	const session = await getPricingSession(
-		server,
-		cookies,
-		new URL('https://usesprocket.dev/api/pricing/session')
-	);
+	return {
+		jar,
+		session: () =>
+			getPricingSession(server, cookies, new URL('https://usesprocket.dev/api/pricing/session'))
+	};
+}
 
-	expect(session).toMatchObject({ accessToken: 'fresh-token', expiresAt: exp * 1000 });
+test('a rejected access token is refreshed and the new session cookie is kept', async () => {
+	const exp = Math.floor(Date.now() / 1000) + 3600;
+	const { jar, session } = refreshingServer(async () => verifiedClaims(exp));
+
+	expect(await session()).toMatchObject({ accessToken: 'fresh-token', expiresAt: exp * 1000 });
+	expect(jar.get('__Host-sprocket-pricing-session')).toBe('refreshed-session');
+});
+
+test('the rotated session cookie is kept when verifying the refreshed token fails', async () => {
+	const { jar, session } = refreshingServer(async () => {
+		throw new Error('JWKS unavailable');
+	});
+
+	await expect(session()).rejects.toThrow('JWKS unavailable');
 	expect(jar.get('__Host-sprocket-pricing-session')).toBe('refreshed-session');
 });
 
