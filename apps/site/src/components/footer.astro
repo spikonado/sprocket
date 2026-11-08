@@ -2,12 +2,12 @@
 import facebookLogo from '@/assets/facebook_logo.svg';
 import githubLogo from '@/assets/github_logo.svg';
 import instagramLogo from '@/assets/instagram_logo.svg';
-import logo from '@/assets/logo.svg';
+import SprocketLockup from '@/assets/sprocket-lockup.svg';
 import xLogo from '@/assets/x_logo.svg';
 import youtubeLogo from '@/assets/youtube_logo.svg';
 import { ORGANIZATION_NAME, ORGANIZATION_SOCIALS, ORGANIZATION_URL } from '@/lib/seo';
 import { SPROCKET_GITHUB_URL } from '@/lib/sprocket-releases';
-import { marketingBrandClass, marketingSectionBodyClass } from '@/styles/marketing';
+import { marketingSectionBodyClass } from '@/styles/marketing';
 import { cn } from '@/utils';
 
 const linkColumns = [
@@ -47,9 +47,12 @@ const socialIcons = {
 		class="relative mx-auto grid w-full max-w-6xl grid-cols-1 gap-12 text-center md:grid-cols-[minmax(0,2fr)_minmax(10rem,1fr)_minmax(10rem,1fr)] md:gap-16 md:text-left"
 	>
 		<div class="flex flex-col items-center gap-5 md:items-start">
-			<a href="/" class="flex items-center gap-3 transition-transform duration-150 hover:scale-105">
-				<img loading="lazy" src={logo.src} alt="" class="h-9 w-9" />
-				<span class={cn(marketingBrandClass, 'text-2xl sm:text-3xl')}>Sprocket</span>
+			<a
+				href="/"
+				aria-label="Sprocket"
+				class="text-foreground transition-transform duration-150 hover:scale-105"
+			>
+				<SprocketLockup class="h-9 w-auto sm:h-10" aria-hidden="true" />
 			</a>
 			<p class={cn(marketingSectionBodyClass, 'text-base md:text-lg')}>Build more tech, faster.</p>
 		</div>

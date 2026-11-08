@@ -1,8 +1,6 @@
 export const marketingSectionBodyClass =
 	'max-w-2xl text-lg leading-relaxed text-muted-foreground md:text-xl';
 
-export const marketingBrandClass = 'font-brand font-semibold tracking-tight text-foreground';
-
 export const marketingButtonPrimaryClass =
 	'inline-flex items-center justify-center rounded-full bg-foreground px-5 py-2.5 font-sans text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
 

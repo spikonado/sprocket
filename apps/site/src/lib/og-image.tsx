@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import satori from 'satori';
 import sharp from 'sharp';
-import { SITE_NAME, SITE_URL } from '@/lib/seo';
+import { SITE_URL } from '@/lib/seo';
 
 declare module 'react' {
 	// Satori renders `corner-shape`, which csstype doesn't list yet.
@@ -36,11 +36,15 @@ async function loadFont(weight: 400 | 600) {
 }
 
 export async function renderOgImagePng(): Promise<Buffer> {
-	const [regular, semibold, logo] = await Promise.all([
+	const [regular, semibold, lockup] = await Promise.all([
 		loadFont(400),
 		loadFont(600),
-		readFile(join(process.cwd(), 'src/assets/logo.svg'))
+		readFile(join(process.cwd(), 'src/assets/sprocket-lockup.svg'), 'utf8')
 	]);
+
+	const lockupSrc = `data:image/svg+xml;base64,${Buffer.from(
+		lockup.replace('currentColor', colors.foreground)
+	).toString('base64')}`;
 
 	const svg = await satori(
 		<div
@@ -58,12 +62,7 @@ export async function renderOgImagePng(): Promise<Buffer> {
 				fontFamily: 'IBM Plex Sans'
 			}}
 		>
-			<div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-				<img src={`data:image/svg+xml;base64,${logo.toString('base64')}`} width={56} height={56} />
-				<div style={{ fontSize: 36, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1 }}>
-					{SITE_NAME}
-				</div>
-			</div>
+			<img src={lockupSrc} height={56} style={{ alignSelf: 'flex-start' }} />
 			<div style={{ display: 'flex', flexDirection: 'column', gap: '28px', maxWidth: 920 }}>
 				<div
 					style={{

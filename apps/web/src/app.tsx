@@ -44,7 +44,6 @@ import PurchaseApprovals from '$lib/components/home/purchase-approvals';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
-import BrandMark from '$lib/components/brand-mark';
 import InboxSidebar, { type SidebarChildrenResolver } from '$lib/components/home/inbox-sidebar';
 import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
@@ -2551,12 +2550,15 @@ export default function App({
 
 				{!sidebarVisible && (
 					<div className="inbox-floating-controls">
-						<BrandMark
-							size="sm"
-							class="inbox-icon touch-target"
-							label="Open sidebar"
-							onclick={() => void openSidebar()}
-						/>
+						<button
+							className="inbox-icon touch-target"
+							type="button"
+							aria-label="Open sidebar"
+							title="Open sidebar"
+							onClick={() => void openSidebar()}
+						>
+							<img src="/logo.svg" alt="" className="size-6" />
+						</button>
 						<button
 							className="inbox-icon touch-target"
 							type="button"
