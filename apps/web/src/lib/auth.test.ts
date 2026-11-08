@@ -466,6 +466,38 @@ describe('installed and hosted auth', () => {
 		);
 	});
 
+	it('times out a hung sign-in start so the next sign-in can run', async () => {
+		stubInstalledWindow();
+		let starts = 0;
+		const startSignals: (AbortSignal | null | undefined)[] = [];
+		stubFetch({
+			desktopStart: (init) => {
+				starts += 1;
+				startSignals.push(init?.signal);
+
+				if (starts === 1) {
+					throw new DOMException('The operation timed out.', 'TimeoutError');
+				}
+
+				return jsonResponse(200, {
+					authorizationUrl: 'https://authkit.example/native',
+					loginId: 'login-2'
+				});
+			},
+			desktopResult: () => jsonResponse(200, { status: 'authenticated', user: nativeUser }),
+			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
+		});
+
+		await signIn();
+		expect(get(authState).error).toBe(
+			'The local server took too long to start sign-in. Try again.'
+		);
+
+		await signIn();
+		expect(get(authState).user).toEqual(nativeUser);
+		expect(startSignals).toEqual([expect.any(AbortSignal), expect.any(AbortSignal)]);
+	});
+
 	it('shares inflight native token requests', async () => {
 		stubInstalledWindow();
 		const pending = deferred<Response>();
@@ -694,7 +726,7 @@ function stubFetch(handlers: {
 	token?: (request: NativeSessionTokenRequest) => Response | Promise<Response>;
 	nativeSessionDelete?: () => Response | Promise<Response>;
 	browserSessionDelete?: () => Response | Promise<Response>;
-	desktopStart?: () => Response | Promise<Response>;
+	desktopStart?: (init?: RequestInit) => Response | Promise<Response>;
 	desktopResult?: () => Response | Promise<Response>;
 	desktopCancel?: () => Response | Promise<Response>;
 }) {
@@ -721,7 +753,7 @@ function stubFetch(handlers: {
 		}
 
 		if (url.includes('/api/auth/desktop-login/start') && method === 'POST') {
-			return handlers.desktopStart?.() ?? unhandled(input, init);
+			return handlers.desktopStart?.(init) ?? unhandled(input, init);
 		}
 
 		if (url.includes('/api/auth/desktop-login/result') && method === 'POST') {
