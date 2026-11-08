@@ -1,0 +1,49 @@
+diff --git a/packages/kicad-parser/src/board_parser.ts b/packages/kicad-parser/src/board_parser.ts
+index efe37d1..4e7bdc7 100644
+--- a/packages/kicad-parser/src/board_parser.ts
++++ b/packages/kicad-parser/src/board_parser.ts
+@@ -651,7 +651,7 @@ function parseBoardVariant(expr: Parseable): B.I_BoardVariant {
+ }
+
+ function parseFootprint(expr: Parseable): B.I_Footprint {
+-    return parse_expr(
++    const footprint = parse_expr(
+         expr,
+         P.start("footprint"),
+         P.positional("library_link", T.string),
+@@ -664,6 +664,12 @@ function parseFootprint(expr: Parseable): B.I_Footprint {
+         P.pair("tedit", T.string),
+         P.pair("tstamp", T.string),
+         P.item("at", parseAt),
++        P.object(
++            "transform",
++            null,
++            P.vec2("translate"),
++            P.pair("rotate", T.number),
++        ),
+         P.pair("uuid", T.string),
+         P.pair("descr", T.string),
+         P.pair("tags", T.string),
+@@ -709,7 +715,21 @@ function parseFootprint(expr: Parseable): B.I_Footprint {
+         P.collection("zones", "zone", T.item(parseZone)),
+         P.collection("models", "model", T.item(parseModel)),
+         P.collection("pads", "pad", T.item(parsePad)),
+-    ) as unknown as B.I_Footprint;
++    ) as any;
++
++    // KiCad 10.99 places footprints with `(transform (translate x y) (rotate r)
++    // (scale sx sy))` instead of `(at x y r)`. Scale isn't drawn.
++    const { transform } = footprint;
++    if (transform) {
++        footprint.at = {
++            position: transform.translate ?? { x: 0, y: 0 },
++            rotation: transform.rotate ?? 0,
++            unlocked: false,
++        };
++        delete footprint.transform;
++    }
++
++    return footprint as B.I_Footprint;
+ }
+
+ function parseLineSegment(expr: Parseable): B.I_LineSegment {

@@ -1,0 +1,15 @@
+diff --git a/packages/kicad-parser/src/tokenizer.ts b/packages/kicad-parser/src/tokenizer.ts
+index 5305839..6c7f300 100644
+--- a/packages/kicad-parser/src/tokenizer.ts
++++ b/packages/kicad-parser/src/tokenizer.ts
+@@ -446,4 +446,10 @@ export function listify(src: string): List {
+     }
+
++    // A file cut short, such as one read mid-write, would otherwise parse as
++    // a document missing everything after the cut.
++    if (stack.length > 1) {
++        throw new Error("The file ends before all its parentheses close.");
++    }
++
+     return root;
+ }

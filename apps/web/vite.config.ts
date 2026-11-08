@@ -23,12 +23,36 @@ const posthogSourceMaps =
 			]
 		: [];
 
-// Matches the Rust server: the KiCanvas frame's opaque origin hides the bundle's errors unless it may read it.
-const kicanvasCors: Plugin = {
-	name: 'kicanvas-cors',
+const kicadFramePaths = [
+	'/ecad-viewer/',
+	'/src/lib/kicad-frame/',
+	'/@vite/client',
+	'/@react-refresh',
+	'/node_modules/'
+];
+
+// The sandboxed KiCad viewer frame has an opaque origin, so all its requests are cross-origin.
+// Like the Rust server's built assets, its own modules and package code may be read by any origin.
+const kicadFrameCors: Plugin = {
+	name: 'kicad-frame-cors',
 	configureServer(server) {
-		server.middlewares.use('/kicanvas/', (_req, res, next) => {
-			res.setHeader('Access-Control-Allow-Origin', '*');
+		server.middlewares.use((req, res, next) => {
+			let url: string;
+
+			try {
+				// Normalized like Vite does, so `..` can't step out of `node_modules`.
+				url = path.posix.normalize(decodeURIComponent(new URL(req.url ?? '', 'http://x').pathname));
+			} catch {
+				return next();
+			}
+
+			if (
+				kicadFramePaths.some((prefix) => url.startsWith(prefix)) ||
+				(url.startsWith('/@fs/') && url.includes('/node_modules/'))
+			) {
+				res.setHeader('Access-Control-Allow-Origin', '*');
+			}
+
 			next();
 		});
 	}
@@ -44,7 +68,10 @@ export default defineConfig({
 	publicDir: 'static',
 	worker: { format: 'es' },
 	build: {
-		assetsDir: IMMUTABLE_ASSETS_DIR
+		assetsDir: IMMUTABLE_ASSETS_DIR,
+		rolldownOptions: {
+			input: ['index.html', 'kicad-viewer.html']
+		}
 	},
 	resolve: {
 		alias: {
@@ -66,7 +93,7 @@ export default defineConfig({
 			}
 		}
 	},
-	plugins: [tailwindcss(), react(), kicanvasCors, ...posthogSourceMaps],
+	plugins: [tailwindcss(), react(), kicadFrameCors, ...posthogSourceMaps],
 	test: {
 		// Component `/test` entrypoints use `import.meta.glob`; Vite must transform them.
 		server: {

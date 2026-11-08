@@ -29,7 +29,7 @@ describe('readKicadSources', () => {
 	it('loads a project with its root schematic and every sheet once', async () => {
 		const sources = await readKicadSources('boards/amp/amp.kicad_pro', read);
 
-		expect(sources.map((source) => source.name)).toEqual([
+		expect(sources.map((source) => source.filename)).toEqual([
 			'amp.kicad_pro',
 			'amp.kicad_sch',
 			'sheets/ch.kicad_sch',

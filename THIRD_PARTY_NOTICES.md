@@ -90,10 +90,17 @@ version, file sizes, and SHA256 checksums are recorded in
 `tools/kicad/releases.json`, and the dependencies' hashes in
 `tools/kicad/requirements.txt`.
 
-## KiCanvas
+## ecad-viewer
 
-The web app ships a build of [KiCanvas](https://github.com/theacodes/kicanvas)
-in `apps/web/static/kicanvas/`, made by `tools/kicanvas/build.sh` from the
-commit it pins, with the patches next to that script. KiCanvas is copyright
-Alethea Katherine Flowers and licensed under MIT; its license is next to the
-build. When it opens a file, it loads its icon and text fonts from Google Fonts.
+The web app ships a build of
+[KiCAD-Prism's ecad-viewer fork](https://github.com/krishna-swaroop/ecad-viewer)
+in `apps/web/static/ecad-viewer/`, made by `tools/ecad-viewer/build.sh` from the
+commit it pins, with the patches next to that script. ecad-viewer is copyright
+深圳华秋电子有限公司 (Huaqiu Electronics) and licensed under MIT. It builds on
+[KiCanvas](https://github.com/theacodes/kicanvas), copyright Alethea Katherine
+Flowers, also MIT. The build bundles [earcut](https://github.com/mapbox/earcut)
+and earcut.hpp (ISC), KiCad's Newstroke font (CC0 1.0),
+[Comlink](https://github.com/GoogleChromeLabs/comlink) (Apache-2.0),
+[Immutable](https://github.com/immutable-js/immutable-js) (MIT) and
+[JSZip](https://github.com/Stuk/jszip) (MIT). All of their license texts are in
+the build's `LICENSE.md`.

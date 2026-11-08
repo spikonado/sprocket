@@ -38,8 +38,9 @@ async fn serve_static_request(
 ) -> Response {
     let path = req.uri().path();
     let immutable = path.starts_with(IMMUTABLE_ASSETS_PREFIX);
-    // The KiCanvas frame has an opaque origin, which hides the bundle's errors unless it may read it.
-    let cross_origin = path.starts_with("/kicanvas/");
+    // The sandboxed KiCad viewer frame has an opaque origin, so it may load the app's chunks and
+    // the vendored viewer only through CORS.
+    let cross_origin = immutable || path.starts_with("/ecad-viewer/");
 
     let mut response = if path.starts_with("/_app/") {
         match assets.oneshot(req).await {

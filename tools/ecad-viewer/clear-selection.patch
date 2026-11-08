@@ -1,0 +1,22 @@
+diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+index d60d01f..a7b5372 100644
+--- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
++++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+@@ -2544,9 +2544,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+     public clearSelection(options: { keepHighlights?: boolean } = {}): void {
+         this.#probe_generation += 1;
+         const board_viewer = this.#safe_board_viewer();
++        const schematic_viewer = this.#safe_schematic_viewer();
+         const had_nets = (board_viewer?.highlighted_nets.size ?? 0) > 0;
+         board_viewer?.clear_selection(options.keepHighlights === true);
+-        this.#safe_schematic_viewer()?.clear_selection();
++        schematic_viewer?.clear_selection();
++        // Like a click on empty canvas, so the property panels close too.
++        for (const viewer of [board_viewer, schematic_viewer]) {
++            viewer?.dispatchEvent(
++                new KiCanvasSelectEvent({ item: null, previous: null }),
++            );
++        }
+         if (had_nets && !options.keepHighlights)
+             this.#emit_highlight_change("clear");
+     }

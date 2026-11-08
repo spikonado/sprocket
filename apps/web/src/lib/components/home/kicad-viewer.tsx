@@ -1,102 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
-import { z } from 'zod';
 import { readVisualThemeCss } from '$lib/chat/artifact-preview';
-import Board3dViewer from '$lib/components/home/board-3d-viewer';
 import { readKicadSources } from '$lib/kicad';
+import { frameMessageSchema, type ParentMessage } from '$lib/kicad-frame/protocol';
 import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 type KicadViewerApi = Pick<LocalApi, 'readWorkspaceText' | 'watchWorkspaceFile' | 'exportBoard3d'>;
 
-type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
-
-type Board = { path: string; version: string };
-
-const VIEWS = ['2D', '3D'] as const;
+type Status =
+	| { kind: 'opening' }
+	| { kind: 'shown'; updating: boolean; notice: string | null }
+	| { kind: 'error'; message: string };
 
 const RELOAD_DELAY_MS = 1_000;
 
 const RECONNECT_MS = 1_000;
 
-const frameMessageSchema = z.union([
-	z.object({ type: z.enum(['ready', 'parsed', 'loaded']) }),
-	z.object({ type: z.literal('failed'), error: z.string().optional() }),
-	z.object({
-		type: z.literal('view'),
-		view: z.object({ page: z.string(), x: z.number(), y: z.number(), zoom: z.number() }).nullable()
-	})
-]);
-
-type FrameMessage = z.infer<typeof frameMessageSchema>;
-
-const malformedFile = 'KiCanvas could not read this file. It may be malformed.';
-
-function frameFailure(message: FrameMessage, fallback: string) {
-	return new Error(
-		message.type === 'failed' && message.error
-			? `KiCanvas could not open this file: ${message.error}`
-			: fallback
-	);
-}
-
-function nextFrameMessage(frame: HTMLIFrameElement, signal: AbortSignal) {
-	return new Promise<FrameMessage>((resolve, reject) => {
-		const stop = () => {
-			removeEventListener('message', onMessage);
-			signal.removeEventListener('abort', onAbort);
-		};
-
-		const onAbort = () => {
-			stop();
-			reject(signal.reason);
-		};
-
-		const onMessage = (event: MessageEvent<unknown>) => {
-			if (event.source !== frame.contentWindow) return;
-
-			const message = frameMessageSchema.safeParse(event.data);
-
-			if (!message.success) return;
-			stop();
-			resolve(message.data);
-		};
-
-		if (signal.aborted) return reject(signal.reason);
-		addEventListener('message', onMessage);
-		signal.addEventListener('abort', onAbort);
-	});
-}
-
-async function currentView(frame: HTMLIFrameElement, signal: AbortSignal) {
-	const reply = nextFrameMessage(frame, signal);
-	frame.contentWindow?.postMessage({ type: 'getView' }, '*');
-	const message = await reply;
-
-	return message.type === 'view' ? message.view : null;
-}
-
-function postTheme(frame: HTMLIFrameElement) {
-	frame.contentWindow?.postMessage({ type: 'theme', css: readVisualThemeCss() }, '*');
-}
-
 /**
- * KiCanvas parses and draws on its page's main thread, which takes tens of seconds for large
- * boards. A sandboxed frame gets its own process in Chromium, so the rest of the app stays live.
- * Each load gets a fresh frame, since KiCanvas reads its sources only once.
+ * Shows KiCad files in the vendored ecad-viewer. It parses and draws large boards for seconds on
+ * its page's main thread, so it runs in a sandboxed frame, which gets its own process in Chromium.
+ * The frame stays for the file's lifetime and swaps in new sources as they change on disk.
  */
-function createFrame(container: HTMLElement, title: string) {
-	const frame = document.createElement('iframe');
-	frame.title = title;
-	frame.src = '/kicanvas-viewer.html';
-	frame.sandbox.add('allow-scripts', 'allow-downloads');
-	frame.allow = 'fullscreen';
-	frame.className = 'absolute inset-0 size-full border-0';
-	// A hidden frame stalls its drawing, so a new frame loads behind the shown one.
-	container.prepend(frame);
-
-	return frame;
-}
-
 export default function KicadViewer({
 	api,
 	file,
@@ -107,111 +31,151 @@ export default function KicadViewer({
 	active: boolean;
 }) {
 	const visible = usePageVisible();
-	const containerRef = useRef<HTMLDivElement>(null);
-	const [status, setStatus] = useState<Status>({ kind: 'loading' });
-	const [showing, setShowing] = useState(false);
+	const frameRef = useRef<HTMLIFrameElement>(null);
+	const [status, setStatus] = useState<Status>({ kind: 'opening' });
 	const [watched, setWatched] = useState('');
-	const [board, setBoard] = useState<Board | null>(null);
-	const [view, setView] = useState<(typeof VIEWS)[number]>('2D');
 	const scheduleReload = useRef(() => {});
 	const versions = useRef(new Map<string, string | null>());
 
 	useEffect(() => {
-		const container = containerRef.current;
+		const frame = frameRef.current;
 
-		if (!api || !container) return;
+		if (!api || !frame) return;
 
 		const closed = new AbortController();
-		let shown: HTMLIFrameElement | null = null;
-		let attempt: AbortController | null = null;
+		let revision = 0;
+		let shown = false;
+		let boardPath: string | null = null;
+		let reading: AbortController | null = null;
+		let exporting: AbortController | null = null;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		versions.current = new Map();
-		setShowing(false);
+		setStatus({ kind: 'opening' });
 		setWatched('');
-		setBoard(null);
-		setView('2D');
+
+		const post = (message: ParentMessage, transfer: Transferable[] = []) =>
+			frame.contentWindow?.postMessage(message, '*', transfer);
+
+		const postTheme = () => post({ type: 'theme', css: readVisualThemeCss() });
+
+		const fail = (message: string) => {
+			if (shown) setStatus({ kind: 'shown', updating: false, notice: message });
+			else setStatus({ kind: 'error', message });
+		};
 
 		const load = async () => {
-			attempt?.abort();
+			reading?.abort();
 			const own = new AbortController();
-			attempt = own;
+			reading = own;
 
 			const signal = AbortSignal.any([closed.signal, own.signal]);
-			const frame = createFrame(container, `KiCanvas viewer for ${file.path}`);
 			const read = new Set<string>();
 
-			setStatus({ kind: 'loading' });
+			if (shown) setStatus({ kind: 'shown', updating: true, notice: null });
 
 			try {
-				const [sources, ready] = await Promise.all([
-					readKicadSources(file.path, async (path) => {
-						read.add(path);
+				const sources = await readKicadSources(file.path, async (path) => {
+					read.add(path);
 
-						try {
-							const text = await api.readWorkspaceText(
-								{ workspacePath: file.workspacePath, path },
-								signal
-							);
+					try {
+						const text = await api.readWorkspaceText(
+							{ workspacePath: file.workspacePath, path },
+							signal
+						);
 
-							if (!signal.aborted) versions.current.set(path, text.version);
+						if (!signal.aborted) versions.current.set(path, text.version);
 
-							return text.content;
-						} catch (error) {
-							if (!signal.aborted) versions.current.set(path, null);
-							throw error;
-						}
-					}),
-					nextFrameMessage(frame, signal)
-				]);
+						return text.content;
+					} catch (error) {
+						if (!signal.aborted) versions.current.set(path, null);
+						throw error;
+					}
+				});
 
-				if (ready.type !== 'ready') throw new Error('Could not load KiCanvas.');
-				postTheme(frame);
+				if (signal.aborted) return;
 
-				// KiCanvas skips blank sources without ever finishing its load.
 				if (sources.every(({ content }) => !content.trim())) {
 					throw new Error('This KiCad file is empty.');
 				}
 
-				const boardName = sources.find(({ name }) => name.endsWith('.kicad_pcb'))?.name;
+				const board = sources.find(({ filename }) => filename.endsWith('.kicad_pcb'));
 
-				const boardPath =
-					boardName && file.path.slice(0, file.path.lastIndexOf('/') + 1) + boardName;
-
-				// Set before KiCanvas parses, so 3D still works for a board KiCanvas can't draw.
-				setBoard(
-					boardPath ? { path: boardPath, version: versions.current.get(boardPath) ?? '' } : null
-				);
-
-				const parsed = nextFrameMessage(frame, signal);
-				frame.contentWindow?.postMessage({ type: 'sources', sources }, '*');
-				const parse = await parsed;
-
-				if (parse.type !== 'parsed') throw frameFailure(parse, malformedFile);
-
-				const view = shown ? await currentView(shown, signal) : null;
-				const outcome = nextFrameMessage(frame, signal);
-				frame.contentWindow?.postMessage({ type: 'show', view }, '*');
-				const result = await outcome;
-
-				if (result.type !== 'loaded') throw frameFailure(result, malformedFile);
-
-				shown?.remove();
-				shown = frame;
-				setShowing(true);
-				setStatus({ kind: 'ready' });
-			} catch (error) {
-				frame.remove();
-
-				if (signal.aborted) return;
-
-				setStatus({
-					kind: 'error',
-					message: error instanceof Error ? error.message : 'Could not open the KiCad file.'
+				boardPath = board
+					? file.path.slice(0, file.path.lastIndexOf('/') + 1) + board.filename
+					: null;
+				post({
+					type: 'sources',
+					revision: ++revision,
+					sources,
+					boardVersion: boardPath && (versions.current.get(boardPath) ?? null)
 				});
+			} catch (error) {
+				if (signal.aborted) return;
+				fail(error instanceof Error ? error.message : 'Could not open the KiCad file.');
 			} finally {
 				if (!signal.aborted) setWatched([...read].sort().join('\n'));
-				own.abort();
+			}
+		};
+
+		const exportBoard = async (boardVersion: string) => {
+			exporting?.abort();
+			const own = new AbortController();
+			exporting = own;
+
+			const signal = AbortSignal.any([closed.signal, own.signal]);
+
+			try {
+				if (!boardPath) throw new Error('This project has no board.');
+
+				const glb = await api.exportBoard3d(
+					{ workspacePath: file.workspacePath, path: boardPath },
+					signal
+				);
+
+				if (!signal.aborted) post({ type: 'board3d', boardVersion, glb }, [glb]);
+			} catch (error) {
+				if (signal.aborted) return;
+				post({
+					type: 'board3dFailed',
+					boardVersion,
+					message: error instanceof Error ? error.message : 'Could not build the 3D model.'
+				});
+			}
+		};
+
+		const onMessage = (event: MessageEvent<unknown>) => {
+			if (event.source !== frame.contentWindow) return;
+
+			const parsed = frameMessageSchema.safeParse(event.data);
+
+			if (!parsed.success) return;
+
+			const message = parsed.data;
+
+			switch (message.type) {
+				case 'ready':
+					postTheme();
+					void load();
+					break;
+				case 'board3dRequest':
+					void exportBoard(message.boardVersion);
+					break;
+				case 'loaded':
+					// Otherwise the frame already has newer sources.
+					if (message.revision !== revision) break;
+					shown = true;
+					setStatus({ kind: 'shown', updating: false, notice: null });
+					break;
+				case 'failed':
+					if (message.revision !== null && message.revision !== revision) break;
+
+					if (message.recovered) {
+						fail(`Showing the last version that opened. ${message.message}`);
+					} else {
+						shown = false;
+						setStatus({ kind: 'error', message: message.message });
+					}
 			}
 		};
 
@@ -220,11 +184,10 @@ export default function KicadViewer({
 			timer = setTimeout(() => void load(), RELOAD_DELAY_MS);
 		};
 
-		void load();
+		addEventListener('message', onMessage);
+		post({ type: 'hello' });
 
-		const themeObserver = new MutationObserver(() =>
-			container.querySelectorAll('iframe').forEach(postTheme)
-		);
+		const themeObserver = new MutationObserver(postTheme);
 
 		themeObserver.observe(document.documentElement, { attributeFilter: ['data-theme'] });
 
@@ -232,7 +195,7 @@ export default function KicadViewer({
 			closed.abort();
 			clearTimeout(timer);
 			themeObserver.disconnect();
-			shown?.remove();
+			removeEventListener('message', onMessage);
 		};
 	}, [api, file.workspacePath, file.path]);
 
@@ -274,54 +237,35 @@ export default function KicadViewer({
 		};
 	}, [api, file.workspacePath, watched, active, visible]);
 
+	const pill =
+		status.kind === 'shown' ? (status.notice ?? (status.updating ? 'Updating…' : null)) : null;
+
 	return (
-		<div ref={containerRef} className="relative min-h-0 flex-1">
-			{board && api && (
-				<>
-					<Board3dViewer
-						api={api}
-						workspacePath={file.workspacePath}
-						path={board.path}
-						revision={board.version}
-						shown={view === '3D'}
-					/>
-					<div
-						role="group"
-						aria-label="Board view"
-						className="bg-muted absolute top-3 left-3 z-30 flex rounded-full p-0.5 text-xs shadow-sm"
-					>
-						{VIEWS.map((item) => (
-							<button
-								key={item}
-								type="button"
-								aria-pressed={view === item}
-								onClick={() => setView(item)}
-								className={`focus-visible:ring-ring rounded-full px-2.5 py-0.5 transition focus-visible:ring-2 focus-visible:outline-none ${
-									view === item
-										? 'bg-background text-foreground shadow-sm'
-										: 'text-muted-foreground hover:text-foreground'
-								}`}
-							>
-								{item}
-							</button>
-						))}
-					</div>
-				</>
-			)}
-			{status.kind !== 'ready' && (
+		<div className="relative min-h-0 flex-1">
+			{/* Keyed so each file gets a fresh viewer. */}
+			<iframe
+				key={`${file.workspacePath}\n${file.path}`}
+				ref={frameRef}
+				title={`KiCad viewer for ${file.path}`}
+				src="/kicad-viewer.html"
+				sandbox="allow-scripts allow-downloads"
+				allow="fullscreen"
+				className="absolute inset-0 size-full border-0"
+			/>
+			{status.kind !== 'shown' && (
 				<div
 					role={status.kind === 'error' ? 'alert' : 'status'}
-					className={
-						showing
-							? 'bg-background/80 text-muted-foreground border-hairline absolute bottom-3 left-1/2 z-10 max-w-[80%] -translate-x-1/2 truncate rounded-md border px-3 py-1.5 text-xs backdrop-blur'
-							: 'bg-background text-muted-foreground absolute inset-0 z-10 flex items-center justify-center p-4 text-center text-sm'
-					}
+					className="bg-background text-muted-foreground absolute inset-0 flex items-center justify-center p-4 text-center text-sm"
 				>
-					{status.kind === 'error'
-						? status.message
-						: showing
-							? 'Updating…'
-							: 'Opening in KiCanvas…'}
+					{status.kind === 'error' ? status.message : 'Opening the KiCad viewer…'}
+				</div>
+			)}
+			{pill && (
+				<div
+					role={status.kind === 'shown' && status.notice ? 'alert' : 'status'}
+					className="bg-background/80 text-muted-foreground border-hairline absolute top-10 left-1/2 max-w-[80%] -translate-x-1/2 truncate rounded-md border px-3 py-1.5 text-xs backdrop-blur"
+				>
+					{pill}
 				</div>
 			)}
 		</div>

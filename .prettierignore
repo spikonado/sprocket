@@ -14,5 +14,5 @@ crates/sprocket-workspace/skills/agent-desktop/SKILL.md
 # Vendored Oxlint plugin
 tools/oxlint/anti-slop/
 
-# Built by tools/kicanvas/build.sh
-apps/web/static/kicanvas/
+# Built by tools/ecad-viewer/build.sh
+apps/web/static/ecad-viewer/

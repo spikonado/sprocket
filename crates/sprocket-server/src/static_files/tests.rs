@@ -27,8 +27,8 @@ fn web_dist() -> tempfile::TempDir {
     std::fs::write(root.join("_app/version.json"), VERSION).unwrap();
     std::fs::write(root.join("_app/env.js"), ENV).unwrap();
     std::fs::write(root.join("_app/immutable/chunk.js"), CHUNK).unwrap();
-    std::fs::create_dir_all(root.join("kicanvas")).unwrap();
-    std::fs::write(root.join("kicanvas/kicanvas.js"), CHUNK).unwrap();
+    std::fs::create_dir_all(root.join("ecad-viewer")).unwrap();
+    std::fs::write(root.join("ecad-viewer/ecad-viewer.js"), CHUNK).unwrap();
     dir
 }
 
@@ -141,14 +141,17 @@ fn vite_emits_assets_under_the_immutable_prefix() {
 }
 
 #[tokio::test]
-async fn kicanvas_files_allow_cross_origin_reads() {
+async fn kicad_viewer_frame_files_allow_cross_origin_reads() {
     let (_dir, app) = fixture();
-    let response = call(&app, get("/kicanvas/kicanvas.js")).await;
 
-    assert_eq!(
-        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
-        Some(&HeaderValue::from_static("*"))
-    );
+    for path in ["/ecad-viewer/ecad-viewer.js", "/_app/immutable/chunk.js"] {
+        let response = call(&app, get(path)).await;
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("*")),
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]

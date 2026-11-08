@@ -1,0 +1,118 @@
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts
+index e259c7c..c6cde30 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts
+@@ -400,7 +400,15 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
+                     (candidate) => candidate.document === src,
+                 );
+             const context = page?.schematic_context;
+-            if (context) this.sch_viewer.set_instance_context(context);
++            if (
++                context &&
++                this.sch_viewer.set_instance_context(context) &&
++                this.sch_viewer.document === src
++            ) {
++                // Another instance of the shown sheet. The shared load below
++                // only redraws a document it already shows.
++                await this.sch_viewer.load(src);
++            }
+         }
+         await super.load(src);
+     }
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts
+index 9dd1521..1ef93ea 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts
+@@ -8,7 +8,6 @@ import { css, html } from "../../../base/web-components";
+ import { KCUIElement } from "../../../kc-ui";
+ import { KicadSch } from "../../../kicad/schematic";
+ import { TabMenuVisibleChangeEvent } from "../../../viewers/base/events";
+-import type { SchematicViewer } from "../../../viewers/schematic/viewer";
+ import type { Project } from "../../project";
+ import { SchPreviewElement } from "./sch-preview";
+
+@@ -65,15 +64,11 @@ export class SchPreviewListElement extends KCUIElement {
+
+     #project: Project;
+     #viewers: SchPreviewElement[] = [];
+-    #sch_viewer: SchematicViewer;
+
+     override connectedCallback() {
+         (async () => {
+             this.#project = await this.requestContext("project");
+             await this.#project.loaded;
+-            this.#sch_viewer =
+-                await this.requestLazyContext<SchematicViewer>("viewer");
+-            await this.#sch_viewer.loaded;
+             super.connectedCallback();
+         })();
+     }
+@@ -85,13 +80,15 @@ export class SchPreviewListElement extends KCUIElement {
+         const vertical_layout = html`<div
+             class="vertical-layout"></div>` as HTMLElement;
+
+-        for (const sch of this.#project.sch_in_order()) {
+-            if (!(sch instanceof KicadSch)) continue;
+-            const viewer = new SchPreviewElement(sch);
++        // One entry per sheet instance, since a reused sheet shows different
++        // references in each instance.
++        for (const page of this.#project.pages) {
++            if (!(page.document instanceof KicadSch)) continue;
++            const viewer = new SchPreviewElement(page);
+             this.#viewers.push(viewer);
+             viewer.addEventListener("click", (e) => {
+                 this.dispatchEvent(new TabMenuVisibleChangeEvent(true));
+-                this.#sch_viewer.load(sch);
++                this.#project.activate_sch(page.project_path);
+             });
+
+             vertical_layout.appendChild(viewer);
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview.ts
+index 6893771..50b5007 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview.ts
+@@ -7,6 +7,7 @@
+ import { css, html } from "../../../base/web-components";
+ import { KCUIElement } from "../../../kc-ui";
+ import { KicadSch } from "../../../kicad";
++import type { ProjectPage } from "../../project";
+ import { KCSchematicViewerElement } from "./viewer";
+
+ export class SchPreviewElement extends KCUIElement {
+@@ -65,19 +66,20 @@ export class SchPreviewElement extends KCUIElement {
+
+     #preview: KCSchematicViewerElement = new KCSchematicViewerElement();
+
+-    #sch: KicadSch;
++    #page: ProjectPage;
+
+-    #sch_name: string;
+-
+-    constructor(sch: KicadSch) {
++    constructor(page: ProjectPage) {
+         super();
+-        this.#sch = sch;
+-        this.#sch_name = sch.filename;
++        this.#page = page;
+         this.#preview.classList.add("preview");
+     }
+
+     override initialContentCallback() {
+-        this.#preview.load(this.#sch);
++        const sch = this.#page.document;
++        if (!(sch instanceof KicadSch)) return;
++        const context = this.#page.schematic_context;
++        if (context) this.#preview.viewer.set_instance_context(context);
++        this.#preview.load(sch);
+     }
+
+     override render() {
+@@ -86,7 +88,7 @@ export class SchPreviewElement extends KCUIElement {
+                 <div class="viewer-panel">
+                     <div class="view-container">${this.#preview}</div>
+                     <div class="text-container">
+-                        <p>${this.#sch_name}</p>
++                        <p>${this.#page.name ?? this.#page.filename}</p>
+                     </div>
+                 </div>
+             </div>

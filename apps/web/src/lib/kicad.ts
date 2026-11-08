@@ -1,3 +1,5 @@
+import type { KicadSource } from '$lib/kicad-frame/protocol';
+
 export const KICAD_FILE = /\.kicad_(?:pro|sch|pcb)$/;
 
 const SHEET_FILE = /\(property\s+"Sheet ?file"\s+"([^"]+)"/g;
@@ -21,7 +23,7 @@ function normalize(path: string) {
 export async function readKicadSources(
 	path: string,
 	read: (path: string) => Promise<string>
-): Promise<{ name: string; content: string }[]> {
+): Promise<KicadSource[]> {
 	const directory = directoryOf(path);
 	const opened = path.slice(directory.length);
 	const stem = opened.replace(KICAD_FILE, '');
@@ -64,5 +66,5 @@ export async function readKicadSources(
 		loaded = await load(sheets, false);
 	}
 
-	return Array.from(sources, ([name, content]) => ({ name, content }));
+	return Array.from(sources, ([filename, content]) => ({ filename, content }));
 }

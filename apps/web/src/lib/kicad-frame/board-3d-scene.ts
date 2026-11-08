@@ -36,7 +36,7 @@ function disposeTree(root: Object3D) {
 export function createBoardScene(container: HTMLElement) {
 	const renderer = new WebGLRenderer({ antialias: true, alpha: true });
 	renderer.setPixelRatio(devicePixelRatio);
-	renderer.domElement.className = 'block size-full';
+	renderer.domElement.style.cssText = 'display: block; width: 100%; height: 100%;';
 	container.append(renderer.domElement);
 
 	const scene = new Scene();

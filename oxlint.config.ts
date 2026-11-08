@@ -17,7 +17,7 @@ const config = {
 		'target/**',
 		'tools/oxlint/anti-slop/**',
 		'apps/web/convex/_generated/**',
-		'apps/web/static/kicanvas/**'
+		'apps/web/static/ecad-viewer/**'
 	],
 	plugins: ['typescript', 'unicorn', 'oxc', 'react'],
 	categories: { correctness: 'error' },
