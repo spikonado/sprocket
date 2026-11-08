@@ -3,8 +3,6 @@ import type { LocalApi } from '$lib/types/sprocket';
 
 const installPollMs = 2_000;
 
-/** Status of a CLI on the local server's machine. Changing `refreshKey` checks again, since the
- * user may have installed or signed in from a terminal. */
 export function useLocalCliStatus<TStatus extends { state: string }>({
 	localApi,
 	userId,

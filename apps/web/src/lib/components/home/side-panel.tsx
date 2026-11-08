@@ -51,7 +51,6 @@ type Props = {
 	activePaneId: string;
 	browserApi: BrowserApi | null;
 	filesApi: (FilesApi & FileEditorApi) | null;
-	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
 	error?: string | null;
@@ -269,7 +268,6 @@ function Pane({
 }: Props & {
 	pane: SidePanelPane;
 	rect: FractionalRect;
-	/** Whether chat links open here; only shown when the panel is split. */
 	focused: boolean;
 	showsPanelButtons: boolean;
 	canSplitRight: boolean;
@@ -445,7 +443,6 @@ function Pane({
 				) : null}
 			</div>
 			{tabs.map((tab) => (
-				// Inactive tabs stay mounted so their browser session, scroll, and artifact state survive.
 				<section
 					key={tab.id}
 					id={`side-panel-tabpanel-${tab.id}`}

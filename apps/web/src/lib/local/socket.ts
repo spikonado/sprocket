@@ -46,11 +46,6 @@ const STABLE_CONNECTION_MS = 10_000;
 
 const RESUBSCRIBE_MS = 1_000;
 
-/**
- * Owns the one socket to a Sprocket server and its reconnect backoff. A dropped
- * socket ends every subscription with an error. `subscribe` then subscribes
- * again, and the topic sends a fresh snapshot once the socket reconnects.
- */
 class LocalSocket {
 	#socket: WebSocket | null = null;
 	#subscriptions = new Map<number, Subscription>();
@@ -61,7 +56,6 @@ class LocalSocket {
 
 	constructor(private readonly url: string) {}
 
-	/** Keeps `topic` subscribed until `signal` aborts, reporting each interruption to `onError`. */
 	async subscribe<T>(
 		topic: LocalTopic,
 		schema: z.ZodType<T>,

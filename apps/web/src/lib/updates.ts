@@ -82,7 +82,6 @@ export async function installPackageUpdate(): Promise<UpdateState | null> {
 	return updateStateSchema.parse(await response.json());
 }
 
-/** Without a local server there is nothing to watch, so it waits for `signal` instead of returning for a retry. */
 export async function watchPackageUpdate(handlers: WatchHandlers<UpdateState>): Promise<void> {
 	const baseUrl = resolveLocalApiBaseUrl();
 

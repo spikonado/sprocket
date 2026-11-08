@@ -7,7 +7,6 @@ export type FileDraft = { doc: Text; base: Text; version: string };
 
 export type SidePanelTab = {
 	id: string;
-	/** `null` shows the view picker. */
 	view: SidePanelView | null;
 	selectedKey: string | null;
 	file?: WorkspaceFileTarget;
@@ -35,7 +34,6 @@ export function renamedPath(path: string, from: string, to: string) {
 
 export type SidePanelSnapshot = {
 	open: boolean;
-	/** When true, the panel covers the full Sprocket workspace UI. */
 	expanded: boolean;
 	layout: SidePanelLayout;
 	activePaneId: string;

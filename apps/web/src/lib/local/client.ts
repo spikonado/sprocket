@@ -7,8 +7,6 @@ import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 
-// The server answers once Convex holds the run. Creating it can wait for the
-// thread's previous run to settle.
 const agentLaunchTimeoutMs = 60_000;
 
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });

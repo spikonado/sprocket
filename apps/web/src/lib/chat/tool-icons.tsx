@@ -90,7 +90,6 @@ export function toolKindIcon(kind: string): LucideIcon {
 	}
 }
 
-/** Icon for a timeline tool row (prefers job kind when present). */
 export function toolLogIcon(tool: { name: string; job?: { kind: string } | null }): LucideIcon {
 	return toolKindIcon(tool.job?.kind ?? tool.name);
 }

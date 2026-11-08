@@ -82,14 +82,12 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [readError, setReadError] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
-	/** Disk state the buffer has not absorbed because it has unsaved edits. */
 	const [diskChange, setDiskChange] = useState<WorkspaceFileContent | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const savedDoc = useRef<Text | null>(null);
 	const version = useRef<string | null>(null);
 	const savesInFlight = useRef(0);
-	/** Starts a fresh watch, so a snapshot read before a save can't arrive after it. */
 	const rewatch = useRef(() => {});
 	const visible = usePageVisible();
 	const language = useRef(new Compartment());
@@ -107,7 +105,6 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 		const view = viewRef.current;
 		const base = savedDoc.current;
 
-		// A save can settle after unmount; the tab's draft is newer than this editor then.
 		if (!view || !base || version.current === null) return;
 		latest.current.onDraftChange(
 			view.state.doc.eq(base) ? undefined : { doc: view.state.doc, base, version: version.current }
@@ -226,7 +223,6 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 				expectedVersion: overwrite ? null : version.current
 			});
 
-			// The rewatch below reads the conflicting disk state and offers it as a reload.
 			if (result.status === 'conflict') return;
 
 			savedDoc.current = doc;

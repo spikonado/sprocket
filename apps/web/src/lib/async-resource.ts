@@ -10,10 +10,6 @@ const RETRY_BASE_MS = 1_000;
 
 const RETRY_MAX_MS = 15_000;
 
-/**
- * Retries failures with a backoff and starts over when `key` changes. A retry keeps showing the
- * last failure until it succeeds. `set` replaces the value and drops any load in flight.
- */
 export function useAsyncResource<T>(
 	key: string | null,
 	load: () => Promise<T>

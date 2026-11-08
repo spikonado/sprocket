@@ -36,7 +36,6 @@ export function subagentSummaryLabel(
 
 	if (descendantCount === 0) return null;
 
-	// Active without working means a subagent is starting or waiting on a question.
 	if (descendantsActive) return `${subagentCountLabel(descendantCount)} · Waiting`;
 
 	return subagentCountLabel(descendantCount);

@@ -53,10 +53,6 @@ function resubmittable(recovery: ComposerRecovery): RecoveredSubmission | null {
 	};
 }
 
-/**
- * Tracks in-flight prompts per composer scope and the drafts to restore when one fails.
- * A launched prompt stays held until its run writes it, so a run that ends first returns it.
- */
 export function useSubmissionTracker() {
 	const [version, setVersion] = useState(0);
 

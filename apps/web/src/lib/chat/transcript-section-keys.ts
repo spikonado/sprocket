@@ -50,7 +50,6 @@ export class TranscriptSectionKeys {
 		const claimed = new Set<string>();
 
 		const keyed = groups.map((members) => {
-			// Parts can arrive at either end; a split must not reuse one key for both sections.
 			const existing = members
 				.map((member) => previous?.get(member))
 				.find((key) => key !== undefined && !claimed.has(key));

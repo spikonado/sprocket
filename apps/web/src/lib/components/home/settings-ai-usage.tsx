@@ -284,7 +284,6 @@ function UsageChart({
 }) {
 	const [hovered, setHovered] = useState<number | null>(null);
 
-	// Null marks a model with usage in the bucket but no price, so it isn't shown as idle.
 	const stacks = buckets.map((bucket) =>
 		models.map((model) => {
 			const rows = bucket.rows.filter((row) => modelUsageKey(row) === model.key);

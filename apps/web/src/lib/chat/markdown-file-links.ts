@@ -105,7 +105,6 @@ export function fileLinkTarget(
 	const split = absolute.lastIndexOf('/') + 1;
 	const parent = absolute.slice(0, split - 1);
 
-	// Outside the workspaces, a folder becomes its own tree root and a file opens from its folder.
 	return knownDirectory || split === absolute.length
 		? { workspacePath: absolute, path: '', knownDirectory: true }
 		: {

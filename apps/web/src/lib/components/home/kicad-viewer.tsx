@@ -14,7 +14,6 @@ type Board = { path: string; version: string };
 
 const VIEWS = ['2D', '3D'] as const;
 
-/** Agents write a project's files one after another, so wait for the batch to land. */
 const RELOAD_DELAY_MS = 1_000;
 
 const RECONNECT_MS = 1_000;
@@ -92,7 +91,7 @@ function createFrame(container: HTMLElement, title: string) {
 	frame.sandbox.add('allow-scripts', 'allow-downloads');
 	frame.allow = 'fullscreen';
 	frame.className = 'absolute inset-0 size-full border-0';
-	// Behind the shown frame until it has drawn. Hiding it instead would stall its drawing.
+	// A hidden frame stalls its drawing, so a new frame loads behind the shown one.
 	container.prepend(frame);
 
 	return frame;
@@ -155,7 +154,6 @@ export default function KicadViewer({
 								signal
 							);
 
-							// The watch compares its first version with this, so writes during the load count.
 							if (!signal.aborted) versions.current.set(path, text.version);
 
 							return text.content;
@@ -213,7 +211,6 @@ export default function KicadViewer({
 				});
 			} finally {
 				if (!signal.aborted) setWatched([...read].sort().join('\n'));
-				// Drops listeners that a failed read left waiting on the frame.
 				own.abort();
 			}
 		};
@@ -254,7 +251,6 @@ export default function KicadViewer({
 						{
 							signal,
 							onEvent: (event) => {
-								// `null` while the file can't be read, such as before an agent creates it.
 								const version = event.kind === 'snapshot' ? event.version : null;
 								const known = versions.current.get(path);
 

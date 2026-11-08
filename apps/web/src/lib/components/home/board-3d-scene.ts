@@ -17,7 +17,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export type BoardScene = ReturnType<typeof createBoardScene>;
 
-/** From above the board's front, tilted toward the viewer like KiCad's 3D viewer. */
 const VIEW_DIRECTION = new Vector3(0, 1, 0.8).normalize();
 
 function disposeTree(root: Object3D) {
@@ -86,7 +85,6 @@ export function createBoardScene(container: HTMLElement) {
 	resize.observe(container);
 
 	return {
-		/** Swaps in a new export, keeping the camera after the first one so reloads don't reset it. */
 		async show(glb: ArrayBuffer) {
 			const { scene: next } = await new GLTFLoader().parseAsync(glb, '');
 

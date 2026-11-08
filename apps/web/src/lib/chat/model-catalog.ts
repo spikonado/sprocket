@@ -75,7 +75,6 @@ const gatewayModelSchema = z.looseObject({
 	defaultReasoningEffort: z.string().min(1),
 	serviceTiers: z.array(z.string()).min(1),
 	usagePolicy: z.literal('unlimited').optional(),
-	// Pricing only feeds the API cost display, so a bad entry must not break model selection.
 	directApiPricing: directApiPricingSchema.nullable().catch(null)
 });
 
