@@ -475,6 +475,29 @@ describe('installed and hosted auth', () => {
 		);
 	});
 
+	it('cancels a timed-out sign-in on the server', async () => {
+		vi.useFakeTimers();
+		stubInstalledWindow();
+
+		const fetch = stubFetch({
+			desktopStart: () =>
+				jsonResponse(200, {
+					authorizationUrl: 'https://authkit.example/native',
+					loginId: 'login-1'
+				}),
+			desktopResult: () => jsonResponse(200, { status: 'pending' }),
+			desktopCancel: () => jsonResponse(200, { ok: true })
+		});
+
+		const login = signIn();
+		await vi.advanceTimersByTimeAsync(5 * 60 * 1_000 + 2_000);
+		await login;
+		expect(get(authState).error).toBe('Sign-in timed out. Try again.');
+		expect(requestBodies(fetch, '/api/auth/desktop-login/cancel')).toEqual([
+			{ loginId: 'login-1' }
+		]);
+	});
+
 	it('times out a hung sign-in start', async () => {
 		stubInstalledWindow();
 		const startTimeout = new AbortController();

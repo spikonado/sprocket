@@ -933,6 +933,8 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 			return;
 		}
 
+		if (attempt.loginId) cancelServerLogin(attempt.loginId);
+
 		authState.update((current) => ({
 			...current,
 			isWaitingForBrowserSignIn: false,
