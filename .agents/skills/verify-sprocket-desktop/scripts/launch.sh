@@ -31,10 +31,10 @@ echo "Xvfb $(cat "$state_dir/Xvfb.pid") with openbox $(cat "$state_dir/openbox.p
 
 bun_install
 cd "$repo_root"
-# A cold build outlasts wait-for-api.mjs's 120 s limit.
-nix develop -c cargo build -p sprocket-cli
+# A cold build outlasts wait-for-api.mjs's 120 s limit. build.sh links a copy other worktrees' builds can't replace.
+"$desktop_scripts/../../verify-sprocket-cli/scripts/build.sh" >/dev/null
 mkdir -p "$(dirname "$server_link")"
-ln -sfn "$CARGO_TARGET_DIR/debug/sprocket" "$server_link"
+ln -sfn "$worktree_bin" "$server_link"
 
 web='bun run --cwd apps/web dev'
 # convex dev refuses to push when the shared deployment holds data this worktree's schema rejects.

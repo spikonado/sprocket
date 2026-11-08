@@ -63,7 +63,7 @@ Proof goes in `OUT=/tmp/verify-sprocket-cli/$(date +%Y%m%d-%H%M%S)-<feature>`, o
 Stop only what this run started.
 
 1. Terminate the `serve` or `--web` command session, then run `$C/stop.sh` for any client or temporary server left behind.
-2. `git -C $SCRATCH checkout -- . && git -C $SCRATCH clean -fd`. Keep the directory: `run` attached it as a project in the dev profile.
+2. In `$SCRATCH`, revert only the files this run changed with `git -C $SCRATCH checkout -- <paths>` and delete only the files it created. Other agents share it, so `checkout -- .` and `git clean` destroy their work. Keep the directory: `run` attached it as a project in the dev profile.
 3. Keep `~/.sprocket-dev-verify`, `/tmp/verify-sprocket-cli-profile`, `~/.cache/sprocket-verify-target` and the evidence in `/tmp/verify-sprocket-cli/`.
 
 Run cleanup after failed attempts too, so the next agent finds the lock and port free.

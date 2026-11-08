@@ -6,10 +6,14 @@ data_dir="${SPROCKET_VERIFY_DATA_DIR:-$HOME/.sprocket-dev-verify}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/sprocket-verify-target}"
 launch_lock="${XDG_RUNTIME_DIR:-/tmp}/sprocket-verify-launch.lock"
 dev_ports=(5173 7731)
+# Each worktree keeps its own link, since every worktree's build replaces the shared debug/sprocket.
+worktree_bin="$CARGO_TARGET_DIR/verify-cli/$worktree_id/sprocket"
+# The committed root .env compiles prod in as the fallback deployment.
+prod_convex_url="$(sed -n 's/^PUBLIC_CONVEX_URL=//p' "$repo_root/.env" | tr -d "\"'")"
 
 load_dev_env() {
 	local main_checkout
-	main_checkout="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+	main_checkout="$(git -C "$repo_root" worktree list --porcelain | sed -n '1s/^worktree //p')"
 	env_file="$repo_root/apps/web/.env.local"
 	[[ -f "$env_file" ]] || env_file="$main_checkout/apps/web/.env.local"
 	if [[ ! -f "$env_file" ]]; then
@@ -21,6 +25,10 @@ load_dev_env() {
 	dev_convex_url="$(nix develop "$repo_root" -c node -e 'const fs = require("node:fs"); const { parseEnv } = require("node:util"); process.stdout.write(parseEnv(fs.readFileSync(process.argv[1], "utf8")).VITE_CONVEX_URL ?? "")' "$env_file")"
 	if [[ -z "$dev_convex_url" ]]; then
 		echo "$env_file has no VITE_CONVEX_URL. Without it, the API falls back to the prod deployment." >&2
+		exit 1
+	fi
+	if [[ "$dev_convex_url" == "$prod_convex_url" ]]; then
+		echo "$env_file points VITE_CONVEX_URL at prod ($prod_convex_url). Ask the user for the dev env file." >&2
 		exit 1
 	fi
 }

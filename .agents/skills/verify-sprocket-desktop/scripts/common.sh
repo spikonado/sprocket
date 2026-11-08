@@ -7,7 +7,7 @@ electron_binary="$desktop_dir/node_modules/electron/dist/electron"
 cdp_port="${SPROCKET_VERIFY_CDP_PORT:-9393}"
 electron_profile="${SPROCKET_VERIFY_ELECTRON_PROFILE:-$HOME/.sprocket-dev-verify-desktop}"
 evidence_root=/tmp/verify-sprocket-desktop
-state_dir="$evidence_root/instance"
+state_dir="$evidence_root/instance-$worktree_id"
 opened_urls="$evidence_root/opened-urls.log"
 # In dev, main.mjs runs the server from here and ignores CARGO_TARGET_DIR.
 server_link="$repo_root/target/debug/sprocket"

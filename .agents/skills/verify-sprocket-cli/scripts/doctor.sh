@@ -14,9 +14,7 @@ else
 	check fail "no binary at $cli_bin. Run build.sh."
 fi
 
-[[ "$dev_convex_url" != "${PUBLIC_CONVEX_URL:-}" ]] &&
-	check ok "Convex: $dev_convex_url (dev; the shell exports ${PUBLIC_CONVEX_URL:-nothing})" ||
-	check fail "the dev Convex URL equals the shell's PUBLIC_CONVEX_URL. Check $env_file."
+check ok "Convex: $dev_convex_url (dev, not $prod_convex_url)"
 
 for stub in xdg-open sprocket-desktop; do
 	[[ "$(PATH="$cli_scripts/stubs:$PATH" command -v "$stub")" == "$cli_scripts/stubs/$stub" ]] &&

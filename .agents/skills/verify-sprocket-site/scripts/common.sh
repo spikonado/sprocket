@@ -8,6 +8,6 @@ site_origin="http://localhost:$site_port"
 # Hosts that must never be reached while verifying. The prod Convex URL comes from the committed root .env.
 prod_hosts_pattern() {
 	local prod_host
-	prod_host=$(sed -n 's/^PUBLIC_CONVEX_URL=//p' "$repo_root/.env" | tr -d "\"'" | sed 's#^https://##; s#/.*##')
+	prod_host=$(sed 's#^https://##; s#/.*##' <<<"$prod_convex_url")
 	echo "kpg\.spikonado\.com|posthog\.com|vercel\.live|${prod_host//./\\.}"
 }

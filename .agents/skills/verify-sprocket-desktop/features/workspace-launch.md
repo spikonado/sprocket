@@ -21,7 +21,7 @@ Preconditions:
 - `$V/scratch-repo.sh` exists. Note the project list in the sidebar before the launch.
 - `$D/electron.sh` stands in for the installed `sprocket-desktop`. It uses the same Electron profile as the running window, so a launch through it reaches the single-instance lock.
 
-- **CLI.** `SPROCKET_DESKTOP_EXECUTABLE=$D/electron.sh ~/.cache/sprocket-verify-target/debug/sprocket /tmp/verify-sprocket-scratch`. It exits 0 at once. The window shows project `verify-sprocket-scratch` selected in a new thread.
+- **CLI.** `../verify-sprocket-cli/scripts/cli.sh SPROCKET_DESKTOP_EXECUTABLE=$D/electron.sh /tmp/verify-sprocket-scratch`. `cli.sh` pins the dev profile and port, which a bare binary would take from the user's installed app. It exits 0 at once. The window shows project `verify-sprocket-scratch` selected in a new thread.
 - **Second instance.** `$D/electron.sh --sprocket-workspace=/tmp/verify-sprocket-scratch` exits within seconds, and the window opens the project as above.
 - **Proof.** Screenshots before and after, plus `~/.sprocket-dev-verify/project-attachments.json` listing `/tmp/verify-sprocket-scratch`.
 

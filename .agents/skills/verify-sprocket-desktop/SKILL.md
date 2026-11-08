@@ -30,7 +30,7 @@ Read Machine facts in [`verify-sprocket`](../verify-sprocket/SKILL.md) first. Th
 - `launch.cjs` picks Wayland when `WAYLAND_DISPLAY` is set or `$XDG_RUNTIME_DIR/wayland-0` exists. `launch.sh` forces X11 on its own Xvfb display and runs openbox on it. Without a window manager, close requests never reach Electron and windows render blank in screen captures. Commands against that display go through `on_display` in `scripts/common.sh`.
 - Electron's profile is `~/.sprocket-dev-verify-desktop`, passed as `--user-data-dir`. It holds the window's session cookie and its single-instance lock, so a sign-in there persists.
 - Electron opens external URLs with `xdg-open`. `launch.sh` puts `scripts/bin/xdg-open` first on `PATH`, which appends each URL with a timestamp to `/tmp/verify-sprocket-desktop/opened-urls.log` instead of opening a browser.
-- In dev, `main.mjs` runs the server from `<worktree>/target/debug/sprocket`. `launch.sh` symlinks that path to the verify build, and `stop.sh` removes the symlink.
+- In dev, `main.mjs` runs the server from `<worktree>/target/debug/sprocket`. `launch.sh` builds with `../verify-sprocket-cli/scripts/build.sh`, symlinks that path to this worktree's copy of the build, and `stop.sh` removes the symlink.
 - CDP listens on `127.0.0.1:9393`. Set `SPROCKET_VERIFY_CDP_PORT` for every helper when that port is taken.
 
 ## Launch

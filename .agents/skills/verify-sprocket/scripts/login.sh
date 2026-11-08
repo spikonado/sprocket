@@ -2,10 +2,10 @@
 source "$(dirname "$0")/common.sh"
 load_dev_env
 
-# With no server on 7731 the CLI spawns a temporary one outside the launch lock.
+# With no server on 7731 the CLI spawns a temporary one outside the launch lock. The desktop app's server runs from apps/desktop.
 api_ours=
 for pid in $(port_pids 7731); do
-	[[ "$(pid_cwd "$pid")" == "$repo_root" ]] && api_ours=1
+	case "$(pid_cwd "$pid")" in "$repo_root" | "$repo_root/apps/desktop") api_ours=1 ;; esac
 done
 if [[ -z "$api_ours" ]]; then
 	echo "No API from this worktree on 7731. Run launch.sh first." >&2
