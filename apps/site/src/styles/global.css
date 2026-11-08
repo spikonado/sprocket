@@ -68,26 +68,19 @@
 	}
 }
 
-@layer utilities {
-	.atmosphere {
-		background-color: var(--background);
-		background-image:
-			radial-gradient(ellipse 70% 55% at 85% 15%, oklch(0.72 0.1 230 / 0.14), transparent 58%),
-			radial-gradient(ellipse 50% 45% at 10% 85%, oklch(0.72 0.1 230 / 0.08), transparent 55%),
-			linear-gradient(
-				180deg,
-				oklch(0.97 0.01 130) 0%,
-				var(--background) 42%,
-				var(--background) 100%
-			);
-	}
+@utility atmosphere {
+	background-color: var(--background);
+	background-image:
+		radial-gradient(ellipse 70% 55% at 85% 15%, oklch(0.72 0.1 230 / 0.14), transparent 58%),
+		radial-gradient(ellipse 50% 45% at 10% 85%, oklch(0.72 0.1 230 / 0.08), transparent 55%),
+		linear-gradient(180deg, oklch(0.97 0.01 130) 0%, var(--background) 42%, var(--background) 100%);
+}
 
-	/* Soft construction grid - Spikonado atmosphere without the rainbow sweep. */
-	.hero-mesh {
-		background-image:
-			linear-gradient(to right, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px),
-			linear-gradient(to bottom, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px);
-		background-size: 56px 56px;
-		mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, black 15%, transparent 70%);
-	}
+/* Soft construction grid - Spikonado atmosphere without the rainbow sweep. */
+@utility hero-mesh {
+	background-image:
+		linear-gradient(to right, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px),
+		linear-gradient(to bottom, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px);
+	background-size: 56px 56px;
+	mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, black 15%, transparent 70%);
 }
