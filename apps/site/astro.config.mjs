@@ -38,6 +38,16 @@ export default defineConfig({
 	site: SITE_URL,
 	// No Astro.session usage on this site, so leave the session runtime out of the SSR bundle.
 	session: false,
+	security: {
+		csp: {
+			// Session replay's canvas encoder runs in a blob: worker.
+			directives: ["worker-src 'self' blob:"],
+			// PostHog loads its remote config and lazy extensions from the reverse proxy.
+			scriptDirective: { resources: ["'self'", 'https://kpg.spikonado.com'] },
+			// The Sprocket demos set `--step` in `style` attributes, which hashes can't cover.
+			styleDirective: { resources: [{ resource: "'unsafe-inline'", kind: 'attribute' }] }
+		}
+	},
 	integrations: [
 		sitemap({
 			filter: (page) => !page.includes('/api/')
