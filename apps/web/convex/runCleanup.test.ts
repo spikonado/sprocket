@@ -451,6 +451,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				prompt: 'Legacy message',
 				storageIds: [],
 				selectedModel: 'gpt-5.6-sol',
+				completionProvider: 'spikonado' as const,
 				reasoningEffort: 'medium' as const,
 				fastMode: false
 			};

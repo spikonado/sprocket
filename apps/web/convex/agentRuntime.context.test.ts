@@ -10,6 +10,7 @@ import {
 	emptyCompletionAssignments,
 	initConvexTest,
 	insertQueuedRun,
+	readTranscriptRange,
 	seedOwnedThread,
 	seedThreadRecord,
 	type ConvexTestInstance
@@ -476,7 +477,7 @@ describe('agentRuntime context accounting', () => {
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.historyFromNumber).toBe(3);
 		expect(state.contextSummary).toBe('First step is done.');
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 3);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion', 'tool']);
 	});
 
@@ -680,7 +681,7 @@ describe('agentRuntime context accounting', () => {
 		});
 		expect((await readThreadUsage(t, threadId)).contextTokens).toBeUndefined();
 
-		const retained = await asUser.query(api.transcript.getParts, { threadId, numbers: [2, 3] });
+		const retained = await readTranscriptRange(asUser, threadId, 2, 4);
 
 		expect(retained.parts.map((part) => part.prompt?.hidden ?? part.prompt?.text)).toEqual([
 			'environment',
@@ -705,6 +706,7 @@ describe('agentRuntime context accounting', () => {
 			submissionId: 'never-began',
 			threadId,
 			selectedModel: 'gpt-5.6-sol',
+			completionProvider: 'spikonado',
 			reasoningEffort: 'medium',
 			fastMode: false,
 			executionSecret,
@@ -923,10 +925,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret: secondSecret
 		});
 
-		const promptParts = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [0, 1, 2]
-		});
+		const promptParts = await readTranscriptRange(asUser, threadId, 0, 3);
 
 		expect(promptParts.parts.map((part) => [part.number, part.kind, part.runId])).toEqual([
 			[0, 'prompt', first.runId],
@@ -961,7 +960,7 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		expect(state.historyFromNumber).toBe(2);
-		const retained = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
+		const retained = await readTranscriptRange(asUser, threadId, 2, 3);
 		expect(retained.parts[0]?.prompt?.text).toBe('New prompt');
 	});
 

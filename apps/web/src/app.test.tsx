@@ -188,9 +188,7 @@ function createConvexFixtures(): ConvexTestClient {
 	client.registerQuery(api.artifacts.getArtifactState, 0);
 	client.registerAction(api.providerCredentials.getMyConfiguration, {
 		openai: false,
-		claude: false,
-		chatgpt: false,
-		chatgptModelIds: null
+		claude: false
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
 
@@ -463,7 +461,6 @@ it('deletes an attached project artifact through the local server and keeps fail
 		type: 'markdown',
 		title: 'Artifact notes',
 		revision: 1,
-		createdAt: 1,
 		updatedAt: 1
 	};
 
@@ -1529,9 +1526,7 @@ it.each([
 		const client = createConvexFixtures();
 		client.registerAction(api.providerCredentials.getMyConfiguration, {
 			openai: false,
-			claude: true,
-			chatgpt: false,
-			chatgptModelIds: null
+			claude: true
 		});
 		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(state));
 		await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));

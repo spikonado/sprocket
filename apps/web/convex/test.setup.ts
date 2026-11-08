@@ -252,6 +252,15 @@ export async function seedOwnedThread(
 	};
 }
 
+export async function readTranscriptRange(
+	asUser: AuthenticatedTest,
+	threadId: Id<'threadRecords'>,
+	start: number,
+	end: number
+) {
+	return await asUser.query(api.transcript.getPartsPage, { threadId, start, end, order: 'asc' });
+}
+
 export async function seedThreadRecord(
 	t: ConvexTestInstance,
 	userId: string,
@@ -326,7 +335,7 @@ export async function insertQueuedRun(
 		prompt: args.prompt,
 		imageUploadIds: args.imageUploadIds ?? [],
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
-		completionProvider: args.completionProvider,
+		completionProvider: args.completionProvider ?? 'spikonado',
 		reasoningEffort: args.reasoningEffort ?? 'medium',
 		fastMode: args.fastMode ?? false,
 		executionSecret: args.executionSecret,

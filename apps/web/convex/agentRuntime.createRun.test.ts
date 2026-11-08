@@ -20,6 +20,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			prompt: 'Build it',
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
+			completionProvider: 'spikonado',
 			reasoningEffort: 'medium',
 			fastMode: false,
 			executionSecret: 'new-thread-secret'
@@ -272,6 +273,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			threadId,
 			prompt: 'Reconcile me',
 			selectedModel: 'gpt-5.6-sol' as const,
+			completionProvider: 'spikonado' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
@@ -306,6 +308,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				prompt: 'Reconcile me',
 				storageIds: [],
 				selectedModel: 'gpt-5.6-sol',
+				completionProvider: 'spikonado',
 				reasoningEffort: 'medium',
 				fastMode: false,
 				executionSecret: 'some-secret',
@@ -324,6 +327,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			threadId,
 			prompt: 'Two launches, one submission',
 			selectedModel: 'gpt-5.6-sol' as const,
+			completionProvider: 'spikonado' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
@@ -355,6 +359,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			threadId,
 			prompt: 'Two launches, one submission',
 			selectedModel: 'gpt-5.6-sol' as const,
+			completionProvider: 'spikonado' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
@@ -392,6 +397,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			threadId,
 			prompt: 'Already running',
 			selectedModel: 'gpt-5.6-sol' as const,
+			completionProvider: 'spikonado' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
@@ -644,6 +650,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			prompt: 'Hello',
 			storageIds: [storageId],
 			selectedModel: 'gpt-5.6-sol',
+			completionProvider: 'spikonado',
 			reasoningEffort: 'medium',
 			fastMode: false,
 			executionSecret: 'storage-ids-secret'
@@ -672,6 +679,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 				prompt: 'Hello',
 				storageIds: [storageId],
 				selectedModel: 'gpt-5.6-sol',
+				completionProvider: 'spikonado',
 				reasoningEffort: 'medium',
 				fastMode: false,
 				executionSecret: 'storage-ids-secret',

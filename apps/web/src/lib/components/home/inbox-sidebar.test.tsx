@@ -453,8 +453,7 @@ it('shows Needs input instead of Working while a question waits for an answer', 
 		anyActive: true,
 		descendantsActive: false,
 		waitingForInput: true,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 	await render([thread(false, 'running')]);
 
@@ -754,8 +753,7 @@ it('expands subagents from the status text without selecting the thread', async 
 		anyActive: true,
 		descendantsActive: true,
 		waitingForInput: false,
-		workingDescendantCount: 5,
-		descendantStatusCounts: { queued: 0, running: 5, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 5
 	});
 	const input = props([thread()]);
 	const view = renderView(<Harness {...input} />);
@@ -816,8 +814,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 		anyActive: true,
 		descendantsActive: true,
 		waitingForInput: false,
-		workingDescendantCount: 2,
-		descendantStatusCounts: { queued: 0, running: 2, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 2
 	});
 	const input = props([thread()]);
 	const view = renderView(<Harness {...input} />);
@@ -850,8 +847,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 		anyActive: true,
 		descendantsActive: true,
 		waitingForInput: false,
-		workingDescendantCount: 3,
-		descendantStatusCounts: { queued: 0, running: 3, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 3
 	});
 	view.rerender(<Harness {...input} />);
 	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
@@ -867,8 +863,7 @@ it('shows active trees without working subagents as waiting', async () => {
 		anyActive: true,
 		descendantsActive: true,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 	const input = props([thread()]);
 	input.resolveChildren = childrenResolverStub({
@@ -910,8 +905,7 @@ it('shows only counted working descendants during backfill', async () => {
 		anyActive: true,
 		descendantsActive: true,
 		waitingForInput: false,
-		workingDescendantCount: 1,
-		descendantStatusCounts: { queued: 0, running: 1, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 1
 	});
 	await render([thread()]);
 	expect(
@@ -925,8 +919,7 @@ it('uses singular for one subagent and omits the row without descendants', async
 		anyActive: false,
 		descendantsActive: false,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 	const oneChild = props([thread()]);
 	const oneChildView = renderView(<Harness {...oneChild} />);
@@ -941,8 +934,7 @@ it('uses singular for one subagent and omits the row without descendants', async
 		anyActive: false,
 		descendantsActive: false,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 	oneChildView.unmount();
 	renderView(<Harness {...props([thread()])} />);
@@ -965,16 +957,14 @@ it('renders and selects nested children with increasing indentation', async () =
 		anyActive: false,
 		descendantsActive: false,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 	treeSummaries.set('child', {
 		descendantCount: 1,
 		anyActive: false,
 		descendantsActive: false,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 
 	const input = props([thread()]);
@@ -1025,8 +1015,7 @@ it('collapses an expanded branch through the expansion control', async () => {
 		anyActive: false,
 		descendantsActive: false,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 	const input = props([thread()]);
 	input.expansion = expansionStub(['thread']);
@@ -1052,8 +1041,7 @@ it('hides settle and unsettle controls for child threads', async () => {
 		anyActive: false,
 		descendantsActive: false,
 		waitingForInput: false,
-		workingDescendantCount: 0,
-		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+		workingDescendantCount: 0
 	});
 
 	const input = props([thread()]);
@@ -1114,14 +1102,7 @@ it.each([
 				anyActive: true,
 				descendantsActive,
 				waitingForInput: false,
-				workingDescendantCount: descendantsActive ? descendantCount : 0,
-				descendantStatusCounts: {
-					queued: 0,
-					running: descendantsActive ? descendantCount : 0,
-					completed: descendantsActive ? 0 : descendantCount,
-					failed: 0,
-					cancelled: 0
-				}
+				workingDescendantCount: descendantsActive ? descendantCount : 0
 			});
 		}
 

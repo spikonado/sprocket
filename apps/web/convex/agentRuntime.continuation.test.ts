@@ -3,7 +3,13 @@ import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
 import { ONLY_LATEST_RUN_CAN_CONTINUE, RUN_CANNOT_CONTINUE } from '@convex/lib/runResume';
-import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	insertQueuedRun,
+	readTranscriptRange,
+	seedOwnedThread
+} from './test.setup';
 
 describe('new-run continuation', { timeout: 30_000 }, () => {
 	it('creates a linked run without a visible prompt and is idempotent', async () => {
@@ -55,7 +61,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.lastMessageAt
 		).toBeGreaterThan(0);
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => [part.number, part.kind, part.runId])).toEqual([
 			[0, 'prompt', parent.runId]
 		]);
@@ -129,7 +135,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			promptPart: { prompt: { text: args.prompt } }
 		});
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => [part.runId, part.prompt?.text])).toEqual([
 			[parent.runId, 'Do the thing'],
 			[created.runId, args.prompt]
@@ -290,6 +296,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			threadId,
 			prompt: '',
 			selectedModel: 'gpt-5.6-sol' as const,
+			completionProvider: 'spikonado' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
