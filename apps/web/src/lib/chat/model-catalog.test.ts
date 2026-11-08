@@ -52,7 +52,7 @@ describe('gateway model catalog', () => {
 		payload.sprocket.models.push({
 			...payload.sprocket.models[0],
 			id: 'model-large',
-			label: 'Model Large'
+			label: 'Model XL'
 		});
 		payload.sprocket.defaultModelId = 'model-large';
 		vi.stubGlobal(
@@ -62,6 +62,25 @@ describe('gateway model catalog', () => {
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(resolveCatalogModel(catalog, 'unknown')).toBe('model-large');
 		expect(resolveCatalogModel(catalog, 'model-small')).toBe('model-small');
+	});
+
+	it('orders models alphabetically by label', async () => {
+		const payload = structuredClone(catalogPayload);
+		payload.sprocket.models = ['Opus 5.5', 'GPT-6.1 Sol', 'GPT-6 Luna', 'deepseek V4.1'].map(
+			(label) => ({ ...catalogPayload.sprocket.models[0], id: label, label })
+		);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
+
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+		expect(catalog.models.map((model) => model.label)).toEqual([
+			'deepseek V4.1',
+			'GPT-6 Luna',
+			'GPT-6.1 Sol',
+			'Opus 5.5'
+		]);
 	});
 
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
