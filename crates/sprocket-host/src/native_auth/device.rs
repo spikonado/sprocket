@@ -172,8 +172,33 @@ impl NativeAuthManager {
             .user;
         let client = self.client().await?.clone();
         let generation = self.session.lock().await.login_generation;
+        let authorization = timeout(
+            CLIENT_CONFIG_TIMEOUT,
+            client.authkit().start_device_authorization(),
+        )
+        .await
+        .context("device authorization timed out")??;
+        let expires = Duration::try_from_secs_f64(authorization.expires_in)
+            .context("invalid device authorization lifetime")?
+            .min(Duration::from_secs(900));
+        anyhow::ensure!(!expires.is_zero(), "device authorization already expired");
+        let interval = Duration::try_from_secs_f64(authorization.interval.unwrap_or(5.0))
+            .context("invalid device polling interval")?
+            .max(Duration::from_secs(1));
+        let authorization_url = match authorization.verification_uri_complete.clone() {
+            Some(url) => url.into_inner(),
+            None => {
+                let mut url = url::Url::parse(&authorization.verification_uri)
+                    .context("WorkOS returned an invalid verification URI")?;
+                url.query_pairs_mut()
+                    .append_pair("user_code", authorization.user_code.expose());
+                url.to_string()
+            }
+        };
         let id = Uuid::new_v4().to_string();
         let cancel = CancellationToken::new();
+        // Nothing awaits between this insert and the spawn below, so a dropped request can't
+        // leave an entry that no task will ever finish.
         {
             let mut session = self.session.lock().await;
             anyhow::ensure!(
@@ -197,62 +222,11 @@ impl NativeAuthManager {
             session.remote_devices.insert(
                 id.clone(),
                 RemoteDeviceLogin {
-                    session_token: session_token.clone(),
+                    session_token,
                     cancel: cancel.clone(),
                     result: None,
                 },
             );
-        }
-        let authorization = match timeout(
-            CLIENT_CONFIG_TIMEOUT,
-            client.authkit().start_device_authorization(),
-        )
-        .await
-        {
-            Ok(Ok(authorization)) => authorization,
-            result => {
-                self.cancel_remote_device_login(&session_token, &id).await;
-                return match result {
-                    Ok(Err(error)) => Err(error.into()),
-                    Err(error) => Err(error).context("device authorization timed out"),
-                    Ok(Ok(_)) => unreachable!(),
-                };
-            }
-        };
-        let setup = (|| -> anyhow::Result<_> {
-            let expires = Duration::try_from_secs_f64(authorization.expires_in)
-                .context("invalid device authorization lifetime")?
-                .min(Duration::from_secs(900));
-            anyhow::ensure!(!expires.is_zero(), "device authorization already expired");
-            let interval = Duration::try_from_secs_f64(authorization.interval.unwrap_or(5.0))
-                .context("invalid device polling interval")?
-                .max(Duration::from_secs(1));
-            let authorization_url = match authorization.verification_uri_complete.clone() {
-                Some(url) => url.into_inner(),
-                None => {
-                    let mut url = url::Url::parse(&authorization.verification_uri)
-                        .context("WorkOS returned an invalid verification URI")?;
-                    url.query_pairs_mut()
-                        .append_pair("user_code", authorization.user_code.expose());
-                    url.to_string()
-                }
-            };
-            Ok((expires, interval, authorization_url))
-        })();
-        let (expires, interval, authorization_url) = match setup {
-            Ok(setup) => setup,
-            Err(error) => {
-                self.cancel_remote_device_login(&session_token, &id).await;
-                return Err(error);
-            }
-        };
-        let current = {
-            let session = self.session.lock().await;
-            session.login_generation == generation && session.remote_devices.contains_key(&id)
-        };
-        if !current {
-            self.cancel_remote_device_login(&session_token, &id).await;
-            anyhow::bail!("login was invalidated by another authentication operation");
         }
         let owner_id = owner.id;
         let manager = Arc::clone(self);

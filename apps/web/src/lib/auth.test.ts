@@ -4,7 +4,6 @@ import type { Store } from './store';
 import { z } from 'zod';
 import {
 	authState,
-	cancelDesktopSignIn,
 	convexAuthRetryPending,
 	convexAuthRetryVersion,
 	getAccessToken,
@@ -491,26 +490,49 @@ describe('installed and hosted auth', () => {
 		);
 	});
 
-	it('cancels a sign-in on the server when its start finishes after the user cancelled', async () => {
-		stubInstalledWindow();
-		const start = deferred<Response>();
-		const fetch = stubFetch({ desktopStart: () => start.promise });
+	it('cancels an abandoned start that finishes after its replacement', async () => {
+		const { open } = stubInstalledWindow();
+		const lateStart = deferred<Response>();
+		let starts = 0;
+		const fetch = stubFetch({
+			desktopStart: () => {
+				starts += 1;
 
-		const login = signIn();
-		await vi.waitFor(() =>
-			expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/start')).toEqual(['POST'])
-		);
-		cancelDesktopSignIn();
-		start.resolve(
+				return starts === 1
+					? lateStart.promise
+					: jsonResponse(200, {
+							authorizationUrl: 'https://authkit.example/current',
+							loginId: 'login-current'
+						});
+			},
+			desktopResult: () =>
+				jsonResponse(200, {
+					status: 'authenticated',
+					user: { id: nativeUser.id, email: nativeUser.email }
+				}),
+			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
+		});
+
+		const abandoned = signIn();
+		await vi.waitFor(() => expect(starts).toBe(1));
+		await signIn();
+		lateStart.resolve(
 			jsonResponse(200, { authorizationUrl: 'https://authkit.example/late', loginId: 'login-late' })
 		);
-		await login;
+		await abandoned;
 
+		expect(open).toHaveBeenCalledExactlyOnceWith('https://authkit.example/current', '_blank');
+		expect(requestBodies(fetch, '/api/auth/desktop-login/result')).toEqual([
+			{ loginId: 'login-current' }
+		]);
 		expect(requestBodies(fetch, '/api/auth/desktop-login/cancel')).toEqual([
 			{ loginId: 'login-late' }
 		]);
-		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual([]);
-		expect(get(authState)).toMatchObject({ isWaitingForBrowserSignIn: false, error: null });
+		expect(get(authState)).toMatchObject({
+			user: nativeUser,
+			isWaitingForBrowserSignIn: false,
+			error: null
+		});
 	});
 
 	it('shares inflight native token requests', async () => {
@@ -805,14 +827,10 @@ function stubWindow(hostname: string, requestedProtocol?: 'http:' | 'https:') {
 		replace: vi.fn()
 	};
 
-	vi.stubGlobal('window', {
-		location,
-		localStorage,
-		open: vi.fn(() => ({ opener: {} })),
-		sprocketDesktopBridge: undefined
-	});
+	const open = vi.fn((_url: string, _target: string) => ({ opener: {} }));
+	vi.stubGlobal('window', { location, localStorage, open, sprocketDesktopBridge: undefined });
 
-	return { location, localStorage };
+	return { location, localStorage, open };
 }
 
 function mockAuthKitClient(currentUser: User | null) {
