@@ -53,7 +53,28 @@ describe('provider credentials', () => {
 		vi.unstubAllEnvs();
 	});
 
-	it('validates and stores an OpenAI key without returning it', async () => {
+	it.each([
+		{
+			provider: 'openai',
+			url: 'https://api.openai.com/v1/models',
+			headers: { authorization: 'Bearer sk-user' }
+		},
+		{
+			provider: 'anthropic',
+			url: 'https://api.anthropic.com/v1/models',
+			headers: { 'x-api-key': 'sk-user', 'anthropic-version': '2023-06-01' }
+		},
+		{
+			provider: 'vercel',
+			url: 'https://ai-gateway.vercel.sh/v1/credits',
+			headers: { authorization: 'Bearer sk-user' }
+		},
+		{
+			provider: 'openrouter',
+			url: 'https://openrouter.ai/api/v1/key',
+			headers: { authorization: 'Bearer sk-user' }
+		}
+	] as const)('validates and stores a $provider key without returning it', async (expected) => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
 		const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -61,7 +82,7 @@ describe('provider credentials', () => {
 			const url = String(input);
 			requests.push({ url, init });
 
-			if (url === 'https://api.openai.com/v1/models') return new Response('{}');
+			if (url === expected.url) return new Response('{}');
 
 			if (url.includes('/vault/v1/kv/name/')) return new Response('', { status: 404 });
 
@@ -69,17 +90,30 @@ describe('provider credentials', () => {
 		});
 
 		expect(
-			await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: ' sk-user ' })
+			await asUser.action(api.providerCredentials.saveApiKey, {
+				provider: expected.provider,
+				apiKey: ' sk-user '
+			})
 		).toBe(null);
 		expect(requests.map(({ url }) => url)).toEqual([
-			'https://api.openai.com/v1/models',
-			expect.stringContaining('/vault/v1/kv/name/sprocket-openai-'),
+			expected.url,
+			expect.stringContaining(`/vault/v1/kv/name/sprocket-${expected.provider}-`),
 			'https://api.workos.com/vault/v1/kv'
 		]);
+		expect(requests[0].init?.headers).toEqual(expected.headers);
 		expect(JSON.parse(String(requests[2].init?.body))).toMatchObject({
 			key_context: { application_id: 'client_test' },
 			value: 'sk-user'
 		});
+	});
+
+	it('reports a key the provider rejects', async () => {
+		const asUser = initConvexTest().withIdentity({ subject: 'user_alice' });
+		vi.stubGlobal('fetch', async () => new Response('', { status: 401 }));
+
+		await expect(
+			asUser.action(api.providerCredentials.saveApiKey, { provider: 'vercel', apiKey: 'bad' })
+		).rejects.toThrow('Vercel AI Gateway rejected this API key.');
 	});
 
 	it('only issues a configured key to an active direct OpenAI run', async () => {
@@ -109,7 +143,8 @@ describe('provider credentials', () => {
 
 		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
 		await expect(
-			t.action(api.providerCredentials.issueOpenAiCredential, {
+			t.action(api.providerCredentials.issueApiKey, {
+				provider: 'openai',
 				runId: created.runId,
 				claimId,
 				executionSecret
@@ -198,7 +233,10 @@ describe('provider credentials', () => {
 		});
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: false,
-			claude: true
+			claude: true,
+			anthropic: false,
+			vercel: false,
+			openrouter: false
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
@@ -219,9 +257,9 @@ describe('provider credentials', () => {
 		await expect(t.action(api.providerCredentials.issueClaudeCredential, run)).resolves.toEqual({
 			token: 'sk-ant-oat01-token_A-1'
 		});
-		await expect(t.action(api.providerCredentials.issueOpenAiCredential, run)).rejects.toThrow(
-			'Run is not configured to use openai credentials.'
-		);
+		await expect(
+			t.action(api.providerCredentials.issueApiKey, { ...run, provider: 'anthropic' })
+		).rejects.toThrow('Run is not configured to use anthropic credentials.');
 
 		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
 		await expect(t.action(api.providerCredentials.issueClaudeCredential, run)).rejects.toThrow(
@@ -229,20 +267,30 @@ describe('provider credentials', () => {
 		);
 	}, 30_000);
 
-	it('reports a saved OpenAI key', async () => {
+	it('reports saved API keys', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
 		vi.stubGlobal('fetch', async () => new Response(null, { status: 404 }));
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: false,
-			claude: false
+			claude: false,
+			anthropic: false,
+			vercel: false,
+			openrouter: false
 		});
 
 		stubVaultFetch(new Map());
 		await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: 'sk-user' });
+		await asUser.action(api.providerCredentials.saveApiKey, {
+			provider: 'openrouter',
+			apiKey: 'sk-or-user'
+		});
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: true,
-			claude: false
+			claude: false,
+			anthropic: false,
+			vercel: false,
+			openrouter: true
 		});
 	});
 });

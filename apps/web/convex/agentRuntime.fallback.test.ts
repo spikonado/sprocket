@@ -81,10 +81,10 @@ describe('provider fallback', () => {
 				await asUser.query(api.agentRuntime.getContext, {
 					runId,
 					executionSecret,
-					includeClaude: true
+					knownProviders: ['openai', 'chatgpt', 'claude', 'vercel']
 				})
 			).providerPreferences.enabledProviders
-		).toEqual(['chatgpt', 'openai', 'claude']);
+		).toEqual(['chatgpt', 'openai', 'claude', 'vercel']);
 		expect(context.shareConversationContent).toBe(false);
 	});
 });

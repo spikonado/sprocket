@@ -1,4 +1,5 @@
 mod analytics;
+mod anthropic;
 mod catalog;
 mod chatgpt;
 mod claude_code;

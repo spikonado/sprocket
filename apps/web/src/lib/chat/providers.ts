@@ -5,7 +5,10 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	spikonado: 'Spikonado',
 	openai: 'OpenAI API',
 	chatgpt: 'ChatGPT Subscription',
-	claude: 'Claude Subscription'
+	claude: 'Claude Subscription',
+	anthropic: 'Anthropic API',
+	vercel: 'Vercel AI Gateway',
+	openrouter: 'OpenRouter'
 };
 
 export function reorderShownProviders(

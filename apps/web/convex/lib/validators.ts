@@ -8,7 +8,15 @@ function literals<const TValue extends string>(values: readonly TValue[]) {
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
-export const completionProviderIds = ['spikonado', 'openai', 'chatgpt', 'claude'] as const;
+export const completionProviderIds = [
+	'spikonado',
+	'openai',
+	'chatgpt',
+	'claude',
+	'anthropic',
+	'vercel',
+	'openrouter'
+] as const;
 
 export type CompletionProvider = (typeof completionProviderIds)[number];
 

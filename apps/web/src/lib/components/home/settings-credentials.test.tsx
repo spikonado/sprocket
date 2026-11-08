@@ -1,11 +1,13 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { ChatGptStatus, ClaudeCodeStatus, LocalApi } from '$lib/types/sprocket';
 import SettingsCredentials from './settings-credentials';
+
+const noApiKeysSaved = { openai: false, anthropic: false, vercel: false, openrouter: false };
 
 const loginWindow = {
 	close: vi.fn(),
@@ -111,13 +113,13 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 function mount(
 	client: ConvexTestClient,
 	{
-		openAiConfigured = false,
+		apiKeysSaved = noApiKeysSaved,
 		claudeTokenSaved = false,
 		claudeCodeStatus = claudeCodeFixture(),
 		chatGptStatus = statusFixture(),
 		localApi = createChatGptApi()
 	}: {
-		openAiConfigured?: boolean;
+		apiKeysSaved?: typeof noApiKeysSaved;
 		claudeTokenSaved?: boolean;
 		claudeCodeStatus?: ClaudeCodeStatus;
 		chatGptStatus?: ChatGptStatus;
@@ -136,7 +138,7 @@ function mount(
 			<SettingsCredentials
 				userId="user-a"
 				localApi={localApi}
-				openAiConfigured={openAiConfigured}
+				apiKeysSaved={apiKeysSaved}
 				claudeTokenSaved={claudeTokenSaved}
 				claudeCodeStatus={claudeStatus}
 				claudeCodeStatusError={null}
@@ -170,18 +172,19 @@ function mount(
 it('saves an API key, clears the input, and reports the configured provider', async () => {
 	const client = new ConvexTestClient();
 	const save = vi.fn(async () => null);
-	client.handleAction(api.providerCredentials.saveOpenAiKey, save);
+	client.handleAction(api.providerCredentials.saveApiKey, save);
 	const view = mount(client);
-	fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'sk-test-not-a-secret' } });
-	fireEvent.click(screen.getByRole('button', { name: 'Connect API key' }));
+	const card = within(screen.getByRole('region', { name: 'Vercel AI Gateway' }));
+	fireEvent.change(card.getByLabelText('API key'), { target: { value: 'vck_not-a-secret' } });
+	fireEvent.click(card.getByRole('button', { name: 'Connect API key' }));
 	await waitFor(() =>
 		expect(view.onConfigurationChange).toHaveBeenCalledWith({
-			provider: 'openai',
+			provider: 'vercel',
 			configured: true
 		})
 	);
-	expect(save).toHaveBeenCalledWith({ apiKey: 'sk-test-not-a-secret' });
-	expect(screen.getByLabelText('API key')).toHaveProperty('value', '');
+	expect(save).toHaveBeenCalledWith({ provider: 'vercel', apiKey: 'vck_not-a-secret' });
+	expect(card.getByLabelText('API key')).toHaveProperty('value', '');
 });
 
 it('shows the Claude Code install command and installs it from the button', async () => {
@@ -272,12 +275,13 @@ it('shows a saved Claude token as connected without a sign-in button', () => {
 it('shows key validation failures and permits a successful retry', async () => {
 	const client = new ConvexTestClient();
 	const save = vi.fn(async () => null).mockRejectedValueOnce(new Error('Invalid API key'));
-	client.handleAction(api.providerCredentials.saveOpenAiKey, save);
+	client.handleAction(api.providerCredentials.saveApiKey, save);
 	const view = mount(client);
-	fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'sk-test-not-a-secret' } });
-	fireEvent.click(screen.getByRole('button', { name: 'Connect API key' }));
-	expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Invalid API key');
-	fireEvent.click(screen.getByRole('button', { name: 'Connect API key' }));
+	const card = within(screen.getByRole('region', { name: 'OpenAI API' }));
+	fireEvent.change(card.getByLabelText('API key'), { target: { value: 'sk-test-not-a-secret' } });
+	fireEvent.click(card.getByRole('button', { name: 'Connect API key' }));
+	expect(await card.findByRole('alert')).toHaveProperty('textContent', 'Invalid API key');
+	fireEvent.click(card.getByRole('button', { name: 'Connect API key' }));
 	await waitFor(() =>
 		expect(view.onConfigurationChange).toHaveBeenCalledWith({
 			provider: 'openai',
@@ -289,17 +293,17 @@ it('shows key validation failures and permits a successful retry', async () => {
 it('removes a configured key after confirmation', async () => {
 	const client = new ConvexTestClient();
 	const remove = vi.fn(async () => null);
-	client.handleAction(api.providerCredentials.removeOpenAiKey, remove);
-	const view = mount(client, { openAiConfigured: true });
+	client.handleAction(api.providerCredentials.removeApiKey, remove);
+	const view = mount(client, { apiKeysSaved: { ...noApiKeysSaved, anthropic: true } });
 	fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
 	await waitFor(() =>
 		expect(view.onConfigurationChange).toHaveBeenCalledWith({
-			provider: 'openai',
+			provider: 'anthropic',
 			configured: false
 		})
 	);
-	expect(remove).toHaveBeenCalledWith({});
+	expect(remove).toHaveBeenCalledWith({ provider: 'anthropic' });
 });
 
 it('explains that local sign-in is unavailable when the server cannot log in', () => {
@@ -541,7 +545,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 			<SettingsCredentials
 				userId={userId}
 				localApi={localApi}
-				openAiConfigured={false}
+				apiKeysSaved={noApiKeysSaved}
 				claudeTokenSaved={false}
 				claudeCodeStatus={claudeCodeFixture()}
 				claudeCodeStatusError={null}

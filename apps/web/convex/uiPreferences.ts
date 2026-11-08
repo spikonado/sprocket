@@ -7,6 +7,7 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 import {
 	assertValidProviderOrder,
 	enabledProviders,
+	releasedClientProviders,
 	vProviderOrderEntry
 } from '@convex/lib/providerOrder';
 import { vCompletionProvider } from '@convex/lib/validators';
@@ -90,14 +91,15 @@ export const getMine = query({
 });
 
 export const getMyEnabledProviders = query({
-	args: { includeClaude: v.optional(v.boolean()) },
+	args: { knownProviders: v.optional(v.array(vCompletionProvider)) },
 	returns: v.array(vCompletionProvider),
 	handler: async (ctx, args) => {
 		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
 
-		return enabledProviders(preferences?.providerOrder, {
-			includeClaude: args.includeClaude ?? false
-		});
+		return enabledProviders(
+			preferences?.providerOrder,
+			args.knownProviders ?? releasedClientProviders
+		);
 	}
 });
 

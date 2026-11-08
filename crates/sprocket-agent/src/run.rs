@@ -780,6 +780,7 @@ pub async fn run_agent(
                     &handoff.selected_model,
                 ),
                 usage_pricing: handoff_capabilities.usage_pricing,
+                route: handoff_capabilities.route,
                 handoff,
             }),
             handoff_capabilities.supports_images,
@@ -794,7 +795,7 @@ pub async fn run_agent(
     };
     let provider = AgentProvider::default_for_run(
         &context,
-        &capabilities.vendor,
+        &capabilities,
         &gateway_url,
         chatgpt_client,
         request.chatgpt_credentials.clone(),

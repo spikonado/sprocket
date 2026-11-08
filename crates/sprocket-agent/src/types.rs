@@ -20,23 +20,57 @@ pub enum CompletionProvider {
     Openai,
     Chatgpt,
     Claude,
+    Anthropic,
+    Vercel,
+    Openrouter,
 }
 
 impl CompletionProvider {
-    pub fn serves_vendor(self, vendor: &str) -> bool {
-        match self {
-            Self::Spikonado => true,
-            Self::Openai | Self::Chatgpt => vendor == "openai",
-            Self::Claude => vendor == "anthropic",
-        }
+    const ALL: [Self; 7] = [
+        Self::Spikonado,
+        Self::Openai,
+        Self::Chatgpt,
+        Self::Claude,
+        Self::Anthropic,
+        Self::Vercel,
+        Self::Openrouter,
+    ];
+
+    /// The `knownProviders` argument, so Convex leaves out providers this build can't parse.
+    pub fn known_providers_arg() -> convex::Value {
+        convex::Value::Array(
+            Self::ALL
+                .iter()
+                .map(|provider| provider.as_str().into())
+                .collect(),
+        )
     }
 
-    /// None for Claude Code, which picks its own speed.
+    pub fn serves(self, route: &ModelRoute) -> bool {
+        self.model_id("", route).is_some()
+    }
+
+    /// The ID this provider addresses catalog model `model` by, or None when it doesn't serve it.
+    pub(crate) fn model_id<'a>(self, model: &'a str, route: &'a ModelRoute) -> Option<&'a str> {
+        let catalog_key = match self {
+            Self::Spikonado => return Some(model),
+            Self::Openai | Self::Chatgpt => return (route.vendor == "openai").then_some(model),
+            Self::Claude | Self::Anthropic => "anthropic",
+            Self::Vercel => "vercel",
+            Self::Openrouter => "openrouter",
+        };
+        route
+            .provider_model_ids
+            .get(catalog_key)
+            .map(String::as_str)
+    }
+
+    /// None for providers whose speed Sprocket doesn't pick, such as Claude Code.
     pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
         match self {
             Self::Spikonado => Some("fast"),
             Self::Openai | Self::Chatgpt => Some("priority"),
-            Self::Claude => None,
+            Self::Claude | Self::Anthropic | Self::Vercel | Self::Openrouter => None,
         }
     }
 
@@ -46,8 +80,20 @@ impl CompletionProvider {
             Self::Openai => "openai",
             Self::Chatgpt => "chatgpt",
             Self::Claude => "claude",
+            Self::Anthropic => "anthropic",
+            Self::Vercel => "vercel",
+            Self::Openrouter => "openrouter",
         }
     }
+}
+
+/// Where a catalog model runs: its vendor, and the IDs BYOK providers take for it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct ModelRoute {
+    #[serde(rename = "provider")]
+    pub vendor: String,
+    #[serde(default, rename = "providerModelIds")]
+    pub provider_model_ids: HashMap<String, String>,
 }
 
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
@@ -125,7 +171,7 @@ pub struct GatewayCredential {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenAiCredential {
+pub struct ApiKeyCredential {
     pub api_key: String,
 }
 
@@ -211,7 +257,7 @@ pub struct ContextBudget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogModelCapabilities {
     pub label: String,
-    pub vendor: String,
+    pub route: ModelRoute,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_fast: bool,

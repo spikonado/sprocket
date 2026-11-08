@@ -188,7 +188,10 @@ function createConvexFixtures(): ConvexTestClient {
 	client.registerQuery(api.artifacts.getArtifactState, 0);
 	client.registerAction(api.providerCredentials.getMyConfiguration, {
 		openai: false,
-		claude: false
+		claude: false,
+		anthropic: false,
+		vercel: false,
+		openrouter: false
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
 
@@ -1521,12 +1524,15 @@ it.each([
 	['installed', true],
 	['outdated', false]
 ] as const)(
-	'shows a saved Claude token as a provider only when Claude Code is up to date (%s)',
+	'shows saved credentials as providers, Claude only when Claude Code is up to date (%s)',
 	async (state, shown) => {
 		const client = createConvexFixtures();
 		client.registerAction(api.providerCredentials.getMyConfiguration, {
 			openai: false,
-			claude: true
+			claude: true,
+			anthropic: false,
+			vercel: false,
+			openrouter: true
 		});
 		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(state));
 		await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));
@@ -1535,6 +1541,7 @@ it.each([
 		await flushPendingWork();
 		expect(fetchClaudeCodeStatus).toHaveBeenCalledWith('user-a');
 		expect(screen.queryByRole('switch', { name: 'Claude Subscription' }) !== null).toBe(shown);
+		expect(screen.getByRole('switch', { name: 'OpenRouter' })).toBeTruthy();
 	}
 );
 

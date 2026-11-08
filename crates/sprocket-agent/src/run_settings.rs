@@ -52,7 +52,7 @@ pub fn resolve_settings(
     let provider = providers
         .iter()
         .copied()
-        .find(|provider| provider.serves_vendor(&model.vendor))
+        .find(|provider| provider.serves(&model.route))
         .with_context(|| {
             format!(
                 "no enabled provider offers {model_id}; check your providers in Settings → Providers"

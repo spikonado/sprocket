@@ -4,8 +4,8 @@ use anyhow::{Context, anyhow};
 use serde::Deserialize;
 
 use crate::types::{
-    CatalogModelCapabilities, CompletionProvider, ContextBudget, ProviderHandoff, RunSnapshot,
-    UsagePricing, gateway_api_v1_url,
+    CatalogModelCapabilities, CompletionProvider, ContextBudget, ModelRoute, ProviderHandoff,
+    RunSnapshot, UsagePricing, gateway_api_v1_url,
 };
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
@@ -53,7 +53,8 @@ struct GatewaySprocketCatalog {
 struct GatewayCatalogModel {
     id: String,
     label: String,
-    provider: String,
+    #[serde(flatten)]
+    route: ModelRoute,
     supports_images: bool,
     reasoning_efforts: Vec<String>,
     default_reasoning_effort: String,
@@ -91,7 +92,8 @@ pub struct ModelCatalog {
 pub struct CatalogModel {
     pub id: String,
     pub label: String,
-    pub vendor: String,
+    #[serde(flatten)]
+    pub route: ModelRoute,
     pub reasoning_efforts: Vec<String>,
     pub default_reasoning_effort: String,
     pub service_tiers: Vec<String>,
@@ -169,7 +171,7 @@ pub async fn model_catalog(gateway_url: &str) -> anyhow::Result<ModelCatalog> {
             .map(|model| CatalogModel {
                 id: model.id,
                 label: model.label,
-                vendor: model.provider,
+                route: model.route,
                 reasoning_efforts: model.reasoning_efforts,
                 default_reasoning_effort: model.default_reasoning_effort,
                 service_tiers: model.service_tiers,
@@ -189,7 +191,7 @@ fn select_catalog_model(
         .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
     Ok(CatalogModelCapabilities {
         label: model.label.clone(),
-        vendor: model.provider.clone(),
+        route: model.route.clone(),
         context_budget: ContextBudget {
             context_window_tokens: model.context_window_tokens,
             auto_handoff_token_limit: model.auto_handoff_token_limit,
@@ -219,9 +221,12 @@ pub(crate) async fn catalog_models_for_run(
     let catalog = fetch_catalog(gateway_url).await?;
     let selected = select_catalog_model(&catalog, &run.selected_model)?;
     let handoff = match handoff {
-        Some(handoff) => {
-            select_handoff_model(&catalog, handoff, run.completion_provider, &selected.vendor)
-        }
+        Some(handoff) => select_handoff_model(
+            &catalog,
+            handoff,
+            run.completion_provider,
+            &selected.route.vendor,
+        ),
         None => Ok(None),
     };
     Ok((
@@ -242,9 +247,8 @@ fn select_handoff_model(
         .iter()
         .any(|model| model.id == handoff.selected_model);
     if removed {
-        let eligible = |model: &&GatewayCatalogModel| {
-            handoff.completion_provider.serves_vendor(&model.provider)
-        };
+        let eligible =
+            |model: &&GatewayCatalogModel| handoff.completion_provider.serves(&model.route);
         let model = catalog
             .models
             .iter()
@@ -264,7 +268,7 @@ fn select_handoff_model(
     // A fallback cannot establish the historical vendor, so summarize instead of replaying it.
     Ok((removed
         || handoff.completion_provider != target_provider
-        || capabilities.vendor != target_vendor)
+        || capabilities.route.vendor != target_vendor)
         .then_some((handoff, capabilities)))
 }
 

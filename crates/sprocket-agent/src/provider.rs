@@ -22,6 +22,7 @@ use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
 
 use self::transcript_sink::TranscriptSink;
+use crate::anthropic;
 use crate::chatgpt::ChatGptClient;
 use crate::claude_code::{ClaudeCode, ResumePoint, resume_point};
 use crate::context_handoff::{
@@ -36,8 +37,8 @@ use crate::request_compression::ZstdResponsesRequests;
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
-    ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
-    UsagePricing, gateway_api_v1_url,
+    CatalogModelCapabilities, ChatGptCredentials, CompletionProvider, ContextBudget, ModelRoute,
+    ProviderHandoff, RunContextResponse, UsagePricing, gateway_api_v1_url,
 };
 use crate::usage::UsageSource;
 use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
@@ -124,7 +125,8 @@ pub(crate) struct AgentProvider {
     gateway_url: String,
     thread_id: String,
     model: String,
-    model_vendor: String,
+    model_route: ModelRoute,
+    cache_write_ttl: Option<String>,
     chatgpt_client: Option<ChatGptClient>,
     chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     claude_code: ClaudeCode,
@@ -144,6 +146,7 @@ pub(crate) enum ProviderSwitch {
 
 pub(crate) struct ProviderSwitchHandoff {
     pub(crate) handoff: ProviderHandoff,
+    pub(crate) route: ModelRoute,
     pub(crate) base_instructions: String,
     pub(crate) usage_pricing: UsagePricing,
 }
@@ -202,7 +205,7 @@ pub(crate) enum AgentProviderResult {
 impl AgentProvider {
     pub(crate) fn default_for_run(
         context: &RunContextResponse,
-        model_vendor: &str,
+        capabilities: &CatalogModelCapabilities,
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
         chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
@@ -216,7 +219,7 @@ impl AgentProvider {
             .iter()
             .copied()
             .filter(|provider| {
-                *provider != completion_provider && provider.serves_vendor(model_vendor)
+                *provider != completion_provider && provider.serves(&capabilities.route)
             })
             .collect();
         Self {
@@ -225,7 +228,8 @@ impl AgentProvider {
             gateway_url: gateway_url.to_string(),
             thread_id: context.run.thread_id.clone(),
             model: context.run.selected_model.clone(),
-            model_vendor: model_vendor.to_string(),
+            model_route: capabilities.route.clone(),
+            cache_write_ttl: capabilities.usage_pricing.cache_write_ttl.clone(),
             chatgpt_client,
             chatgpt_credentials,
             claude_code,
@@ -323,7 +327,8 @@ impl AgentProvider {
             gateway_url: self.gateway_url.clone(),
             thread_id: self.thread_id.clone(),
             model: switch.handoff.selected_model.clone(),
-            model_vendor: String::new(),
+            model_route: switch.route.clone(),
+            cache_write_ttl: switch.usage_pricing.cache_write_ttl.clone(),
             chatgpt_client: self.chatgpt_client.clone(),
             chatgpt_credentials: self.chatgpt_credentials.clone(),
             claude_code: self.claude_code.clone(),
@@ -333,7 +338,7 @@ impl AgentProvider {
         let model = source
             .completion_model(runtime, run_id, claim_id, &switch.base_instructions)
             .await?;
-        if self.completion_provider.serves_vendor(&self.model_vendor) {
+        if self.completion_provider.serves(&self.model_route) {
             self.completion_model(runtime, run_id, claim_id, base_instructions)
                 .await?;
         }
@@ -349,7 +354,7 @@ impl AgentProvider {
     ) -> anyhow::Result<DynModel<Completion>> {
         let mut usage_limit = None;
         loop {
-            let error = if self.completion_provider.serves_vendor(&self.model_vendor) {
+            let error = if self.completion_provider.serves(&self.model_route) {
                 match self
                     .completion_model(runtime, run_id, claim_id, base_instructions)
                     .await
@@ -418,7 +423,11 @@ impl AgentProvider {
         claim_id: &str,
         base_instructions: &str,
     ) -> anyhow::Result<DynModel<Completion>> {
-        match self.completion_provider {
+        let provider = self.completion_provider;
+        let model = provider
+            .model_id(&self.model, &self.model_route)
+            .ok_or_else(|| anyhow!("{} does not serve {}", provider.as_str(), self.model))?;
+        match provider {
             CompletionProvider::Spikonado => {
                 let credential = runtime.issue_gateway_credential(run_id, claim_id).await?;
                 let completion_client = GatewayClient::new(
@@ -436,17 +445,53 @@ impl AgentProvider {
                         }
                     },
                 );
-                Ok(completion_client.completion_model(&self.model, base_instructions))
+                Ok(completion_client.completion_model(model, base_instructions))
             }
             CompletionProvider::Openai => {
-                let credential = runtime.issue_openai_credential(run_id, claim_id).await?;
-                let model = stateless_responses_model(
+                let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
+                Ok(stateless_responses_model(
                     openai::OpenAIConfig::new(credential.api_key)
                         .with_instructions(base_instructions)
                         .connect(rig::rig_reqwest::shared().with_middleware(ZstdResponsesRequests)),
-                    &self.model,
-                );
-                Ok(model)
+                    model,
+                ))
+            }
+            CompletionProvider::Anthropic => {
+                let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
+                Ok(anthropic::messages_model(
+                    &anthropic::ANTHROPIC,
+                    credential.api_key,
+                    model,
+                    None,
+                    base_instructions,
+                    self.cache_write_ttl.as_deref(),
+                ))
+            }
+            CompletionProvider::Vercel | CompletionProvider::Openrouter => {
+                let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
+                let (messages_host, responses_url) = match provider {
+                    CompletionProvider::Vercel => {
+                        (&anthropic::VERCEL, "https://ai-gateway.vercel.sh/v1")
+                    }
+                    _ => (&anthropic::OPENROUTER, "https://openrouter.ai/api/v1"),
+                };
+                if self.model_route.vendor == "anthropic" {
+                    return Ok(anthropic::messages_model(
+                        messages_host,
+                        credential.api_key,
+                        model,
+                        CompletionProvider::Anthropic.model_id(&self.model, &self.model_route),
+                        base_instructions,
+                        self.cache_write_ttl.as_deref(),
+                    ));
+                }
+                Ok(stateless_responses_model(
+                    openai::OpenAIConfig::new(credential.api_key)
+                        .with_base_url(responses_url)
+                        .with_instructions(base_instructions)
+                        .connect(rig::rig_reqwest::shared()),
+                    model,
+                ))
             }
             CompletionProvider::Chatgpt => {
                 let completion_client = match (&self.chatgpt_client, &self.chatgpt_credentials) {
@@ -458,18 +503,14 @@ impl AgentProvider {
                         ));
                     }
                 };
-                Ok(completion_client.completion_model(
-                    &self.model,
-                    base_instructions,
-                    &self.thread_id,
-                ))
+                Ok(completion_client.completion_model(model, base_instructions, &self.thread_id))
             }
             CompletionProvider::Claude => {
                 let credential = runtime.issue_claude_credential(run_id, claim_id).await?;
                 self.claude_code
                     .completion_model(
                         credential.token,
-                        &self.model,
+                        model,
                         base_instructions,
                         &self.cwd,
                         self.claude_resume.clone(),

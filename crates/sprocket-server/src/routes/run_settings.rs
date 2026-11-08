@@ -35,7 +35,10 @@ pub(crate) async fn resolve(
 ) -> anyhow::Result<ResolvedSettings> {
     let providers = rpc.query::<Vec<CompletionProvider>>(
         "uiPreferences:getMyEnabledProviders",
-        BTreeMap::from([("includeClaude".to_string(), convex::Value::Boolean(true))]),
+        BTreeMap::from([(
+            "knownProviders".to_string(),
+            CompletionProvider::known_providers_arg(),
+        )]),
     );
     let catalog = async { model_catalog(&gateway_url()?).await };
     let (providers, catalog) = tokio::time::timeout(RESOLVE_TIMEOUT, async {

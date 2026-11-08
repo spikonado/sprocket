@@ -60,8 +60,10 @@ describe('theme preferences', () => {
 			'chatgpt'
 		]);
 		expect(
-			await alice.query(api.uiPreferences.getMyEnabledProviders, { includeClaude: true })
-		).toEqual(['spikonado', 'openai', 'chatgpt', 'claude']);
+			await alice.query(api.uiPreferences.getMyEnabledProviders, {
+				knownProviders: ['spikonado', 'claude', 'anthropic', 'vercel', 'openrouter']
+			})
+		).toEqual(['spikonado', 'claude', 'anthropic', 'vercel', 'openrouter']);
 
 		await alice.mutation(api.uiPreferences.setProviderOrder, {
 			providerOrder: [
@@ -76,8 +78,10 @@ describe('theme preferences', () => {
 			'openai'
 		]);
 		expect(
-			await alice.query(api.uiPreferences.getMyEnabledProviders, { includeClaude: true })
-		).toEqual(['chatgpt', 'openai', 'claude']);
+			await alice.query(api.uiPreferences.getMyEnabledProviders, {
+				knownProviders: ['openai', 'chatgpt', 'spikonado', 'anthropic']
+			})
+		).toEqual(['chatgpt', 'openai', 'anthropic']);
 	});
 
 	it('rejects a provider order that disables every provider', async () => {

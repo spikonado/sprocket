@@ -55,7 +55,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     assert!(vision.supports_images);
     assert!(vision.supports_fast);
     assert_eq!(vision.label, "Vision Model");
-    assert_eq!(vision.vendor, "openai");
+    assert_eq!(vision.route.vendor, "openai");
     assert_eq!(vision.context_budget.context_window_tokens, 100_000);
     assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
     assert_eq!(
@@ -70,7 +70,7 @@ fn reports_selected_model_metadata_from_one_payload() {
         .expect("long-context model");
     assert!(!long_context.supports_images);
     assert!(!long_context.supports_fast);
-    assert_eq!(long_context.vendor, "other");
+    assert_eq!(long_context.route.vendor, "other");
     assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     assert_eq!(long_context.usage_pricing, UsagePricing::default());
 }
@@ -106,7 +106,7 @@ fn removed_handoff_model_uses_an_available_model_on_the_previous_provider() {
         assert_eq!(handoff.completion_provider, provider);
         assert_eq!(handoff.selected_model, "vision-model");
         assert_eq!(handoff.reasoning_effort, "high");
-        assert_eq!(capabilities.vendor, "openai");
+        assert_eq!(capabilities.route.vendor, "openai");
     }
 }
 
@@ -137,12 +137,12 @@ fn removed_handoff_model_filters_the_default_for_the_previous_provider() {
             assert_eq!(handoff.selected_model, "long-context-model");
             assert_eq!(handoff.reasoning_effort, "none");
             assert!(!handoff.fast_mode);
-            assert_eq!(capabilities.vendor, "other");
+            assert_eq!(capabilities.route.vendor, "other");
         } else {
             assert_eq!(handoff.selected_model, "vision-model");
             assert_eq!(handoff.reasoning_effort, "high");
             assert!(handoff.fast_mode);
-            assert_eq!(capabilities.vendor, "openai");
+            assert_eq!(capabilities.route.vendor, "openai");
         }
     }
 }
@@ -165,7 +165,7 @@ fn listed_handoff_model_keeps_its_settings_except_unlisted_fast_mode() {
     assert_eq!(handoff.selected_model, "long-context-model");
     assert_eq!(handoff.reasoning_effort, "none");
     assert!(!handoff.fast_mode);
-    assert_eq!(capabilities.vendor, "other");
+    assert_eq!(capabilities.route.vendor, "other");
 }
 
 #[test]

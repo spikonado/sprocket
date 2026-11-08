@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    ClaudeCredential, CompletionProvider, CreateRunResponse, GatewayCredential, OpenAiCredential,
+    ApiKeyCredential, ClaudeCredential, CompletionProvider, CreateRunResponse, GatewayCredential,
     RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse,
 };
 use crate::workspace_context::HiddenPrompt;
@@ -216,7 +216,10 @@ impl RuntimeClient {
 
     pub(crate) async fn run_context(&self, run_id: &str) -> anyhow::Result<RunContextResponse> {
         let mut args = self.run_args(run_id);
-        args.insert("includeClaude".to_string(), Value::Boolean(true));
+        args.insert(
+            "knownProviders".to_string(),
+            CompletionProvider::known_providers_arg(),
+        );
         self.query_json("agentRuntime:getContext", args).await
     }
 
@@ -369,16 +372,16 @@ impl RuntimeClient {
         .await
     }
 
-    pub(crate) async fn issue_openai_credential(
+    pub(crate) async fn issue_api_key(
         &self,
         run_id: &str,
         claim_id: &str,
-    ) -> anyhow::Result<OpenAiCredential> {
-        self.action_json(
-            "providerCredentials:issueOpenAiCredential",
-            self.run_args_with_claim(run_id, claim_id),
-        )
-        .await
+        provider: CompletionProvider,
+    ) -> anyhow::Result<ApiKeyCredential> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("provider".to_string(), provider.as_str().into());
+        self.action_json("providerCredentials:issueApiKey", args)
+            .await
     }
 
     pub(crate) async fn issue_claude_credential(
