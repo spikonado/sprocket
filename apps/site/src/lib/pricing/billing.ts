@@ -1,4 +1,5 @@
 import { api } from '@convex/_generated/api';
+import { PUBLIC_CONVEX_URL } from 'astro:env/client';
 import type { ConvexHttpClient } from 'convex/browser';
 import { ConvexError } from 'convex/values';
 import * as z from 'zod/mini';
@@ -23,7 +24,7 @@ const checkoutAttemptSchema = z.object({
 export type CheckoutAttempt = z.infer<typeof checkoutAttemptSchema>;
 
 function convexClient(token?: string): ConvexHttpClient {
-	const url = import.meta.env.PUBLIC_CONVEX_URL?.trim();
+	const url = PUBLIC_CONVEX_URL?.trim();
 
 	if (!url) throw new Error('Billing is not configured (missing PUBLIC_CONVEX_URL).');
 

@@ -2,7 +2,7 @@
 
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
-import { defineConfig } from 'astro/config';
+import { defineConfig, envField } from 'astro/config';
 import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
 import posthog from '@posthog/rollup-plugin';
@@ -45,6 +45,18 @@ export default defineConfig({
 		react()
 	],
 	adapter: vercel(),
+	env: {
+		schema: {
+			PUBLIC_POSTHOG_KEY: envField.string({ context: 'client', access: 'public', optional: true }),
+			PUBLIC_CONVEX_URL: envField.string({ context: 'client', access: 'public', optional: true }),
+			WORKOS_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+			WORKOS_COOKIE_PASSWORD: envField.string({
+				context: 'server',
+				access: 'secret',
+				optional: true
+			})
+		}
+	},
 
 	vite: {
 		plugins: [tailwindcss(), ...posthogSourceMaps],

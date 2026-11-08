@@ -1,7 +1,8 @@
+import { PUBLIC_POSTHOG_KEY } from 'astro:env/client';
 import posthog from 'posthog-js';
 import type { AnalyticsEvents } from '@/lib/analytics/events';
 
-const POSTHOG_KEY = import.meta.env.PUBLIC_POSTHOG_KEY?.trim();
+const POSTHOG_KEY = PUBLIC_POSTHOG_KEY?.trim();
 
 /**
  * PostHog autocapture adds `data-ph-capture-attribute-*` values from a clicked element and its
