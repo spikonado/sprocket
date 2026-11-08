@@ -40,12 +40,21 @@ export default defineConfig({
 	session: false,
 	security: {
 		csp: {
-			// Session replay's canvas encoder runs in a blob: worker.
-			directives: ["worker-src 'self' blob:"],
-			// PostHog loads its remote config and lazy extensions from the reverse proxy.
-			scriptDirective: { resources: ["'self'", 'https://kpg.spikonado.com'] },
-			// The Sprocket demos set `--step` in `style` attributes, which hashes can't cover.
-			styleDirective: { resources: [{ resource: "'unsafe-inline'", kind: 'attribute' }] }
+			// Sources follow https://posthog.com/docs/advanced/content-security-policy so replay,
+			// surveys, and the PostHog and Vercel toolbars all load.
+			directives: ["worker-src 'self' blob: data:"],
+			scriptDirective: {
+				resources: [
+					"'self'",
+					'https://kpg.spikonado.com',
+					'https://*.posthog.com',
+					'https://vercel.live'
+				]
+			},
+			// Surveys and both toolbars inject <style> elements, which hashes can't cover.
+			styleDirective: {
+				resources: ["'self'", "'unsafe-inline'", 'https://*.posthog.com', 'https://vercel.live']
+			}
 		}
 	},
 	integrations: [
