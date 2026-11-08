@@ -14,9 +14,9 @@ impl NativeAuthManager {
             .context(NATIVE_SESSION_SIGNED_OUT)
     }
 
-    async fn remote_device_status(&self, session_token: &str) -> NativeLoginStatus {
+    async fn remote_device_status(&self, login_id: &str) -> NativeLoginStatus {
         let session = self.session.lock().await;
-        let Some(attempt) = session.remote_devices.get(session_token) else {
+        let Some(attempt) = session.remote_devices.get(login_id) else {
             return NativeLoginStatus::SignedOut;
         };
         match &attempt.result {
@@ -251,11 +251,11 @@ async fn manager_with_response(
 
 async fn wait_for_remote_device_status(
     manager: &Arc<NativeAuthManager>,
-    session_token: &str,
+    login_id: &str,
 ) -> NativeLoginStatus {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let status = manager.remote_device_status(session_token).await;
+            let status = manager.remote_device_status(login_id).await;
             if !matches!(status, NativeLoginStatus::Pending) {
                 return status;
             }
@@ -387,19 +387,19 @@ async fn remote_device_login_matches_the_host_owner_without_replacing_its_creden
         .unwrap();
     assert!(login.authorization_url.contains("ABCD-EFGH"));
     assert!(matches!(
-        wait_for_remote_device_status(&manager, &browser_session).await,
+        wait_for_remote_device_status(&manager, &login.login_id).await,
         NativeLoginStatus::Authenticated { user, .. } if user.id == "user_123"
     ));
     assert!(matches!(
         manager
-            .complete_remote_device_login(&browser_session)
+            .complete_remote_device_login(&browser_session, &login.login_id)
             .await
             .unwrap(),
         NativeLoginStatus::Authenticated { user, .. } if user.id == "user_123"
     ));
     assert_eq!(local.user(&browser_session).as_deref(), Some("user_123"));
     assert!(matches!(
-        manager.remote_device_status(&browser_session).await,
+        manager.remote_device_status(&login.login_id).await,
         NativeLoginStatus::SignedOut
     ));
 
@@ -421,12 +421,12 @@ async fn remote_device_login_rejects_another_account_without_changing_the_host_o
     let manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
     manager.authenticate_for_test("user_123").await;
 
-    manager
+    let login = manager
         .start_remote_device_login("browser-session".into())
         .await
         .unwrap();
     assert!(matches!(
-        wait_for_remote_device_status(&manager, "browser-session").await,
+        wait_for_remote_device_status(&manager, &login.login_id).await,
         NativeLoginStatus::Failed { error } if error.contains("same account")
     ));
 
@@ -450,7 +450,7 @@ async fn remote_device_login_fails_if_the_host_owner_changes_while_polling() {
         })
         .await;
     manager.authenticate_for_test("user_123").await;
-    manager
+    let login = manager
         .start_remote_device_login("browser-session".into())
         .await
         .unwrap();
@@ -458,7 +458,7 @@ async fn remote_device_login_fails_if_the_host_owner_changes_while_polling() {
     manager.authenticate_for_test("user_other").await;
 
     assert!(matches!(
-        wait_for_remote_device_status(&manager, "browser-session").await,
+        wait_for_remote_device_status(&manager, &login.login_id).await,
         NativeLoginStatus::Failed { error } if error.contains("same account")
     ));
     let host = manager.browser_session(false).await.unwrap().unwrap();
@@ -479,7 +479,7 @@ async fn host_sign_out_cancels_remote_device_login() {
     })
     .await;
     manager.authenticate_for_test("user_123").await;
-    manager
+    let login = manager
         .start_remote_device_login("browser-session".into())
         .await
         .unwrap();
@@ -487,7 +487,7 @@ async fn host_sign_out_cancels_remote_device_login() {
     manager.sign_out().await.unwrap();
 
     assert!(matches!(
-        manager.remote_device_status("browser-session").await,
+        manager.remote_device_status(&login.login_id).await,
         NativeLoginStatus::SignedOut
     ));
 }
@@ -506,11 +506,14 @@ async fn remote_device_login_limit_counts_only_active_attempts_when_full() {
     )
     .await;
     manager.authenticate_for_test("user_123").await;
+    let mut logins = Vec::new();
     for index in 0..32 {
-        manager
-            .start_remote_device_login(format!("browser-{index}"))
+        let session_token = format!("browser-{index}");
+        let login = manager
+            .start_remote_device_login(session_token.clone())
             .await
             .unwrap();
+        logins.push((session_token, login.login_id));
     }
 
     assert!(
@@ -522,19 +525,20 @@ async fn remote_device_login_limit_counts_only_active_attempts_when_full() {
             .contains("too many remote sign-ins")
     );
 
-    manager.cancel_remote_device_login("browser-0", None).await;
+    let (session_token, login_id) = logins.remove(0);
     manager
+        .cancel_remote_device_login(&session_token, &login_id)
+        .await;
+    let replacement = manager
         .start_remote_device_login("replacement".into())
         .await
         .unwrap();
-    for index in 1..32 {
+    logins.push(("replacement".into(), replacement.login_id));
+    for (session_token, login_id) in logins {
         manager
-            .cancel_remote_device_login(&format!("browser-{index}"), None)
+            .cancel_remote_device_login(&session_token, &login_id)
             .await;
     }
-    manager
-        .cancel_remote_device_login("replacement", None)
-        .await;
 }
 
 #[tokio::test]
@@ -626,7 +630,7 @@ async fn refresh_resumes_a_persisted_session_and_rotates_the_token() {
     assert_eq!(session.access_token, expected_access_token);
     assert_eq!(session.user, native_user());
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::Authenticated { .. }
     ));
     assert_eq!(store.token().as_deref(), Some("refresh-new"));
@@ -788,7 +792,9 @@ async fn failed_code_exchange_reports_why_sign_in_failed() {
             .is_err()
     );
     assert_eq!(
-        manager.status("paired-session").await,
+        manager
+            .login_status("paired-session", &login.login_id)
+            .await,
         NativeLoginStatus::Failed {
             error: "credential store unavailable".to_string()
         }
@@ -925,7 +931,7 @@ async fn unexpected_refresh_failure_preserves_the_session_for_retry() {
     );
     assert_eq!(store.token().as_deref(), Some("refresh-current"));
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::Authenticated { .. }
     ));
 }
@@ -1092,7 +1098,7 @@ async fn browser_session_is_none_when_signed_out() {
 
     assert!(manager.browser_session(false).await.unwrap().is_none());
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::SignedOut
     ));
 }
@@ -1113,7 +1119,7 @@ async fn browser_session_is_none_after_a_terminal_refresh_failure() {
     assert!(manager.browser_session(false).await.unwrap().is_none());
     assert_eq!(store.token(), None);
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::SignedOut
     ));
 }
@@ -1139,7 +1145,7 @@ async fn browser_session_errors_when_the_credential_store_cannot_load() {
             .contains("credential store unavailable")
     );
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::Unavailable { .. }
     ));
 }
@@ -1165,7 +1171,7 @@ async fn status_does_not_trust_a_stale_in_memory_user() {
     }
 
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::SignedOut
     ));
     assert!(manager.browser_session(false).await.unwrap().is_none());
@@ -1189,7 +1195,7 @@ async fn status_reports_unavailable_when_a_stale_user_cannot_refresh() {
     }
 
     assert!(matches!(
-        manager.status("paired-session").await,
+        manager.status().await,
         NativeLoginStatus::Unavailable { .. }
     ));
     assert!(manager.browser_session(false).await.is_err());

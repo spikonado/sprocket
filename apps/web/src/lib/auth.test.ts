@@ -4,6 +4,7 @@ import type { Store } from './store';
 import { z } from 'zod';
 import {
 	authState,
+	cancelDesktopSignIn,
 	convexAuthRetryPending,
 	convexAuthRetryVersion,
 	getAccessToken,
@@ -156,7 +157,9 @@ describe('installed and hosted auth', () => {
 			'/api/auth/native-session/token',
 			expect.objectContaining({ method: 'POST', credentials: 'include' })
 		);
-		expect(tokenBodies(fetch)).toEqual([{ forceRefreshToken: false }]);
+		expect(requestBodies(fetch, '/api/auth/native-session/token')).toEqual([
+			{ forceRefreshToken: false }
+		]);
 		expect(get(authState)).toMatchObject({
 			isReady: true,
 			isLoading: false,
@@ -429,7 +432,10 @@ describe('installed and hosted auth', () => {
 		const token = await getAccessToken({ forceRefreshToken: true });
 
 		expect(token).toBe('native-token');
-		expect(tokenBodies(fetch)).toEqual([{ forceRefreshToken: false }, { forceRefreshToken: true }]);
+		expect(requestBodies(fetch, '/api/auth/native-session/token')).toEqual([
+			{ forceRefreshToken: false },
+			{ forceRefreshToken: true }
+		]);
 		expect(localStorage.setItem).not.toHaveBeenCalled();
 		expect(get(authState)).not.toHaveProperty('accessToken');
 	});
@@ -461,34 +467,20 @@ describe('installed and hosted auth', () => {
 		await vi.advanceTimersByTimeAsync(3_100);
 		await login;
 		expect(polls).toBe(3);
+		expect(requestBodies(fetch, '/api/auth/desktop-login/result')).toEqual(
+			Array(3).fill({ loginId: 'login-1' })
+		);
 		expect(get(authState).user).toEqual(nativeUser);
 		expect(fetch.mock.calls.filter(([input]) => requestUrl(input).endsWith('/start'))).toHaveLength(
 			1
 		);
 	});
 
-	it('times out a hung sign-in start so the next sign-in can run', async () => {
+	it('times out a hung sign-in start', async () => {
 		stubInstalledWindow();
 		const startTimeout = new AbortController();
 		const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(startTimeout.signal);
-		let starts = 0;
-
-		stubFetch({
-			desktopStart: (init) => {
-				starts += 1;
-
-				if (starts === 1) {
-					return rejectOnAbort(init?.signal);
-				}
-
-				return jsonResponse(200, {
-					authorizationUrl: 'https://authkit.example/native',
-					loginId: 'login-2'
-				});
-			},
-			desktopResult: () => jsonResponse(200, { status: 'authenticated', user: nativeUser }),
-			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
-		});
+		stubFetch({ desktopStart: (init) => rejectOnAbort(init?.signal) });
 
 		const hungSignIn = signIn();
 		startTimeout.abort(new DOMException('The operation timed out.', 'TimeoutError'));
@@ -497,9 +489,28 @@ describe('installed and hosted auth', () => {
 		expect(get(authState).error).toBe(
 			'The local server took too long to start sign-in. Try again.'
 		);
+	});
 
-		await signIn();
-		expect(get(authState).user).toEqual(nativeUser);
+	it('cancels a sign-in on the server when its start finishes after the user cancelled', async () => {
+		stubInstalledWindow();
+		const start = deferred<Response>();
+		const fetch = stubFetch({ desktopStart: () => start.promise });
+
+		const login = signIn();
+		await vi.waitFor(() =>
+			expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/start')).toEqual(['POST'])
+		);
+		cancelDesktopSignIn();
+		start.resolve(
+			jsonResponse(200, { authorizationUrl: 'https://authkit.example/late', loginId: 'login-late' })
+		);
+		await login;
+
+		expect(requestBodies(fetch, '/api/auth/desktop-login/cancel')).toEqual([
+			{ loginId: 'login-late' }
+		]);
+		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual([]);
+		expect(get(authState)).toMatchObject({ isWaitingForBrowserSignIn: false, error: null });
 	});
 
 	it('shares inflight native token requests', async () => {
@@ -516,7 +527,9 @@ describe('installed and hosted auth', () => {
 
 		expect(await first).toBe('shared-token');
 		expect(await second).toBe('shared-token');
-		expect(tokenBodies(fetch)).toEqual([{ forceRefreshToken: false }]);
+		expect(requestBodies(fetch, '/api/auth/native-session/token')).toEqual([
+			{ forceRefreshToken: false }
+		]);
 	});
 
 	it('ignores a native token that finishes after an account switch', async () => {
@@ -692,32 +705,16 @@ function requestUrl(input: RequestInfo | URL): string {
 	return input;
 }
 
-function tokenBodies(fetch: ReturnType<typeof stubFetch>) {
-	const bodies: NativeSessionTokenRequest[] = [];
-
-	for (const [input, init] of fetch.mock.calls) {
-		if (!requestUrl(input).includes('/api/auth/native-session/token')) {
-			continue;
-		}
-
-		if ((init?.method ?? 'GET').toUpperCase() !== 'POST') {
-			continue;
-		}
-
-		const parsed = nativeTokenRequestSchema.safeParse(JSON.parse(String(init?.body ?? '{}')));
-
-		if (parsed.success) {
-			bodies.push(parsed.data);
-		}
-	}
-
-	return bodies;
-}
-
 function fetchMethodCalls(fetch: ReturnType<typeof stubFetch>, path: string) {
 	return fetch.mock.calls
 		.filter(([input]) => requestUrl(input).endsWith(path))
 		.map(([, init]) => (init?.method ?? 'GET').toUpperCase());
+}
+
+function requestBodies(fetch: ReturnType<typeof stubFetch>, path: string) {
+	return fetch.mock.calls
+		.filter(([input]) => requestUrl(input).endsWith(path))
+		.map(([, init]) => JSON.parse(String(init?.body)));
 }
 
 function unhandled(input: RequestInfo | URL, init?: RequestInit) {

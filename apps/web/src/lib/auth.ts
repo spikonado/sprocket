@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { ensureLocalSession, resolveLocalApiBaseUrl } from '$lib/local/client';
 import { localSocket } from '$lib/local/socket';
-import { LocalResponseError } from '$lib/local/transport';
+import { isServerRejection } from '$lib/local/transport';
 import type { SubscriptionHandlers } from '$lib/types/sprocket';
 import { createStore, selectStore } from './store';
 
@@ -124,8 +124,6 @@ let isSigningOut = false;
 
 let desktopSignInAttempt: DesktopSignInAttempt | null = null;
 
-let desktopLoginStartQueue: Promise<void> = Promise.resolve();
-
 let authGeneration = 0;
 
 let nativeAuthWatch: AbortController | null = null;
@@ -142,7 +140,6 @@ export function resetAuthRuntime() {
 	clearConvexRecovery();
 	desktopSignInAttempt?.abort.abort();
 	desktopSignInAttempt = null;
-	desktopLoginStartQueue = Promise.resolve();
 	authClientPromise = null;
 	authConfigPromise = null;
 	bootstrapClient = null;
@@ -239,9 +236,16 @@ function invalidateAuthGeneration() {
 	clearConvexRecovery();
 	authGeneration += 1;
 	nativeTokenInflight = null;
-	// Superseded sign-outs and Convex retries return early without settling these.
+	settleSupersededOperations();
+}
+
+function settleSupersededOperations() {
 	convexAuthRetryPending.set(false);
 	authState.update((current) => (current.isLoading ? { ...current, isLoading: false } : current));
+}
+
+function reinstallConvexAuth() {
+	convexAuthRetryVersion.update((version) => version + 1);
 }
 
 function getAuthBootstrapClient() {
@@ -448,8 +452,7 @@ function watchNativeAuthentication() {
 		signal: watch.signal,
 		onEvent: onChange,
 		onError: (error) => {
-			// The server rejected this session; the next auth initialization subscribes again.
-			if (!(error instanceof LocalResponseError)) return;
+			if (!isServerRejection(error)) return;
 			watch.abort();
 
 			if (nativeAuthWatch === watch) nativeAuthWatch = null;
@@ -705,6 +708,7 @@ async function errorMessageFromFailedResponse(
 }
 
 async function startDesktopLogin(
+	attempt: DesktopSignInAttempt,
 	flow: AuthFlow
 ): Promise<{ authorizationUrl: string; loginId: string }> {
 	let response: Response;
@@ -739,7 +743,23 @@ async function startDesktopLogin(
 		throw new Error('Local server returned an invalid desktop sign-in URL.');
 	}
 
+	attempt.loginId = payload.data.loginId;
+
+	if (!isCurrentDesktopSignIn(attempt)) {
+		cancelServerLogin(attempt.loginId);
+		throw new DOMException('Aborted', 'AbortError');
+	}
+
 	return payload.data;
+}
+
+function cancelServerLogin(loginId: string) {
+	void fetch('/api/auth/desktop-login/cancel', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ loginId })
+	}).catch(() => {});
 }
 
 function isCurrentDesktopSignIn(attempt: DesktopSignInAttempt): boolean {
@@ -752,40 +772,15 @@ function requireCurrentDesktopSignIn(attempt: DesktopSignInAttempt): void {
 	}
 }
 
-async function startDesktopLoginInOrder(
-	attempt: DesktopSignInAttempt,
-	flow: AuthFlow
-): Promise<string> {
-	const previousStart = desktopLoginStartQueue;
-	let releaseStart!: () => void;
-	desktopLoginStartQueue = new Promise<void>((resolve) => {
-		releaseStart = resolve;
-	});
-
-	await previousStart;
-
-	try {
-		requireCurrentDesktopSignIn(attempt);
-
-		// The server keeps only the last /start it handles, so starts run one at a time.
-		// A timed-out start can still land after a later one.
-		const { authorizationUrl, loginId } = await startDesktopLogin(flow);
-		attempt.loginId = loginId;
-		requireCurrentDesktopSignIn(attempt);
-
-		return authorizationUrl;
-	} finally {
-		releaseStart();
-	}
-}
-
-async function fetchDesktopLoginResult(signal: AbortSignal) {
+async function fetchDesktopLoginResult(loginId: string, signal: AbortSignal) {
 	let response: Response;
 
 	try {
 		response = await fetch('/api/auth/desktop-login/result', {
 			method: 'POST',
 			credentials: 'include',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ loginId }),
 			signal: AbortSignal.any([signal, AbortSignal.timeout(DESKTOP_LOGIN_REQUEST_TIMEOUT_MS)])
 		});
 	} catch (error) {
@@ -805,7 +800,10 @@ async function fetchDesktopLoginResult(signal: AbortSignal) {
 	return desktopLoginResultSchema.parse(await response.json());
 }
 
-async function pollDesktopLoginResult(signal: AbortSignal): Promise<{ id: string; email: string }> {
+async function pollDesktopLoginResult(
+	loginId: string,
+	signal: AbortSignal
+): Promise<{ id: string; email: string }> {
 	const startedAt = Date.now();
 
 	while (!signal.aborted) {
@@ -813,7 +811,7 @@ async function pollDesktopLoginResult(signal: AbortSignal): Promise<{ id: string
 			throw new Error('Sign-in timed out. Try again.');
 		}
 
-		const result = await fetchDesktopLoginResult(signal);
+		const result = await fetchDesktopLoginResult(loginId, signal);
 
 		if (result?.status === 'failed') {
 			throw new Error(result.error || 'Desktop sign-in failed.');
@@ -848,7 +846,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 		throw new Error('Machine browser sign-in is unavailable.');
 	}
 
-	stopDesktopSignInPolling();
+	abandonDesktopSignIn();
 
 	const attempt: DesktopSignInAttempt = {
 		abort: new AbortController(),
@@ -867,17 +865,16 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 	try {
 		await establishLocalSession();
 		requireCurrentDesktopSignIn(attempt);
-		const authorizeUrl = await startDesktopLoginInOrder(attempt, flow);
-		requireCurrentDesktopSignIn(attempt);
+		const { authorizationUrl, loginId } = await startDesktopLogin(attempt, flow);
 
 		authState.update((current) => ({
 			...current,
-			browserSignInUrl: authorizeUrl
+			browserSignInUrl: authorizationUrl
 		}));
 		requireCurrentDesktopSignIn(attempt);
 
 		if (bridge) {
-			void bridge.openExternal(authorizeUrl).catch((error) => {
+			void bridge.openExternal(authorizationUrl).catch((error) => {
 				if (!isCurrentDesktopSignIn(attempt)) {
 					return;
 				}
@@ -889,7 +886,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 				}));
 			});
 		} else {
-			const opened = window.open(authorizeUrl, '_blank');
+			const opened = window.open(authorizationUrl, '_blank');
 
 			if (opened) {
 				try {
@@ -905,7 +902,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 			}
 		}
 
-		const nativeUser = await pollDesktopLoginResult(attempt.abort.signal);
+		const nativeUser = await pollDesktopLoginResult(loginId, attempt.abort.signal);
 		requireCurrentDesktopSignIn(attempt);
 
 		if (bridge) {
@@ -1038,40 +1035,22 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 	}
 }
 
-function stopDesktopSignInPolling() {
-	desktopSignInAttempt?.abort.abort();
+function abandonDesktopSignIn() {
+	const attempt = desktopSignInAttempt;
 	desktopSignInAttempt = null;
+	attempt?.abort.abort();
+
+	if (attempt?.loginId) cancelServerLogin(attempt.loginId);
 }
 
 export function cancelDesktopSignIn() {
-	const cancelledAttempt = desktopSignInAttempt;
-	const pendingStarts = desktopLoginStartQueue;
-	stopDesktopSignInPolling();
+	abandonDesktopSignIn();
 	authState.update((current) => ({
 		...current,
 		isWaitingForBrowserSignIn: false,
 		browserSignInUrl: null,
 		error: null
 	}));
-
-	if (!cancelledAttempt) {
-		return;
-	}
-
-	void pendingStarts
-		.then(async () => {
-			if (!cancelledAttempt.loginId) {
-				return;
-			}
-
-			await fetch('/api/auth/desktop-login/cancel', {
-				method: 'POST',
-				credentials: 'include',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ loginId: cancelledAttempt.loginId })
-			});
-		})
-		.catch(() => {});
 }
 
 export function clearDesktopSignInOpenError() {
@@ -1266,7 +1245,7 @@ export async function getConvexAccessToken(options: { forceRefreshToken: boolean
 				convexRecoveryTimer = null;
 
 				if (generation === authGeneration && authState.getSnapshot().user) {
-					convexAuthRetryVersion.update((version) => version + 1);
+					reinstallConvexAuth();
 				}
 			}, 5_000);
 		}
@@ -1393,9 +1372,7 @@ export async function retryConvexAuthentication() {
 			throw new Error('Your session has expired. Sign in again.');
 		}
 
-		// Bump version so setupAuth reinstalls auth; clear isLoading so provider
-		// loading/auth can transition and Convex can confirm the fresh token.
-		convexAuthRetryVersion.update((version) => version + 1);
+		reinstallConvexAuth();
 		authState.update((current) => ({ ...current, isLoading: false, error: null }));
 	} catch (error) {
 		if (generation !== authGeneration) return;

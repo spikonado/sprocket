@@ -136,7 +136,7 @@ import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
-import { LocalResponseError } from '$lib/local/transport';
+import { isServerRejection } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import { useLocalCliStatus } from '$lib/home/local-cli-status';
 import type { LocalApi, ExecutorJob, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
@@ -1876,10 +1876,9 @@ export default function App({
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					clearLaunch();
-					// The server answered, so any run it created has already failed.
 					recoverSubmission(
 						error.message,
-						error instanceof LocalResponseError ? crypto.randomUUID() : undefined
+						isServerRejection(error) ? crypto.randomUUID() : undefined
 					);
 				},
 				onStarted: (runId, createdThreadId) => {

@@ -40,7 +40,7 @@ struct DesktopLoginCallbackQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DesktopLoginCancelRequest {
+struct DesktopLoginRequest {
     login_id: String,
 }
 
@@ -331,14 +331,22 @@ async fn desktop_login_result(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
+    Json(payload): Json<DesktopLoginRequest>,
 ) -> Result<Json<NativeLoginStatus>, ApiError> {
     let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let login_id = payload.login_id.as_str();
     let status = match connection {
-        BrowserConnection::Loopback => state.host.native_auth.status(&session_token).await,
+        BrowserConnection::Loopback => {
+            state
+                .host
+                .native_auth
+                .login_status(&session_token, login_id)
+                .await
+        }
         BrowserConnection::Https => state
             .host
             .native_auth
-            .complete_remote_device_login(&session_token)
+            .complete_remote_device_login(&session_token, login_id)
             .await
             .map_err(ApiError::internal)?,
     };
@@ -356,26 +364,23 @@ async fn desktop_login_cancel(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<DesktopLoginCancelRequest>,
+    Json(payload): Json<DesktopLoginRequest>,
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
     let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let login_id = payload.login_id.as_str();
     match connection {
         BrowserConnection::Loopback => {
             state
                 .host
                 .native_auth
-                .cancel_login(&session_token, payload.login_id.trim())
+                .cancel_login(&session_token, login_id)
                 .await;
         }
         BrowserConnection::Https => {
-            let login_id = payload.login_id.trim();
             state
                 .host
                 .native_auth
-                .cancel_remote_device_login(
-                    &session_token,
-                    (!login_id.is_empty()).then_some(login_id),
-                )
+                .cancel_remote_device_login(&session_token, login_id)
                 .await;
         }
     }
@@ -418,7 +423,7 @@ async fn browser_session_sign_out(
     state
         .host
         .native_auth
-        .cancel_remote_device_login(&session_token, None)
+        .cancel_remote_device_logins(&session_token)
         .await;
     state
         .auth

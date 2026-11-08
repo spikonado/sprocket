@@ -80,6 +80,28 @@ fn session_cookie(session_token: &str) -> String {
     format!("{}={session_token}", crate::SESSION_COOKIE_NAME)
 }
 
+async fn login_result(
+    app: &axum::Router,
+    session_token: &str,
+    login_id: &str,
+) -> serde_json::Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/desktop-login/result")
+                .header(header::COOKIE, session_cookie(session_token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"loginId":"{login_id}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    read_json(response).await
+}
+
 async fn start_login(app: &axum::Router, session_token: &str) -> (String, serde_json::Value) {
     let response = app
         .clone()
@@ -663,19 +685,7 @@ async fn provider_error_terminates_pending_attempt() {
     let html = read_text(callback).await;
     assert!(html.contains("access_denied"));
 
-    let result = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/desktop-login/result")
-                .header(header::COOKIE, session_cookie(&session_token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(result.status(), StatusCode::OK);
-    let payload = read_json(result).await;
+    let payload = login_result(&app, &session_token, &login_id).await;
     assert_eq!(payload["status"], "failed");
     assert!(
         payload["error"]
@@ -699,32 +709,14 @@ async fn concurrent_sessions_have_independent_pending_attempts() {
     let (login_b, _) = start_login(&app, &session_b).await;
     assert_ne!(login_a, login_b);
 
-    let status_b = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/desktop-login/result")
-                .header(header::COOKIE, session_cookie(&session_b))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(read_json(status_b).await["status"], "pending");
-
-    let status_a = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/desktop-login/result")
-                .header(header::COOKIE, session_cookie(&session_a))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(read_json(status_a).await["status"], "pending");
+    assert_eq!(
+        login_result(&app, &session_b, &login_b).await["status"],
+        "pending"
+    );
+    assert_eq!(
+        login_result(&app, &session_a, &login_a).await["status"],
+        "pending"
+    );
 }
 
 #[tokio::test]
@@ -767,14 +759,14 @@ async fn cancel_clears_pending_attempt() {
 }
 
 #[tokio::test]
-async fn stale_cancel_does_not_remove_replacement_attempt() {
+async fn attempts_in_one_session_are_independent() {
     let (state, session_token, _) = test_state(true).await;
     let app = router(state);
 
     let (old_login_id, _) = start_login(&app, &session_token).await;
     let (new_login_id, _) = start_login(&app, &session_token).await;
 
-    let stale_cancel = app
+    let cancel_old = app
         .clone()
         .oneshot(
             Request::builder()
@@ -787,24 +779,14 @@ async fn stale_cancel_does_not_remove_replacement_attempt() {
         )
         .await
         .unwrap();
-    assert_eq!(stale_cancel.status(), StatusCode::OK);
-
-    let result = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/desktop-login/result")
-                .header(header::COOKIE, session_cookie(&session_token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let payload = read_json(result).await;
-    assert_eq!(payload["status"], "pending");
+    assert_eq!(cancel_old.status(), StatusCode::OK);
+    assert_eq!(
+        login_result(&app, &session_token, &old_login_id).await["status"],
+        "signedOut"
+    );
 
     let callback = app
+        .clone()
         .oneshot(with_peer(
             Request::builder()
                 .uri(format!(
@@ -817,6 +799,11 @@ async fn stale_cancel_does_not_remove_replacement_attempt() {
         .await
         .unwrap();
     assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
+    assert!(read_text(callback).await.contains("access_denied"));
+    assert_eq!(
+        login_result(&app, &session_token, &new_login_id).await["status"],
+        "failed"
+    );
 }
 
 #[tokio::test]
@@ -852,7 +839,7 @@ async fn expired_attempt_cannot_complete() {
     let native_auth = Arc::clone(&state.host.native_auth);
     let app = router(state);
     let (login_id, _) = start_login(&app, &session_token).await;
-    native_auth.expire_login_for_test(&session_token).await;
+    native_auth.expire_login_for_test(&login_id).await;
 
     let callback = app
         .clone()
@@ -869,18 +856,7 @@ async fn expired_attempt_cannot_complete() {
         .unwrap();
     assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
 
-    let result = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/desktop-login/result")
-                .header(header::COOKIE, session_cookie(&session_token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let payload = read_json(result).await;
+    let payload = login_result(&app, &session_token, &login_id).await;
     assert_eq!(payload["status"], "signedOut");
 }
 
@@ -909,18 +885,7 @@ async fn non_loopback_peer_cannot_complete_callback() {
     let html = read_text(callback).await;
     assert!(html.contains("only available from this machine"));
 
-    let result = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/desktop-login/result")
-                .header(header::COOKIE, session_cookie(&session_token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let payload = read_json(result).await;
+    let payload = login_result(&app, &session_token, &login_id).await;
     assert_eq!(payload["status"], "pending");
 }
 

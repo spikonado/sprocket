@@ -10,6 +10,12 @@ pub(super) struct PendingDeviceLogin {
     pub result: Option<Result<NativeUser, String>>,
 }
 
+pub(super) struct RemoteDeviceLogin {
+    session_token: String,
+    pub cancel: CancellationToken,
+    pub result: Option<Result<NativeUser, String>>,
+}
+
 impl NativeAuthManager {
     pub async fn select_credential_store(
         self: &Arc<Self>,
@@ -146,7 +152,7 @@ impl NativeAuthManager {
                 }
             }
         }
-        self.status(session_token).await
+        self.status().await
     }
 
     pub async fn cancel_device_login(&self, session_token: &str) {
@@ -174,32 +180,28 @@ impl NativeAuthManager {
                 session.login_generation == generation,
                 "login was invalidated by another authentication operation"
             );
-            if !session.remote_devices.contains_key(&session_token)
-                && session.remote_devices.len() >= MAX_PENDING_REMOTE_LOGINS
+            if session.remote_devices.len() >= MAX_PENDING_REMOTE_LOGINS
                 && let Some(completed) = session
                     .remote_devices
                     .iter()
                     .find(|(_, attempt)| attempt.result.is_some())
-                    .map(|(token, _)| token.clone())
+                    .map(|(id, _)| id.clone())
                 && let Some(attempt) = session.remote_devices.remove(&completed)
             {
                 attempt.cancel.cancel();
             }
             anyhow::ensure!(
-                session.remote_devices.contains_key(&session_token)
-                    || session.remote_devices.len() < MAX_PENDING_REMOTE_LOGINS,
+                session.remote_devices.len() < MAX_PENDING_REMOTE_LOGINS,
                 "too many remote sign-ins are pending"
             );
-            if let Some(previous) = session.remote_devices.insert(
-                session_token.clone(),
-                PendingDeviceLogin {
-                    id: id.clone(),
+            session.remote_devices.insert(
+                id.clone(),
+                RemoteDeviceLogin {
+                    session_token: session_token.clone(),
                     cancel: cancel.clone(),
                     result: None,
                 },
-            ) {
-                previous.cancel.cancel();
-            }
+            );
         }
         let authorization = match timeout(
             CLIENT_CONFIG_TIMEOUT,
@@ -209,8 +211,7 @@ impl NativeAuthManager {
         {
             Ok(Ok(authorization)) => authorization,
             result => {
-                self.cancel_remote_device_login(&session_token, Some(&id))
-                    .await;
+                self.cancel_remote_device_login(&session_token, &id).await;
                 return match result {
                     Ok(Err(error)) => Err(error.into()),
                     Err(error) => Err(error).context("device authorization timed out"),
@@ -241,22 +242,16 @@ impl NativeAuthManager {
         let (expires, interval, authorization_url) = match setup {
             Ok(setup) => setup,
             Err(error) => {
-                self.cancel_remote_device_login(&session_token, Some(&id))
-                    .await;
+                self.cancel_remote_device_login(&session_token, &id).await;
                 return Err(error);
             }
         };
         let current = {
             let session = self.session.lock().await;
-            session.login_generation == generation
-                && session
-                    .remote_devices
-                    .get(&session_token)
-                    .is_some_and(|attempt| attempt.id == id)
+            session.login_generation == generation && session.remote_devices.contains_key(&id)
         };
         if !current {
-            self.cancel_remote_device_login(&session_token, Some(&id))
-                .await;
+            self.cancel_remote_device_login(&session_token, &id).await;
             anyhow::bail!("login was invalidated by another authentication operation");
         }
         let owner_id = owner.id;
@@ -294,16 +289,10 @@ impl NativeAuthManager {
                 Err(_) => Err("Device login expired. Try again.".to_string()),
             };
             let mut session = manager.session.lock().await;
-            if cancel.is_cancelled()
-                || session.login_generation != generation
-                || !session
-                    .remote_devices
-                    .get(&session_token)
-                    .is_some_and(|attempt| attempt.id == task_id)
-            {
+            if cancel.is_cancelled() || session.login_generation != generation {
                 return;
             }
-            if let Some(attempt) = session.remote_devices.get_mut(&session_token) {
+            if let Some(attempt) = session.remote_devices.get_mut(&task_id) {
                 attempt.result = Some(result);
             }
         });
@@ -316,9 +305,14 @@ impl NativeAuthManager {
     pub async fn complete_remote_device_login(
         &self,
         session_token: &str,
+        login_id: &str,
     ) -> anyhow::Result<NativeLoginStatus> {
         let mut session = self.session.lock().await;
-        let Some(attempt) = session.remote_devices.get(session_token) else {
+        let Some(attempt) = session
+            .remote_devices
+            .get(login_id)
+            .filter(|attempt| attempt.session_token == session_token)
+        else {
             return Ok(NativeLoginStatus::SignedOut);
         };
         let user = match &attempt.result {
@@ -342,7 +336,7 @@ impl NativeAuthManager {
             .as_ref()
             .context("local browser sessions are unavailable")?;
         browser_sessions.bind_user(session_token, &user.id).await?;
-        if let Some(attempt) = session.remote_devices.remove(session_token) {
+        if let Some(attempt) = session.remote_devices.remove(login_id) {
             attempt.cancel.cancel();
         }
         Ok(NativeLoginStatus::Authenticated {
@@ -351,15 +345,29 @@ impl NativeAuthManager {
         })
     }
 
-    pub async fn cancel_remote_device_login(&self, session_token: &str, login_id: Option<&str>) {
+    pub async fn cancel_remote_device_login(&self, session_token: &str, login_id: &str) {
         let mut session = self.session.lock().await;
         if session
             .remote_devices
-            .get(session_token)
-            .is_some_and(|attempt| login_id.is_none_or(|login_id| attempt.id == login_id))
-            && let Some(attempt) = session.remote_devices.remove(session_token)
+            .get(login_id)
+            .is_some_and(|attempt| attempt.session_token == session_token)
+            && let Some(attempt) = session.remote_devices.remove(login_id)
         {
             attempt.cancel.cancel();
         }
+    }
+
+    pub async fn cancel_remote_device_logins(&self, session_token: &str) {
+        self.session
+            .lock()
+            .await
+            .remote_devices
+            .retain(|_, attempt| {
+                let owned = attempt.session_token == session_token;
+                if owned {
+                    attempt.cancel.cancel();
+                }
+                !owned
+            });
     }
 }
