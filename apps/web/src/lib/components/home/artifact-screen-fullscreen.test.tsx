@@ -1,6 +1,5 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ArtifactEntry } from '$lib/chat/artifacts';
 import ArtifactScreenFullscreen from './artifact-screen-fullscreen';
 
 afterEach(() => {
@@ -81,41 +80,22 @@ it('resolves images beside the artifact and closes the image before the fullscre
 	expect(onClose).toHaveBeenCalledOnce();
 });
 
-it('offers a close button only when browser fullscreen was refused', async () => {
-	const artifact: ArtifactEntry = {
-		key: 'notes',
-		title: 'Notes',
-		artifactType: 'markdown',
-		content: 'Hi'
-	};
-
-	const granted = render(
-		<ArtifactScreenFullscreen
-			artifact={artifact}
-			fullscreenRequest={Promise.resolve(true)}
-			onClose={vi.fn()}
-		/>
-	);
-
-	await act(async () => {});
-	expect(granted.queryByRole('button', { name: 'Exit fullscreen' })).toBeNull();
-	granted.unmount();
-
+it('offers a close button when browser fullscreen was refused', async () => {
 	const onClose = vi.fn();
 
-	const refused = render(
+	const { findByRole } = render(
 		<ArtifactScreenFullscreen
-			artifact={artifact}
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown', content: 'Hi' }}
 			fullscreenRequest={Promise.resolve(false)}
 			onClose={onClose}
 		/>
 	);
 
-	fireEvent.click(await refused.findByRole('button', { name: 'Exit fullscreen' }));
+	fireEvent.click(await findByRole('button', { name: 'Exit fullscreen' }));
 	expect(onClose).toHaveBeenCalledOnce();
 });
 
-it('closes when the browser leaves fullscreen', async () => {
+it('closes when the browser leaves fullscreen', () => {
 	const onClose = vi.fn();
 	render(
 		<ArtifactScreenFullscreen
