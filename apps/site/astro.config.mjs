@@ -66,7 +66,6 @@ export default defineConfig({
 			})
 		}
 	},
-	// Fonts load from the pinned @fontsource packages so the site serves the same files as the web app.
 	fonts: [
 		{
 			provider: fontProviders.local(),
