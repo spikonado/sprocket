@@ -17,7 +17,7 @@ Set `V=$(git rev-parse --show-toplevel)/.agents/skills/verify-sprocket/scripts` 
 | `$V/doctor.sh`             | Read-only health check. Exit 0 means the instance is worth driving.                                                  |
 | `$V/app-url.sh`            | Maps the tailnet's port 5173 to Vite and prints the app URL.                                                         |
 | `$V/ref.sh '<text>'`       | Prints the `@ref` of the first `snapshot -i` line containing the text.                                               |
-| `$V/login.sh`              | Signs the profile's host in with a device code.                                                                      |
+| `$V/login.sh`              | Signs the profile's host in with a device code. Needs this worktree's launched API.                                  |
 | `$V/stop.sh`               | Kills this worktree's leftover dev-port listeners.                                                                   |
 | `$V/scratch-repo.sh [dir]` | Creates or reuses a remote-less git repo and prints its path. Default `/tmp/verify-sprocket-scratch`.                |
 
@@ -48,6 +48,8 @@ Ready means these lines appeared and then `$V/doctor.sh` exits 0:
 
 Vite's "Port 5173 is in use on a wildcard address" is tailscale serve on the tailnet IP and is harmless.
 
+`[web] ✖ Schema validation failed.` with `Document with ID "..." in table "..." does not match the schema` means an unmerged branch pushed its schema to the shared dev deployment and left rows this worktree's schema rejects. The API still comes up, but Vite never starts and doctor reports `web: http://localhost:5173 -> 000`. Run Cleanup step 2 to release the ports, then report the table, the offending value and the branch that defines it (`git grep -l '<value>' $(git for-each-ref --format='%(refname)' refs/remotes) -- apps/web/convex`) to the user. That data belongs to someone else's verification, so leave it in place.
+
 Web edits hot-reload. For Rust edits, run Cleanup step 2 and launch again.
 
 ## Doctor
@@ -76,6 +78,7 @@ agent-browser snapshot -i
 [features/README.md](features/README.md) indexes one recipe per feature. Read it before driving.
 
 - `snapshot -i` gives refs. Plain `snapshot` also shows alerts, banners and errors.
+- `snapshot` doesn't print `aria-pressed`. Read it with `agent-browser get attr <ref> aria-pressed`.
 - Take refs with `$V/ref.sh`, for example `agent-browser click $($V/ref.sh 'button "Files"')`. Dialogs show in plain `snapshot` only, while `snapshot -i` lists their controls.
 - `click` has no right button. For a context menu, read the target's center from `agent-browser get box @eN`, round that center to integers, then run `mouse move <x> <y>`, `mouse down right` and `mouse up right`. Floats fail with "Missing arguments". This also reaches rows inside shadow roots, such as the Files tree. `matchMedia('(hover: hover)')` is false in this headless session, so CSS that reveals controls only inside `@media (hover: hover)` never applies; use the row's context menu instead of hovering.
 - A hot reload resets UI state such as the open side panel. Re-open it and re-take refs after each source edit.
@@ -98,7 +101,7 @@ Stop only what this run started, by PID.
 
 1. `agent-browser close`, which saves the restore state.
 2. Terminate the launch command session, then run `$V/stop.sh`, which kills the `vite dev` that terminating leaves behind.
-3. Reset the scratch repos: `git -C <dir> checkout -- . && git -C <dir> clean -fd` for `/tmp/verify-sprocket-scratch` and any other `$V/scratch-repo.sh` directory the run touched. Keep the directories. Removing a project from the list detaches it (see [features/projects.md](features/projects.md)); deleting a directory that is still attached leaves a dangling project in `~/.sprocket-dev-verify`.
+3. In `/tmp/verify-sprocket-scratch` and any other `$V/scratch-repo.sh` directory the run touched, revert only the files this run changed with `git -C <dir> checkout -- <paths>`, and delete only the files it created. Other agents share these directories, so `checkout -- .` and `git clean` destroy their work. Keep the directories. Removing a project from the list detaches it (see [features/projects.md](features/projects.md)); deleting a directory that is still attached leaves a dangling project in `~/.sprocket-dev-verify`.
 4. Keep `~/.sprocket-dev-verify`, the `verify-sprocket` restore state, `~/.cache/sprocket-verify-target` and the evidence in `/tmp/verify-sprocket/`. Keep the 5173 serve mapping too, since the stored sign-in belongs to that origin.
 
 Run cleanup after failed attempts too, so the next launch finds free ports.
@@ -107,4 +110,4 @@ Run cleanup after failed attempts too, so the next launch finds free ports.
 
 - Model replies need the dev deployment's `tiers` table, seeded from prod on 2026-10-19. A failed reply with "Subscription tiers are unavailable." means it is empty again. Report that to the user.
 - Billing and checkout fail on dev, because the seeded tiers have no product IDs.
-- This skill doesn't cover the desktop app, `bun run dev:desktop`, or the CLI, `sprocket run`.
+- Other surfaces have their own skills: `verify-sprocket-cli` for the `sprocket` CLI, `verify-sprocket-desktop` for the Electron app, and `verify-sprocket-site` for the marketing site.

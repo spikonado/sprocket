@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Verification stand-in on cli.sh's PATH: records the URL instead of opening a browser.
+printf '%s xdg-open %s\n' "$(date -Is)" "$*" >>"$VERIFY_CLI_OPENED"

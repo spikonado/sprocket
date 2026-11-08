@@ -16,7 +16,11 @@ Proof follows Evidence in `SKILL.md`. Report an unreachable path as a failure wi
 
 - [Sign-in](./sign-in.md): the signed-out gate, host and browser device codes, persistence across restarts.
 - [Projects](./projects.md): adding from the empty state and the project menu, switching projects, filtering the inbox by project, removing a project from the list.
-- [Threads](./threads.md): sending a prompt, the model reply, stopping a run, renaming and settling, the transcript after reload.
-- [Side panel](./side-panel.md): opening, the view picker, tabs, full workspace, closing and restoring.
+- [Threads](./threads.md): sending a prompt, the model reply, stopping a run, renaming and settling, the transcript after reload, linked PRs.
+- [Composer](./composer.md): the model and reasoning picker, Fast mode, attachments, and the `@`, `$` and `/` popups.
+- [Agent input](./agent-input.md): agent questions in the composer, `Needs input` in the inbox, purchase approvals.
+- [Transcript rendering](./transcript.md): code blocks, images, mermaid, visuals and json-render, KiCad cards, the work disclosure, running commands.
+- [Artifacts](./artifacts.md): reference cards, the Artifacts view, source and preview, fullscreen, deleting.
+- [Side panel](./side-panel.md): opening, the view picker, tabs, full workspace, closing and restoring, the Browser view.
 - [Files](./files.md): the project tree, editing and saving a file, KiCad in KiCanvas, save conflicts, the discard prompt, creating, renaming and deleting, search.
 - [Settings](./settings.md): the settings pages including Connectors, a preference switch, the GitHub switch.
