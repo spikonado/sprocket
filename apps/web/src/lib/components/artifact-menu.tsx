@@ -173,7 +173,7 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 						className="bg-popover text-popover-foreground fixed right-4 bottom-4 z-250 w-80 max-w-[calc(100vw-2rem)] rounded-md border p-3 shadow-md"
 					>
 						<div className="flex items-center justify-between gap-2">
-							<p className="text-destructive text-sm font-medium">Artifact deletion failed</p>
+							<p className="text-destructive text-sm">Artifact deletion failed</p>
 							<button
 								type="button"
 								aria-label="Dismiss deletion error"

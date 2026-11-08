@@ -181,7 +181,7 @@ export default function ClaudeSubscriptionCard({
 			<div className="flex items-center gap-3">
 				<ProviderLogo provider="claude" className="size-5" />
 				<div className="min-w-0 flex-1">
-					<p className="text-foreground text-[15px] font-medium">Claude Subscription</p>
+					<p className="text-foreground text-[15px]">Claude Subscription</p>
 					<p className="text-muted-foreground mt-0.5 text-[12px]">
 						{loading ? 'Checking configuration…' : tokenSaved ? 'Connected' : 'Not configured'}
 					</p>

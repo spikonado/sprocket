@@ -173,7 +173,7 @@ export default function MuseSubscriptionCard({
 			<div className="flex items-center gap-3">
 				<ProviderLogo provider="muse" className="size-5" />
 				<div className="min-w-0 flex-1">
-					<p className="text-foreground text-[15px] font-medium">Muse Code Subscription</p>
+					<p className="text-foreground text-[15px]">Muse Code Subscription</p>
 					<p className="text-muted-foreground mt-0.5 text-[12px]">{statusLine}</p>
 				</div>
 			</div>

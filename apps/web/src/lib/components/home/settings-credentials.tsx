@@ -365,7 +365,7 @@ export default function SettingsCredentials({
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">BYOK/BYOS</h1>
+				<h1 className="text-foreground text-[1rem] tracking-[-0.03em]">BYOK/BYOS</h1>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -374,7 +374,7 @@ export default function SettingsCredentials({
 						<div className="flex items-center gap-3">
 							<ProviderLogo provider="openai" className="size-5" />
 							<div className="min-w-0 flex-1">
-								<p className="text-foreground text-[15px] font-medium">ChatGPT Subscription</p>
+								<p className="text-foreground text-[15px]">ChatGPT Subscription</p>
 								<p className="text-muted-foreground mt-0.5 text-[12px]">{chatGptStatusLine}</p>
 							</div>
 							<button
@@ -411,9 +411,7 @@ export default function SettingsCredentials({
 													className="border-border flex items-center gap-3 rounded-lg border px-3 py-2"
 												>
 													<div className="min-w-0 flex-1">
-														<p className="text-foreground truncate text-[13px] font-medium">
-															{account.label}
-														</p>
+														<p className="text-foreground truncate text-[13px]">{account.label}</p>
 														<p className="text-muted-foreground text-[12px]">
 															{isActive ? 'Active' : account.connected ? 'Signed in' : 'Signed out'}
 														</p>

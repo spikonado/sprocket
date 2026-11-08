@@ -47,7 +47,7 @@ export default function SettingsGeneral() {
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">General</h1>
+				<h1 className="text-foreground text-[1rem] tracking-[-0.03em]">General</h1>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">

@@ -72,9 +72,7 @@ export default function MobileModelSelector({
 						}}
 					>
 						<ProviderLogo provider={candidate.provider} className="size-5 shrink-0" />
-						<span className="min-w-0 flex-1 text-[15px] leading-5 font-medium">
-							{candidate.label}
-						</span>
+						<span className="min-w-0 flex-1 text-[15px] leading-5">{candidate.label}</span>
 						{candidate.id === model?.id ? (
 							<Check className="text-accent-strong size-5 shrink-0" />
 						) : null}

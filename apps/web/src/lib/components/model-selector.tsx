@@ -236,7 +236,7 @@ export default function ModelSelector({
 									}}
 								>
 									<ProviderLogo provider={model.provider} className="size-4 shrink-0" />
-									<span className="min-w-0 flex-1 truncate font-medium">{model.label}</span>
+									<span className="min-w-0 flex-1 truncate">{model.label}</span>
 									{model.id === modelId ? (
 										<Check className="text-accent-strong size-3.5 shrink-0" />
 									) : null}

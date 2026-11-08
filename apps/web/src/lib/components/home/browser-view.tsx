@@ -118,7 +118,7 @@ export default function BrowserView({ browserApi }: Props) {
 							</p>
 							<button
 								type="button"
-								className="hover:bg-muted rounded-md border px-3 py-1.5 text-xs font-medium transition"
+								className="hover:bg-muted rounded-md border px-3 py-1.5 text-xs transition"
 								onClick={() => setAttempt((value) => value + 1)}
 							>
 								Retry setup

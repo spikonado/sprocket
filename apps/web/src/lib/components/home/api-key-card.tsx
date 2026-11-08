@@ -90,7 +90,7 @@ export default function ApiKeyCard({
 			<div className="flex items-center gap-3">
 				<ProviderLogo provider={provider} className="size-5" />
 				<div className="min-w-0 flex-1">
-					<p className="text-foreground text-[15px] font-medium">{title}</p>
+					<p className="text-foreground text-[15px]">{title}</p>
 					<p className="text-muted-foreground mt-0.5 text-[12px]">
 						{loading ? 'Checking configuration…' : configured ? 'Connected' : 'Not configured'}
 					</p>

@@ -66,7 +66,7 @@ export default function PreferenceToggle({
 				className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-wait disabled:opacity-50"
 				onClick={() => void toggle()}
 			>
-				<span className="flex-1 font-medium">{title}</span>
+				<span className="flex-1">{title}</span>
 				<SwitchTrack enabled={enabled} />
 			</button>
 			{description && (

@@ -155,7 +155,6 @@
 	justify-content: space-between;
 	padding: 12px 8px 8px;
 	font-size: 11px;
-	font-weight: 500;
 	color: var(--muted-foreground);
 	text-align: left;
 }
@@ -168,7 +167,6 @@
 .inbox-primary-navigation:hover {
 	color: #000;
 	font-size: 14px;
-	font-weight: 500;
 }
 
 [data-theme='dark'] .inbox-primary-navigation,
@@ -237,7 +235,6 @@
 }
 
 .inbox-row-title {
-	font-weight: 500;
 	font-size: 14px;
 	line-height: 1.4;
 }
@@ -250,7 +247,6 @@
 	background: transparent;
 	color: var(--foreground);
 	font-size: 14px;
-	font-weight: 500;
 	line-height: 1.4;
 	outline: none;
 }
@@ -287,7 +283,6 @@
 	border-radius: 999px;
 	color: var(--muted-foreground);
 	font-size: 11px;
-	font-weight: 500;
 	font-variant-numeric: tabular-nums;
 	line-height: 1;
 	transition:
@@ -375,7 +370,6 @@
 
 .inbox-pr-item-title {
 	overflow: hidden;
-	font-weight: 500;
 	line-height: 1.3;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -523,7 +517,6 @@
 
 .inbox-attention {
 	color: var(--foreground);
-	font-weight: 500;
 }
 
 .inbox-needs-input {

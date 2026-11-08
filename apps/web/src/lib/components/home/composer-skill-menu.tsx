@@ -67,7 +67,7 @@ export default function ComposerSkillMenu({
 						onPointerEnter={() => onHighlight(index)}
 						onClick={() => onSelect(skill)}
 					>
-						<span className="text-sm font-medium">
+						<span className="text-sm">
 							{prefix}
 							{skill.name}
 						</span>

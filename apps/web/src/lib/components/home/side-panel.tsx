@@ -354,7 +354,7 @@ function Pane({
 						return (
 							<div
 								key={tab.id}
-								className={`group flex max-w-40 min-w-20 shrink items-center rounded-md text-xs font-medium transition ${
+								className={`group flex max-w-40 min-w-20 shrink items-center rounded-md text-xs transition ${
 									active
 										? `text-foreground ${focused ? 'bg-muted' : 'bg-muted/50'}`
 										: 'text-muted-foreground hover:bg-hover-fill hover:text-foreground'

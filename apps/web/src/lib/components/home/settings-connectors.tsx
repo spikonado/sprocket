@@ -15,7 +15,7 @@ const caughtMessage = z
 	.catch('');
 
 const primaryButtonClass =
-	'bg-primary text-primary-foreground inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium transition hover:opacity-90 disabled:opacity-50';
+	'bg-primary text-primary-foreground inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] transition hover:opacity-90 disabled:opacity-50';
 
 const secondaryButtonClass =
 	'border-border text-foreground hover:bg-hover-fill inline-flex h-8 items-center rounded-lg border px-3 text-[13px] transition disabled:opacity-50';
@@ -64,7 +64,7 @@ export default function SettingsConnectors({
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Connectors</h1>
+				<h1 className="text-foreground text-[1rem] tracking-[-0.03em]">Connectors</h1>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -131,7 +131,7 @@ function ConnectorCard({
 		<div className="border-border flex items-center gap-3 rounded-xl border p-5">
 			<img src={logos[connector.id]} alt="" className="size-8 shrink-0" />
 			<div className="min-w-0 flex-1">
-				<p className="text-foreground flex items-center gap-2 text-[15px] font-medium">
+				<p className="text-foreground flex items-center gap-2 text-[15px]">
 					{connector.name}
 					<span className="border-border text-muted-foreground rounded-full border px-1.5 text-[11px] leading-4 font-normal">
 						Experimental

@@ -579,7 +579,7 @@ export default function PromptComposer({
 						<div className="mx-auto mb-3 w-full max-w-[48rem] px-4">
 							<button
 								type="button"
-								className="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
+								className="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] transition"
 								onClick={onContinueWorking}
 								disabled={isSubmitting}
 							>
@@ -605,7 +605,7 @@ export default function PromptComposer({
 									aria-live="polite"
 								>
 									<Paperclip className="text-primary size-5" aria-hidden="true" />
-									<span className="text-foreground text-sm font-medium">Drop files to attach</span>
+									<span className="text-foreground text-sm">Drop files to attach</span>
 								</div>
 							) : null}
 							<div className="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
@@ -752,7 +752,7 @@ export default function PromptComposer({
 										{answeringQuestion && canAnswerQuestion ? (
 											<button
 												type="button"
-												className="bg-primary/90 text-primary-foreground hover:bg-primary h-11 rounded-full px-4 text-[13px] font-medium transition enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 sm:h-10"
+												className="bg-primary/90 text-primary-foreground hover:bg-primary h-11 rounded-full px-4 text-[13px] transition enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 sm:h-10"
 												onClick={onSubmit}
 												disabled={!canSend || isSubmitting}
 												data-ph-capture-attribute-action="submit_answer"
@@ -762,7 +762,7 @@ export default function PromptComposer({
 										) : answeringQuestion ? (
 											<button
 												type="button"
-												className="text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill h-11 rounded-full border border-[var(--hairline)] px-4 text-[13px] font-medium transition enabled:cursor-pointer disabled:opacity-40 sm:h-10"
+												className="text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill h-11 rounded-full border border-[var(--hairline)] px-4 text-[13px] transition enabled:cursor-pointer disabled:opacity-40 sm:h-10"
 												data-ph-capture-attribute-action="skip_question"
 												disabled={isSubmitting}
 												onClick={onSkipQuestion}

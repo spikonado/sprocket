@@ -338,14 +338,14 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 					<button
 						type="button"
 						onClick={() => actions.current.absorb(diskChange, true)}
-						className="hover:bg-hover-fill shrink-0 rounded px-2 py-0.5 font-medium"
+						className="hover:bg-hover-fill shrink-0 rounded px-2 py-0.5"
 					>
 						Reload
 					</button>
 					<button
 						type="button"
 						onClick={() => actions.current.save(true)}
-						className="hover:bg-hover-fill shrink-0 rounded px-2 py-0.5 font-medium"
+						className="hover:bg-hover-fill shrink-0 rounded px-2 py-0.5"
 					>
 						Overwrite
 					</button>
