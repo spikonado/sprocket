@@ -91,24 +91,25 @@ pub(crate) async fn authorize_session_changes(
     Ok(())
 }
 
-/// Emits the current auth generation, then each change. Holding the stream keeps
-/// an idle CLI-started server running while a browser is open.
 pub(crate) fn session_change_events(
     state: &AppState,
     _: Authorized<()>,
 ) -> Result<futures::stream::BoxStream<'static, u64>, ApiError> {
     let mut receiver = state.host.native_auth.subscribe_changes();
     receiver.mark_changed();
-    let guard = state
+    let keep_server_alive = state
         .host
         .lifetime
         .run_guard()
         .map_err(ApiError::bad_request)?;
-    let stream = futures::stream::unfold((receiver, guard), |(mut receiver, guard)| async move {
-        receiver.changed().await.ok()?;
-        let generation = *receiver.borrow_and_update();
-        Some((generation, (receiver, guard)))
-    });
+    let stream = futures::stream::unfold(
+        (receiver, keep_server_alive),
+        |(mut receiver, keep_server_alive)| async move {
+            receiver.changed().await.ok()?;
+            let generation = *receiver.borrow_and_update();
+            Some((generation, (receiver, keep_server_alive)))
+        },
+    );
     Ok(futures::StreamExt::boxed(stream))
 }
 

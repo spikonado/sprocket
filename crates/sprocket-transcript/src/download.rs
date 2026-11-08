@@ -5,7 +5,6 @@ use serde::Serialize;
 
 use super::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptStore};
 
-// A failing user-authenticated watcher must not monopolize the shared download lock.
 const PAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Serialize)]

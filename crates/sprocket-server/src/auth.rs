@@ -93,7 +93,7 @@ impl BrowserSessions for AuthState {
         &'a self,
         user_id: Option<&'a str>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
-        Box::pin(self.sync_sessions_with_owner(user_id))
+        Box::pin(self.unbind_sessions_not_owned_by(user_id))
     }
 
     fn bind_user<'a>(
@@ -278,8 +278,7 @@ impl AuthState {
         self.save_sessions(sessions).await
     }
 
-    /// Sessions only gain a user through an explicit sign-in; owner changes can only unbind them.
-    pub(crate) async fn sync_sessions_with_owner(
+    pub(crate) async fn unbind_sessions_not_owned_by(
         &self,
         user_id: Option<&str>,
     ) -> anyhow::Result<()> {

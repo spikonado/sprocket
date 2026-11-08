@@ -10,7 +10,6 @@ use super::read_index::ReadIndex;
 use super::sections::{POSITION_STRIDE, WorkPosition};
 use super::{TranscriptPart, TranscriptStore};
 
-// Bump when the schema or derived row shapes change; mismatched caches are rebuilt from parts.
 const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL);

@@ -13,6 +13,9 @@ import {
 	UPDATE_API_FILENAME
 } from './update.js';
 
+const RELAUNCHED_BY_LAUNCHER_ENV = 'SPROCKET_RELAUNCHED_BY_LAUNCHER';
+const LEGACY_RELAUNCHED_ENV = 'SPROCKET_RESTARTED';
+
 export function resolveNativeBinary() {
 	const native = resolveNativePackage();
 	const version = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8')).version;
@@ -119,6 +122,12 @@ function readRestartLauncher(restartFile) {
 export async function launch(args, options = {}) {
 	const env = { ...(options.env ?? process.env) };
 	delete env.SPROCKET_UPDATE_MANAGED;
+
+	if (env[LEGACY_RELAUNCHED_ENV]) {
+		env[RELAUNCHED_BY_LAUNCHER_ENV] = '1';
+	}
+
+	delete env[LEGACY_RELAUNCHED_ENV];
 	const parsed = parseUpdateArgs(args);
 
 	if (parsed.kind !== 'none' && parsed.kind !== 'native') {
@@ -134,9 +143,7 @@ export async function launch(args, options = {}) {
 		const binary = (options.resolveBinary ?? resolveNativeBinary)();
 		(options.ensureExecutable ?? ensureExecutable)(binary);
 		const execPath = options.execPath ?? process.execPath;
-		// The native server clears SPROCKET_RESTARTED, so only a launcher started by a restarting
-		// launcher sees it and leaves the next restart to that parent.
-		const ownsRestart = !env.SPROCKET_RESTARTED;
+		const ownsRestart = !env[RELAUNCHED_BY_LAUNCHER_ENV];
 
 		if (ownsRestart) {
 			env.SPROCKET_RESTART_FILE = path.join(
@@ -161,7 +168,7 @@ export async function launch(args, options = {}) {
 
 				if (!launcher) break;
 				code = await run(execPath, [launcher, ...args], {
-					env: { ...env, SPROCKET_RESTARTED: '1' },
+					env: { ...env, [RELAUNCHED_BY_LAUNCHER_ENV]: '1' },
 					spawn: options.spawn
 				});
 			}

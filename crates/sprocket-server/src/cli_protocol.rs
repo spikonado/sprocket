@@ -140,7 +140,6 @@ pub struct CliRunSnapshot {
     pub answer: String,
     pub run_id: String,
     pub thread_id: String,
-    /// `None` until execution finishes with a confirmed final status.
     pub status: Option<RunStatus>,
     pub error: Option<String>,
     pub parts: Vec<sprocket_transcript::TranscriptPart>,

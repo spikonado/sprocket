@@ -147,6 +147,10 @@ Released clients only update `@spikonado/sprocket`, so the release workflow also
 
 An npm launcher from v0.4.3 and earlier stays in memory across in-app updates and restarts only when its child exits with code 75. Current launchers restart whenever the restart file exists and pass the native exit code up, so the native server still exits with `RESTART_EXIT_CODE` after an accepted restart. Remove `ServerExit` and that code once launchers from v0.4.3 and earlier are outside the supported upgrade window.
 
+### Relaunch marker name
+
+An npm launcher from v0.4.3 and earlier marks the updated launcher it starts with `SPROCKET_RESTARTED` in place of `SPROCKET_RELAUNCHED_BY_LAUNCHER`. `launch` in `npm/sprocket/lib/launcher.js` reads `LEGACY_RELAUNCHED_ENV` as the new name. Remove it once launchers from v0.4.3 and earlier are outside the supported upgrade window.
+
 ## Permanent history formats
 
 Stored executor jobs, transcripts and local data files keep accepting these historical shapes so history stays readable. No lossless rewrite exists, so they have no removal gate:

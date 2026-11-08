@@ -1003,14 +1003,14 @@ fn filters_keep_one_run_and_hide_its_sender_prompts() {
     let hidden_prompt_runs = BTreeSet::from(["new".to_string()]);
     assert_eq!(
         read(MonitorFilter {
-            run_id: None,
+            only_run_id: None,
             hidden_prompt_runs: hidden_prompt_runs.clone(),
         }),
         ["old task", "old reply", "new reply"]
     );
     assert_eq!(
         read(MonitorFilter {
-            run_id: Some("new".into()),
+            only_run_id: Some("new".into()),
             hidden_prompt_runs,
         }),
         ["new reply"]

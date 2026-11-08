@@ -19,7 +19,8 @@ use uuid::Uuid;
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
 const RESTART_EXIT_CODE: u8 = 75;
-const RESTARTED_ENV: &str = "SPROCKET_RESTARTED";
+const RELAUNCHED_BY_LAUNCHER_ENV: &str = "SPROCKET_RELAUNCHED_BY_LAUNCHER";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
@@ -88,13 +89,11 @@ fn main() -> std::process::ExitCode {
 }
 
 fn entry() -> anyhow::Result<u8> {
-    let restarted = std::env::var_os(RESTARTED_ENV).is_some();
     // SAFETY: this runs before the Tokio runtime is constructed.
-    unsafe {
-        // Keep agent shells from inheriting the restart marker.
-        std::env::remove_var(RESTARTED_ENV);
+    let relaunched = unsafe {
         load_repo_env();
-    }
+        take_env_flag(RELAUNCHED_BY_LAUNCHER_ENV)
+    };
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -145,10 +144,10 @@ fn entry() -> anyhow::Result<u8> {
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, !restarted, workspace_path, false)
+            serve_local(server, false, !relaunched, workspace_path, false)
         }
         None => {
-            if !restarted {
+            if !relaunched {
                 if launch_desktop(workspace_path.as_deref())? {
                     return Ok(0);
                 }
@@ -159,9 +158,15 @@ fn entry() -> anyhow::Result<u8> {
                 );
             }
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, !restarted, workspace_path, false)
+            serve_local(server, false, !relaunched, workspace_path, false)
         }
     }
+}
+
+unsafe fn take_env_flag(key: &str) -> bool {
+    let present = std::env::var_os(key).is_some();
+    unsafe { std::env::remove_var(key) };
+    present
 }
 
 fn resolve_launch_workspace(path: &Path) -> anyhow::Result<String> {
