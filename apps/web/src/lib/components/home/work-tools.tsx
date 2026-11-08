@@ -92,7 +92,7 @@ function ToolRow({
 				data-tool-row
 				data-work-detail
 				title={item}
-				className={rowClass}
+				className={`${rowClass} max-w-full`}
 				onClick={onOpen}
 			>
 				{row}
