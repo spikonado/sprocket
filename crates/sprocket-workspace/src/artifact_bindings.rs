@@ -28,8 +28,8 @@ pub fn content_hash(content: &str) -> String {
     hex::encode(Sha256::digest(content.as_bytes()))
 }
 
-/// Legacy thread bindings can converge on one project path. Preserve every
-/// binding, but pause synchronization until the user chooses distinct paths.
+/// Bindings whose paths name the same file, such as `a.md` and `./a.md`, or a symlink and its
+/// target. Callers keep them but pause their sync until the user picks distinct paths.
 pub async fn conflicting_binding_ids(
     workspace: &Path,
     bindings: &[ArtifactBinding],
