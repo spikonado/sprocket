@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -12,6 +13,13 @@ use crate::tool_install::{PinnedTool, set_executable};
 const PYTHON_VERSION: &str = "3.12";
 const PYTHON_INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UV_EXECUTABLES: [&str; 3] = ["uv", "uvx", "uvw"];
+/// Go's list of Linux system CA bundles.
+const CA_BUNDLES: [&str; 4] = [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+];
 
 pub(crate) struct PythonTools {
     uv: PinnedTool,
@@ -88,6 +96,21 @@ impl PythonTools {
         *ready = true;
         Ok(())
     }
+}
+
+/// uv's Python builds look for CAs only in `/etc/ssl/cert.pem` and a hashed `/etc/ssl/certs`,
+/// which NixOS lacks, so their HTTPS fails there without `SSL_CERT_FILE`.
+pub(crate) fn certificate_environment() -> Vec<(OsString, OsString)> {
+    if !cfg!(target_os = "linux") || std::env::var_os("SSL_CERT_FILE").is_some() {
+        return Vec::new();
+    }
+    CA_BUNDLES
+        .into_iter()
+        .map(Path::new)
+        .find(|bundle| bundle.is_file())
+        .map(|bundle| ("SSL_CERT_FILE".into(), bundle.into()))
+        .into_iter()
+        .collect()
 }
 
 fn unpack(archive: &Path, bin: &Path) -> anyhow::Result<()> {

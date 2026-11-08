@@ -360,6 +360,10 @@ function compileRequirements(wheel, path) {
 		(name) => `${name} ; ${ROUTING_TOOLS_MARKER}`
 	);
 
+	// Agents read datasheets with PyMuPDF and plot with matplotlib. PyMuPDF 2 adds onnxruntime
+	// and drops the Intel macOS and Windows on Arm wheels.
+	const agentTools = ['matplotlib', 'pymupdf<2'];
+
 	run(
 		'uv',
 		[
@@ -377,7 +381,7 @@ function compileRequirements(wheel, path) {
 			path,
 			'-'
 		],
-		{ input: [`kicad-python @ file://${wheel}`, ...routingTools, ''].join('\n') }
+		{ input: [`kicad-python @ file://${wheel}`, ...routingTools, ...agentTools, ''].join('\n') }
 	);
 }
 

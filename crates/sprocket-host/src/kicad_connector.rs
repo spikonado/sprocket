@@ -25,6 +25,8 @@ const KIPY_API: &str = include_str!("../../../tools/kicad/kipy-api.py");
 const KIPY_API_FILE: &str = "kipy-api.py";
 const KICAD_VIEW: &str = include_str!("../../../tools/kicad/kicad-view.py");
 const KICAD_VIEW_FILE: &str = "kicad-view.py";
+const FONTS_CONF_FILE: &str = "fonts.conf";
+const HOST_FONTCONFIG_DIR: &str = "/etc/fonts";
 const LIBRARIES_FILE: &str = "libraries-dir";
 const ROUTING_TOOLS_DIR: &str = "routing-tools";
 /// KiCad doesn't read this name, so a KiCad started from an agent's shell keeps its own paths.
@@ -327,6 +329,15 @@ impl KiCadConnector {
             None => None,
         };
         tokio::fs::write(staging.join(KIPY_API_FILE), KIPY_API).await?;
+        // Only the AppImage bundles its own fontconfig.
+        let fonts_conf = (cfg!(target_os = "linux") && user_kicad.is_none())
+            .then(|| version_dir.join(FONTS_CONF_FILE));
+        if fonts_conf.is_some() {
+            let contents =
+                tokio::task::spawn_blocking(|| host_fontconfig(Path::new(HOST_FONTCONFIG_DIR)))
+                    .await?;
+            tokio::fs::write(staging.join(FONTS_CONF_FILE), contents).await?;
+        }
         write_launchers(
             &staging.join(LAUNCHER_DIR),
             launchers(
@@ -335,6 +346,7 @@ impl KiCadConnector {
                 &version_dir.join(KIPY_API_FILE),
                 &version_dir.join(KICAD_VIEW_FILE),
                 routing_tools.as_deref(),
+                fonts_conf.as_deref(),
             ),
         )
         .await?;
@@ -507,7 +519,7 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
             let installed = installed_version(root, pinned);
             sync_launchers(root, installed.as_deref())?;
             match installed {
-                Some(dir) => refresh_scripts(&root.join(dir)),
+                Some(dir) => refresh_files(&root.join(dir)),
                 None => Ok(()),
             }
         }
@@ -516,9 +528,17 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     }
 }
 
-/// The scripts ship with Sprocket rather than the release, so an update reaches installs on start.
-fn refresh_scripts(dir: &Path) -> io::Result<()> {
-    for (name, contents) in [(KIPY_API_FILE, KIPY_API), (KICAD_VIEW_FILE, KICAD_VIEW)] {
+/// These files come from Sprocket and the host rather than the release, so changes to either
+/// reach installs on start.
+fn refresh_files(dir: &Path) -> io::Result<()> {
+    for (name, contents) in [
+        (KIPY_API_FILE, KIPY_API.to_owned()),
+        (KICAD_VIEW_FILE, KICAD_VIEW.to_owned()),
+        (
+            FONTS_CONF_FILE,
+            host_fontconfig(Path::new(HOST_FONTCONFIG_DIR)),
+        ),
+    ] {
         let path = dir.join(name);
         if fs::read_to_string(&path).is_ok_and(|current| current != contents) {
             let temporary = tempfile::NamedTempFile::new_in(dir)?;
@@ -527,6 +547,62 @@ fn refresh_scripts(dir: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The AppImage's fontconfig 2.14 reads the host's config and prints dozens of warnings on
+/// every load for conf.d files using fontconfig 2.17's `genericfamily`, which it can't apply
+/// anyway. Its config is the host's without those files.
+fn host_fontconfig(host: &Path) -> String {
+    let mut includes: Vec<PathBuf> = fs::read_dir(host.join("conf.d"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            // fontconfig loads only these names from a conf.d directory.
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            name.starts_with(|character: char| character.is_ascii_digit())
+                && name.ends_with(".conf")
+                && fs::read_to_string(path).is_ok_and(|config| !config.contains("genericfamily"))
+        })
+        .collect();
+    includes.sort();
+    let includes = includes
+        .iter()
+        .map(|path| {
+            format!(
+                "<include ignore_missing=\"yes\">{}</include>",
+                path.display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Without a host config, fontconfig falls back to this directory.
+    let fonts_conf = fs::read_to_string(host.join("fonts.conf"))
+        .unwrap_or_else(|_| "<fontconfig><dir>/usr/share/fonts</dir></fontconfig>\n".to_owned());
+    let close = "</include>";
+    let mut config = String::new();
+    let mut rest = fonts_conf.as_str();
+    while let Some(start) = rest.find("<include") {
+        let Some(length) = rest[start..].find(close) else {
+            break;
+        };
+        let end = start + length + close.len();
+        let element = &rest[start..end];
+        let target = element[..element.len() - close.len()]
+            .rsplit('>')
+            .next()
+            .unwrap_or_default();
+        config.push_str(&rest[..start]);
+        config.push_str(if target.trim().ends_with("conf.d") {
+            includes.as_str()
+        } else {
+            element
+        });
+        rest = &rest[end..];
+    }
+    config.push_str(rest);
+    config
 }
 
 /// Removes staging directories and tombstones, which are the only hidden directories.
@@ -673,9 +749,13 @@ fn launchers(
     kipy_api: &Path,
     kicad_view: &Path,
     routing_tools: Option<&Path>,
+    fonts_conf: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
     let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', r"'\''"));
-    let script = |body: String| format!("#!/bin/sh\n{body}\n");
+    let environment = fonts_conf
+        .map(|file| format!("export FONTCONFIG_FILE={}\n", quote(file)))
+        .unwrap_or_default();
+    let script = |body: String| format!("#!/bin/sh\n{environment}{body}\n");
     let gui = if cfg!(target_os = "macos") {
         let app = cli.ancestors().nth(3).unwrap_or(cli);
         format!("exec open -a {} \"$@\"", quote(app))
