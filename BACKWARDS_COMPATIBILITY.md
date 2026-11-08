@@ -8,9 +8,13 @@ Clients older than v0.4.2 are unsupported. Each shim below is temporary code wit
 
 Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
 
-### Enabled providers without Claude
+### Enabled providers for released clients
 
-Released clients reject unknown completion providers, so `uiPreferences.getMyEnabledProviders` and `agentRuntime.getContext` leave `claude` out of enabled providers and provider handoffs unless the caller passes `includeClaude: true`. Once those clients age out, always include `claude` and remove the argument.
+Released clients reject unknown completion providers. `uiPreferences.getMyEnabledProviders` and `agentRuntime.getContext` take the providers a client can parse as `knownProviders` and leave the others out of enabled providers and provider handoffs. Released clients omit it, so a missing `knownProviders` means `releasedClientProviders` in `lib/providerOrder.ts`: `spikonado`, `openai` and `chatgpt`. Once clients that omit it age out, make `knownProviders` required and remove `releasedClientProviders`.
+
+### OpenAI-only credential actions
+
+Released UIs call `providerCredentials:saveOpenAiKey` and `removeOpenAiKey`, and released agents call `issueOpenAiCredential`. They wrap `saveApiKey`, `removeApiKey` and `issueApiKey` with `provider: 'openai'`. Once the UIs and agents that call them age out, remove the three actions.
 
 ### Firecrawl request endpoints
 

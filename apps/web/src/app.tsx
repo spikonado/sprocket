@@ -92,7 +92,7 @@ import {
 	useSubmissionTracker,
 	type ComposerRecovery
 } from '$lib/home/submission-tracker';
-import type { CompletionProvider } from '@convex/lib/validators';
+import { completionProviderIds, type CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
@@ -355,8 +355,17 @@ export default function App({
 		providerConfiguration.status === 'loaded' ? providerConfiguration.value : null;
 
 	const savedProvidersRef = useLatest(savedProviders);
-	const openAiConfigured = savedProviders?.openai === true;
 	const claudeTokenSaved = savedProviders?.claude === true;
+
+	const apiKeysSaved = useMemo(
+		() => ({
+			openai: savedProviders?.openai === true,
+			anthropic: savedProviders?.anthropic === true,
+			vercel: savedProviders?.vercel === true,
+			openrouter: savedProviders?.openrouter === true
+		}),
+		[savedProviders]
+	);
 
 	const providerConfigurationError =
 		providerConfiguration.status === 'failed'
@@ -458,15 +467,16 @@ export default function App({
 	const claudeConfigured =
 		claudeTokenSaved && (!localApi || claudeCodeStatus?.state === 'installed');
 
-	const configuredProviders = useMemo<CompletionProvider[]>(
-		() => [
-			'spikonado',
-			...(openAiConfigured ? (['openai'] as const) : []),
-			...(chatGptConfigured ? (['chatgpt'] as const) : []),
-			...(claudeConfigured ? (['claude'] as const) : [])
-		],
-		[openAiConfigured, chatGptConfigured, claudeConfigured]
-	);
+	const configuredProviders = useMemo(() => {
+		const configured: Record<CompletionProvider, boolean> = {
+			...apiKeysSaved,
+			spikonado: true,
+			chatgpt: chatGptConfigured,
+			claude: claudeConfigured
+		};
+
+		return completionProviderIds.filter((provider) => configured[provider]);
+	}, [apiKeysSaved, chatGptConfigured, claudeConfigured]);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -1400,7 +1410,7 @@ export default function App({
 	}
 
 	function handleProviderConfigurationChange(change: {
-		provider: 'openai' | 'claude';
+		provider: keyof NonNullable<typeof savedProviders>;
 		configured: boolean;
 	}) {
 		const saved = savedProvidersRef.current;
@@ -2625,7 +2635,7 @@ export default function App({
 							<SettingsCredentials
 								userId={signedInUserId}
 								localApi={localApi}
-								openAiConfigured={openAiConfigured}
+								apiKeysSaved={apiKeysSaved}
 								claudeTokenSaved={claudeTokenSaved}
 								claudeCodeStatus={claudeCodeStatus}
 								claudeCodeStatusError={claudeCodeStatusError}

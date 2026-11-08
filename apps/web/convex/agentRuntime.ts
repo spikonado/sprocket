@@ -53,7 +53,7 @@ import {
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
-import { enabledProviders } from '@convex/lib/providerOrder';
+import { enabledProviders, releasedClientProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, hydratePromptUrls } from '@convex/lib/transcriptParts';
@@ -379,7 +379,7 @@ function getContextResult(args: {
 const getContextArgs = {
 	runId: v.id('runs'),
 	executionSecret: v.string(),
-	includeClaude: v.optional(v.boolean())
+	knownProviders: v.optional(v.array(vCompletionProvider))
 };
 
 export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof getContextArgs>) {
@@ -390,7 +390,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 	const parentThreadId = thread?.parentThreadId;
 	const providerHandoff = await getProviderHandoff(ctx, run, thread);
 	const preferences = await getUiPreferences(ctx.db, run.userId);
-	const includeClaude = args.includeClaude ?? false;
+	const knownProviders = args.knownProviders ?? releasedClientProviders;
 
 	if (!promptPart?.prompt && !run.pendingPrompt && !run.continuationOfRunId) {
 		throw new Error('Run does not contain a user prompt.');
@@ -403,11 +403,11 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 		pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
 		contextTokens,
 		providerHandoff:
-			includeClaude || providerHandoff?.completionProvider !== 'claude'
+			providerHandoff && knownProviders.includes(providerHandoff.completionProvider)
 				? providerHandoff
 				: undefined,
 		providerPreferences: {
-			enabledProviders: enabledProviders(preferences?.providerOrder, { includeClaude }),
+			enabledProviders: enabledProviders(preferences?.providerOrder, knownProviders),
 			restrictSubagentsToProvider: false
 		},
 		cwd: thread?.cwd,

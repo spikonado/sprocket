@@ -73,7 +73,7 @@ impl ClaudeCode {
     pub(crate) async fn completion_model(
         &self,
         token: String,
-        model: &str,
+        anthropic_model: &str,
         instructions: &str,
         cwd: &Path,
         resume: Option<ResumePoint>,
@@ -81,7 +81,7 @@ impl ClaudeCode {
         let executable = self.locator.executable().await?;
         let wire = AnthropicConfig::new("")
             .with_base_url(UNUSED_ENDPOINT)
-            .completion(anthropic_model_id(model))
+            .completion(anthropic_model)
             .with_default_max_tokens(DEFAULT_MAX_TOKENS);
         let transport = ClaudeCodeTransport(Arc::new(Run {
             executable,
@@ -96,11 +96,6 @@ impl ClaudeCode {
         }));
         Ok(Model::new(wire, transport).erase())
     }
-}
-
-/// Maps catalog IDs such as `opus-5.5` to Anthropic's `claude-opus-5-5`.
-fn anthropic_model_id(model: &str) -> String {
-    format!("claude-{}", model.replace('.', "-"))
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,4 +1,5 @@
 mod analytics;
+mod anthropic;
 mod catalog;
 mod chatgpt;
 mod claude_code;
@@ -12,6 +13,7 @@ mod output;
 mod provider;
 mod reasoning;
 mod request_compression;
+mod responses_gateway;
 mod run;
 mod run_settings;
 mod stream_recovery;

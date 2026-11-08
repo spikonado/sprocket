@@ -171,17 +171,24 @@ describe('provider handoff provenance', () => {
 		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
 	});
 
-	it('hands off from Claude only to callers that include it', async () => {
+	it('hands off only to callers that know the source provider', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
-		await historicalRun(t, threadId, 'claude');
+		await historicalRun(t, threadId, 'openrouter');
 		const run = await currentRun(t, threadId, 'spikonado');
 
 		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
 		expect(
-			(await t.query(api.agentRuntime.getContext, { ...run, includeClaude: true })).providerHandoff
-				?.completionProvider
-		).toBe('claude');
+			await t.query(api.agentRuntime.getContext, { ...run, knownProviders: ['spikonado'] })
+		).not.toHaveProperty('providerHandoff');
+		expect(
+			(
+				await t.query(api.agentRuntime.getContext, {
+					...run,
+					knownProviders: ['spikonado', 'openrouter']
+				})
+			).providerHandoff?.completionProvider
+		).toBe('openrouter');
 	});
 
 	it('ignores current-run completions and completions covered by a handoff', async () => {

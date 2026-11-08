@@ -1,13 +1,13 @@
 use super::*;
-use crate::types::CompletionProvider::{Chatgpt, Spikonado};
+use crate::types::CompletionProvider::{Anthropic, Chatgpt, Openrouter, Spikonado, Vercel};
 
 fn catalog() -> ModelCatalog {
     serde_json::from_value(serde_json::json!({
         "defaultModelId": "default",
         "models": [
-            {"id": "default", "label": "Default", "vendor": "anthropic", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
-            {"id": "pro", "label": "Pro", "vendor": "anthropic", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
-            {"id": "gpt", "label": "GPT", "vendor": "openai", "reasoningEfforts": ["low", "xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard", "fast"]}
+            {"id": "default", "label": "Default", "provider": "anthropic", "providerModelIds": {"anthropic": "claude-default", "openrouter": "anthropic/default"}, "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
+            {"id": "pro", "label": "Pro", "provider": "anthropic", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
+            {"id": "gpt", "label": "GPT", "provider": "openai", "reasoningEfforts": ["low", "xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard", "fast"]}
         ]
     }))
     .unwrap()
@@ -56,6 +56,18 @@ fn new_threads_use_the_catalog_default_on_the_first_serving_provider() {
     );
     assert_eq!(
         resolve(&[Chatgpt, Spikonado], None, model("default"))
+            .unwrap()
+            .provider,
+        Spikonado
+    );
+    assert_eq!(
+        resolve(&[Vercel, Openrouter], None, model("default"))
+            .unwrap()
+            .provider,
+        Openrouter
+    );
+    assert_eq!(
+        resolve(&[Anthropic, Spikonado], None, model("gpt"))
             .unwrap()
             .provider,
         Spikonado

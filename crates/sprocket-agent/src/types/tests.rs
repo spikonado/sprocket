@@ -3,8 +3,27 @@ use rig::message::{AssistantContent, DocumentSourceKind, ImageMediaType, UserCon
 
 use super::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-    deserialize_agent_history,
+    CompletionProvider, ModelRoute, deserialize_agent_history,
 };
+
+#[test]
+fn providers_address_catalog_models_by_their_own_ids() {
+    let route: ModelRoute = serde_json::from_value(serde_json::json!({
+        "provider": "anthropic",
+        "providerModelIds": {"anthropic": "claude-opus-5-5", "vercel": "anthropic/claude-opus-5.5"},
+    }))
+    .unwrap();
+    let id = |provider: CompletionProvider| provider.model_id("opus-5.5", &route);
+    assert_eq!(id(CompletionProvider::Spikonado), Some("opus-5.5"));
+    assert_eq!(id(CompletionProvider::Claude), Some("claude-opus-5-5"));
+    assert_eq!(id(CompletionProvider::Anthropic), Some("claude-opus-5-5"));
+    assert_eq!(
+        id(CompletionProvider::Vercel),
+        Some("anthropic/claude-opus-5.5")
+    );
+    assert_eq!(id(CompletionProvider::Openrouter), None);
+    assert_eq!(id(CompletionProvider::Openai), None);
+}
 
 #[test]
 fn legacy_origin_fallback_preserves_known_origins() {

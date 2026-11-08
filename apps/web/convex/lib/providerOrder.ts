@@ -1,5 +1,9 @@
 import { v, type Infer } from 'convex/values';
-import { completionProviderIds, vCompletionProvider } from '@convex/lib/validators';
+import {
+	completionProviderIds,
+	vCompletionProvider,
+	type CompletionProvider
+} from '@convex/lib/validators';
 
 export const vProviderOrderEntry = v.object({
 	provider: vCompletionProvider,
@@ -7,6 +11,13 @@ export const vProviderOrderEntry = v.object({
 });
 
 export type ProviderOrderEntry = Infer<typeof vProviderOrderEntry>;
+
+/** Released clients omit `knownProviders` and reject any provider outside this list. */
+export const releasedClientProviders: readonly CompletionProvider[] = [
+	'spikonado',
+	'openai',
+	'chatgpt'
+];
 
 export const defaultProviderOrder: readonly ProviderOrderEntry[] = completionProviderIds.map(
 	(provider) => ({ provider, enabled: true })
@@ -26,10 +37,10 @@ export function resolveProviderOrder(
 
 export function enabledProviders(
 	saved: readonly ProviderOrderEntry[] | undefined,
-	{ includeClaude }: { includeClaude: boolean }
+	knownProviders: readonly CompletionProvider[]
 ) {
 	return resolveProviderOrder(saved)
-		.filter((entry) => entry.enabled && (includeClaude || entry.provider !== 'claude'))
+		.filter((entry) => entry.enabled && knownProviders.includes(entry.provider))
 		.map((entry) => entry.provider);
 }
 
