@@ -1,59 +1,39 @@
 ---
-import schematic from '@/assets/robot-car-schematic.svg';
+import render from '@/assets/power-board-pcb.webp';
 import AppWindow from '@/components/sprocket/app-window.astro';
 import Step from '@/components/sprocket/mock-step.astro';
-
-const bom = [
-	['U1', 'ESP32-CAM-MB camera board', '1'],
-	['U2', 'TB6612FNG motor driver board', '1'],
-	['U3', 'LM2596 buck converter module', '1'],
-	['BT1', '2× 18650 battery holder with switch', '1'],
-	['MFL–MRR', 'BO gearmotor', '4']
-] as const;
 ---
 
 <AppWindow
-	thread="Wi-Fi robot car"
-	label="Sprocket designing a Wi-Fi camera robot car: it reads datasheets, draws a schematic of the battery, buck converter, ESP32-CAM, motor driver, and four motors, then writes a bill of materials and an assembly guide"
+	thread="USB-C power board"
+	label="Sprocket designing a USB-C power board in KiCad: it reads datasheets, draws the schematic, routes a 4-layer PCB that passes DRC, shows a 3D render of the board, then exports Gerbers and assembly files for PCBWay"
 >
 	<Step step={0} kind="user"
-		>Design the electronics for a 4-motor robot car I can drive over Wi-Fi.</Step
+		>Design a board that charges a 1S–4S battery over USB-C and drives four programmable
+		outputs.</Step
 	>
-	<Step step={1} kind="web">Read ESP32-CAM, TB6612FNG, and LM2596 datasheets</Step>
-	<Step step={2} kind="file">Created artifact · Robot car schematic</Step>
-	<Step step={3} kind="text">
-		<img
-			src={schematic.src}
-			width={schematic.width}
-			height={schematic.height}
-			alt=""
-			loading="lazy"
-			decoding="async"
-			class="h-auto w-full rounded-xl border border-border/80"
-		/>
+	<Step step={1} kind="web">Read BQ25798, BQ40Z50-R2, and TPS55288 datasheets</Step>
+	<Step step={2} kind="file">Drew 7 schematic sheets in KiCad</Step>
+	<Step step={3} kind="command">Routed the 4-layer PCB · 0 DRC errors</Step>
+	<Step step={4} kind="text">
+		<figure class="overflow-hidden rounded-xl border border-border/80 bg-background/50">
+			<img
+				src={render.src}
+				width={render.width}
+				height={render.height}
+				alt=""
+				loading="lazy"
+				decoding="async"
+				class="h-auto w-full px-4 pt-3"
+			/>
+			<figcaption
+				class="flex items-center justify-between gap-2 border-t border-border/70 px-3 py-2 text-xs"
+			>
+				<span class="shrink-0 font-mono">power-board.kicad_pro</span>
+				<span class="truncate text-muted-foreground">145 × 120 mm · 4 layers, 2 oz · 368 parts</span>
+			</figcaption>
+		</figure>
 	</Step>
-	<Step step={4} kind="file">Created docs/bom.md</Step>
-	<Step step={5} kind="text">
-		<table class="w-full text-left text-xs">
-			<thead class="text-muted-foreground">
-				<tr>
-					<th class="py-1 pr-2 font-medium">Ref</th>
-					<th class="py-1 pr-2 font-medium">Part</th>
-					<th class="py-1 text-right font-medium">Qty</th>
-				</tr>
-			</thead>
-			<tbody class="divide-y divide-border/70 border-t border-border/70">
-				{
-					bom.map(([ref, part, qty]) => (
-						<tr>
-							<td class="py-1 pr-2 font-mono">{ref}</td>
-							<td class="py-1 pr-2">{part}</td>
-							<td class="py-1 text-right">{qty}</td>
-						</tr>
-					))
-				}
-			</tbody>
-		</table>
-	</Step>
-	<Step step={6} kind="done">Wrote docs/assembly.md with 12 steps</Step>
+	<Step step={5} kind="file">Exported Gerbers, BOM, and pick-and-place for PCBWay</Step>
+	<Step step={6} kind="done">Wrote docs/assembly.md and docs/ordering.md</Step>
 </AppWindow>

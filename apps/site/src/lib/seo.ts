@@ -12,7 +12,7 @@ export const ORGANIZATION_DESCRIPTION =
 export const DEFAULT_TITLE = 'Sprocket - The best AI agent for hardware and software';
 
 export const DEFAULT_DESCRIPTION =
-	'Sprocket is the best AI agent for hardware and software. Create schematics, write and test code, use rich web and file context, and buy anything your project needs after you approve each purchase.';
+	'Sprocket is the best AI agent for hardware and software. Design PCBs, write and test code, use rich web and file context, and buy anything your project needs after you approve each purchase.';
 
 export const ORGANIZATION_SOCIALS = [
 	{ label: 'GitHub', href: 'https://github.com/spikonado' },
