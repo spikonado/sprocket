@@ -9,7 +9,8 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	anthropic: 'Anthropic API',
 	vercel: 'Vercel AI Gateway',
 	openrouter: 'OpenRouter',
-	opencode: 'OpenCode'
+	opencode: 'OpenCode',
+	'opencode-go': 'OpenCode Go'
 };
 
 export function reorderShownProviders(

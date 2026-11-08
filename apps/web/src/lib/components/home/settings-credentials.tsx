@@ -18,6 +18,7 @@ type ProviderConfigurationChange = {
 };
 
 const apiKeyProviders: readonly ApiKeyProvider[] = [
+	'opencode-go',
 	'anthropic',
 	'openai',
 	'opencode',

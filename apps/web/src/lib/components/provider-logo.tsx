@@ -58,7 +58,7 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'opencode') {
+	if (provider === 'opencode' || provider === 'opencode-go') {
 		return (
 			<svg
 				viewBox="0 0 24 24"

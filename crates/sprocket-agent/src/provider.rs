@@ -482,9 +482,14 @@ impl AgentProvider {
                     base_instructions,
                 ))
             }
-            CompletionProvider::Opencode => {
+            CompletionProvider::Opencode | CompletionProvider::OpencodeGo => {
                 let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
+                let dialect = match provider {
+                    CompletionProvider::OpencodeGo => &openai::wire::OPENCODE_GO,
+                    _ => &openai::wire::OPENCODE,
+                };
                 opencode::completion_model(
+                    dialect,
                     credential.api_key,
                     model,
                     &self.model_route.vendor,

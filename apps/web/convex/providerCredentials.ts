@@ -13,7 +13,14 @@ import {
 	storeVaultObject
 } from '@convex/lib/workosVault';
 
-const apiKeyProviderIds = ['openai', 'anthropic', 'vercel', 'openrouter', 'opencode'] as const;
+const apiKeyProviderIds = [
+	'openai',
+	'anthropic',
+	'vercel',
+	'openrouter',
+	'opencode',
+	'opencode-go'
+] as const;
 
 type ApiKeyProvider = (typeof apiKeyProviderIds)[number];
 
@@ -55,6 +62,11 @@ const apiKeyProviders: Record<
 		label: 'OpenCode',
 		validationUrl: 'https://opencode.ai/inference/v1/models',
 		headers: bearer
+	},
+	'opencode-go': {
+		label: 'OpenCode Go',
+		validationUrl: 'https://opencode.ai/inference/go/v1/models',
+		headers: bearer
 	}
 };
 
@@ -84,16 +96,25 @@ export const getMyConfiguration = action({
 		anthropic: v.boolean(),
 		vercel: v.boolean(),
 		openrouter: v.boolean(),
-		opencode: v.boolean()
+		opencode: v.boolean(),
+		'opencode-go': v.boolean()
 	}),
 	handler: async (ctx) => {
-		const [openai, claude, anthropic, vercel, openrouter, opencode] = await Promise.all(
-			(['openai', 'claude', 'anthropic', 'vercel', 'openrouter', 'opencode'] as const).map(
-				(provider) => isConfigured(ctx, provider)
-			)
+		const [openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo] = await Promise.all(
+			(
+				[
+					'openai',
+					'claude',
+					'anthropic',
+					'vercel',
+					'openrouter',
+					'opencode',
+					'opencode-go'
+				] as const
+			).map((provider) => isConfigured(ctx, provider))
 		);
 
-		return { openai, claude, anthropic, vercel, openrouter, opencode };
+		return { openai, claude, anthropic, vercel, openrouter, opencode, 'opencode-go': opencodeGo };
 	}
 });
 

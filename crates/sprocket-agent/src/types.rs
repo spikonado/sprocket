@@ -20,6 +20,8 @@ pub enum CompletionProvider {
     Openai,
     Chatgpt,
     Claude,
+    #[serde(rename = "opencode-go")]
+    OpencodeGo,
     Anthropic,
     Vercel,
     Openrouter,
@@ -27,11 +29,12 @@ pub enum CompletionProvider {
 }
 
 impl CompletionProvider {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Spikonado,
         Self::Openai,
         Self::Chatgpt,
         Self::Claude,
+        Self::OpencodeGo,
         Self::Anthropic,
         Self::Vercel,
         Self::Openrouter,
@@ -54,17 +57,18 @@ impl CompletionProvider {
 
     /// The ID this provider addresses catalog model `model` by, or None when it doesn't serve it.
     pub(crate) fn model_id<'a>(self, model: &'a str, route: &'a ModelRoute) -> Option<&'a str> {
-        let catalog_key = match self {
+        let models_dev_provider = match self {
             Self::Spikonado => return route.served_by_gateway.then_some(model),
             Self::Openai | Self::Chatgpt => return (route.vendor == "openai").then_some(model),
             Self::Claude | Self::Anthropic => "anthropic",
             Self::Vercel => "vercel",
             Self::Openrouter => "openrouter",
             Self::Opencode => "opencode",
+            Self::OpencodeGo => "opencode-go",
         };
         route
             .provider_model_ids
-            .get(catalog_key)
+            .get(models_dev_provider)
             .map(String::as_str)
     }
 
@@ -73,9 +77,12 @@ impl CompletionProvider {
         match self {
             Self::Spikonado => Some("fast"),
             Self::Openai | Self::Chatgpt => Some("priority"),
-            Self::Claude | Self::Anthropic | Self::Vercel | Self::Openrouter | Self::Opencode => {
-                None
-            }
+            Self::Claude
+            | Self::OpencodeGo
+            | Self::Anthropic
+            | Self::Vercel
+            | Self::Openrouter
+            | Self::Opencode => None,
         }
     }
 
@@ -85,6 +92,7 @@ impl CompletionProvider {
             Self::Openai => "openai",
             Self::Chatgpt => "chatgpt",
             Self::Claude => "claude",
+            Self::OpencodeGo => "opencode-go",
             Self::Anthropic => "anthropic",
             Self::Vercel => "vercel",
             Self::Openrouter => "openrouter",
@@ -98,8 +106,11 @@ impl CompletionProvider {
 pub struct ModelRoute {
     #[serde(rename = "provider")]
     pub vendor: String,
-    #[serde(default, rename = "providerModelIds")]
-    pub provider_model_ids: HashMap<String, String>,
+    #[serde(default, rename = "modelsDevId")]
+    pub models_dev_id: Option<String>,
+    /// Keyed by models.dev provider ID, filled from models.dev after the catalog loads.
+    #[serde(skip)]
+    pub provider_model_ids: HashMap<&'static str, String>,
     /// The gateway publishes null `usageWeights` for models only BYOK providers serve.
     #[serde(
         default = "served_by_gateway_default",

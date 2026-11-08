@@ -363,7 +363,8 @@ export default function App({
 			anthropic: savedProviders?.anthropic === true,
 			vercel: savedProviders?.vercel === true,
 			openrouter: savedProviders?.openrouter === true,
-			opencode: savedProviders?.opencode === true
+			opencode: savedProviders?.opencode === true,
+			'opencode-go': savedProviders?.['opencode-go'] === true
 		}),
 		[savedProviders]
 	);

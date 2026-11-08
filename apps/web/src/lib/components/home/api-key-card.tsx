@@ -16,7 +16,8 @@ const keyPlaceholders: Record<ApiKeyProvider, string> = {
 	anthropic: 'sk-ant-…',
 	vercel: 'vck_…',
 	openrouter: 'sk-or-…',
-	opencode: 'oc_sk_…'
+	opencode: 'oc_sk_…',
+	'opencode-go': 'oc_sk_…'
 };
 
 const caughtError = z.instanceof(Error).catch(new Error());

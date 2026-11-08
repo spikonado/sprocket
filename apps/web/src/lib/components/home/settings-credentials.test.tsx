@@ -12,7 +12,8 @@ const noApiKeysSaved = {
 	anthropic: false,
 	vercel: false,
 	openrouter: false,
-	opencode: false
+	opencode: false,
+	'opencode-go': false
 };
 
 const loginWindow = {

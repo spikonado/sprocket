@@ -2,15 +2,21 @@ use super::*;
 use crate::types::CompletionProvider::{Anthropic, Chatgpt, Openrouter, Spikonado, Vercel};
 
 fn catalog() -> ModelCatalog {
-    serde_json::from_value(serde_json::json!({
+    let mut catalog: ModelCatalog = serde_json::from_value(serde_json::json!({
         "defaultModelId": "default",
         "models": [
-            {"id": "default", "label": "Default", "provider": "anthropic", "providerModelIds": {"anthropic": "claude-default", "openrouter": "anthropic/default"}, "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
+            {"id": "default", "label": "Default", "provider": "anthropic", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
             {"id": "pro", "label": "Pro", "provider": "anthropic", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
             {"id": "gpt", "label": "GPT", "provider": "openai", "reasoningEfforts": ["low", "xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard", "fast"]}
         ]
     }))
-    .unwrap()
+    .unwrap();
+    catalog.models[0].route.provider_model_ids = [
+        ("anthropic", "claude-default".to_string()),
+        ("openrouter", "anthropic/default".to_string()),
+    ]
+    .into();
+    catalog
 }
 
 fn saved(model: &str, reasoning: &str, fast: bool) -> ModelSettings {

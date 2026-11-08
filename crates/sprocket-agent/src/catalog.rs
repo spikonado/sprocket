@@ -148,7 +148,7 @@ async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatal
     if !response.status().is_success() {
         anyhow::bail!("AI gateway catalog returned {}", response.status());
     }
-    let payload: GatewayModelsResponse = response
+    let mut payload: GatewayModelsResponse = response
         .json()
         .await
         .context("AI gateway catalog was not valid JSON")?;
@@ -158,6 +158,14 @@ async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatal
             payload.sprocket.protocol_version
         );
     }
+    crate::models_dev::resolve(
+        payload
+            .sprocket
+            .models
+            .iter_mut()
+            .map(|model| &mut model.route),
+    )
+    .await;
     Ok(payload.sprocket)
 }
 
