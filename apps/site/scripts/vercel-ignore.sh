@@ -10,12 +10,14 @@ fi
 
 base="${VERCEL_GIT_PREVIOUS_SHA:-}"
 
-# A branch's first preview has no previous deployment, so compare with where it left main.
-# Vercel's clone is 10 commits deep and has no remotes, so deepen both sides from GitHub.
-if [[ -z "$base" ]]; then
+# Without a previous deployment in this history, as on a first preview, a force-push or a
+# redeploy, compare with where the branch left main. Vercel's clone is 10 commits deep and has
+# no remotes, so deepen both sides from GitHub.
+if [[ -z "$base" ]] || ! git merge-base --is-ancestor "$base" HEAD 2>/dev/null; then
 	repo="https://github.com/$VERCEL_GIT_REPO_OWNER/$VERCEL_GIT_REPO_SLUG.git"
 	git fetch --quiet --depth=100 "$repo" "$VERCEL_GIT_COMMIT_SHA" main:main-tip &&
 		base="$(git merge-base main-tip HEAD)" || exit 1
 fi
 
-git diff --quiet "$base" HEAD -- . ../web/convex ../web/convex.json ../../bun.lock
+# Vercel fails the deployment on exit codes other than 0 and 1.
+git diff --quiet "$base" HEAD -- . ../web/convex ../web/convex.json ../../bun.lock || exit 1
