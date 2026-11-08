@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
-import type { ChatGptStatus, ClaudeCodeStatus, LocalApi } from '$lib/types/sprocket';
+import type { ChatGptStatus, ClaudeCodeStatus, LocalApi, MuseStatus } from '$lib/types/sprocket';
 import SettingsCredentials from './settings-credentials';
 
 const noApiKeysSaved = {
@@ -52,6 +52,18 @@ function claudeCodeFixture(overrides: Partial<ClaudeCodeStatus> = {}): ClaudeCod
 		version: '2.1.300',
 		minimumVersion: '2.1.257',
 		installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
+		error: null,
+		...overrides
+	};
+}
+
+function museFixture(overrides: Partial<MuseStatus> = {}): MuseStatus {
+	return {
+		state: 'signedOut',
+		version: '1.0.0',
+		minimumVersion: '1.0.0',
+		installCommand: 'curl -fsSL https://muse.test/install.sh | bash',
+		account: null,
 		error: null,
 		...overrides
 	};
@@ -113,6 +125,10 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		startClaudeCodeLogin: unused,
 		finishClaudeCodeLogin: unused,
 		cancelClaudeCodeLogin: async () => {},
+		fetchMuseStatus: async () => museFixture(),
+		installMuse: unused,
+		startMuseLogin: unused,
+		cancelMuseLogin: async () => {},
 		...overrides
 	};
 }
@@ -123,12 +139,14 @@ function mount(
 		apiKeysSaved = noApiKeysSaved,
 		claudeTokenSaved = false,
 		claudeCodeStatus = claudeCodeFixture(),
+		museStatus = museFixture(),
 		chatGptStatus = statusFixture(),
 		localApi = createChatGptApi()
 	}: {
 		apiKeysSaved?: typeof noApiKeysSaved;
 		claudeTokenSaved?: boolean;
 		claudeCodeStatus?: ClaudeCodeStatus;
+		museStatus?: MuseStatus;
 		chatGptStatus?: ChatGptStatus;
 		localApi?: LocalApi;
 	} = {}
@@ -136,10 +154,12 @@ function mount(
 	const onConfigurationChange = vi.fn();
 	const onChatGptStatusChange = vi.fn();
 	const onClaudeCodeStatusChange = vi.fn();
+	const onMuseStatusChange = vi.fn();
 
 	function Harness() {
 		const [status, setStatus] = useState(chatGptStatus);
 		const [claudeStatus, setClaudeStatus] = useState(claudeCodeStatus);
+		const [currentMuseStatus, setMuseStatus] = useState(museStatus);
 
 		return (
 			<SettingsCredentials
@@ -149,6 +169,8 @@ function mount(
 				claudeTokenSaved={claudeTokenSaved}
 				claudeCodeStatus={claudeStatus}
 				claudeCodeStatusError={null}
+				museStatus={currentMuseStatus}
+				museStatusError={null}
 				chatGptStatus={status}
 				chatGptLoading={false}
 				chatGptStatusError={null}
@@ -162,6 +184,10 @@ function mount(
 					setClaudeStatus(next);
 					onClaudeCodeStatusChange(next);
 				}}
+				onMuseStatusChange={(next) => {
+					setMuseStatus(next);
+					onMuseStatusChange(next);
+				}}
 				onConfigurationChange={onConfigurationChange}
 			/>
 		);
@@ -173,7 +199,13 @@ function mount(
 		</ConvexTestProvider>
 	);
 
-	return { ...view, onConfigurationChange, onChatGptStatusChange, onClaudeCodeStatusChange };
+	return {
+		...view,
+		onConfigurationChange,
+		onChatGptStatusChange,
+		onClaudeCodeStatusChange,
+		onMuseStatusChange
+	};
 }
 
 it('saves an API key, clears the input, and reports the configured provider', async () => {
@@ -212,6 +244,51 @@ it('shows the Claude Code install command and installs it from the button', asyn
 	expect(install).toHaveBeenCalledWith('user-a');
 	expect(view.onClaudeCodeStatusChange).toHaveBeenCalledWith(installing);
 	expect(screen.queryByRole('button', { name: 'Sign in with Claude' })).toBeNull();
+});
+
+it('signs in to Muse with a device code and waits until Muse is ready', async () => {
+	vi.useFakeTimers();
+	const ready = museFixture({ state: 'ready', account: 'a@example.com' });
+
+	const fetchMuseStatus = vi
+		.fn<() => Promise<MuseStatus>>()
+		.mockResolvedValueOnce(museFixture())
+		.mockResolvedValue(ready);
+
+	const view = mount(new ConvexTestClient(), {
+		localApi: createChatGptApi({
+			startMuseLogin: async () => ({
+				loginId: 'login-1',
+				verificationUrl: 'https://muse.test/device',
+				userCode: 'ABCD-EFGH'
+			}),
+			fetchMuseStatus
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Sign in with Muse' }));
+	});
+	expect(screen.getByText('ABCD-EFGH')).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'Open sign-in page' })).toHaveProperty(
+		'href',
+		'https://muse.test/device'
+	);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(4_000);
+	});
+	expect(view.onMuseStatusChange).toHaveBeenLastCalledWith(ready);
+	expect(screen.getByText('Connected as a@example.com')).toBeTruthy();
+	expect(screen.queryByText('ABCD-EFGH')).toBeNull();
+});
+
+it('links to a plan upgrade when the Muse plan lacks Muse Wonder Full', () => {
+	mount(new ConvexTestClient(), { museStatus: museFixture({ state: 'planRequired' }) });
+	expect(screen.getByRole('link', { name: 'Upgrade in Accounts Center' })).toHaveProperty(
+		'href',
+		'https://accountscenter.meta.com/'
+	);
+	expect(screen.queryByRole('button', { name: 'Sign in with Muse' })).toBeNull();
 });
 
 it('signs in with Claude and saves the token', async () => {
@@ -556,6 +633,8 @@ it('starts a fresh login after the signed-in user changes', async () => {
 				claudeTokenSaved={false}
 				claudeCodeStatus={claudeCodeFixture()}
 				claudeCodeStatusError={null}
+				museStatus={museFixture()}
+				museStatusError={null}
 				chatGptStatus={statusFixture()}
 				chatGptLoading={false}
 				chatGptStatusError={null}
@@ -563,6 +642,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 				loadError={null}
 				onChatGptStatusChange={() => {}}
 				onClaudeCodeStatusChange={() => {}}
+				onMuseStatusChange={() => {}}
 				onConfigurationChange={() => {}}
 			/>
 		</ConvexTestProvider>

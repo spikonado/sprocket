@@ -5,6 +5,7 @@ mod browser_install;
 mod bun_install;
 pub mod chatgpt_credentials;
 pub mod claude_code_cli;
+mod cli_install;
 pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
@@ -15,6 +16,7 @@ pub mod kicad_connector;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
+pub mod muse_cli;
 pub mod native_auth;
 pub mod package_update;
 pub mod profile;
@@ -47,6 +49,7 @@ use crate::kicad_connector::KiCadConnector;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
 use crate::machines::MachineManager;
+use crate::muse_cli::MuseCli;
 use crate::native_auth::{BrowserSessions, NativeAuthManager};
 use crate::package_update::PackageUpdateManager;
 use crate::project_attachments::ProjectAttachmentStore;
@@ -101,6 +104,8 @@ pub struct Host {
     pub kicad: Arc<KiCadConnector>,
     pub claude_code_cli: Arc<ClaudeCodeCli>,
     pub claude_code: sprocket_agent::ClaudeCode,
+    pub muse_cli: Arc<MuseCli>,
+    pub muse: sprocket_agent::Muse,
     bun: Arc<PinnedTool>,
     desktop: Arc<PinnedTool>,
     gh: Arc<PinnedTool>,
@@ -140,6 +145,7 @@ impl Host {
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         let python = Arc::new(PythonTools::new(data_dir)?);
         let claude_code_cli = Arc::new(ClaudeCodeCli::new());
+        let muse_cli = Arc::new(MuseCli::new());
         let gh = Arc::new(gh_install::installer(data_dir)?);
         sprocket_workspace::github::use_pinned_gh(gh_install::executable(&gh));
         Ok(Self {
@@ -178,6 +184,8 @@ impl Host {
                 data_dir.join("claude-code"),
             ),
             claude_code_cli,
+            muse: sprocket_agent::Muse::new(Arc::clone(&muse_cli) as _),
+            muse_cli,
             bun: Arc::new(bun_install::installer(data_dir)?),
             desktop: Arc::new(desktop_install::installer(data_dir)?),
             gh,

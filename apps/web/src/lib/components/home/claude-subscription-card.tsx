@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { LoaderCircle } from 'lucide-react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import Button from '$lib/components/ui/button/button';
@@ -7,6 +6,7 @@ import ProviderLogo from '$lib/components/provider-logo';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import { z } from 'zod';
 import type { ClaudeCodeStatus, LocalApi } from '$lib/types/sprocket';
+import CliInstallPrompt from './cli-install-prompt';
 
 const caughtError = z.instanceof(Error).catch(new Error());
 
@@ -174,7 +174,6 @@ export default function ClaudeSubscriptionCard({
 		}
 	}
 
-	const installing = status?.state === 'installing';
 	const shownError = error ?? status?.error ?? statusError;
 
 	return (
@@ -199,24 +198,12 @@ export default function ClaudeSubscriptionCard({
 					<p className="text-muted-foreground mt-4 text-[12px]">Checking Claude Code…</p>
 				)
 			) : status.state !== 'installed' ? (
-				<div className="mt-4 space-y-3">
-					<p className="text-muted-foreground text-[12px] leading-5">
-						{status.version
-							? `Claude Code ${status.version} is older than ${status.minimumVersion}, which Sprocket needs. Update it with:`
-							: 'Sprocket uses Claude Code on this computer. Install it with:'}
-					</p>
-					<pre className="border-border bg-hover-fill text-foreground overflow-x-auto rounded-lg border px-3 py-2 font-mono text-[12px]">
-						<code>{status.installCommand}</code>
-					</pre>
-					<Button disabled={pending || installing} onclick={() => void install()}>
-						{installing && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
-						{installing
-							? 'Installing…'
-							: status.state === 'outdated'
-								? 'Update Claude Code'
-								: 'Install Claude Code'}
-					</Button>
-				</div>
+				<CliInstallPrompt
+					name="Claude Code"
+					status={status}
+					disabled={pending}
+					onInstall={() => void install()}
+				/>
 			) : tokenSaved ? null : loginId ? (
 				<form className="mt-5 space-y-3" onSubmit={(event) => void finishLogin(event)}>
 					<label className="block space-y-1.5">

@@ -7,10 +7,12 @@ import type {
 	ChatGptBrowserLoginStart,
 	ChatGptStatus,
 	ClaudeCodeStatus,
-	LocalApi
+	LocalApi,
+	MuseStatus
 } from '$lib/types/sprocket';
 import ApiKeyCard, { type ApiKeyProvider } from './api-key-card';
 import ClaudeSubscriptionCard from './claude-subscription-card';
+import MuseSubscriptionCard from './muse-subscription-card';
 
 type ProviderConfigurationChange = {
 	provider: ApiKeyProvider | 'claude';
@@ -38,6 +40,8 @@ export default function SettingsCredentials({
 	claudeTokenSaved,
 	claudeCodeStatus,
 	claudeCodeStatusError,
+	museStatus,
+	museStatusError,
 	chatGptStatus,
 	chatGptLoading,
 	chatGptStatusError,
@@ -45,6 +49,7 @@ export default function SettingsCredentials({
 	loadError,
 	onChatGptStatusChange,
 	onClaudeCodeStatusChange,
+	onMuseStatusChange,
 	onConfigurationChange
 }: {
 	userId: string;
@@ -53,6 +58,8 @@ export default function SettingsCredentials({
 	claudeTokenSaved: boolean;
 	claudeCodeStatus: ClaudeCodeStatus | null;
 	claudeCodeStatusError: string | null;
+	museStatus: MuseStatus | null;
+	museStatusError: string | null;
 	chatGptStatus: ChatGptStatus | null;
 	chatGptLoading: boolean;
 	chatGptStatusError: string | null;
@@ -60,6 +67,7 @@ export default function SettingsCredentials({
 	loadError: string | null;
 	onChatGptStatusChange: (status: ChatGptStatus) => void;
 	onClaudeCodeStatusChange: (status: ClaudeCodeStatus) => void;
+	onMuseStatusChange: (status: MuseStatus) => void;
 	onConfigurationChange: (change: ProviderConfigurationChange) => void;
 }) {
 	const [chatGptPending, setChatGptPending] = useState(false);
@@ -494,6 +502,15 @@ export default function SettingsCredentials({
 						onTokenSavedChange={(configured) =>
 							onConfigurationChange({ provider: 'claude', configured })
 						}
+					/>
+
+					<MuseSubscriptionCard
+						key={`${userId}:muse`}
+						userId={userId}
+						localApi={localApi}
+						status={museStatus}
+						statusError={museStatusError}
+						onStatusChange={onMuseStatusChange}
 					/>
 
 					{apiKeyProviders.map((provider) => (

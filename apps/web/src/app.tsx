@@ -139,13 +139,8 @@ import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sp
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
 import { LocalResponseError } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
-import type {
-	ClaudeCodeStatus,
-	LocalApi,
-	ExecutorJob,
-	ThreadSummary,
-	ProjectAttachment
-} from '$lib/types/sprocket';
+import { useLocalCliStatus } from '$lib/home/local-cli-status';
+import type { LocalApi, ExecutorJob, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
 import { syncShareConversationContent } from '$lib/analytics';
 
@@ -165,8 +160,6 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
 const submissionPreparationTimeoutMs = 30_000;
-
-const claudeCodeInstallPollMs = 2_000;
 
 type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
@@ -375,9 +368,6 @@ export default function App({
 			? loadErrorMessage(providerConfiguration.error, 'Couldn’t load provider settings.')
 			: null;
 
-	const [claudeCodeStatus, setClaudeCodeStatus] = useState<ClaudeCodeStatus | null>(null);
-	const [claudeCodeStatusError, setClaudeCodeStatusError] = useState<string | null>(null);
-
 	const [localConnection] = useAsyncResource('local-server', async () => {
 		const client = await runtime.resolveLocalApi();
 		await reconcileNativeAuthentication();
@@ -435,51 +425,6 @@ export default function App({
 		ensureSubscriptionAttemptedFor.current = signedInUserId;
 		void ensureMySubscription({}).catch(() => {});
 	}, [authReady, signedInUserId, ensureMySubscription]);
-
-	const claudeCodeStatusGeneration = useRef(0);
-
-	const loadClaudeCodeStatus = useEffectEvent((api: LocalApi, userId: string) => {
-		const generation = ++claudeCodeStatusGeneration.current;
-
-		const current = () =>
-			generation === claudeCodeStatusGeneration.current && signedInUserIdRef.current === userId;
-
-		api
-			.fetchClaudeCodeStatus(userId)
-			.then((status) => {
-				if (current()) handleClaudeCodeStatusChange(status);
-			})
-			.catch((error: Error) => {
-				if (current())
-					setClaudeCodeStatusError(error.message || 'Couldn’t check Claude Code on this computer.');
-			});
-	});
-
-	useEffect(() => {
-		if (claudeCodeStatus?.state !== 'installing' || !localApi || !signedInUserId) return;
-
-		const timer = setTimeout(
-			() => loadClaudeCodeStatus(localApi, signedInUserId),
-			claudeCodeInstallPollMs
-		);
-
-		return () => clearTimeout(timer);
-	}, [claudeCodeStatus, localApi, signedInUserId]);
-
-	// A window without the local server can't see Claude Code, so it trusts the saved token.
-	const claudeConfigured =
-		claudeTokenSaved && (!localApi || claudeCodeStatus?.state === 'installed');
-
-	const configuredProviders = useMemo(() => {
-		const configured: Record<CompletionProvider, boolean> = {
-			...apiKeysSaved,
-			spikonado: true,
-			chatgpt: chatGptConfigured,
-			claude: claudeConfigured
-		};
-
-		return completionProviderIds.filter((provider) => configured[provider]);
-	}, [apiKeysSaved, chatGptConfigured, claudeConfigured]);
 
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -542,21 +487,41 @@ export default function App({
 	const [initialProjectLaunchResolved, setInitialProjectLaunchResolved] = useState(false);
 	const credentialsOpen = settingsOpen && settingsPage === 'credentials';
 
-	// Opening BYOK/BYOS checks again, since the user may have installed Claude Code from a terminal.
-	useEffect(() => {
-		if (!authReady || !signedInUserId || !localApi) {
-			setClaudeCodeStatus(null);
-			setClaudeCodeStatusError(null);
+	const cliUserId = authReady ? signedInUserId : null;
 
-			return;
-		}
+	const claudeCode = useLocalCliStatus({
+		localApi,
+		userId: cliUserId,
+		refreshKey: credentialsOpen,
+		fetchStatus: (api, userId) => api.fetchClaudeCodeStatus(userId),
+		failureMessage: 'Couldn’t check Claude Code on this computer.'
+	});
 
-		loadClaudeCodeStatus(localApi, signedInUserId);
+	const muse = useLocalCliStatus({
+		localApi,
+		userId: cliUserId,
+		refreshKey: credentialsOpen,
+		fetchStatus: (api, userId) => api.fetchMuseStatus(userId),
+		failureMessage: 'Couldn’t check Muse on this computer.'
+	});
 
-		return () => {
-			claudeCodeStatusGeneration.current += 1;
+	// A window without the local server can't see Claude Code, so it trusts the saved token.
+	const claudeConfigured =
+		claudeTokenSaved && (!localApi || claudeCode.status?.state === 'installed');
+
+	const museConfigured = muse.status?.state === 'ready';
+
+	const configuredProviders = useMemo(() => {
+		const configured: Record<CompletionProvider, boolean> = {
+			...apiKeysSaved,
+			spikonado: true,
+			chatgpt: chatGptConfigured,
+			claude: claudeConfigured,
+			muse: museConfigured
 		};
-	}, [authReady, signedInUserId, localApi, credentialsOpen]);
+
+		return completionProviderIds.filter((provider) => configured[provider]);
+	}, [apiKeysSaved, chatGptConfigured, claudeConfigured, museConfigured]);
 
 	const [createThreadComposerElement, setCreateThreadComposerElement] =
 		useState<HTMLElement | null>(null);
@@ -1421,12 +1386,6 @@ export default function App({
 		const key = change.provider === 'opencode-go' ? 'opencodeGo' : change.provider;
 
 		if (saved) setProviderConfiguration({ ...saved, [key]: change.configured });
-	}
-
-	function handleClaudeCodeStatusChange(status: ClaudeCodeStatus) {
-		claudeCodeStatusGeneration.current += 1;
-		setClaudeCodeStatus(status);
-		setClaudeCodeStatusError(null);
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {
@@ -2642,15 +2601,18 @@ export default function App({
 								localApi={localApi}
 								apiKeysSaved={apiKeysSaved}
 								claudeTokenSaved={claudeTokenSaved}
-								claudeCodeStatus={claudeCodeStatus}
-								claudeCodeStatusError={claudeCodeStatusError}
+								claudeCodeStatus={claudeCode.status}
+								claudeCodeStatusError={claudeCode.error}
+								museStatus={muse.status}
+								museStatusError={muse.error}
 								chatGptStatus={chatGptStatus}
 								chatGptLoading={chatGptStatusResource.status === 'loading'}
 								chatGptStatusError={chatGptStatusError}
 								loading={providerConfiguration.status === 'loading'}
 								loadError={providerConfigurationError}
 								onChatGptStatusChange={setChatGptStatus}
-								onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
+								onClaudeCodeStatusChange={claudeCode.update}
+								onMuseStatusChange={muse.update}
 								onConfigurationChange={handleProviderConfigurationChange}
 							/>
 						) : settingsPage === 'payments' ? (

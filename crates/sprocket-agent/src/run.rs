@@ -799,7 +799,10 @@ pub async fn run_agent(
         &gateway_url,
         chatgpt_client,
         request.chatgpt_credentials.clone(),
-        request.claude_code.clone(),
+        crate::provider::LocalClis {
+            claude_code: request.claude_code.clone(),
+            muse: request.muse.clone(),
+        },
         cwd.clone(),
     );
 

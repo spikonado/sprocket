@@ -319,6 +319,21 @@ const claudeCodeLoginStartSchema = z.object({ loginId: z.string(), url: z.string
 
 const claudeCodeLoginFinishSchema = z.object({ token: z.string() });
 
+const museStatusSchema = z.object({
+	state: z.enum(['notInstalled', 'installing', 'outdated', 'signedOut', 'planRequired', 'ready']),
+	version: z.string().nullable(),
+	minimumVersion: z.string(),
+	installCommand: z.string(),
+	account: z.string().nullable(),
+	error: z.string().nullable()
+});
+
+const museLoginStartSchema = z.object({
+	loginId: z.string(),
+	verificationUrl: z.string(),
+	userCode: z.string()
+});
+
 function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
@@ -795,6 +810,24 @@ export function createLocalClient(baseUrl: string): LocalApi {
 		},
 		cancelClaudeCodeLogin: async (userId, loginId) => {
 			await transport.response('/api/claude-code/login/cancel', {
+				method: 'POST',
+				body: JSON.stringify({ userId, loginId })
+			});
+		},
+		fetchMuseStatus: async (userId) =>
+			await request(`/api/muse?${new URLSearchParams({ userId }).toString()}`, museStatusSchema),
+		installMuse: async (userId) =>
+			await request('/api/muse/install', museStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		startMuseLogin: async (userId) =>
+			await request('/api/muse/login/start', museLoginStartSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		cancelMuseLogin: async (userId, loginId) => {
+			await transport.response('/api/muse/login/cancel', {
 				method: 'POST',
 				body: JSON.stringify({ userId, loginId })
 			});

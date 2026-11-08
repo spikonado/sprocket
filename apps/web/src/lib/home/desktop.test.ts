@@ -83,7 +83,11 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		installClaudeCode: unusedDesktopCall,
 		startClaudeCodeLogin: unusedDesktopCall,
 		finishClaudeCodeLogin: unusedDesktopCall,
-		cancelClaudeCodeLogin: unusedDesktopCall
+		cancelClaudeCodeLogin: unusedDesktopCall,
+		fetchMuseStatus: unusedDesktopCall,
+		installMuse: unusedDesktopCall,
+		startMuseLogin: unusedDesktopCall,
+		cancelMuseLogin: unusedDesktopCall
 	};
 }
 

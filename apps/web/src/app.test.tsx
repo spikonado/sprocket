@@ -12,6 +12,7 @@ import type { RuntimeConfig } from '$lib/runtime-config';
 import { stubWebSocket } from '$lib/local/socket-test-support';
 import type {
 	ClaudeCodeStatus,
+	MuseStatus,
 	LocalApi,
 	ProjectAttachment,
 	TranscriptDisplayPage,
@@ -155,6 +156,10 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		startClaudeCodeLogin: unused,
 		finishClaudeCodeLogin: unused,
 		cancelClaudeCodeLogin: unused,
+		fetchMuseStatus: async () => museStatus('signedOut'),
+		installMuse: unused,
+		startMuseLogin: unused,
+		cancelMuseLogin: unused,
 		...overrides
 	};
 }
@@ -165,6 +170,17 @@ function claudeCodeStatus(state: ClaudeCodeStatus['state']): ClaudeCodeStatus {
 		version: '2.1.300',
 		minimumVersion: '2.1.257',
 		installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
+		error: null
+	};
+}
+
+function museStatus(state: MuseStatus['state']): MuseStatus {
+	return {
+		state,
+		version: '1.0.0',
+		minimumVersion: '1.0.0',
+		installCommand: 'curl -fsSL https://muse.test/install.sh | bash',
+		account: null,
 		error: null
 	};
 }
@@ -1523,11 +1539,11 @@ it('shows a retained-account sign-out failure in Account settings', async () => 
 });
 
 it.each([
-	['installed', true],
-	['outdated', false]
+	['installed', 'ready', true],
+	['outdated', 'planRequired', false]
 ] as const)(
-	'shows saved credentials as providers, Claude only when Claude Code is up to date (%s)',
-	async (state, shown) => {
+	'shows saved credentials as providers, Claude and Muse only when ready (%s, %s)',
+	async (claudeState, museState, shown) => {
 		const client = createConvexFixtures();
 		client.registerAction(api.providerCredentials.getMyConfiguration, {
 			openai: false,
@@ -1538,13 +1554,19 @@ it.each([
 			opencode: false,
 			opencodeGo: false
 		});
-		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(state));
-		await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));
+		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(claudeState));
+		const fetchMuseStatus = vi.fn(async () => museStatus(museState));
+		await renderApp(
+			client,
+			createRuntime(createLocalApi({ fetchClaudeCodeStatus, fetchMuseStatus }))
+		);
 		fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
 		fireEvent.click(screen.getByRole('button', { name: 'Providers' }));
 		await flushPendingWork();
 		expect(fetchClaudeCodeStatus).toHaveBeenCalledWith('user-a');
+		expect(fetchMuseStatus).toHaveBeenCalledWith('user-a');
 		expect(screen.queryByRole('switch', { name: 'Claude Subscription' }) !== null).toBe(shown);
+		expect(screen.queryByRole('switch', { name: 'Muse Code Subscription' }) !== null).toBe(shown);
 		expect(screen.getByRole('switch', { name: 'OpenRouter' })).toBeTruthy();
 	}
 );

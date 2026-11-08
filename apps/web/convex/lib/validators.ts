@@ -14,6 +14,7 @@ export const completionProviderIds = [
 	'chatgpt',
 	'claude',
 	'opencode-go',
+	'muse',
 	'anthropic',
 	'vercel',
 	'openrouter',

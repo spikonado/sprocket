@@ -10,7 +10,8 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	vercel: 'Vercel AI Gateway',
 	openrouter: 'OpenRouter',
 	opencode: 'OpenCode',
-	'opencode-go': 'OpenCode Go'
+	'opencode-go': 'OpenCode Go',
+	muse: 'Muse Code Subscription'
 };
 
 export function reorderShownProviders(
