@@ -162,7 +162,7 @@ impl Session {
                     let text = screen_text(&String::from_utf8_lossy(&self.raw));
                     bail!(
                         "claude setup-token exited: {}",
-                        super::tail(text.trim(), EXIT_TEXT_TAIL)
+                        crate::cli_install::tail(text.trim(), EXIT_TEXT_TAIL)
                     );
                 }
                 Err(_) => bail!(

@@ -308,6 +308,22 @@ export type ClaudeCodeLoginStart = {
 	url: string;
 };
 
+/** Muse on this machine, which the Muse Code Subscription provider runs with the user's own Muse login. */
+export type MuseStatus = {
+	state: 'notInstalled' | 'installing' | 'outdated' | 'signedOut' | 'planRequired' | 'ready';
+	version: string | null;
+	minimumVersion: string;
+	installCommand: string;
+	account: string | null;
+	error: string | null;
+};
+
+export type MuseLoginStart = {
+	loginId: string;
+	verificationUrl: string;
+	userCode: string;
+};
+
 export type WorkspaceSearchEntry = {
 	path: string;
 	kind: 'file' | 'directory';
@@ -473,6 +489,10 @@ export type LocalApi = {
 	startClaudeCodeLogin: (userId: string) => Promise<ClaudeCodeLoginStart>;
 	finishClaudeCodeLogin: (userId: string, loginId: string, code: string) => Promise<string>;
 	cancelClaudeCodeLogin: (userId: string, loginId: string) => Promise<void>;
+	fetchMuseStatus: (userId: string) => Promise<MuseStatus>;
+	installMuse: (userId: string) => Promise<MuseStatus>;
+	startMuseLogin: (userId: string) => Promise<MuseLoginStart>;
+	cancelMuseLogin: (userId: string, loginId: string) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

@@ -25,6 +25,19 @@ fn providers_address_catalog_models_by_their_own_ids() {
     );
     assert_eq!(id(CompletionProvider::Openrouter), None);
     assert_eq!(id(CompletionProvider::Openai), None);
+    assert_eq!(id(CompletionProvider::Muse), None);
+
+    let meta: ModelRoute = serde_json::from_value(serde_json::json!({
+        "provider": "meta",
+        "modelsDevId": "meta/muse-wonder-full",
+        "usageWeights": null,
+    }))
+    .unwrap();
+    assert_eq!(
+        CompletionProvider::Muse.model_id("muse-wonder-full-1.0", &meta),
+        Some("muse-wonder-full-1.0")
+    );
+    assert!(!CompletionProvider::Spikonado.serves(&meta));
 }
 
 #[test]

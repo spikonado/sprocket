@@ -37,7 +37,8 @@ pub(crate) fn max_yield_ms(provider: CompletionProvider, cache_write_ttl: Option
         | CompletionProvider::Openrouter => cache_write_ttl.and_then(ttl_ms),
         CompletionProvider::Chatgpt
         | CompletionProvider::Opencode
-        | CompletionProvider::OpencodeGo => None,
+        | CompletionProvider::OpencodeGo
+        | CompletionProvider::Muse => None,
         // Claude Code writes its prompt cache at a one-hour TTL.
         CompletionProvider::Claude => Some(3_600_000),
     };

@@ -197,6 +197,7 @@ async fn launch_agent_inner(
     let request = RunAgentRequest {
         chatgpt_credentials: Some(host.chatgpt_credentials.for_user(payload.user_id.clone())),
         claude_code: host.claude_code.clone(),
+        muse: host.muse.clone(),
         allow_interaction,
         cancellation,
         deployment_url: host.convex_deployment_url.clone(),

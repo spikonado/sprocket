@@ -64,6 +64,7 @@ it('lists configured providers in the saved order and saves toggles', async () =
 				{ provider: 'chatgpt', enabled: true },
 				{ provider: 'claude', enabled: true },
 				{ provider: 'opencode-go', enabled: true },
+				{ provider: 'muse', enabled: true },
 				{ provider: 'anthropic', enabled: true },
 				{ provider: 'vercel', enabled: true },
 				{ provider: 'openrouter', enabled: true },

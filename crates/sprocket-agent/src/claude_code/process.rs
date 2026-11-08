@@ -8,50 +8,19 @@ use std::time::Duration;
 
 use anyhow::Context;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-const MCP_SERVER: &str = "sprocket";
-const STDERR_TAIL_BYTES: usize = 4096;
-const TURN_END_TIMEOUT: Duration = Duration::from_secs(30);
+use super::{ClaudeCodeCli, result_error};
+use crate::cli_session::{
+    CliProcess, Event, MCP_SERVER, McpReply, SessionStart, Spawn, mcp_reply, read_stderr, rpc_error,
+};
+
+const TOOL_PREFIX: &str = "mcp__sprocket__";
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const EXIT_GRACE: Duration = Duration::from_secs(5);
-
-pub(super) enum SessionStart {
-    New(String),
-    Resume(String),
-}
-
-impl SessionStart {
-    pub(super) fn id(&self) -> &str {
-        match self {
-            Self::New(id) | Self::Resume(id) => id,
-        }
-    }
-}
-
-pub(super) struct Spawn<'a> {
-    pub(super) executable: &'a Path,
-    pub(super) config_dir: &'a Path,
-    pub(super) cwd: &'a Path,
-    pub(super) token: &'a str,
-    pub(super) model: &'a str,
-    pub(super) effort: Option<&'a str>,
-    pub(super) system_prompt: &'a str,
-    pub(super) session: SessionStart,
-    pub(super) tools: Vec<Value>,
-}
-
-#[derive(Debug)]
-pub(super) enum Event {
-    /// A Messages stream event of the top-level conversation.
-    Stream(Value),
-    RateLimit(Value),
-    Result(Value),
-    Exited(String),
-}
 
 /// One Claude Code CLI session driven over its stream-json control protocol, with
 /// Sprocket's tools served to it as an in-process MCP server.
@@ -86,8 +55,8 @@ impl Drop for Process {
 }
 
 impl Process {
-    pub(super) fn spawn(spawn: Spawn<'_>) -> anyhow::Result<Self> {
-        let prompts = spawn.config_dir.join("system-prompts");
+    pub(super) fn spawn(cli: &ClaudeCodeCli, spawn: Spawn<'_>) -> anyhow::Result<Self> {
+        let prompts = cli.config_dir.join("system-prompts");
         std::fs::create_dir_all(&prompts)
             .with_context(|| format!("create {}", prompts.display()))?;
         let mut system_prompt = tempfile::Builder::new()
@@ -96,7 +65,7 @@ impl Process {
         system_prompt.write_all(spawn.system_prompt.as_bytes())?;
         system_prompt.flush()?;
 
-        let mut command = Command::new(spawn.executable);
+        let mut command = Command::new(&cli.executable);
         command
             .args(arguments(&spawn, system_prompt.path()))
             .current_dir(spawn.cwd)
@@ -110,8 +79,8 @@ impl Process {
             }
         }
         command
-            .env("CLAUDE_CODE_OAUTH_TOKEN", spawn.token)
-            .env("CLAUDE_CONFIG_DIR", spawn.config_dir)
+            .env("CLAUDE_CODE_OAUTH_TOKEN", &cli.token)
+            .env("CLAUDE_CONFIG_DIR", &cli.config_dir)
             .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
             // Subscriptions meter Claude Code's default `sdk-cli` entrypoint about twice as
             // heavily. Without the artifact flag, a custom entrypoint adds a per-session
@@ -127,7 +96,7 @@ impl Process {
             .env("MAX_MCP_OUTPUT_TOKENS", "1000000");
         let mut child = command
             .spawn()
-            .with_context(|| format!("start Claude Code at {}", spawn.executable.display()))?;
+            .with_context(|| format!("start Claude Code at {}", cli.executable.display()))?;
         let stdin = child.stdin.take().context("Claude Code has no stdin")?;
         let stdout = child.stdout.take().context("Claude Code has no stdout")?;
         let stderr = child.stderr.take().context("Claude Code has no stderr")?;
@@ -140,6 +109,7 @@ impl Process {
             events: sender,
             calls: Arc::clone(&calls),
             tools: spawn.tools,
+            rate_limit: None,
         };
         tokio::spawn(write_input(stdin, pending_input));
         let process = Self {
@@ -161,8 +131,10 @@ impl Process {
     fn send(&self, message: &Value) {
         let _ = self.input.send(message.to_string());
     }
+}
 
-    pub(super) fn send_user(&self, content: Vec<Value>) {
+impl CliProcess for Process {
+    fn send_user(&self, content: Vec<Value>) {
         self.send(&json!({
             "type": "user",
             "message": { "role": "user", "content": content },
@@ -173,8 +145,7 @@ impl Process {
         }));
     }
 
-    /// Answers Claude Code's call for `tool_use_id` now, or when it makes the call.
-    pub(super) fn answer(&self, tool_use_id: &str, result: Value) {
+    fn answer(&self, tool_use_id: &str, result: Value) {
         let Ok(mut calls) = self.calls.lock() else {
             return;
         };
@@ -186,26 +157,11 @@ impl Process {
         }
     }
 
-    pub(super) async fn next_event(&mut self) -> Event {
+    async fn next_event(&mut self) -> Event {
         self.events
             .recv()
             .await
             .unwrap_or_else(|| Event::Exited("Claude Code stopped.".to_string()))
-    }
-
-    /// Waits for the `result` that follows a turn's last message.
-    pub(super) async fn finish_turn(&mut self) -> anyhow::Result<()> {
-        tokio::time::timeout(TURN_END_TIMEOUT, async {
-            loop {
-                match self.next_event().await {
-                    Event::Result(_) => return Ok(()),
-                    Event::Exited(reason) => anyhow::bail!("Claude Code stopped: {reason}"),
-                    Event::Stream(_) | Event::RateLimit(_) => {}
-                }
-            }
-        })
-        .await
-        .context("Claude Code did not finish its turn")?
     }
 }
 
@@ -299,60 +255,17 @@ fn control_error(request_id: &Value, error: &str) -> Value {
     })
 }
 
-#[derive(Debug, PartialEq)]
-enum McpReply {
-    Respond(Value),
-    ToolCall { rpc_id: Value, tool_use_id: String },
-}
-
-fn mcp_reply(message: &Value, tools: &[Value]) -> McpReply {
-    let id = &message["id"];
-    let rpc_error = |code: i64, text: &str| {
-        McpReply::Respond(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": { "code": code, "message": text },
-        }))
-    };
-    let result =
-        |result: Value| McpReply::Respond(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-    let method = message["method"].as_str();
-    if id.is_null() || method.is_none() {
-        // Notifications and responses get no JSON-RPC reply, but their control request needs an ack.
-        return McpReply::Respond(json!({ "jsonrpc": "2.0", "result": {} }));
-    }
-    match method {
-        Some("initialize") => result(json!({
-            "protocolVersion": message["params"]["protocolVersion"],
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": MCP_SERVER, "version": env!("CARGO_PKG_VERSION") },
-        })),
-        Some("tools/list") => result(json!({ "tools": tools })),
-        Some("ping") => result(json!({})),
-        Some("tools/call") => match message["params"]["_meta"]["claudecode/toolUseId"].as_str() {
-            Some(tool_use_id) => McpReply::ToolCall {
-                rpc_id: id.clone(),
-                tool_use_id: tool_use_id.to_string(),
-            },
-            None => rpc_error(
-                -32602,
-                "Sprocket needs Claude Code's tool use ID to run a tool.",
-            ),
-        },
-        _ => rpc_error(-32601, "Method not found"),
-    }
-}
-
 struct Output {
     /// Weak, so the writer closes stdin once the `Process` is dropped.
     input: mpsc::WeakUnboundedSender<String>,
     events: mpsc::UnboundedSender<Event>,
     calls: Arc<Mutex<ToolCalls>>,
     tools: Vec<Value>,
+    rate_limit: Option<Value>,
 }
 
 impl Output {
-    async fn read(self, stdout: ChildStdout, stderr: ChildStderr) {
+    async fn read(mut self, stdout: ChildStdout, stderr: ChildStderr) {
         let stderr_tail = Arc::new(Mutex::new(String::new()));
         let stderr_reader = tokio::spawn(read_stderr(stderr, Arc::clone(&stderr_tail)));
         let mut lines = BufReader::new(stdout).lines();
@@ -379,7 +292,7 @@ impl Output {
         }
     }
 
-    fn handle(&self, mut message: Value) {
+    fn handle(&mut self, mut message: Value) {
         let kind = message["type"].as_str().unwrap_or_default().to_string();
         match kind.as_str() {
             "control_request" => self.control_request(&message["request_id"], &message["request"]),
@@ -391,15 +304,15 @@ impl Output {
                 }
             }
             "stream_event" if message["parent_tool_use_id"].is_null() => {
-                let _ = self.events.send(Event::Stream(message["event"].take()));
+                let mut event = message["event"].take();
+                unprefix_tool_names(&mut event);
+                let _ = self.events.send(Event::Stream(event));
             }
-            "rate_limit_event" => {
-                let _ = self
-                    .events
-                    .send(Event::RateLimit(message["rate_limit_info"].take()));
-            }
+            "rate_limit_event" => self.rate_limit = Some(message["rate_limit_info"].take()),
             "result" => {
-                let _ = self.events.send(Event::Result(message));
+                let error =
+                    result_error(&message, self.rate_limit.as_ref(), crate::now_ms() / 1_000);
+                let _ = self.events.send(Event::TurnEnd { error });
             }
             _ => {}
         }
@@ -408,22 +321,30 @@ impl Output {
     fn control_request(&self, request_id: &Value, request: &Value) {
         match request["subtype"].as_str() {
             Some("mcp_message") if request["server_name"] == MCP_SERVER => {
-                match mcp_reply(&request["message"], &self.tools) {
-                    McpReply::Respond(response) => self.send(&control_success(
-                        request_id,
-                        json!({ "mcp_response": response }),
-                    )),
-                    McpReply::ToolCall {
-                        rpc_id,
-                        tool_use_id,
-                    } => self.hold(
-                        tool_use_id,
-                        HeldCall {
+                let response = match mcp_reply(&request["message"], &self.tools) {
+                    // Notifications and responses get no JSON-RPC reply, but their control
+                    // request needs an ack.
+                    McpReply::Ack => json!({ "jsonrpc": "2.0", "result": {} }),
+                    McpReply::Respond(response) => response,
+                    McpReply::ToolCall { rpc_id, params } => {
+                        let Some(tool_use_id) = params["_meta"]["claudecode/toolUseId"].as_str()
+                        else {
+                            return self.send(&control_success(
+                                request_id,
+                                json!({ "mcp_response": rpc_error(&rpc_id, -32602, "Sprocket needs Claude Code's tool use ID to run a tool.") }),
+                            ));
+                        };
+                        let call = HeldCall {
                             request_id: request_id.clone(),
                             rpc_id,
-                        },
-                    ),
-                }
+                        };
+                        return self.hold(tool_use_id.to_string(), call);
+                    }
+                };
+                self.send(&control_success(
+                    request_id,
+                    json!({ "mcp_response": response }),
+                ));
             }
             Some("can_use_tool") => self.send(&control_success(
                 request_id,
@@ -449,22 +370,14 @@ impl Output {
     }
 }
 
-async fn read_stderr(mut stderr: ChildStderr, tail: Arc<Mutex<String>>) {
-    let mut buffer = [0; 4096];
-    while let Ok(read) = stderr.read(&mut buffer).await
-        && read > 0
+/// Claude Code names Sprocket's tools after their MCP server.
+fn unprefix_tool_names(event: &mut Value) {
+    if event["type"] == "content_block_start"
+        && event["content_block"]["type"] == "tool_use"
+        && let Some(name) = event["content_block"]["name"].as_str()
+        && let Some(name) = name.strip_prefix(TOOL_PREFIX)
     {
-        let Ok(mut tail) = tail.lock() else {
-            return;
-        };
-        tail.push_str(&String::from_utf8_lossy(&buffer[..read]));
-        if tail.len() > STDERR_TAIL_BYTES {
-            let mut cut = tail.len() - STDERR_TAIL_BYTES;
-            while !tail.is_char_boundary(cut) {
-                cut += 1;
-            }
-            tail.drain(..cut);
-        }
+        event["content_block"]["name"] = Value::String(name.to_string());
     }
 }
 

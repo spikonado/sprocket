@@ -26,10 +26,11 @@ pub enum CompletionProvider {
     Vercel,
     Openrouter,
     Opencode,
+    Muse,
 }
 
 impl CompletionProvider {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Spikonado,
         Self::Openai,
         Self::Chatgpt,
@@ -39,6 +40,7 @@ impl CompletionProvider {
         Self::Vercel,
         Self::Openrouter,
         Self::Opencode,
+        Self::Muse,
     ];
 
     /// The `knownProviders` argument, so Convex leaves out providers this build can't parse.
@@ -60,6 +62,7 @@ impl CompletionProvider {
         let models_dev_provider = match self {
             Self::Spikonado => return route.served_by_gateway.then_some(model),
             Self::Openai | Self::Chatgpt => return (route.vendor == "openai").then_some(model),
+            Self::Muse => return (route.vendor == "meta").then_some(model),
             Self::Claude | Self::Anthropic => "anthropic",
             Self::Vercel => "vercel",
             Self::Openrouter => "openrouter",
@@ -72,7 +75,7 @@ impl CompletionProvider {
             .map(String::as_str)
     }
 
-    /// None for providers whose speed Sprocket doesn't pick, such as Claude Code.
+    /// None for providers whose speed Sprocket doesn't pick, such as Claude Code and Muse.
     pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
         match self {
             Self::Spikonado => Some("fast"),
@@ -82,7 +85,8 @@ impl CompletionProvider {
             | Self::Anthropic
             | Self::Vercel
             | Self::Openrouter
-            | Self::Opencode => None,
+            | Self::Opencode
+            | Self::Muse => None,
         }
     }
 
@@ -97,6 +101,7 @@ impl CompletionProvider {
             Self::Vercel => "vercel",
             Self::Openrouter => "openrouter",
             Self::Opencode => "opencode",
+            Self::Muse => "muse",
         }
     }
 }
@@ -149,8 +154,8 @@ pub trait ChatGptCredentials: Send + Sync {
     fn credential(&self) -> BoxFuture<'_, anyhow::Result<ChatGptAccess>>;
 }
 
-pub trait ClaudeCodeLocator: Send + Sync {
-    /// Finds the user's Claude Code, or explains how to install or update it.
+pub trait CliLocator: Send + Sync {
+    /// Finds the user's CLI, or explains how to install or update it.
     fn executable(&self) -> BoxFuture<'_, anyhow::Result<PathBuf>>;
 }
 
@@ -159,6 +164,7 @@ pub struct RunAgentRequest {
     /// Local ChatGPT credential service handle. Required for ChatGPT runs.
     pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     pub claude_code: crate::claude_code::ClaudeCode,
+    pub muse: crate::muse::Muse,
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,

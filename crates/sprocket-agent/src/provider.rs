@@ -24,7 +24,8 @@ use tokio::time::sleep;
 use self::transcript_sink::TranscriptSink;
 use crate::anthropic;
 use crate::chatgpt::ChatGptClient;
-use crate::claude_code::{ClaudeCode, ResumePoint, resume_point};
+use crate::claude_code::ClaudeCode;
+use crate::cli_session::{ResumePoint, resume_point};
 use crate::context_handoff::{
     ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
@@ -32,6 +33,7 @@ use crate::convex::{ClaimStatus, ContextHandoffWrite, RuntimeClient};
 use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
+use crate::muse::Muse;
 use crate::openai::stateless_responses_model;
 use crate::request_compression::ZstdResponsesRequests;
 use crate::responses_gateway::{ResponsesGateway, gateway_responses_model};
@@ -88,7 +90,16 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
 }
 
 fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    crate::chatgpt::user_facing_error(crate::claude_code::user_facing_error(error))
+    let error = crate::cli_session::user_facing_error(
+        error,
+        &[
+            crate::claude_code::USAGE_LIMIT_CODE,
+            crate::claude_code::ERROR_CODE,
+            crate::muse::USAGE_LIMIT_CODE,
+            crate::muse::ERROR_CODE,
+        ],
+    );
+    crate::chatgpt::user_facing_error(error)
 }
 
 /// A provider-switch handoff writes on the previous provider.
@@ -120,6 +131,13 @@ fn usage_source(
     }
 }
 
+/// The CLIs on this computer that subscription providers run through.
+#[derive(Clone)]
+pub(crate) struct LocalClis {
+    pub(crate) claude_code: ClaudeCode,
+    pub(crate) muse: Muse,
+}
+
 pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     fallback_providers: VecDeque<CompletionProvider>,
@@ -130,8 +148,8 @@ pub(crate) struct AgentProvider {
     cache_write_ttl: Option<String>,
     chatgpt_client: Option<ChatGptClient>,
     chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
-    claude_code: ClaudeCode,
-    claude_resume: Option<ResumePoint>,
+    clis: LocalClis,
+    cli_resume: Option<ResumePoint>,
     cwd: PathBuf,
 }
 
@@ -210,7 +228,7 @@ impl AgentProvider {
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
         chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
-        claude_code: ClaudeCode,
+        clis: LocalClis,
         cwd: PathBuf,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
@@ -233,8 +251,8 @@ impl AgentProvider {
             cache_write_ttl: capabilities.usage_pricing.cache_write_ttl.clone(),
             chatgpt_client,
             chatgpt_credentials,
-            claude_code,
-            claude_resume: None,
+            clis,
+            cli_resume: None,
             cwd,
         }
     }
@@ -244,7 +262,7 @@ impl AgentProvider {
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        self.claude_resume = resume_point(&request.prior_history);
+        self.cli_resume = resume_point(&request.prior_history);
         let mut omit_prior_reasoning = false;
         let switch = match std::mem::take(&mut request.provider_switch) {
             ProviderSwitch::Handoff(switch) => {
@@ -301,7 +319,7 @@ impl AgentProvider {
             }
         };
         // Models started later join mid-run, after replies the resumed session didn't write.
-        self.claude_resume = None;
+        self.cli_resume = None;
         match run_with_completion_model(model, runtime, request, self, switch, omit_prior_reasoning)
             .await
         {
@@ -332,8 +350,8 @@ impl AgentProvider {
             cache_write_ttl: switch.usage_pricing.cache_write_ttl.clone(),
             chatgpt_client: self.chatgpt_client.clone(),
             chatgpt_credentials: self.chatgpt_credentials.clone(),
-            claude_code: self.claude_code.clone(),
-            claude_resume: self.claude_resume.clone(),
+            clis: self.clis.clone(),
+            cli_resume: self.cli_resume.clone(),
             cwd: self.cwd.clone(),
         };
         let model = source
@@ -501,14 +519,21 @@ impl AgentProvider {
             }
             CompletionProvider::Claude => {
                 let credential = runtime.issue_claude_credential(run_id, claim_id).await?;
-                self.claude_code
+                self.clis
+                    .claude_code
                     .completion_model(
                         credential.token,
                         model,
                         base_instructions,
                         &self.cwd,
-                        self.claude_resume.clone(),
+                        self.cli_resume.clone(),
                     )
+                    .await
+            }
+            CompletionProvider::Muse => {
+                self.clis
+                    .muse
+                    .completion_model(model, base_instructions, &self.cwd, self.cli_resume.clone())
                     .await
             }
         }
