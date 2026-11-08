@@ -14,4 +14,4 @@ If available, spawn an Opus 5.5 subagent. If not available and you are working i
 
 ### Task
 
-Go through the requested designs/code and fix every place that breaks your system instructions' "Delete what isn't needed", "Writing comments and docs for maintainers", "Writing style", and "Writing tests" sections. When cleaning up a PR, inspect the full PR diff, not individual commits. Remove compatibility added only for earlier revisions of the PR when no supported consumer or existing data needs it.
+Go through the requested designs/code and fix every place that breaks your system instructions' "Code and design quality" and "Writing style" sections. When cleaning up a PR, inspect the full PR diff, not individual commits. Remove compatibility added only for earlier revisions of the PR when no supported consumer or existing data needs it.

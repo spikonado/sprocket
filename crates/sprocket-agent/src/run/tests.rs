@@ -101,6 +101,21 @@ fn base_instructions_include_the_selected_model_identity() {
 }
 
 #[test]
+fn cleanup_skill_points_at_existing_system_prompt_sections() {
+    let skill = include_str!("../../../sprocket-workspace/skills/cleanup/SKILL.md");
+    let headings: Vec<_> = super::SYSTEM_PROMPT_TEMPLATE
+        .lines()
+        .filter_map(|line| line.strip_prefix("## ").or(line.strip_prefix("### ")))
+        .collect();
+    let sections: Vec<_> = skill.split('"').skip(1).step_by(2).collect();
+
+    assert!(!sections.is_empty());
+    for section in sections {
+        assert!(headings.contains(&section), "missing section {section:?}");
+    }
+}
+
+#[test]
 fn restore_cwd_uses_the_saved_directory_while_it_exists() {
     let dir = tempfile::tempdir().unwrap();
     let root = sprocket_workspace::simplified_path(
