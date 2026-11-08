@@ -91,7 +91,6 @@ impl PinnedTool {
             tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 let staging = tempfile::tempdir_in(staging_parent)?;
                 unpack(&download, staging.path())?;
-                // Publishing `bin` by a rename means it exists only once fully unpacked.
                 std::fs::rename(staging.path(), &bin)?;
                 std::fs::remove_file(&download)?;
                 Ok(())
@@ -293,7 +292,7 @@ pub(crate) fn prune_versions(tool_dir: &Path, current: &str) {
         if !entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
             continue;
         }
-        let result = if name.starts_with('.') && name.ends_with(TOMBSTONE_SUFFIX) {
+        let result = if is_tombstone(&name) {
             std::fs::remove_dir_all(&path)
         } else if name != current && is_version(&name) {
             remove_version(tool_dir, &name, &path)
@@ -329,6 +328,10 @@ pub(crate) fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::i
     #[cfg(not(windows))]
     drop(locks);
     std::fs::remove_dir_all(tombstone)
+}
+
+pub(crate) fn is_tombstone(name: &str) -> bool {
+    name.starts_with('.') && name.ends_with(TOMBSTONE_SUFFIX)
 }
 
 pub(crate) fn is_version(name: &str) -> bool {
