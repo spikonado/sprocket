@@ -395,8 +395,6 @@ impl rig::tool::Tool for DeleteArtifactTool {
                 .delete_artifact(&self.0.workspace_root, &args.artifact_id)
                 .await
                 .map_err(tool_error)?;
-            // Keep the store exclusive until Convex removes the artifact so a
-            // concurrent save cannot recreate the file from the still-visible record.
             tokio::time::timeout(
                 std::time::Duration::from_secs(10),
                 run_convex_tool_mutation(

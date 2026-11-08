@@ -35,7 +35,6 @@ enum ParseResult {
     Failed { error: String },
 }
 
-/// A physical page of the uploaded PDF, numbered from 1.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ParsedPage {

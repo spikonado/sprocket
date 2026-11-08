@@ -13,8 +13,6 @@ use crate::convex::RuntimeClient;
 const MAX_IMAGES_PER_LOOKUP: usize = 100;
 const CONCURRENT_UPLOADS: usize = 4;
 
-/// Hex sha256 of a replayed image to the URL the model fetches it from, or why
-/// no URL could be obtained.
 pub(super) type ImageUrlMap = HashMap<String, Result<String, String>>;
 
 pub(crate) struct ConvexImageUrls<'a> {
@@ -88,8 +86,8 @@ impl ConvexImageUrls<'_> {
                 return urls;
             }
         };
-        // Plain `upload` futures rather than a stream of async closures, which
-        // fails the `Send` check rig's tool futures need (rust-lang/rust#102211).
+        // A stream of async closures fails the `Send` check rig's tool futures
+        // need (rust-lang/rust#102211).
         for chunk in uploads.chunks(CONCURRENT_UPLOADS) {
             let mut pending = Vec::with_capacity(chunk.len());
             for (image, upload_url) in chunk {

@@ -23,9 +23,6 @@ const CATALOG_NAVIGATION: [&[u8]; 6] = [
     b"Threads",
 ];
 
-/// Converts text pages locally and sends only scanned pages to hosted OCR.
-/// Fails with [`LocalConversionFailed`] only before contacting the hosted
-/// parser, because each tool job gets a single hosted parse request.
 pub(super) async fn pdf_markdown(
     bytes: Vec<u8>,
     hosted: Option<&HostedParseContext<'_>>,
@@ -105,7 +102,7 @@ fn load_pdf(bytes: &[u8]) -> anyhow::Result<lopdf::Document> {
         .map_err(|error| anyhow!("failed to load the PDF for OCR: {error}"))
 }
 
-/// Keeps only `pages` (1-indexed, ascending) under a single flat page tree.
+/// `pages` are lopdf's 1-indexed page numbers, ascending.
 fn sub_pdf(bytes: &[u8], pages: &[u32]) -> anyhow::Result<Vec<u8>> {
     let mut document = load_pdf(bytes)?;
     let numbered = document.get_pages();
@@ -127,8 +124,8 @@ fn sub_pdf(bytes: &[u8], pages: &[u32]) -> anyhow::Result<Vec<u8>> {
         }
         page.set("Parent", tree);
     }
-    // Links and form fields can still reference dropped pages.
-    // Nulling those keeps the dropped pages' content out of the upload.
+    // Links and form fields can still reference dropped pages and pull their
+    // content into the upload.
     for (_, id) in numbered {
         if !kept.contains(&id) {
             document.objects.insert(id, Object::Null);
@@ -208,9 +205,7 @@ fn inherited_attributes(
 }
 
 struct ScannedPdf {
-    /// Local markdown by page; empty for scanned pages.
     pages: Vec<String>,
-    /// 1-indexed, ascending.
     scanned: Vec<u32>,
 }
 
@@ -240,7 +235,6 @@ impl ScannedPdf {
         &self.scanned[..self.scanned.len().min(MAX_OCR_PAGES)]
     }
 
-    /// `ocr` holds the hosted pages of the [`Self::ocr_batch`] sub-PDF.
     fn assemble(&self, ocr: Result<Vec<ParsedPage>, String>) -> String {
         let batch = self.ocr_batch();
         let mut recognized = BTreeMap::new();
