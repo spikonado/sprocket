@@ -62,7 +62,12 @@ impl StubSession {
         let mut history = self.history.clone();
         history.result = super::completion_output(&completed_ok(), preview);
         history.save(&self.history_path).await.unwrap();
-        self.complete();
+        self.completion
+            .send(Some(CommandCompletion {
+                saved: true,
+                ..completed_ok()
+            }))
+            .unwrap();
     }
 
     async fn observe(&self, mode: ObservationMode) -> anyhow::Result<CommandOutput> {
@@ -91,6 +96,7 @@ fn completed_ok() -> CommandCompletion {
         success: true,
         timed_out: false,
         error: None,
+        saved: false,
     }
 }
 
@@ -1102,7 +1108,7 @@ async fn cancelled_exec_keeps_the_started_command_discoverable() {
 }
 
 #[tokio::test]
-async fn cleanup_releases_completed_handles_and_preserves_live_observations() {
+async fn cleanup_releases_only_unobserved_saved_sessions() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let running = stub_session(&root).await;
@@ -1140,18 +1146,13 @@ async fn cleanup_releases_completed_handles_and_preserves_live_observations() {
         .insert(unsaved_id.clone(), unsaved.session);
     sessions.prune_completed().await;
     let retained = sessions.sessions.lock().await;
-    assert_eq!(retained.len(), 2);
+    assert_eq!(retained.len(), 3);
     assert!(retained.contains_key(&running_id));
     assert!(retained.contains_key(&observed_id));
+    assert!(retained.contains_key(&unsaved_id));
     drop(retained);
     assert_eq!(poll(&sessions, &completed_id, 0).await.output, "unreturned");
-    assert!(
-        poll(&sessions, &unsaved_id, 0)
-            .await
-            .error
-            .unwrap()
-            .contains("interrupted")
-    );
+    assert!(poll(&sessions, &unsaved_id, 0).await.success);
     drop(observed);
     sessions.prune_completed().await;
     assert!(!sessions.sessions.lock().await.contains_key(&observed_id));
