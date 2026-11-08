@@ -88,13 +88,13 @@ export function fileLinkTarget(
 
 	if (!absolute) return null;
 
-	let target: MarkdownLinkTarget | null = null;
+	let target: WorkspaceFileTarget | null = null;
 
 	for (const root of roots) {
 		const relative = relativePath(root, absolute);
 
 		if (relative !== null && (!target || relative.length < target.path.length)) {
-			target = { workspacePath: root, path: relative, knownDirectory: false };
+			target = { workspacePath: root, path: relative };
 		}
 	}
 
