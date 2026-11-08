@@ -44,7 +44,8 @@ jobs:
             exit 1
           fi
 
-      # Vercel doesn't build main on push, so the site never runs against older production functions.
+      # Vercel doesn't build main on push, and the hook builds main's tip, so it only fires while
+      # that tip is the commit just deployed. A newer commit's own run fires it after its deploy.
       - name: Deploy Convex production and rebuild usesprocket.dev
         working-directory: apps/web
         shell: 'nix develop ../../sprocket-shell -c bash -e {0}'
@@ -54,12 +55,21 @@ jobs:
           DEPLOY_HOOK_URL: ${{ secrets.VERCEL_SITE_DEPLOY_HOOK_URL }}
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          git fetch origin main
-          if [[ "$TESTED_SHA" != "$(git rev-parse origin/main)" ]]; then
+          tested_is_main() {
+            git fetch --quiet origin main
+            [[ "$TESTED_SHA" == "$(git rev-parse origin/main)" ]]
+          }
+
+          if ! tested_is_main; then
             echo "Skipping stale production deploy for $TESTED_SHA."
             exit 0
           fi
 
           bunx convex deploy --message "$CONVEX_DEPLOY_MESSAGE"
           bunx convex run migrations:run
+
+          if ! tested_is_main; then
+            echo "main moved during the deploy, so its own run rebuilds usesprocket.dev."
+            exit 0
+          fi
           curl --fail-with-body --silent --show-error -X POST "$DEPLOY_HOOK_URL"
