@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest';
 import type { TranscriptDisplayRow, TranscriptMessage } from '$lib/types/sprocket';
 import ThreadTranscript from './thread-transcript';
 import { fixtureId } from '$lib/convex-test-client';
+import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
 
 it.each(['persisted', 'live-fallback', 'live-section'])(
 	"resolves %s model images against the thread's cwd, falling back to the project",
@@ -58,7 +59,7 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 	}
 );
 
-it('opens a transcript attachment in the image viewer and restores focus after Escape', async () => {
+it('opens a transcript attachment in the image viewer and closes only the viewer on Escape', async () => {
 	const imageUrl = 'https://example.com/board.png';
 	const loadAttachment = vi.fn(async () => imageUrl);
 
@@ -92,6 +93,15 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 	);
 	const trigger = await screen.findByRole('button', { name: 'View board.png' });
 	expect(loadAttachment).toHaveBeenCalledWith(message.attachments[0].storageId);
+
+	const closeMenu = vi.fn();
+
+	const stopMenu = listenOpenMenuDismiss({
+		getRoot: () => null,
+		onOutside: vi.fn(),
+		onEscape: closeMenu
+	});
+
 	trigger.focus();
 	fireEvent.click(trigger);
 	const dialog = screen.getByRole('dialog', { name: 'Image preview: board.png' });
@@ -100,4 +110,7 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 	fireEvent.keyDown(document, { key: 'Escape' });
 	expect(screen.queryByRole('dialog')).toBeNull();
 	expect(document.activeElement).toBe(trigger);
+	fireEvent.keyDown(document, { key: 'Escape' });
+	expect(closeMenu).toHaveBeenCalledOnce();
+	stopMenu();
 });

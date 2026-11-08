@@ -1,3 +1,5 @@
+import { pushEscapeLayer } from '$lib/use-escape-layer';
+
 export function listenOpenMenuDismiss(options: {
 	getRoot: () => HTMLElement | null | readonly (HTMLElement | null)[];
 	onOutside: () => void;
@@ -17,19 +19,11 @@ export function listenOpenMenuDismiss(options: {
 		}
 	}
 
-	function handleKeyDown(event: KeyboardEvent) {
-		if (event.key !== 'Escape') {
-			return;
-		}
-
-		options.onEscape();
-	}
-
 	document.addEventListener('pointerdown', handlePointerDown);
-	document.addEventListener('keydown', handleKeyDown);
+	const removeEscapeLayer = pushEscapeLayer({ current: options.onEscape });
 
 	return () => {
 		document.removeEventListener('pointerdown', handlePointerDown);
-		document.removeEventListener('keydown', handleKeyDown);
+		removeEscapeLayer();
 	};
 }
