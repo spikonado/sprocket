@@ -97,7 +97,7 @@ export const getMyConfiguration = action({
 		vercel: v.boolean(),
 		openrouter: v.boolean(),
 		opencode: v.boolean(),
-		'opencode-go': v.boolean()
+		opencodeGo: v.boolean()
 	}),
 	handler: async (ctx) => {
 		const [openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo] = await Promise.all(
@@ -114,7 +114,7 @@ export const getMyConfiguration = action({
 			).map((provider) => isConfigured(ctx, provider))
 		);
 
-		return { openai, claude, anthropic, vercel, openrouter, opencode, 'opencode-go': opencodeGo };
+		return { openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo };
 	}
 });
 

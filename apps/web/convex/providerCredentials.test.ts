@@ -248,7 +248,7 @@ describe('provider credentials', () => {
 			vercel: false,
 			openrouter: false,
 			opencode: false,
-			'opencode-go': false
+			opencodeGo: false
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
@@ -290,7 +290,7 @@ describe('provider credentials', () => {
 			vercel: false,
 			openrouter: false,
 			opencode: false,
-			'opencode-go': false
+			opencodeGo: false
 		});
 
 		stubVaultFetch(new Map());
@@ -306,7 +306,7 @@ describe('provider credentials', () => {
 			vercel: false,
 			openrouter: true,
 			opencode: false,
-			'opencode-go': false
+			opencodeGo: false
 		});
 	});
 });
