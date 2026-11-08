@@ -58,6 +58,21 @@ export default function ProviderLogo({
 		);
 	}
 
+	if (provider === 'opencode') {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				className={cn('text-foreground size-4', className)}
+				role="img"
+				aria-label="OpenCode"
+				fill="currentColor"
+			>
+				<path fillRule="evenodd" d="M2.4 0h19.2v24H2.4Zm4.8 4.8v14.4h9.6V4.8Z" />
+				<path d="M7.2 9.6h9.6v9.6H7.2Z" opacity={0.4} />
+			</svg>
+		);
+	}
+
 	if (provider === 'xai') {
 		return (
 			<svg

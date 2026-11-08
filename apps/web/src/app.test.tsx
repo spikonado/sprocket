@@ -191,7 +191,8 @@ function createConvexFixtures(): ConvexTestClient {
 		claude: false,
 		anthropic: false,
 		vercel: false,
-		openrouter: false
+		openrouter: false,
+		opencode: false
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
 
@@ -1532,7 +1533,8 @@ it.each([
 			claude: true,
 			anthropic: false,
 			vercel: false,
-			openrouter: true
+			openrouter: true,
+			opencode: false
 		});
 		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(state));
 		await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));

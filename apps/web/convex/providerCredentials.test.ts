@@ -73,6 +73,11 @@ describe('provider credentials', () => {
 			provider: 'openrouter',
 			url: 'https://openrouter.ai/api/v1/key',
 			headers: { authorization: 'Bearer sk-user' }
+		},
+		{
+			provider: 'opencode',
+			url: 'https://opencode.ai/inference/v1/models',
+			headers: { authorization: 'Bearer sk-user' }
 		}
 	] as const)('validates and stores a $provider key without returning it', async (expected) => {
 		const t = initConvexTest();
@@ -236,7 +241,8 @@ describe('provider credentials', () => {
 			claude: true,
 			anthropic: false,
 			vercel: false,
-			openrouter: false
+			openrouter: false,
+			opencode: false
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
@@ -276,7 +282,8 @@ describe('provider credentials', () => {
 			claude: false,
 			anthropic: false,
 			vercel: false,
-			openrouter: false
+			openrouter: false,
+			opencode: false
 		});
 
 		stubVaultFetch(new Map());
@@ -290,7 +297,8 @@ describe('provider credentials', () => {
 			claude: false,
 			anthropic: false,
 			vercel: false,
-			openrouter: true
+			openrouter: true,
+			opencode: false
 		});
 	});
 });

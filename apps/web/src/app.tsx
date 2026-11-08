@@ -362,7 +362,8 @@ export default function App({
 			openai: savedProviders?.openai === true,
 			anthropic: savedProviders?.anthropic === true,
 			vercel: savedProviders?.vercel === true,
-			openrouter: savedProviders?.openrouter === true
+			openrouter: savedProviders?.openrouter === true,
+			opencode: savedProviders?.opencode === true
 		}),
 		[savedProviders]
 	);

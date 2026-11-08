@@ -18,19 +18,22 @@ pub(crate) fn messages_model(
     instructions: &str,
     cache_write_ttl: Option<&str>,
 ) -> DynModel<Completion> {
-    let wire = claude_messages(api_key, model, instructions, cache_write_ttl);
+    let wire = claude_messages(
+        AnthropicConfig::new(api_key),
+        model,
+        instructions,
+        cache_write_ttl,
+    );
     Model::new(wire, rig::rig_reqwest::shared()).erase()
 }
 
-fn claude_messages(
-    api_key: String,
+pub(crate) fn claude_messages(
+    config: AnthropicConfig,
     model: &str,
     instructions: &str,
     cache_write_ttl: Option<&str>,
 ) -> ClaudeMessages {
-    let mut wire = AnthropicConfig::new(api_key)
-        .completion(model)
-        .with_prompt_caching();
+    let mut wire = config.completion(model).with_prompt_caching();
     if wire.default_max_tokens.is_none() {
         wire = wire.with_default_max_tokens(DEFAULT_MAX_TOKENS);
     }
@@ -46,7 +49,7 @@ fn claude_messages(
 }
 
 #[derive(Clone)]
-struct ClaudeMessages {
+pub(crate) struct ClaudeMessages {
     wire: Messages,
     instructions: String,
     cache: CacheRetention,

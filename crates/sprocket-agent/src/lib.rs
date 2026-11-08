@@ -9,6 +9,7 @@ mod gateway;
 mod history;
 mod hooks;
 mod openai;
+mod opencode;
 mod output;
 mod provider;
 mod reasoning;

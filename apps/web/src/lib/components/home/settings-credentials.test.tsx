@@ -7,7 +7,13 @@ import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { ChatGptStatus, ClaudeCodeStatus, LocalApi } from '$lib/types/sprocket';
 import SettingsCredentials from './settings-credentials';
 
-const noApiKeysSaved = { openai: false, anthropic: false, vercel: false, openrouter: false };
+const noApiKeysSaved = {
+	openai: false,
+	anthropic: false,
+	vercel: false,
+	openrouter: false,
+	opencode: false
+};
 
 const loginWindow = {
 	close: vi.fn(),
