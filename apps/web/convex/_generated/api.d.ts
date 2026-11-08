@@ -93,6 +93,7 @@ import type * as lib_workosVault from "../lib/workosVault.js";
 import type * as machines from "../machines.js";
 import type * as migrations from "../migrations.js";
 import type * as payments from "../payments.js";
+import type * as previews from "../previews.js";
 import type * as pricing from "../pricing.js";
 import type * as providerCredentials from "../providerCredentials.js";
 import type * as pullRequests from "../pullRequests.js";
@@ -204,6 +205,7 @@ declare const fullApi: ApiFromModules<{
   machines: typeof machines;
   migrations: typeof migrations;
   payments: typeof payments;
+  previews: typeof previews;
   pricing: typeof pricing;
   providerCredentials: typeof providerCredentials;
   pullRequests: typeof pullRequests;

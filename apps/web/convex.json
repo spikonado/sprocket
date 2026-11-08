@@ -20,6 +20,11 @@
 					"https://usesprocket.dev"
 				]
 			}
+		},
+		"preview": {
+			"configure": {
+				"redirectUris": ["https://${buildEnv.VERCEL_BRANCH_URL}/pricing/callback"]
+			}
 		}
 	}
 }

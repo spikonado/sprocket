@@ -1,3 +1,6 @@
 {
-	"bunVersion": "1.x"
+	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"bunVersion": "1.x",
+	"buildCommand": "bash scripts/vercel-build.sh",
+	"ignoreCommand": "bash scripts/vercel-ignore.sh"
 }
