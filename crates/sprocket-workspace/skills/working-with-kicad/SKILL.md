@@ -74,7 +74,9 @@ Keep net class widths and clearances above them.
 ## Copper pours
 
 Before routing, give every copper layer a GND zone over the whole board at priority 0.
-Put pours of other nets, like power planes and switch nodes, above it at higher priorities, so GND fills the copper they leave.
+Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
+Keep one layer as the solid ground plane, with no other pours or traces: the inner layer next to `F.Cu` on boards with 4 or more layers, and `B.Cu` on 2-layer boards, where only short jumpers may cross it.
+Keep switch node copper as small as its current allows, because its area radiates.
 
 ```python
 from kipy.board_types import Zone
@@ -93,7 +95,8 @@ board.create_items([zone])
 
 Route the board with `kicad-route`.
 It reads clearances and widths from the `.kicad_pro`, and connects the pads of zone nets, like `GND`, to their pours.
-Put rule-area keepouts on every layer over switch nodes and other areas that traces must avoid before the first route.
+It routes on every copper layer by default, so on boards with 4 or more layers pass `--layers` with all of them and `--layer-costs` with `-1` for the ground plane layer on every run.
+Put rule-area keepouts that block tracks on every layer over switch nodes and other areas that traces must avoid before the first route. Leave copper pours allowed in them, so GND still fills under the switch node.
 
 Right after placement, and before the schematic is final, judge the placement with a trial route:
 
