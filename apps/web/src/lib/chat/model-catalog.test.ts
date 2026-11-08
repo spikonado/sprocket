@@ -52,7 +52,7 @@ describe('gateway model catalog', () => {
 		payload.sprocket.models.push({
 			...payload.sprocket.models[0],
 			id: 'model-large',
-			label: 'Model Large'
+			label: 'Model XL'
 		});
 		payload.sprocket.defaultModelId = 'model-large';
 		vi.stubGlobal(
