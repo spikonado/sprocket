@@ -61,10 +61,36 @@ struct WatchKey {
     workspace_path: String,
 }
 
-pub struct ArtifactWatchers {
+#[derive(Clone)]
+struct WatchSource {
     deployment_url: String,
     native_auth: Arc<NativeAuthManager>,
     bindings_root: PathBuf,
+}
+
+impl WatchSource {
+    fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
+        ArtifactBindings::new(
+            &self.bindings_root,
+            &self.deployment_url,
+            user_id,
+            workspace,
+        )
+    }
+
+    async fn connect(&self, key: &WatchKey) -> anyhow::Result<UserConvexClient> {
+        self.native_auth.require_user(&key.user_id).await?;
+        UserConvexClient::connect_with_fetcher(
+            &self.deployment_url,
+            self.native_auth
+                .auth_token_fetcher_for_user(key.user_id.clone()),
+        )
+        .await
+    }
+}
+
+pub struct ArtifactWatchers {
+    source: WatchSource,
     registry: Arc<ArtifactRegistry>,
 }
 
@@ -88,20 +114,17 @@ impl ArtifactWatchers {
         bindings_root: PathBuf,
     ) -> Arc<Self> {
         Arc::new(Self {
-            deployment_url,
-            native_auth,
-            bindings_root,
+            source: WatchSource {
+                deployment_url,
+                native_auth,
+                bindings_root,
+            },
             registry: WatchRegistry::new(),
         })
     }
 
     pub fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
-        ArtifactBindings::new(
-            &self.bindings_root,
-            &self.deployment_url,
-            user_id,
-            workspace,
-        )
+        self.source.bindings(user_id, workspace)
     }
 
     pub async fn open(
@@ -115,21 +138,12 @@ impl ArtifactWatchers {
             repository_key: repository_key.into(),
             workspace_path: workspace_path.into(),
         };
-        // The task must not own the registry: the last session drop aborts it.
-        let (session, latest) =
-            self.registry
-                .open_with(key.clone(), 1, || Arc::new(Mutex::new(None)), {
-                    |events, latest| {
-                        tokio::spawn(watch(
-                            self.deployment_url.clone(),
-                            Arc::clone(&self.native_auth),
-                            key.clone(),
-                            self.bindings(&key.user_id, Path::new(&key.workspace_path)),
-                            events,
-                            latest,
-                        ))
-                    }
-                });
+        let (session, latest) = self.registry.open_with(
+            key.clone(),
+            1,
+            || Arc::new(Mutex::new(None)),
+            |events, latest| tokio::spawn(watch(self.source.clone(), key.clone(), events, latest)),
+        );
         ArtifactWatchSession {
             watchers: Arc::clone(self),
             key,
@@ -152,12 +166,7 @@ impl ArtifactWatchSession {
 
     pub async fn flush(&self) -> anyhow::Result<()> {
         timeout(Duration::from_secs(30), async {
-            let client = connect(
-                &self.watchers.deployment_url,
-                &self.watchers.native_auth,
-                &self.key,
-            )
-            .await?;
+            let client = self.watchers.source.connect(&self.key).await?;
             let bindings = self
                 .watchers
                 .bindings(&self.key.user_id, Path::new(&self.key.workspace_path));
@@ -227,27 +236,13 @@ where
     }
 }
 
-async fn connect(
-    url: &str,
-    auth: &Arc<NativeAuthManager>,
-    key: &WatchKey,
-) -> anyhow::Result<UserConvexClient> {
-    auth.require_user(&key.user_id).await?;
-    UserConvexClient::connect_with_fetcher(
-        url,
-        auth.auth_token_fetcher_for_user(key.user_id.clone()),
-    )
-    .await
-}
-
 async fn watch(
-    url: String,
-    auth: Arc<NativeAuthManager>,
+    source: WatchSource,
     key: WatchKey,
-    bindings: ArtifactBindings,
     events: broadcast::Sender<ArtifactWatchEvent>,
     latest: Arc<Mutex<Option<ArtifactWatchEvent>>>,
 ) {
+    let bindings = source.bindings(&key.user_id, Path::new(&key.workspace_path));
     let mut feed = ArtifactFeed::new(key.clone(), bindings.clone());
     let mut cloud_stale = true;
     let mut cloud_error = None;
@@ -255,11 +250,11 @@ async fn watch(
     let (cloud_tx, mut cloud_rx) = tokio::sync::mpsc::channel(1);
     let mut tasks = tokio::task::JoinSet::new();
     tasks.spawn(check_auth(
-        Arc::clone(&auth),
+        Arc::clone(&source.native_auth),
         key.user_id.clone(),
         cloud_tx.clone(),
     ));
-    tasks.spawn(cloud_worker(url, auth, key, bindings, pending_rx, cloud_tx));
+    tasks.spawn(cloud_worker(source, key, bindings, pending_rx, cloud_tx));
     let mut poll = interval(Duration::from_millis(500));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
@@ -294,8 +289,7 @@ async fn watch(
 }
 
 async fn cloud_worker(
-    url: String,
-    auth: Arc<NativeAuthManager>,
+    source: WatchSource,
     key: WatchKey,
     bindings: ArtifactBindings,
     pending: tokio::sync::watch::Receiver<Vec<SyncRequest>>,
@@ -303,7 +297,7 @@ async fn cloud_worker(
 ) {
     loop {
         let outcome = async {
-            let client = timeout(NETWORK_TIMEOUT, connect(&url, &auth, &key)).await??;
+            let client = timeout(NETWORK_TIMEOUT, source.connect(&key)).await??;
             let updates = timeout(
                 NETWORK_TIMEOUT,
                 client.subscribe_artifact_state(&key.repository_key),
