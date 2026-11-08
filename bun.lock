@@ -38,7 +38,7 @@
         "@fontsource/ibm-plex-sans": "^5.3.0",
         "@tailwindcss/vite": "^4.2.4",
         "@vercel/functions": "^3.10.2",
-        "@workos-inc/node": "^11.0.0",
+        "@workos-inc/node": "^12.1.0",
         "astro": "7.3.3",
         "clsx": "^2.1.1",
         "convex": "^1.45.0",
@@ -1206,7 +1206,7 @@
 
     "@workos-inc/authkit-js": ["@workos-inc/authkit-js@0.20.4", "", {}, "sha512-hr6umahJXM8bQ+cxC0Li9MIgBlzZCQwWGxINWC1j51Bj/l/6rl0VNnyuTkeHZsKpwk0i0goE128ooAGJ6Y/3OQ=="],
 
-    "@workos-inc/node": ["@workos-inc/node@11.0.0", "", {}, "sha512-swUT6CbkuVQXMOtUpI70LZ8usjSg8OXcKMjKdoYLeqCApRI0Oo97l+nZ0lKzZ5GxjxgcVZGGVK025h7z9WyCJg=="],
+    "@workos-inc/node": ["@workos-inc/node@12.1.0", "", {}, "sha512-qT/RpDHti/MDR1r5Jkngg6gS7cpwzrRTB0DA4H/5UMD27t8qOcLqOkIrxVX4AOIzUQ0oJXn7l+c0kZZC/mrGiQ=="],
 
     "@xmldom/xmldom": ["@xmldom/xmldom@0.8.15", "", {}, "sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA=="],
 
