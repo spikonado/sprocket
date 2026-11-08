@@ -1,0 +1,13 @@
+{
+	"$schema": "https://turborepo.dev/schema.json",
+	"extends": ["//"],
+	"tasks": {
+		"check": {
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/apps/web/convex/**",
+				"$TURBO_ROOT$/npm/sprocket/package.json"
+			]
+		}
+	}
+}

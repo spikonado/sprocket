@@ -1,0 +1,330 @@
+---
+import Footer from '@/components/footer.svelte';
+import LineIcon, { type LineIconName } from '@/components/line-icon.astro';
+import SprocketScreenshot from '@/components/sprocket-screenshot.svelte';
+import InstallRow from '@/components/sprocket/install-row.astro';
+import ContextMock from '@/components/sprocket/mocks/context-mock.astro';
+import HardwareMock from '@/components/sprocket/mocks/hardware-mock.astro';
+import PurchaseMock from '@/components/sprocket/mocks/purchase-mock.astro';
+import QuestionsMock from '@/components/sprocket/mocks/questions-mock.astro';
+import SubagentsMock from '@/components/sprocket/mocks/subagents-mock.astro';
+import ReleaseBadge from '@/components/sprocket/release-badge.astro';
+import BaseLayout from '@/layouts/base-layout.astro';
+import { fetchLatestSprocketRelease } from '@/lib/latest-sprocket-release';
+import {
+	SPROCKET_GITHUB_URL,
+	SPROCKET_NPM_URL,
+	SPROCKET_RELEASES_LATEST_URL
+} from '@/lib/sprocket-releases';
+import { DEFAULT_DESCRIPTION, ORGANIZATION_ID, SITE_URL } from '@/lib/seo';
+import { marketingButtonPrimaryClass, marketingSectionBodyClass } from '@/styles/marketing';
+import { cn } from '@/utils';
+
+const release = await fetchLatestSprocketRelease();
+
+const showcases = [
+	{
+		id: 'electronics',
+		heading: 'Designs electronics',
+		body: 'Describe a device, and Sprocket designs the circuit around real parts.',
+		points: [
+			'Draws clear schematics from the datasheets of the parts it picks',
+			'Writes the BOM, pin maps, and step-by-step assembly guides',
+			'Writes and tests the firmware that runs on the board'
+		],
+		mock: HardwareMock
+	},
+	{
+		id: 'context',
+		heading: 'Works from real docs',
+		body: 'Sprocket checks current sources before it acts, so its answers hold up on real hardware.',
+		points: [
+			'Searches the web and reads full pages, not just snippets',
+			'Reads PDFs, spreadsheets, and images you share',
+			'Runs commands to confirm the fix works'
+		],
+		mock: ContextMock
+	},
+	{
+		id: 'purchasing',
+		heading: 'Buys what the project needs',
+		body: 'Sprocket can buy anything that your project needs, within limits you set.',
+		points: [
+			'You approve each spending limit once with a passkey',
+			'Limits are locked to a merchant and an amount',
+			'Unused money goes back as soon as the order completes'
+		],
+		mock: PurchaseMock
+	},
+	{
+		id: 'questions',
+		heading: 'Asks before guessing',
+		body: 'When a request is ambiguous, Sprocket asks a quick question instead of assuming.',
+		points: [
+			'Multiple-choice answers for design choices, frameworks, and parts',
+			"An option to let Sprocket decide when you don't mind",
+			'Your answer goes straight into the work'
+		],
+		mock: QuestionsMock
+	},
+	{
+		id: 'subagents',
+		heading: 'Splits big tasks',
+		body: 'Sprocket hands parts of a large task to subagents and keeps working while they run.',
+		points: [
+			'Subagents run in the background and report back when they finish',
+			'Each subagent has its own context, so the main thread stays focused',
+			'Follow their threads in the inbox, send follow-ups, and answer their questions'
+		],
+		mock: SubagentsMock
+	}
+] as const;
+
+const capabilities = [
+	{
+		icon: 'chip',
+		name: 'Schematics',
+		body: 'Readable circuit schematics, plus KiCad files for PCBs'
+	},
+	{
+		icon: 'list',
+		name: 'BOMs and pin maps',
+		body: 'Parts lists and wiring tables for every board'
+	},
+	{
+		icon: 'wrench',
+		name: 'Assembly guides',
+		body: 'Step-by-step instructions for building the device'
+	},
+	{
+		icon: 'code',
+		name: 'Firmware and apps',
+		body: 'Writes and tests code across your whole system'
+	},
+	{ icon: 'globe', name: 'Web context', body: 'Searches the web and reads full pages and docs' },
+	{
+		icon: 'window',
+		name: 'Browser',
+		body: 'Clicks through sites, fills forms, and takes screenshots'
+	},
+	{
+		icon: 'file',
+		name: 'Files',
+		body: 'Browse and edit the project, and read PDFs, spreadsheets, and images'
+	},
+	{
+		icon: 'card',
+		name: 'Purchasing',
+		body: 'Buys anything your project needs within approved limits'
+	},
+	{
+		icon: 'question',
+		name: 'Questions',
+		body: 'Asks multiple-choice questions when a task is unclear'
+	},
+	{
+		icon: 'layers',
+		name: 'Subagents',
+		body: 'Runs background agents for research, building, and review'
+	},
+	{
+		icon: 'zap',
+		name: 'Skills',
+		body: 'Reusable instructions for your workflows, called with $ or /'
+	},
+	{ icon: 'file-text', name: 'AGENTS.md', body: 'Project rules that apply per directory' },
+	{ icon: 'panel', name: 'Artifacts', body: 'Docs, schematics, and previews in a side panel' },
+	{ icon: 'image', name: 'Visuals', body: 'Charts, diagrams, and mockups in replies' },
+	{
+		icon: 'branch',
+		name: 'Git',
+		body: 'Branches, worktrees, commits, and linked GitHub pull requests'
+	},
+	{
+		icon: 'terminal-box',
+		name: 'Terminal',
+		body: 'Runs builds, tests, and flashing tools for you'
+	},
+	{ icon: 'terminal', name: 'CLI', body: 'Run tasks from your terminal with sprocket run' },
+	{
+		icon: 'monitor',
+		name: 'Desktop, browser, or phone',
+		body: "Use the desktop app, a browser, or add it to your phone's home screen"
+	},
+	{
+		icon: 'key',
+		name: 'Your own keys',
+		body: 'Bring API keys and subscriptions from AI providers'
+	},
+	{
+		icon: 'chart',
+		name: 'AI usage',
+		body: 'Token use and API cost per run, thread, and account'
+	},
+	{ icon: 'shield', name: 'Fair source', body: 'Read the code, and self-host anytime' }
+] as const satisfies readonly { icon: LineIconName; name: string; body: string }[];
+
+const softwareLd = {
+	'@type': 'SoftwareApplication',
+	name: 'Sprocket',
+	applicationCategory: 'DeveloperApplication',
+	operatingSystem: 'Windows, macOS, Linux',
+	url: `${SITE_URL}/`,
+	description: DEFAULT_DESCRIPTION,
+	downloadUrl: release?.htmlUrl ?? SPROCKET_RELEASES_LATEST_URL,
+	installUrl: SPROCKET_NPM_URL,
+	featureList: capabilities.map(({ name, body }) => `${name}: ${body}`),
+	softwareVersion: release?.version,
+	publisher: { '@id': ORGANIZATION_ID }
+};
+
+const chipClass =
+	'inline-flex items-center gap-1 rounded-full bg-foreground/6 px-3.5 py-1.5 font-sans text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none';
+
+const chips = [
+	{ label: 'GitHub', href: SPROCKET_GITHUB_URL, external: true },
+	{ label: 'Releases', href: SPROCKET_RELEASES_LATEST_URL, external: true },
+	{ label: 'Pricing', href: '/pricing', external: false }
+] as const;
+
+const subheadingClass =
+	'font-brand text-3xl font-semibold tracking-tight text-foreground sm:text-4xl';
+---
+
+<BaseLayout jsonLd={[softwareLd]}>
+	<main id="main" class="atmosphere">
+		<section
+			class="relative overflow-hidden px-4 pt-32 pb-16 text-center sm:px-6 sm:pt-40 lg:px-8"
+			data-ph-capture-attribute-section="sprocket_hero"
+		>
+			<div class="hero-mesh pointer-events-none absolute inset-0" aria-hidden="true"></div>
+			<div class="relative mx-auto max-w-3xl">
+				<ReleaseBadge release={release} />
+				<h1
+					class="mt-6 font-brand text-5xl leading-[1.05] font-semibold tracking-tight text-foreground sm:text-6xl md:text-7xl"
+				>
+					The best AI agent for hardware and software.
+				</h1>
+				<p class={cn(marketingSectionBodyClass, 'mx-auto mt-6')}>
+					Sprocket designs electronics, writes and tests code, and can buy anything that's needed
+					for your project.
+				</p>
+
+				<InstallRow release={release} class="mt-10" />
+
+				<ul class="mt-6 flex flex-wrap justify-center gap-2">
+					{
+						chips.map((chip) => (
+							<li>
+								<a
+									href={chip.href}
+									class={chipClass}
+									{...(chip.external && { target: '_blank', rel: 'noopener noreferrer' })}
+								>
+									{chip.label}
+									<span aria-hidden="true">›</span>
+								</a>
+							</li>
+						))
+					}
+				</ul>
+			</div>
+
+			<figure
+				class="relative mx-auto mt-16 max-w-5xl overflow-hidden rounded-2xl border border-border/70 bg-ink shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.7)]"
+			>
+				<SprocketScreenshot client:visible />
+			</figure>
+		</section>
+
+		<div class="mx-auto max-w-6xl border-t border-border/70 px-4 sm:px-6 lg:px-8">
+			{
+				showcases.map(({ id, heading, body, points, mock: Mock }, index) => (
+					<section
+						id={id}
+						aria-labelledby={`${id}-heading`}
+						data-ph-capture-attribute-section={`sprocket_${id}`}
+						class="grid scroll-mt-24 items-center gap-10 py-16 lg:grid-cols-2 lg:gap-16 lg:py-24"
+					>
+						<div class={cn(index % 2 === 1 && 'lg:order-2')}>
+							<h2 id={`${id}-heading`} class={subheadingClass}>
+								{heading}
+							</h2>
+							<p class={cn(marketingSectionBodyClass, 'mt-4')}>{body}</p>
+							<ul class="mt-6 space-y-3">
+								{points.map((point) => (
+									<li class="flex gap-3 text-base leading-relaxed text-muted-foreground">
+										<svg
+											viewBox="0 0 16 16"
+											class="mt-1 h-4 w-4 shrink-0 text-accent-strong"
+											fill="none"
+											aria-hidden="true"
+										>
+											<path
+												d="M3.5 8.5 6.5 11.5 12.5 4.5"
+												stroke="currentColor"
+												stroke-width="1.8"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+											/>
+										</svg>
+										{point}
+									</li>
+								))}
+							</ul>
+						</div>
+						<Mock />
+					</section>
+				))
+			}
+		</div>
+
+		<section
+			class="border-t border-border/70 px-4 py-20 sm:px-6 lg:px-8 lg:py-28"
+			aria-labelledby="capabilities-heading"
+			data-ph-capture-attribute-section="sprocket_capabilities"
+		>
+			<div class="mx-auto max-w-6xl">
+				<h2
+					id="capabilities-heading"
+					class="font-brand text-4xl font-semibold tracking-tight text-foreground sm:text-5xl"
+				>
+					Everything you need to invent
+				</h2>
+				<p class="mt-4 text-lg text-foreground/80">
+					One agent for the whole build, from the first idea to a working device.
+				</p>
+				<dl class="mt-14 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+					{
+						capabilities.map(({ icon, name, body }) => (
+							<div class="flex gap-4">
+								<LineIcon name={icon} class="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground/70" />
+								<div>
+									<dt class="text-[1.0625rem] font-medium text-foreground">{name}</dt>
+									<dd class="mt-1 text-[0.9375rem] leading-relaxed text-muted-foreground">
+										{body}
+									</dd>
+								</div>
+							</div>
+						))
+					}
+				</dl>
+			</div>
+		</section>
+
+		<section
+			id="download"
+			class="border-t border-border/70 px-4 py-20 text-center sm:px-6 lg:px-8 lg:py-28"
+			aria-labelledby="sprocket-install-heading"
+			data-ph-capture-attribute-section="sprocket_install"
+		>
+			<h2 id="sprocket-install-heading" class={subheadingClass}>Start building with Sprocket</h2>
+			<p class={cn(marketingSectionBodyClass, 'mx-auto mt-4')}>
+				Download the app, or run it with one command.
+			</p>
+			<InstallRow release={release} showAlternates={false} class="mt-8" />
+			<a href="/pricing" class={cn(marketingButtonPrimaryClass, 'mt-8')}> See pricing → </a>
+		</section>
+	</main>
+	<Footer />
+</BaseLayout>

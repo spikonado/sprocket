@@ -1,0 +1,26 @@
+---
+import type { SprocketRelease } from '@/lib/sprocket-releases';
+
+interface Props {
+	release: SprocketRelease | null;
+}
+
+const { release } = Astro.props;
+---
+
+{
+	release && (
+		<a
+			href={release.htmlUrl}
+			target="_blank"
+			rel="noopener noreferrer"
+			class="inline-flex items-center gap-2 rounded-full border border-border bg-surface/80 py-1 pr-3 pl-1 font-sans text-sm text-foreground transition-colors hover:bg-surface"
+		>
+			<span class="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent-strong">
+				New
+			</span>
+			Sprocket v{release.version} is out
+			<span aria-hidden="true">↗</span>
+		</a>
+	)
+}

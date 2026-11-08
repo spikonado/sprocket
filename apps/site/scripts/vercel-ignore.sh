@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Vercel's ignored build step, run from apps/site: exit 0 skips the build, any other code builds.
+# Production always builds. Only deploy hooks start it, and the desktop release hook rebuilds a
+# commit that is already deployed.
+set -uo pipefail
+
+if [[ "${VERCEL_ENV:-}" == production ]]; then
+	exit 1
+fi
+
+base="${VERCEL_GIT_PREVIOUS_SHA:-}"
+
+# Without a previous deployment in this history, as on a first preview, a force-push or a
+# redeploy, compare with where the branch left main. Vercel's clone is 10 commits deep and has
+# no remotes, so deepen both sides from GitHub.
+if [[ -z "$base" ]] || ! git merge-base --is-ancestor "$base" HEAD 2>/dev/null; then
+	repo="https://github.com/$VERCEL_GIT_REPO_OWNER/$VERCEL_GIT_REPO_SLUG.git"
+	git fetch --quiet --depth=100 "$repo" "$VERCEL_GIT_COMMIT_SHA" main:main-tip &&
+		base="$(git merge-base main-tip HEAD)" || exit 1
+fi
+
+# Vercel fails the deployment on exit codes other than 0 and 1.
+git diff --quiet "$base" HEAD -- . ../web/convex ../web/convex.json ../../bun.lock || exit 1
