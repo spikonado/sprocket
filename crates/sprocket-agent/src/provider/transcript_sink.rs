@@ -168,7 +168,6 @@ impl TranscriptSink {
         Ok(())
     }
 
-    /// Discards the attempt's live output before the model retries it.
     pub(super) async fn retry_attempt(&mut self) -> anyhow::Result<()> {
         self.advance_attempt().await?;
         self.clear_live();
@@ -179,7 +178,6 @@ impl TranscriptSink {
         self.call_completed = true;
     }
 
-    /// Each completion call after the first in an attempt gets its own attempt.
     pub(super) async fn begin_completion_call(&mut self) -> anyhow::Result<()> {
         if self.call_completed {
             self.advance_attempt().await?;

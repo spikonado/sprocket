@@ -69,7 +69,6 @@ impl Cli for ClaudeCodeCli {
     }
 }
 
-/// The error event for a turn Claude Code ended with `result`.
 fn result_error(result: &Value, rate_limit: Option<&Value>, now_secs: u64) -> Value {
     if result["is_error"] != true {
         return error_event(ERROR_CODE, "Claude Code ended the turn without a reply.");

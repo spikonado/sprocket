@@ -18,7 +18,6 @@ use tokio::sync::OwnedMutexGuard;
 
 use crate::stream_recovery::provider_response;
 
-/// The MCP server CLIs reach Sprocket's tools through.
 pub(crate) const MCP_SERVER: &str = "sprocket";
 const UNUSED_ENDPOINT: &str = "http://cli-session.invalid";
 const DEFAULT_MAX_TOKENS: u64 = 128_000;
@@ -30,22 +29,18 @@ static IMAGE_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::
 
 type Digest32 = [u8; 32];
 
-/// A coding CLI that Sprocket drives as a model, with Sprocket's tools served to it over MCP.
 pub(crate) trait Cli: Send + Sync + 'static {
     type Process: CliProcess;
 
     const NAME: &'static str;
-    /// The error code of the failures this CLI explains to the user.
     const ERROR_CODE: &'static str;
 
     fn spawn(&self, spawn: Spawn<'_>) -> anyhow::Result<Self::Process>;
 }
 
-/// One running CLI session. Dropping it stops the CLI.
 pub(crate) trait CliProcess: Send + 'static {
     fn send_user(&self, content: Vec<Value>);
 
-    /// Answers the CLI's call for `tool_use_id` now, or when it makes the call.
     fn answer(&self, tool_use_id: &str, result: Value);
 
     fn next_event(&mut self) -> impl Future<Output = Event> + Send;
@@ -57,7 +52,6 @@ pub(crate) struct Spawn<'a> {
     pub(crate) effort: Option<&'a str>,
     pub(crate) system_prompt: &'a str,
     pub(crate) session: SessionStart,
-    /// MCP tool definitions.
     pub(crate) tools: Vec<Value>,
 }
 
@@ -76,12 +70,8 @@ impl SessionStart {
 
 #[derive(Debug)]
 pub(crate) enum Event {
-    /// A Messages stream event of the top-level conversation.
     Stream(Value),
-    /// The CLI ended its turn. `error` explains a turn that ends before its reply does.
-    TurnEnd {
-        error: Value,
-    },
+    TurnEnd { error: Value },
     Exited(String),
 }
 
@@ -91,8 +81,6 @@ pub(crate) struct ResumePoint {
     model: String,
 }
 
-/// The CLI session that wrote the history's latest reply, read from the response ID
-/// `stamp_session` gave it.
 pub(crate) fn resume_point(history: &[Message]) -> Option<ResumePoint> {
     let origin = history.iter().rev().find_map(|message| match message {
         Message::Assistant(assistant) => Some(assistant.origin.as_ref()),
@@ -106,7 +94,6 @@ pub(crate) fn resume_point(history: &[Message]) -> Option<ResumePoint> {
     })
 }
 
-/// A model whose Messages requests drive sessions of `cli`.
 pub(crate) fn completion_model<C: Cli>(
     cli: C,
     model: &str,
@@ -138,8 +125,6 @@ struct UserFacingError {
     source: anyhow::Error,
 }
 
-/// Shows the message a CLI wrote for a failed turn under one of `codes`, instead of rig's
-/// diagnostic.
 pub(crate) fn user_facing_error(error: anyhow::Error, codes: &[&str]) -> anyhow::Error {
     let message = error.chain().find_map(|cause| {
         let response = provider_response(cause)?;
@@ -164,7 +149,6 @@ pub(crate) fn error_event(code: &str, message: &str) -> Value {
     json!({ "type": "error", "error": { "type": "api_error", "code": code, "message": message } })
 }
 
-/// How a usage limit that resets `seconds` from now reads to the user.
 pub(crate) fn resets_in(seconds: u64) -> String {
     match seconds {
         0..3_600 => format!(" It resets in about {} minutes.", seconds / 60 + 1),
@@ -172,7 +156,6 @@ pub(crate) fn resets_in(seconds: u64) -> String {
     }
 }
 
-/// The MCP result for a Messages tool result.
 pub(crate) fn mcp_tool_result(block: &Value) -> Value {
     let content: Vec<Value> = match &block["content"] {
         Value::String(text) => vec![json!({ "type": "text", "text": text })],
@@ -198,14 +181,12 @@ pub(crate) enum McpReply {
     /// A notification or response, which gets no JSON-RPC reply.
     Ack,
     Respond(Value),
-    /// A `tools/call` that Sprocket answers once it runs the tool.
     ToolCall {
         rpc_id: Value,
         params: Value,
     },
 }
 
-/// How Sprocket's MCP server answers `message`, serving `tools`.
 pub(crate) fn mcp_reply(message: &Value, tools: &[Value]) -> McpReply {
     let id = &message["id"];
     let result =
@@ -242,7 +223,6 @@ struct Run<C: Cli> {
 }
 
 struct RunState<P> {
-    /// Taken by the run's first turn, the only one whose history ends at that reply.
     resume: Option<ResumePoint>,
     session: Option<Session<P>>,
 }
@@ -277,13 +257,10 @@ impl LiveSession {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Awaiting {
-    /// The CLI waits on Sprocket to run these tool calls.
     ToolResults(Vec<String>),
-    /// The CLI is finishing or has finished its turn.
     TurnEnd,
 }
 
-/// One Messages request, as the CLI takes it.
 #[derive(Debug)]
 struct Turn {
     launch: Launch,
@@ -431,7 +408,6 @@ fn after_last_reply(turn: &Turn) -> Option<&[Value]> {
     Some(&turn.messages[reply + 1..])
 }
 
-/// The user messages after the reply the CLI wrote to `known`, when `turn` extends it.
 fn continuation<'a>(turn: &'a Turn, known: &[Digest32]) -> Option<&'a [Value]> {
     let reply = known.len();
     if turn.hashes.len() < reply + 2 || turn.hashes[..reply] != *known {
@@ -484,8 +460,6 @@ fn resumed_content(tail: &[Value]) -> Option<Vec<Value>> {
     (!content.is_empty()).then_some(content)
 }
 
-/// One user message that carries a conversation the CLI didn't write. The latest user turn
-/// stays as real content; earlier turns become text, and their images stay in place.
 fn checkpoint(messages: &[Value]) -> Vec<Value> {
     let latest_start = messages
         .iter()
@@ -573,7 +547,6 @@ async fn inline_image_urls(result: &mut Value) {
     }
 }
 
-/// Turns an image block with a URL source into one with a base64 source.
 pub(crate) async fn inline_image_url(block: &mut Value) {
     if block["type"] != "image" || block["source"]["type"] != "url" {
         return;
@@ -615,7 +588,6 @@ fn sse(event: &Value) -> Bytes {
     Bytes::from(format!("event: {kind}\ndata: {event}\n\n"))
 }
 
-/// Keeps the end of a CLI's stderr, which explains why it stopped.
 pub(crate) async fn read_stderr(
     mut stderr: tokio::process::ChildStderr,
     tail: Arc<std::sync::Mutex<String>>,
@@ -868,7 +840,6 @@ impl<C: Cli> TurnStream<C> {
         }
     }
 
-    /// The transcript keeps the reply's response ID, so the session outlives this run and host.
     fn stamp_session(&self, event: &mut Value) {
         if event["type"] == "message_start"
             && let Some(session) = &self.state.session
@@ -905,7 +876,6 @@ impl<C: Cli> TurnStream<C> {
     }
 }
 
-/// Waits for the end of a turn whose last message has streamed.
 async fn finish_turn<C: Cli>(process: &mut C::Process) -> anyhow::Result<()> {
     let finished = tokio::time::timeout(TURN_END_TIMEOUT, async {
         loop {
@@ -920,7 +890,6 @@ async fn finish_turn<C: Cli>(process: &mut C::Process) -> anyhow::Result<()> {
     finished.unwrap_or_else(|_| Err(anyhow::anyhow!("{} did not finish its turn", C::NAME)))
 }
 
-/// Starts a new session that replays the conversation from a checkpoint.
 fn spawn_fresh<C: Cli>(
     run: &Run<C>,
     state: &mut RunState<C::Process>,

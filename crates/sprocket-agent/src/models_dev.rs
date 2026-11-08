@@ -1,5 +1,3 @@
-//! Maps a catalog model's models.dev ID to the ID each BYOK provider serves it under.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

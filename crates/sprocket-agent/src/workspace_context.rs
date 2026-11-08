@@ -64,8 +64,6 @@ impl WorkspaceContext {
     }
 }
 
-/// The live prompts whose kind the model last saw with different text, or not
-/// at all. Sending only these keeps every earlier message unchanged.
 pub(crate) fn unseen(shown: &[HiddenPrompt], live: [HiddenPrompt; 2]) -> Vec<HiddenPrompt> {
     live.into_iter()
         .filter(|live| {

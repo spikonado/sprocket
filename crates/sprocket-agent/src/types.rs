@@ -57,7 +57,6 @@ impl CompletionProvider {
         self.model_id("", route).is_some()
     }
 
-    /// The ID this provider addresses catalog model `model` by, or None when it doesn't serve it.
     pub(crate) fn model_id<'a>(self, model: &'a str, route: &'a ModelRoute) -> Option<&'a str> {
         let models_dev_provider = match self {
             Self::Spikonado => return route.served_by_gateway.then_some(model),
@@ -75,7 +74,6 @@ impl CompletionProvider {
             .map(String::as_str)
     }
 
-    /// None for providers whose speed Sprocket doesn't pick, such as Claude Code and Muse.
     pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
         match self {
             Self::Spikonado => Some("fast"),
@@ -106,14 +104,12 @@ impl CompletionProvider {
     }
 }
 
-/// Where a catalog model runs: its vendor, and the IDs BYOK providers take for it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct ModelRoute {
     #[serde(rename = "provider")]
     pub vendor: String,
     #[serde(rename = "modelsDevId")]
     pub models_dev_id: Option<String>,
-    /// Keyed by models.dev provider ID, filled from models.dev after the catalog loads.
     #[serde(skip)]
     pub provider_model_ids: HashMap<&'static str, String>,
     /// The gateway publishes null `usageWeights` for models only BYOK providers serve.
@@ -161,7 +157,7 @@ pub trait CliLocator: Send + Sync {
 
 #[derive(Clone)]
 pub struct RunAgentRequest {
-    /// Local ChatGPT credential service handle. Required for ChatGPT runs.
+    /// Required for ChatGPT runs.
     pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     pub claude_code: crate::claude_code::ClaudeCode,
     pub muse: crate::muse::Muse,
@@ -263,7 +259,6 @@ pub struct RunContextResponse {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderPreferences {
-    /// The user's enabled providers, in fallback order.
     pub enabled_providers: Vec<CompletionProvider>,
 }
 
@@ -309,7 +304,6 @@ pub struct CatalogModelCapabilities {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UsagePricing {
     pub long_context_threshold_tokens: Option<u64>,
-    /// The cache lifetime the gateway's requests write at.
     pub cache_write_ttl: Option<String>,
 }
 

@@ -9,7 +9,7 @@ pub(crate) fn zstd_compress(body: &[u8]) -> std::io::Result<Vec<u8>> {
     zstd::bulk::compress(body, ZSTD_LEVEL)
 }
 
-/// Sends Responses request bodies zstd-compressed to an endpoint known to decode them.
+/// Only for endpoints known to decode zstd request bodies.
 pub(crate) struct ZstdResponsesRequests;
 
 fn is_responses_post(exchange: Exchange<'_>) -> bool {
