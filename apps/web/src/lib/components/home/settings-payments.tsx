@@ -41,7 +41,7 @@ export default function SettingsPayments({
 	onOpenThread: (threadId: Id<'threadRecords'>) => Promise<void>;
 }) {
 	const convexAuth = useConvexAuth();
-	const signedIn = convexAuth.isAuthenticated && !convexAuth.isLoading;
+	const signedIn = convexAuth.isAuthenticated;
 	const listMyCards = useAction(api.payments.listMyCards);
 	const [cards, setCards] = useState<Card[] | null>(null);
 	const [cardsError, setCardsError] = useState<string | null>(null);

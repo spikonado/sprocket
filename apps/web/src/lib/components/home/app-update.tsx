@@ -33,7 +33,7 @@ export default function AppUpdate() {
 
 	const preferences = useConvexQueryResult({
 		query: api.uiPreferences.getMine,
-		args: auth.isAuthenticated && !auth.isLoading ? {} : 'skip'
+		args: auth.isAuthenticated ? {} : 'skip'
 	});
 
 	const [tracked, setTracked] = useState<TrackedUpdate | null>(null);

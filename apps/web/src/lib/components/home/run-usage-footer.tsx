@@ -24,7 +24,7 @@ export default function RunUsageFooter({
 
 	const usage = useQuery_experimental({
 		query: api.aiUsage.getRunUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { runId } : 'skip'
+		args: convexAuth.isAuthenticated ? { runId } : 'skip'
 	});
 
 	if (usage.status !== 'success' || usage.data.length === 0) return null;

@@ -26,7 +26,7 @@ export default function SettingsGeneral() {
 
 	const preferencesQuery = useConvexQueryResult({
 		query: api.uiPreferences.getMine,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+		args: convexAuth.isAuthenticated ? {} : 'skip'
 	});
 
 	const setAutomaticThreadTitles = useMutation(api.uiPreferences.setAutomaticThreadTitles);

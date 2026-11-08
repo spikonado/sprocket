@@ -293,7 +293,6 @@ export default function App({
 		!auth.isLoading &&
 		isSignedIn &&
 		(auth.nativeSession === 'notRequired' || auth.nativeSession === 'ready') &&
-		!convexAuth.isLoading &&
 		convexAuth.isAuthenticated;
 
 	const authConnectionFailed =
@@ -558,10 +557,7 @@ export default function App({
 	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
 	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
 
-	// Queries stay skipped until Convex confirms the token; running them on the
-	// account id alone surfaces a spurious auth error during sign-in.
-	const authenticatedQueryArgs =
-		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
+	const authenticatedQueryArgs = signedInUserId && convexAuth.isAuthenticated ? {} : 'skip';
 
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
 
@@ -884,7 +880,7 @@ export default function App({
 		return artifactPanel.watch({
 			localApi,
 			artifactClient,
-			cloudReady: !convexAuth.isLoading && convexAuth.isAuthenticated,
+			cloudReady: convexAuth.isAuthenticated,
 			scope
 		});
 	}, [
@@ -894,12 +890,11 @@ export default function App({
 		currentWorkspacePath,
 		localApi,
 		artifactClient,
-		convexAuth.isLoading,
 		convexAuth.isAuthenticated
 	]);
 
 	const deleteArtifact =
-		currentRepositoryKey && convexAuth.isAuthenticated && !convexAuth.isLoading
+		currentRepositoryKey && convexAuth.isAuthenticated
 			? async (artifactId: string) => {
 					if (localApi && signedInUserId && currentWorkspacePath) {
 						await localApi.deleteArtifact({
