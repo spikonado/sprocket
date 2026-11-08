@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 
 use self::process::{Event, Process, SessionStart, Spawn};
-use crate::stream_recovery::with_provider_message;
+use crate::stream_recovery::provider_response;
 use crate::types::ClaudeCodeLocator;
 
 const TOOL_PREFIX: &str = "mcp__sprocket__";
@@ -98,9 +98,36 @@ impl ClaudeCode {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+struct UserFacingError {
+    message: String,
+    #[source]
+    source: anyhow::Error,
+}
+
 /// Shows the message this module wrote for a failed turn instead of rig's diagnostic.
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    with_provider_message(error, &[USAGE_LIMIT_CODE, ERROR_CODE])
+    let message = error.chain().find_map(|cause| {
+        let response = provider_response(cause)?;
+        if !matches!(
+            response.machine_code()?.as_str(),
+            USAGE_LIMIT_CODE | ERROR_CODE
+        ) {
+            return None;
+        }
+        response.envelope_json()?["error"]["message"]
+            .as_str()
+            .map(str::to_string)
+    });
+    match message {
+        Some(message) => UserFacingError {
+            message,
+            source: error,
+        }
+        .into(),
+        None => error,
+    }
 }
 
 struct Run {
