@@ -29,6 +29,7 @@ const showcases = [
 		body: 'Describe a device, and Sprocket designs the circuit around real parts.',
 		points: [
 			'Draws clear schematics from the datasheets of the parts it picks',
+			'Designs custom boards in KiCad, from the schematic to the routed PCB',
 			'Writes the BOM, pin maps, and step-by-step assembly guides',
 			'Writes and tests the firmware that runs on the board'
 		],
@@ -48,11 +49,11 @@ const showcases = [
 	{
 		id: 'purchasing',
 		heading: 'Buys what the project needs',
-		body: 'Sprocket can buy anything that your project needs, within limits you set.',
+		body: 'Sprocket can buy anything that your project needs, after you approve each purchase.',
 		points: [
-			'You approve each spending limit once with a passkey',
-			'Limits are locked to a merchant and an amount',
-			'Unused money goes back as soon as the order completes'
+			'You save a card once in Settings',
+			'You approve the store and the amount with your passkey in the thread',
+			'Your card details never reach the agent'
 		],
 		mock: PurchaseMock
 	},
@@ -63,7 +64,7 @@ const showcases = [
 		points: [
 			'Multiple-choice answers for design choices, frameworks, and parts',
 			"An option to let Sprocket decide when you don't mind",
-			'Your answer goes straight into the work'
+			'Skip a question to let Sprocket continue without an answer'
 		],
 		mock: QuestionsMock
 	},
@@ -84,7 +85,12 @@ const capabilities = [
 	{
 		icon: 'chip',
 		name: 'Schematics',
-		body: 'Readable circuit schematics, plus KiCad files for PCBs'
+		body: 'Readable circuit schematics for builds made from modules and dev boards'
+	},
+	{
+		icon: 'board',
+		name: 'KiCad',
+		body: 'Designs schematics and boards in KiCad on your computer, then routes them'
 	},
 	{
 		icon: 'list',
@@ -108,6 +114,11 @@ const capabilities = [
 		body: 'Clicks through sites, fills forms, and takes screenshots'
 	},
 	{
+		icon: 'pointer',
+		name: 'Desktop apps',
+		body: 'Clicks, types, and reads native apps on your computer'
+	},
+	{
 		icon: 'file',
 		name: 'Files',
 		body: 'Browse and edit the project, and read PDFs, spreadsheets, and images'
@@ -115,7 +126,7 @@ const capabilities = [
 	{
 		icon: 'card',
 		name: 'Purchasing',
-		body: 'Buys anything your project needs within approved limits'
+		body: 'Buys anything your project needs after you approve each purchase'
 	},
 	{
 		icon: 'question',
@@ -133,7 +144,11 @@ const capabilities = [
 		body: 'Reusable instructions for your workflows, called with $ or /'
 	},
 	{ icon: 'file-text', name: 'AGENTS.md', body: 'Project rules that apply per directory' },
-	{ icon: 'panel', name: 'Artifacts', body: 'Docs, schematics, and previews in a side panel' },
+	{
+		icon: 'panel',
+		name: 'Artifacts',
+		body: 'Docs, schematics, previews, and interactive KiCad projects in a side panel'
+	},
 	{ icon: 'image', name: 'Visuals', body: 'Charts, diagrams, and mockups in replies' },
 	{
 		icon: 'branch',
