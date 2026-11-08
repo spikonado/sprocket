@@ -9,7 +9,6 @@ const SOURCE_PACKAGE = path.join(ROOT, 'npm/sprocket');
 
 const TARGETS = JSON.parse(readFileSync(path.join(SOURCE_PACKAGE, 'targets.json'), 'utf8'));
 
-// Directory names must not contain '-', which the release workflow uses to find native packages.
 const ROOT_PACKAGES = [
 	{ directory: 'sprocket', name: 'usesprocket' },
 	{ directory: 'legacy', name: '@spikonado/sprocket' }

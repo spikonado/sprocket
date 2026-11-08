@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import { captureException, observeSection, setAnalyticsUser, track } from '@/lib/analytics/client';
 import {
 	clearCheckoutAttempt,
@@ -83,10 +83,6 @@ export default function PricingPlans({
 	const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
 	const [pending, setPending] = useState(false);
 
-	// Checkout recovery runs across renders and needs the latest catalog for its messages.
-	const catalogRef = useRef(catalog);
-	catalogRef.current = catalog;
-
 	const cards = catalog ? buildPlanCards(catalog) : [];
 	const packs = catalog ? buildCreditPackCards(catalog) : [];
 	const largestDiscount = Math.max(0, ...cards.map((card) => card.annualDiscountPercent));
@@ -122,10 +118,9 @@ export default function PricingPlans({
 	async function confirmation(purchase: Purchase, status: CheckoutStatus): Promise<string | null> {
 		if ('pack' in purchase) {
 			if (status.creditsAdded !== true) return null;
-			const current = catalogRef.current;
 
 			const pack =
-				current && buildCreditPackCards(current).find((card) => card.productId === purchase.pack);
+				catalog && buildCreditPackCards(catalog).find((card) => card.productId === purchase.pack);
 
 			return pack
 				? `${pack.usage} of AI usage was added to your account. It expires ${pack.expiresAfter} after purchase.`
@@ -150,8 +145,7 @@ export default function PricingPlans({
 		const label =
 			'pack' in purchase
 				? null
-				: (catalogRef.current?.plans.find((plan) => plan.id === purchase.tier)?.label ??
-					purchase.tier);
+				: (catalog?.plans.find((plan) => plan.id === purchase.tier)?.label ?? purchase.tier);
 
 		const what = label ? `${label} subscription` : 'credit pack';
 		setPending(true);
@@ -322,7 +316,7 @@ export default function PricingPlans({
 		return !card.prices[interval];
 	}
 
-	async function initialize(params: URLSearchParams) {
+	const initialize = useEffectEvent(async (params: URLSearchParams) => {
 		try {
 			const signedInUser = await loadAccount();
 			const purchase = readPurchase(params);
@@ -353,9 +347,12 @@ export default function PricingPlans({
 		} finally {
 			setLoading(false);
 		}
-	}
+	});
 
-	// Runs once: the flows it starts read the catalog through `catalogRef` and take the user as an argument.
+	const reportCatalogFailure = useEffectEvent(() => {
+		if (!catalog) setNotice({ text: 'Could not load plans. Reload to try again.', error: true });
+	});
+
 	useEffect(() => {
 		const url = new URL(window.location.href);
 		const params = new URLSearchParams(url.search);
@@ -367,10 +364,7 @@ export default function PricingPlans({
 
 		fetchPricingCatalog()
 			.then(setCatalog)
-			.catch(() => {
-				if (!catalogRef.current)
-					setNotice({ text: 'Could not load plans. Reload to try again.', error: true });
-			});
+			.catch(() => reportCatalogFailure());
 		void initialize(params);
 
 		const onPageShow = (event: PageTransitionEvent) => {

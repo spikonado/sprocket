@@ -1,6 +1,6 @@
 // Pins the latest stable GitHub CLI release (or the version passed as the first argument) in
-// releases.json. Each archive must match GitHub's size and digest and hold `bin/gh`, the only
-// file the host installs.
+// releases.json. Each archive must match GitHub's size and digest and hold `bin/gh`, or
+// `bin/gh.exe` on Windows, the only file the host installs.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';

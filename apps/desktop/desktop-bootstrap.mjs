@@ -2,12 +2,9 @@ function isPlainObject(value) {
 	return value !== null && !Array.isArray(value) && value === Object(value);
 }
 
-function parseNonEmptyString(value) {
-	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {
-		return null;
-	}
-
-	if (value !== `${value}`) {
+export function parseNonEmptyString(value) {
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- this is the decoder for untyped IPC and argv input.
+	if (typeof value !== 'string') {
 		return null;
 	}
 

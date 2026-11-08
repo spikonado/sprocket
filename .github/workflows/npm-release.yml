@@ -279,7 +279,8 @@ jobs:
           NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          for package in npm-dist/*-*; do
+          for id in $(node -p "require('./npm-dist/sprocket/targets.json').map((target) => target.id).join(' ')"); do
+            package="npm-dist/$id"
             name="$(node -p "require('./$package/package.json').name")"
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "$name@$VERSION is already published; skipping"
@@ -295,8 +296,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           # Installs that resolve the root before its native packages keep the old binary.
-          for package in npm-dist/*-*; do
-            name="$(node -p "require('./$package/package.json').name")"
+          for name in $(node -p "require('./npm-dist/sprocket/targets.json').map((target) => target.packageName).join(' ')"); do
             for attempt in $(seq 60); do
               if npm view "$name@$VERSION" version >/dev/null 2>&1; then
                 continue 2
