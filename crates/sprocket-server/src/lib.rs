@@ -233,11 +233,11 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         async move {
             tokio::select! {
                 _ = shutdown_signal() => {},
-                _ = lifetime.shutdown.cancelled() => {},
                 _ = async {
                     loop {
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         cli_sessions.tick(std::time::Instant::now()).await;
+                        if lifetime.is_stopping() { break; }
                     }
                 } => {},
             }
