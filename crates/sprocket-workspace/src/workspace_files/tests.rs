@@ -7,6 +7,21 @@ fn workspace() -> tempfile::TempDir {
     dir
 }
 
+async fn write(
+    root: &Path,
+    path: &str,
+    content: &str,
+    expected_version: Option<&str>,
+) -> Result<WorkspaceFileWrite> {
+    write_workspace_file(
+        root.to_owned(),
+        path.to_owned(),
+        content.to_owned(),
+        expected_version.map(str::to_owned),
+    )
+    .await
+}
+
 #[test]
 fn rejects_paths_outside_the_workspace() {
     let dir = workspace();
@@ -24,8 +39,8 @@ fn rejects_paths_outside_the_workspace() {
 }
 
 #[cfg(unix)]
-#[test]
-fn rejects_symlink_escapes_but_deletes_the_link_itself() {
+#[tokio::test]
+async fn rejects_symlink_escapes_but_deletes_the_link_itself() {
     let dir = workspace();
     let root = dir.path();
     let outside = tempfile::tempdir().unwrap();
@@ -36,7 +51,7 @@ fn rejects_symlink_escapes_but_deletes_the_link_itself() {
     assert!(read_workspace_file(root, "escape/secret").is_err());
     assert!(read_workspace_file(root, "secret-link").is_err());
     assert!(create_workspace_entry(root, "escape/new.txt", false).is_err());
-    assert!(write_workspace_file(root, "secret-link", "x", None).is_err());
+    assert!(write(root, "secret-link", "x", None).await.is_err());
 
     delete_workspace_entry(root, "escape/").unwrap();
     assert!(!root.join("escape").exists());
@@ -91,15 +106,16 @@ fn reports_entry_kinds() {
     assert!(workspace_entry_kind(root, "missing").is_err());
 }
 
-#[test]
-fn write_detects_conflicts() {
+#[tokio::test]
+async fn write_detects_conflicts() {
     let dir = workspace();
     let root = dir.path();
     let opened = read_workspace_file(root, "src/main.rs").unwrap();
     fs::write(root.join("src/main.rs"), "changed elsewhere").unwrap();
 
-    let conflict =
-        write_workspace_file(root, "src/main.rs", "mine", Some(&opened.version)).unwrap();
+    let conflict = write(root, "src/main.rs", "mine", Some(&opened.version))
+        .await
+        .unwrap();
     let current = read_workspace_file(root, "src/main.rs").unwrap();
     assert_eq!(
         conflict,
@@ -109,7 +125,9 @@ fn write_detects_conflicts() {
     );
     assert_eq!(current.content.as_deref(), Some("changed elsewhere"));
 
-    let saved = write_workspace_file(root, "src/main.rs", "mine", Some(&current.version)).unwrap();
+    let saved = write(root, "src/main.rs", "mine", Some(&current.version))
+        .await
+        .unwrap();
     let reread = read_workspace_file(root, "src/main.rs").unwrap();
     assert_eq!(
         saved,
@@ -120,7 +138,7 @@ fn write_detects_conflicts() {
     assert_eq!(reread.content.as_deref(), Some("mine"));
 
     assert_eq!(
-        write_workspace_file(root, "gone.rs", "x", Some("stale")).unwrap(),
+        write(root, "gone.rs", "x", Some("stale")).await.unwrap(),
         WorkspaceFileWrite::Conflict {
             version: String::new()
         }
@@ -128,15 +146,17 @@ fn write_detects_conflicts() {
 }
 
 #[cfg(unix)]
-#[test]
-fn write_preserves_permissions() {
+#[tokio::test]
+async fn write_preserves_permissions() {
     use std::os::unix::fs::PermissionsExt;
     let dir = workspace();
     let script = dir.path().join("run.sh");
     fs::write(&script, "#!/bin/sh").unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
 
-    write_workspace_file(dir.path(), "run.sh", "#!/bin/sh\necho", None).unwrap();
+    write(dir.path(), "run.sh", "#!/bin/sh\necho", None)
+        .await
+        .unwrap();
 
     assert_eq!(
         fs::metadata(&script).unwrap().permissions().mode() & 0o777,
