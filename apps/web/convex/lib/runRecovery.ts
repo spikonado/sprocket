@@ -1,6 +1,7 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
+import { runHasBegun } from '@convex/lib/runs';
 
 export const LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
 
@@ -15,11 +16,10 @@ export function isAutomaticallyRecoverableRun(
 	run: Pick<Doc<'runs'>, 'failureKind' | 'cancellationRequestedAt' | 'machineId' | 'pendingPrompt'>,
 	machineId: string
 ): boolean {
-	// A run that never began has no prompt part for a continuation to answer.
 	return (
 		run.failureKind === 'abandoned' &&
 		run.cancellationRequestedAt === undefined &&
-		run.pendingPrompt === undefined &&
+		runHasBegun(run) &&
 		run.machineId === machineId
 	);
 }

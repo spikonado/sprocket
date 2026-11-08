@@ -31,6 +31,13 @@ export const vCreditPackTerms = v.object({ units: v.number(), expiresAfter: vCre
 
 export type CreditPackTerms = Infer<typeof vCreditPackTerms>;
 
+export const vCheckoutPurchase = v.union(
+	v.object({ kind: v.literal('subscription') }),
+	v.object({ kind: v.literal('creditPack'), terms: vCreditPackTerms })
+);
+
+export type CheckoutPurchase = Infer<typeof vCheckoutPurchase>;
+
 export const vPublicPricingPlan = v.object({
 	id: v.string(),
 	label: v.string(),

@@ -12,7 +12,7 @@ import type { UserIdentity } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
 import { grantForPayment } from '@convex/lib/credits';
 import { readDodoEnvironment } from '@convex/lib/dodoProducts';
-import type { CreditPackTerms } from '@convex/lib/pricingValidators';
+import type { CheckoutPurchase } from '@convex/lib/pricingValidators';
 import { resolvePlan } from '@convex/lib/tiers';
 import {
 	vBillingInterval,
@@ -60,11 +60,11 @@ async function startCheckout(
 	identity: UserIdentity,
 	{
 		productId,
-		creditPack,
+		purchase,
 		pageParams
 	}: {
 		productId: string;
-		creditPack?: CreditPackTerms;
+		purchase: CheckoutPurchase;
 		pageParams: Record<string, string>;
 	}
 ): Promise<CheckoutStart> {
@@ -83,7 +83,7 @@ async function startCheckout(
 		email: identity.email,
 		name: identity.name ?? identity.nickname ?? identity.email ?? identity.subject,
 		productId,
-		creditPack,
+		purchase,
 		...pricingPageUrls(pageParams)
 	});
 
@@ -161,6 +161,7 @@ export const checkout = action({
 
 		return await startCheckout(ctx, identity, {
 			productId,
+			purchase: { kind: 'subscription' },
 			pageParams: { tier }
 		});
 	}
@@ -179,7 +180,7 @@ export const buyCredits = action({
 
 		return await startCheckout(ctx, identity, {
 			productId,
-			creditPack,
+			purchase: { kind: 'creditPack', terms: creditPack },
 			pageParams: { pack: productId }
 		});
 	}

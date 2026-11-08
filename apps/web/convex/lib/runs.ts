@@ -1,4 +1,5 @@
 import type { Infer } from 'convex/values';
+import type { Doc } from '@convex/_generated/dataModel';
 import { isRunFinalStatus, type vExecutorJobStatus, type vRunStatus } from '@convex/lib/validators';
 
 type ExecutorJobState = {
@@ -12,6 +13,10 @@ const STARTED_WORK_MAY_CONTINUE =
 
 export function runStartedAt(run: { _creationTime: number }): number {
 	return Math.floor(run._creationTime);
+}
+
+export function runHasBegun(run: Pick<Doc<'runs'>, 'pendingPrompt'>): boolean {
+	return run.pendingPrompt === undefined;
 }
 
 export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null | undefined) {

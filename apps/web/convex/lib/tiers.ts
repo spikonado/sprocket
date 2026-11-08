@@ -41,10 +41,7 @@ export async function getTierRow(ctx: QueryCtx, tierId: string): Promise<Doc<'ti
 	return rows[0] ?? null;
 }
 
-export async function tierForProduct(
-	ctx: QueryCtx,
-	productId: string
-): Promise<{ row: Doc<'tiers'>; interval: BillingInterval } | null> {
+async function tiersSellingProduct(ctx: QueryCtx, productId: string) {
 	const [monthly, annual] = await Promise.all([
 		ctx.db
 			.query('tiers')
@@ -60,9 +57,22 @@ export async function tierForProduct(
 		throw new Error(`Dodo product "${productId}" is assigned more than once.`);
 	}
 
-	if (monthly[0]) return { row: monthly[0], interval: 'monthly' };
+	return { monthly: monthly[0], annual: annual[0] };
+}
 
-	if (annual[0]) return { row: annual[0], interval: 'annual' };
+export async function assertSingleTierSells(ctx: QueryCtx, productId: string): Promise<void> {
+	await tiersSellingProduct(ctx, productId);
+}
+
+export async function tierForProduct(
+	ctx: QueryCtx,
+	productId: string
+): Promise<{ row: Doc<'tiers'>; interval: BillingInterval } | null> {
+	const { monthly, annual } = await tiersSellingProduct(ctx, productId);
+
+	if (monthly) return { row: monthly, interval: 'monthly' };
+
+	if (annual) return { row: annual, interval: 'annual' };
 
 	return null;
 }

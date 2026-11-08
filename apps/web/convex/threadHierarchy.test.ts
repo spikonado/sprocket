@@ -425,6 +425,13 @@ describe('thread hierarchy', () => {
 				await changeThreadActivity(ctx, id, async () => {});
 			}
 		});
+		await expect(
+			t.run((ctx) =>
+				changeThreadActivity(ctx, threadId, () =>
+					changeThreadActivity(ctx, threadId, async () => {})
+				)
+			)
+		).rejects.toThrow('Thread activity changes must not nest.');
 		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(states);
 	});
 });

@@ -16,7 +16,6 @@ export function utcMonth(year: number, month: number, day: number, anchor: Date)
 	);
 }
 
-/** Free and granted tiers use calendar months; paid terms use their Dodo billing period. */
 export function billingWindow(term: PaidTerm | null, now: number): UsageWindow {
 	const date = new Date(now);
 
@@ -28,38 +27,23 @@ export function billingWindow(term: PaidTerm | null, now: number): UsageWindow {
 		const termEnd = term.billingPeriodEnd;
 		const anchor = new Date(term.billingPeriodStart);
 		const firstMonth = anchor.getUTCFullYear() * 12 + anchor.getUTCMonth();
-		// During renewal grace the last subwindow stays open.
-		const effectiveNow = Math.min(now, termEnd - 1);
-		const effectiveDate = new Date(effectiveNow);
-		const currentMonth = effectiveDate.getUTCFullYear() * 12 + effectiveDate.getUTCMonth();
+		const nowInTerm = Math.min(now, termEnd - 1);
+		const dateInTerm = new Date(nowInTerm);
+		const currentMonth = dateInTerm.getUTCFullYear() * 12 + dateInTerm.getUTCMonth();
 
 		const boundary = (offset: number) =>
 			utcMonth(anchor.getUTCFullYear(), anchor.getUTCMonth() + offset, anchor.getUTCDate(), anchor);
 
 		let offset = Math.max(0, currentMonth - firstMonth);
 
-		if (boundary(offset) > effectiveNow && offset > 0) offset--;
+		if (boundary(offset) > nowInTerm && offset > 0) offset--;
 
-		// Walk back while the clamped subwindow is not strictly positive; the
-		// term end caps every subwindow at the actual confirmed end.
-		for (;;) {
-			const start = boundary(offset);
-			const end = Math.min(boundary(offset + 1), termEnd);
+		const start = boundary(offset);
+		const end = Math.min(boundary(offset + 1), termEnd);
 
-			if (end > start) return { start, end };
+		if (end <= start) throw new Error('Annual subscription term is not positive.');
 
-			if (offset <= 0) {
-				// The whole confirmed term is shorter than one subwindow; report the
-				// positive term itself.
-				if (termEnd > term.billingPeriodStart) {
-					return { start: term.billingPeriodStart, end: termEnd };
-				}
-
-				throw new Error('Annual subscription term is not positive.');
-			}
-
-			offset--;
-		}
+		return { start, end };
 	}
 
 	const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);

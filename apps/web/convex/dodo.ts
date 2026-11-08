@@ -16,7 +16,7 @@ import {
 	readDodoEnvironment,
 	type BillingInterval
 } from '@convex/lib/dodoProducts';
-import { vCreditPackTerms, type PackPrice, type Price } from '@convex/lib/pricingValidators';
+import { vCheckoutPurchase, type PackPrice, type Price } from '@convex/lib/pricingValidators';
 import { vCheckoutAttemptStatus } from '@convex/lib/validators';
 
 export const LIVE_SUBSCRIPTION_CHECKOUT_ERROR =
@@ -239,8 +239,7 @@ export const createCheckout = internalAction({
 		email: v.optional(v.string()),
 		name: v.string(),
 		productId: v.string(),
-		// Present for a pack; subscriptions refuse a second live subscription instead.
-		creditPack: v.optional(vCreditPackTerms),
+		purchase: vCheckoutPurchase,
 		returnUrl: v.string(),
 		cancelUrl: v.string()
 	},
@@ -248,8 +247,9 @@ export const createCheckout = internalAction({
 	handler: async (ctx, args) => {
 		const client = createDodoClient();
 		const customer = await ensureCustomer(ctx, client, args);
+		const { purchase } = args;
 
-		if (!args.creditPack && !customer.created) {
+		if (purchase.kind === 'subscription' && !customer.created) {
 			const subscriptions = await listCustomerSubscriptions(client, customer.dodoCustomerId);
 
 			if (subscriptions.some(({ status }) => LIVE_SUBSCRIPTION_STATUSES.has(status))) {
@@ -261,10 +261,10 @@ export const createCheckout = internalAction({
 			product_cart: [{ product_id: args.productId, quantity: 1 }],
 			metadata: {
 				userId: args.userId,
-				...(args.creditPack && {
-					creditUnits: String(args.creditPack.units),
-					creditExpiresAfterCount: String(args.creditPack.expiresAfter.count),
-					creditExpiresAfterUnit: args.creditPack.expiresAfter.unit
+				...(purchase.kind === 'creditPack' && {
+					creditUnits: String(purchase.terms.units),
+					creditExpiresAfterCount: String(purchase.terms.expiresAfter.count),
+					creditExpiresAfterUnit: purchase.terms.expiresAfter.unit
 				})
 			},
 			return_url: args.returnUrl,

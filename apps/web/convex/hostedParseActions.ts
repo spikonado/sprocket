@@ -9,6 +9,7 @@ import {
 	firecrawlParseOptions,
 	parseFirecrawlParseDocument,
 	readBoundedResponseBytes,
+	serializeParsePages,
 	shortHostedParseError
 } from '@convex/lib/hostedParse';
 import { firecrawlClient, firecrawlFailure, firecrawlRetryAfterMs } from '@convex/lib/firecrawl';
@@ -87,7 +88,7 @@ export const executeHostedParse = internalAction({
 
 		const resultStorageId = await ctx.storage.store(
 			'pages' in parsed
-				? new Blob([JSON.stringify({ pages: parsed.pages })], { type: 'application/json' })
+				? new Blob([serializeParsePages(parsed.pages)], { type: 'application/json' })
 				: new Blob([parsed.markdown], { type: 'text/markdown; charset=utf-8' })
 		);
 

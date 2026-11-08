@@ -15,6 +15,7 @@ import { vCompletionActor } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import {
+	purchaseStatuses,
 	vListedPurchaseStatus,
 	vOrderOutcome,
 	vPurchaseStatus,
@@ -82,15 +83,23 @@ function purchaseView(purchase: ListedPurchase): Infer<typeof vPurchase> {
 	};
 }
 
+const statusesAfterApprovalRequest = purchaseStatuses.filter(
+	(status) => status !== 'awaiting_approval'
+);
+
+const purchaseTransitions: Record<PurchaseStatus, readonly PurchaseStatus[]> = {
+	awaiting_approval: statusesAfterApprovalRequest,
+	approved: statusesAfterApprovalRequest,
+	submitted_on_device: statusesAfterApprovalRequest,
+	declined: statusesAfterApprovalRequest,
+	expired: statusesAfterApprovalRequest,
+	failed: ['settled'],
+	settled: [],
+	cancelled: []
+};
+
 function nextPurchaseStatus(current: PurchaseStatus, incoming: PurchaseStatus): PurchaseStatus {
-	if (current === 'settled' || current === 'cancelled' || incoming === 'awaiting_approval') {
-		return current;
-	}
-
-	// Only Agentcard's read-back of a charge outranks the agent seeing the payment fail.
-	if (current === 'failed' && incoming !== 'settled') return current;
-
-	return incoming;
+	return purchaseTransitions[current].includes(incoming) ? incoming : current;
 }
 
 export const paymentActor = internalQuery({
