@@ -55,7 +55,7 @@ Use `kicad-cli` for checks and exports.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
 - DRC on a renamed copy of a board ignores the project's rules: `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
   Make copies with `copy_board.py`. For DRC without parity errors or `lib_footprint_issues`, also copy the `.kicad_sch` under the new basename and `fp-lib-table` next to it.
-- A keepout inside a footprint ends up far from its part: setting `footprint.position` also moves the footprint's zones. Restore their outlines after a move and check keepouts in DRC.
+- A keepout inside a footprint ends up far from its part: setting `footprint.position` moves the footprint's zones twice. Restore their outlines after a move and check keepouts in DRC.
 - A Zone created with several outline polygons keeps only the first. Create one Zone per polygon.
 - Setters on a new `NetClass()` raise. Copy the `Default` netclass's proto and edit the copy.
 - `board.get_project()` fails after `open_document`. Pass the DocumentSpecifier that `open_document` returns to `KiCad.get_project()`.
