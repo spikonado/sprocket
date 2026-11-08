@@ -36,13 +36,6 @@ const SUPPORT_HREF = `mailto:${SUPPORT_EMAIL}?subject=Sprocket%20billing%20suppo
 const ACTIVATION_TIMEOUT_MS = 30_000;
 const ACTIVATION_POLL_MS = 2_000;
 
-const FREE: MySubscription = {
-	tier: 'free',
-	tierLabel: 'Free',
-	billingManaged: false,
-	accessPhase: 'none'
-};
-
 // Dodo appends `payment_id`, `status` and `email` to the return URL.
 const CHECKOUT_PARAMS = [
 	'checkout',
@@ -83,7 +76,7 @@ export default function PricingPlans({
 	const [catalog, setCatalog] = useState(initialCatalog);
 	const [interval, setBillingInterval] = useState<BillingInterval>('monthly');
 	const [user, setUser] = useState<User | null>(null);
-	const [subscription, setSubscription] = useState(FREE);
+	const [subscription, setSubscription] = useState<MySubscription | null>(null);
 	const [loading, setLoading] = useState(true);
 	// `id` is the plan or pack whose button shows the label.
 	const [busy, setBusy] = useState<{ id: string | null; label: string } | null>(null);
@@ -99,7 +92,8 @@ export default function PricingPlans({
 	const largestDiscount = Math.max(0, ...cards.map((card) => card.annualDiscountPercent));
 
 	// Plan changes go through the Dodo portal, since checkout refuses a second subscription.
-	const subscribed = subscription.tier !== 'free' && subscription.billingManaged;
+	const subscribed =
+		subscription !== null && subscription.tier !== 'free' && subscription.billingManaged;
 
 	function fail(cause: unknown, fallback: string) {
 		setBusy(null);
@@ -116,7 +110,7 @@ export default function PricingPlans({
 		const { user: current } = await loadPricingSession({ reload: true });
 		setAnalyticsUser(current);
 		setUser(current);
-		setSubscription(current ? await fetchMySubscription() : FREE);
+		setSubscription(current ? await fetchMySubscription() : null);
 
 		return current;
 	}
@@ -273,7 +267,7 @@ export default function PricingPlans({
 			await signOutOfPricing();
 			setAnalyticsUser(null);
 			setUser(null);
-			setSubscription(FREE);
+			setSubscription(null);
 			setPending(false);
 			setBusy(null);
 			setNotice(null);
@@ -310,7 +304,7 @@ export default function PricingPlans({
 
 		if (card.isFree) return 'Start free';
 
-		if (card.id === subscription.tier)
+		if (card.id === subscription?.tier)
 			return subscription.billingManaged ? 'Manage billing' : 'Current plan';
 
 		if (!card.prices[interval]) return 'Unavailable';
@@ -323,7 +317,7 @@ export default function PricingPlans({
 
 		if (loading || busy) return true;
 
-		if (card.id === subscription.tier) return !subscription.billingManaged;
+		if (card.id === subscription?.tier) return !subscription.billingManaged;
 
 		return !card.prices[interval];
 	}
@@ -454,7 +448,7 @@ export default function PricingPlans({
 						<div className="text-muted-foreground mt-4 flex flex-wrap items-center justify-center gap-3 text-sm">
 							<p>
 								Signed in as <span className="text-foreground">{user.email}</span>
-								{subscription.tier !== 'free' && (
+								{subscription && subscription.tier !== 'free' && (
 									<>
 										. Current plan:{' '}
 										<span className="text-foreground">{subscription.tierLabel}</span>
@@ -469,7 +463,7 @@ export default function PricingPlans({
 							>
 								Sign out
 							</button>
-							{subscription.billingManaged && (
+							{subscription?.billingManaged && (
 								<>
 									<button
 										type="button"

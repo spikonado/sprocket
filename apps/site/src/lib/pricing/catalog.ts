@@ -124,7 +124,7 @@ export function buildPlanCards(catalog: PublicPricingCatalog): PlanCard[] {
 			name: plan.label,
 			description: plan.description?.trim() ?? '',
 			highlighted: plan.highlighted,
-			primaryCta: plan.highlighted || isFree || plan.id === 'pro',
+			primaryCta: plan.highlighted || isFree,
 			isFree,
 			previousPlanName: inherited?.name ?? null,
 			features: inherited ? features.filter(({ label }) => !inherited.labels.has(label)) : features,
