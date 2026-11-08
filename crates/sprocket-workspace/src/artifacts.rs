@@ -25,8 +25,6 @@ pub async fn read_artifact_file(workspace_root: &Path, path: &str) -> anyhow::Re
     if title.chars().count() > 200 {
         bail!("Artifact filename must not exceed 200 characters.");
     }
-    // Keep symlinks and parent components intact so later reads follow the same
-    // path after atomic saves or a symlink replacement.
     let requested: PathBuf = path
         .components()
         .filter(|component| !matches!(component, Component::CurDir))

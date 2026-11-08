@@ -70,7 +70,7 @@ impl Container {
             .with_context(|| format!("failed to kill {}", self.path.display()))?;
         let deadline = Instant::now() + REMOVAL_TIMEOUT;
         loop {
-            match remove_tree(&self.path) {
+            match remove_with_nested_cgroups(&self.path) {
                 Ok(()) => return Ok(()),
                 // The cgroup stays busy until the kernel finishes tearing down the killed processes.
                 Err(error)
@@ -89,17 +89,16 @@ impl Container {
 
 impl Drop for Container {
     fn drop(&mut self) {
-        let _ = remove_tree(&self.path);
+        let _ = remove_with_nested_cgroups(&self.path);
     }
 }
 
-/// Sprocket servers started by a command, such as dev builds, nest their containers in this one.
-fn remove_tree(path: &Path) -> io::Result<()> {
+fn remove_with_nested_cgroups(path: &Path) -> io::Result<()> {
     let result = fs::read_dir(path).and_then(|entries| {
         for entry in entries {
             let entry = entry?;
             if entry.file_type()?.is_dir() {
-                remove_tree(&entry.path())?;
+                remove_with_nested_cgroups(&entry.path())?;
             }
         }
         fs::remove_dir(path)

@@ -228,6 +228,7 @@ async fn terminate_child(child: &mut Child, process_id: Option<u32>) -> Result<E
 #[cfg(unix)]
 fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
     if let Some(pid) = process_id {
+        // SAFETY: `kill` takes no pointers, and a group that is already gone yields ESRCH.
         let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
         if result != 0 {
             let error = std::io::Error::last_os_error();

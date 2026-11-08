@@ -31,7 +31,6 @@ impl CommandHistory {
         session_id: &str,
     ) -> Result<()> {
         if self.result.running {
-            // The supervisor may have archived the result since this snapshot was read.
             let Some(mut saved) = Self::read(&history_path(log_directory, session_id)?).await?
             else {
                 bail!("unknown command session: {session_id}");

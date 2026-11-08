@@ -75,7 +75,6 @@ pub(crate) fn normalize_path(path: &Path) -> Result<PathBuf> {
                 } else if !normalized.has_root() {
                     normalized.push("..");
                 }
-                // Absolute path already at root: treat extra `..` as a no-op.
             }
         }
     }

@@ -428,9 +428,9 @@ pub(crate) fn apply_update(
     Ok(output)
 }
 
-/// Trailing empty strings represent the file's final newline, which is
-/// stripped from the file's lines, so also try the hunk without them.
-fn line_variants(chunk: &UpdateChunk) -> impl Iterator<Item = (&[String], &[String])> {
+fn with_and_without_final_newline(
+    chunk: &UpdateChunk,
+) -> impl Iterator<Item = (&[String], &[String])> {
     let stripped = strip_trailing_empty(&chunk.old_lines).map(|old_lines| {
         let new_lines = strip_trailing_empty(&chunk.new_lines).unwrap_or(&chunk.new_lines);
         (old_lines, new_lines)
@@ -461,7 +461,7 @@ fn locate_forward(lines: &[String], chunk: &UpdateChunk, cursor: usize) -> Optio
         return Some(insertion(chunk, after_anchor, lines.len()));
     }
     let start = after_anchor.unwrap_or(cursor);
-    line_variants(chunk).find_map(|(old_lines, new_lines)| {
+    with_and_without_final_newline(chunk).find_map(|(old_lines, new_lines)| {
         let position = find_matches(lines, old_lines, start, chunk.end_of_file, 1)?[0];
         Some(Replacement {
             start: position,
@@ -471,8 +471,6 @@ fn locate_forward(lines: &[String], chunk: &UpdateChunk, cursor: usize) -> Optio
     })
 }
 
-/// Fallback for out-of-order hunks: the anchor (or, without one, the lines)
-/// must match exactly one place in the whole file.
 fn locate_anywhere(
     lines: &[String],
     chunk: &UpdateChunk,
@@ -502,7 +500,7 @@ fn locate_anywhere(
     }
 
     let start = after_anchor.unwrap_or(0);
-    for (old_lines, new_lines) in line_variants(chunk) {
+    for (old_lines, new_lines) in with_and_without_final_newline(chunk) {
         let Some(matches) = find_matches(lines, old_lines, start, chunk.end_of_file, usize::MAX)
         else {
             continue;
@@ -553,8 +551,6 @@ fn uses_crlf(contents: &str) -> bool {
     saw_newline
 }
 
-/// Up to `limit` positions from `start` where `pattern` matches, using the
-/// strictest comparison that matches anywhere so exact context always wins.
 fn find_matches(
     lines: &[String],
     pattern: &[String],

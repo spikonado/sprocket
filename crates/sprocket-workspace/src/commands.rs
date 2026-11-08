@@ -787,7 +787,6 @@ impl CommandSession {
         from_offset: u64,
     ) -> Result<(CommandOutput, u64)> {
         let preview = self.output.lock().await.preview_metadata();
-        // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
         let unreturned = observation
