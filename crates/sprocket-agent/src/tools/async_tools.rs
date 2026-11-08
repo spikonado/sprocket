@@ -47,7 +47,6 @@ pub(crate) fn max_yield_ms(provider: CompletionProvider, cache_write_ttl: Option
         .max(MIN_POLL_YIELD_MS)
 }
 
-/// Parses catalog TTLs such as `"5m"`, `"30m"`, and `"1h"`.
 fn ttl_ms(ttl: &str) -> Option<u64> {
     let (count, unit_ms) = if let Some(hours) = ttl.strip_suffix('h') {
         (hours, 3_600_000)
@@ -65,7 +64,6 @@ pub(super) fn is_default_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_YIELD_MS
 }
 
-/// Use the same wait policy in provider schemas and resource execution.
 pub(super) fn yield_time_schema(mode: YieldMode, max_yield_ms: u64, description: &str) -> Value {
     let mut schema = json!({
         "type": "integer",

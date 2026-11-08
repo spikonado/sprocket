@@ -134,7 +134,6 @@ impl PinnedConnection {
 
 type SharedConnection = Arc<Mutex<PinnedConnection>>;
 
-/// `check` only sets `valid` before it bails, so a poisoned connection is still consistent.
 fn lock_connection(connection: &SharedConnection) -> MutexGuard<'_, PinnedConnection> {
     connection.lock().unwrap_or_else(PoisonError::into_inner)
 }

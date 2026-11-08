@@ -381,8 +381,6 @@ fn start_checkout(
     receiver
 }
 
-/// Losing the run's status counts as the run ending, since no tool call could
-/// observe the checkout anymore.
 async fn cancel_when_run_ends(context: AgentToolContext, cancellation: WorkspaceCancellation) {
     if let Ok(mut updates) = context
         .runtime
@@ -407,8 +405,6 @@ async fn wait_for_checkout(
         let state = progress.borrow_and_update().clone();
         let changed = match state {
             CheckoutProgress::Finished(result) => return result.map_err(tool_failure),
-            // No deadline here: card_checkout stops when the run ends, except
-            // inside the uncancellable purchase create.
             CheckoutProgress::Starting => progress.changed().await,
             CheckoutProgress::AwaitingApproval { purchase_id } => tokio::select! {
                 changed = progress.changed() => changed,
@@ -657,8 +653,6 @@ async fn create_purchase_idempotent(
     }
 }
 
-/// Cancels a purchase Sprocket can no longer complete. It may already be past
-/// approval, in which case only the store knows whether the order went through.
 async fn lost(
     context: &AgentToolContext,
     purchase_id: &str,

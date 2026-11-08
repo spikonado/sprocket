@@ -13,8 +13,6 @@ use super::hosted_parse::HostedParseContext;
 use super::image_urls::{ConvexImageUrls, ImageUrlMap};
 use crate::types::AgentHistoryToolResultItem;
 
-/// Encoded-image ceiling for model input. Attachment files have no size cap;
-/// this bound applies only when converting image bytes for the model.
 pub(crate) const MAX_PARSE_FILE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const MAX_PARSE_FILE_IMAGE_DIMENSION: u32 = 8192;
 pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
@@ -437,7 +435,6 @@ pub(super) async fn run_cancellable_blocking<T: Send + 'static>(
 pub(super) struct ReplayedImage {
     pub(super) path: String,
     pub(super) image: ModelImage,
-    /// Hex sha256 of the bytes the model receives.
     pub(super) sha256: String,
     show_path: bool,
 }
@@ -529,7 +526,6 @@ async fn replay_image_output(
             && bytes.len() as u64 == byte_size,
         "cached image {path} does not match persisted metadata"
     );
-    // Images cached before fitting existed still reach the model through replay.
     let (image, sha256) = tokio::task::spawn_blocking(move || {
         let image = fit_image_for_model(bytes)?;
         let sha256 = hex::encode(Sha256::digest(&image.bytes));

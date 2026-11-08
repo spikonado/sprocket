@@ -23,7 +23,6 @@ const MAX_CONTENT_BYTES: usize = 256 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct GenerationTracker {
-    // Hashed ids, also the personless distinct id, so generations don't link to the user.
     trace_id: String,
     session_id: String,
     share_content: bool,
@@ -35,7 +34,6 @@ pub(crate) struct GenerationTracker {
 struct TrackerState {
     conversation_len: usize,
     turns: HashMap<usize, PendingGeneration>,
-    /// The turn whose call started and has not reported its usage yet.
     in_flight_turn: Option<usize>,
     latest_generation_span_id: Option<String>,
     tools: HashMap<EffectId, PendingTool>,
@@ -202,7 +200,6 @@ impl GenerationTracker {
     }
 }
 
-/// Matches Convex's `analyticsId`, so its run and thread events share these trace and session ids.
 fn analytics_id(id: &str) -> String {
     hex::encode(Sha256::digest(id.as_bytes()))
 }

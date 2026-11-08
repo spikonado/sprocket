@@ -715,7 +715,6 @@ impl ControlSubagentTool {
                 })
                 .await?
             }
-            // Retrying Stop could stop replacement work rather than the original run.
             SubagentControlAction::Stop => {
                 cancelled_read(&cancellation, async {
                     timeout(
