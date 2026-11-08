@@ -41,10 +41,10 @@ def print_module(module, wanted, printed):
             if printed.get(name) is not enum:
                 print(f"enum {name}: {' '.join(enum.keys())}")
                 printed[name] = enum
-    if not wanted:
-        for name, function in inspect.getmembers(module, inspect.isfunction):
-            if function.__module__ == module.__name__:
-                print(f"def {name}{signature(function)}")
+    for name, function in inspect.getmembers(module, inspect.isfunction):
+        if function.__module__ == module.__name__ and (not wanted or name in wanted):
+            print(f"def {name}{signature(function)}")
+            printed[name] = function
 
 
 modules = sorted(info.name for info in pkgutil.iter_modules(kipy.__path__) if not info.ispkg)
