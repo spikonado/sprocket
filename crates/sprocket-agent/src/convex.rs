@@ -566,7 +566,7 @@ impl RuntimeClient {
         if let Some(handoff) = handoff {
             args.insert("handoff".to_string(), Value::Object(handoff.args()));
         }
-        self.mutation_with_retries("agentRuntime:beginRun", args)
+        self.idempotent_mutation("agentRuntime:beginRun", args)
             .await
     }
 
@@ -576,7 +576,7 @@ impl RuntimeClient {
         claim_id: &str,
     ) -> anyhow::Result<ClaimStatus> {
         let args = self.run_args_with_claim(run_id, claim_id);
-        self.mutation_with_retries("agentRuntime:omitReasoningReplay", args)
+        self.idempotent_mutation("agentRuntime:omitReasoningReplay", args)
             .await
     }
 
@@ -588,13 +588,11 @@ impl RuntimeClient {
     ) -> anyhow::Result<ClaimStatus> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("completionProvider".to_string(), provider.as_str().into());
-        self.mutation_with_retries("agentRuntime:fallBackToProvider", args)
+        self.idempotent_mutation("agentRuntime:fallBackToProvider", args)
             .await
     }
 
-    /// Retries transport failures only, so `function` must accept a repeat of a
-    /// call whose first attempt committed but lost its response.
-    pub(crate) async fn mutation_with_retries<T: DeserializeOwned>(
+    pub(crate) async fn idempotent_mutation<T: DeserializeOwned>(
         &self,
         function: &str,
         args: BTreeMap<String, Value>,

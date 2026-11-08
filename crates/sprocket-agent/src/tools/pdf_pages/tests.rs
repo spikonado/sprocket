@@ -191,15 +191,32 @@ fn sub_pdf_keeps_requested_pages_with_their_inherited_attributes() {
     }
     let annotations = document.get_dictionary(pages[1]).unwrap().get(b"Annots");
     assert!(annotations.is_ok());
-    // Catalog, tree, shared resources, a page plus contents per kept page,
-    // and the nulled page 56 the link targets. The writer's cross-reference
-    // stream loads as an object too.
-    let written: Vec<&Object> = document
+    let mut kinds: Vec<&str> = document
         .objects
         .values()
-        .filter(|object| object.type_name().ok() != Some(b"XRef".as_slice()))
+        .map(|object| {
+            object.type_name().map_or(object.enum_variant(), |name| {
+                std::str::from_utf8(name).unwrap()
+            })
+        })
+        .filter(|kind| *kind != "XRef")
         .collect();
-    assert_eq!(written.len(), 10, "{written:?}");
+    kinds.sort_unstable();
+    assert_eq!(
+        kinds,
+        [
+            "Catalog",
+            "Dictionary",
+            "Null",
+            "Page",
+            "Page",
+            "Page",
+            "Pages",
+            "Stream",
+            "Stream",
+            "Stream"
+        ]
+    );
 }
 
 #[test]

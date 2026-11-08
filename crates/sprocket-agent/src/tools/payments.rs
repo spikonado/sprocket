@@ -551,40 +551,17 @@ async fn approve(
     let page_url = interceptor.page_url().await.map_err(tool_error)?;
     let origin = checkout_origin(&page_url)
         .ok_or_else(|| tool_failure("card_checkout only works on https checkout pages."))?;
-    let create_args = action_args_from_payload(
-        &context.run_id,
-        &context.claim_id,
-        &json!({
-            "attemptId": Uuid::new_v4().to_string(),
+    let created = create_purchase_idempotent(
+        context,
+        json!({
             "checkoutOrigin": origin,
             "amount": args.amount,
             "currency": args.currency,
             "psp": payment.psp,
             "request": payment.request.to_convex(),
         }),
-    )?;
-    // Not cancellable: once the purchase exists, its id is needed to cancel it.
-    // A failed create may still have started the purchase, so retries reuse the
-    // attempt id and Convex returns that purchase instead of starting another.
-    let mut create_failures = 0;
-    let created: CheckoutState = loop {
-        match context
-            .runtime
-            .action_json::<Value>(CREATE, create_args.clone())
-            .await
-        {
-            Ok(value) => break decode(value, CREATE)?,
-            Err(error) => {
-                create_failures += 1;
-                if create_failures >= MAX_CONVEX_FAILURES {
-                    return Err(tool_failure(format!(
-                        "{error:#} Sprocket can't tell whether the purchase started, so don't retry the checkout. Ask the user to check the approval card in this thread and Settings → Payments."
-                    )));
-                }
-                sleep(CREATE_RETRY_DELAY).await;
-            }
-        }
-    };
+    )
+    .await?;
     let (purchase_id, mut interval) = match (created.status.as_str(), created.purchase_id) {
         ("card_required", _) => {
             return Ok(Outcome::Stopped(json!({ "status": "card_required" })));
@@ -650,6 +627,33 @@ async fn approve(
             }
             _ => Outcome::Stopped(finished("outcome_unknown", &purchase_id, state.reason)),
         });
+    }
+}
+
+async fn create_purchase_idempotent(
+    context: &AgentToolContext,
+    mut payload: Value,
+) -> Result<CheckoutState, ToolExecutionError> {
+    payload["attemptId"] = json!(Uuid::new_v4().to_string());
+    let args = action_args_from_payload(&context.run_id, &context.claim_id, &payload)?;
+    let mut failures = 0;
+    loop {
+        match context
+            .runtime
+            .action_json::<Value>(CREATE, args.clone())
+            .await
+        {
+            Ok(value) => return decode(value, CREATE),
+            Err(error) => {
+                failures += 1;
+                if failures >= MAX_CONVEX_FAILURES {
+                    return Err(tool_failure(format!(
+                        "{error:#} Sprocket can't tell whether the purchase started, so don't retry the checkout. Ask the user to check the approval card in this thread and Settings → Payments."
+                    )));
+                }
+                sleep(CREATE_RETRY_DELAY).await;
+            }
+        }
     }
 }
 

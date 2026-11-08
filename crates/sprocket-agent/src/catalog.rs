@@ -250,11 +250,11 @@ fn select_handoff_model(
     target_provider: CompletionProvider,
     target_vendor: &str,
 ) -> anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>> {
-    let removed = !catalog
+    let replaced_by_fallback = !catalog
         .models
         .iter()
         .any(|model| model.id == handoff.selected_model);
-    if removed {
+    if replaced_by_fallback {
         let eligible =
             |model: &&GatewayCatalogModel| handoff.completion_provider.serves(&model.route);
         let model = catalog
@@ -273,8 +273,7 @@ fn select_handoff_model(
     }
     let capabilities = select_catalog_model(catalog, &handoff.selected_model)?;
     handoff.fast_mode &= capabilities.supports_fast;
-    // A fallback cannot establish the historical vendor, so summarize instead of replaying it.
-    Ok((removed
+    Ok((replaced_by_fallback
         || handoff.completion_provider != target_provider
         || capabilities.route.vendor != target_vendor)
         .then_some((handoff, capabilities)))
