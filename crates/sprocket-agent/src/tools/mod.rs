@@ -10,6 +10,7 @@ mod image_urls;
 mod job;
 mod markdown_url;
 mod parse_file;
+mod parts;
 mod patch;
 mod payments;
 mod pdf_pages;
@@ -36,6 +37,7 @@ use self::cwd::SetCwdTool;
 pub(crate) use self::image_urls::ConvexImageUrls;
 use self::image_urls::ImageUrlMap;
 use self::parse_file::ParseFileTool;
+use self::parts::LookupPartsTool;
 use self::patch::ApplyPatchTool;
 use self::payments::{CardCheckoutTool, PollCheckoutTool, ReportOrderTool};
 use self::pull_requests::{LinkPrsTool, PollPrTool};
@@ -56,6 +58,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
     pub(crate) list_subagents: ListSubagentsTool,
+    pub(crate) lookup_parts: LookupPartsTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
@@ -201,6 +204,7 @@ pub(crate) fn agent_tools(
         list_subagents: ListSubagentsTool {
             context: context.clone(),
         },
+        lookup_parts: LookupPartsTool(context.clone()),
         parse_file: ParseFileTool(context.clone()),
         poll_cmd: PollCmdTool(context.clone()),
         read_skill: ReadSkillTool {

@@ -126,6 +126,13 @@ export const vWebSearchPayload = v.object({
 	numResults: v.optional(v.number())
 });
 
+export const vLookupPartsPayload = v.object({
+	parts: v.array(v.string()),
+	quantity: v.optional(v.number())
+});
+
+export type LookupPartsPayload = Infer<typeof vLookupPartsPayload>;
+
 export const vWriteStdinPayload = v.object({
 	sessionId: v.string(),
 	chars: v.optional(v.string()),
@@ -426,6 +433,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
+	vLookupPartsPayload,
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
@@ -548,6 +556,52 @@ export const vWebSearchResult = v.object({
 			publishedDate: v.optional(v.string()),
 			author: v.optional(v.string()),
 			text: v.optional(v.string())
+		})
+	)
+});
+
+export const partSources = ['jlcpcb', 'lcsc', 'digikey', 'mouser'] as const;
+
+export type PartSource = (typeof partSources)[number];
+
+export const vPartSource = v.union(...literals(partSources));
+
+const vPriceBreak = v.object({ quantity: v.number(), price: v.number() });
+
+/** One distributor listing as cached; prices are USD unless `currency` says otherwise. */
+export const vPartListing = v.object({
+	source: vPartSource,
+	sku: v.string(),
+	mpn: v.string(),
+	manufacturer: v.optional(v.string()),
+	description: v.optional(v.string()),
+	stock: v.number(),
+	priceBreaks: v.array(vPriceBreak),
+	currency: v.optional(v.string()),
+	moq: v.optional(v.number()),
+	status: v.optional(v.string()),
+	packaging: v.optional(v.string()),
+	library: v.optional(v.union(v.literal('basic'), v.literal('extended'), v.literal('preferred'))),
+	datasheet: v.optional(v.string()),
+	url: v.optional(v.string())
+});
+
+const vSourceNotes = v.object({
+	jlcpcb: v.optional(v.string()),
+	lcsc: v.optional(v.string()),
+	digikey: v.optional(v.string()),
+	mouser: v.optional(v.string())
+});
+
+export const vLookupPartsResult = v.object({
+	quantity: v.number(),
+	/** Sources skipped for every part, such as ones without API keys. */
+	unavailable: v.optional(vSourceNotes),
+	parts: v.array(
+		v.object({
+			part: v.string(),
+			offers: v.array(vPartListing.extend({ unitPrice: v.optional(v.number()) })),
+			errors: v.optional(vSourceNotes)
 		})
 	)
 });
@@ -908,6 +962,7 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebImageResult,
 	vWebSearchResult,
+	vLookupPartsResult,
 	vArtifactResult,
 	vListArtifactsResult,
 	vListConnectorsResult,
@@ -959,6 +1014,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
+	v.literal('lookup_parts'),
 	v.literal('control_cmd'),
 	v.literal('poll_cmd'),
 	v.literal('bind_artifact'),

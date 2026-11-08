@@ -74,6 +74,8 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Changed Directory';
 		case 'link_prs':
 			return 'Linked PRs';
+		case 'lookup_parts':
+			return 'Checked Parts';
 		default:
 			return titleizeSnakeCase(toolKey);
 	}
@@ -195,6 +197,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
+		case 'lookup_parts':
+			return Array.isArray(fields?.parts) ? fields.parts.map(String).join(', ') : 'Parts';
 		default:
 			return titleizeSnakeCase(name);
 	}

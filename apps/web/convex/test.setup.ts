@@ -371,8 +371,8 @@ export async function seedStartedWebJob(
 	t: ConvexTestInstance,
 	options: {
 		executionSecret: string;
-		kind: 'web_search' | 'scrape_url';
-		payload: { query: string } | { url: string };
+		kind: 'web_search' | 'scrape_url' | 'lookup_parts';
+		payload: { query: string } | { url: string } | { parts: string[]; quantity?: number };
 		prompt?: string;
 		claimId?: string;
 	}

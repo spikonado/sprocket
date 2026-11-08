@@ -17,6 +17,8 @@ import {
 	vLegacyArtifactType,
 	vLinkedPullRequest,
 	vModelCallUsage,
+	vPartListing,
+	vPartSource,
 	vPurchaseStatus,
 	vReasoningEffort,
 	vRunFailureKind,
@@ -396,6 +398,14 @@ export default defineSchema({
 		.index('by_jobId', ['jobId'])
 		.index('by_inputStorageId', ['inputStorageId'])
 		.index('by_resultStorageId', ['resultStorageId'])
+		.index('by_expiresAt', ['expiresAt']),
+	partListingCache: defineTable({
+		source: vPartSource,
+		query: v.string(),
+		listings: v.array(vPartListing),
+		expiresAt: v.number()
+	})
+		.index('by_source_and_query', ['source', 'query'])
 		.index('by_expiresAt', ['expiresAt']),
 	webRequests: defineTable({
 		runId: v.id('runs'),

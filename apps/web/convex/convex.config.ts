@@ -22,7 +22,10 @@ const app = defineApp({
 		AGENTCARD_WEBHOOK_SECRET: v.optional(v.string()),
 		MODEL_GATEWAY_URL: v.optional(v.string()),
 		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string()),
-		POSTHOG_PROJECT_TOKEN: v.string()
+		POSTHOG_PROJECT_TOKEN: v.string(),
+		DIGIKEY_CLIENT_ID: v.optional(v.string()),
+		DIGIKEY_CLIENT_SECRET: v.optional(v.string()),
+		MOUSER_API_KEY: v.optional(v.string())
 	}
 });
 

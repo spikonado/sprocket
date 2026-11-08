@@ -20,6 +20,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "link_prs",
     "list_artifacts",
     "list_subagents",
+    "lookup_parts",
     "parse_file",
     "poll_checkout",
     "poll_cmd",

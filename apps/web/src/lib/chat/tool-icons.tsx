@@ -13,6 +13,7 @@ import {
 	Hourglass,
 	ListChecks,
 	NotebookPen,
+	PackageSearch,
 	Receipt,
 	ScrollText,
 	Save,
@@ -83,6 +84,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return FileText;
 		case 'web_search':
 			return Search;
+		case 'lookup_parts':
+			return PackageSearch;
 		case 'write_stdin':
 			return SquareTerminal;
 		default:

@@ -451,7 +451,7 @@ export const executeWebSearch = internalAction({
 	args: executeArgs,
 	returns: vWebSearchResult,
 	handler: async (ctx, args): Promise<Infer<typeof vWebSearchResult>> => {
-		const job = await ctx.runMutation(internal.webSearchPool.getWebSearchJob, args);
+		const job = await ctx.runMutation(internal.webSearchPool.getCloudToolJob, args);
 
 		if (!job || job.kind !== 'web_search') {
 			throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);

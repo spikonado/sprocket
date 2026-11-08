@@ -19,21 +19,31 @@ const vWebSearchContext = v.object({
 	claimId: v.string()
 });
 
-const vWebSearchJobSnapshot = v.union(
+const cloudToolKinds = ['web_search', 'lookup_parts'] as const;
+
+type CloudToolKind = (typeof cloudToolKinds)[number];
+
+const vCloudToolJobSnapshot = v.union(
 	v.null(),
 	v.object({
-		kind: v.literal('web_search'),
+		kind: v.union(...cloudToolKinds.map((kind) => v.literal(kind))),
 		payload: vExecutorJobPayload
 	})
 );
 
-export function isCloudWebSearchKind(kind: string): kind is 'web_search' {
-	return kind === 'web_search';
+export function isCloudToolKind(kind: string): kind is CloudToolKind {
+	return cloudToolKinds.some((cloudKind) => cloudKind === kind);
 }
 
-export async function enqueueWebSearchJob(
+const CLOUD_TOOL_ACTIONS = {
+	web_search: internal.webTools.executeWebSearch,
+	lookup_parts: internal.partsLookup.execute
+} as const;
+
+export async function enqueueCloudToolJob(
 	ctx: MutationCtx,
 	args: {
+		kind: CloudToolKind;
 		jobId: Id<'executorJobs'>;
 		runId: Id<'runs'>;
 		claimId: string;
@@ -41,9 +51,10 @@ export async function enqueueWebSearchJob(
 ): Promise<void> {
 	const workId = await webSearchWorkpool.enqueueAction(
 		ctx,
-		internal.webTools.executeWebSearch,
+		CLOUD_TOOL_ACTIONS[args.kind],
 		{ jobId: args.jobId, runId: args.runId, claimId: args.claimId },
 		{
+			// Keeps its web search name so callbacks queued before a deploy still resolve.
 			onComplete: internal.webSearchPool.completeWebSearch,
 			context: { jobId: args.jobId, runId: args.runId, claimId: args.claimId }
 		}
@@ -52,13 +63,13 @@ export async function enqueueWebSearchJob(
 	await ctx.db.patch('executorJobs', args.jobId, { cloudWorkId: workId });
 }
 
-export const getWebSearchJob = internalMutation({
+export const getCloudToolJob = internalMutation({
 	args: vWebSearchContext.fields,
-	returns: vWebSearchJobSnapshot,
+	returns: vCloudToolJobSnapshot,
 	handler: async (ctx, args) => {
 		const active = await claimedJobForActiveRun(ctx, args);
 
-		if (!active || !isCloudWebSearchKind(active.job.kind)) {
+		if (!active || !isCloudToolKind(active.job.kind)) {
 			return null;
 		}
 

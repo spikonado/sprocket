@@ -34,6 +34,8 @@ type Env = {
   readonly AGENTCARD_CLIENT_SECRET: string | undefined;
   readonly AGENTCARD_WEBHOOK_SECRET: string | undefined;
   readonly CONTEXT_DEV_API_KEY: string;
+  readonly DIGIKEY_CLIENT_ID: string | undefined;
+  readonly DIGIKEY_CLIENT_SECRET: string | undefined;
   readonly DODO_PAYMENTS_API_KEY: string | undefined;
   readonly DODO_PAYMENTS_ENVIRONMENT: string | undefined;
   readonly DODO_PAYMENTS_WEBHOOK_SECRET: string | undefined;
@@ -41,6 +43,7 @@ type Env = {
   readonly FIRECRAWL_API_KEY: string;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
+  readonly MOUSER_API_KEY: string | undefined;
   readonly POSTHOG_PROJECT_TOKEN: string;
   readonly SPROCKET_MARKETING_ORIGIN: string | undefined;
   readonly WORKOS_API_KEY: string | undefined;

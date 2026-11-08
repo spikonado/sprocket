@@ -29,6 +29,8 @@ crons.interval(
 	{}
 );
 
+crons.interval('expire cached part listings', { hours: 1 }, internal.partsLookup.cleanupExpired);
+
 crons.interval(
 	'resync Dodo subscriptions past their billing period',
 	{ hours: 1 },

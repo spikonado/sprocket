@@ -3,18 +3,14 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
 import { sameValue } from '@convex/lib/transcriptParts';
-import {
-	enqueueWebSearchJob,
-	isCloudWebSearchKind,
-	webSearchWorkpool
-} from '@convex/webSearchPool';
+import { enqueueCloudToolJob, isCloudToolKind, webSearchWorkpool } from '@convex/webSearchPool';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 
-export async function cancelWebSearchWork(
+export async function cancelCloudToolWork(
 	ctx: MutationCtx,
 	job: Doc<'executorJobs'>
 ): Promise<void> {
-	if (!isCloudWebSearchKind(job.kind) || !job.cloudWorkId || isSettledExecutorJobStatus(job.status))
+	if (!isCloudToolKind(job.kind) || !job.cloudWorkId || isSettledExecutorJobStatus(job.status))
 		return;
 
 	try {
@@ -93,8 +89,9 @@ export async function beginExecutorJob(
 	if (args.callId) job.callId = args.callId;
 	const jobId = await ctx.db.insert('executorJobs', job);
 
-	if (isCloudWebSearchKind(args.kind)) {
-		await enqueueWebSearchJob(ctx, {
+	if (isCloudToolKind(args.kind)) {
+		await enqueueCloudToolJob(ctx, {
+			kind: args.kind,
 			jobId,
 			runId: args.run._id,
 			claimId: args.claimId

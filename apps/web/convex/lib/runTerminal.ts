@@ -2,7 +2,7 @@ import { internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
-import { cancelWebSearchWork } from '@convex/lib/toolJobs';
+import { cancelCloudToolWork } from '@convex/lib/toolJobs';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { getRunExecutionState } from '@convex/lib/runExecution';
 
@@ -60,7 +60,7 @@ export async function reconcileTerminalRun(
 		);
 
 	for await (const job of jobs) {
-		await cancelWebSearchWork(ctx, job);
+		await cancelCloudToolWork(ctx, job);
 
 		const [finalizedJob] = cancelExecutorJobsForTerminalRun({
 			jobs: [job],
