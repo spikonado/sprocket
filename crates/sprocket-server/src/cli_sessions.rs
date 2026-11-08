@@ -138,11 +138,9 @@ impl CliSessions {
         self.end_auth_session(session_token).await
     }
 
-    /// Returns whether the server is stopping.
-    pub async fn tick(&self, now: Instant) -> bool {
+    pub async fn tick(&self, now: Instant) {
         let mut expired = Vec::new();
-        let stopping = {
-            // Holding the client lock keeps a new CLI connection from racing the idle check.
+        {
             let mut state = self.state.lock().unwrap();
             state.clients.retain(|_, lease| {
                 if lease.expires_at > now {
@@ -158,14 +156,12 @@ impl CliSessions {
             {
                 self.host.stop_if_idle();
             }
-            self.host.is_stopping()
-        };
+        }
         for session_token in expired {
             if let Err(error) = self.end_auth_session(&session_token).await {
                 tracing::warn!("failed to end an expired CLI session: {error:#}");
             }
         }
-        stopping
     }
 
     async fn end_auth_session(&self, session_token: &str) -> anyhow::Result<()> {

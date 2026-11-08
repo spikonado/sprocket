@@ -9,6 +9,8 @@ import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
 const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, SPROCKET_RELEASE_VERSION } = process.env;
 
+const IMMUTABLE_ASSETS_DIR = '_app/immutable';
+
 const posthogSourceMaps =
 	POSTHOG_PERSONAL_API_KEY && POSTHOG_PROJECT_ID
 		? [
@@ -42,8 +44,7 @@ export default defineConfig({
 	publicDir: 'static',
 	worker: { format: 'es' },
 	build: {
-		// Rust gives this directory immutable caching and returns 404 for missing chunks.
-		assetsDir: '_app/immutable'
+		assetsDir: IMMUTABLE_ASSETS_DIR
 	},
 	resolve: {
 		alias: {

@@ -124,7 +124,7 @@ pub struct PackageUpdateManager {
 }
 
 impl PackageUpdateManager {
-    pub fn from_env() -> Arc<Self> {
+    pub fn from_env(temporary_server: bool) -> Arc<Self> {
         let mut manager = Self::new(
             parse_update_command_from_env(),
             SUCCESS_CHECK_TTL,
@@ -132,7 +132,9 @@ impl PackageUpdateManager {
             CHECK_TIMEOUT,
             INSTALL_TIMEOUT,
         );
-        manager.restart_file = std::env::var_os("SPROCKET_RESTART_FILE").map(PathBuf::from);
+        if !temporary_server {
+            manager.restart_file = std::env::var_os("SPROCKET_RESTART_FILE").map(PathBuf::from);
+        }
         Arc::new(manager)
     }
 

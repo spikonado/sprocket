@@ -10,6 +10,8 @@ use axum::response::{IntoResponse, Response};
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
+const IMMUTABLE_ASSETS_PREFIX: &str = "/_app/immutable/";
+
 pub fn static_router(dir: PathBuf, api: Router) -> Router {
     let index = dir.join("index.html");
     let assets = ServeDir::new(dir.clone());
@@ -35,7 +37,7 @@ async fn serve_static_request(
     assets: ServeDir,
 ) -> Response {
     let path = req.uri().path();
-    let immutable = path.starts_with("/_app/immutable/");
+    let immutable = path.starts_with(IMMUTABLE_ASSETS_PREFIX);
     // The KiCanvas frame has an opaque origin, which hides the bundle's errors unless it may read it.
     let cross_origin = path.starts_with("/kicanvas/");
 

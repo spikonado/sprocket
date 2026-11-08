@@ -80,6 +80,7 @@ pub struct HostConfig {
     pub convex_deployment_url: String,
     pub native_login_callback_url: String,
     pub browser_sessions: Option<Arc<dyn BrowserSessions>>,
+    pub temporary: bool,
 }
 
 #[derive(Clone)]
@@ -126,7 +127,7 @@ impl Host {
             &config.data_dir,
             config.convex_deployment_url,
             ChatGptService::load_or_unavailable(&config.data_dir)?,
-            PackageUpdateManager::from_env(),
+            PackageUpdateManager::from_env(config.temporary),
         )
     }
 
