@@ -5,21 +5,11 @@ import * as z from 'zod/mini';
 import { convexClientWithTimeout } from '@/lib/convex-client';
 import type { PricingSession } from './auth-server';
 import type { Purchase } from './catalog';
-import type {
-	CheckoutMode,
-	CheckoutStatus,
-	MySubscription,
-	PublicPricingCatalog
-} from './convex-types';
+import type { CheckoutStatus, MySubscription, PublicPricingCatalog } from './convex-types';
 
 const REQUEST_TIMEOUT_MS = 12_000;
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
 const ATTEMPT_KEY = 'sprocket_pricing_attempt';
-
-const CHECKOUT_ORIGINS: Record<CheckoutMode, string> = {
-	live: 'https://checkout.dodopayments.com',
-	test: 'https://test.checkout.dodopayments.com'
-};
 
 const checkoutAttemptSchema = z.object({
 	userId: z.string(),
@@ -108,12 +98,6 @@ export async function fetchMySubscription(): Promise<MySubscription> {
 	return convex.query(api.billing.getMySubscription, {});
 }
 
-export function assertCheckoutUrl(url: string, mode: CheckoutMode): void {
-	if (new URL(url).origin !== CHECKOUT_ORIGINS[mode]) {
-		throw new Error('Checkout returned an invalid link. Contact billing support.');
-	}
-}
-
 /** Creates a hosted checkout and returns its URL after recording the attempt for recovery. */
 export async function startCheckout(purchase: Purchase): Promise<string> {
 	const { convex, userId } = await signedIn();
@@ -130,8 +114,6 @@ export async function startCheckout(purchase: Purchase): Promise<string> {
 	} catch {
 		// Without storage the checkout still works; only automatic recovery on return is lost.
 	}
-
-	assertCheckoutUrl(result.checkout_url, result.mode);
 
 	return result.checkout_url;
 }

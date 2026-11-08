@@ -3,8 +3,6 @@ import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 
 export type BillingInterval = FunctionArgs<typeof api.billing.checkout>['interval'];
 
-export type CheckoutMode = FunctionReturnType<typeof api.billing.checkout>['mode'];
-
 export type CheckoutStatus = FunctionReturnType<typeof api.billing.getCheckoutStatus>;
 
 export type MySubscription = FunctionReturnType<typeof api.billing.getMySubscription>;

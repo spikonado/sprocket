@@ -65,18 +65,6 @@
 }
 
 @layer utilities {
-	/* Marker sits in the mid-line so line boxes don't clip neighboring descenders. */
-	.mark-accent {
-		color: var(--accent-strong);
-		padding-inline: 0.2em;
-		border-radius: 0.25rem;
-		background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
-		background-repeat: no-repeat;
-		background-size: 100% 0.72em;
-		background-position: 0 0.78em;
-		box-decoration-break: clone;
-		-webkit-box-decoration-break: clone;
-	}
 	.atmosphere {
 		background-color: var(--background);
 		background-image:
@@ -97,12 +85,5 @@
 			linear-gradient(to bottom, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px);
 		background-size: 56px 56px;
 		mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, black 15%, transparent 70%);
-	}
-
-	.hero-orb {
-		background:
-			radial-gradient(circle at 50% 50%, oklch(0.72 0.1 230 / 0.22), transparent 68%),
-			radial-gradient(circle at 30% 70%, oklch(0.85 0.05 230 / 0.12), transparent 55%);
-		filter: blur(8px);
 	}
 }
