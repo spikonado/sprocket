@@ -165,38 +165,36 @@ test('starts the updated launcher after the native server exits to restart', asy
 	assert.equal(restarted.binary, '/usr/bin/node');
 	assert.deepEqual(restarted.args, [updatedLauncher, '--web']);
 	assert.equal(restarted.env.SPROCKET_RESTART_FILE, native.env.SPROCKET_RESTART_FILE);
-	assert.equal(restarted.env.SPROCKET_RELAUNCHED_BY_LAUNCHER, '1');
+	assert.equal(restarted.env.SPROCKET_RESTARTED, '1');
 	assert.equal(existsSync(native.env.SPROCKET_RESTART_FILE), false);
 });
 
-for (const relaunchedEnv of ['SPROCKET_RELAUNCHED_BY_LAUNCHER', 'SPROCKET_RESTARTED']) {
-	test(`a launcher relaunched with ${relaunchedEnv} passes the next restart and its exit code up to its parent`, async (t) => {
-		const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-test-'));
-		t.after(() => rmSync(directory, { recursive: true, force: true }));
-		const restartFile = path.join(directory, 'restart');
-		const invocations = [];
+test('a restarted launcher passes the next restart and its exit code up to its parent', async (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-test-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const restartFile = path.join(directory, 'restart');
+	const invocations = [];
 
-		const code = await launch(['--web'], {
-			env: {
-				SPROCKET_RESTART_FILE: restartFile,
-				[relaunchedEnv]: '1'
-			},
-			resolveBinary: () => '/tmp/sprocket',
-			ensureExecutable: () => {},
-			spawn(binary, args, options) {
-				invocations.push(options.env);
-				writeFileSync(options.env.SPROCKET_RESTART_FILE, '/opt/sprocket/bin/sprocket.js');
+	const code = await launch(['--web'], {
+		env: {
+			SPROCKET_RESTART_FILE: restartFile,
+			SPROCKET_RESTARTED: '1'
+		},
+		resolveBinary: () => '/tmp/sprocket',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocations.push(options.env);
+			writeFileSync(options.env.SPROCKET_RESTART_FILE, '/opt/sprocket/bin/sprocket.js');
 
-				return successfulChild(75);
-			}
-		});
-
-		assert.equal(code, 75);
-		assert.equal(invocations.length, 1);
-		assert.equal(invocations[0].SPROCKET_RELAUNCHED_BY_LAUNCHER, '1');
-		assert.equal(existsSync(restartFile), true);
+			return successfulChild(75);
+		}
 	});
-}
+
+	assert.equal(code, 75);
+	assert.equal(invocations.length, 1);
+	assert.equal(invocations[0].SPROCKET_RESTARTED, '1');
+	assert.equal(existsSync(restartFile), true);
+});
 
 test('update and upgrade help is delegated to the native CLI', async () => {
 	for (const args of [
