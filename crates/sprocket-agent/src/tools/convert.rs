@@ -2,7 +2,6 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
-use base64::Engine;
 use rig::message::{ImageMediaType, MimeType, ToolResultContent};
 use rig::tool::ToolOutput;
 use serde::{Deserialize, Serialize};
@@ -457,8 +456,8 @@ impl ReplayedOutput {
         }
     }
 
-    fn into_content(self, urls: &ImageUrlMap) -> Vec<ToolResultContent> {
-        match self {
+    fn into_content(self, urls: &ImageUrlMap) -> anyhow::Result<Vec<ToolResultContent>> {
+        Ok(match self {
             Self::Text(text) => vec![ToolResultContent::text(text)],
             Self::Image(ReplayedImage {
                 path,
@@ -466,15 +465,12 @@ impl ReplayedOutput {
                 sha256,
                 show_path,
             }) => {
-                let media_type = Some(image.media_type);
-                let image = match urls.get(&sha256) {
-                    Some(url) => ToolResultContent::image_url(url.clone(), media_type, None),
-                    None => ToolResultContent::image_base64(
-                        base64::engine::general_purpose::STANDARD.encode(image.bytes),
-                        media_type,
-                        None,
-                    ),
+                let url = match urls.get(&sha256) {
+                    Some(Ok(url)) => url.clone(),
+                    Some(Err(error)) => bail!("no model URL for image {path}: {error}"),
+                    None => bail!("no model URL for image {path}"),
                 };
+                let image = ToolResultContent::image_url(url, Some(image.media_type), None);
                 if show_path {
                     vec![
                         ToolResultContent::text(format!("Image saved to: {path}")),
@@ -484,14 +480,14 @@ impl ReplayedOutput {
                     vec![image]
                 }
             }
-        }
+        })
     }
 
     pub(super) fn into_history_items(
         self,
         urls: &ImageUrlMap,
     ) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
-        self.into_content(urls)
+        self.into_content(urls)?
             .into_iter()
             .map(|content| match content {
                 ToolResultContent::Image(image) => Ok(AgentHistoryToolResultItem::Image {
@@ -640,5 +636,5 @@ pub(super) async fn replay_tool_output(
         (Some(source), Some(image)) => source.urls(&[image]).await,
         _ => ImageUrlMap::new(),
     };
-    Ok(ToolOutput::content(replayed.into_content(&urls))?)
+    Ok(ToolOutput::content(replayed.into_content(&urls)?)?)
 }

@@ -13,8 +13,9 @@ use crate::convex::RuntimeClient;
 const MAX_IMAGES_PER_LOOKUP: usize = 100;
 const CONCURRENT_UPLOADS: usize = 4;
 
-/// Hex sha256 of a replayed image to the URL the model fetches it from.
-pub(super) type ImageUrlMap = HashMap<String, String>;
+/// Hex sha256 of a replayed image to the URL the model fetches it from, or why
+/// no URL could be obtained.
+pub(super) type ImageUrlMap = HashMap<String, Result<String, String>>;
 
 pub(crate) struct ConvexImageUrls<'a> {
     runtime: &'a RuntimeClient,
@@ -56,7 +57,7 @@ impl ConvexImageUrls<'_> {
                     for image in stored {
                         match image {
                             StoredImage::Live { sha256, url } => {
-                                urls.insert(sha256, url);
+                                urls.insert(sha256, Ok(url));
                             }
                             StoredImage::Missing { sha256, upload_url } => {
                                 if let Some(image) = by_hash.get(sha256.as_str()) {
@@ -66,10 +67,12 @@ impl ConvexImageUrls<'_> {
                         }
                     }
                 }
-                Err(error) => eprintln!(
-                    "sprocket-agent: image URL lookup failed ({error:#}); sending {} images as base64",
-                    chunk.len()
-                ),
+                Err(error) => {
+                    let error = format!("image URL lookup failed: {error:#}");
+                    for sha256 in chunk {
+                        urls.insert((*sha256).to_string(), Err(error.clone()));
+                    }
+                }
             }
         }
         if uploads.is_empty() {
@@ -78,9 +81,10 @@ impl ConvexImageUrls<'_> {
         let client = match upload_client() {
             Ok(client) => client,
             Err(error) => {
-                eprintln!(
-                    "sprocket-agent: image upload client failed ({error:#}); sending images as base64"
-                );
+                let error = format!("image upload client failed: {error:#}");
+                for (image, _) in uploads {
+                    urls.insert(image.sha256.clone(), Err(error.clone()));
+                }
                 return urls;
             }
         };
@@ -93,15 +97,10 @@ impl ConvexImageUrls<'_> {
             }
             let results = futures::future::join_all(pending).await;
             for ((image, _), result) in chunk.iter().zip(results) {
-                match result {
-                    Ok(url) => {
-                        urls.insert(image.sha256.clone(), url);
-                    }
-                    Err(error) => eprintln!(
-                        "sprocket-agent: image upload failed for {} ({error:#}); sending it as base64",
-                        image.path
-                    ),
-                }
+                urls.insert(
+                    image.sha256.clone(),
+                    result.map_err(|error| format!("image upload failed: {error:#}")),
+                );
             }
         }
         urls
