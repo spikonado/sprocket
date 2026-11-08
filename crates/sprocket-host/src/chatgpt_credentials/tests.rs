@@ -67,10 +67,11 @@ impl TestProvider {
     }
 }
 
+const PKCS8_RSA_PREFIX_LEN: usize = 26;
+
 fn signing_key() -> EncodingKey {
     let der = pem_der(RSA_KEY);
-    // This fixture has a 26-byte PKCS8 wrapper around the PKCS1 key.
-    EncodingKey::from_rsa_der(&der[26..])
+    EncodingKey::from_rsa_der(&der[PKCS8_RSA_PREFIX_LEN..])
 }
 
 fn pem_der(pem: &str) -> Vec<u8> {

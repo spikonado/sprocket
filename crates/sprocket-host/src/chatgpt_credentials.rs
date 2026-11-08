@@ -29,9 +29,7 @@ pub struct ChatGptService {
     token_endpoint: String,
     client: reqwest::Client,
     watches: Arc<StdMutex<HashMap<String, watch::Sender<Option<String>>>>>,
-    /// Stays set after a failed write, since disk may then hold either version,
-    /// and memory can be ahead of it with tokens OpenAI already rotated.
-    persistence_pending: Arc<AtomicBool>,
+    memory_ahead_of_disk: Arc<AtomicBool>,
     storage_error: Option<String>,
     #[cfg(test)]
     persist_failure_after: Arc<StdMutex<Option<usize>>>,
@@ -79,9 +77,7 @@ struct Tokens {
 
 enum Refresh {
     Refreshed(Tokens),
-    /// The old tokens are still usable.
     Retry(&'static str),
-    /// The old tokens are spent or unsafe to reuse.
     Disconnect(anyhow::Error),
 }
 
@@ -434,7 +430,7 @@ impl ChatGptService {
                 .timeout(Duration::from_secs(15))
                 .build()?,
             watches: Arc::new(StdMutex::new(watches)),
-            persistence_pending: Arc::new(AtomicBool::new(false)),
+            memory_ahead_of_disk: Arc::new(AtomicBool::new(false)),
             storage_error,
             #[cfg(test)]
             persist_failure_after: Arc::new(StdMutex::new(None)),
@@ -443,7 +439,7 @@ impl ChatGptService {
 
     async fn persist(&self, state: &Store) -> anyhow::Result<()> {
         self.require_storage()?;
-        self.persistence_pending.store(true, Ordering::Release);
+        self.memory_ahead_of_disk.store(true, Ordering::Release);
         #[cfg(test)]
         {
             let mut failure_after = self.persist_failure_after.lock().unwrap();
@@ -461,8 +457,18 @@ impl ChatGptService {
             .await
             .context("ChatGPT storage task stopped.")?
             .context("Could not save local ChatGPT credentials.")?;
-        self.persistence_pending.store(false, Ordering::Release);
+        self.memory_ahead_of_disk.store(false, Ordering::Release);
         Ok(())
+    }
+
+    async fn persist_refresh_in_flight(&self, state: &Store, user: &str) -> anyhow::Result<()> {
+        let mut on_disk = state.clone();
+        active_account(&mut on_disk, user)?
+            .tokens
+            .as_mut()
+            .context("Reconnect ChatGPT locally in Settings.")?
+            .refresh_in_flight = true;
+        self.persist(&on_disk).await
     }
 
     fn notify(&self, user: &str, accounts: &UserAccounts) {
@@ -906,7 +912,7 @@ impl ChatGptService {
     async fn access(&self, user: &str) -> anyhow::Result<ChatGptAccess> {
         self.require_storage()?;
         let mut state = self.state.lock().await;
-        if self.persistence_pending.load(Ordering::Acquire) {
+        if self.memory_ahead_of_disk.load(Ordering::Acquire) {
             self.persist(&state).await?;
         }
         let account = active_account(&mut state, user)?;
@@ -928,14 +934,7 @@ impl ChatGptService {
         );
         let client_id = account.client_id.clone();
         let subject = account.subject.clone();
-        // Only disk carries the marker, so a crash mid-refresh makes load retire the token.
-        let mut marked = state.clone();
-        active_account(&mut marked, user)?
-            .tokens
-            .as_mut()
-            .context("Reconnect ChatGPT locally in Settings.")?
-            .refresh_in_flight = true;
-        self.persist(&marked).await?;
+        self.persist_refresh_in_flight(&state, user).await?;
         let outcome = self.refresh(&client_id, &subject, &tokens).await;
         let account = active_account(&mut state, user)?;
         let result = match outcome {
@@ -1072,7 +1071,7 @@ impl ChatGptService {
             }
             let connected = {
                 let state = service.state.lock().await;
-                if service.persistence_pending.load(Ordering::Acquire) {
+                if service.memory_ahead_of_disk.load(Ordering::Acquire) {
                     if let Err(failure) = service.persist(&state).await {
                         error = Some(failure.to_string());
                     }
