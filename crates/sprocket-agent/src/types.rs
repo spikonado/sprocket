@@ -106,7 +106,7 @@ impl CompletionProvider {
 pub struct ModelRoute {
     #[serde(rename = "provider")]
     pub vendor: String,
-    #[serde(default, rename = "modelsDevId")]
+    #[serde(rename = "modelsDevId")]
     pub models_dev_id: Option<String>,
     /// Keyed by models.dev provider ID, filled from models.dev after the catalog loads.
     #[serde(skip)]
