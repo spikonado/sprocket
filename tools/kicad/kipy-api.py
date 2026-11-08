@@ -30,18 +30,34 @@ def print_class(name, cls):
             print(f"  {attribute}{signature(value)}")
 
 
-if len(sys.argv) < 2:
-    modules = [info.name for info in pkgutil.iter_modules(kipy.__path__) if not info.ispkg]
-    sys.exit(f"Usage: kipy-api <module> [name ...]\nModules: {' '.join(sorted(modules))}")
-module = importlib.import_module(f"kipy.{sys.argv[1]}")
-wanted = sys.argv[2:]
-for name, cls in inspect.getmembers(module, inspect.isclass):
-    if cls.__module__ == module.__name__ and (not wanted or name in wanted):
-        print_class(name, cls)
-for name, enum in vars(module).items():
-    if isinstance(enum, EnumTypeWrapper) and (not wanted or name in wanted):
-        print(f"enum {name}: {' '.join(enum.keys())}")
-if not wanted:
+def print_module(module, wanted, printed):
+    for name, cls in inspect.getmembers(module, inspect.isclass):
+        if cls.__module__ == module.__name__ and (not wanted or name in wanted):
+            print_class(name, cls)
+            printed[name] = cls
+    for name, enum in vars(module).items():
+        if isinstance(enum, EnumTypeWrapper) and (not wanted or name in wanted):
+            # Modules re-export the same protobuf enums.
+            if printed.get(name) is not enum:
+                print(f"enum {name}: {' '.join(enum.keys())}")
+                printed[name] = enum
     for name, function in inspect.getmembers(module, inspect.isfunction):
-        if function.__module__ == module.__name__:
+        if function.__module__ == module.__name__ and (not wanted or name in wanted):
             print(f"def {name}{signature(function)}")
+            printed[name] = function
+
+
+modules = sorted(info.name for info in pkgutil.iter_modules(kipy.__path__) if not info.ispkg)
+args = sys.argv[1:]
+if not args or args[0] in ("-h", "--help"):
+    print("Usage: kipy-api <module> [name ...]")
+    print("       kipy-api <name> ...   searches every module")
+    print(f"Modules: {' '.join(modules)}")
+elif args[0] in modules:
+    print_module(importlib.import_module(f"kipy.{args[0]}"), args[1:], {})
+else:
+    printed = {}
+    for name in modules:
+        print_module(importlib.import_module(f"kipy.{name}"), args, printed)
+    if missing := [name for name in args if name not in printed]:
+        sys.exit(f"Not in kipy: {' '.join(missing)}. Run kipy-api <module> to list a module.")

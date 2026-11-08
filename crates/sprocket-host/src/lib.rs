@@ -227,6 +227,7 @@ impl Host {
                 .chain(self.git.as_deref().map(git_install::path_dir)),
         );
         environment.extend(self.kicad.environment());
+        environment.extend(python_install::certificate_environment());
         environment
     }
 

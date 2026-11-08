@@ -112,6 +112,40 @@ fn copies_only_missing_lib_tables() {
     );
 }
 
+#[test]
+fn fontconfig_keeps_the_hosts_font_dirs_and_rules_it_can_read() {
+    let host = tempfile::tempdir().unwrap();
+    let conf_d = host.path().join("conf.d");
+    fs::create_dir(&conf_d).unwrap();
+    let fonts_conf = |includes: &str| {
+        format!(
+            "<fontconfig>\n\t<dir>/usr/share/fonts</dir>\n\t{includes}\n\t<include ignore_missing=\"yes\">local.conf</include>\n</fontconfig>\n"
+        )
+    };
+    fs::write(
+        host.path().join("fonts.conf"),
+        fonts_conf("<include ignore_missing=\"yes\">conf.d</include>"),
+    )
+    .unwrap();
+    for (name, contents) in [
+        ("00-cache.conf", "<dir>/nix/store/fonts</dir>"),
+        ("48-guessfamily.conf", "<edit name=\"genericfamily\"/>"),
+        ("60-latin.conf", "<alias/>"),
+        ("README", "<dir>/ignored</dir>"),
+    ] {
+        fs::write(conf_d.join(name), contents).unwrap();
+    }
+
+    assert_eq!(
+        host_fontconfig(host.path()),
+        fonts_conf(&format!(
+            "<include ignore_missing=\"yes\">{}</include>\n<include ignore_missing=\"yes\">{}</include>",
+            conf_d.join("00-cache.conf").display(),
+            conf_d.join("60-latin.conf").display()
+        ))
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
@@ -125,7 +159,7 @@ async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
         tree.join("kicad-view.py"),
     );
     for (program, body) in [
-        (&cli, r#"printf '%s|' cli "$@""#),
+        (&cli, r#"printf '%s|' cli "$FONTCONFIG_FILE" "$@""#),
         (
             &python,
             r#"printf '%s|' "$KICAD_CLI_PATH$KICAD_CLI" "$SPROCKET_KICAD_ROUTING_TOOLS" "$@""#,
@@ -135,9 +169,17 @@ async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
         set_executable(program).unwrap();
     }
     let bin = directory.path().join("bin");
+    let fonts_conf = tree.join("fonts.conf");
     write_launchers(
         &bin,
-        launchers(&cli, &python, &kipy_api, &kicad_view, Some(&tree)),
+        launchers(
+            &cli,
+            &python,
+            &kipy_api,
+            &kicad_view,
+            Some(&tree),
+            Some(&fonts_conf),
+        ),
     )
     .await
     .unwrap();
@@ -149,7 +191,10 @@ async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
             .unwrap();
         String::from_utf8(output.stdout).unwrap()
     };
-    assert_eq!(output("kicad-cli"), "cli|a b|c|");
+    assert_eq!(
+        output("kicad-cli"),
+        format!("cli|{}|a b|c|", fonts_conf.display())
+    );
     assert_eq!(output("kicad-python"), format!("{}||a b|c|", cli.display()));
     assert_eq!(
         output("kipy-api"),
