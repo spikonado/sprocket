@@ -1,5 +1,6 @@
 import { api } from '@convex/_generated/api';
-import { getSecret } from 'astro:env/server';
+import { PUBLIC_CONVEX_URL } from 'astro:env/client';
+import { WORKOS_API_KEY, WORKOS_COOKIE_PASSWORD } from 'astro:env/server';
 import { convexClientWithTimeout } from '@/lib/convex-client';
 import { createPricingAuthServer, PricingAuthError, type PricingAuthServer } from './auth-server';
 
@@ -7,7 +8,7 @@ let serverPromise: Promise<PricingAuthServer> | null = null;
 
 export function pricingAuthServer(): Promise<PricingAuthServer> {
 	serverPromise ??= (async () => {
-		const convexUrl = import.meta.env.PUBLIC_CONVEX_URL?.trim();
+		const convexUrl = PUBLIC_CONVEX_URL?.trim();
 
 		if (!convexUrl)
 			throw new PricingAuthError('Billing is not configured (missing PUBLIC_CONVEX_URL).');
@@ -18,8 +19,8 @@ export function pricingAuthServer(): Promise<PricingAuthServer> {
 		);
 
 		return createPricingAuthServer(
-			getSecret('WORKOS_API_KEY'),
-			getSecret('WORKOS_COOKIE_PASSWORD'),
+			WORKOS_API_KEY,
+			WORKOS_COOKIE_PASSWORD,
 			bootstrap.workosClientId
 		);
 	})().catch((error) => {

@@ -1,7 +1,8 @@
 import { waitUntil } from '@vercel/functions';
+import { PUBLIC_POSTHOG_KEY } from 'astro:env/client';
 import { PostHog } from 'posthog-node';
 
-const POSTHOG_KEY = import.meta.env.PUBLIC_POSTHOG_KEY?.trim();
+const POSTHOG_KEY = PUBLIC_POSTHOG_KEY?.trim();
 
 let client: PostHog | undefined;
 
