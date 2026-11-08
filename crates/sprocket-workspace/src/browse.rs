@@ -172,7 +172,9 @@ fn drive_letters_from_mask(mask: u32) -> Vec<char> {
 
 #[cfg(windows)]
 fn list_windows_volumes() -> Result<FilesystemBrowseResult> {
-    let entries = drive_letters_from_mask(logical_drive_mask())
+    // SAFETY: GetLogicalDrives takes no arguments.
+    let mask = unsafe { windows_sys::Win32::Storage::FileSystem::GetLogicalDrives() };
+    let entries = drive_letters_from_mask(mask)
         .into_iter()
         .map(|letter| FilesystemBrowseEntry {
             name: format!("{letter}:\\"),
@@ -185,17 +187,6 @@ fn list_windows_volumes() -> Result<FilesystemBrowseResult> {
         entries,
         volume_list: true,
     })
-}
-
-#[cfg(windows)]
-fn logical_drive_mask() -> u32 {
-    // SAFETY: GetLogicalDrives is a parameterless Win32 query.
-    unsafe { GetLogicalDrives() }
-}
-
-#[cfg(windows)]
-unsafe extern "system" {
-    fn GetLogicalDrives() -> u32;
 }
 
 fn default_browse_directory() -> Result<PathBuf> {

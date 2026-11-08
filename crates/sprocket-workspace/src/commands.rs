@@ -83,6 +83,13 @@ type HistoryFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<CommandHistory>>> + Send>>;
 type HistoryResolver = Arc<dyn Fn(String, PathBuf) -> HistoryFuture + Send + Sync>;
 
+#[derive(Clone, Default)]
+struct HistoryScope {
+    user_id: String,
+    thread_id: String,
+    machine_id: String,
+}
+
 #[derive(Clone)]
 pub struct CommandSessionManager {
     workspace_root: PathBuf,
@@ -94,7 +101,7 @@ pub struct CommandSessionManager {
     stopped: Arc<AtomicBool>,
     lifetime_guard_factory: Option<CommandLifetimeGuardFactory>,
     container: Option<CommandContainer>,
-    history_scope: (String, String, String),
+    history_scope: HistoryScope,
     history_resolver: Option<HistoryResolver>,
     history_fetch_lock: Arc<Mutex<()>>,
     changes: Option<watch::Sender<()>>,
@@ -140,7 +147,11 @@ impl CommandSessionManager {
         thread_id: String,
         machine_id: String,
     ) -> Self {
-        self.history_scope = (user_id, thread_id, machine_id);
+        self.history_scope = HistoryScope {
+            user_id,
+            thread_id,
+            machine_id,
+        };
         self
     }
 
@@ -187,7 +198,7 @@ impl CommandSessionManager {
         let fetched = match &self.history_resolver {
             Some(resolver)
                 if local.as_ref().is_none_or(|history| {
-                    history.machine_id != self.history_scope.2 && history.result.running
+                    history.machine_id != self.history_scope.machine_id && history.result.running
                 }) =>
             {
                 let fetched = tokio::time::timeout(Duration::from_secs(10), async {
@@ -208,9 +219,7 @@ impl CommandSessionManager {
         let Some(mut history) = fetched.or(local) else {
             bail!("unknown command session: {session_id}");
         };
-        if history.machine_id == self.history_scope.2 && history.result.running {
-            // Outside the live map, this machine's sessions only stay running
-            // after the server exited before their final status was saved.
+        if history.is_orphaned_on(&self.history_scope.machine_id) {
             history.mark_interrupted().await?;
         }
         let unreturned = if reveal_output {
@@ -330,9 +339,9 @@ impl CommandSessionManager {
         let history_path = history_path(&self.log_directory, &session_id)?;
         let preview = output.lock().await.preview_metadata();
         let history = CommandHistory {
-            user_id: self.history_scope.0.clone(),
-            thread_id: self.history_scope.1.clone(),
-            machine_id: self.history_scope.2.clone(),
+            user_id: self.history_scope.user_id.clone(),
+            thread_id: self.history_scope.thread_id.clone(),
+            machine_id: self.history_scope.machine_id.clone(),
             command: command.to_string(),
             workdir: cwd.to_string_lossy().to_string(),
             max_output_chars,
