@@ -17,6 +17,7 @@ import {
 	mapPanes,
 	mapSplit,
 	panesOf,
+	removePane,
 	renamedPath,
 	type FileDraft,
 	type SidePanelLayout,
@@ -298,8 +299,7 @@ export class ArtifactPanel implements Store<number> {
 					? rest[Math.min(paneIndex, rest.length - 1)]!.id
 					: this.panel.activePaneId;
 
-			this.#setPanes((candidate) => (candidate === pane ? null : candidate));
-			this.panel = { ...this.panel, activePaneId };
+			this.panel = { ...this.panel, layout: removePane(this.panel.layout, pane.id), activePaneId };
 		} else {
 			const activeTabId =
 				pane.activeTabId === id ? tabs[Math.min(index, tabs.length - 1)]!.id : pane.activeTabId;
@@ -376,9 +376,8 @@ export class ArtifactPanel implements Store<number> {
 		return this.panes.find((pane) => pane.tabs.some((tab) => tab.id === tabId));
 	}
 
-	/** Callers never remove the last pane, so the layout stays non-empty. */
-	#setPanes(map: (pane: SidePanelPane) => SidePanelLayout | null) {
-		this.panel = { ...this.panel, layout: mapPanes(this.panel.layout, map)! };
+	#setPanes(map: (pane: SidePanelPane) => SidePanelLayout) {
+		this.panel = { ...this.panel, layout: mapPanes(this.panel.layout, map) };
 	}
 
 	#setTabs(map: (tab: SidePanelTab) => SidePanelTab) {

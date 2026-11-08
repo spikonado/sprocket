@@ -101,19 +101,23 @@ export function panesOf(node: SidePanelLayout): SidePanelPane[] {
 	return node.type === 'pane' ? [node] : [...panesOf(node.first), ...panesOf(node.second)];
 }
 
-/** Replaces every pane with `map`'s result; a split whose side maps to null becomes its other side. */
 export function mapPanes(
 	node: SidePanelLayout,
-	map: (pane: SidePanelPane) => SidePanelLayout | null
-): SidePanelLayout | null {
+	map: (pane: SidePanelPane) => SidePanelLayout
+): SidePanelLayout {
 	if (node.type === 'pane') return map(node);
 
-	const first = mapPanes(node.first, map);
-	const second = mapPanes(node.second, map);
+	return { ...node, first: mapPanes(node.first, map), second: mapPanes(node.second, map) };
+}
 
-	if (!first || !second) return first ?? second;
+export function removePane(node: SidePanelLayout, id: string): SidePanelLayout {
+	if (node.type === 'pane') return node;
 
-	return { ...node, first, second };
+	if (node.first.type === 'pane' && node.first.id === id) return node.second;
+
+	if (node.second.type === 'pane' && node.second.id === id) return node.first;
+
+	return { ...node, first: removePane(node.first, id), second: removePane(node.second, id) };
 }
 
 export function mapSplit(
