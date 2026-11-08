@@ -91,13 +91,19 @@ export function createBoard3d(
 			refresh();
 		},
 		async show(version: string, glb: ArrayBuffer) {
-			if (version !== pendingVersion || !scene) return;
+			const current = scene;
 
+			if (version !== pendingVersion || !current) return;
+
+			// The viewer can replace this element while the model loads.
 			try {
-				await (await scene).show(glb);
+				await (await current).show(glb);
+
+				if (scene !== current) return;
 				shownVersion = version;
 				setStatus(null);
 			} catch (error) {
+				if (scene !== current) return;
 				failedVersion = version;
 				setStatus(error instanceof Error ? error.message : 'Could not show the board in 3D.');
 			}

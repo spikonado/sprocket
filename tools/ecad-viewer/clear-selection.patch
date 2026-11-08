@@ -20,3 +20,16 @@ index d60d01f..a7b5372 100644
          if (had_nets && !options.keepHighlights)
              this.#emit_highlight_change("clear");
      }
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/properties-panel.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/properties-panel.ts
+index fc9f5da..3fb9b2c 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/properties-panel.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/properties-panel.ts
+@@ -84,7 +84,7 @@ export class KCSchematicPropertiesPanelElement extends KCUIElement {
+         this.addDisposable(
+             this.viewer.addEventListener(KiCanvasSelectEvent.type, (e) => {
+                 this.selected_item = e.detail.item as SchematicSymbol;
+-                this.hidden = false;
++                this.hidden = !this.selected_item;
+                 this.update();
+             }),
+         );

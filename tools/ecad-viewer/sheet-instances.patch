@@ -20,10 +20,15 @@ index e259c7c..c6cde30 100644
          await super.load(src);
      }
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts
-index 9dd1521..1ef93ea 100644
+index 9dd1521..d7de797 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview-list.ts
-@@ -8,7 +8,6 @@ import { css, html } from "../../../base/web-components";
+@@ -4,11 +4,11 @@
+     Full text available at: https://opensource.org/licenses/MIT
+ */
+
++import { listen } from "../../../base/events";
+ import { css, html } from "../../../base/web-components";
  import { KCUIElement } from "../../../kc-ui";
  import { KicadSch } from "../../../kicad/schematic";
  import { TabMenuVisibleChangeEvent } from "../../../viewers/base/events";
@@ -31,10 +36,11 @@ index 9dd1521..1ef93ea 100644
  import type { Project } from "../../project";
  import { SchPreviewElement } from "./sch-preview";
 
-@@ -65,15 +64,11 @@ export class SchPreviewListElement extends KCUIElement {
+@@ -64,17 +64,16 @@ export class SchPreviewListElement extends KCUIElement {
+     ];
 
      #project: Project;
-     #viewers: SchPreviewElement[] = [];
+-    #viewers: SchPreviewElement[] = [];
 -    #sch_viewer: SchematicViewer;
 
      override connectedCallback() {
@@ -45,21 +51,26 @@ index 9dd1521..1ef93ea 100644
 -                await this.requestLazyContext<SchematicViewer>("viewer");
 -            await this.#sch_viewer.loaded;
              super.connectedCallback();
++            // Live edits keep the app, so the sheets and their previews change under it.
++            this.addDisposable(
++                listen(this.#project, "load", () => void this.update()),
++            );
          })();
      }
-@@ -85,13 +80,15 @@ export class SchPreviewListElement extends KCUIElement {
+
+@@ -85,13 +84,14 @@ export class SchPreviewListElement extends KCUIElement {
          const vertical_layout = html`<div
              class="vertical-layout"></div>` as HTMLElement;
 
 -        for (const sch of this.#project.sch_in_order()) {
 -            if (!(sch instanceof KicadSch)) continue;
 -            const viewer = new SchPreviewElement(sch);
+-            this.#viewers.push(viewer);
 +        // One entry per sheet instance, since a reused sheet shows different
 +        // references in each instance.
 +        for (const page of this.#project.pages) {
 +            if (!(page.document instanceof KicadSch)) continue;
 +            const viewer = new SchPreviewElement(page);
-             this.#viewers.push(viewer);
              viewer.addEventListener("click", (e) => {
                  this.dispatchEvent(new TabMenuVisibleChangeEvent(true));
 -                this.#sch_viewer.load(sch);
