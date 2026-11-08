@@ -486,7 +486,6 @@ const vCommandOutput = v.object({
 	completeLogPath: v.string(),
 	eventsPath: v.optional(v.string()),
 	error: v.optional(v.string()),
-	// Released agents omit it; the next poll of that session reads from the start.
 	nextOffset: v.optional(v.number())
 });
 

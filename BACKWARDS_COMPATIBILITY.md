@@ -163,6 +163,7 @@ Stored executor jobs, transcripts and local data files keep accepting these hist
 - `merchant` on `card_checkout` results, and `{ recorded: true }` `report_order` results.
 - `report_order` payloads without `outcome`, which all reported orders.
 - `eventsPath` on command tool results, which released servers still send.
+- Command tool results without `nextOffset`, which released agents still send. The next read of that session starts from the beginning of its output.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
 - `summary` on `scrape_url` results, from before `outline` replaced it, and `images`, from before image references moved into the markdown.

@@ -12,10 +12,6 @@ export function isJsonString<T>(value: T): value is Extract<T, string> {
 	return Object.prototype.toString.call(value) === '[object String]' && !(value instanceof String);
 }
 
-export function isJsonNumber<T>(value: T): value is Extract<T, number> {
-	return Object.prototype.toString.call(value) === '[object Number]' && !(value instanceof Number);
-}
-
 export function isJsonBoolean<T>(value: T): value is Extract<T, boolean> {
 	return (
 		Object.prototype.toString.call(value) === '[object Boolean]' && !(value instanceof Boolean)
@@ -24,23 +20,6 @@ export function isJsonBoolean<T>(value: T): value is Extract<T, boolean> {
 
 export function isJsonObject<T>(value: T): value is Extract<T, JsonObject> {
 	return value !== null && value !== undefined && !Array.isArray(value) && Object(value) === value;
-}
-
-/** Expects values produced by JSON.parse. Raw runtime objects (Date, class instances) can pass vacuously and must not be sent through it. */
-export function isJsonValue<T>(value: T): value is T & JsonValue {
-	if (value === null || isJsonString(value) || isJsonNumber(value) || isJsonBoolean(value)) {
-		return true;
-	}
-
-	if (Array.isArray(value)) {
-		return value.every(isJsonValue);
-	}
-
-	if (value === undefined || Object(value) !== value) {
-		return false;
-	}
-
-	return Object.values(value).every(isJsonValue);
 }
 
 const vJsonPrimitive = v.union(v.string(), v.number(), v.boolean(), v.null());
