@@ -20,7 +20,9 @@ export default function HighlightedCommand({ command }: { command: string }) {
 			.then((runs) => {
 				if (runs && !controller.signal.aborted) setHighlighted({ command, runs });
 			})
-			.catch(() => {});
+			.catch(() => {
+				// Keep the plain-text fallback when a lazy chunk or grammar fails.
+			});
 
 		return () => controller.abort();
 	}, [command]);

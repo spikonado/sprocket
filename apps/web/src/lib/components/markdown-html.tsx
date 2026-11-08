@@ -111,7 +111,9 @@ export default function MarkdownHtml({
 					block.replaceChildren(fragment);
 					block.classList.add('shiki');
 				})
-				.catch(() => {});
+				.catch(() => {
+					// Keep the readable plain-code fallback when a lazy chunk or grammar fails.
+				});
 		}
 
 		setControls({ html, blocks });
