@@ -22,7 +22,7 @@
 		"@tailwindcss/vite": "^4.2.4",
 		"@vercel/functions": "^3.10.2",
 		"@workos-inc/node": "^11.0.0",
-		"astro": "7.2.8",
+		"astro": "7.3.3",
 		"clsx": "^2.1.1",
 		"convex": "^1.45.0",
 		"posthog-js": "^1.438.15",
