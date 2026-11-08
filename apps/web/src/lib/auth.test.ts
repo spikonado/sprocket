@@ -494,6 +494,7 @@ describe('installed and hosted auth', () => {
 		const { open } = stubInstalledWindow();
 		const lateStart = deferred<Response>();
 		let starts = 0;
+
 		const fetch = stubFetch({
 			desktopStart: () => {
 				starts += 1;
@@ -827,7 +828,8 @@ function stubWindow(hostname: string, requestedProtocol?: 'http:' | 'https:') {
 		replace: vi.fn()
 	};
 
-	const open = vi.fn((_url: string, _target: string) => ({ opener: {} }));
+	const open = vi.fn<(url: string, target: string) => { opener: object }>(() => ({ opener: {} }));
+
 	vi.stubGlobal('window', { location, localStorage, open, sprocketDesktopBridge: undefined });
 
 	return { location, localStorage, open };
