@@ -49,36 +49,7 @@ pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> 
     provider_response(error)?.machine_code()
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("{message}")]
-struct ProviderMessage {
-    message: String,
-    #[source]
-    source: anyhow::Error,
-}
-
-/// Shows the provider's own error message instead of rig's diagnostic when its code is one of `codes`.
-pub(crate) fn with_provider_message(error: anyhow::Error, codes: &[&str]) -> anyhow::Error {
-    let message = error.chain().find_map(|cause| {
-        let response = provider_response(cause)?;
-        if !codes.contains(&response.machine_code()?.as_str()) {
-            return None;
-        }
-        response.envelope_json()?["error"]["message"]
-            .as_str()
-            .map(str::to_string)
-    });
-    match message {
-        Some(message) => ProviderMessage {
-            message,
-            source: error,
-        }
-        .into(),
-        None => error,
-    }
-}
-
-fn provider_response<'a>(
+pub(crate) fn provider_response<'a>(
     error: &'a (dyn std::error::Error + 'static),
 ) -> Option<&'a rig::ProviderResponseError> {
     if let Some(error) = error.downcast_ref::<PromptError>() {
