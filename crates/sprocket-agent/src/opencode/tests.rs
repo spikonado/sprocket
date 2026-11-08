@@ -94,8 +94,6 @@ fn open_models_use_go_chat_completions_with_instructions_first() {
         panic!("Chat Completions uses JSON");
     };
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(
-        body["messages"][0],
-        serde_json::json!({"role": "system", "content": "Be brief."})
-    );
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][0]["content"][0]["text"], "Be brief.");
 }
