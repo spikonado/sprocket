@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://usesprocket.dev/sitemap-index.xml

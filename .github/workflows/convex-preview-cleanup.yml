@@ -1,0 +1,54 @@
+name: Convex Preview Cleanup
+
+# Vercel preview builds of apps/site deploy a Convex preview per branch (apps/site/scripts/vercel-build.sh).
+# Previews count toward the team's deployment quota until Convex expires them, so delete each one when its PR closes.
+on:
+  pull_request:
+    types: [closed]
+    paths:
+      - apps/site/**
+      - apps/web/convex/**
+      - apps/web/convex.json
+      - bun.lock
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    # Fork PRs get no secrets, and Vercel doesn't build them without approval.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ./.github/actions/setup-nix-shell
+        with:
+          dev-shell: '.#convex'
+
+      - name: Install dependencies
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        run: bun install --frozen-lockfile
+
+      - name: Delete the branch's Convex preview
+        working-directory: apps/web
+        shell: 'nix develop ../../sprocket-shell -c bash -e {0}'
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
+            echo "::error::Add a Convex project preview deploy key as the CONVEX_PREVIEW_DEPLOY_KEY repository or organization secret."
+            exit 1
+          fi
+          # Prints https://dashboard.convex.dev/d/<deployment>, and fails when the branch has no preview.
+          if ! dashboard_url="$(bunx convex dashboard --no-open --preview-name "$BRANCH")"; then
+            echo "No Convex preview deployment for $BRANCH."
+            exit 0
+          fi
+          deployment="${dashboard_url##*/d/}"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $CONVEX_DEPLOY_KEY" \
+            "https://api.convex.dev/v1/deployments/$deployment/delete"
+          echo "Deleted preview deployment $deployment."

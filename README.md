@@ -4,7 +4,7 @@ The best AI agent for hardware and software.
 
 Sprocket designs electronics, tests code end-to-end, and buys parts or subscriptions for your project when asked.
 
-[![Sprocket](./assets/sprocket.webp)](https://spikonado.com/sprocket)
+[![Sprocket](./assets/sprocket.webp)](https://usesprocket.dev)
 
 ## Using Sprocket
 
@@ -52,6 +52,10 @@ Update your CLI installation with `sprocket update`. Run `sprocket --help` for m
 - If `sprocket` opens the browser instead of the desktop app, install `sprocket-desktop` from [GitHub Releases](https://github.com/spikonado/sprocket/releases) onto `PATH`, or set `SPROCKET_DESKTOP_EXECUTABLE`.
 - Unsigned macOS and Windows desktop builds may need a Gatekeeper / SmartScreen override the first time you open them.
 - Contact [aarav@spikonado.com](mailto:aarav@spikonado.com) for help.
+
+## Developing the website
+
+The [usesprocket.dev](https://usesprocket.dev) website lives in `apps/site`. Copy `apps/site/.env.example` to `apps/site/.env`, set `PUBLIC_CONVEX_URL` to the dev deployment's `VITE_CONVEX_URL` from `apps/web/.env.local`, then run `bun dev` in `apps/site`. It serves http://localhost:4321. Variables exported in your shell override `.env`.
 
 ## License
 
