@@ -228,3 +228,14 @@ jobs:
             release-publish/*.yml
             release-publish/SHA256SUMS
           fail_on_unmatched_files: true
+      # usesprocket.dev reads the latest release when it builds, so its downloads only change after a rebuild.
+      - name: Rebuild usesprocket.dev
+        if: needs.prepare.outputs.channel == 'latest'
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.VERCEL_SITE_DEPLOY_HOOK_URL }}
+        run: |
+          if [[ -z "$DEPLOY_HOOK_URL" ]]; then
+            echo "::error::Add the usesprocket.dev Vercel deploy hook URL as the VERCEL_SITE_DEPLOY_HOOK_URL repository secret, then trigger the hook by hand for this release."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error -X POST "$DEPLOY_HOOK_URL"
