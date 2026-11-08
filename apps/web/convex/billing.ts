@@ -21,7 +21,6 @@ import {
 	vSubscriptionTier
 } from '@convex/lib/validators';
 
-// Public checkout mode; never the raw provider environment name.
 type DodoMode = Infer<typeof vDodoMode>;
 
 type CheckoutStatus = Infer<typeof vCheckoutAttemptStatus>;
@@ -29,8 +28,7 @@ type CheckoutStatus = Infer<typeof vCheckoutAttemptStatus>;
 const vCheckoutStart = v.object({
 	checkout_url: v.string(),
 	mode: vDodoMode,
-	attemptId: v.string(),
-	sessionId: v.string()
+	attemptId: v.string()
 });
 
 type CheckoutStart = Infer<typeof vCheckoutStart>;
@@ -74,8 +72,6 @@ async function startCheckout(
 		throw new ConvexError('Payments are not configured.');
 	}
 
-	// The pricing site can start checkout before the app ever created the
-	// users row that stores the Dodo customer.
 	await ctx.runMutation(api.billing.ensureMySubscription, {});
 
 	const session = await ctx.runAction(internal.dodo.createCheckout, {
@@ -90,8 +86,7 @@ async function startCheckout(
 	return {
 		checkout_url: session.checkoutUrl,
 		mode,
-		attemptId: session.sessionId,
-		sessionId: session.sessionId
+		attemptId: session.sessionId
 	};
 }
 
@@ -167,7 +162,6 @@ export const checkout = action({
 	}
 });
 
-/** Anyone signed in can buy a credit pack, with or without a subscription. */
 export const buyCredits = action({
 	args: { productId: v.string() },
 	returns: vCheckoutStart,
@@ -186,7 +180,6 @@ export const buyCredits = action({
 	}
 });
 
-/** `attemptId` is the Dodo checkout session ID that `checkout` returned. */
 export const getCheckoutStatus = action({
 	args: { attemptId: v.string() },
 	returns: v.object({
@@ -223,10 +216,6 @@ export const getCheckoutStatus = action({
 	}
 });
 
-/**
- * Checkout refuses a second live subscription, so a paid plan comes from this checkout.
- * A pack checkout is done once the webhook granted its payment.
- */
 export const checkoutOutcome = internalQuery({
 	args: { userId: v.string(), paymentId: v.string(), now: v.number() },
 	returns: v.object({ activated: v.boolean(), creditsAdded: v.boolean() }),

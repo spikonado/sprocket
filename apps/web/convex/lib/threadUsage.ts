@@ -1,8 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 
-// Context tokens live outside `threadRecords` so per-turn writes don't
-// invalidate thread-scoped subscriptions.
+// Kept off `threadRecords` so per-turn writes don't invalidate thread subscriptions.
 
 async function getUsageRow(
 	db: QueryCtx['db'] | MutationCtx['db'],

@@ -36,7 +36,6 @@ export default defineSchema({
 		tokenIdentifier: v.string(),
 		email: v.string(),
 		dodoCustomerId: v.optional(v.string()),
-		// Operator-set tier id that overrides Dodo subscriptions.
 		grantedTier: v.optional(v.string())
 	})
 		.index('by_subject', ['subject'])
@@ -75,7 +74,6 @@ export default defineSchema({
 	billingCheckoutAttempts: defineTable(v.any()),
 	dodoPricingCache: defineTable(v.any()),
 	subscriptionReconciliations: defineTable(v.any()),
-	// Mirror of Dodo subscriptions; Dodo is the source of truth.
 	subscriptions: defineTable({
 		userId: v.string(),
 		dodoSubscriptionId: v.optional(v.string()),
@@ -119,7 +117,6 @@ export default defineSchema({
 		windowStart: v.number(),
 		used: v.number()
 	}).index('by_userId_and_windowStart', ['userId', 'windowStart']),
-	// Operator-managed one-time Dodo products that add usage credit.
 	creditPacks: defineTable({
 		productId: v.string(),
 		units: v.number(),
@@ -306,8 +303,7 @@ export default defineSchema({
 		offset: v.number(),
 		bytes: v.bytes()
 	}).index('by_commandId_offset', ['commandId', 'offset']),
-	// Durable numbered transcript replica source. Kept off threadRecords so
-	// appends do not invalidate the thread list subscription.
+	// Kept off threadRecords so appends don't invalidate thread list subscriptions.
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
 		totalParts: v.number()
@@ -389,7 +385,6 @@ export default defineSchema({
 		inputStorageId: v.optional(v.id('_storage')),
 		resultStorageId: v.optional(v.id('_storage')),
 		filename: v.optional(v.string()),
-		/** The result is `{"pages":[{pageNumber, markdown}]}` JSON instead of markdown. */
 		pages: v.optional(v.boolean()),
 		error: v.optional(v.string()),
 		expiresAt: v.number()
@@ -473,7 +468,6 @@ export default defineSchema({
 		repositoryKey: v.string(),
 		registrationId: v.string(),
 		content: v.string(),
-		// Dropped by migrations:removeArtifactTypes.
 		type: v.optional(vLegacyArtifactType),
 		title: v.string(),
 		revision: v.number(),

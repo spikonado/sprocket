@@ -11,7 +11,6 @@ export const migrations = new Migrations(components.migrations, { schema, intern
 // Spreads the resync's Dodo list calls so up to ~14k customers stay under Dodo's 240 requests a minute.
 const DODO_RESYNC_SPREAD_MS = 60 * 60 * 1_000;
 
-/** Keeps the legacy pick: the latest grant wins and `active` breaks ties, so a later revoke holds. */
 async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
 	const rows = await ctx.db
 		.query('subscriptions')
@@ -20,7 +19,6 @@ async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
 
 	const grants = rows.filter((row) => !row.dodoSubscriptionId && row.tier && row.tier !== 'free');
 
-	// An earlier row in the same batch already moved this user's grants.
 	if (grants.length === 0) return;
 
 	const winner = grants.reduce((best, row) => {
@@ -90,7 +88,6 @@ export const dropQuestionAnsweredAt = migrations.define({
 	}
 });
 
-/** Moves operator grants to `users.grantedTier`, deletes free bootstrap rows, and strips projection fields. */
 export const migrateSubscriptionRows = migrations.define({
 	table: 'subscriptions',
 	migrateOne: async (ctx, row) => {
@@ -133,7 +130,6 @@ export const clearCheckoutAttempts = deleteEveryRow('billingCheckoutAttempts');
 
 export const clearPricingCache = deleteEveryRow('dodoPricingCache');
 
-/** Mirrors every Dodo subscription, including duplicates the old webhook rejected. */
 export const resyncDodoCustomers = migrations.define({
 	table: 'users',
 	customRange: (query) =>

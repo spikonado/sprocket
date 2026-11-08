@@ -2,7 +2,6 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery, type MutationCtx } from '@convex/_generated/server';
 import { getUserBySubject } from '@convex/lib/auth';
 
-/** The customer's linked user, else the checkout's `userId` metadata, which links the customer. */
 export async function resolveCustomerOwner(
 	ctx: MutationCtx,
 	dodoCustomerId: string,

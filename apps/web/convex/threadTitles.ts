@@ -11,7 +11,8 @@ import {
 	type ActionCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
-import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
+import { modelGatewayOrigin, modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
+import { GATEWAY_API_PREFIX } from '@convex/lib/gatewayProtocol';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { firstUserPromptPart, getPromptPart } from '@convex/lib/transcriptParts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -206,7 +207,7 @@ async function generateTitle(ctx: ActionCtx, args: TitleRequest): Promise<null> 
 			exp: gatewayTokenExpiresAt()
 		});
 
-		const response = await fetch(`${modelGatewayUrl()}/api/v1/responses`, {
+		const response = await fetch(`${modelGatewayOrigin()}${GATEWAY_API_PREFIX}/v1/responses`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 			signal: AbortSignal.timeout(60_000),

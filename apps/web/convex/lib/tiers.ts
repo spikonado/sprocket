@@ -3,7 +3,6 @@ import type { QueryCtx } from '@convex/_generated/server';
 import { getUserBySubject } from '@convex/lib/auth';
 import type { BillingInterval } from '@convex/lib/dodoProducts';
 
-/** Tier ids are operator-owned (see the `tiers` table); an opaque string, not a union. */
 export type SubscriptionTier = string;
 
 export const MODEL_USAGE_UNITS_PER_DOLLAR = 1_000_000_000;
@@ -24,12 +23,10 @@ export type Plan = {
 	tier: SubscriptionTier;
 	label: string;
 	limits: { modelUsage: number };
-	/** The Dodo subscription that grants the tier; null for free and granted tiers. */
 	subscription: (PaidSubscription & PaidTerm) | null;
 	legacyQuotaResetAt: number | undefined;
 };
 
-/** Strict lookup: duplicate tierId rows fail instead of metering against an arbitrary row. */
 export async function getTierRow(ctx: QueryCtx, tierId: string): Promise<Doc<'tiers'> | null> {
 	const rows = await ctx.db
 		.query('tiers')
@@ -91,7 +88,6 @@ function hasAccess(
 	return billingPeriodStart <= now && now < billingPeriodEnd + grace;
 }
 
-/** Unknown tier ids keep their id as the label and meter against the free tier. */
 async function planForTier(
 	ctx: QueryCtx,
 	tierId: string,
@@ -105,7 +101,6 @@ async function planForTier(
 	return { tier: tierId, label: row?.label ?? tierId, limits: { modelUsage: limitsRow.monthly } };
 }
 
-/** The granted tier, else the highest-allowance Dodo subscription with access, else free. */
 export async function resolvePlan(ctx: QueryCtx, userId: string, now: number): Promise<Plan> {
 	const user = await getUserBySubject(ctx.db, userId);
 

@@ -26,7 +26,6 @@ export const vCreditPackExpiry = v.object({
 
 export type CreditPackExpiry = Infer<typeof vCreditPackExpiry>;
 
-/** What a buyer gets, recorded at checkout. */
 export const vCreditPackTerms = v.object({ units: v.number(), expiresAfter: vCreditPackExpiry });
 
 export type CreditPackTerms = Infer<typeof vCreditPackTerms>;

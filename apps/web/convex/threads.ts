@@ -13,8 +13,7 @@ import {
 	unsettleRoot
 } from '@convex/lib/threadHierarchy';
 
-// One transaction moves the whole tree, so no run can start in a half-moved tree.
-const MAX_MOVED_DESCENDANTS = 1000;
+const MAX_ATOMIC_MOVE_DESCENDANTS = 1000;
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -120,7 +119,7 @@ export const moveToProject = mutation({
 			throw new Error('Cannot move a thread with active work.');
 		}
 
-		if (summary.descendantCount > MAX_MOVED_DESCENDANTS) {
+		if (summary.descendantCount > MAX_ATOMIC_MOVE_DESCENDANTS) {
 			throw new Error('This thread has too many subagents to move.');
 		}
 

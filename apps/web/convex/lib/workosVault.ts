@@ -34,7 +34,6 @@ function workosClientId(): string {
 	return clientId;
 }
 
-/** A per-user vault name that doesn't reveal the user ID. */
 export async function credentialName(prefix: string, userId: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
 
@@ -134,13 +133,12 @@ export async function readVaultObject(name: string): Promise<VaultObject | null>
 	return object;
 }
 
-/** Pass the object read earlier to fail instead of overwriting a concurrent change. */
 export async function storeVaultObject(
 	name: string,
 	value: string,
-	existingObject?: VaultObject | null
+	expectedObject?: VaultObject | null
 ): Promise<void> {
-	const existing = existingObject === undefined ? await readVaultObject(name) : existingObject;
+	const existing = expectedObject === undefined ? await readVaultObject(name) : expectedObject;
 
 	const response = existing
 		? await providerFetch(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(existing.id)}`, {
@@ -161,8 +159,8 @@ export async function storeVaultObject(
 	if (!response.ok) throw new Error('Couldn’t save the credential in WorkOS Vault.');
 }
 
-export async function deleteVaultObject(name: string, existingObject?: VaultObject | null) {
-	const object = existingObject === undefined ? await readVaultObject(name) : existingObject;
+export async function deleteVaultObject(name: string, expectedObject?: VaultObject | null) {
+	const object = expectedObject === undefined ? await readVaultObject(name) : expectedObject;
 
 	if (!object) return;
 	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(object.id)}`);

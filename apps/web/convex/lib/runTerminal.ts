@@ -15,8 +15,6 @@ const WRITE_RESERVE_BYTES = 4 * 1024 * 1024;
 async function hasCleanupHeadroom(ctx: MutationCtx): Promise<boolean> {
 	const metrics = await ctx.meta.getTransactionMetrics();
 
-	// Reserve enough for the next maximum-sized job, its transcript/section
-	// reads, and whatever work the caller still has to do inline.
 	return (
 		metrics.bytesRead.remaining > READ_RESERVE_BYTES &&
 		metrics.bytesWritten.remaining > WRITE_RESERVE_BYTES &&

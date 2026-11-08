@@ -7,7 +7,6 @@ export const posthog = new PostHog(components.posthog, {
 
 type CaptureProperties = NonNullable<Parameters<typeof posthog.capture>[1]['properties']>;
 
-/** SHA-256 hex, matching the Rust agent's `analytics_id`, so traces and sessions line up. */
 export async function analyticsId(id: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id));
 

@@ -45,7 +45,6 @@ const dodoPayment = z.object({
 	disputes: z.array(z.unknown())
 });
 
-/** Set by `createCheckout`; a pack checkout also records the pack's terms at purchase time. */
 const checkoutMetadata = z.object({
 	userId: z.string().optional(),
 	creditUnits: z.coerce.number().optional(),
@@ -98,18 +97,13 @@ async function syncSubscription(
 	await mirror(ctx, await client.subscriptions.retrieve(dodoSubscriptionId), fetchedAt);
 }
 
-/** One page covers a customer; checkout refuses a second live subscription. */
 async function listCustomerSubscriptions(client: DodoPayments, dodoCustomerId: string) {
 	const page = await client.subscriptions.list({ customer_id: dodoCustomerId, page_size: 100 });
 
 	return page.items;
 }
 
-/**
- * Payment events carry the payment; refund and dispute events name it, so fetch it.
- * Any succeeded refund or any dispute revokes the pack, including a dispute later won.
- * Payments without pack terms in their metadata, such as subscription charges, are skipped.
- */
+/** Refund and dispute events name the payment instead of carrying it. */
 async function syncPayment(
 	ctx: ActionCtx,
 	client: DodoPayments,
@@ -189,7 +183,6 @@ export const syncCustomer = internalAction({
 	}
 });
 
-/** Catches renewals and cancellations whose webhooks never arrived. */
 export const syncOverdue = internalAction({
 	args: {},
 	returns: v.null(),
@@ -329,7 +322,6 @@ export const createCustomerPortal = internalAction({
 	}
 });
 
-/** Null when the product can't be sold at `interval`; throws on request failures. */
 async function fetchPrice(
 	client: DodoPayments,
 	productId: string,
@@ -361,7 +353,6 @@ async function fetchPrice(
 	};
 }
 
-/** Null when the product isn't a paid one-time product; throws on request failures. */
 async function fetchPackPrice(client: DodoPayments, productId: string): Promise<PackPrice | null> {
 	const { price } = await client.products.retrieve(productId);
 
@@ -374,7 +365,6 @@ async function fetchPackPrice(client: DodoPayments, productId: string): Promise<
 	return { productId, amountMinor: price.price, currency: price.currency };
 }
 
-/** Keeps the last price when Dodo can't be reached. */
 export const syncPrices = internalAction({
 	args: {},
 	returns: v.null(),

@@ -45,7 +45,6 @@ function dodoPayment(overrides: Partial<DodoPayment> = {}): DodoPayment {
 	};
 }
 
-/** Serves Dodo's payment retrieve endpoint from `payments`. */
 function stubPayments(payments: DodoPayment[]) {
 	stubDodoEnv();
 	vi.stubGlobal('fetch', async (input: Request | string | URL) => {
@@ -56,7 +55,6 @@ function stubPayments(payments: DodoPayment[]) {
 	});
 }
 
-/** No `creditPacks` row: grants use the terms recorded at checkout, so a retired pack still pays out. */
 async function setup() {
 	const t = initConvexTest();
 	await seedTiers(t);

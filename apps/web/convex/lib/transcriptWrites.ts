@@ -86,14 +86,14 @@ export async function recordHiddenPrompts(
 	args: {
 		threadId: Id<'threadRecords'>;
 		runId: Id<'runs'>;
-		scope: string;
+		idempotencyScope: string;
 		prompts: HiddenPrompt[];
 	}
 ): Promise<void> {
 	for (const prompt of args.prompts) {
 		await appendTranscriptPart(ctx, {
 			threadId: args.threadId,
-			sourceKey: hiddenPromptSourceKey(args.scope, prompt.kind),
+			sourceKey: hiddenPromptSourceKey(args.idempotencyScope, prompt.kind),
 			kind: 'prompt',
 			runId: args.runId,
 			prompt: { text: prompt.text, imageUploads: [], hidden: prompt.kind },
@@ -209,7 +209,6 @@ export async function recordToolTranscript(
 			)
 			.unique();
 
-		// Stored display output can predate migrations of executor job results.
 		if (existing?.tool) tool.output = existing.tool.output;
 
 		if (existing && args.job.sectionKey === undefined) work = existing.work;
