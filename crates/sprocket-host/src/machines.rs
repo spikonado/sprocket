@@ -15,8 +15,9 @@ use crate::transcript_client::UserConvexClient;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
-// Covers a 90-second lease plus two RPCs.
-const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(120);
+const MACHINE_ONLINE_THRESHOLD: Duration = Duration::from_secs(90);
+const REGISTRATION_TIMEOUT: Duration =
+    Duration::from_secs(MACHINE_ONLINE_THRESHOLD.as_secs() + 2 * RPC_TIMEOUT.as_secs());
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
