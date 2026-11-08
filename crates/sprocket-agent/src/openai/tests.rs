@@ -1,5 +1,6 @@
 use super::*;
 use rig::message::Message;
+use rig::wire::Body;
 use serde_json::json;
 
 #[test]
@@ -12,7 +13,7 @@ fn stateless_requests_keep_developer_messages_and_request_encrypted_reasoning() 
         "store": true,
         "include": ["message.output_text.logprobs"],
     }));
-    let encoded = StatelessResponses(Responses::new(OpenAIConfig::new("test"), "gpt-5"))
+    let encoded = StatelessResponses::new(Responses::new(OpenAIConfig::new("test"), "gpt-5"))
         .encode(request, Mode::Streaming)
         .unwrap();
     let Body::Bytes(bytes) = encoded.request.into_body() else {

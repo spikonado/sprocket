@@ -149,10 +149,10 @@ fn stub_model(
         body,
     };
     Model::new(
-        StatelessResponses(openai::responses_api::wire::Responses::new(
+        siwc_wire(
             openai::OpenAIConfig::new("test-token").with_instructions("Base instructions."),
             "gpt-6.1-sol",
-        )),
+        ),
         http,
     )
 }
@@ -300,10 +300,10 @@ async fn siwc_recovers_a_truncated_turn_without_repeating_committed_tools() {
     .await;
     let (credentials, client) = stub_client("connection-1");
     let model = Model::new(
-        StatelessResponses(openai::responses_api::wire::Responses::new(
+        siwc_wire(
             transport_auth_config().with_base_url(endpoint.trim_end_matches("/responses")),
             "gpt-6.1-sol",
-        )),
+        ),
         SiwcHttpClient {
             inner: reqwest::Client::builder().no_proxy().build().unwrap(),
             authorization: Some((credentials, Arc::clone(&client.connection))),
@@ -403,12 +403,12 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
     .await;
     let (credentials, client) = stub_client("connection-1");
     let model = Model::new(
-        StatelessResponses(openai::responses_api::wire::Responses::new(
+        siwc_wire(
             transport_auth_config()
                 .with_base_url(endpoint.trim_end_matches("/responses"))
                 .with_instructions("Base instructions."),
             "gpt-5.3-codex",
-        )),
+        ),
         SiwcHttpClient {
             inner: reqwest::Client::builder()
                 .no_proxy()
@@ -691,20 +691,6 @@ fn other_provider_errors_keep_their_diagnostics() {
     }
 }
 
-#[test]
-fn streaming_response_preserves_explicit_content_types() {
-    let (_, client) = stub_client("connection-1");
-    for content_type in ["text/event-stream; charset=utf-8", "application/json", ""] {
-        let response = http::Response::builder()
-            .header(http::header::CONTENT_TYPE, content_type)
-            .body("")
-            .unwrap()
-            .into();
-        let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
-        assert_eq!(response.headers()[http::header::CONTENT_TYPE], content_type);
-    }
-}
-
 #[tokio::test]
 async fn responses_model_rejects_premature_eof_and_unparseable_streams() {
     for body in [
@@ -967,10 +953,10 @@ fn test_request(chat_history: Vec<Message>) -> CompletionRequest {
 }
 
 fn wire_body(request: CompletionRequest) -> serde_json::Value {
-    let wire = StatelessResponses(openai::responses_api::wire::Responses::new(
+    let wire = siwc_wire(
         openai::OpenAIConfig::new("test-token").with_instructions("Base instructions."),
         "gpt-5.3-codex",
-    ));
+    );
     let encoded = wire
         .encode(request, Mode::Streaming)
         .expect("request converts");

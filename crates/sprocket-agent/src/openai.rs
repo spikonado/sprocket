@@ -1,10 +1,10 @@
 use rig::completion::CompletionRequest;
 use rig::error::EncodeError;
 use rig::operation::Completion;
-use rig::providers::openai::responses_api::{SystemInstructionsPlacement, wire::Responses};
+use rig::providers::openai::responses_api::wire::Responses;
 use rig::providers::openai::wire::Auth;
 use rig::providers::openai::{OpenAI, OpenAIConfig};
-use rig::wire::{Body, Descriptor, Encoded, Mode, Wire, WireFrame};
+use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
 
 /// For transports that set `Authorization` themselves.
@@ -17,12 +17,35 @@ pub(crate) fn stateless_responses_model(
     model: impl Into<String>,
 ) -> DynModel<Completion> {
     let model = client.responses(model);
-    Model::new(StatelessResponses(model.wire), model.transport).erase()
+    Model::new(StatelessResponses::new(model.wire), model.transport).erase()
 }
 
-// Remove once Rig exposes an equivalent stateless Responses configuration.
+/// Sends system messages as `developer` items in `input`.
+pub(crate) fn developer_messages(mut wire: Responses) -> Responses {
+    wire.provider.dialect.quirks.responses.system_role = "developer";
+    wire.with_system_instructions_as_messages()
+}
+
+// Rig sets `store` per request only. Remove once it has a per-model setting.
 #[derive(Clone)]
-pub(crate) struct StatelessResponses(pub(crate) Responses);
+pub(crate) struct StatelessResponses {
+    wire: Responses,
+    relaxed_content_type: bool,
+}
+
+impl StatelessResponses {
+    pub(crate) fn new(wire: Responses) -> Self {
+        Self {
+            wire: developer_messages(wire),
+            relaxed_content_type: false,
+        }
+    }
+
+    pub(crate) fn with_relaxed_content_type(mut self) -> Self {
+        self.relaxed_content_type = true;
+        self
+    }
+}
 
 impl Wire for StatelessResponses {
     type Op = Completion;
@@ -33,7 +56,7 @@ impl Wire for StatelessResponses {
     type Reassembler = <Responses as Wire>::Reassembler;
 
     fn describe(&self) -> Descriptor<'_> {
-        self.0.describe()
+        self.wire.describe()
     }
 
     fn encode(&self, mut request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
@@ -44,56 +67,16 @@ impl Wire for StatelessResponses {
             .as_object_mut()
             .ok_or_else(|| EncodeError::request("Responses parameters must be a JSON object."))?;
         params.insert("store".to_string(), serde_json::json!(false));
-        DeveloperResponses(self.0.clone()).encode(request, mode)
+        let encoded = self.wire.encode(request, mode)?;
+        Ok(if self.relaxed_content_type {
+            encoded.with_relaxed_content_type()
+        } else {
+            encoded
+        })
     }
 
     fn decoder<'id>(&self) -> Self::Decoder<'id> {
-        self.0.decoder()
-    }
-}
-
-// Rig has no developer role; remove once a released Rig version supports it.
-#[derive(Clone)]
-pub(crate) struct DeveloperResponses(pub(crate) Responses);
-
-impl Wire for DeveloperResponses {
-    type Op = Completion;
-    type Payload = Encoded;
-    type Frame = WireFrame;
-    type Event = <Responses as Wire>::Event;
-    type Decoder<'id> = <Responses as Wire>::Decoder<'id>;
-    type Reassembler = <Responses as Wire>::Reassembler;
-
-    fn describe(&self) -> Descriptor<'_> {
-        self.0.describe()
-    }
-
-    fn encode(&self, request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
-        let mut encoded = self
-            .0
-            .clone()
-            .with_system_instructions_placement(SystemInstructionsPlacement::InputSystemMessages)
-            .encode(request, mode)?;
-        let Body::Bytes(bytes) = encoded.request.body_mut() else {
-            return Err(EncodeError::request("Responses requires a JSON body."));
-        };
-        let mut body: serde_json::Value = serde_json::from_slice(bytes)
-            .map_err(|error| EncodeError::request(error.to_string()))?;
-        let input = body["input"]
-            .as_array_mut()
-            .ok_or_else(|| EncodeError::request("Responses input must be an array."))?;
-        for item in input {
-            if item["role"] == "system" {
-                item["role"] = serde_json::json!("developer");
-            }
-        }
-        *bytes =
-            serde_json::to_vec(&body).map_err(|error| EncodeError::request(error.to_string()))?;
-        Ok(encoded)
-    }
-
-    fn decoder<'id>(&self) -> Self::Decoder<'id> {
-        self.0.decoder()
+        self.wire.decoder()
     }
 }
 
