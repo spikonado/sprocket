@@ -13,13 +13,13 @@ const TIERS = [
 	{ tierId: 'ultra', label: 'Ultra', dollars: 300 }
 ];
 
-/** Seeds the pricing catalog of a new preview deployment, through `convex deploy --preview-run`. */
+/** Seeds the pricing catalog of a preview deployment that has none, from `apps/site/scripts/vercel-build.sh`. */
 export const seed = internalMutation({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
 		if (await ctx.db.query('tiers').first()) {
-			throw new Error('Only empty preview deployments can be seeded.');
+			return null;
 		}
 
 		for (const { tierId, label, dollars } of TIERS) {
