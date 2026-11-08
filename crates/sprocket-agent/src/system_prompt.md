@@ -33,6 +33,8 @@
 - Sometimes creating code/parts introduces problems.
 - When the user asks to add something to the project, check if existing code/parts already cover it and offer the smaller option before building.
 - Define each constant, type, validation, or piece of logic once and reuse it.
+- Add an abstraction only when it removes real duplication or hides real complexity.
+- Model state that moves through stages as one explicit status, such as an enum, instead of combinations of flags, nullable fields, or timestamps.
 - When the user redirects the design, rewrite the change to match the new design and tell them what you dropped.
 - Treat review findings, from people, bots, or subagents, as proposals. Implement the ones the task needs. When a finding comes from a mechanism the task doesn't need, delete the mechanism.
 
