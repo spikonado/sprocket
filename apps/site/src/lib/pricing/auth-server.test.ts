@@ -1,5 +1,12 @@
 import { expect, spyOn, test } from 'bun:test';
-import { beginPricingSignIn, completePricingSignIn, createPricingAuthServer } from './auth-server';
+import { CookieSession, type AccessTokenClaims, type User } from '@workos-inc/node';
+import {
+	beginPricingSignIn,
+	completePricingSignIn,
+	createPricingAuthServer,
+	getPricingSession,
+	pricingLogoutUrl
+} from './auth-server';
 
 function fakeCookies() {
 	const jar = new Map<string, string>();
@@ -17,6 +24,34 @@ function fakeCookies() {
 	return { jar, cookies };
 }
 
+const user: User = {
+	object: 'user',
+	id: 'user_1',
+	email: 'ada@example.com',
+	emailVerified: true,
+	profilePictureUrl: null,
+	name: null,
+	firstName: null,
+	lastName: null,
+	lastSignInAt: null,
+	locale: null,
+	createdAt: new Date('2026-01-01T00:00:00.000Z'),
+	updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+	externalId: null,
+	metadata: {}
+};
+
+function verifiedClaims(exp: number) {
+	return {
+		sub: user.id,
+		sid: 'session_1',
+		iss: 'https://api.workos.com/',
+		exp,
+		iat: 0,
+		auth_time: 0
+	};
+}
+
 function fakeServer() {
 	const server = createPricingAuthServer('sk_test', 'x'.repeat(32), 'client_test');
 	const { userManagement } = server.workos;
@@ -28,22 +63,7 @@ function fakeServer() {
 	});
 
 	const authenticateWithCode = spyOn(userManagement, 'authenticateWithCode').mockResolvedValue({
-		user: {
-			object: 'user',
-			id: 'user_1',
-			email: 'ada@example.com',
-			emailVerified: true,
-			profilePictureUrl: null,
-			name: null,
-			firstName: null,
-			lastName: null,
-			lastSignInAt: null,
-			locale: null,
-			createdAt: '2026-01-01T00:00:00.000Z',
-			updatedAt: '2026-01-01T00:00:00.000Z',
-			externalId: null,
-			metadata: {}
-		},
+		user,
 		accessToken: 'access-token',
 		refreshToken: 'refresh-token',
 		sealedSession: 'sealed-session'
@@ -108,4 +128,94 @@ test('sign-in completion requires the state issued to this browser', async () =>
 		)
 	).rejects.toThrow('Sign-in could not be completed.');
 	expect(authenticateWithCode).not.toHaveBeenCalled();
+});
+
+test('session expiry comes from the verified access token', async () => {
+	const { server } = fakeServer();
+	const { cookies } = fakeCookies();
+	const exp = Math.floor(Date.now() / 1000) + 3600;
+
+	cookies.set('__Host-sprocket-pricing-session', 'sealed-session');
+	spyOn(server.workos.userManagement, 'getSessionFromCookie').mockResolvedValue({
+		user,
+		accessToken: 'access-token',
+		refreshToken: 'refresh-token'
+	});
+
+	spyOn(server.workos.userManagement, 'verifyAccessToken').mockResolvedValue(verifiedClaims(exp));
+
+	expect(
+		await getPricingSession(server, cookies, new URL('https://usesprocket.dev/api/pricing/session'))
+	).toEqual({
+		user: { id: 'user_1', email: 'ada@example.com' },
+		accessToken: 'access-token',
+		expiresAt: exp * 1000
+	});
+});
+
+function refreshingServer(verifyFreshToken: () => Promise<AccessTokenClaims>) {
+	const { server } = fakeServer();
+	const { jar, cookies } = fakeCookies();
+	const { userManagement } = server.workos;
+	const sealed = new CookieSession(userManagement, 'sealed-session', server.cookiePassword);
+
+	cookies.set('__Host-sprocket-pricing-session', 'sealed-session');
+	spyOn(userManagement, 'getSessionFromCookie').mockResolvedValue({
+		user,
+		accessToken: 'expired-token',
+		refreshToken: 'refresh-token'
+	});
+	spyOn(userManagement, 'verifyAccessToken').mockImplementation(async (token) =>
+		token === 'fresh-token' ? verifyFreshToken() : null
+	);
+	spyOn(sealed, 'refresh').mockResolvedValue({
+		authenticated: true,
+		sessionId: 'session_1',
+		authenticationMethod: 'Password',
+		user,
+		sealedSession: 'refreshed-session',
+		session: { user, accessToken: 'fresh-token', refreshToken: 'refresh-token-2' }
+	});
+	spyOn(userManagement, 'loadSealedSession').mockReturnValue(sealed);
+
+	return {
+		jar,
+		session: () =>
+			getPricingSession(server, cookies, new URL('https://usesprocket.dev/api/pricing/session'))
+	};
+}
+
+test('a rejected access token is refreshed and the new session cookie is kept', async () => {
+	const exp = Math.floor(Date.now() / 1000) + 3600;
+	const { jar, session } = refreshingServer(async () => verifiedClaims(exp));
+
+	expect(await session()).toMatchObject({ accessToken: 'fresh-token', expiresAt: exp * 1000 });
+	expect(jar.get('__Host-sprocket-pricing-session')).toBe('refreshed-session');
+});
+
+test('the rotated session cookie is kept when verifying the refreshed token fails', async () => {
+	const { jar, session } = refreshingServer(async () => {
+		throw new Error('JWKS unavailable');
+	});
+
+	await expect(session()).rejects.toThrow('JWKS unavailable');
+	expect(jar.get('__Host-sprocket-pricing-session')).toBe('refreshed-session');
+});
+
+test('logout ends the WorkOS session after the access token expires', async () => {
+	const { server } = fakeServer();
+	const expiredClaims = { exp: Math.floor(Date.now() / 1000) - 60, sid: 'session_1' };
+	spyOn(server.workos.userManagement, 'getSessionFromCookie').mockResolvedValue({
+		user,
+		accessToken: `header.${Buffer.from(JSON.stringify(expiredClaims)).toString('base64url')}.sig`,
+		refreshToken: 'refresh-token'
+	});
+
+	const logoutUrl = await pricingLogoutUrl(
+		server,
+		'sealed-session',
+		new URL('https://usesprocket.dev/api/pricing/sign-out')
+	);
+
+	expect(new URL(logoutUrl ?? '').searchParams.get('session_id')).toBe('session_1');
 });

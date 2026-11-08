@@ -67,10 +67,6 @@ function cookie(url: URL, kind: 'session' | 'login') {
 	};
 }
 
-function tokenClaims(token: string): { exp?: number; sid?: string } {
-	return JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString());
-}
-
 export async function beginPricingSignIn(
 	server: PricingAuthServer,
 	cookies: Cookies,
@@ -142,12 +138,20 @@ function writeSessionCookie(cookies: Cookies, url: URL, sealedSession: string): 
 	cookies.set(name, sealedSession, { ...options, maxAge: SESSION_MAX_AGE });
 }
 
-function signedIn(user: User, accessToken: string): PricingSession & { expiresAt: number } {
-	return {
-		user: { id: user.id, email: user.email },
-		accessToken,
-		expiresAt: (tokenClaims(accessToken).exp ?? 0) * 1000
-	};
+async function signedIn(
+	server: PricingAuthServer,
+	user: User,
+	accessToken: string
+): Promise<(PricingSession & { expiresAt: number }) | null> {
+	const claims = await server.workos.userManagement.verifyAccessToken(accessToken);
+
+	return (
+		claims && {
+			user: { id: user.id, email: user.email },
+			accessToken,
+			expiresAt: claims.exp * 1000
+		}
+	);
 }
 
 export async function getPricingSession(
@@ -160,24 +164,24 @@ export async function getPricingSession(
 
 	if (!sealedSession) return signedOut;
 
-	const session = server.workos.userManagement.loadSealedSession({
+	const stored = await server.workos.userManagement.getSessionFromCookie({
 		sessionData: sealedSession,
 		cookiePassword: server.cookiePassword
 	});
 
-	const current = await session.authenticate();
-
-	if (current.authenticated) {
-		const valid = signedIn(current.user, current.accessToken);
-
-		if (valid.expiresAt > Date.now() + TOKEN_REFRESH_MARGIN_MS) return valid;
-	} else if (current.reason !== 'invalid_jwt') {
+	if (!stored?.accessToken) {
 		cookies.delete(name, options);
 
 		return signedOut;
 	}
 
-	const refreshed = await session.refresh();
+	const current = await signedIn(server, stored.user, stored.accessToken);
+
+	if (current && current.expiresAt > Date.now() + TOKEN_REFRESH_MARGIN_MS) return current;
+
+	const refreshed = await server.workos.userManagement
+		.loadSealedSession({ sessionData: sealedSession, cookiePassword: server.cookiePassword })
+		.refresh();
 
 	if (!refreshed.authenticated) {
 		if (refreshed.retryable) throw new PricingAuthError('Sign-in is temporarily unavailable.');
@@ -190,7 +194,11 @@ export async function getPricingSession(
 		throw new PricingAuthError('Sign-in could not be refreshed.');
 	writeSessionCookie(cookies, url, refreshed.sealedSession);
 
-	return signedIn(refreshed.user, refreshed.session.accessToken);
+	const session = await signedIn(server, refreshed.user, refreshed.session.accessToken);
+
+	if (!session) throw new PricingAuthError('Sign-in could not be refreshed.');
+
+	return session;
 }
 
 /** Clears local pricing cookies and returns the sealed session that was in them. */
@@ -209,13 +217,12 @@ export async function pricingLogoutUrl(
 	sealedSession: string,
 	url: URL
 ): Promise<string | null> {
-	// Unsealing without verification still finds the session ID after the access token expires.
 	const session = await server.workos.userManagement.getSessionFromCookie({
 		sessionData: sealedSession,
 		cookiePassword: server.cookiePassword
 	});
 
-	const sessionId = session?.accessToken && tokenClaims(session.accessToken).sid;
+	const sessionId = session?.accessToken && unverifiedSessionId(session.accessToken);
 
 	if (!sessionId) return null;
 
@@ -223,6 +230,14 @@ export async function pricingLogoutUrl(
 		sessionId,
 		returnTo: `${url.origin}/pricing`
 	});
+}
+
+/**
+ * `verifyAccessToken` rejects expired tokens, but logout must still end their WorkOS session.
+ * The sealed cookie is authenticated, so the token inside it can be read without verifying it.
+ */
+function unverifiedSessionId(token: string): string | undefined {
+	return JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()).sid;
 }
 
 export function isSameOriginPost(request: Request): boolean {
