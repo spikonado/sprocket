@@ -54,6 +54,7 @@
       "devDependencies": {
         "@astrojs/check": "0.9.12",
         "@astrojs/ts-plugin": "^1.10.7",
+        "@posthog/cli": "^0.18.12",
         "@posthog/rollup-plugin": "^1.6.2",
         "@types/bun": "^1.3.14",
         "svelte-check": "^4.7.7",
