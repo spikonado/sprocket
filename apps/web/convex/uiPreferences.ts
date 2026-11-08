@@ -113,6 +113,16 @@ export const setShareConversationContent = mutation({
 	}
 });
 
+export const setCoAuthorCommits = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await savePreferences(ctx, { coAuthorCommits: args.enabled });
+
+		return null;
+	}
+});
+
 export const setTheme = mutation({
 	args: {
 		theme: vTheme

@@ -33,6 +33,12 @@ const toggles = [
 		defaultEnabled: false
 	},
 	{
+		name: 'Add Sprocket as a co-author on agent commits',
+		field: 'coAuthorCommits',
+		mutation: api.uiPreferences.setCoAuthorCommits,
+		defaultEnabled: true
+	},
+	{
 		name: 'Share anonymous conversation data to help improve Sprocket for everyone',
 		field: 'shareConversationContent',
 		mutation: api.uiPreferences.setShareConversationContent,
