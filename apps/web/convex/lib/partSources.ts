@@ -480,7 +480,6 @@ const mouserResponse = z.object({
 							.array(
 								z.object({
 									Quantity: z.number(),
-									Price: nullableString,
 									RawPrice: z.number().nullish(),
 									Currency: nullableString
 								})
@@ -503,12 +502,6 @@ function parseCount(value: string | null | undefined): number | undefined {
 	return Number.isFinite(count) ? count : undefined;
 }
 
-function parseMouserPrice(price: string | null | undefined): number | undefined {
-	const amount = Number.parseFloat(price?.replace(/[^\d.,]/g, '').replace(',', '.') ?? '');
-
-	return Number.isFinite(amount) ? amount : undefined;
-}
-
 function mouserListing(part: MouserPart): PartListing | null {
 	if (!part.MouserPartNumber || part.MouserPartNumber === 'N/A' || !part.ManufacturerPartNumber) {
 		return null;
@@ -524,11 +517,10 @@ function mouserListing(part: MouserPart): PartListing | null {
 		manufacturer: present(part.Manufacturer),
 		description: clipDescription(part.Description),
 		stock: parseCount(part.AvailabilityInStock) ?? 0,
-		priceBreaks: breaks.flatMap((price) => {
-			const amount = price.RawPrice ?? parseMouserPrice(price.Price);
-
-			return amount === undefined ? [] : [{ quantity: price.Quantity, price: amount }];
-		}),
+		// `Price` is a locale-formatted string, so "1,234" is ambiguous; only `RawPrice` is used.
+		priceBreaks: breaks.flatMap((price) =>
+			price.RawPrice == null ? [] : [{ quantity: price.Quantity, price: price.RawPrice }]
+		),
 		currency: currency && currency !== 'USD' ? currency : undefined,
 		moq: parseCount(part.Min),
 		status:
