@@ -1,8 +1,18 @@
 import { ConvexError, v, type Infer } from 'convex/values';
 import { api, internal } from '@convex/_generated/api';
-import { action, env, internalQuery, mutation, query } from '@convex/_generated/server';
+import {
+	action,
+	env,
+	internalQuery,
+	mutation,
+	query,
+	type ActionCtx
+} from '@convex/_generated/server';
+import type { UserIdentity } from 'convex/server';
 import { ensureCurrentUser, getUserBySubject, getUserId, requireIdentity } from '@convex/lib/auth';
+import { grantForPayment } from '@convex/lib/credits';
 import { readDodoEnvironment } from '@convex/lib/dodoProducts';
+import type { CreditPackTerms } from '@convex/lib/pricingValidators';
 import { resolvePlan } from '@convex/lib/tiers';
 import {
 	vBillingInterval,
@@ -16,6 +26,15 @@ type DodoMode = Infer<typeof vDodoMode>;
 
 type CheckoutStatus = Infer<typeof vCheckoutAttemptStatus>;
 
+const vCheckoutStart = v.object({
+	checkout_url: v.string(),
+	mode: vDodoMode,
+	attemptId: v.string(),
+	sessionId: v.string()
+});
+
+type CheckoutStart = Infer<typeof vCheckoutStart>;
+
 function paymentsMode(): DodoMode {
 	const environment = readDodoEnvironment(env);
 
@@ -24,15 +43,55 @@ function paymentsMode(): DodoMode {
 	return environment === 'live_mode' ? 'live' : 'test';
 }
 
-function pricingPageUrls(tier: string) {
+function pricingPageUrls(params: Record<string, string>) {
 	const origin = env.SPROCKET_MARKETING_ORIGIN?.trim().replace(/\/$/, '');
 
 	if (!origin) throw new Error('SPROCKET_MARKETING_ORIGIN must be configured for billing.');
-	const query = `tier=${encodeURIComponent(tier)}`;
+	const query = new URLSearchParams(params).toString();
 
 	return {
 		returnUrl: `${origin}/pricing?checkout=return&${query}`,
 		cancelUrl: `${origin}/pricing?checkout=cancel&${query}`
+	};
+}
+
+async function startCheckout(
+	ctx: ActionCtx,
+	identity: UserIdentity,
+	{
+		productId,
+		creditPack,
+		pageParams
+	}: {
+		productId: string;
+		creditPack?: CreditPackTerms;
+		pageParams: Record<string, string>;
+	}
+): Promise<CheckoutStart> {
+	const mode = paymentsMode();
+
+	if (!env.DODO_PAYMENTS_WEBHOOK_SECRET?.trim()) {
+		throw new ConvexError('Payments are not configured.');
+	}
+
+	// The pricing site can start checkout before the app ever created the
+	// users row that stores the Dodo customer.
+	await ctx.runMutation(api.billing.ensureMySubscription, {});
+
+	const session = await ctx.runAction(internal.dodo.createCheckout, {
+		userId: identity.subject,
+		email: identity.email,
+		name: identity.name ?? identity.nickname ?? identity.email ?? identity.subject,
+		productId,
+		creditPack,
+		...pricingPageUrls(pageParams)
+	});
+
+	return {
+		checkout_url: session.checkoutUrl,
+		mode,
+		attemptId: session.sessionId,
+		sessionId: session.sessionId
 	};
 }
 
@@ -85,25 +144,11 @@ export const checkout = action({
 		tier: v.string(),
 		interval: vBillingInterval
 	},
-	returns: v.object({
-		checkout_url: v.string(),
-		mode: vDodoMode,
-		attemptId: v.string(),
-		sessionId: v.string()
-	}),
-	handler: async (
-		ctx,
-		{ tier, interval }
-	): Promise<{ checkout_url: string; mode: DodoMode; attemptId: string; sessionId: string }> => {
+	returns: vCheckoutStart,
+	handler: async (ctx, { tier, interval }): Promise<CheckoutStart> => {
 		const identity = await requireIdentity(ctx);
 
 		if (tier === 'free') throw new ConvexError('The Free tier does not use checkout.');
-
-		const mode = paymentsMode();
-
-		if (!env.DODO_PAYMENTS_WEBHOOK_SECRET?.trim()) {
-			throw new ConvexError('Payments are not configured.');
-		}
 
 		const productId: string | null = await ctx.runQuery(internal.pricing.getTierProduct, {
 			tierId: tier,
@@ -114,24 +159,29 @@ export const checkout = action({
 			throw new ConvexError(`No ${interval} checkout product is configured for tier "${tier}".`);
 		}
 
-		// The pricing site can start checkout before the app ever created the
-		// users row that stores the Dodo customer.
-		await ctx.runMutation(api.billing.ensureMySubscription, {});
-
-		const session = await ctx.runAction(internal.dodo.createCheckout, {
-			userId: identity.subject,
-			email: identity.email,
-			name: identity.name ?? identity.nickname ?? identity.email ?? identity.subject,
+		return await startCheckout(ctx, identity, {
 			productId,
-			...pricingPageUrls(tier)
+			pageParams: { tier }
 		});
+	}
+});
 
-		return {
-			checkout_url: session.checkoutUrl,
-			mode,
-			attemptId: session.sessionId,
-			sessionId: session.sessionId
-		};
+/** Anyone signed in can buy a credit pack, with or without a subscription. */
+export const buyCredits = action({
+	args: { productId: v.string() },
+	returns: vCheckoutStart,
+	handler: async (ctx, { productId }): Promise<CheckoutStart> => {
+		const identity = await requireIdentity(ctx);
+
+		const creditPack = await ctx.runQuery(internal.credits.getSellablePack, { productId });
+
+		if (!creditPack) throw new ConvexError('Unknown credit pack.');
+
+		return await startCheckout(ctx, identity, {
+			productId,
+			creditPack,
+			pageParams: { pack: productId }
+		});
 	}
 });
 
@@ -142,7 +192,8 @@ export const getCheckoutStatus = action({
 		attemptId: v.string(),
 		status: vCheckoutAttemptStatus,
 		mode: vDodoMode,
-		activated: v.optional(v.boolean())
+		activated: v.optional(v.boolean()),
+		creditsAdded: v.optional(v.boolean())
 	}),
 	handler: async (
 		ctx,
@@ -152,31 +203,40 @@ export const getCheckoutStatus = action({
 		status: CheckoutStatus;
 		mode: DodoMode;
 		activated?: boolean;
+		creditsAdded?: boolean;
 	}> => {
 		const identity = await requireIdentity(ctx);
 		const mode = paymentsMode();
 
-		const status: CheckoutStatus = await ctx.runAction(internal.dodo.getCheckoutStatus, {
-			sessionId: attemptId
-		});
+		const { status, paymentId }: { status: CheckoutStatus; paymentId: string | null } =
+			await ctx.runAction(internal.dodo.getCheckoutStatus, { sessionId: attemptId });
 
-		if (status !== 'succeeded') return { attemptId, status, mode };
+		if (status !== 'succeeded' || !paymentId) return { attemptId, status, mode };
 
-		// Checkout refuses a second live subscription, so a paid plan comes from this checkout.
-		const activated: boolean = await ctx.runQuery(internal.billing.hasPaidPlan, {
-			userId: identity.subject,
-			now: Date.now()
-		});
+		const outcome: { activated: boolean; creditsAdded: boolean } = await ctx.runQuery(
+			internal.billing.checkoutOutcome,
+			{ userId: identity.subject, paymentId, now: Date.now() }
+		);
 
-		return { attemptId, status, mode, activated };
+		return { attemptId, status, mode, ...outcome };
 	}
 });
 
-export const hasPaidPlan = internalQuery({
-	args: { userId: v.string(), now: v.number() },
-	returns: v.boolean(),
-	handler: async (ctx, { userId, now }) =>
-		(await resolvePlan(ctx, userId, now)).subscription !== null
+/**
+ * Checkout refuses a second live subscription, so a paid plan comes from this checkout.
+ * A pack checkout is done once the webhook granted its payment.
+ */
+export const checkoutOutcome = internalQuery({
+	args: { userId: v.string(), paymentId: v.string(), now: v.number() },
+	returns: v.object({ activated: v.boolean(), creditsAdded: v.boolean() }),
+	handler: async (ctx, { userId, paymentId, now }) => {
+		const grant = await grantForPayment(ctx, paymentId);
+
+		return {
+			activated: (await resolvePlan(ctx, userId, now)).subscription !== null,
+			creditsAdded: grant?.userId === userId
+		};
+	}
 });
 
 export const customerPortal = action({

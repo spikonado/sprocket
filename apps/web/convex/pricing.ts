@@ -4,14 +4,16 @@ import { action, internalMutation, internalQuery } from '@convex/_generated/serv
 import {
 	vPrice,
 	vPublicPricingCatalog,
-	type Price,
 	type PublicPricingCatalog
 } from '@convex/lib/pricingValidators';
 import { getTierRow, MODEL_USAGE_UNITS_PER_DOLLAR, tierForProduct } from '@convex/lib/tiers';
 import { vBillingInterval } from '@convex/lib/validators';
 
 /** Hides a price synced for a product the tier no longer sells. */
-function currentPrice(productId: string | undefined, price: Price | undefined): Price | null {
+function currentPrice<T extends { productId: string }>(
+	productId: string | undefined,
+	price: T | undefined
+): T | null {
 	return price && price.productId === productId ? price : null;
 }
 
@@ -54,7 +56,20 @@ export const getCatalog = internalQuery({
 				left.id.localeCompare(right.id)
 		);
 
-		return { plans };
+		const packs = await ctx.db.query('creditPacks').collect();
+
+		packs.sort(
+			(left, right) => left.units - right.units || left.productId.localeCompare(right.productId)
+		);
+
+		const creditPacks = packs.map((pack) => ({
+			productId: pack.productId,
+			usageDollars: pack.units / MODEL_USAGE_UNITS_PER_DOLLAR,
+			expiresAfter: pack.expiresAfter,
+			price: currentPrice(pack.productId, pack.price)
+		}));
+
+		return { plans, creditPacks };
 	}
 });
 

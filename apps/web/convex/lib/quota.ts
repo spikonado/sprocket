@@ -1,6 +1,7 @@
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { posthog } from '@convex/lib/analytics';
 import { billingWindow } from '@convex/lib/billingWindows';
+import { drawCredits, remainingCredits, spendableGrants } from '@convex/lib/credits';
 import { legacyUsage } from '@convex/lib/legacyUsage';
 import { resolvePlan, type Plan, type SubscriptionTier } from '@convex/lib/tiers';
 
@@ -58,7 +59,9 @@ export async function gatewayQuotaStatus(
 	const { tier } = plan;
 	const { used, window } = await readUsage(ctx, userId, plan, now);
 
-	if (used < plan.limits.modelUsage) return { tier, exhausted: false };
+	if (used < plan.limits.modelUsage || (await spendableGrants(ctx, userId, now)).length > 0) {
+		return { tier, exhausted: false };
+	}
 
 	return {
 		tier,
@@ -67,17 +70,30 @@ export async function gatewayQuotaStatus(
 	};
 }
 
+/** Draws the allowance window first, then credit grants; what grants can't cover overdraws the window. */
 export async function chargeUsage(ctx: MutationCtx, userId: string, units: number): Promise<void> {
 	if (units <= 0) return;
 	const now = Date.now();
 	const plan = await resolvePlan(ctx, userId, now);
 	const limit = plan.limits.modelUsage;
 	const { window, row, used } = await readUsage(ctx, userId, plan, now);
+	const grants = await spendableGrants(ctx, userId, now);
+	const credits = remainingCredits(grants);
+	const fromAllowance = Math.min(units, Math.max(0, limit - used));
+	const fromCredits = Math.min(units - fromAllowance, credits);
+	const windowUsed = used + units - fromCredits;
 
-	if (row) await ctx.db.patch('usage', row._id, { used: used + units });
-	else await ctx.db.insert('usage', { userId, windowStart: window.start, used: used + units });
+	await drawCredits(ctx, grants, fromCredits);
 
-	if (used < limit && used + units >= limit) {
+	if (windowUsed !== used) {
+		if (row) await ctx.db.patch('usage', row._id, { used: windowUsed });
+		else await ctx.db.insert('usage', { userId, windowStart: window.start, used: windowUsed });
+	}
+
+	const wasExhausted = used >= limit && credits === 0;
+	const isExhausted = windowUsed >= limit && fromCredits === credits;
+
+	if (!wasExhausted && isExhausted) {
 		await posthog.capture(ctx, {
 			distinctId: userId,
 			event: 'quota_exhausted',

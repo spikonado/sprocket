@@ -45,6 +45,18 @@ describe('public pricing catalog', () => {
 				label: 'Pro',
 				monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR
 			});
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_pack_large',
+				units: 50 * MODEL_USAGE_UNITS_PER_DOLLAR,
+				expiresAfter: { count: 1, unit: 'year' },
+				price: { productId: 'prod_pack_large', amountMinor: 5_000, currency: 'USD' }
+			});
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_pack_small',
+				units: 10 * MODEL_USAGE_UNITS_PER_DOLLAR,
+				expiresAfter: { count: 90, unit: 'day' },
+				price: { productId: 'prod_pack_retired', amountMinor: 1_000, currency: 'USD' }
+			});
 		});
 
 		await expect(t.action(api.pricing.getPublicCatalog, {})).resolves.toEqual({
@@ -79,6 +91,20 @@ describe('public pricing catalog', () => {
 					highlighted: false,
 					prices: { monthly: null, annual: null }
 				}
+			],
+			creditPacks: [
+				{
+					productId: 'prod_pack_small',
+					usageDollars: 10,
+					expiresAfter: { count: 90, unit: 'day' },
+					price: null
+				},
+				{
+					productId: 'prod_pack_large',
+					usageDollars: 50,
+					expiresAfter: { count: 1, unit: 'year' },
+					price: { productId: 'prod_pack_large', amountMinor: 5_000, currency: 'USD' }
+				}
 			]
 		});
 	});
@@ -98,6 +124,13 @@ describe('public pricing catalog', () => {
 			const productId = new URL(input instanceof Request ? input.url : String(input)).pathname
 				.split('/')
 				.at(-1);
+
+			if (productId === 'prod_pack') {
+				return Response.json({
+					product_id: productId,
+					price: { type: 'one_time_price', price: 1_000, currency: 'USD' }
+				});
+			}
 
 			const product = products.get(productId ?? '');
 
@@ -130,13 +163,24 @@ describe('public pricing catalog', () => {
 				annualProductId: 'prod_wrong_interval',
 				annualPrice: usdPrice('prod_wrong_interval', 1, 'Year')
 			});
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_pack',
+				units: 1,
+				expiresAfter: { count: 30, unit: 'day' }
+			});
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_monthly',
+				units: 1,
+				expiresAfter: { count: 30, unit: 'day' },
+				price: { productId: 'prod_monthly', amountMinor: 1, currency: 'USD' }
+			});
 		});
 
 		await t.action(internal.dodo.syncPrices, {});
 		products.delete('prod_annual');
 		await t.action(internal.dodo.syncPrices, {});
 
-		const { plans } = await t.action(api.pricing.getPublicCatalog, {});
+		const { plans, creditPacks } = await t.action(api.pricing.getPublicCatalog, {});
 		expect(plans.map(({ id, prices }) => ({ id, prices }))).toEqual([
 			{ id: 'max', prices: { monthly: null, annual: null } },
 			{
@@ -145,6 +189,13 @@ describe('public pricing catalog', () => {
 					monthly: usdPrice('prod_monthly', 2_000, 'Month'),
 					annual: usdPrice('prod_annual', 20_000, 'Year')
 				}
+			}
+		]);
+		expect(creditPacks.map(({ productId, price }) => ({ productId, price }))).toEqual([
+			{ productId: 'prod_monthly', price: null },
+			{
+				productId: 'prod_pack',
+				price: { productId: 'prod_pack', amountMinor: 1_000, currency: 'USD' }
 			}
 		]);
 	});

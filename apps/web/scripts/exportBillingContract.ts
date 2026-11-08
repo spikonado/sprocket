@@ -2,6 +2,7 @@ import type { DefaultFunctionArgs, FunctionVisibility } from 'convex/server';
 import type { RegisteredAction, RegisteredMutation, RegisteredQuery } from 'convex/server';
 import { getClientConfig } from '../convex/authBootstrap';
 import {
+	buyCredits,
 	checkout,
 	customerPortal,
 	ensureMySubscription,
@@ -43,6 +44,7 @@ console.log(
 				'billing:getMySubscription': contract(getMySubscription),
 				'billing:ensureMySubscription': contract(ensureMySubscription),
 				'billing:checkout': contract(checkout),
+				'billing:buyCredits': contract(buyCredits),
 				'billing:customerPortal': contract(customerPortal),
 				'billing:getCheckoutStatus': contract(getCheckoutStatus),
 				'pricing:getPublicCatalog': contract(getPublicCatalog)

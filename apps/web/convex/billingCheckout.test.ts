@@ -156,6 +156,49 @@ describe('checkout', () => {
 		).rejects.toThrow('Payments are not configured.');
 		expect(requests).toEqual([]);
 	});
+
+	it('sells a credit pack to a subscriber without the live subscription check', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		await t.run(async (ctx) => {
+			await insertUser(ctx, 'owner', 'cus_owner');
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_pack',
+				units: 1,
+				expiresAfter: { count: 3, unit: 'month' },
+				price: { productId: 'prod_pack', amountMinor: 500, currency: 'USD' }
+			});
+			await ctx.db.insert('creditPacks', {
+				productId: 'prod_unpriced',
+				units: 1,
+				expiresAfter: { count: 30, unit: 'day' }
+			});
+		});
+		const requests = stubDodo({ subscriptionStatuses: ['active'] });
+
+		for (const productId of ['prod_pro', 'prod_unpriced']) {
+			await expect(owner(t).action(api.billing.buyCredits, { productId })).rejects.toThrow(
+				'Unknown credit pack.'
+			);
+		}
+
+		await expect(
+			owner(t).action(api.billing.buyCredits, { productId: 'prod_pack' })
+		).resolves.toMatchObject({ attemptId: 'cks_1' });
+
+		expect(paths(requests)).toEqual(['POST /checkouts']);
+		expect(await requests[0]?.json()).toMatchObject({
+			product_cart: [{ product_id: 'prod_pack', quantity: 1 }],
+			metadata: {
+				userId: 'owner',
+				creditUnits: '1',
+				creditExpiresAfterCount: '3',
+				creditExpiresAfterUnit: 'month'
+			},
+			customer: { customer_id: 'cus_owner' },
+			return_url: 'https://spikonado.com/pricing?checkout=return&pack=prod_pack'
+		});
+	});
 });
 
 describe('getCheckoutStatus', () => {
@@ -165,7 +208,7 @@ describe('getCheckoutStatus', () => {
 		[{ payment_id: 'pay_1', payment_status: 'cancelled' }, { status: 'failed' }],
 		[
 			{ payment_id: 'pay_1', payment_status: 'succeeded' },
-			{ status: 'succeeded', activated: false }
+			{ status: 'succeeded', activated: false, creditsAdded: false }
 		]
 	])('maps Dodo session %j to %j', async (session, expected) => {
 		const t = initConvexTest();
@@ -177,12 +220,12 @@ describe('getCheckoutStatus', () => {
 		).resolves.toEqual({ attemptId: 'cks_1', mode: 'test', ...expected });
 	});
 
-	it('reports activation once the mirror grants a paid plan', async () => {
+	it('reports activation once the mirror grants a paid plan, and credits once the payment is granted', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 		stubDodo({ session: { payment_id: 'pay_1', payment_status: 'succeeded' } });
-		await t.run((ctx) =>
-			ctx.db.insert('subscriptions', {
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
 				userId: 'owner',
 				dodoSubscriptionId: 'sub_owner',
 				dodoProductId: 'prod_pro',
@@ -191,12 +234,20 @@ describe('getCheckoutStatus', () => {
 				billingPeriodEnd: Date.now() + 60_000,
 				cancelAtNextBillingDate: false,
 				syncedAt: Date.now()
-			})
-		);
+			});
+			await ctx.db.insert('creditGrants', {
+				userId: 'owner',
+				paymentId: 'pay_1',
+				productId: 'prod_pack',
+				units: 1,
+				used: 0,
+				expiresAt: Date.now() + 60_000
+			});
+		});
 
 		await expect(
 			owner(t).action(api.billing.getCheckoutStatus, { attemptId: 'cks_1' })
-		).resolves.toMatchObject({ status: 'succeeded', activated: true });
+		).resolves.toMatchObject({ status: 'succeeded', activated: true, creditsAdded: true });
 	});
 
 	it('rejects a session Dodo does not know', async () => {
