@@ -1,0 +1,369 @@
+diff --git a/py_router/kicad_dru.py b/py_router/kicad_dru.py
+index 9f50a68c..08e0f32e 100644
+--- a/py_router/kicad_dru.py
++++ b/py_router/kicad_dru.py
+@@ -1767,7 +1767,8 @@ def install_layer_clearances(config, layer_clearances, input_file, pcb_data=None
+     target layers outside the routed subset -- via keep-outs still need them)
+     and pinned up to the fab tier's clearance floor. Prints what is honored.
+     ``net_keepouts``: the caller stamps net-filtered keep-outs (route.py /
+-    route_diff.py), so the design rules derive them (net_keepouts.py)."""
++    route_diff.py / repair_planes.py), so the design rules derive them
++    (net_keepouts.py)."""
+     if layer_clearances is not None:
+         config.layer_clearances = dict(layer_clearances)
+         _install_rules_quietly(config, input_file, pcb_data, net_keepouts)
+diff --git a/py_router/kicad_oracle.py b/py_router/kicad_oracle.py
+index 5d362ccc..00bd70cc 100644
+--- a/py_router/kicad_oracle.py
++++ b/py_router/kicad_oracle.py
+@@ -2176,11 +2176,27 @@ def oracle_reconnect(board_file: str, net_names, config,
+                        or board_has_scoped_clearance_rules(_track_src))
+     except Exception:                                       # noqa: BLE001
+         _track_live = False
++    _net_keepouts = None
+
+     def _install_net_maps(pcb):
+         """Install the by-name maps on the board just parsed, by ITS ids."""
++        nonlocal _net_keepouts
+         if _ncl_by_name:
+             config.net_clearances = rekey_by_name(_ncl_by_name, pcb.nets)
++        from net_keepouts import attach, derive_area_keepouts, derive_layer_bans
++        if _net_keepouts is None:
++            # the rules source's net-filtered keep-outs name nets and
++            # polygons, so one derivation serves every parse
++            try:
++                from design_rules import DesignRules
++                rules = DesignRules.from_project(pcb, _track_src)
++                _net_keepouts = (derive_area_keepouts(rules, pcb)
++                                 + derive_layer_bans(rules, pcb))
++            except Exception as _ke:                        # noqa: BLE001
++                print(f"  KiCad-oracle recheck: net-filtered keep-outs not "
++                      f"derived ({_ke})")
++                _net_keepouts = []
++        attach(pcb, _net_keepouts)
+         # #1133: the weld's power-layer discipline and width ladder read
+         # these by net id, so they follow the parse too
+         for _f, _m in _w_by_name.items():
+diff --git a/py_router/net_keepouts.py b/py_router/net_keepouts.py
+index 49d04a06..8ad2721b 100644
+--- a/py_router/net_keepouts.py
++++ b/py_router/net_keepouts.py
+@@ -34,9 +34,11 @@ route_multipoint_main / _taps (and with them net_rescue, stub-swap and terminal
+ escalation, which call them -- a rescue window is a shallow copy that carries
+ the regions), and on the diff-pair side the pair route (its centreline map at
+ `centerline_config`, its connectors' base map plain), the hybrid coupled middle
+-and its legs (`stamping`). Copper laid by anything else -- the plane finalize's
+-taps and region joins, which have their own A*, and post-route passes such as
+-meanders -- does not see a region, so the run ends with `audit()` of the board
++and its legs (`stamping`). The plane finalize's region joins and oracle welds
++route on a map built for one plane net, which `block()` stamps for good
++(plane_region_connector.build_base_obstacles); its pad taps judge their sites
++and copper by `audit_items`. Copper laid by anything else, such as post-route
++meanders, does not see a region, so the run ends with `audit()` of the board
+ it ships: bound-net copper found inside a region is printed and reported as
+ JSON_SUMMARY / --json-out `net_keepouts`, never shipped silently. KiCad's DRC of
+ the rule stays the authority.
+@@ -403,10 +405,10 @@ def _cells_for(pcb_data, idx: Tuple[int, ...], config) -> Tuple[np.ndarray, np.n
+     return cache[key]
+
+
+-@contextlib.contextmanager
+-def stamp(obstacles, pcb_data, net_ids: Iterable[int], config):
+-    """Block the keep-outs binding any of `net_ids` in `obstacles` for the
+-    duration of the block, then remove exactly what was added.
++def block(obstacles, pcb_data, net_ids: Iterable[int], config):
++    """Block the keep-outs binding any of `net_ids` in `obstacles`; returns
++    the call that removes exactly what was added (`stamp`). A map built for
++    those nets alone (the plane finalize's base map) keeps them for good.
+
+     Via cells reach every via map the list twins (add/remove_vias_list) do:
+     rung 0 at the run's via, the #568 small rung at the run's via (a superset
+@@ -414,12 +416,10 @@ def stamp(obstacles, pcb_data, net_ids: Iterable[int], config):
+     (#1226 `_stamp_rungs_at_own_via`, whose remove twin re-derives the same
+     rows), so a search at any rung sees the region."""
+     if obstacles is None or not getattr(pcb_data, '_net_keepouts', None):
+-        yield
+-        return
++        return lambda: None
+     idx = _binding(pcb_data, net_ids)
+     if not idx:
+-        yield
+-        return
++        return lambda: None
+     cells, vias = _cells_for(pcb_data, idx, config)
+     from obstacle_map import _rung_small_armed, _stamp_rungs_at_own_via
+     small = _rung_small_armed() and hasattr(obstacles, 'add_blocked_vias_small_batch')
+@@ -432,9 +432,8 @@ def stamp(obstacles, pcb_data, net_ids: Iterable[int], config):
+             obstacles.add_blocked_vias_small_batch(vias)
+     if rungs:
+         _stamp_rungs_at_own_via(obstacles, config, _stamper(pcb_data, idx))
+-    try:
+-        yield
+-    finally:
++
++    def remove():
+         if len(cells):
+             obstacles.remove_blocked_cells_batch(cells)
+         if len(vias):
+@@ -444,6 +443,18 @@ def stamp(obstacles, pcb_data, net_ids: Iterable[int], config):
+         if rungs:
+             _stamp_rungs_at_own_via(obstacles, config, _stamper(pcb_data, idx),
+                                     remove=True)
++    return remove
++
++
++@contextlib.contextmanager
++def stamp(obstacles, pcb_data, net_ids: Iterable[int], config):
++    """The keep-outs binding any of `net_ids`, blocked in `obstacles` for the
++    duration of the block (`block`)."""
++    remove = block(obstacles, pcb_data, net_ids, config)
++    try:
++        yield
++    finally:
++        remove()
+
+
+ def centerline_config(config):
+@@ -581,6 +592,42 @@ def audit_items(pcb_data, segments, vias, keepouts):
+                     yield ko, 'via', v
+
+
++def via_site_filter(pcb_data, net_id: int, via_size: float, layers=None):
++    """An (x, y) -> bool predicate: may a via of `net_id` (diameter
++    `via_size`, spanning `layers`; None = a through via) sit at (x, y)
++    without entering a region that forbids it the net's vias? None when no
++    region does, so a caller adds nothing to its search.
++
++    For a via search that places on maps of its own, which `stamp()` never
++    reaches (the pad taps): skipping the sites `audit` would refuse lets the
++    search go on to the next site rather than fail. It judges each site by
++    `audit_items`, so the two cannot disagree; a bounding-box test keeps the
++    far sites cheap."""
++    net = pcb_data.nets.get(net_id)
++    name = getattr(net, 'name', None)
++    kos = [ko for ko in getattr(pcb_data, '_net_keepouts', None) or ()
++           if not ko.get('edge_band') and not ko.get('layer_ban')
++           and not ko.get('vias_allowed', True) and name and binds(ko, name)]
++    if not kos:
++        return None
++    view = SimpleNamespace(nets={net_id: net}, board_info=pcb_data.board_info)
++    r = via_size / 2
++    boxes = [(min(p[0] for p in ko['polygon']) - r, min(p[1] for p in ko['polygon']) - r,
++              max(p[0] for p in ko['polygon']) + r, max(p[1] for p in ko['polygon']) + r)
++             for ko in kos]
++    vlayers = list(layers or ())
++
++    def allowed(x, y):
++        near = [ko for ko, (x0, y0, x1, y1) in zip(kos, boxes)
++                if x0 <= x <= x1 and y0 <= y <= y1]
++        if not near:
++            return True
++        via = SimpleNamespace(x=x, y=y, size=via_size, layers=vlayers, net_id=net_id)
++        return next(audit_items(view, (), (via,), near), None) is None
++
++    return allowed
++
++
+ def audit(pcb_data, segments, vias,
+           keepouts: Optional[List[dict]] = None) -> Optional[List[dict]]:
+     """The copper of `segments` / `vias` that a net-filtered keep-out forbids
+@@ -591,8 +638,8 @@ def audit(pcb_data, segments, vias,
+     keep-out.
+
+     It reads only geometry, so it sees copper from every path, including the
+-    ones stamp() does not reach (the plane finalize's taps and joins, post-route
+-    meanders) and copper the input already had inside a region.
++    ones stamp() does not reach (post-route meanders) and copper the input
++    already had inside a region.
+
+     `pcb_data` supplies the net names and copper layers of the copper given,
+     and the keep-outs unless `keepouts` names them (a re-parsed output board
+diff --git a/py_router/net_rescue.py b/py_router/net_rescue.py
+index 4390940e..87a4f3f7 100644
+--- a/py_router/net_rescue.py
++++ b/py_router/net_rescue.py
+@@ -1564,6 +1564,24 @@ def rescue_failed_nets(state, single_ended_nets, net_clearances=None,
+                                  f" stay where they are" if _capmv666
+                                  else ""))
+                         continue
++                    # ...and against the net-filtered keep-outs binding the
++                    # net (net_keepouts): the fanout ladder places on maps
++                    # the per-route region stamp never reaches. The dogbone
++                    # tap above (tap_pad_with_escalation) checks the same.
++                    if getattr(pcb_data, '_net_keepouts', None):
++                        from net_keepouts import audit as _nk_audit
++                        _ko666 = _nk_audit(pcb_data, _gsegs, _gvias)
++                        if _ko666:
++                            print(f"    bare-ball escape: "
++                                  f"{_pad.component_ref}.{_pad.pad_number} "
++                                  f"declined (escape inside net keep-out(s) "
++                                  + ', '.join(f"{r['region']}" for r in _ko666)
++                                  + ")"
++                                  + (f"; cap(s) "
++                                     f"{', '.join(m['reference'] for m in _capmv666)}"
++                                     f" stay where they are" if _capmv666
++                                     else ""))
++                            continue
+                     pcb_data.segments.extend(_gsegs)
+                     pcb_data.vias.extend(_gvias)
+                     # #803: bump the copper epoch -- _blockid_geom_memo and
+diff --git a/py_router/plane_pad_tap.py b/py_router/plane_pad_tap.py
+index 4690a783..64d3113b 100644
+--- a/py_router/plane_pad_tap.py
++++ b/py_router/plane_pad_tap.py
+@@ -1292,6 +1292,19 @@ def try_tap_pad(
+         def zone_filter(x, y):
+             return any(point_in_polygon(x, y, poly) for poly in _net_zone_polys)
+
++    # A net-filtered keep-out that forbids the net's vias (net_keepouts): this
++    # search places on maps of its own, which the per-route region stamp never
++    # reaches, so skip the sites inside such a region and go on to the next
++    # one. tap_pad_with_escalation still audits the result, which also covers
++    # the via -> pad trace and the edge clamp's move.
++    from net_keepouts import via_site_filter
++    _ko_ok = via_site_filter(pcb_data, net_id, via_size)
++    if _ko_ok is not None:
++        _zone_ok = zone_filter
++
++        def zone_filter(x, y):
++            return _ko_ok(x, y) and (_zone_ok is None or _zone_ok(x, y))
++
+     ghost_pref = None
+     if corridor_ghosts is not None:
+         # #517 arm 2: soft preference for via sites OUTSIDE vacated ripped
+@@ -1389,6 +1402,38 @@ def try_tap_pad(
+     return _gate(TapResult(success=True, via=via, segments=segments))
+
+
++def _tap_in_net_keepout(pcb_data: PCBData, net_id: int, result: TapResult) -> List[Dict]:
++    """The net-filtered keep-outs (net_keepouts) that a tap's new copper (its
++    via and traces) puts `net_id` inside, as `net_keepouts.audit` rows; []
++    when it is clean. Judged by net_keepouts.audit, the geometry KiCad's DRC
++    grades.
++
++    The tap places on maps of its own, which the per-route region stamp
++    (net_keepouts.stamp) never reaches, and its callers lay the copper
++    outside any stamped route: the #189 via-in-pad unblock (a free via in an
++    allowed block), the #666 bare-ball escape of the net rescue, plane taps.
++    A boxed power pad beside a mask opening only GND may cross got such an
++    escape via 0.13 mm inside the region; a bottom-side pad under it got an
++    in-pad dogbone whose barrel reached the region's top-side copper. KiCad
++    grades both items_not_allowed (and, there, solder_mask_bridge).
++    try_tap_pad's via search already skips sites inside such a region
++    (net_keepouts.via_site_filter); this also judges the via -> pad trace and
++    a via the edge clamp moved."""
++    if not getattr(pcb_data, '_net_keepouts', None):
++        return []
++    from net_keepouts import audit
++    vias = []
++    if result.via is not None:
++        v = result.via
++        vias.append(Via(x=v['x'], y=v['y'], size=v['size'], drill=v['drill'],
++                        layers=v.get('layers', ['F.Cu', 'B.Cu']), net_id=net_id))
++    segs = [Segment(start_x=sd['start'][0], start_y=sd['start'][1],
++                    end_x=sd['end'][0], end_y=sd['end'][1],
++                    width=sd['width'], layer=sd['layer'], net_id=net_id)
++            for sd in (result.segments or [])]
++    return audit(pcb_data, segs, vias) or []
++
++
+ def tap_pad_with_escalation(
+     pad: Pad,
+     pad_layer: Optional[str],
+@@ -1427,6 +1472,7 @@ def tap_pad_with_escalation(
+     fine-pitch neighborhoods also benefit from the fine parameters).
+     """
+     last_failure = TapResult(success=False)
++    ko_refused: List[Dict] = []     # the last rung a net keep-out refused
+     if try_default:
+         result = try_tap_pad(
+             pad, pad_layer, net_id, pcb_data, config, max_search_radius,
+@@ -1436,6 +1482,10 @@ def tap_pad_with_escalation(
+             shared_via_maps=shared_via_maps, pour_trace_only=pour_trace_only,
+             plane_oracle=plane_oracle, corridor_ghosts=corridor_ghosts,
+             ghost_exclude_ids=ghost_exclude_ids, plane_tap=plane_tap)
++        if result.success:
++            _ko = _tap_in_net_keepout(pcb_data, net_id, result)
++            if _ko:
++                ko_refused, result = _ko, TapResult(success=False)
+         if result.success:
+             result.params_label = 'default'
+             result.clearance_used = config.clearance
+@@ -1496,6 +1546,10 @@ def tap_pad_with_escalation(
+                 shared_via_maps=shared_via_maps, pour_trace_only=pour_trace_only,
+                 plane_oracle=plane_oracle, corridor_ghosts=corridor_ghosts,
+                 ghost_exclude_ids=ghost_exclude_ids, plane_tap=plane_tap)
++            if result.success:
++                _ko = _tap_in_net_keepout(pcb_data, net_id, result)
++                if _ko:
++                    ko_refused, result = _ko, TapResult(success=False)
+             if result.success:
+                 result.params_label = 'fine'
+                 result.clearance_used = fine_config.clearance
+@@ -1506,6 +1560,11 @@ def tap_pad_with_escalation(
+                 return result
+             last_failure = result
+
++    if ko_refused:
++        print(f"    tap of {pad.component_ref}.{pad.pad_number} refused: its copper "
++              f"is inside net keep-out(s) " + '; '.join(
++                  f"{r['region']}: {r['net']} ({r['tracks']} track(s), {r['vias']} via(s))"
++                  for r in ko_refused))
+     # Return the last failure so a rip-up caller sees its via_blocked /
+     # blocked_cells diagnostics.
+     return last_failure
+diff --git a/py_router/plane_region_connector.py b/py_router/plane_region_connector.py
+index e1c834d3..689eb922 100644
+--- a/py_router/plane_region_connector.py
++++ b/py_router/plane_region_connector.py
+@@ -3740,6 +3740,12 @@ def build_base_obstacles(
+     # keep-out rule areas (#25), on the plane routing layers.
+     add_user_keepout_obstacles(obstacles, pcb_data, config, coord, num_layers)
+     add_rule_area_keepout_obstacles(obstacles, pcb_data, config, layers=routing_layers)
++    # and the .kicad_dru's net-filtered keep-outs (net_keepouts) that bind
++    # the nets this map is built for
++    from dataclasses import replace
++    from net_keepouts import block as block_net_keepouts
++    block_net_keepouts(obstacles, pcb_data, exclude_net_ids,
++                       replace(config, layers=list(routing_layers), track_width=track_width))
+
+     # #1279: the excluded nets' own copper is free to this map, so a protected
+     # Kelvin sense branch of one of them is stamped back in as foreign copper
+diff --git a/py_router/repair_planes.py b/py_router/repair_planes.py
+index 463f4476..4d9d9784 100644
+--- a/py_router/repair_planes.py
++++ b/py_router/repair_planes.py
+@@ -1115,7 +1115,15 @@ def repair_planes(
+     # and tap/join copper would route blind to the board's layer rules. Same
+     # reasoning as the reconciliation sub-run's forwarded map.
+     from kicad_dru import install_layer_clearances, install_track_clearances
+-    install_layer_clearances(config, layer_clearances, input_file, pcb_data)
++    install_layer_clearances(config, layer_clearances, input_file, pcb_data,
++                             net_keepouts=True)
++    # Net-filtered keep-outs bind repair copper too: the base map blocks them
++    # (build_base_obstacles) and the pad taps check them. An in-run finalize
++    # takes the parent's list, for the same reason as the layer map above.
++    from net_keepouts import attach as _nk_attach
++    _nk_parent = (route_knobs or {}).get('net_keepouts')
++    _nk_attach(pcb_data, _nk_parent if _nk_parent is not None
++               else getattr(getattr(config, 'rules', None), 'net_keepouts', None))
+     # #1135: and the track-to-track rules, as route.py installs them -- a
+     # region join or a pad tap is a track like any other, and a board's
+     # `A.Type == 'track' && B.Type == 'track'` rule binds it too (raise-only
+diff --git a/py_router/route.py b/py_router/route.py
+index d2cd29d1..71ee5a5f 100644
+--- a/py_router/route.py
++++ b/py_router/route.py
+@@ -9067,9 +9067,9 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
+
+     # Net-filtered keep-outs: the bound-net copper the SHIPPED board has
+     # inside a region. stamp() keeps the router's own searches out, but the
+-    # plane finalize's taps and joins and the post-route passes lay copper
+-    # without it, and the input may already have some: KiCad grades every
+-    # piece as items_not_allowed, so it is said here, not found there.
++    # post-route passes lay copper without it, and the input may already
++    # have some: KiCad grades every piece as items_not_allowed, so it is said
++    # here, not found there.
+     _nk_shipped = None
+     if final_reconcile and not _ckpt_stop and getattr(pcb_data, '_net_keepouts', None):
+         try:

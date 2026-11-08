@@ -62,12 +62,29 @@ const requirementsPath = join(toolDir, 'requirements.txt');
 
 const TAG_PREFIX = 'kicad-connector-v';
 
-const BUILD_FILES = [
-	'update-release.mjs',
+// Applied in order. When a patch stops applying because upstream released its fix, delete it.
+const KIPY_PATCHES = [
 	'kipy-cli-env.patch',
 	'kipy-item-results.patch',
-	'routing-tools-transform-pose.patch'
+	'kipy-footprint-zone-position.patch'
 ];
+
+// board-escalation is Sprocket's policy and stays: agents write the fab's minimums into Board Setup,
+// so no descent may go below them. escape-via-pour-guard builds on the pad tap code that
+// plane-net-keepouts backports.
+const ROUTING_TOOLS_PATCHES = [
+	'routing-tools-transform-pose.patch',
+	'routing-tools-board-escalation.patch',
+	'routing-tools-qfn-fanout-class-via.patch',
+	'routing-tools-failed-pad-number.patch',
+	'routing-tools-wall-time.patch',
+	'routing-tools-oracle-locked-debris.patch',
+	'routing-tools-plane-net-keepouts.patch',
+	'routing-tools-via-weld-clearance.patch',
+	'routing-tools-escape-via-pour-guard.patch'
+];
+
+const BUILD_FILES = ['update-release.mjs', ...KIPY_PATCHES, ...ROUTING_TOOLS_PATCHES];
 
 function run(command, args, options = {}) {
 	return execFileSync(command, args, {
@@ -75,6 +92,10 @@ function run(command, args, options = {}) {
 		stdio: ['ignore', 'pipe', 'inherit'],
 		...options
 	});
+}
+
+function applyPatches(directory, patches) {
+	run('git', ['-C', directory, 'apply', ...patches.map((patch) => join(toolDir, patch))]);
 }
 
 async function listKeys(prefix) {
@@ -293,9 +314,7 @@ function buildKipy(work, expectedCommit) {
 		throw new Error(`kicad-python moved from ${expectedCommit} to ${commit} meanwhile; rerun`);
 	}
 
-	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-cli-env.patch')]);
-	// When this stops applying because upstream fixed the double unpack, delete the patch.
-	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-item-results.patch')]);
+	applyPatches(source, KIPY_PATCHES);
 	// Poetry emits a platform wheel; the build script writes the pure one to the source's dist.
 	run(
 		'uv',
@@ -328,8 +347,7 @@ async function buildRoutingTools(work, release) {
 	rmSync(zip);
 	const tree = join(work, 'routing-tools');
 	renameSync(join(work, 'plugins'), tree);
-	// When this stops applying because upstream released it, delete the patch.
-	run('git', ['apply', join(toolDir, 'routing-tools-transform-pose.patch')], { cwd: tree });
+	applyPatches(tree, ROUTING_TOOLS_PATCHES);
 	// The boards belong to other projects and the agent skills to upstream's harness.
 	rmSync(join(tree, '.claude'), { recursive: true, force: true });
 
@@ -468,9 +486,9 @@ function releaseNotes(build, kipyCommit, routingToolsRelease, buildCommit) {
 		'',
 		`Corresponding source: https://gitlab.com/kicad/code/kicad/-/tree/${build.commit}`,
 		'',
-		`The kicad-python wheel is built from ${KIPY_REPOSITORY}/-/tree/${kipyCommit} with two patches: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path, and \`create_items()\` and \`update_items()\` stop unpacking each returned item twice.`,
+		`The kicad-python wheel is built from ${KIPY_REPOSITORY}/-/tree/${kipyCommit}, patched with the \`kipy-*.patch\` files of the build directory linked below.`,
 		'',
-		`The \`kicad-routing-tools-*\` archives are https://github.com/${ROUTING_TOOLS_REPOSITORY}/releases/tag/${routingToolsRelease.tag_name} with one patch that reads the footprint poses of board format 20260616 and later, without its example boards. Each holds its platform's \`grid_router\` binary.`,
+		`The \`kicad-routing-tools-*\` archives are https://github.com/${ROUTING_TOOLS_REPOSITORY}/releases/tag/${routingToolsRelease.tag_name} without its example boards, patched with the \`routing-tools-*.patch\` files of the build directory linked below. Each holds its platform's \`grid_router\` binary.`,
 		'',
 		'`requirements.txt` pins the Python dependencies of both.',
 		'',

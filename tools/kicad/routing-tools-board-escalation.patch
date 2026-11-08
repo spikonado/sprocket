@@ -1,0 +1,13 @@
+diff --git a/py_router/routing_defaults.py b/py_router/routing_defaults.py
+index 593e444f..9f075f04 100644
+--- a/py_router/routing_defaults.py
++++ b/py_router/routing_defaults.py
+@@ -21,7 +21,7 @@ VIA_DRILL = 0.3  # mm
+ # The hard tiers ('standard' / 'advanced') and the bounded policies
+ # ('board' / 'off') are the opt-in for a run that must not narrow.
+ FAB_TIER = 'auto'        # 'standard' | 'advanced' | 'auto'
+-ESCALATION = 'fab'       # 'off' | 'board' | 'fab'
++ESCALATION = 'board'     # 'off' | 'board' | 'fab'
+
+ # Grid parameters
+ GRID_STEP = 0.1  # mm

@@ -1,0 +1,26 @@
+diff --git a/kipy/board_types.py b/kipy/board_types.py
+index eb7712e..c95ffda 100644
+--- a/kipy/board_types.py
++++ b/kipy/board_types.py
+@@ -2783,10 +2783,6 @@ class FootprintInstance(BoardItem):
+         contained items since KiCad footprint children are stored with absolute positions"""
+         delta = position - self.position
+
+-        local_delta = Vector2.from_xy(delta.x, delta.y).rotate(
+-            Angle.from_degrees(-self.orientation.degrees), Vector2.from_xy(0, 0)
+-        )
+-
+         self._proto.position.CopyFrom(position.proto)
+
+         for field in [
+@@ -2804,9 +2800,7 @@ class FootprintInstance(BoardItem):
+                 item.position += delta
+             elif isinstance(item, Zone):
+                 # Zone outlines inside a footprint definition are stored in the footprint's
+-                # local coordinate frame but any filled polys are in the board frame
+-                item.outline.move(local_delta)
+-
++                # local coordinate frame, so only the filled polys, in the board frame, move
+                 for polygons in item.filled_polygons.values():
+                     for polygon in polygons:
+                         polygon.move(delta)

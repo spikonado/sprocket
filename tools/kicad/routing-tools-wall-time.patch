@@ -1,0 +1,101 @@
+diff --git a/py_router/cli_banner.py b/py_router/cli_banner.py
+index e6942ed4..1e1a3ce9 100644
+--- a/py_router/cli_banner.py
++++ b/py_router/cli_banner.py
+@@ -22,7 +22,8 @@ Usage — two lines at the top of the ``__main__`` block, no re-indentation::
+ - arranges for ``EXIT=<rc>`` to be printed as the process ends, whatever
+   the path out: a ``sys.exit(n)`` (argparse errors included), falling off
+   the end of the script (rc 0), or an unhandled exception (rc 1, the
+-  traceback still prints).
++  traceback still prints). Given ``run_started`` (a ``time.monotonic()``
++  reading), ``Wall time: Ns (whole run)`` is printed just before it.
+
+ Both lines go to stdout so a single ``> log 2>&1`` redirect captures the
+ whole evidence unit. Set ``KRT_NO_BANNER=1`` to suppress (for consumers
+@@ -33,6 +34,7 @@ from __future__ import annotations
+ import atexit
+ import os
+ import sys
++import time
+
+ _installed = False
+
+@@ -105,7 +107,7 @@ def install_dash_hint() -> None:
+     argparse.ArgumentParser.error = error
+
+
+-def install() -> None:
++def install(run_started: float | None = None) -> None:
+     """Print the CMD banner now; print EXIT=<rc> when the process ends."""
+     global _installed
+     if _installed or os.environ.get('KRT_NO_BANNER'):
+@@ -169,6 +171,9 @@ def install() -> None:
+     @atexit.register
+     def _print_exit():  # pragma: no cover - exercised via subprocess tests
+         try:
++            if run_started is not None:
++                print(f"Wall time: {time.monotonic() - run_started:.1f}s "
++                      f"(whole run)", flush=True)
+             print(f"EXIT={state['rc']}", flush=True)
+         except Exception:
+             pass
+diff --git a/py_router/route.py b/py_router/route.py
+index 1402928e..d2cd29d1 100644
+--- a/py_router/route.py
++++ b/py_router/route.py
+@@ -32,6 +32,7 @@ from startup_checks import exit_on_error_if_main
+ exit_on_error_if_main(__name__)
+
+ import time
++_RUN_T0 = time.monotonic()  # "Wall time" counts from here, ahead of the heavy imports
+ import json
+ from typing import List, Optional, Tuple, Dict, Set
+
+@@ -5983,7 +5984,7 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
+         swap_pairs = summarize_target_swaps(single_ended_target_swaps)
+         print(f"  Target swaps:  {len(swap_pairs)}")
+     print(f"  Total vias:    {total_vias}")
+-    print(f"  Total time:    {total_time:.2f}s")
++    print(f"  Search time:   {total_time:.2f}s (net search only, not the whole run)")
+     print(f"  Iterations:    {total_iterations:,}")
+     _frag = getattr(config, '_fragility_field', None)
+     if _frag is not None and _frag.refreshes:
+@@ -9474,7 +9475,7 @@ if __name__ == "__main__":
+     # argparse runs -- the banner has to be decided before then too.
+     if '--capabilities' not in sys.argv[1:]:
+         import cli_banner
+-        cli_banner.install()
++        cli_banner.install(run_started=_RUN_T0)
+     from redo_record import record_invocation
+     record_invocation()  # stress-test redo manifest (#132); no-op unless REDO_MANIFEST set
+
+diff --git a/py_router/route_diff.py b/py_router/route_diff.py
+index fd3f9cc4..00d68da9 100644
+--- a/py_router/route_diff.py
++++ b/py_router/route_diff.py
+@@ -35,6 +35,7 @@ from startup_checks import exit_on_error_if_main
+ exit_on_error_if_main(__name__)
+
+ import time
++_RUN_T0 = time.monotonic()  # "Wall time" counts from here, ahead of the heavy imports
+ import fnmatch
+ from typing import List, Optional, Tuple, Dict, Set
+
+@@ -2455,7 +2456,7 @@ def batch_route_diff_pairs(input_file: str, output_file: str, net_names: List[st
+         print(f"  {RED}Skipped:       {len(skipped_bad_fanout)} (fanout stubs self-overlap - "
+               f"fix the fanout, #242){RESET}")
+     print(f"  Total vias:    {total_vias}")
+-    print(f"  Total time:    {total_time:.2f}s")
++    print(f"  Search time:   {total_time:.2f}s (net search only, not the whole run)")
+     print(f"  Iterations:    {total_iterations:,}")
+     from target_swap import summarize_target_swaps  # cycle-safe swap list (#380)
+     summary = {
+@@ -2798,7 +2799,7 @@ if __name__ == "__main__":
+     # CMD/EXIT self-echo (run-3 B1); see route.py for the external-kill caveat.
+     # CLI-`__main__`-only: the GUI imports the engine function.
+     import cli_banner
+-    cli_banner.install()
++    cli_banner.install(run_started=_RUN_T0)
+     import argparse
+     from redo_record import record_invocation
+     record_invocation()  # stress-test redo manifest (#132); no-op unless REDO_MANIFEST set
