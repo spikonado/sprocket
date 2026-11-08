@@ -19,7 +19,6 @@ interface Props {
 }
 
 export default function SprocketDownload({ release, showAlternates, className }: Props) {
-	// Null until detection runs in the browser, so SSR and first paint match.
 	const [target, setTarget] = useState<DetectedDesktopTarget | null>(null);
 
 	useEffect(() => {

@@ -64,14 +64,13 @@ jobs:
               # The npm package build copies these.
               - deleted: '{LICENSE,README,THIRD_PARTY_NOTICES}.md'
 
-  native_tests:
+  non_linux_tests:
     name: Native (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
-        # Linux runs the full suite in the rust job.
         os: [macos-latest, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -150,7 +149,7 @@ jobs:
   # and jobs skipped because `changes` failed would pass on their own.
   build_test_passed:
     if: always()
-    needs: [changes, native_tests, web, rust]
+    needs: [changes, non_linux_tests, web, rust]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -182,9 +182,7 @@ export class TranscriptReplica implements Store<number> {
 						}
 					}
 				);
-			} catch {
-				// The watch is retried below whether it failed or ended.
-			}
+			} catch {}
 
 			if (ac.signal.aborted) return;
 			history.setWatching(false);

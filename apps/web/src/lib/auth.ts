@@ -891,9 +891,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 			if (opened) {
 				try {
 					opened.opener = null;
-				} catch {
-					// Best-effort isolation if the browser rejects opener writes.
-				}
+				} catch {}
 			} else {
 				authState.update((current) => ({
 					...current,

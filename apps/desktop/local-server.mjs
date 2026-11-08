@@ -15,7 +15,6 @@ export async function waitForServerReady(baseUrl, timeoutMs = 30_000, fetchImpl 
 				return;
 			}
 		} catch {
-			// The server may still be starting.
 		} finally {
 			clearTimeout(requestTimer);
 		}

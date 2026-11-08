@@ -95,7 +95,6 @@ jobs:
           NPM_TAG: ${{ steps.version.outputs.npm-tag }}
           SOURCE_SHA: ${{ steps.version.outputs.source-sha }}
         run: |
-          # Reruns of older main builds would otherwise move the dev tag back.
           release=true
           if [[ "$NPM_TAG" == "dev" ]]; then
             published="$(npm view usesprocket@dev version 2>/dev/null || true)"

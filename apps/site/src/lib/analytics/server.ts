@@ -20,7 +20,6 @@ function browserIds(request: Request) {
 	};
 }
 
-// Sends after the response, so analytics never delays or fails a request.
 function sendLater(send: Promise<void>): void {
 	waitUntil(send.catch(() => {}));
 }

@@ -10,7 +10,6 @@ import { SITE_URL } from './src/lib/seo.ts';
 
 const { POSTHOG_PERSONAL_API_KEY, POSTHOG_PROJECT_ID, VERCEL_GIT_COMMIT_SHA } = process.env;
 
-// Uploads source maps so PostHog error tracking shows original code. Builds without the keys skip it.
 const posthogSourceMaps =
 	POSTHOG_PERSONAL_API_KEY && POSTHOG_PROJECT_ID
 		? [
@@ -23,10 +22,8 @@ const posthogSourceMaps =
 			]
 		: [];
 
-// https://astro.build/config
 export default defineConfig({
 	site: SITE_URL,
-	// No Astro.session usage on this site, so leave the session runtime out of the SSR bundle.
 	session: false,
 	security: {
 		csp: {

@@ -19,9 +19,7 @@ export async function cancelWebSearchWork(
 
 	try {
 		await webSearchWorkpool.cancel(ctx, job.cloudWorkId);
-	} catch {
-		// Best-effort; callbacks are fenced on job/claim state.
-	}
+	} catch {}
 }
 
 export async function beginExecutorJob(

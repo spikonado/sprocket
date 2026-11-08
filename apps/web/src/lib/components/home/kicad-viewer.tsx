@@ -264,9 +264,7 @@ export default function KicadViewer({
 							}
 						}
 					);
-				} catch {
-					// A dropped socket ends the watch; the next one starts from a fresh snapshot.
-				}
+				} catch {}
 
 				if (!signal.aborted) timers.add(setTimeout(watch, RECONNECT_MS));
 			};

@@ -37,9 +37,7 @@ export function ensureExecutable(binary) {
 	} catch {
 		try {
 			chmodSync(binary, 0o755);
-		} catch {
-			// Best-effort; spawn reports EACCES if still unusable.
-		}
+		} catch {}
 	}
 }
 

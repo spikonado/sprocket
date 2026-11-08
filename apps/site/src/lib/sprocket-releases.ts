@@ -5,7 +5,6 @@ export const SPROCKET_GITHUB_URL = 'https://github.com/spikonado/sprocket';
 export const SPROCKET_RELEASES_LATEST_URL = `${SPROCKET_GITHUB_URL}/releases/latest`;
 export const SPROCKET_NPM_URL = `https://www.npmjs.com/package/${npmPackageName}`;
 
-/** Stable identifiers matching GitHub desktop asset filenames. */
 export type SprocketDesktopPlatform =
 	'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x86_64' | 'linux-arm64';
 
@@ -32,7 +31,6 @@ export const OS_LABELS: Record<SprocketOsFamily, string> = {
 };
 
 export interface DetectedDesktopTarget {
-	/** Null when the architecture is unknown, so the visitor must choose. */
 	platform: SprocketDesktopPlatform | null;
 	osFamily: SprocketOsFamily | null;
 }
@@ -87,12 +85,7 @@ type NavigatorLike = {
 	};
 };
 
-/**
- * Best-effort desktop target from the browser environment.
- * Mobile OSes (Android/iOS) are not desktop download targets.
- * macOS architecture is only selected from Client Hints — Safari still reports
- * "Intel Mac OS X" on Apple Silicon, so guessing from the UA is unsafe.
- */
+/** Safari reports "Intel Mac OS X" on Apple Silicon, so only Client Hints pick a macOS architecture. */
 export function detectDesktopTarget(
 	nav: NavigatorLike,
 	architectureHint = ''
@@ -102,7 +95,7 @@ export function detectDesktopTarget(
 	const uaDataPlatform = nav.userAgentData?.platform?.toLowerCase() ?? '';
 	const architecture = architectureHint.toLowerCase();
 
-	// Android UAs / navigator.platform often contain "Linux" — exclude mobiles first.
+	// Android UAs and navigator.platform often contain "Linux", so mobiles are excluded first.
 	const isMobile =
 		uaDataPlatform === 'android' ||
 		/android/i.test(ua) ||
@@ -141,8 +134,6 @@ export function detectDesktopTarget(
 	const isLinux = uaDataPlatform.includes('linux') || /linux/i.test(platform) || /linux/i.test(ua);
 
 	if (isLinux) {
-		// Only auto-pick when the arch is positively known. ARMv7 / unknown must not
-		// fall through to the x86_64 AppImage (unusable), or be treated as ARM64.
 		const isArm64 = architecture === 'arm64' || /\baarch64\b/i.test(ua) || /\barm64\b/i.test(ua);
 
 		if (isArm64) {
@@ -173,9 +164,7 @@ export async function detectBrowserDesktopTarget(): Promise<DetectedDesktopTarge
 	try {
 		architecture = (await nav.userAgentData?.getHighEntropyValues?.(['architecture']))
 			?.architecture;
-	} catch {
-		// Without Client Hints the architecture stays unknown.
-	}
+	} catch {}
 
 	return detectDesktopTarget(nav, architecture);
 }

@@ -11,7 +11,7 @@ import {
 	signInForCheckout,
 	signOutOfPricing,
 	startCheckout,
-	userFacingError
+	billingRefusalMessage
 } from '@/lib/pricing/billing';
 import {
 	buildCreditPackCards,
@@ -78,8 +78,7 @@ export default function PricingPlans({
 	const [user, setUser] = useState<User | null>(null);
 	const [subscription, setSubscription] = useState<MySubscription | null>(null);
 	const [loading, setLoading] = useState(true);
-	// `id` is the plan or pack whose button shows the label.
-	const [busy, setBusy] = useState<{ id: string | null; label: string } | null>(null);
+	const [busy, setBusy] = useState<{ buttonFor: string | null; label: string } | null>(null);
 	const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
 	const [pending, setPending] = useState(false);
 
@@ -87,13 +86,12 @@ export default function PricingPlans({
 	const packs = catalog ? buildCreditPackCards(catalog) : [];
 	const largestDiscount = Math.max(0, ...cards.map((card) => card.annualDiscountPercent));
 
-	// Plan changes go through the Dodo portal, since checkout refuses a second subscription.
-	const subscribed =
+	const changesPlanInPortal =
 		subscription !== null && subscription.tier !== 'free' && subscription.billingManaged;
 
 	function fail(cause: unknown, fallback: string) {
 		setBusy(null);
-		const message = userFacingError(cause);
+		const message = billingRefusalMessage(cause);
 		setNotice({
 			text: message ?? (cause instanceof Error ? cause.message : fallback),
 			error: true
@@ -111,11 +109,10 @@ export default function PricingPlans({
 		return current;
 	}
 
-	/**
-	 * A subscription counts once its tier shows. A pack counts once the webhook granted its credit.
-	 * Returns the notice to show, or null while the purchase is unconfirmed.
-	 */
-	async function confirmation(purchase: Purchase, status: CheckoutStatus): Promise<string | null> {
+	async function purchaseConfirmedNotice(
+		purchase: Purchase,
+		status: CheckoutStatus
+	): Promise<string | null> {
 		if ('pack' in purchase) {
 			if (status.creditsAdded !== true) return null;
 
@@ -149,7 +146,10 @@ export default function PricingPlans({
 
 		const what = label ? `${label} subscription` : 'credit pack';
 		setPending(true);
-		setBusy({ id: purchaseId(purchase), label: label ? `Confirming ${label}…` : 'Confirming…' });
+		setBusy({
+			buttonFor: purchaseId(purchase),
+			label: label ? `Confirming ${label}…` : 'Confirming…'
+		});
 		setNotice({ text: `Confirming your ${what}…`, error: false });
 		const deadline = Date.now() + ACTIVATION_TIMEOUT_MS;
 
@@ -175,7 +175,7 @@ export default function PricingPlans({
 				return true;
 			}
 
-			const confirmed = status && (await confirmation(purchase, status));
+			const confirmed = status && (await purchaseConfirmedNotice(purchase, status));
 
 			if (confirmed) {
 				clearCheckoutAttempt();
@@ -204,22 +204,22 @@ export default function PricingPlans({
 
 	async function checkout(purchase: Purchase, signedInUser: User | null) {
 		setNotice(null);
-		const id = purchaseId(purchase);
+		const buttonFor = purchaseId(purchase);
 
 		if (!signedInUser) {
-			setBusy({ id, label: 'Redirecting to sign in…' });
+			setBusy({ buttonFor, label: 'Redirecting to sign in…' });
 			signInForCheckout(purchase);
 
 			return;
 		}
 
-		setBusy({ id, label: 'Starting checkout…' });
+		setBusy({ buttonFor, label: 'Starting checkout…' });
 		const props = purchaseProps(purchase);
 		track('pricing_checkout_started', props);
 
 		try {
 			const checkoutUrl = await startCheckout(purchase);
-			setBusy({ id, label: 'Redirecting to checkout…' });
+			setBusy({ buttonFor, label: 'Redirecting to checkout…' });
 			track('pricing_checkout_redirected', props);
 			window.location.assign(checkoutUrl);
 		} catch (error) {
@@ -227,13 +227,12 @@ export default function PricingPlans({
 			fail(error, 'Could not start checkout.');
 			setPending(readCheckoutAttempt(signedInUser.id) !== null);
 
-			// A refusal can mean a subscription went live since the page loaded.
-			if (userFacingError(error)) await loadAccount().catch(() => {});
+			if (billingRefusalMessage(error)) await loadAccount().catch(() => {});
 		}
 	}
 
-	async function manageBilling(id: string | null = null) {
-		setBusy({ id, label: 'Opening billing portal…' });
+	async function manageBilling(buttonFor: string | null = null) {
+		setBusy({ buttonFor, label: 'Opening billing portal…' });
 
 		try {
 			window.location.assign(await fetchCustomerPortalUrl());
@@ -255,7 +254,7 @@ export default function PricingPlans({
 	}
 
 	async function signOut() {
-		setBusy({ id: null, label: 'Signing out…' });
+		setBusy({ buttonFor: null, label: 'Signing out…' });
 
 		try {
 			await signOutOfPricing();
@@ -276,7 +275,7 @@ export default function PricingPlans({
 	}
 
 	function selectPlan(card: PlanCard) {
-		if (!card.isFree && subscribed) {
+		if (!card.isFree && changesPlanInPortal) {
 			void manageBilling(card.id);
 
 			return;
@@ -294,7 +293,7 @@ export default function PricingPlans({
 	}
 
 	function buttonLabel(card: PlanCard): string {
-		if (busy?.id === card.id) return busy.label;
+		if (busy?.buttonFor === card.id) return busy.label;
 
 		if (card.isFree) return 'Start free';
 
@@ -303,7 +302,7 @@ export default function PricingPlans({
 
 		if (!card.prices[interval]) return 'Unavailable';
 
-		return subscribed ? `Switch to ${card.name}` : `Get ${card.name}`;
+		return changesPlanInPortal ? `Switch to ${card.name}` : `Get ${card.name}`;
 	}
 
 	function buttonDisabled(card: PlanCard): boolean {
@@ -616,7 +615,7 @@ export default function PricingPlans({
 									disabled={loading || !!busy}
 									onClick={() => buyPack(pack.productId)}
 								>
-									{busy?.id === pack.productId ? busy.label : `Buy for ${pack.price}`}
+									{busy?.buttonFor === pack.productId ? busy.label : `Buy for ${pack.price}`}
 								</button>
 							</li>
 						))}

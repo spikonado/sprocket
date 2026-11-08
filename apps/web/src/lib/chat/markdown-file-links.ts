@@ -136,9 +136,7 @@ export async function openMarkdownLink(
 	if (!directory) {
 		try {
 			directory = (await entryKind({ workspacePath, path })) === 'directory';
-		} catch {
-			// The file tab reports a missing or unreadable file.
-		}
+		} catch {}
 	}
 
 	if (!directory) openFile({ workspacePath, path });

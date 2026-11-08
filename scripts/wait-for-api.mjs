@@ -11,9 +11,7 @@ while (Date.now() - startedAt < timeoutMs) {
 		if (response.ok) {
 			process.exit(0);
 		}
-	} catch {
-		// API is still starting.
-	}
+	} catch {}
 
 	await new Promise((resolve) => {
 		setTimeout(resolve, 250);

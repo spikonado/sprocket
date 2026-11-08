@@ -93,7 +93,6 @@ export async function beginPricingSignIn(
 	return login.url;
 }
 
-/** Returns the pricing path to continue on, carrying the plan or pack chosen before sign-in. */
 export async function completePricingSignIn(
 	server: PricingAuthServer,
 	cookies: Cookies,
@@ -201,7 +200,6 @@ export async function getPricingSession(
 	return session;
 }
 
-/** Clears local pricing cookies and returns the sealed session that was in them. */
 export function takePricingSession(cookies: Cookies, url: URL): string | undefined {
 	const session = cookie(url, 'session');
 	const login = cookie(url, 'login');
