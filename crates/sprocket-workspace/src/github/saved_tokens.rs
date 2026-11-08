@@ -31,9 +31,7 @@ pub fn install(loader: Loader) {
 }
 
 pub(super) struct Loaded {
-    /// The last tokens known, or `None` before any load succeeded.
-    pub tokens: Option<SavedTokens>,
-    /// Why the last load failed.
+    pub last_known: Option<SavedTokens>,
     pub error: Option<String>,
 }
 
@@ -48,7 +46,7 @@ pub(super) async fn reload(user_id: &str) -> Loaded {
 async fn load_or_reload(user_id: &str, reload: bool) -> Loaded {
     let Some(loader) = LOADER.get() else {
         return Loaded {
-            tokens: Some(SavedTokens::new()),
+            last_known: Some(SavedTokens::new()),
             error: None,
         };
     };
@@ -77,7 +75,7 @@ async fn load_or_reload(user_id: &str, reload: bool) -> Loaded {
         }
     }
     Loaded {
-        tokens: entry.tokens.clone(),
+        last_known: entry.tokens.clone(),
         error: entry.error.clone(),
     }
 }

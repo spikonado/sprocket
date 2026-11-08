@@ -26,6 +26,11 @@ struct Fingerprint {
     remarks: String,
 }
 
+struct Status {
+    viewer: String,
+    activity_without_remarks: Activity,
+}
+
 impl ActivityReader {
     pub async fn connect(
         user_id: &str,
@@ -57,7 +62,10 @@ impl ActivityReader {
         {
             return Ok(last.activity.clone());
         }
-        let (viewer, mut activity) = self.status().await?;
+        let Status {
+            viewer,
+            activity_without_remarks: mut activity,
+        } = self.status().await?;
         activity.remarks = match self.last.take() {
             Some(last) if last.fingerprint.remarks == fingerprint.remarks => last.activity.remarks,
             _ => self.remarks(&viewer).await?,
@@ -130,8 +138,7 @@ impl ActivityReader {
         })
     }
 
-    /// The viewer's login and everything but the remarks.
-    async fn status(&self) -> Result<(String, Activity), GitHubError> {
+    async fn status(&self) -> Result<Status, GitHubError> {
         let data: StatusData = self.query("PullRequestStatus", json!({})).await?;
         let pr = self.pull_request(data.repository)?;
         let mut checks = Vec::new();
@@ -150,9 +157,9 @@ impl ActivityReader {
             }
             after = page.commits.read_contexts(&mut checks);
         }
-        Ok((
-            data.viewer.login,
-            Activity {
+        Ok(Status {
+            viewer: data.viewer.login,
+            activity_without_remarks: Activity {
                 state: pr.state,
                 head_sha: pr.head_ref_oid,
                 conflicting: match pr.mergeable.as_str() {
@@ -163,7 +170,7 @@ impl ActivityReader {
                 checks,
                 remarks: Vec::new(),
             },
-        ))
+        })
     }
 
     async fn remarks(&self, viewer: &str) -> Result<Vec<Remark>, GitHubError> {

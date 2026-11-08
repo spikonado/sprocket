@@ -69,6 +69,15 @@ pub enum GitHubError {
     Failed(#[from] anyhow::Error),
 }
 
+impl GitHubError {
+    fn is_credential_problem(&self) -> bool {
+        matches!(
+            self,
+            Self::NoCredential(_) | Self::Disabled(_) | Self::Status(StatusCode::UNAUTHORIZED)
+        )
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GraphQlError {
     #[serde(rename = "type")]

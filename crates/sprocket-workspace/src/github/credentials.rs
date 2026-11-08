@@ -41,15 +41,7 @@ pub(super) async fn resolve(user_id: &str, host: &str) -> Result<ResolvedCredent
             return Err(GitHubError::Disabled(host.to_string()));
         }
     }
-    let saved = saved_tokens::load(user_id).await;
-    let Some(mut tokens) = saved.tokens else {
-        // Falling back could act as a different GitHub account than the one saved in Settings.
-        return Err(GitHubError::Failed(anyhow::anyhow!(
-            "Couldn't load your saved GitHub tokens: {}",
-            saved.error.unwrap_or_default()
-        )));
-    };
-    if let Some(token) = tokens.remove(host) {
+    if let Some(token) = saved_token(saved_tokens::load(user_id).await, host)? {
         return Ok(ResolvedCredential {
             token,
             source: CredentialSource::Settings,
@@ -68,6 +60,16 @@ pub(super) async fn resolve(user_id: &str, host: &str) -> Result<ResolvedCredent
             source: CredentialSource::GitHubCli,
         })
         .ok_or_else(|| GitHubError::NoCredential(host.to_string()))
+}
+
+fn saved_token(saved: saved_tokens::Loaded, host: &str) -> Result<Option<String>, GitHubError> {
+    let Some(mut tokens) = saved.last_known else {
+        return Err(GitHubError::Failed(anyhow::anyhow!(
+            "Couldn't load your saved GitHub tokens: {}",
+            saved.error.unwrap_or_default()
+        )));
+    };
+    Ok(tokens.remove(host))
 }
 
 pub(super) fn forget_cached(host: &str) {
