@@ -16,12 +16,15 @@ use crate::openai::StatelessResponses;
 const APP_URL: &str = "https://usesprocket.dev";
 const APP_TITLE: &str = "Sprocket";
 const OPENROUTER_APP_CATEGORIES: &str = "programming-app,cloud-agent";
+const USER_AGENT: &str = concat!("sprocket/", env!("CARGO_PKG_VERSION"));
 
 /// A third-party gateway serving the Responses API for every vendor's models.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ResponsesGateway {
     Vercel,
     Openrouter,
+    Opencode,
+    OpencodeGo,
 }
 
 impl ResponsesGateway {
@@ -29,11 +32,14 @@ impl ResponsesGateway {
         match self {
             Self::Vercel => "https://ai-gateway.vercel.sh/v1",
             Self::Openrouter => "https://openrouter.ai/api/v1",
+            Self::Opencode => "https://opencode.ai/inference/openai/v1",
+            Self::OpencodeGo => "https://opencode.ai/inference/go/openai/v1",
         }
     }
 }
 
 /// `cache_write_ttl` is the catalog's, which Claude's cache writes must match.
+/// `session_id` keeps an OpenCode thread on one route and prompt cache, which Go requires.
 pub(crate) fn gateway_responses_model(
     gateway: ResponsesGateway,
     api_key: String,
@@ -41,8 +47,9 @@ pub(crate) fn gateway_responses_model(
     claude: bool,
     cache_write_ttl: Option<&str>,
     instructions: &str,
-) -> DynModel<Completion> {
-    Model::new(
+    session_id: &str,
+) -> anyhow::Result<DynModel<Completion>> {
+    Ok(Model::new(
         gateway_responses(
             gateway,
             api_key,
@@ -50,10 +57,11 @@ pub(crate) fn gateway_responses_model(
             claude,
             cache_write_ttl,
             instructions,
-        ),
+            session_id,
+        )?,
         rig::rig_reqwest::shared(),
     )
-    .erase()
+    .erase())
 }
 
 fn gateway_responses(
@@ -63,7 +71,8 @@ fn gateway_responses(
     claude: bool,
     cache_write_ttl: Option<&str>,
     instructions: &str,
-) -> GatewayResponses {
+    session_id: &str,
+) -> anyhow::Result<GatewayResponses> {
     let mut config = OpenAIConfig::new(api_key)
         .with_base_url(gateway.base_url())
         .with_instructions(instructions);
@@ -71,12 +80,13 @@ fn gateway_responses(
         // OpenRouter replays Claude's thinking through the item's `signature`, not ciphertext.
         config.dialect.quirks.responses.reasoning_ciphertext = false;
     }
-    GatewayResponses {
+    Ok(GatewayResponses {
         wire: StatelessResponses(Responses::new(config, model)),
         gateway,
         claude,
         cache_write_ttl: cache_write_ttl.map(str::to_string),
-    }
+        session: http::HeaderValue::from_str(session_id)?,
+    })
 }
 
 #[derive(Clone)]
@@ -85,6 +95,7 @@ struct GatewayResponses {
     gateway: ResponsesGateway,
     claude: bool,
     cache_write_ttl: Option<String>,
+    session: http::HeaderValue,
 }
 
 impl GatewayResponses {
@@ -121,6 +132,7 @@ impl GatewayResponses {
                 }
                 params.insert("cache_control".to_string(), cache_control);
             }
+            ResponsesGateway::Opencode | ResponsesGateway::OpencodeGo => {}
         }
     }
 }
@@ -155,11 +167,21 @@ impl Wire for GatewayResponses {
         let headers = encoded.request.headers_mut();
         headers.insert("http-referer", http::HeaderValue::from_static(APP_URL));
         headers.insert("x-title", http::HeaderValue::from_static(APP_TITLE));
-        if self.gateway == ResponsesGateway::Openrouter {
-            headers.insert(
-                "x-openrouter-categories",
-                http::HeaderValue::from_static(OPENROUTER_APP_CATEGORIES),
-            );
+        match self.gateway {
+            ResponsesGateway::Vercel => {}
+            ResponsesGateway::Openrouter => {
+                headers.insert(
+                    "x-openrouter-categories",
+                    http::HeaderValue::from_static(OPENROUTER_APP_CATEGORIES),
+                );
+            }
+            ResponsesGateway::Opencode | ResponsesGateway::OpencodeGo => {
+                headers.insert(
+                    http::header::USER_AGENT,
+                    http::HeaderValue::from_static(USER_AGENT),
+                );
+                headers.insert("x-opencode-session", self.session.clone());
+            }
         }
         Ok(encoded)
     }

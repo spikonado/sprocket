@@ -13,9 +13,11 @@ export const completionProviderIds = [
 	'openai',
 	'chatgpt',
 	'claude',
+	'opencode-go',
 	'anthropic',
 	'vercel',
-	'openrouter'
+	'openrouter',
+	'opencode'
 ] as const;
 
 export type CompletionProvider = (typeof completionProviderIds)[number];

@@ -63,9 +63,11 @@ it('lists configured providers in the saved order and saves toggles', async () =
 				{ provider: 'openai', enabled: false },
 				{ provider: 'chatgpt', enabled: true },
 				{ provider: 'claude', enabled: true },
+				{ provider: 'opencode-go', enabled: true },
 				{ provider: 'anthropic', enabled: true },
 				{ provider: 'vercel', enabled: true },
-				{ provider: 'openrouter', enabled: true }
+				{ provider: 'openrouter', enabled: true },
+				{ provider: 'opencode', enabled: true }
 			]
 		},
 		expect.anything()

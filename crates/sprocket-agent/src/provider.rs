@@ -466,20 +466,26 @@ impl AgentProvider {
                     self.cache_write_ttl.as_deref(),
                 ))
             }
-            CompletionProvider::Vercel | CompletionProvider::Openrouter => {
+            CompletionProvider::Vercel
+            | CompletionProvider::Openrouter
+            | CompletionProvider::Opencode
+            | CompletionProvider::OpencodeGo => {
                 let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
                 let gateway = match provider {
                     CompletionProvider::Vercel => ResponsesGateway::Vercel,
+                    CompletionProvider::Opencode => ResponsesGateway::Opencode,
+                    CompletionProvider::OpencodeGo => ResponsesGateway::OpencodeGo,
                     _ => ResponsesGateway::Openrouter,
                 };
-                Ok(gateway_responses_model(
+                gateway_responses_model(
                     gateway,
                     credential.api_key,
                     model,
                     self.model_route.vendor == "anthropic",
                     self.cache_write_ttl.as_deref(),
                     base_instructions,
-                ))
+                    &self.thread_id,
+                )
             }
             CompletionProvider::Chatgpt => {
                 let completion_client = match (&self.chatgpt_client, &self.chatgpt_credentials) {

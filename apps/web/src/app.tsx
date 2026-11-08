@@ -53,6 +53,7 @@ import RunUsageFooter from '$lib/components/home/run-usage-footer';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsCredentials from '$lib/components/home/settings-credentials';
+import type { ApiKeyProvider } from '$lib/components/home/api-key-card';
 import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsVersionControl from '$lib/components/home/settings-version-control';
 import SettingsConnectors from '$lib/components/home/settings-connectors';
@@ -362,7 +363,9 @@ export default function App({
 			openai: savedProviders?.openai === true,
 			anthropic: savedProviders?.anthropic === true,
 			vercel: savedProviders?.vercel === true,
-			openrouter: savedProviders?.openrouter === true
+			openrouter: savedProviders?.openrouter === true,
+			opencode: savedProviders?.opencode === true,
+			'opencode-go': savedProviders?.opencodeGo === true
 		}),
 		[savedProviders]
 	);
@@ -1410,12 +1413,14 @@ export default function App({
 	}
 
 	function handleProviderConfigurationChange(change: {
-		provider: keyof NonNullable<typeof savedProviders>;
+		provider: ApiKeyProvider | 'claude';
 		configured: boolean;
 	}) {
 		const saved = savedProvidersRef.current;
+		// Convex object keys can't contain '-'.
+		const key = change.provider === 'opencode-go' ? 'opencodeGo' : change.provider;
 
-		if (saved) setProviderConfiguration({ ...saved, [change.provider]: change.configured });
+		if (saved) setProviderConfiguration({ ...saved, [key]: change.configured });
 	}
 
 	function handleClaudeCodeStatusChange(status: ClaudeCodeStatus) {

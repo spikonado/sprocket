@@ -8,6 +8,7 @@ mod convex;
 mod gateway;
 mod history;
 mod hooks;
+mod models_dev;
 mod openai;
 mod output;
 mod provider;

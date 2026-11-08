@@ -8,11 +8,13 @@ use super::{
 
 #[test]
 fn providers_address_catalog_models_by_their_own_ids() {
-    let route: ModelRoute = serde_json::from_value(serde_json::json!({
-        "provider": "anthropic",
-        "providerModelIds": {"anthropic": "claude-opus-5-5", "vercel": "anthropic/claude-opus-5.5"},
-    }))
-    .unwrap();
+    let mut route: ModelRoute =
+        serde_json::from_value(serde_json::json!({"provider": "anthropic"})).unwrap();
+    route.provider_model_ids = [
+        ("anthropic", "claude-opus-5-5".to_string()),
+        ("vercel", "anthropic/claude-opus-5.5".to_string()),
+    ]
+    .into();
     let id = |provider: CompletionProvider| provider.model_id("opus-5.5", &route);
     assert_eq!(id(CompletionProvider::Spikonado), Some("opus-5.5"));
     assert_eq!(id(CompletionProvider::Claude), Some("claude-opus-5-5"));
@@ -27,12 +29,12 @@ fn providers_address_catalog_models_by_their_own_ids() {
 
 #[test]
 fn the_gateway_skips_models_it_publishes_without_usage_weights() {
-    let route: ModelRoute = serde_json::from_value(serde_json::json!({
+    let mut route: ModelRoute = serde_json::from_value(serde_json::json!({
         "provider": "moonshotai",
-        "providerModelIds": {"vercel": "moonshotai/kimi-k3.1-pro"},
         "usageWeights": null,
     }))
     .unwrap();
+    route.provider_model_ids = [("vercel", "moonshotai/kimi-k3.1-pro".to_string())].into();
     assert!(!CompletionProvider::Spikonado.serves(&route));
     assert!(CompletionProvider::Vercel.serves(&route));
 }
