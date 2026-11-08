@@ -1,0 +1,13 @@
+diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+index 6517822..37cfbc9 100644
+--- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
++++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+@@ -567,6 +567,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+                     )
+                 ) {
+                     this.#active_schematic_project_path = active;
++                    // Reloads reopen this page, including one the user opened in the viewer.
++                    this.#desired_page = active;
+                 }
+                 this.dispatchEvent(
+                     new CustomEvent("ecad-viewer:view-state-change", {

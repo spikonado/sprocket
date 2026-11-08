@@ -1,0 +1,18 @@
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
+index f349cbd..98798d4 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
+@@ -6,4 +6,5 @@
+
+ import { KCUIElement } from "../../../kc-ui";
++import { listen } from "../../../base/events";
+ import { css, html } from "../../../base/web-components";
+ import "./viewer";
+@@ -131,4 +132,7 @@ export class BomViewer extends KCUIElement {
+             await this.#project.loaded;
+             super.connectedCallback();
++            this.addDisposable(
++                listen(this.#project, "load", () => void this.update()),
++            );
+         })();
+     }

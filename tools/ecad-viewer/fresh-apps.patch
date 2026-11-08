@@ -1,0 +1,25 @@
+diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+index 6517822..37cfbc9 100644
+--- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
++++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+@@ -4894,12 +4896,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+         if (!this.loaded) return this.#spinner;
+         this.#spinner.hidden = true;
+         this.#tab_contents = {};
+-        // Drop stale apps from a previous project shape so SCH-only and PCB-only
+-        // loads never keep both canvases stacked in .vertical.
+-        if (!this.has_pcb) this.#board_app = undefined;
+-        if (!this.has_sch) this.#schematic_app = undefined;
+-        if (!this.has_3d) this.#step_viewer_placeholder = undefined;
+-        if (!this.has_bom) this.#bom_app = undefined;
++        // A re-render follows a change in which documents the project has. Moving the
++        // previous apps into the new tabs would reconnect their nested elements, which
++        // render only once, so every render builds new ones.
++        this.#board_app = undefined;
++        this.#schematic_app = undefined;
++        this.#step_viewer_placeholder = undefined;
++        this.#ov_d_app = undefined!;
++        this.#bom_app = undefined;
+
+         this.#tab_header = new TabHeaderElement({
+             has_3d: this.has_3d,

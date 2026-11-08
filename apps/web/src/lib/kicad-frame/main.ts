@@ -68,6 +68,8 @@ async function loadViewer() {
 
 const otherContext = (context: Context): Context => (context === 'SCH' ? 'PCB' : 'SCH');
 
+type Load = { revision: number; sources: KicadSource[]; boardVersion: string | null };
+
 /** Shows the selection's footprint or symbol, or else its net, in the other document. */
 function crossProbe(viewer: EcadViewerElement, selection: Selection) {
 	const { sourceContext, reference, net, netCode } = selection;
@@ -125,7 +127,17 @@ async function start() {
 	);
 
 	let shown: KicadSource[] | null = null;
-	let loads = 0;
+	let revisionKeys = 0;
+	let pending: Load | null = null;
+	let draining = false;
+	// Such as the renderer setup throwing without WebGL2. The viewer's load then never
+	// settles, and every later one would wait behind it.
+	let crash: Error | null = null;
+	let onCrash: ((error: Error) => void) | null = null;
+
+	addEventListener('unhandledrejection', ({ reason }) =>
+		onCrash?.(reason instanceof Error ? reason : new Error('The KiCad viewer stopped working.'))
+	);
 
 	const highlight = (nets: NetRef[]) => {
 		viewer.setHighlightedNets(nets);
@@ -143,12 +155,24 @@ async function start() {
 			failures.push(eventDetail(event, z.string()) ?? 'The viewer could not read these files.');
 		};
 
+		const crashed = new Promise<never>((_, reject) => {
+			onCrash = (error) => {
+				crash = error;
+				reject(error);
+			};
+		});
+
 		addEventListener(loadErrorEvent, onError);
 
 		try {
-			await viewer.replaceSources({ revisionKey: String(++loads), sources });
+			if (crash) throw crash;
+			await Promise.race([
+				viewer.replaceSources({ revisionKey: String(++revisionKeys), sources }),
+				crashed
+			]);
 		} finally {
 			removeEventListener(loadErrorEvent, onError);
+			onCrash = null;
 		}
 
 		if (failures.length) throw new Error(failures.join('\n'));
@@ -156,15 +180,16 @@ async function start() {
 		viewer.camera = camera;
 	};
 
-	const load = async (revision: number, sources: KicadSource[], boardVersion: string | null) => {
+	const load = async ({ revision, sources, boardVersion }: Load) => {
 		try {
 			await replace(sources);
 		} catch (error) {
-			// A newer load replaced this one.
-			if (error instanceof DOMException && error.name === 'AbortError') return;
+			// The newer sources replace these anyway, and restoring the old ones first only delays them.
+			if (pending) return;
 
 			const recovered =
 				!!shown &&
+				!crash &&
 				(await replace(shown).then(
 					() => true,
 					() => false
@@ -184,6 +209,24 @@ async function start() {
 		board3d.setBoardVersion(boardVersion);
 		toolbar.update();
 		post({ type: 'loaded', revision });
+	};
+
+	// One load at a time, so a recovery can't cancel newer sources and each load sees only
+	// its own read errors. Sources that arrive meanwhile replace any still waiting.
+	const enqueue = async (next: Load) => {
+		pending = next;
+
+		if (draining) return;
+		draining = true;
+
+		while (pending) {
+			const current: Load = pending;
+
+			pending = null;
+			await load(current);
+		}
+
+		draining = false;
 	};
 
 	viewer.addEventListener('ecad-viewer:selection', (event) => {
@@ -243,7 +286,7 @@ async function start() {
 				theme.textContent = data.css;
 				break;
 			case 'sources':
-				void load(data.revision, data.sources, data.boardVersion);
+				void enqueue(data);
 				break;
 			case 'board3d':
 				void board3d.show(data.boardVersion, data.glb);

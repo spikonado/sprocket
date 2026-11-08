@@ -13,12 +13,17 @@ trap 'rm -rf "$src"' EXIT
 
 git clone --quiet https://github.com/krishna-swaroop/ecad-viewer "$src"
 git -C "$src" checkout --quiet "$commit"
+# bom-reload: redraws the BOM table when the frame loads edited files.
 # clear-selection: closes the property panels when the frame clears the selection on Escape.
 # footprint-transform: KiCad 10.99 places footprints with
 # `(transform (translate x y) (rotate r) (scale sx sy))` instead of `(at x y r)`.
+# fresh-apps: builds new document apps when the set of documents changes, since moving
+# the old ones into the new tabs breaks their nested elements.
 # inset-board-warmup: lays out a never-shown PCB tab so schematic insets can draw the board.
 # parser-unclosed: fails on a file whose parentheses never close, such as one read
 # mid-write, instead of loading an empty document.
+# relative-sheets: loads sheets outside the opened file's folder, such as `../shared/x.kicad_sch`.
+# reopen-sheet: reopens the sheet the user navigated to after the frame reloads edited files.
 # sheet-instances: lists each instance of a reused sheet in the sheet panel and shows
 # that instance's references, even when switching between instances of one file.
 # show-tab: lets the frame open the other document after a cross-probe, and keeps
