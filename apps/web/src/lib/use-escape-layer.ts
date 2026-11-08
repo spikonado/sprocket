@@ -7,6 +7,10 @@ const layers: EscapeLayer[] = [];
 
 function handleEscape(event: KeyboardEvent) {
 	if (event.key !== 'Escape' || event.defaultPrevented) return;
+
+	// An open modal <dialog> cancels itself on Escape unless the key is prevented.
+	if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
+
 	event.preventDefault();
 	layers.at(-1)?.current();
 }
