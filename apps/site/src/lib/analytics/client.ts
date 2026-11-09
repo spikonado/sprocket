@@ -14,11 +14,9 @@ let initialized = false;
 
 let sectionObserver: IntersectionObserver | undefined;
 
-// Hydration can hand `observeSection` a section the observer already reported and dropped.
-const viewedSections = new Set<string>();
+const reportedSections = new Set<string>();
 
-// Islands can capture before the layout script runs, so every call initializes on demand.
-function client(): typeof posthog | undefined {
+function ensurePosthog(): typeof posthog | undefined {
 	if (!initialized) {
 		initialized = true;
 
@@ -51,37 +49,31 @@ function client(): typeof posthog | undefined {
 }
 
 export function initAnalytics(): void {
-	client();
+	ensurePosthog();
 }
 
-/** Pass `source` to record which page section the event came from. */
 export function track<E extends keyof AnalyticsEvents>(
 	event: E,
 	properties: AnalyticsEvents[E],
 	source?: Element
 ): void {
 	const section = source?.closest(`[${SECTION_ATTRIBUTE}]`)?.getAttribute(SECTION_ATTRIBUTE);
-	client()?.capture(event, section ? { ...properties, section } : properties);
+	ensurePosthog()?.capture(event, section ? { ...properties, section } : properties);
 }
 
 export function captureException(cause: unknown, context: string): void {
-	client()?.captureException(cause, { context });
+	ensurePosthog()?.captureException(cause, { context });
 }
 
-/** For sections an island mounts after analytics started, like packs from the live catalog. */
 export function observeSection(section: Element): () => void {
-	client();
+	ensurePosthog();
 	sectionObserver?.observe(section);
 
 	return () => sectionObserver?.unobserve(section);
 }
 
-/**
- * The WorkOS user ID is the Sprocket account ID, so it stays stable across devices.
- * `null` only resets identified visitors, so anonymous visitors keep their history.
- */
 export function setAnalyticsUser(user: { id: string; email: string } | null): void {
-	const ph = client();
+	const ph = ensurePosthog();
 
 	if (!ph) return;
 
@@ -100,8 +92,8 @@ function trackSectionViews(): void {
 				if (!entry.isIntersecting || !section) continue;
 				observer.unobserve(entry.target);
 
-				if (viewedSections.has(section)) continue;
-				viewedSections.add(section);
+				if (reportedSections.has(section)) continue;
+				reportedSections.add(section);
 				posthog.capture('section_viewed', { section } satisfies AnalyticsEvents['section_viewed']);
 			}
 		},

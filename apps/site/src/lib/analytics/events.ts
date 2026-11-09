@@ -2,7 +2,7 @@ import type { BillingInterval } from '@/lib/pricing/convex-types';
 
 type Checkout = { plan: string; interval: BillingInterval } | { pack: string };
 
-/** Every custom PostHog event and its properties. Autocapture covers plain clicks. */
+/** Autocapture covers plain clicks. */
 export type AnalyticsEvents = {
 	section_viewed: { section: string };
 	sprocket_download_clicked: {

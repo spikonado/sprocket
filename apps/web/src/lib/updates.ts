@@ -128,9 +128,7 @@ export async function restartPackageUpdate(version: string): Promise<void> {
 					return;
 				}
 			}
-		} catch {
-			// Connection failures are expected while the server restarts.
-		}
+		} catch {}
 
 		await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
 	}

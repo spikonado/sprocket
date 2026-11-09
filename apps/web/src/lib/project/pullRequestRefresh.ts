@@ -89,9 +89,7 @@ export class PullRequestRefresher {
 			});
 
 			if (updates.length > 0) await this.#sync.updateStates(updates);
-		} catch {
-			// Stale badges are harmless; the next refresh tries again.
-		}
+		} catch {}
 	}
 }
 

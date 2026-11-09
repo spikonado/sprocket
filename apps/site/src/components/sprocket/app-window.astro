@@ -111,23 +111,23 @@ const iconProps = {
 </style>
 
 <script>
-	// Steps stay visible without JS or with reduced motion; they're only hidden once we can reveal them.
 	const mocks = document.querySelectorAll<HTMLElement>('[data-mock]');
 	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	const isBelowViewport = (entry: IntersectionObserverEntry) =>
+		!entry.isIntersecting && entry.boundingClientRect.top > 0;
 
 	if (!reduceMotion && 'IntersectionObserver' in window) {
 		for (const mock of mocks) {
 			// A mock taller than the viewport (short windows, high zoom) can never be 35% visible.
-			const cutoff = Math.min(0.35, (0.5 * window.innerHeight) / mock.offsetHeight);
+			const revealRatio = Math.min(0.35, (0.5 * window.innerHeight) / mock.offsetHeight);
 
 			const observer = new IntersectionObserver(
 				([entry]) => {
-					// Rewind only once a mock drops below the viewport, so it replays when scrolled down to again.
-					if (entry.intersectionRatio >= cutoff) mock.classList.add('is-playing');
-					else if (!entry.isIntersecting && entry.boundingClientRect.top > 0)
-						mock.classList.remove('is-playing');
+					if (entry.intersectionRatio >= revealRatio) mock.classList.add('is-playing');
+					else if (isBelowViewport(entry)) mock.classList.remove('is-playing');
 				},
-				{ threshold: [0, cutoff] }
+				{ threshold: [0, revealRatio] }
 			);
 
 			mock.dataset.animate = '';

@@ -127,9 +127,7 @@ export default function BrowserSignInOverlay({
 
 		try {
 			opened.opener = null;
-		} catch {
-			// Best-effort isolation if the browser rejects opener writes.
-		}
+		} catch {}
 
 		onClearOpenErrorRef.current?.();
 	}

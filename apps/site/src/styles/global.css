@@ -1,7 +1,6 @@
 @import 'tailwindcss';
 
 :root {
-	/* Soft sage parchment - PostHog-adjacent, not cream */
 	--background: oklch(0.955 0.014 130);
 	--foreground: oklch(0.18 0.02 260);
 	--surface: oklch(0.99 0.004 130);
@@ -9,15 +8,12 @@
 	--border: oklch(0.88 0.012 130);
 	--ring: oklch(0.72 0.08 230);
 
-	/* Logo-aligned sky blue */
 	--accent: oklch(0.72 0.1 230);
 	--accent-strong: oklch(0.52 0.16 250);
 	--accent-soft: oklch(0.92 0.04 230);
 
-	/* Lighter blue-green fill for install controls */
 	--action-soft: oklch(0.955 0.03 185);
 	--action-soft-hover: oklch(0.93 0.035 185);
-	/* Dark surface for product screenshots */
 	--ink: oklch(0.16 0.015 40);
 }
 
@@ -75,7 +71,6 @@
 		linear-gradient(180deg, oklch(0.97 0.01 130) 0%, var(--background) 42%, var(--background) 100%);
 }
 
-/* Soft construction grid - Spikonado atmosphere without the rainbow sweep. */
 @utility hero-mesh {
 	background-image:
 		linear-gradient(to right, oklch(0.18 0.02 260 / 0.045) 1px, transparent 1px),

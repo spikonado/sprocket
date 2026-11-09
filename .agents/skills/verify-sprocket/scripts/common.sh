@@ -43,8 +43,7 @@ port_pids() {
 	ss -Hltnp "$(port_filter "$@")" | { grep -o 'pid=[0-9]*' || true; } | cut -d= -f2 | sort -u
 }
 
-# Skips tailscale serve on the tailnet IP.
-port_listeners() {
+port_local_listeners() {
 	ss -Hltn "$(port_filter "$@")" | awk '$4 ~ /^(127\.0\.0\.1|\[::1\]|0\.0\.0\.0|\[::\]|\*):/ {print $4}'
 }
 
@@ -75,10 +74,10 @@ take_port_lock() {
 		flock 9
 	fi
 	local busy
-	busy=$(port_listeners "$@")
+	busy=$(port_local_listeners "$@")
 	if [[ -n "$busy" ]]; then
 		echo "Ports in use: $busy. Waiting for that instance to stop. If it is this worktree's leftover, run stop.sh." >&2
-		while [[ -n "$(port_listeners "$@")" ]]; do sleep 30; done
+		while [[ -n "$(port_local_listeners "$@")" ]]; do sleep 30; done
 	fi
 }
 
@@ -100,7 +99,7 @@ stop_listeners() {
 	done
 
 	sleep 1
-	busy=$(port_listeners "$@")
+	busy=$(port_local_listeners "$@")
 	if [[ -n "$busy" ]]; then
 		echo "still listening: $busy" >&2
 		return 1

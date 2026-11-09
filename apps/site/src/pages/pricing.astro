@@ -4,19 +4,12 @@ import PricingPlans from '@/components/pricing-plans';
 import BaseLayout from '@/layouts/base-layout.astro';
 import { fetchPricingCatalog } from '@/lib/pricing/billing';
 import { pricingFaqs } from '@/lib/pricing/catalog';
-import type { PublicPricingCatalog } from '@/lib/pricing/convex-types';
 import { ORGANIZATION_NAME, SITE_URL } from '@/lib/seo';
 
 const description =
 	'Compare Sprocket plans and choose the AI usage limits that fit your engineering work.';
 
-let initialCatalog: PublicPricingCatalog | null = null;
-
-try {
-	initialCatalog = await fetchPricingCatalog();
-} catch {
-	// The island fetches the live catalog in the browser.
-}
+const initialCatalog = await fetchPricingCatalog().catch(() => null);
 
 const freePlan = initialCatalog?.plans.find((plan) => plan.id === 'free');
 

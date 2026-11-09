@@ -53,7 +53,7 @@ const config = {
 			}
 		],
 		'no-case-declarations': 'error',
-		'no-empty': 'error',
+		'no-empty': ['error', { allowEmptyCatch: true }],
 		'no-fallthrough': 'error',
 		'no-prototype-builtins': 'error',
 		'no-regex-spaces': 'error',

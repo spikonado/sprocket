@@ -81,8 +81,7 @@ function reportFatalError(title, error) {
 	}
 }
 
-/** Quits without the unsaved-changes prompt, because choosing Stay would leave a window with no server. */
-function fatalQuit(title, error) {
+function quitSkippingUnsavedPrompt(title, error) {
 	reportFatalError(title, error);
 	hasUnsavedChanges = false;
 	app.quit();
@@ -208,7 +207,7 @@ async function startLocalServer() {
 	const host = serverHost;
 	const dataDir = getLocalDataDir();
 	const serverBinary = getServerBinaryPath();
-	// extraResources (not asar): the Rust server must read these from disk.
+	// The Rust server reads these from disk, so they ship as extraResources outside the asar.
 	const staticDir = isDevelopment ? undefined : path.join(process.resourcesPath, 'web');
 	const fallbackBaseUrl = `http://${host}:${port}`;
 
@@ -253,7 +252,7 @@ async function startLocalServer() {
 	});
 	serverProcess.once('error', (error) => {
 		if (!isStoppingServer()) {
-			fatalQuit('Failed to start Sprocket server', error);
+			quitSkippingUnsavedPrompt('Failed to start Sprocket server', error);
 		}
 	});
 
@@ -296,7 +295,7 @@ async function startLocalServer() {
 			? `The local server exited via signal ${signal}.`
 			: `The local server exited with code ${code ?? 0}.`;
 
-		fatalQuit(
+		quitSkippingUnsavedPrompt(
 			'Sprocket server stopped',
 			new Error(`${exitReason}\n\n${serverStderrTail.trim()}`.trim())
 		);
@@ -457,7 +456,7 @@ function createMainWindow() {
 
 	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
 		if (mainWindow.isDestroyed() || mainWindow !== mainWindowRef) return;
-		fatalQuit('Failed to load Sprocket', error);
+		quitSkippingUnsavedPrompt('Failed to load Sprocket', error);
 	});
 
 	if (isDevelopment) {
@@ -485,14 +484,9 @@ ipcMain.handle('sprocket:set-unsaved-changes', (event, value) => {
 });
 
 function confirmDiscardUnsavedChanges() {
-	// Quitting and installing start only after the user already chose to discard.
-	if (
-		phase !== 'running' ||
-		updates.getState().status === 'installing' ||
-		!hasUnsavedChanges ||
-		!mainWindowRef ||
-		mainWindowRef.isDestroyed()
-	) {
+	const alreadyConfirmed = phase !== 'running' || updates.getState().status === 'installing';
+
+	if (alreadyConfirmed || !hasUnsavedChanges || !mainWindowRef || mainWindowRef.isDestroyed()) {
 		return true;
 	}
 
@@ -556,7 +550,7 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 			}
 		}
 	} catch (error) {
-		fatalQuit('Failed to install Sprocket update', error);
+		quitSkippingUnsavedPrompt('Failed to install Sprocket update', error);
 	}
 
 	return updates.getState();
@@ -673,7 +667,7 @@ if (hasSingleInstanceLock) {
 			updateTimer.unref();
 		})
 		.catch((error) => {
-			fatalQuit('Failed to start Sprocket', error);
+			quitSkippingUnsavedPrompt('Failed to start Sprocket', error);
 		});
 
 	app.on('activate', showDesktopApp);

@@ -22,6 +22,5 @@ for attempt in 1 2 3 4; do
 	sleep $((attempt * 5))
 done
 
-# Checkout return URLs follow this origin.
 bunx convex env set --preview-name "$VERCEL_GIT_COMMIT_REF" \
 	SPROCKET_MARKETING_ORIGIN "https://$VERCEL_BRANCH_URL"

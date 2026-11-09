@@ -10,7 +10,5 @@ export function readStorage(key: string): string | null {
 export function writeStorage(key: string, value: string): void {
 	try {
 		localStorage.setItem(key, value);
-	} catch {
-		// The value only lasts for this session.
-	}
+	} catch {}
 }

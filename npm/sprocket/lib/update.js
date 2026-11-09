@@ -331,9 +331,7 @@ export async function killProcessTree(child, platform = process.platform, extras
 		} catch {
 			try {
 				process.kill(pid, 'SIGKILL');
-			} catch {
-				// The process already exited.
-			}
+			} catch {}
 		}
 	}
 }
@@ -423,9 +421,7 @@ export function createRunCommand(spawnImpl, treeKiller = killProcessTree, selfKi
 				if (managed && platform !== 'win32') {
 					try {
 						killHelperGroup(-process.pid);
-					} catch {
-						// Tests inject a no-op killer; production SIGKILL does not return.
-					}
+					} catch {}
 
 					done({
 						status: 1,

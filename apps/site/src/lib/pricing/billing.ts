@@ -99,7 +99,6 @@ export async function fetchMySubscription(): Promise<MySubscription> {
 	return convex.query(api.billing.getMySubscription, {});
 }
 
-/** Creates a hosted checkout and returns its URL after recording the attempt for recovery. */
 export async function startCheckout(purchase: Purchase): Promise<string> {
 	const { convex, userId } = await signedIn();
 
@@ -112,9 +111,7 @@ export async function startCheckout(purchase: Purchase): Promise<string> {
 			ATTEMPT_KEY,
 			JSON.stringify({ userId, attemptId: result.attemptId, purchase } satisfies CheckoutAttempt)
 		);
-	} catch {
-		// Without storage the checkout still works; only automatic recovery on return is lost.
-	}
+	} catch {}
 
 	return result.checkout_url;
 }
@@ -134,9 +131,7 @@ export function readCheckoutAttempt(userId: string): CheckoutAttempt | null {
 export function clearCheckoutAttempt(): void {
 	try {
 		sessionStorage.removeItem(ATTEMPT_KEY);
-	} catch {
-		// Storage is unavailable, so there is no attempt to clear.
-	}
+	} catch {}
 }
 
 export async function fetchCheckoutStatus(attemptId: string): Promise<CheckoutStatus> {
@@ -151,7 +146,6 @@ export async function fetchCustomerPortalUrl(): Promise<string> {
 	return (await convex.action(api.billing.customerPortal, {})).portal_url;
 }
 
-/** Billing refusals, such as checkout while a subscription is live, are ConvexErrors worded for users. */
-export function userFacingError(cause: unknown): string | null {
+export function billingRefusalMessage(cause: unknown): string | null {
 	return cause instanceof ConvexError ? (z.string().safeParse(cause.data).data ?? null) : null;
 }

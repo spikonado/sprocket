@@ -144,7 +144,6 @@ export function buildPlanCards(catalog: PublicPricingCatalog): PlanCard[] {
 	});
 }
 
-/** Packs without a synced price can't be bought yet. */
 export function buildCreditPackCards(catalog: PublicPricingCatalog): CreditPackCard[] {
 	return catalog.creditPacks.flatMap(({ productId, usageDollars, expiresAfter, price }) =>
 		price
