@@ -700,6 +700,67 @@ fn released_reasoning_reloads_verbatim_as_openai() {
     assert!(reasoning.native.is_none());
 }
 
+fn anthropic_origin() -> serde_json::Value {
+    serde_json::to_value(Origin::new(ANTHROPIC_MESSAGES_API, "anthropic", "claude")).unwrap()
+}
+
+fn reloaded_reasoning_native(item: serde_json::Value) -> Option<serde_json::Value> {
+    let message = reloaded_assistant(item);
+    let AssistantContent::Reasoning(reasoning) = &message.content[0] else {
+        panic!("expected reasoning");
+    };
+    reasoning.native.as_ref().map(|native| native.item.clone())
+}
+
+#[test]
+fn anthropic_thinking_reloads_as_the_native_block() {
+    let signed = serde_json::json!({ "type": "thinking", "thinking": "plan", "signature": "sig" });
+    let redacted = serde_json::json!({ "type": "redacted_thinking", "data": "opaque" });
+    for (reasoning, native) in [
+        (Reasoning::new("plan"), signed),
+        (
+            Reasoning {
+                redacted: true,
+                ..Reasoning::default()
+            },
+            redacted,
+        ),
+    ] {
+        let AssistantContent::Reasoning(live) =
+            AssistantContent::Reasoning(reasoning).with_native(native.clone())
+        else {
+            unreachable!()
+        };
+        let mut parts = LiveAssistantParts::default();
+        let mut metadata = HashMap::new();
+        apply_completed_reasoning(&mut parts, &mut metadata, "s", "r", &live);
+        let mut item = merge_provider_metadata(&parts.parts[0], metadata.get("reasoning:s:r"));
+        assert!(item["providerMetadata"].get("openai").is_none());
+        item["providerMetadata"]["origin"] = anthropic_origin();
+        assert_eq!(reloaded_reasoning_native(item), Some(native));
+    }
+}
+
+#[test]
+fn released_anthropic_thinking_rebuilds_from_its_signature() {
+    let released = |text: &str, signature: Option<&str>| {
+        let mut item = serde_json::json!({
+            "type": "reasoning", "text": text,
+            "providerMetadata": { "origin": anthropic_origin() }
+        });
+        if let Some(signature) = signature {
+            item["providerMetadata"]["openai"] =
+                serde_json::json!({ "reasoningEncryptedContent": signature });
+        }
+        item
+    };
+    assert_eq!(
+        reloaded_reasoning_native(released("plan", Some("sig"))),
+        Some(serde_json::json!({ "type": "thinking", "thinking": "plan", "signature": "sig" }))
+    );
+    assert_eq!(reloaded_reasoning_native(released("unsigned", None)), None);
+}
+
 #[test]
 fn reloads_empty_opaque_reasoning_without_inventing_ciphertext() {
     let message = reloaded_assistant(serde_json::json!({

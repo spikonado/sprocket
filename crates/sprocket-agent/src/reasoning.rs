@@ -75,19 +75,27 @@ pub(crate) fn apply_completed_reasoning(
     let id = format!("{stream_id}:{correlator}");
     let key = format!("reasoning:{id}");
     let text = completed_reasoning_text(reasoning);
-    let openai = native_reasoning(reasoning)
-        .map(|native| &native.item)
-        .filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"));
-    let mut metadata = openai_reasoning_metadata(
-        openai
-            .and_then(|item| item.get("id"))
-            .and_then(JsonValue::as_str),
-        opaque_reasoning_blob(reasoning),
-    )
-    .unwrap_or_else(|| serde_json::json!({}));
-    if openai.is_some() {
-        metadata["reasoningIssuer"] = serde_json::json!("openai");
-    }
+    let metadata = match native_reasoning(reasoning).map(|native| &native.item) {
+        Some(item) if item.get("type").and_then(JsonValue::as_str) == Some("reasoning") => {
+            let mut metadata = openai_reasoning_metadata(
+                item.get("id").and_then(JsonValue::as_str),
+                opaque_reasoning_blob(reasoning),
+            )
+            .unwrap_or_else(|| serde_json::json!({}));
+            metadata["reasoningIssuer"] = serde_json::json!("openai");
+            metadata
+        }
+        Some(item) => {
+            let mut item = item.clone();
+            if let Some(fields) = item.as_object_mut()
+                && fields.get("thinking").and_then(JsonValue::as_str) == Some(text.as_str())
+            {
+                fields.remove("thinking");
+            }
+            serde_json::json!({ "rigNative": item })
+        }
+        None => serde_json::json!({}),
+    };
     provider_metadata.insert(key, metadata);
     parts.apply_completed_reasoning(id, text, Some(stream_id.to_string()), now_ms());
 }

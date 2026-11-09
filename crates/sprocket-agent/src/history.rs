@@ -14,6 +14,7 @@ use sprocket_transcript::{
 };
 
 const LEGACY_REASONING_ISSUER: &str = "openai";
+const ANTHROPIC_MESSAGES_API: &str = "anthropic.messages";
 
 pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
     history
@@ -304,7 +305,9 @@ pub fn agent_history_from_parts(
                     let contents: Vec<_> = completion
                         .items
                         .iter()
-                        .filter_map(|item| completion_item_to_history(item, omit_reasoning))
+                        .filter_map(|item| {
+                            completion_item_to_history(item, origin.as_ref(), omit_reasoning)
+                        })
                         .collect();
                     let call_ids: Vec<_> = contents
                         .iter()
@@ -359,6 +362,7 @@ fn non_empty_str<'a>(value: Option<&'a serde_json::Value>) -> Option<&'a str> {
 
 fn completion_item_to_history(
     item: &serde_json::Value,
+    origin: Option<&Origin>,
     omit_reasoning: bool,
 ) -> Option<AgentHistoryContent> {
     let metadata = item.get("providerMetadata").filter(|_| !omit_reasoning);
@@ -371,7 +375,7 @@ fn completion_item_to_history(
                 text: text.to_string(),
             })
         }
-        "reasoning" => reasoning_history(item),
+        "reasoning" => reasoning_history(item, origin),
         "tool-call" => {
             let item_id = non_empty_str(openai_field(item, "itemId"));
             let call_id = non_empty_str(item.get("callId"))
@@ -434,11 +438,27 @@ fn legacy_text_native_item(text: &str, metadata: &serde_json::Value) -> Option<s
     Some(native)
 }
 
-fn reasoning_history(item: &serde_json::Value) -> Option<AgentHistoryContent> {
+fn reasoning_history(
+    item: &serde_json::Value,
+    origin: Option<&Origin>,
+) -> Option<AgentHistoryContent> {
     let summary = item
         .get("text")
         .and_then(|value| value.as_str())
         .unwrap_or("");
+    let metadata = item.get("providerMetadata");
+    if let Some(native) = metadata.and_then(|metadata| metadata.get("rigNative")) {
+        let mut native = native.clone();
+        if native.get("type").and_then(serde_json::Value::as_str) == Some("thinking")
+            && native.get("thinking").is_none()
+        {
+            native["thinking"] = serde_json::json!(summary);
+        }
+        return Some(AgentHistoryContent::Reasoning {
+            summary: summary.to_string(),
+            native_item: Some(native),
+        });
+    }
     let item_id = non_empty_str(openai_field(item, "itemId"));
     let encrypted = opaque_encrypted(
         openai_field(item, "reasoningEncryptedContent").and_then(|value| value.as_str()),
@@ -446,8 +466,13 @@ fn reasoning_history(item: &serde_json::Value) -> Option<AgentHistoryContent> {
     if summary.is_empty() && encrypted.is_none() && item_id.is_none() {
         return None;
     }
-    let issuer = item
-        .get("providerMetadata")
+    if origin.is_some_and(|origin| origin.api.as_str() == ANTHROPIC_MESSAGES_API) {
+        return Some(AgentHistoryContent::Reasoning {
+            summary: summary.to_string(),
+            native_item: legacy_anthropic_thinking(summary, encrypted),
+        });
+    }
+    let issuer = metadata
         .and_then(|metadata| metadata.get("reasoningIssuer"))
         .and_then(|value| value.as_str())
         .unwrap_or(LEGACY_REASONING_ISSUER);
@@ -469,6 +494,11 @@ fn reasoning_history(item: &serde_json::Value) -> Option<AgentHistoryContent> {
         summary: summary.to_string(),
         native_item,
     })
+}
+
+fn legacy_anthropic_thinking(text: &str, signature: Option<&str>) -> Option<serde_json::Value> {
+    let signature = signature.filter(|_| !text.is_empty())?;
+    Some(serde_json::json!({ "type": "thinking", "thinking": text, "signature": signature }))
 }
 
 fn tool_call_native_item(
