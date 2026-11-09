@@ -263,6 +263,7 @@ impl Host {
 
     pub fn start(&self) -> HostTasks {
         self.prepare_tools();
+        self.kicad.update_outdated();
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));

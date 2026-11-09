@@ -113,13 +113,20 @@ impl KiCadConnector {
         })
     }
 
-    /// A Sprocket update can pin a newer connector, so an older install updates on startup.
-    pub(crate) fn prepare(self: &Arc<Self>) {
-        let connector = Arc::clone(self);
+    pub(crate) fn prepare(&self) {
+        let (root, pinned) = (self.root.clone(), self.pinned.clone());
         tokio::task::spawn_blocking(move || {
-            if let Err(error) = repair_unless_installing(&connector.root, &connector.pinned) {
+            if let Err(error) = repair_unless_installing(&root, &pinned) {
                 tracing::warn!("KiCad cleanup failed: {error}");
             }
+        });
+    }
+
+    /// A Sprocket update can pin a newer connector, so Sprocket updates an older install
+    /// once when it starts.
+    pub(crate) fn update_outdated(self: &Arc<Self>) {
+        let connector = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
             if connector.outdated(installed_version(&connector.root, &connector.pinned)) {
                 connector.start_install_or_update();
             }
