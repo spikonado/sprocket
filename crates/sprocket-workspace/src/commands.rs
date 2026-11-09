@@ -540,10 +540,14 @@ impl CommandSessionManager {
         })
     }
 
-    /// A completed result whose save failed reads back as interrupted once released.
     pub async fn prune_completed(&self) {
         self.sessions.lock().await.retain(|_, session| {
-            Arc::strong_count(session) > 1 || session.completion.borrow().is_none()
+            Arc::strong_count(session) > 1
+                || !session
+                    .completion
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|completion| completion.saved)
         });
     }
 
@@ -627,7 +631,6 @@ impl CommandSessionManager {
             }
         })
         .await;
-        // Unfinished sessions stay live so polls never race their supervisor's final save.
         self.prune_completed().await;
     }
 

@@ -48,10 +48,16 @@ impl Container {
     pub fn spawn(&self, command: &mut Command) -> io::Result<Child> {
         let child = command.spawn()?;
         // Anything the shell starts before this assignment is not contained. Shells take far
-        // longer than this to start a child.
+        // longer than this to start a child. A failed assignment falls back to `taskkill /T`,
+        // which misses processes the shell detaches.
         if let Some(process) = child.raw_handle() {
             // SAFETY: both handles stay open for the call.
-            unsafe { AssignProcessToJobObject(self.job, process as HANDLE) };
+            if unsafe { AssignProcessToJobObject(self.job, process as HANDLE) } == 0 {
+                tracing::warn!(
+                    "failed to add a command shell to the job object: {}",
+                    io::Error::last_os_error()
+                );
+            }
         }
         Ok(child)
     }

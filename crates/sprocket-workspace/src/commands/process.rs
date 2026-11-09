@@ -27,6 +27,7 @@ pub(super) struct CommandCompletion {
     pub success: bool,
     pub timed_out: bool,
     pub error: Option<String>,
+    pub saved: bool,
 }
 
 pub(super) fn signal_change(changes: &Option<watch::Sender<()>>) {
@@ -121,16 +122,20 @@ pub(super) async fn supervise_command(
         success: status.is_some_and(|status| status.success()) && !timed_out && error.is_none(),
         timed_out,
         error,
+        saved: false,
     };
     let (path, mut history) = history;
     history.result = completion_output(&completed, output.lock().await.full_preview());
-    if let Err(error) = history.save(&path).await {
-        completed.success = false;
-        let message = format!("failed to save command result: {error:#}");
-        completed.error = Some(match completed.error {
-            Some(error) => format!("{error}; {message}"),
-            None => message,
-        });
+    match history.save(&path).await {
+        Ok(()) => completed.saved = true,
+        Err(error) => {
+            completed.success = false;
+            let message = format!("failed to save command result: {error:#}");
+            completed.error = Some(match completed.error {
+                Some(error) => format!("{error}; {message}"),
+                None => message,
+            });
+        }
     }
     stdin_task.abort();
     let _ = stdin_task.await;

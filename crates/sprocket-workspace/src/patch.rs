@@ -277,8 +277,8 @@ async fn load(path: &Path) -> Result<FileState> {
                 .with_context(|| format!("failed to read {}", path.display()))?,
             permissions: Some(metadata.permissions()),
         })),
-        // Directories and dangling symlinks.
         Ok(_) => Ok(FileState::NotAFile),
+        // `symlink_metadata` found the entry, so this is a dangling symlink.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(FileState::NotAFile),
         Err(error) => Err(error).with_context(|| format!("failed to inspect {}", path.display())),
     }
@@ -311,7 +311,15 @@ async fn commit(
     cancellation: &WorkspaceCancellation,
     files: &BTreeMap<PathBuf, TrackedFile>,
 ) -> Result<()> {
-    // Removals first so a later section can create a file where a removed one was.
+    remove_deleted_files(cancellation, files).await?;
+    write_updated_files(cancellation, files).await?;
+    cancellation.ensure_active()
+}
+
+async fn remove_deleted_files(
+    cancellation: &WorkspaceCancellation,
+    files: &BTreeMap<PathBuf, TrackedFile>,
+) -> Result<()> {
     for (path, file) in files {
         if let (FileState::File(_), Some(FileState::Missing)) = (&file.original, &file.updated) {
             cancellation.ensure_active()?;
@@ -320,6 +328,13 @@ async fn commit(
                 .with_context(|| format!("failed to remove {}", path.display()))?;
         }
     }
+    Ok(())
+}
+
+async fn write_updated_files(
+    cancellation: &WorkspaceCancellation,
+    files: &BTreeMap<PathBuf, TrackedFile>,
+) -> Result<()> {
     for (path, file) in files {
         let Some(FileState::File(contents)) = &file.updated else {
             continue;
@@ -338,7 +353,7 @@ async fn commit(
             }
         }
     }
-    cancellation.ensure_active()
+    Ok(())
 }
 
 async fn write_new_file(
