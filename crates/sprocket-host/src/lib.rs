@@ -68,7 +68,6 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Runs `task` on its own Tokio task, so dropping the caller can't cancel it partway.
 pub(crate) async fn run_to_completion<T: Send + 'static>(
     task: impl Future<Output = T> + Send + 'static,
 ) -> Result<T, tokio::task::JoinError> {
@@ -209,8 +208,6 @@ impl Host {
         self.kicad.prepare();
     }
 
-    /// The environment that gives agents their pinned tools. Runtimes go after the user's own
-    /// on the `PATH`, so projects keep the versions they expect.
     pub fn tool_environment(&self) -> Vec<(OsString, OsString)> {
         let mut environment = append_path(
             prepend_path(

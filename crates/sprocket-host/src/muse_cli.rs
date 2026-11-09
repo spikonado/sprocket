@@ -18,7 +18,6 @@ const INSTALL_COMMAND: &str = "curl -fsSL https://dev.meta.ai/install.sh | bash"
 #[cfg(windows)]
 const INSTALL_COMMAND: &str = "irm https://dev.meta.ai/install.ps1 | iex";
 
-/// The catalog model Muse subscription runs serve.
 const MODEL: &str = "muse-wonder-full-1.0";
 const STATUS_TIMEOUT: Duration = Duration::from_secs(20);
 /// Muse's device codes expire well before this.
@@ -148,8 +147,8 @@ impl MuseCli {
         Msp::start(&executable, ["--no-session-log"], &home()).await
     }
 
-    pub fn install(&self) {
-        self.install.install();
+    pub fn start_install_or_update(&self) {
+        self.install.start_install_or_update();
     }
 
     /// Starts Muse's device-code sign-in. Status turns `ready` or `planRequired` once the user

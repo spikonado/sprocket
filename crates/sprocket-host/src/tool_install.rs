@@ -318,7 +318,6 @@ pub(crate) fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::i
             Err(std::fs::TryLockError::Error(error)) => return Err(error),
         }
     }
-    // Renaming first keeps a partial removal from looking like an installed version.
     // Windows refuses the rename while files inside are open, including running
     // executables and our own locks; on Unix, running processes keep their unlinked files.
     let tombstone = tool_dir.join(format!(".{name}.{}{TOMBSTONE_SUFFIX}", std::process::id()));

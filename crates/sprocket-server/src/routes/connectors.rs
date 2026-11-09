@@ -24,7 +24,10 @@ impl UserScoped for UserRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/connectors", get(list))
-        .route("/connectors/kicad/install", post(install_kicad))
+        .route(
+            "/connectors/kicad/install",
+            post(start_kicad_install_or_update),
+        )
         .route("/connectors/kicad/uninstall", post(uninstall_kicad))
 }
 
@@ -35,12 +38,11 @@ async fn list(
     Json(vec![state.host.kicad.status().await])
 }
 
-/// Also updates or retries. The install keeps running after the response.
-async fn install_kicad(
+async fn start_kicad_install_or_update(
     State(state): State<AppState>,
     AuthorizedJson(_): AuthorizedJson<UserRequest>,
 ) -> Json<ConnectorStatus> {
-    state.host.kicad.install();
+    state.host.kicad.start_install_or_update();
     Json(state.host.kicad.status().await)
 }
 
