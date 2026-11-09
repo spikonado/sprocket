@@ -25,7 +25,7 @@
 		"@exalabs/convex-exa": "^0.1.1",
 		"@fontsource-variable/geist": "^5.3.0",
 		"@fontsource-variable/geist-mono": "^5.3.0",
-		"@json-render/core": "0.21.3",
+		"@json-render/core": "0.21.4",
 		"@json-render/react": "0.21.3",
 		"@json-render/shadcn": "0.21.4",
 		"@lezer/highlight": "^1.2.5",
