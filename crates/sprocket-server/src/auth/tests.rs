@@ -245,16 +245,20 @@ async fn owner_changes_unbind_other_accounts_without_binding_new_sessions() {
     let (_, unbound) = auth.bootstrap_browser_session(true).await.unwrap();
     auth.bind_session_user(&bound, "user-1").await.unwrap();
 
-    auth.sync_sessions_with_owner(Some("user-1")).await.unwrap();
+    auth.unbind_sessions_not_owned_by(Some("user-1"))
+        .await
+        .unwrap();
     auth.require_session_user(&bound, "user-1").await.unwrap();
     assert!(!auth.session_has_user(&unbound).await);
 
-    auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
+    auth.unbind_sessions_not_owned_by(Some("user-2"))
+        .await
+        .unwrap();
     assert!(!auth.session_has_user(&bound).await);
     assert!(!auth.session_has_user(&unbound).await);
     auth.bind_session_user(&bound, "user-2").await.unwrap();
 
-    auth.sync_sessions_with_owner(None).await.unwrap();
+    auth.unbind_sessions_not_owned_by(None).await.unwrap();
     assert!(!auth.session_has_user(&bound).await);
 }
 

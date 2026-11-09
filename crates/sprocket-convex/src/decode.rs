@@ -54,7 +54,6 @@ impl std::fmt::Display for ConvexFunctionError {
 
 impl std::error::Error for ConvexFunctionError {}
 
-/// The code of the first Convex function failure in `error`'s chain.
 pub fn convex_error_code(error: &anyhow::Error) -> Option<ConvexErrorCode> {
     error
         .chain()
@@ -62,14 +61,9 @@ pub fn convex_error_code(error: &anyhow::Error) -> Option<ConvexErrorCode> {
         .and_then(|failure| failure.code)
 }
 
-/// Decode a Convex `FunctionResult` into `T`, converting Values through plain JSON.
-///
-/// Error messages are cleaned of Convex transport noise (request-id masking lines,
-/// `Uncaught` prefixes, stack frames) so callers can surface them to users or tools
-/// without extra stripping. `ConvexError` `data` is preferred over `message`
-/// because production redacts `message`. Failures are `ConvexFunctionError`s.
-/// The `function` argument is only attached when a successful Value fails to
-/// deserialize into `T`.
+/// Failures are `ConvexFunctionError`s whose messages are cleaned of Convex transport noise
+/// (request-ID lines, `Uncaught` prefixes, stack frames). `function` only labels a successful
+/// value that fails to deserialize into `T`.
 pub fn decode_function_result<T: for<'de> Deserialize<'de>>(
     result: FunctionResult,
     function: &str,

@@ -1251,7 +1251,7 @@ async fn read_transcript_snapshot(
     let user_id = &context.user_id;
     let thread_id = &transcript.thread_id;
     let filter = sprocket_transcript::monitor::MonitorFilter {
-        run_id,
+        only_run_id: run_id,
         hidden_prompt_runs: info.caller_prompt_run_ids.clone(),
     };
     sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript)

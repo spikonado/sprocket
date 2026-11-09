@@ -52,15 +52,15 @@ pub struct MonitorPage {
 
 #[derive(Clone, Debug, Default)]
 pub struct MonitorFilter {
-    /// Keeps only entries from this run.
-    pub run_id: Option<String>,
-    /// Runs whose prompts are omitted.
+    pub only_run_id: Option<String>,
     pub hidden_prompt_runs: BTreeSet<String>,
 }
 
 impl MonitorFilter {
     fn keeps(&self, run: &str, entry: &MonitorEntry) -> bool {
-        self.run_id.as_deref().is_none_or(|run_id| run_id == run)
+        self.only_run_id
+            .as_deref()
+            .is_none_or(|run_id| run_id == run)
             && !(matches!(entry, MonitorEntry::Prompt { .. })
                 && self.hidden_prompt_runs.contains(run))
     }
@@ -92,7 +92,8 @@ struct MonitorCursor {
 #[serde(rename_all = "camelCase")]
 struct ResumeEntry {
     id: String,
-    offset: u64,
+    #[serde(rename = "offset")]
+    source_offset: u64,
     patch: bool,
 }
 
@@ -187,10 +188,10 @@ fn read_page(
         let (entry, next) = resume_entry(replica, &resume, max_chars)?;
         cursor.resume = next;
         cursor.revision = revision;
-        let boundary = replica.completion_boundary(cursor.scanned, ready_end)?;
+        let scan_end = replica.first_pending_patch_sequence(cursor.scanned, ready_end)?;
         let has_more = cursor.resume.is_some()
             || !replica
-                .project_completed(cursor.scanned, boundary)?
+                .project_completed(cursor.scanned, scan_end)?
                 .is_empty()
             || prefix < replica.total()?;
         return Ok(MonitorPage {
@@ -200,10 +201,8 @@ fn read_page(
         });
     }
 
-    // Results can arrive after unrelated committed entries. Pin at the source
-    // until it completes to preserve canonical order without losing it.
-    let completion_boundary = replica.completion_boundary(cursor.scanned, ready_end)?;
-    let entries = replica.project_completed(cursor.scanned, completion_boundary)?;
+    let scan_end = replica.first_pending_patch_sequence(cursor.scanned, ready_end)?;
+    let entries = replica.project_completed(cursor.scanned, scan_end)?;
     let mut output: Vec<MonitorEntry> = Vec::new();
     let mut used = 0usize;
     let mut exhausted = true;
@@ -261,13 +260,12 @@ fn read_page(
         }
     }
     if exhausted {
-        cursor.scanned = completion_boundary;
+        cursor.scanned = scan_end;
     }
     anyhow::ensure!(used <= max_chars, "monitor page exceeded the char budget");
     cursor.revision = revision;
-    let has_more = cursor.resume.is_some()
-        || cursor.scanned < completion_boundary
-        || prefix < replica.total()?;
+    let has_more =
+        cursor.resume.is_some() || cursor.scanned < scan_end || prefix < replica.total()?;
     Ok(MonitorPage {
         entries: output,
         next_cursor: encode_cursor(&cursor)?,
@@ -288,7 +286,7 @@ fn truncate_entry(
                 *used += budget;
                 Some(ResumeEntry {
                     id: id.clone(),
-                    offset: budget as u64,
+                    source_offset: budget as u64,
                     patch: false,
                 })
             } else {
@@ -303,7 +301,7 @@ fn truncate_entry(
                     changes.truncate(index);
                     return Some(ResumeEntry {
                         id: id.clone(),
-                        offset: index as u64,
+                        source_offset: index as u64,
                         patch: true,
                     });
                 }
@@ -322,8 +320,6 @@ fn patch_change_cost(change: &PatchChangeSummary) -> usize {
             .map_or(0, |source| source.chars().count())
 }
 
-/// Renders the remaining fragment of a truncated entry. Offsets accumulate
-/// against the original stored text, so consecutive resumes never restart.
 fn resume_entry(
     replica: &WorkReplica,
     resume: &ResumeEntry,
@@ -351,7 +347,7 @@ fn resume_entry(
         else {
             anyhow::bail!("patch resume points at another entry kind");
         };
-        let offset = usize::try_from(resume.offset)?;
+        let offset = usize::try_from(resume.source_offset)?;
         anyhow::ensure!(
             offset <= changes.len(),
             "patch resume offset exceeds result"
@@ -376,7 +372,7 @@ fn resume_entry(
             )
             .optional()?;
         let (kind, text) = row.with_context(|| format!("monitor entry {} is gone", resume.id))?;
-        let offset = usize::try_from(resume.offset).unwrap_or(usize::MAX);
+        let offset = usize::try_from(resume.source_offset).unwrap_or(usize::MAX);
         let text = text.chars().skip(offset).collect();
         match kind.as_str() {
             "prompt" => MonitorEntry::Prompt {
@@ -393,7 +389,7 @@ fn resume_entry(
     let mut used = 0;
     let mut next = truncate_entry(&mut entry, &mut used, max_chars);
     if let Some(next) = &mut next {
-        next.offset = next.offset.saturating_add(resume.offset);
+        next.source_offset = next.source_offset.saturating_add(resume.source_offset);
     }
     Ok((entry, next))
 }
@@ -418,7 +414,7 @@ impl WorkReplica {
             .collect::<Result<_, _>>()?)
     }
 
-    fn completion_boundary(&self, after: u64, boundary: u64) -> anyhow::Result<u64> {
+    fn first_pending_patch_sequence(&self, after: u64, boundary: u64) -> anyhow::Result<u64> {
         let mut next = boundary;
         for source in self.patch_sources(after, boundary)? {
             if self.patch_outcome(&source)?.is_none() {

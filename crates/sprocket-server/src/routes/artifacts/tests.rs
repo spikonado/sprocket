@@ -24,7 +24,6 @@ async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails()
         true,
         sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
-    // Fail cloud initialization immediately without using the network.
     state.host.convex_deployment_url.clear();
     let bindings = state
         .host

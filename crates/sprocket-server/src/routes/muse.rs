@@ -57,7 +57,6 @@ async fn start_install_or_update(
     Json(state.host.muse_cli.status().await)
 }
 
-/// Starts a device-code sign-in, which the user finishes on Meta's site.
 async fn start_login(
     State(state): State<AppState>,
     AuthorizedJson(_): AuthorizedJson<UserRequest>,

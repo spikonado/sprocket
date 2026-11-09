@@ -111,7 +111,6 @@ pub enum HiddenPromptKind {
     Instructions,
     Environment,
     Continuation,
-    /// Written by a newer version. Kept so its parts still parse.
     #[serde(other)]
     Other,
 }

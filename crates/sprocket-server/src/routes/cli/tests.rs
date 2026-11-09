@@ -73,7 +73,7 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
     request.after_revision = None;
     state
         .auth
-        .sync_sessions_with_owner(Some("other-user"))
+        .unbind_sessions_not_owned_by(Some("other-user"))
         .await
         .unwrap();
     assert_eq!(
@@ -147,7 +147,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
     );
     state
         .auth
-        .sync_sessions_with_owner(Some("user"))
+        .unbind_sessions_not_owned_by(Some("user"))
         .await
         .unwrap();
     assert!(

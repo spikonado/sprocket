@@ -88,13 +88,11 @@ fn main() -> std::process::ExitCode {
 }
 
 fn entry() -> anyhow::Result<u8> {
-    let restarted = std::env::var_os(RESTARTED_ENV).is_some();
     // SAFETY: this runs before the Tokio runtime is constructed.
-    unsafe {
-        // Keep agent shells from inheriting the restart marker.
-        std::env::remove_var(RESTARTED_ENV);
+    let restarted = unsafe {
         load_repo_env();
-    }
+        take_env_flag(RESTARTED_ENV)
+    };
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -162,6 +160,12 @@ fn entry() -> anyhow::Result<u8> {
             serve_local(server, false, !restarted, workspace_path, false)
         }
     }
+}
+
+unsafe fn take_env_flag(key: &str) -> bool {
+    let present = std::env::var_os(key).is_some();
+    unsafe { std::env::remove_var(key) };
+    present
 }
 
 fn resolve_launch_workspace(path: &Path) -> anyhow::Result<String> {

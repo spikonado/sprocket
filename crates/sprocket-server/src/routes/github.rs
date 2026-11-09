@@ -48,8 +48,6 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/github/settings", post(update_handler))
 }
 
-/// Reloads the user's saved tokens, so a token just saved on any machine is
-/// checked right away.
 async fn status_handler(
     AuthorizedQuery(query): AuthorizedQuery<StatusQuery>,
 ) -> Json<GitHubStatus> {

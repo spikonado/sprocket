@@ -41,7 +41,6 @@ struct ClientState {
     used: bool,
 }
 
-/// Owns each CLI client's lease together with its local auth session, so both end together.
 pub(crate) struct CliSessions {
     host: Arc<HostLifetime>,
     native_auth: Arc<NativeAuthManager>,

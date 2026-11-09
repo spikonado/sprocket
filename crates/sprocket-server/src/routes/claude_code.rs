@@ -86,7 +86,6 @@ async fn start_login(
     Ok(Json(login))
 }
 
-/// Returns the long-lived token, which the UI saves to the user's vault.
 async fn finish_login(
     State(state): State<AppState>,
     AuthorizedJson(request): AuthorizedJson<FinishLoginRequest>,

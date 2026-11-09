@@ -24,7 +24,7 @@ const RESYNC: TranscriptWatchEvent = TranscriptWatchEvent::UPDATED;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TranscriptScope {
     user_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
     thread_id: String,
 }
 
@@ -32,7 +32,7 @@ pub(crate) struct TranscriptScope {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptAttachmentRequest {
     user_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
     thread_id: String,
     storage_id: String,
 }
@@ -49,7 +49,7 @@ impl UserScoped for TranscriptAttachmentRequest {
     }
 }
 
-fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
+fn deserialize_path_safe_id<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<String, D::Error> {
     let id = String::deserialize(deserializer)?;
@@ -69,10 +69,6 @@ fn deserialize_row_id<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<String, D::Error> {
     let id = String::deserialize(deserializer)?;
-    // Work section keys are `agent:{runId}:{claimId}:{attempt}:section:{ordinal}`
-    // (and similar `historical-tool:...` keys), so colons must be accepted.
-    // Unlike thread IDs, row IDs are only used as SQLite query parameters,
-    // never as filesystem path segments.
     if id.is_empty()
         || id.len() > 512
         || !id
@@ -104,7 +100,7 @@ pub fn routes() -> axum::Router<AppState> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DisplayDetailsRequest {
     user_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
     thread_id: String,
     #[serde(deserialize_with = "deserialize_row_id")]
     row_id: String,
@@ -117,7 +113,7 @@ struct DisplayDetailsRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DisplayStream {
-    #[serde(deserialize_with = "deserialize_thread_id")]
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
     run_id: String,
     stream_id: String,
 }
@@ -133,7 +129,7 @@ struct DisplayChangeCursor {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DisplayRequest {
     user_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
     thread_id: String,
     before: Option<u64>,
     limit: Option<u32>,
