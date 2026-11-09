@@ -303,16 +303,16 @@ async fn write_file(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceFileWriteRequest>,
 ) -> Result<Json<WorkspaceFileWrite>, ApiError> {
-    in_workspace(payload.workspace_path, move |root| {
-        write_workspace_file(
-            root,
-            &payload.path,
-            &payload.content,
-            payload.expected_version.as_deref(),
-        )
-    })
+    let root = in_workspace(payload.workspace_path, |root| Ok(root.to_owned())).await?;
+    write_workspace_file(
+        root,
+        payload.path,
+        payload.content,
+        payload.expected_version,
+    )
     .await
     .map(Json)
+    .map_err(ApiError::bad_request)
 }
 
 async fn create_entry(

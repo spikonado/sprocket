@@ -66,6 +66,10 @@ impl CommandHistory {
         }
     }
 
+    pub(crate) fn is_orphaned_on(&self, machine_id: &str) -> bool {
+        self.machine_id == machine_id && self.result.running
+    }
+
     pub(crate) async fn mark_interrupted(&mut self) -> Result<()> {
         if self.result.running {
             self.result.running = false;

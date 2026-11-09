@@ -36,7 +36,7 @@ pub struct Remark {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub body: String,
-    /// RFC 3339 in UTC, as GitHub writes it, so it orders as text.
+    /// GitHub writes RFC 3339 in UTC, which orders as text.
     #[serde(skip)]
     pub at: String,
     pub url: String,
@@ -181,13 +181,12 @@ pub fn compare(seen: &Seen, activity: &Activity) -> Report {
     }
 }
 
-/// `fresh` are all at or after `through`.
 fn seen_through(
     through: Option<&str>,
     ids: &[String],
-    fresh: &[Remark],
+    new_remarks: &[Remark],
 ) -> (Option<String>, Vec<String>) {
-    let Some(latest) = fresh.iter().map(|remark| remark.at.as_str()).max() else {
+    let Some(latest) = new_remarks.iter().map(|remark| remark.at.as_str()).max() else {
         return (through.map(str::to_owned), ids.to_vec());
     };
     let mut latest_ids = if through == Some(latest) {
@@ -196,7 +195,7 @@ fn seen_through(
         Vec::new()
     };
     latest_ids.extend(
-        fresh
+        new_remarks
             .iter()
             .filter(|remark| remark.at == latest)
             .map(|remark| remark.id.clone()),
@@ -204,8 +203,8 @@ fn seen_through(
     (Some(latest.to_owned()), latest_ids)
 }
 
-/// The start of `body` as plain text. Review bots wrap findings in HTML, and
-/// an image's alt text can carry a finding's priority.
+/// Review bots wrap findings in HTML, and an image's alt text can carry a
+/// finding's priority.
 fn snippet(body: &str) -> String {
     let mut text = String::new();
     let mut rest = body;

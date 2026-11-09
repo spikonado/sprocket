@@ -67,10 +67,6 @@ fn parse_repository(repository: &str) -> Option<Repository<'_>> {
         .then_some(Repository { host, owner, name })
 }
 
-/// Background refreshes back off from a host after it fails, doubling the
-/// pause each time, so a rate limit or an outage isn't hit every minute.
-/// A missing, rejected or switched-off credential doesn't pause, so fixing it
-/// in Settings applies on the next refresh.
 #[derive(Default)]
 struct HostPauses {
     hosts: Mutex<HashMap<String, Pause>>,
@@ -88,14 +84,7 @@ impl HostPauses {
 
     fn record(&self, host: &str, error: Option<&GitHubError>, now: Instant) {
         let mut hosts = self.lock();
-        let Some(error) = error.filter(|error| {
-            !matches!(
-                error,
-                GitHubError::NoCredential(_)
-                    | GitHubError::Disabled(_)
-                    | GitHubError::Status(reqwest::StatusCode::UNAUTHORIZED)
-            )
-        }) else {
+        let Some(error) = error.filter(|error| !error.is_credential_problem()) else {
             hosts.remove(host);
             return;
         };

@@ -19,7 +19,7 @@ pub struct ArtifactBinding {
 }
 
 pub struct BindingGuard {
-    _lock: std::fs::File,
+    lock: std::fs::File,
     directory: PathBuf,
     pub bindings: Vec<ArtifactBinding>,
 }
@@ -89,7 +89,7 @@ impl ArtifactBindings {
         }
         let bindings = self.load().await?;
         Ok(BindingGuard {
-            _lock: lock,
+            lock,
             directory: self.directory.clone(),
             bindings,
         })
@@ -110,6 +110,19 @@ impl ArtifactBindings {
 }
 
 impl BindingGuard {
+    /// The blocking thread holds its own lock handle, because cancelling the caller doesn't stop it.
+    async fn spawn_locked<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+    ) -> anyhow::Result<T> {
+        let lock = self.lock.try_clone()?;
+        tokio::task::spawn_blocking(move || {
+            let _lock = lock;
+            operation()
+        })
+        .await?
+    }
+
     pub async fn at_path(
         &self,
         workspace: &Path,
@@ -170,10 +183,7 @@ impl BindingGuard {
         if paths.is_empty() {
             return Ok(());
         }
-        // Keep the binding lock held if cancellation outlives the filesystem operation.
-        let lock = self._lock.try_clone()?;
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let _lock = lock;
+        self.spawn_locked(move || {
             for path in paths {
                 match std::fs::remove_file(&path) {
                     Ok(()) => {}
@@ -187,7 +197,7 @@ impl BindingGuard {
             }
             Ok(())
         })
-        .await??;
+        .await?;
         self.bindings
             .retain(|binding| binding.artifact_id.as_deref() != Some(artifact_id));
         self.persist().await
@@ -229,11 +239,8 @@ impl BindingGuard {
     pub async fn persist(&self) -> anyhow::Result<()> {
         let bytes = serde_json::to_vec(&self.bindings)?;
         let directory = self.directory.clone();
-        // A cancelled caller must not release the lock while publication still runs.
-        let lock = self._lock.try_clone()?;
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        self.spawn_locked(move || {
             use std::io::Write;
-            let _lock = lock;
             let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
             temporary.write_all(&bytes)?;
             temporary.as_file().sync_all()?;
@@ -247,7 +254,7 @@ impl BindingGuard {
             }
             Ok(())
         })
-        .await?
+        .await
     }
 }
 

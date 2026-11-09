@@ -39,7 +39,7 @@ pub async fn status(user_id: &str) -> GitHubStatus {
         saved_tokens::reload(user_id)
     );
     let settings = settings();
-    let saved_hosts = saved.tokens.unwrap_or_default();
+    let saved_hosts = saved.last_known.unwrap_or_default();
     let mut hosts = settings.disabled_hosts.clone();
     hosts.insert(PUBLIC_HOST.to_string());
     hosts.extend(saved_hosts.keys().cloned());

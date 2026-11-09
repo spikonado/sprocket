@@ -6,11 +6,14 @@ use std::time::UNIX_EPOCH;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex;
 
 use crate::paths::{canonicalize_with_missing_tail, normalize_path};
 
 pub const MAX_EDITABLE_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_VIEWABLE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+
+pub(crate) static FILE_WRITE_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,18 +122,31 @@ pub fn workspace_file_path(root: &Path, path: &str) -> Result<PathBuf> {
 }
 
 /// `expected_version: None` overwrites unconditionally.
-pub fn write_workspace_file(
+pub async fn write_workspace_file(
+    root: PathBuf,
+    path: String,
+    content: String,
+    expected_version: Option<String>,
+) -> Result<WorkspaceFileWrite> {
+    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        bail!("file content exceeds the 2 MiB editor limit");
+    }
+    let write_guard = FILE_WRITE_LOCK.lock().await;
+    tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
+        replace_if_unchanged(&root, &path, &content, expected_version.as_deref())
+    })
+    .await
+    .context("file write task failed")?
+}
+
+fn replace_if_unchanged(
     root: &Path,
     path: &str,
     content: &str,
     expected_version: Option<&str>,
 ) -> Result<WorkspaceFileWrite> {
-    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
-        bail!("file content exceeds the 2 MiB editor limit");
-    }
     let file_path = resolve_entry(root, path, FinalLink::Follow)?;
-    // Callers run on blocking threads; `blocking_lock` panics inside an async context.
-    let _write_guard = crate::patch::PATCH_LOCK.blocking_lock();
     let existing = match fs::metadata(&file_path) {
         Ok(metadata) if metadata.is_file() => Some(metadata),
         Ok(_) => bail!("{path} is not a file"),

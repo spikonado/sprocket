@@ -5,17 +5,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::apply_patch_format::{PatchSection, UpdateChunk, apply_update, parse_apply_patch};
 use crate::cancellation::WorkspaceCancellation;
 use crate::paths::{canonicalize_with_missing_tail, expand_home, normalize_path, simplified_path};
-
-/// Patches may target any absolute path and runs may start from different
-/// directories, so one process-wide lock is the only key every overlapping
-/// write shares. Editor saves take it too so their version check and replace
-/// stay atomic with respect to patches and each other.
-pub(crate) static PATCH_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+use crate::workspace_files::FILE_WRITE_LOCK;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,8 +79,8 @@ pub async fn apply_workspace_patch(
     let cwd = tokio::fs::canonicalize(&cwd)
         .await
         .with_context(|| format!("failed to resolve working directory {}", cwd.display()))?;
-    let _patch_guard = tokio::select! {
-        guard = PATCH_LOCK.lock() => guard,
+    let _write_guard = tokio::select! {
+        guard = FILE_WRITE_LOCK.lock() => guard,
         _ = cancellation.cancelled() => return Err(crate::cancellation::WorkspaceOperationCancelled.into()),
     };
     cancellation.ensure_active()?;

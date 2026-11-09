@@ -6,26 +6,20 @@ use tokio::time::{Instant, timeout_at};
 use super::credentials::{self, ResolvedCredential};
 use super::{CredentialSource, PUBLIC_HOST, is_valid_host, saved_tokens};
 
-/// Keeps an unreachable Convex or a hung `gh` from stalling every command; the
-/// lookups keep running and fill the caches for the next one.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Gives an agent's git and `gh` the credential Sprocket uses for each GitHub
-/// host, and makes them fail instead of waiting for a password.
 pub async fn agent_environment(user_id: &str) -> Vec<(String, String)> {
     let credentials = host_credentials(user_id, Instant::now() + RESOLVE_TIMEOUT).await;
     environment(&credentials, |name| std::env::var(name).ok())
 }
 
-/// Hosts without a saved token or `GH_HOST` are left to the user's git setup,
-/// as are hosts whose lookup misses the deadline.
 async fn host_credentials(user_id: &str, deadline: Instant) -> Vec<(String, ResolvedCredential)> {
     let loading = tokio::spawn({
         let user_id = user_id.to_string();
         async move {
             saved_tokens::load(&user_id)
                 .await
-                .tokens
+                .last_known
                 .unwrap_or_default()
         }
     });

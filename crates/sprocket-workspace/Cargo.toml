@@ -26,7 +26,7 @@ uuid = { version = "1.21.0", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 tracing = "0.1.44"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 gix = { version = "0.90", default-features = false, features = ["worktree-mutation"] }
