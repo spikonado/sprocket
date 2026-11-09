@@ -43,7 +43,11 @@ async fn sync_when_changed(
     let size = tokio::fs::metadata(&history.result.events_path)
         .await?
         .len();
-    if history.result.running && idle.get(path) == Some(&size) {
+    // A cut-off log stops growing while its preview keeps changing.
+    if history.result.running
+        && history.result.log_cut_off.is_none()
+        && idle.get(path) == Some(&size)
+    {
         return Ok(RecordSync::Waiting);
     }
     idle.remove(path);

@@ -794,8 +794,12 @@ impl CommandSession {
         observation: &mut CommandObservation,
         from_offset: u64,
     ) -> Result<(CommandOutput, u64)> {
-        let preview = self.output.lock().await.preview_metadata();
+        let capture = self.output.lock().await;
+        let preview = capture.preview_metadata();
+        // The supervisor finishes the capture before sending completion, so a
+        // completion read under the capture lock matches the preview.
         let completion = completion.or_else(|| self.completion.borrow().clone());
+        drop(capture);
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
         let running = completion.is_none();
         let mut output = CommandOutput {
