@@ -496,7 +496,26 @@ function releaseNotes(build, kipyCommit, routingToolsRelease, buildCommit) {
 	].join('\n');
 }
 
-async function createRelease(tag, notes, build, kipyCommit, routingToolsRelease) {
+// The update PR can merge while a build runs, so the replaced version is checked against the
+// default branch as it is now, not this run's checkout.
+function replaceUnmergedRelease(tag) {
+	const merged = JSON.parse(
+		run('gh', [
+			'api',
+			'-H',
+			'Accept: application/vnd.github.raw',
+			`repos/${REPOSITORY}/contents/tools/kicad/releases.json`
+		])
+	);
+
+	if (`${TAG_PREFIX}${merged.version}` === tag) {
+		throw new Error(`${tag} was merged meanwhile; rerun`);
+	}
+
+	run('gh', ['release', 'delete', tag, '--repo', REPOSITORY, '--cleanup-tag', '--yes']);
+}
+
+async function createRelease(tag, notes, build, kipyCommit, routingToolsRelease, replace) {
 	const work = mkdtempSync(join(tmpdir(), 'kicad-'));
 
 	try {
@@ -528,6 +547,10 @@ async function createRelease(tag, notes, build, kipyCommit, routingToolsRelease)
 		exes.forEach(verifyExe);
 		const dmg = download(`${BUCKET}/${build.dmg}`, work);
 		await verifyDmg(dmg);
+
+		if (replace) {
+			replaceUnmergedRelease(tag);
+		}
 
 		// gh uploads the assets to a draft and publishes it only once all are in.
 		run(
@@ -590,20 +613,15 @@ if (!buildChanged && pinned.kicad.version === build.version) {
 
 const notes = releaseNotes(build, kipyCommit, routingToolsRelease, buildCommit);
 
-let version = nextVersion(pinned.version, buildChanged ? 'minor' : 'patch');
-
-let release = publishedRelease(`${TAG_PREFIX}${version}`);
-
-// An unmerged update's version may already be installed for testing, so other contents get the
-// next free version instead of replacing it.
-while (release && release.body?.trim() !== notes) {
-	version = nextVersion(version, 'patch');
-	release = publishedRelease(`${TAG_PREFIX}${version}`);
-}
-
+const version = nextVersion(pinned.version, buildChanged ? 'minor' : 'patch');
 const tag = `${TAG_PREFIX}${version}`;
 
-release ??= await createRelease(tag, notes, build, kipyCommit, routingToolsRelease);
+let release = publishedRelease(tag);
+
+// Versions above the pinned one belong to the unmerged update PR, so its release is rebuilt in place.
+if (release?.body?.trim() !== notes) {
+	release = await createRelease(tag, notes, build, kipyCommit, routingToolsRelease, !!release);
+}
 
 function asset(suffix) {
 	const published = release.assets.find((candidate) => candidate.name.endsWith(suffix));
