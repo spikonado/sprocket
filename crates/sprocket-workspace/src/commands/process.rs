@@ -7,7 +7,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tokio::io::AsyncWriteExt;
 #[cfg(windows)]
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -340,13 +340,21 @@ where
     Ok(())
 }
 
+/// Spool reads stop at the length the spools had when the command ended, so they always finish.
+#[cfg(unix)]
+async fn join_capture_task(task: tokio::task::JoinHandle<Result<()>>) -> Result<()> {
+    task.await.context("command output task failed")?
+}
+
+/// A pipe stays open while any process that escaped the command's tree still holds it.
+#[cfg(windows)]
 async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Result<()> {
     match tokio::time::timeout(Duration::from_secs(1), &mut task).await {
         Ok(result) => result.context("command output task failed")?,
         Err(_) => {
             task.abort();
             let _ = task.await;
-            bail!(
+            anyhow::bail!(
                 "command output did not reach EOF before the drain deadline; logs may be incomplete"
             )
         }

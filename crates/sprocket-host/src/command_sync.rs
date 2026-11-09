@@ -101,20 +101,26 @@ fn snapshot_value(history: &CommandHistory, running: bool) -> Value {
 
 async fn log_chunks(path: &str, mut offset: u64) -> Result<Vec<Value>> {
     let mut file = tokio::fs::File::open(path).await?;
-    file.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut chunks = Vec::new();
     for _ in 0..2 {
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
         let mut bytes = vec![0; CHUNK_BYTES];
         let read = file.read(&mut bytes).await?;
-        if read == 0 {
+        // An event still being written, or torn by a crash, stays local. A server that adopts
+        // the command replaces a torn one, so the remote copy must not hold its start.
+        let complete = bytes[..read]
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |end| end + 1);
+        if complete == 0 {
             break;
         }
-        bytes.truncate(read);
+        bytes.truncate(complete);
         chunks.push(Value::Object(BTreeMap::from([
             ("offset".into(), Value::Float64(offset as f64)),
             ("bytes".into(), Value::Bytes(bytes)),
         ])));
-        offset += read as u64;
+        offset += complete as u64;
     }
     Ok(chunks)
 }
@@ -156,7 +162,7 @@ pub fn spawn(
     tokio::spawn(async move {
         let mut idle = IdleSessions::new();
         loop {
-            if let Err(error) = sync_directory(
+            sync_directory(
                 &store,
                 &registry,
                 &auth,
@@ -164,10 +170,7 @@ pub fn spawn(
                 &machine_id,
                 &mut idle,
             )
-            .await
-            {
-                tracing::warn!("command sync will retry: {error:#}");
-            }
+            .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     })
@@ -179,11 +182,11 @@ pub async fn flush(
     auth: &Arc<NativeAuthManager>,
     deployment: &str,
     machine_id: &str,
-) -> Result<()> {
+) {
     let mut idle = IdleSessions::new();
     loop {
-        match sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await? {
-            RecordSync::Settled => return Ok(()),
+        match sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await {
+            RecordSync::Settled => return,
             RecordSync::Uploading => {}
             RecordSync::Waiting => tokio::time::sleep(FLUSH_RETRY_DELAY).await,
         }
@@ -197,9 +200,9 @@ async fn sync_directory(
     deployment: &str,
     machine_id: &str,
     idle: &mut IdleSessions,
-) -> Result<RecordSync> {
+) -> RecordSync {
     let mut pass = RecordSync::Settled;
-    for records in session_records(&store.root()).await? {
+    for records in session_records(&store.root()).await {
         let mut client = None;
         for SessionRecord { directory, path } in records {
             let result = tokio::time::timeout(
@@ -228,7 +231,7 @@ async fn sync_directory(
             pass = pass.max(record);
         }
     }
-    Ok(pass)
+    pass
 }
 
 pub(crate) struct SessionRecord {
@@ -237,29 +240,15 @@ pub(crate) struct SessionRecord {
     pub path: PathBuf,
 }
 
-/// Every saved command record under `store_root`, grouped by user directory.
-pub(crate) async fn session_records(store_root: &Path) -> Result<Vec<Vec<SessionRecord>>> {
-    let mut users = match tokio::fs::read_dir(store_root).await {
-        Ok(users) => users,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
+/// Every saved command record under `store_root`, grouped by user directory. Unreadable
+/// directories are skipped so they don't hide the records in the others.
+pub(crate) async fn session_records(store_root: &Path) -> Vec<Vec<SessionRecord>> {
     let mut found = Vec::new();
-    while let Some(user) = users.next_entry().await? {
-        if !user.file_type().await?.is_dir() {
-            continue;
-        }
-        let mut threads = tokio::fs::read_dir(user.path()).await?;
+    for user in directory_entries(store_root).await {
         let mut user_records = Vec::new();
-        while let Some(thread) = threads.next_entry().await? {
-            let directory = thread.path().join("command-logs");
-            let mut records = match tokio::fs::read_dir(directory.join("sessions")).await {
-                Ok(records) => records,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            while let Some(record) = records.next_entry().await? {
-                let path = record.path();
+        for thread in directory_entries(&user).await {
+            let directory = thread.join("command-logs");
+            for path in directory_entries(&directory.join("sessions")).await {
                 if path
                     .extension()
                     .is_some_and(|extension| extension == "json")
@@ -273,7 +262,30 @@ pub(crate) async fn session_records(store_root: &Path) -> Result<Vec<Vec<Session
         }
         found.push(user_records);
     }
-    Ok(found)
+    found
+}
+
+async fn directory_entries(directory: &Path) -> Vec<PathBuf> {
+    let entries = async {
+        let mut entries = tokio::fs::read_dir(directory).await?;
+        let mut paths = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            paths.push(entry.path());
+        }
+        Ok::<_, std::io::Error>(paths)
+    };
+    entries.await.unwrap_or_else(|error| {
+        if !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ) {
+            tracing::warn!(
+                "skipping unreadable command directory {}: {error}",
+                directory.display()
+            );
+        }
+        Vec::new()
+    })
 }
 
 async fn sync_record(

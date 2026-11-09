@@ -192,6 +192,11 @@ impl CapturedOutput {
         Ok((output, captured))
     }
 
+    #[cfg(unix)]
+    pub(crate) fn max_log_bytes(&self) -> u64 {
+        self.limits.max_log_bytes
+    }
+
     pub(crate) async fn append(&mut self, channel: OutputChannel, bytes: &[u8]) -> Result<()> {
         let event = OutputEvent {
             sequence: self.sequence,

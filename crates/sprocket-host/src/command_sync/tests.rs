@@ -168,8 +168,7 @@ async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
             "machine",
             &mut IdleSessions::new(),
         )
-        .await
-        .unwrap(),
+        .await,
         RecordSync::Waiting
     );
     assert_eq!(tokio::fs::read(&path).await.unwrap(), b"interrupted write");
@@ -178,11 +177,19 @@ async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
 }
 
 #[tokio::test]
-async fn log_batches_resume_in_order_without_changing_retry_bytes() {
+async fn log_batches_resume_in_order_and_hold_back_partial_events() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("output.log");
-    let bytes: Vec<u8> = (0..CHUNK_BYTES * 5 + 17).map(|index| index as u8).collect();
+    let mut bytes: Vec<u8> = (0..CHUNK_BYTES * 5 + 17).map(|index| index as u8).collect();
+    bytes.push(b'\n');
     tokio::fs::write(&path, &bytes).await.unwrap();
+    let mut torn_event = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .await
+        .unwrap();
+    torn_event.write_all(b"{\"sequence\":").await.unwrap();
+    torn_event.flush().await.unwrap();
     let path = path.to_str().unwrap();
     let mut downloaded = bytes[..23].to_vec();
 

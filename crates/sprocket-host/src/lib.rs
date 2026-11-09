@@ -322,7 +322,13 @@ pub struct HostTasks {
 impl HostTasks {
     pub async fn shutdown(self) {
         let host = self.host;
-        for task in [self.attachment_cleanup, self.recovery, self.command_cleanup] {
+        // Sync stops first so it can't see a detached command without its manager and end it.
+        for task in [
+            self.command_sync,
+            self.attachment_cleanup,
+            self.recovery,
+            self.command_cleanup,
+        ] {
             task.abort();
             let _ = task.await;
         }
@@ -332,9 +338,7 @@ impl HostTasks {
             host.command_sessions.stop_all().await;
         }
         host.browsers.shutdown().await;
-        self.command_sync.abort();
-        let _ = self.command_sync.await;
-        if let Err(error) = tokio::time::timeout(
+        if tokio::time::timeout(
             Duration::from_secs(10),
             command_sync::flush(
                 &host.transcript,
@@ -345,9 +349,9 @@ impl HostTasks {
             ),
         )
         .await
-        .unwrap_or_else(|error| Err(error.into()))
+        .is_err()
         {
-            tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
+            tracing::warn!("command sync remains pending on disk after shutdown");
         }
         host.machines.shutdown().await;
     }

@@ -74,13 +74,7 @@ impl ThreadCommandSessions {
     /// Takes over the commands that this machine's previous server left running.
     #[cfg(unix)]
     pub async fn adopt(&self, store_root: &Path, machine_id: &str, lifetime: &Arc<HostLifetime>) {
-        let records = match crate::command_sync::session_records(store_root).await {
-            Ok(records) => records,
-            Err(error) => {
-                tracing::warn!("failed to find commands left by the previous server: {error:#}");
-                return;
-            }
-        };
+        let records = crate::command_sync::session_records(store_root).await;
         for record in records.into_iter().flatten() {
             if tokio::fs::try_exists(record.path.with_extension("synced"))
                 .await

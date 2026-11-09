@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use tokio::process::Command;
 use tokio::sync::{Mutex, watch};
 use tokio::time::Instant;
@@ -33,6 +33,9 @@ exit "$code""#;
 pub(in crate::commands) struct Spools {
     stdout: File,
     stderr: File,
+    /// The spool lengths when capture was asked to stop. Later writes come from processes that
+    /// left the command's group, so reading ends there.
+    ends: Option<[u64; 2]>,
 }
 
 impl Spools {
@@ -48,6 +51,7 @@ impl Spools {
         Ok(Self {
             stdout: open(STDOUT_SPOOL, captured.stdout)?,
             stderr: open(STDERR_SPOOL, captured.stderr)?,
+            ends: None,
         })
     }
 
@@ -59,20 +63,41 @@ impl Spools {
         }
     }
 
-    fn read_chunks(&mut self) -> std::io::Result<Vec<(OutputChannel, Vec<u8>)>> {
+    /// The next chunk of each spool, and the spools' total length.
+    fn read_chunks(
+        &mut self,
+        stopping: bool,
+    ) -> std::io::Result<(u64, Vec<(OutputChannel, Vec<u8>)>)> {
+        let ends = match self.ends {
+            Some(ends) => ends,
+            None => {
+                let lengths = [self.stdout.metadata()?.len(), self.stderr.metadata()?.len()];
+                if stopping {
+                    self.ends = Some(lengths);
+                }
+                lengths
+            }
+        };
         let mut chunks = Vec::new();
-        for (channel, file) in [
+        for ((channel, file), end) in [
             (OutputChannel::Stdout, &mut self.stdout),
             (OutputChannel::Stderr, &mut self.stderr),
-        ] {
-            let mut bytes = vec![0; READ_BYTES];
+        ]
+        .into_iter()
+        .zip(ends)
+        {
+            let unread = end.saturating_sub(file.stream_position()?);
+            if unread == 0 {
+                continue;
+            }
+            let mut bytes = vec![0; unread.min(READ_BYTES as u64) as usize];
             let read = file.read(&mut bytes)?;
             if read > 0 {
                 bytes.truncate(read);
                 chunks.push((channel, bytes));
             }
         }
-        Ok(chunks)
+        Ok((ends.iter().sum(), chunks))
     }
 }
 
@@ -109,17 +134,23 @@ async fn capture_spools(
     output: Arc<Mutex<CapturedOutput>>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
+    let max_log_bytes = output.lock().await.max_log_bytes();
     loop {
         // Checked before reading, so the read after a stop request sees all of the output.
         let stopping = *stop.borrow_and_update() || stop.has_changed().is_err();
         let (returned, chunks) = tokio::task::spawn_blocking(move || {
-            let chunks = spools.read_chunks();
+            let chunks = spools.read_chunks(stopping);
             (spools, chunks)
         })
         .await
         .context("command output reader failed")?;
         spools = returned;
-        let chunks = chunks.context("failed to read command output")?;
+        let (spooled, chunks) = chunks.context("failed to read command output")?;
+        // Files don't hold back a writer the way pipes do, so the spools are limited here too.
+        ensure!(
+            spooled <= max_log_bytes,
+            "command output log quota of {max_log_bytes} bytes reached",
+        );
         if chunks.is_empty() {
             if stopping {
                 return Ok(());
@@ -171,9 +202,7 @@ impl AdoptedProcess {
     }
 
     pub(in crate::commands) async fn terminate(&self) -> Result<Option<i32>> {
-        if self.running() {
-            stop_remaining_processes(Some(self.pid))?;
-        }
+        stop_remaining_processes(self.process_group())?;
         let deadline = Instant::now() + STOP_TIMEOUT;
         while self.running() {
             if Instant::now() >= deadline {
