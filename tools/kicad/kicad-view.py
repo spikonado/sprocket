@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(os.environ["SPROCKET_KICAD_ROUTING_TOOLS"]) / "py_router"))
 
-from kicad_parser import parse_kicad_pcb  # noqa: E402
-from PIL import Image, ImageDraw  # noqa: E402
-from route_render import BoardRenderer, load_font, mm_ruler_overlay  # noqa: E402
+from kicad_parser import parse_kicad_pcb
+from PIL import Image, ImageDraw
+from route_render import BoardRenderer, load_font, mm_ruler_overlay
 
 GRAPHIC_COLORS = [(40, 40, 40), (120, 40, 170), (0, 120, 130), (170, 90, 0), (90, 90, 160)]
 DRC_COLORS = {"error": (230, 0, 0), "warning": (240, 140, 0)}
@@ -68,7 +68,9 @@ def main():
         overlays.insert(0, chosen_overlay(pcb, chosen, segments))
     image = renderer.frame(segments=segments, vias=vias, overlays=overlays)
 
-    to_px = lambda x, y: tuple(v / renderer.ss for v in renderer.tf.pt(x, y))  # noqa: E731
+    def to_px(x, y):
+        return tuple(v / renderer.ss for v in renderer.tf.pt(x, y))
+
     px_per_mm = renderer.tf.length(1.0) / renderer.ss
     labels = Labels(image)
     if args.drc:
@@ -86,7 +88,10 @@ def main():
 
 def chosen_nets(pcb, patterns):
     names = {net.name for net in pcb.nets.values() if net.name}
-    matches = lambda name, p: fnmatch.fnmatchcase(name, p) or fnmatch.fnmatchcase(short(name), p)  # noqa: E731
+
+    def matches(name, p):
+        return fnmatch.fnmatchcase(name, p) or fnmatch.fnmatchcase(short(name), p)
+
     unmatched = [p for p in patterns if not any(matches(name, p) for name in names)]
     if unmatched:
         sys.exit(f"kicad-view: no net matches {', '.join(unmatched)}")

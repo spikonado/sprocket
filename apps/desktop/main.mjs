@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
-import { parseDesktopBootstrap } from './desktop-bootstrap.mjs';
+import { parseDesktopBootstrap, parseNonEmptyString } from './desktop-bootstrap.mjs';
 import { waitForServerReady } from './local-server.mjs';
 import { shouldDenyUntrustedNavigation } from './navigation-guard.mjs';
 import { parsePairingProof } from './pairing-proof.mjs';
@@ -70,21 +70,6 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock({
 
 if (!hasSingleInstanceLock) {
 	app.quit();
-}
-
-function parseNonEmptyString(value) {
-	// Accepts only primitive non-empty strings (no boxed strings/arrays/objects).
-	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {
-		return null;
-	}
-
-	if (value !== `${value}`) {
-		return null;
-	}
-
-	const trimmed = value.trim();
-
-	return trimmed.length > 0 ? trimmed : null;
 }
 
 function reportFatalError(title, error) {

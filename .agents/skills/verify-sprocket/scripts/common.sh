@@ -21,8 +21,7 @@ load_dev_env() {
 		exit 1
 	fi
 
-	# Same parser as scripts/run-dev.mjs, so quoting is handled identically.
-	dev_convex_url="$(nix develop "$repo_root" -c node -e 'const fs = require("node:fs"); const { parseEnv } = require("node:util"); process.stdout.write(parseEnv(fs.readFileSync(process.argv[1], "utf8")).VITE_CONVEX_URL ?? "")' "$env_file")"
+	dev_convex_url="$(nix develop "$repo_root" -c bun "$repo_root/scripts/run-dev.mjs" --env-file="$env_file" --print-convex-url)"
 	if [[ -z "$dev_convex_url" ]]; then
 		echo "$env_file has no VITE_CONVEX_URL. Without it, the API falls back to the prod deployment." >&2
 		exit 1

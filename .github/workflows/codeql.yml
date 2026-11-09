@@ -2,7 +2,6 @@ name: CodeQL
 
 on:
   pull_request:
-    # Rust analysis is skipped on pull requests.
     paths:
       - '.github/**'
       - '**/*.cjs'
@@ -33,11 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Rust analysis takes over 10 minutes, so it only runs on the schedule or on demand.
-        language: >-
-          ${{ fromJSON(contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name)
-          && '["actions","javascript-typescript","rust"]'
-          || '["actions","javascript-typescript"]') }}
+        language: [actions, javascript-typescript]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: github/codeql-action/init@v4

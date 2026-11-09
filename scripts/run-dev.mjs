@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -16,11 +16,15 @@ let envFile = null;
 
 let mode = null;
 
+let printConvexUrl = false;
+
 const unexpectedArguments = [];
 
 for (const arg of args) {
 	if (arg === '--desktop') {
 		mode = '--desktop';
+	} else if (arg === '--print-convex-url') {
+		printConvexUrl = true;
 	} else if (arg.startsWith('--data-dir=')) {
 		dataDir = arg.slice('--data-dir='.length);
 	} else if (arg.startsWith('--env-file=')) {
@@ -32,25 +36,28 @@ for (const arg of args) {
 
 if (unexpectedArguments.length > 0) {
 	console.error(
-		'Usage: bun scripts/run-dev.mjs [--desktop] [--data-dir=<path>] [--env-file=<path>]'
+		'Usage: bun scripts/run-dev.mjs [--desktop] [--data-dir=<path>] [--env-file=<path>] [--print-convex-url]'
 	);
 	process.exit(1);
 }
 
-const childEnv = { ...process.env };
+const fileEnv = envFile
+	? parseEnv(readFileSync(path.resolve(repositoryRoot, envFile), 'utf8'))
+	: {};
+
+const fileConvexUrl = fileEnv.VITE_CONVEX_URL;
+
+if (printConvexUrl) {
+	process.stdout.write(fileConvexUrl ?? '');
+	process.exit(0);
+}
 
 // Bun loads the root `.env`, so this clears its production key. An `--env-file` can opt back in.
-childEnv.PUBLIC_POSTHOG_KEY = '';
+const childEnv = { ...process.env, PUBLIC_POSTHOG_KEY: '', ...fileEnv };
 
-if (envFile) {
-	const filePath = path.resolve(repositoryRoot, envFile);
-	const fileEnv = parseEnv(readFileSync(filePath, 'utf8'));
-	Object.assign(childEnv, fileEnv);
-
-	// `convex dev` writes only VITE_CONVEX_URL; point the Rust API at the same deployment as the web app.
-	if (fileEnv.VITE_CONVEX_URL) {
-		childEnv.PUBLIC_CONVEX_URL = fileEnv.VITE_CONVEX_URL;
-	}
+// `convex dev` writes only VITE_CONVEX_URL; point the Rust API at the same deployment as the web app.
+if (fileConvexUrl) {
+	childEnv.PUBLIC_CONVEX_URL = fileConvexUrl;
 }
 
 if (dataDir) {
@@ -76,6 +83,18 @@ const commands = desktop
 			`cargo run -p sprocket-cli -- serve --port ${DEV_API_PORT} --api-only`,
 			'node scripts/wait-for-api.mjs && bun run --cwd apps/web dev'
 		];
+
+// A cold build outlasts wait-for-api.mjs's 120 s limit, which then kills the whole dev stack.
+const build = spawnSync('cargo', ['build', '-p', 'sprocket-cli'], {
+	cwd: repositoryRoot,
+	env: childEnv,
+	stdio: 'inherit'
+});
+
+if (build.status !== 0) {
+	if (build.error) console.error('Failed to build sprocket-cli:', build.error);
+	process.exit(build.status ?? 1);
+}
 
 const child = spawn(
 	process.execPath,
