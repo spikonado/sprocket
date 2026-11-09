@@ -79,7 +79,7 @@
         "@exalabs/convex-exa": "^0.1.1",
         "@fontsource-variable/geist": "^5.3.0",
         "@fontsource-variable/geist-mono": "^5.3.0",
-        "@json-render/core": "0.21.3",
+        "@json-render/core": "0.21.4",
         "@json-render/react": "0.21.3",
         "@json-render/shadcn": "0.21.4",
         "@lezer/highlight": "^1.2.5",
@@ -552,7 +552,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@json-render/core": ["@json-render/core@0.21.3", "", { "dependencies": { "zod": "^4.3.6" } }, "sha512-sgzPtRhRB5wkhrbLtPm9bAhna5Q0x/U0vUpb3S/VEutouWEvvZRebHhpM5XiEjRM5Shv4W70VMZ8pGcGcz7j+A=="],
+    "@json-render/core": ["@json-render/core@0.21.4", "", { "dependencies": { "zod": "^4.3.6" } }, "sha512-UqjpdDOmr7a9ISZisgQvgeKuBpiNQesS7PNgcstwTBlutMbgS/5fbNThvpEk4E35eMe2bpBVzwOPuaNY3xthNw=="],
 
     "@json-render/react": ["@json-render/react@0.21.3", "", { "dependencies": { "@json-render/core": "0.21.3" }, "peerDependencies": { "react": "^19.2.3" } }, "sha512-+/i0vPRQ164KzvNdPpQleLp+WjfRS2zYRIujLbRZUEmqiQb+WtEi1i9tZMYL/dRFOUzeNveu421KDzI11Wounw=="],
 
@@ -2534,7 +2534,7 @@
 
     "@exalabs/convex-exa/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
-    "@json-render/shadcn/@json-render/core": ["@json-render/core@0.21.4", "", { "dependencies": { "zod": "^4.3.6" } }, "sha512-UqjpdDOmr7a9ISZisgQvgeKuBpiNQesS7PNgcstwTBlutMbgS/5fbNThvpEk4E35eMe2bpBVzwOPuaNY3xthNw=="],
+    "@json-render/react/@json-render/core": ["@json-render/core@0.21.3", "", { "dependencies": { "zod": "^4.3.6" } }, "sha512-sgzPtRhRB5wkhrbLtPm9bAhna5Q0x/U0vUpb3S/VEutouWEvvZRebHhpM5XiEjRM5Shv4W70VMZ8pGcGcz7j+A=="],
 
     "@json-render/shadcn/@json-render/react": ["@json-render/react@0.21.4", "", { "dependencies": { "@json-render/core": "0.21.4" }, "peerDependencies": { "react": "^19.2.3" } }, "sha512-pCOhhgpBQBZV8NDLx0TTMapeWqGzDGPDgaIcYg9xHm35XglqxkcG2QgzzhE/VUSz3uqkWW0s8mCYO/jGP/hZHQ=="],
 
