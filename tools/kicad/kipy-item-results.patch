@@ -9,7 +9,7 @@ index 93e321a..1663695 100644
 -from kipy.util import pack_any, unpack_any
 +from kipy.util import pack_any
  from kipy.wrapper import Item, Wrapper
- 
+
  _ItemT_co = TypeVar("_ItemT_co", bound=Item, covariant=True)
 @@ -140,7 +140,7 @@ class EditorCommandsHandler(Generic[_ItemT_co]):
                      f"{status.error_message} ({editor_commands_pb2.ItemStatusCode.Name(status.code)})"
@@ -17,7 +17,7 @@ index 93e321a..1663695 100644
              else:
 -                results.append(self._item_from_message(unpack_any(result.item)))
 +                results.append(self._item_from_message(result.item))
- 
+
          if len(failures) > 0:
              raise ApiError(f"Failed to create items: {'; '.join(failures)}")
 @@ -225,7 +225,7 @@ class EditorCommandsHandler(Generic[_ItemT_co]):
@@ -26,6 +26,6 @@ index 93e321a..1663695 100644
              else:
 -                results.append(self._item_from_message(unpack_any(result.item)))
 +                results.append(self._item_from_message(result.item))
- 
+
          if len(failures) > 0:
              raise ApiError(f"Failed to update items: {'; '.join(failures)}")
