@@ -13,6 +13,8 @@ use sprocket_transcript::{
     HiddenPromptKind, TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
 };
 
+const LEGACY_REASONING_ISSUER: &str = "openai";
+
 pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
     history
         .into_iter()
@@ -395,20 +397,24 @@ fn completion_item_to_history(
 }
 
 fn text_native_item(text: &str, metadata: &serde_json::Value) -> Option<serde_json::Value> {
-    if let Some(native) = metadata.get("rigNative") {
-        let mut native = native.clone();
-        if let Some(content) = native
-            .get_mut("content")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for part in content {
-                if part.get("type").and_then(serde_json::Value::as_str) == Some("output_text") {
-                    part["text"] = serde_json::json!(text);
-                }
+    let Some(native) = metadata.get("rigNative") else {
+        return legacy_text_native_item(text, metadata);
+    };
+    let mut native = native.clone();
+    if let Some(content) = native
+        .get_mut("content")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for part in content {
+            if part.get("type").and_then(serde_json::Value::as_str) == Some("output_text") {
+                part["text"] = serde_json::json!(text);
             }
         }
-        return Some(native);
     }
+    Some(native)
+}
+
+fn legacy_text_native_item(text: &str, metadata: &serde_json::Value) -> Option<serde_json::Value> {
     let extras = metadata.get("openai_responses")?;
     let mut native = serde_json::json!({
         "type": "message", "role": "assistant", "status": "completed",
@@ -440,12 +446,11 @@ fn reasoning_history(item: &serde_json::Value) -> Option<AgentHistoryContent> {
     if summary.is_empty() && encrypted.is_none() && item_id.is_none() {
         return None;
     }
-    // Released transcripts omit the issuer for OpenAI reasoning.
     let issuer = item
         .get("providerMetadata")
         .and_then(|metadata| metadata.get("reasoningIssuer"))
         .and_then(|value| value.as_str())
-        .unwrap_or("openai");
+        .unwrap_or(LEGACY_REASONING_ISSUER);
     let native_item = (issuer == "openai").then(|| {
         let summary_parts: Vec<_> = (!summary.is_empty())
             .then(|| serde_json::json!({ "type": "summary_text", "text": summary }))
@@ -484,19 +489,22 @@ fn tool_call_native_item(
         "type": "function_call", "id": item_id, "call_id": call_id,
         "name": name, "arguments": arguments.to_string(), "status": "completed"
     });
-    // Released transcripts store extra native fields beside the signature.
     if let Some(metadata) = metadata {
-        let params = metadata.get("toolCallAdditionalParams").unwrap_or(metadata);
-        for (key, value) in params.as_object().into_iter().flatten() {
-            if key != "origin" {
-                native[key] = value.clone();
-            }
-        }
-        if let Some(signature) = metadata.get("signature").and_then(|value| value.as_str()) {
-            native["signature"] = serde_json::json!(signature);
-        }
+        legacy_tool_call_fields(&mut native, metadata);
     }
     native
+}
+
+fn legacy_tool_call_fields(native: &mut serde_json::Value, metadata: &serde_json::Value) {
+    let params = metadata.get("toolCallAdditionalParams").unwrap_or(metadata);
+    for (key, value) in params.as_object().into_iter().flatten() {
+        if key != "origin" {
+            native[key] = value.clone();
+        }
+    }
+    if let Some(signature) = metadata.get("signature").and_then(|value| value.as_str()) {
+        native["signature"] = serde_json::json!(signature);
+    }
 }
 
 #[cfg(test)]

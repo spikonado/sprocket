@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::{
     GenerationCall, MAX_CONTENT_BYTES, analytics_id, bounded, generation_properties, input_delta,
-    is_reportable, tools_called,
+    is_sprocket_fixable, tools_called,
 };
 use crate::chatgpt::ChatGptNotConnected;
 use crate::types::CompletionProvider;
@@ -113,12 +113,14 @@ fn analytics_id_matches_convex() {
 
 #[test]
 fn only_sprocket_failures_are_reportable() {
-    assert!(is_reportable(&anyhow!(
+    assert!(is_sprocket_fixable(&anyhow!(
         "Agent stream ended without a final response."
     )));
-    assert!(!is_reportable(
+    assert!(!is_sprocket_fixable(
         &anyhow!(PromptError::Report(ProviderError::Truncated.report()))
             .context("Context handoff failed.")
     ));
-    assert!(!is_reportable(&anyhow::Error::new(ChatGptNotConnected)));
+    assert!(!is_sprocket_fixable(&anyhow::Error::new(
+        ChatGptNotConnected
+    )));
 }

@@ -387,16 +387,14 @@ fn to_json(value: impl Serialize) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
-/// Provider failures are left out: the gateway reports its own server errors, and the rest
-/// are the user's quota, their network, or ChatGPT, none of which Sprocket can fix.
-fn is_reportable(error: &anyhow::Error) -> bool {
+fn is_sprocket_fixable(error: &anyhow::Error) -> bool {
     !error
         .chain()
         .any(|cause| cause.is::<ChatGptNotConnected>() || is_provider_failure_cause(cause))
 }
 
 pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, run_id: &str) {
-    if !is_reportable(error) {
+    if !is_sprocket_fixable(error) {
         return;
     }
     let source: &(dyn std::error::Error + Send + Sync + 'static) = error.as_ref();

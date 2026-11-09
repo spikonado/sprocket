@@ -382,7 +382,7 @@ async fn finish_job(
     };
     let accepted: bool = context
         .runtime
-        .mutation_with_retries(function, args)
+        .idempotent_mutation(function, args)
         .await
         .map_err(tool_error)?;
     if accepted {

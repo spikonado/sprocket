@@ -14,12 +14,11 @@ pub(super) enum YieldMode {
 }
 
 impl YieldMode {
-    /// `max_yield_ms` must be at least `MIN_POLL_YIELD_MS`.
     pub(super) fn normalize(self, yield_time_ms: u64, max_yield_ms: u64) -> u64 {
         match self {
             Self::Action => yield_time_ms.min(max_yield_ms),
             Self::Poll if yield_time_ms == 0 => 0,
-            Self::Poll => yield_time_ms.clamp(MIN_POLL_YIELD_MS, max_yield_ms),
+            Self::Poll => yield_time_ms.min(max_yield_ms).max(MIN_POLL_YIELD_MS),
         }
     }
 }

@@ -308,18 +308,17 @@ enum DetectedDocument {
     Pdf(Vec<u8>),
 }
 
-/// `path` names the document and `hint` gives the format of signatureless
-/// content; the path is never read.
 pub(super) async fn convert_document(
     bytes: Vec<u8>,
-    path: PathBuf,
-    hint: Option<anydoc::Format>,
+    file_name: PathBuf,
+    format_hint: Option<anydoc::Format>,
     hosted: Option<&HostedParseContext<'_>>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<(String, &'static str)> {
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
     let detected = run_cancellable_blocking(cancellation, move || {
-        Ok(match detect_anydoc_format(&bytes, &path).or(hint) {
+        let format = detect_anydoc_format(&bytes, &file_name).or(format_hint);
+        Ok(match format {
             Some(anydoc::Format::Pdf) => DetectedDocument::Pdf(bytes),
             format => DetectedDocument::Converted(convert_file_bytes(bytes, format)?),
         })
