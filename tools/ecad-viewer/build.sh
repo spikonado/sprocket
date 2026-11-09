@@ -16,6 +16,7 @@ git -C "$src" checkout --quiet "$commit"
 # bom-reload: redraws the BOM table when the frame loads edited files.
 # bom-sourcing: adds the sourcing fields from the working-with-kicad skill, such as MPN and
 # distributor part numbers, to the BOM, and keeps parts with different ones on separate rows.
+# It also marks DNP parts and honors board-only BOMs' DNP and exclude-from-BOM flags.
 # clear-selection: closes the property panels when the frame clears the selection on Escape.
 # footprint-transform: KiCad 10.99 places footprints with
 # `(transform (translate x y) (rotate r) (scale sx sy))` instead of `(at x y r)`.
@@ -23,6 +24,8 @@ git -C "$src" checkout --quiet "$commit"
 # the old ones into the new tabs breaks their nested elements.
 # hidden-tab-layout: lays out the board and schematic on hidden tabs, so their loads
 # finish and schematic insets can draw a board that was never shown.
+# load-settle: a failed load rejects only after its other files finish parsing, so none of
+# them lands in the sources the frame restores next.
 # parser-unclosed: fails on a file whose parentheses never close, such as one read
 # mid-write, instead of loading an empty document.
 # relative-sheets: loads sheets outside the opened file's folder, such as `../shared/x.kicad_sch`.

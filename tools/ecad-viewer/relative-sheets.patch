@@ -1,5 +1,5 @@
 diff --git a/packages/ecad-viewer-app/src/kicanvas/project.ts b/packages/ecad-viewer-app/src/kicanvas/project.ts
-index bfdd21d..40349b8 100644
+index 137b96c..59f33c0 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/project.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/project.ts
 @@ -471,7 +471,7 @@ export class Project extends EventTarget implements IDisposable {
@@ -11,3 +11,14 @@ index bfdd21d..40349b8 100644
              if (blob.filename === root_sch_file_name) continue;
 
              if (blob.filename.endsWith(KICAD_PCB_EXT)) {
+@@ -1107,7 +1107,9 @@ export class Project extends EventTarget implements IDisposable {
+             const parts: string[] = [];
+             for (const part of value.replace(/\\/g, "/").split("/")) {
+                 if (!part || part === ".") continue;
+-                if (part === "..") parts.pop();
++                // A `..` above the project stays, so `../x` and `x` differ.
++                if (part === ".." && parts.length && parts.at(-1) !== "..")
++                    parts.pop();
+                 else parts.push(part);
+             }
+             return parts.join("/");

@@ -1,0 +1,20 @@
+diff --git a/packages/ecad-viewer-app/src/kicanvas/project.ts b/packages/ecad-viewer-app/src/kicanvas/project.ts
+index 6c1c0db..137b96c 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/project.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/project.ts
+@@ -490,7 +490,14 @@ export class Project extends EventTarget implements IDisposable {
+             }
+         }
+
+-        await Promise.all(promises);
++        // A failed parse rejects only after the others finish, since each
++        // writes into this project and a reload resets it next.
++        const results = await Promise.allSettled(promises);
++        const failure = results.find(
++            (result): result is PromiseRejectedResult =>
++                result.status === "rejected",
++        );
++        if (failure) throw failure.reason;
+
+         if (this._found_cjk) {
+             await Project.import_cjk_glyphs();

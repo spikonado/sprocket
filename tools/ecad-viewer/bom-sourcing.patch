@@ -16,10 +16,18 @@ index b3c7c29..10f4ab2 100644
      ) {}
  }
 diff --git a/packages/ecad-viewer-app/src/kicad/board.ts b/packages/ecad-viewer-app/src/kicad/board.ts
-index 48cac91..d2307e9 100644
+index 48cac91..8af2508 100644
 --- a/packages/ecad-viewer-app/src/kicad/board.ts
 +++ b/packages/ecad-viewer-app/src/kicad/board.ts
-@@ -1118,6 +1118,14 @@ export class Footprint implements BoardNode {
+@@ -1111,13 +1111,21 @@ export class Footprint implements BoardNode {
+     }
+
+     get Datasheet() {
+-        return this.properties["Datasheet"] ?? "";
++        return this.field("Datasheet") ?? "";
+     }
+
+     get Description() {
          return this.descr ?? this.properties["Description"] ?? "";
      }
 
@@ -35,7 +43,7 @@ index 48cac91..d2307e9 100644
      variant_record(name: string | null): FootprintVariantRecord | undefined {
          return find_footprint_variant(this.variants, name);
 diff --git a/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts b/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts
-index 0aa1269..6f78dd8 100644
+index 0aa1269..f988ee4 100644
 --- a/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts
 +++ b/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts
 @@ -1,6 +1,6 @@
@@ -46,19 +54,56 @@ index 0aa1269..6f78dd8 100644
 
  export interface DesignatorRef {
      uuid: string;
-@@ -35,6 +35,7 @@ export class BoardBomItemVisitor extends BoardVisitorBase {
-             Datasheet: node.Datasheet,
-             Footprint: node.Footprint,
-             DNP: false,
-+            Fields: read_bom_fields((name) => node.field(name)),
-             Qty: 1,
-             Price: 0,
-         };
+@@ -19,6 +19,10 @@ export class BoardBomItemVisitor extends BoardVisitorBase {
+
+     #designator_refs = new Map<string, DesignatorRef[]>();
+
++    constructor(private readonly variant: string | null = null) {
++        super();
++    }
++
+     get bom_list() {
+         return this.#bom_list;
+     }
+@@ -28,18 +32,21 @@ export class BoardBomItemVisitor extends BoardVisitorBase {
+     }
+
+     protected override visitFootprint(node: Footprint) {
+-        const schematicSymbol: BomItem = {
+-            Reference: node.Reference,
+-            Name: node.Value,
+-            Description: node.Description,
+-            Datasheet: node.Datasheet,
+-            Footprint: node.Footprint,
+-            DNP: false,
+-            Qty: 1,
+-            Price: 0,
+-        };
+-
+-        this.#bom_list.push(schematicSymbol);
++        const flags = node.effective_flags(this.variant);
++
++        if (!flags.exclude_from_bom) {
++            this.#bom_list.push({
++                Reference: node.Reference,
++                Name: node.Value,
++                Description: node.Description,
++                Datasheet: node.Datasheet,
++                Footprint: node.Footprint,
++                DNP: flags.dnp,
++                Fields: read_bom_fields((name) => node.field(name)),
++                Qty: 1,
++                Price: 0,
++            });
++        }
+         // Both are what a cross-probe resolves against: without a designator
+         // there is nothing to look the footprint up by, and without a uuid
+         // there is nothing to select once it is found.
 diff --git a/packages/ecad-viewer-app/src/kicad/bom_item.ts b/packages/ecad-viewer-app/src/kicad/bom_item.ts
-index 78897a3..8ae6edb 100644
+index 78897a3..909e740 100644
 --- a/packages/ecad-viewer-app/src/kicad/bom_item.ts
 +++ b/packages/ecad-viewer-app/src/kicad/bom_item.ts
-@@ -1,3 +1,25 @@
+@@ -1,3 +1,29 @@
 +/** The sourcing fields Sprocket's KiCad skill asks agents to give every part. */
 +export const BOM_FIELDS = [
 +    "Manufacturer",
@@ -81,10 +126,14 @@ index 78897a3..8ae6edb 100644
 +    ) as BomFields;
 +}
 +
++/** KiCad writes `~` for an empty datasheet. */
++export const bom_datasheet = (item: BomItem) =>
++    item.Datasheet.trim() === "~" ? "" : item.Datasheet.trim();
++
  export interface BomItem {
      Reference: string;
      Name: string;
-@@ -5,6 +27,7 @@ export interface BomItem {
+@@ -5,6 +31,7 @@ export interface BomItem {
      Footprint: string;
      Description: string;
      DNP: boolean;
@@ -116,15 +165,19 @@ index d1f9ff5..a43915e 100644
              Price: 0,
          };
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
-index 7945086..5ac46f7 100644
+index 7945086..05892d7 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
-@@ -9,7 +9,42 @@ import { listen } from "../../../base/events";
+@@ -9,7 +9,53 @@ import { listen } from "../../../base/events";
  import { css, html } from "../../../base/web-components";
  import "./viewer";
  import type { Project } from "../../project";
 -import type { BomItem } from "../../../kicad/bom_item";
-+import { BOM_FIELDS, type BomItem } from "../../../kicad/bom_item";
++import {
++    BOM_FIELDS,
++    bom_datasheet,
++    type BomItem,
++} from "../../../kicad/bom_item";
 +
 +type Column = {
 +    title: string;
@@ -133,10 +186,6 @@ index 7945086..5ac46f7 100644
 +    optional?: boolean;
 +    className?: string;
 +};
-+
-+/** KiCad writes `~` for an empty datasheet. */
-+const datasheet = (item: BomItem) =>
-+    item.Datasheet === "~" ? "" : item.Datasheet.trim();
 +
 +const COLUMNS: Column[] = [
 +    { title: "No", text: (_, index) => String(index + 1), className: "narrow" },
@@ -152,8 +201,19 @@ index 7945086..5ac46f7 100644
 +        text: (item: BomItem) => item.Fields[field],
 +        optional: true,
 +    })),
-+    { title: "Datasheet", text: datasheet, optional: true, className: "url" },
++    {
++        title: "Datasheet",
++        text: bom_datasheet,
++        optional: true,
++        className: "url",
++    },
 +    { title: "Designator", text: (item) => item.Reference },
++    {
++        title: "DNP",
++        text: (item) => (item.DNP ? "DNP" : ""),
++        optional: true,
++        className: "narrow",
++    },
 +    {
 +        title: "Quantity",
 +        text: (item) => String(item.Qty),
@@ -163,7 +223,7 @@ index 7945086..5ac46f7 100644
 
  export class BomViewer extends KCUIElement {
      #project: Project;
-@@ -61,36 +96,14 @@ export class BomViewer extends KCUIElement {
+@@ -61,36 +107,14 @@ export class BomViewer extends KCUIElement {
                  background: #666;
              }
 
@@ -207,7 +267,7 @@ index 7945086..5ac46f7 100644
              }
              #summary {
                  color: white;
-@@ -138,54 +151,40 @@ export class BomViewer extends KCUIElement {
+@@ -138,54 +162,40 @@ export class BomViewer extends KCUIElement {
      }
 
      override initialContentCallback() {}
@@ -294,9 +354,18 @@ index 7945086..5ac46f7 100644
              <!-- <kc-ui-panel-title title="Nets"></kc-ui-panel-title> -->
              <div class="vertical">
 diff --git a/packages/ecad-viewer-app/src/kicanvas/project.ts b/packages/ecad-viewer-app/src/kicanvas/project.ts
-index bfdd21d..b71c6bc 100644
+index bfdd21d..6c1c0db 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/project.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/project.ts
+@@ -17,7 +17,7 @@ import {
+     BoardBomItemVisitor,
+     type DesignatorRef,
+ } from "../kicad/board_bom_visitor";
+-import type { BomItem } from "../kicad/bom_item";
++import { bom_datasheet, type BomItem } from "../kicad/bom_item";
+ import { ItemsGroupedByFpValueDNP } from "../kicad/ItemsGroupedByFpValueDNP";
+ import { NetRef, type LabelKind } from "../kicad/net_ref";
+ import {
 @@ -521,8 +521,14 @@ export class Project extends EventTarget implements IDisposable {
      _sort_bom(bom_list: BomItem[]) {
          const grouped_it_map: Map<string, ItemsGroupedByFpValueDNP> = new Map();
@@ -313,7 +382,7 @@ index bfdd21d..b71c6bc 100644
 
          for (const it of bom_list) {
              const key = group_by_fp_value(it);
-@@ -536,6 +542,7 @@ export class Project extends EventTarget implements IDisposable {
+@@ -536,10 +542,14 @@ export class Project extends EventTarget implements IDisposable {
                          it.Description,
                          it.Footprint,
                          it.DNP,
@@ -321,3 +390,20 @@ index bfdd21d..b71c6bc 100644
                      ),
                  );
              }
+-            grouped_it_map.get(key)!.addReference(it.Reference);
++            const group = grouped_it_map.get(key)!;
++            // Show a datasheet when any of the group's parts has one.
++            if (!bom_datasheet(group)) group.Datasheet = it.Datasheet;
++            group.addReference(it.Reference);
+         }
+         this._bom_items = Array.from(grouped_it_map.values());
+     }
+@@ -570,7 +580,7 @@ export class Project extends EventTarget implements IDisposable {
+                 if (sch_visitor.bom_list.length) return sch_visitor.bom_list;
+             }
+             if (this.has_boards) {
+-                const visitor = new BoardBomItemVisitor();
++                const visitor = new BoardBomItemVisitor(this.active_variant);
+                 for (const b of this.boards()) visitor.visit(b);
+                 this._designator_refs = visitor.designator_refs;
+                 return visitor.bom_list;
