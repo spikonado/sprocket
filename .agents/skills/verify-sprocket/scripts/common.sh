@@ -112,8 +112,9 @@ stop_listeners() {
 # update script, delete the installed launcher's restart file, serve its web bundle and use its git tokens.
 scrub_installed_app_env() {
 	local name
-	for name in $(compgen -e); do
-		[[ "$name" == SPROCKET_* && "$name" != SPROCKET_VERIFY_* ]] && unset "$name"
+	# Not compgen: nix develop's non-interactive bash lacks it.
+	for name in "${!SPROCKET_@}"; do
+		[[ "$name" != SPROCKET_VERIFY_* ]] && unset "$name"
 	done
 	export PUBLIC_POSTHOG_KEY=
 }
