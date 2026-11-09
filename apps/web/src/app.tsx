@@ -2510,6 +2510,7 @@ export default function App({
 					) : (
 						<InboxSidebarContainer
 							signedInUserId={signedInUserId}
+							localApi={localApi}
 							pullRequestRefresher={sidebarVisible ? pullRequestRefresher : null}
 							repositoryKeys={inboxProjectKeys}
 							sections={inbox.sections}

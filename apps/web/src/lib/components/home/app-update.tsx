@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import type { LocalApi } from '$lib/types/sprocket';
 import {
 	installPackageUpdate,
 	restartPackageUpdate,
@@ -10,6 +11,9 @@ import {
 	type UpdateState
 } from '$lib/updates';
 import ConfirmDialog from './confirm-dialog';
+import { caughtMessage, useConnectors } from './use-connectors';
+
+export type ConnectorUpdatesApi = Pick<LocalApi, 'fetchConnectors' | 'installOrUpdateConnector'>;
 
 type FailedRequest = { error: string; status: UpdateState['status'] };
 
@@ -27,7 +31,13 @@ function withRestartWhenReady(restartWhenReady: boolean) {
 	return (current: TrackedUpdate | null) => current && { ...current, restartWhenReady };
 }
 
-export default function AppUpdate() {
+export default function AppUpdate({
+	userId,
+	localApi
+}: {
+	userId: string | null;
+	localApi: ConnectorUpdatesApi | null;
+}) {
 	const auth = useConvexAuth();
 
 	const preferences = useConvexQueryResult({
@@ -144,29 +154,18 @@ export default function AppUpdate() {
 	}
 
 	if (!label || !updateState) {
-		return null;
+		return userId && localApi ? <ConnectorUpdate userId={userId} localApi={localApi} /> : null;
 	}
 
 	return (
-		<div className="mb-1" aria-live="polite">
-			<button
-				type="button"
-				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
-				disabled={working}
-				data-ph-capture-attribute-action={restartReady ? 'restart_to_update' : 'install_update'}
-				onClick={() => void update()}
-				title={updateState.version ? `Sprocket ${updateState.version}` : undefined}
-				aria-busy={working}
-			>
-				{working ? (
-					<LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-				) : restartReady ? (
-					<RefreshCw className="size-4 shrink-0" aria-hidden="true" />
-				) : (
-					<Download className="size-4 shrink-0" aria-hidden="true" />
-				)}
-				<span>{busy && restartReady ? 'Restarting Sprocket...' : label}</span>
-			</button>
+		<UpdateButton
+			label={busy && restartReady ? 'Restarting Sprocket...' : label}
+			title={updateState.version ? `Sprocket ${updateState.version}` : undefined}
+			working={working}
+			restartReady={restartReady}
+			error={requestError || updateState.error}
+			onClick={() => void update()}
+		>
 			{confirmRestart && (
 				<ConfirmDialog
 					title="Restart Sprocket?"
@@ -176,9 +175,91 @@ export default function AppUpdate() {
 					onConfirm={() => void update(true)}
 				/>
 			)}
-			{(requestError || updateState.error) && (
+		</UpdateButton>
+	);
+}
+
+/** Shown only when Sprocket is current, since a Sprocket update also updates connectors on startup. */
+function ConnectorUpdate({ userId, localApi }: { userId: string; localApi: ConnectorUpdatesApi }) {
+	const { connectors, replace } = useConnectors(userId, localApi);
+	const [busy, setBusy] = useState(false);
+	const [requestError, setRequestError] = useState<string | null>(null);
+	const outdated = connectors?.filter((connector) => connector.updateAvailable) ?? [];
+	const installing = outdated.some((connector) => connector.state === 'installing');
+	const error = requestError ?? outdated.find((connector) => connector.error)?.error ?? null;
+
+	async function update() {
+		setBusy(true);
+		setRequestError(null);
+
+		try {
+			await Promise.all(
+				outdated.map(async (connector) =>
+					replace(await localApi.installOrUpdateConnector(userId, connector.id))
+				)
+			);
+		} catch (caught) {
+			setRequestError(caughtMessage.parse(caught) || 'Something went wrong.');
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	if (outdated.length === 0) return null;
+
+	return (
+		<UpdateButton
+			label={installing ? 'Installing update…' : error ? 'Retry update' : 'Update available'}
+			title={outdated.map((connector) => `${connector.name} connector`).join(', ')}
+			working={busy || installing}
+			restartReady={false}
+			error={error}
+			onClick={() => void update()}
+		/>
+	);
+}
+
+function UpdateButton({
+	label,
+	title,
+	working,
+	restartReady,
+	error,
+	onClick,
+	children
+}: {
+	label: string;
+	title: string | undefined;
+	working: boolean;
+	restartReady: boolean;
+	error: string | null;
+	onClick: () => void;
+	children?: ReactNode;
+}) {
+	return (
+		<div className="mb-1" aria-live="polite">
+			<button
+				type="button"
+				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
+				disabled={working}
+				data-ph-capture-attribute-action={restartReady ? 'restart_to_update' : 'install_update'}
+				onClick={onClick}
+				title={title}
+				aria-busy={working}
+			>
+				{working ? (
+					<LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+				) : restartReady ? (
+					<RefreshCw className="size-4 shrink-0" aria-hidden="true" />
+				) : (
+					<Download className="size-4 shrink-0" aria-hidden="true" />
+				)}
+				<span>{label}</span>
+			</button>
+			{children}
+			{error && (
 				<p className="text-destructive px-2 pb-2 text-xs break-words" role="alert">
-					{requestError || updateState.error}
+					{error}
 				</p>
 			)}
 		</div>

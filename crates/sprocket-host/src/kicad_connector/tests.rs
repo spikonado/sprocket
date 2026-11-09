@@ -49,6 +49,11 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
         KIPY_API
     );
 
+    *connector.activity() = Activity::Installing;
+    let status = connector.status().await;
+    assert_eq!(status.state, ConnectorState::Installing);
+    assert!(status.update_available);
+
     *connector.activity() = Activity::Failed("Download failed".into());
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);

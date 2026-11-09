@@ -4,8 +4,9 @@ import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import { stubWebSocket } from '$lib/local/socket-test-support';
+import type { ConnectorStatus } from '$lib/types/sprocket';
 import type { UpdateState } from '$lib/updates';
-import AppUpdate from './app-update';
+import AppUpdate, { type ConnectorUpdatesApi } from './app-update';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -34,7 +35,11 @@ function preferences(automaticAgentContinuation?: boolean): Doc<'uiPreferences'>
 			};
 }
 
-function mount(automaticAgentContinuation?: boolean, loading = false) {
+function mount(
+	automaticAgentContinuation?: boolean,
+	loading = false,
+	localApi: ConnectorUpdatesApi | null = null
+) {
 	const client = new ConvexTestClient();
 
 	if (!loading) {
@@ -46,7 +51,7 @@ function mount(automaticAgentContinuation?: boolean, loading = false) {
 
 	render(
 		<ConvexTestProvider client={client}>
-			<AppUpdate />
+			<AppUpdate userId="user-test" localApi={localApi} />
 		</ConvexTestProvider>
 	);
 	sockets[0]?.open();
@@ -85,6 +90,36 @@ it('installs a package update on the first click and prevents another request wh
 		'disabled',
 		false
 	);
+});
+
+it('offers connector updates when Sprocket itself is current', async () => {
+	const kicad: ConnectorStatus = {
+		id: 'kicad',
+		name: 'KiCad',
+		state: 'installed',
+		error: null,
+		updateAvailable: true
+	};
+
+	const localApi = {
+		fetchConnectors: vi.fn().mockResolvedValue([kicad]),
+		installOrUpdateConnector: vi.fn().mockResolvedValue({ ...kicad, state: 'installing' })
+	};
+
+	const publish = mount(true, false, localApi);
+	publish({ ...available, status: 'idle', version: null });
+	const button = await screen.findByRole('button', { name: 'Update available' });
+	expect(button.title).toBe('KiCad connector');
+
+	await act(async () => fireEvent.click(button));
+	expect(localApi.installOrUpdateConnector).toHaveBeenCalledWith('user-test', 'kicad');
+	expect(screen.getByRole('button', { name: 'Installing update…' })).toHaveProperty(
+		'disabled',
+		true
+	);
+
+	publish(available);
+	expect(screen.getByRole('button', { name: 'Update available' }).title).toBe('Sprocket 1.1.0');
 });
 
 it('restarts once the update installs when automatic continuation is on', async () => {
