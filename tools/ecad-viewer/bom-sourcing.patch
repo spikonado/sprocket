@@ -1,0 +1,323 @@
+diff --git a/packages/ecad-viewer-app/src/kicad/ItemsGroupedByFpValueDNP.ts b/packages/ecad-viewer-app/src/kicad/ItemsGroupedByFpValueDNP.ts
+index b3c7c29..10f4ab2 100644
+--- a/packages/ecad-viewer-app/src/kicad/ItemsGroupedByFpValueDNP.ts
++++ b/packages/ecad-viewer-app/src/kicad/ItemsGroupedByFpValueDNP.ts
+@@ -1,4 +1,4 @@
+-import type { BomItem } from "./bom_item";
++import type { BomFields, BomItem } from "./bom_item";
+
+ export class ItemsGroupedByFpValueDNP implements BomItem {
+     #references: string[] = [];
+@@ -25,5 +25,6 @@ export class ItemsGroupedByFpValueDNP implements BomItem {
+         public Description: string,
+         public Footprint: string,
+         public DNP: boolean,
++        public Fields: BomFields,
+     ) {}
+ }
+diff --git a/packages/ecad-viewer-app/src/kicad/board.ts b/packages/ecad-viewer-app/src/kicad/board.ts
+index 48cac91..d2307e9 100644
+--- a/packages/ecad-viewer-app/src/kicad/board.ts
++++ b/packages/ecad-viewer-app/src/kicad/board.ts
+@@ -1118,6 +1118,14 @@ export class Footprint implements BoardNode {
+         return this.descr ?? this.properties["Description"] ?? "";
+     }
+
++    field(name: string): string | undefined {
++        return (
++            this.properties[name] ??
++            this.properties_kicad_8.find((property) => property.name === name)
++                ?.value
++        );
++    }
++
+     /** The footprint's record for `name`, matched case-insensitively. */
+     variant_record(name: string | null): FootprintVariantRecord | undefined {
+         return find_footprint_variant(this.variants, name);
+diff --git a/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts b/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts
+index 0aa1269..6f78dd8 100644
+--- a/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts
++++ b/packages/ecad-viewer-app/src/kicad/board_bom_visitor.ts
+@@ -1,6 +1,6 @@
+ import { Footprint } from "./board";
+ import { BoardVisitorBase } from "./board_visitor_base";
+-import type { BomItem } from "./bom_item";
++import { read_bom_fields, type BomItem } from "./bom_item";
+
+ export interface DesignatorRef {
+     uuid: string;
+@@ -35,6 +35,7 @@ export class BoardBomItemVisitor extends BoardVisitorBase {
+             Datasheet: node.Datasheet,
+             Footprint: node.Footprint,
+             DNP: false,
++            Fields: read_bom_fields((name) => node.field(name)),
+             Qty: 1,
+             Price: 0,
+         };
+diff --git a/packages/ecad-viewer-app/src/kicad/bom_item.ts b/packages/ecad-viewer-app/src/kicad/bom_item.ts
+index 78897a3..8ae6edb 100644
+--- a/packages/ecad-viewer-app/src/kicad/bom_item.ts
++++ b/packages/ecad-viewer-app/src/kicad/bom_item.ts
+@@ -1,3 +1,25 @@
++/** The sourcing fields Sprocket's KiCad skill asks agents to give every part. */
++export const BOM_FIELDS = [
++    "Manufacturer",
++    "MPN",
++    "Digikey Part #",
++    "Mouser Part #",
++    "LCSC Part #",
++    "JLCPCB Part #",
++] as const;
++
++export type BomField = (typeof BOM_FIELDS)[number];
++
++export type BomFields = Record<BomField, string>;
++
++export function read_bom_fields(
++    read: (name: string) => string | undefined,
++): BomFields {
++    return Object.fromEntries(
++        BOM_FIELDS.map((name) => [name, read(name)?.trim() ?? ""]),
++    ) as BomFields;
++}
++
+ export interface BomItem {
+     Reference: string;
+     Name: string;
+@@ -5,6 +27,7 @@ export interface BomItem {
+     Footprint: string;
+     Description: string;
+     DNP: boolean;
++    Fields: BomFields;
+     Qty: number;
+     Price: number;
+ }
+diff --git a/packages/ecad-viewer-app/src/kicad/schematic_bom_visitor.ts b/packages/ecad-viewer-app/src/kicad/schematic_bom_visitor.ts
+index d1f9ff5..a43915e 100644
+--- a/packages/ecad-viewer-app/src/kicad/schematic_bom_visitor.ts
++++ b/packages/ecad-viewer-app/src/kicad/schematic_bom_visitor.ts
+@@ -1,5 +1,5 @@
+ import type { DesignatorRef } from "./board_bom_visitor";
+-import type { BomItem } from "./bom_item";
++import { read_bom_fields, type BomItem } from "./bom_item";
+ import {
+     SchematicInstanceContext,
+     type KicadSch,
+@@ -65,6 +65,11 @@ export class SchematicBomVisitor extends SchematicVisitorBase {
+                 context?.property_text(node, "Datasheet") ?? node.datasheet,
+             Footprint: footprint,
+             DNP: context?.dnp(node) ?? node.dnp,
++            Fields: read_bom_fields(
++                (name) =>
++                    context?.property_text(node, name) ??
++                    node.get_property_text(name),
++            ),
+             Qty: 1,
+             Price: 0,
+         };
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
+index 7945086..5ac46f7 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
+@@ -9,7 +9,42 @@ import { listen } from "../../../base/events";
+ import { css, html } from "../../../base/web-components";
+ import "./viewer";
+ import type { Project } from "../../project";
+-import type { BomItem } from "../../../kicad/bom_item";
++import { BOM_FIELDS, type BomItem } from "../../../kicad/bom_item";
++
++type Column = {
++    title: string;
++    text: (item: BomItem, index: number) => string;
++    /** Shown only when some part has a value. */
++    optional?: boolean;
++    className?: string;
++};
++
++/** KiCad writes `~` for an empty datasheet. */
++const datasheet = (item: BomItem) =>
++    item.Datasheet === "~" ? "" : item.Datasheet.trim();
++
++const COLUMNS: Column[] = [
++    { title: "No", text: (_, index) => String(index + 1), className: "narrow" },
++    { title: "Value", text: (item) => item.Name, className: "narrow" },
++    {
++        title: "Description",
++        text: (item) => item.Description,
++        optional: true,
++    },
++    { title: "Footprint", text: (item) => item.Footprint },
++    ...BOM_FIELDS.map((field) => ({
++        title: field,
++        text: (item: BomItem) => item.Fields[field],
++        optional: true,
++    })),
++    { title: "Datasheet", text: datasheet, optional: true, className: "url" },
++    { title: "Designator", text: (item) => item.Reference },
++    {
++        title: "Quantity",
++        text: (item) => String(item.Qty),
++        className: "narrow",
++    },
++];
+
+ export class BomViewer extends KCUIElement {
+     #project: Project;
+@@ -61,36 +96,14 @@ export class BomViewer extends KCUIElement {
+                 background: #666;
+             }
+
+-            /* Adjust column widths */
+-            th:nth-child(1),
+-            td:nth-child(1) {
+-                /* Index */
+-                width: 5%;
++            .narrow {
++                width: 1%;
++                white-space: nowrap;
+             }
+-            th:nth-child(2),
+-            td:nth-child(2) {
+-                /* Name */
+-                width: 15%;
+-            }
+-            th:nth-child(3),
+-            td:nth-child(3) {
+-                /* Description */
+-                width: 35%;
+-            }
+-            th:nth-child(4),
+-            td:nth-child(4) {
+-                /* Footprint */
+-                width: 15%;
+-            }
+-            th:nth-child(5),
+-            td:nth-child(5) {
+-                /* Reference */
+-                width: 25%;
+-            }
+-            th:nth-child(6),
+-            td:nth-child(6) {
+-                /* Quantity */
+-                width: 5%;
++            td.url {
++                max-width: 16em;
++                white-space: nowrap;
++                text-overflow: ellipsis;
+             }
+             #summary {
+                 color: white;
+@@ -138,54 +151,40 @@ export class BomViewer extends KCUIElement {
+     }
+
+     override initialContentCallback() {}
+-    generateBomItemHtml(bomItem: BomItem, index: number) {
+-        return html`
+-            <tr>
+-                <td>${index}</td>
+-                <td>${bomItem.Name}</td>
+-                <td>${bomItem.Description}</td>
+-                <td>${bomItem.Footprint}</td>
+-                <td>${bomItem.Reference}</td>
+-                <td>${bomItem.Qty}</td>
+-            </tr>
+-        `;
+-    }
+     override render() {
+-        const table = html`<table>
+-            <thead>
+-                <tr>
+-                    <th>No</th>
+-                    <th>Value</th>
+-                    <!-- <th>Price</th> -->
+-                    <th>Description</th>
+-                    <th>Footprint</th>
+-                    <th>Designator</th>
+-                    <th>Quantity</th>
+-                </tr>
+-            </thead>
+-        </table>`;
+-
+-        const body = html`<tbody id="bomItemsBody"></tbody>`;
+-
+-        let total_cp = 0;
+         const bom_items = this.#project.bom_items!;
+-        for (let i = 0; i < bom_items.length; i++) {
+-            const it = bom_items[i]!;
+-            body.appendChild(this.generateBomItemHtml(it, i + 1));
+-            total_cp += it.Qty;
+-        }
+-
+-        table.appendChild(body);
+-        const headerCells = table.querySelectorAll("th");
+-        const bodyCells = table.querySelectorAll("td");
+-
+-        headerCells.forEach((cell, index) => {
+-            const headerWidth = cell.getBoundingClientRect().width;
+-            const bodyWidth =
+-                bodyCells[index]?.getBoundingClientRect().width ?? headerWidth;
+-            const maxWidth = Math.max(headerWidth, bodyWidth);
+-            cell.style.width = maxWidth + "px";
++        const columns = COLUMNS.filter(
++            (column) =>
++                !column.optional ||
++                bom_items.some((item, index) => column.text(item, index)),
++        );
++
++        const cell = (tag: "th" | "td", column: Column, text: string) => {
++            const element = document.createElement(tag);
++            element.textContent = text;
++            if (column.className) element.className = column.className;
++            if (tag === "td" && column.className === "url")
++                element.title = text;
++            return element;
++        };
++
++        const table = document.createElement("table");
++        table
++            .createTHead()
++            .insertRow()
++            .append(
++                ...columns.map((column) => cell("th", column, column.title)),
++            );
++        const body = table.createTBody();
++        bom_items.forEach((item, index) => {
++            body.insertRow().append(
++                ...columns.map((column) =>
++                    cell("td", column, column.text(item, index)),
++                ),
++            );
+         });
++
++        const total_cp = bom_items.reduce((total, item) => total + item.Qty, 0);
+         return html`
+             <!-- <kc-ui-panel-title title="Nets"></kc-ui-panel-title> -->
+             <div class="vertical">
+diff --git a/packages/ecad-viewer-app/src/kicanvas/project.ts b/packages/ecad-viewer-app/src/kicanvas/project.ts
+index bfdd21d..b71c6bc 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/project.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/project.ts
+@@ -521,8 +521,14 @@ export class Project extends EventTarget implements IDisposable {
+     _sort_bom(bom_list: BomItem[]) {
+         const grouped_it_map: Map<string, ItemsGroupedByFpValueDNP> = new Map();
+
++        // Parts with different sourcing fields are different parts to buy.
+         const group_by_fp_value = (itm: BomItem) =>
+-            `${itm.Footprint}-${itm.Name}-${itm.DNP}`;
++            JSON.stringify([
++                itm.Footprint,
++                itm.Name,
++                itm.DNP,
++                ...Object.values(itm.Fields),
++            ]);
+
+         for (const it of bom_list) {
+             const key = group_by_fp_value(it);
+@@ -536,6 +542,7 @@ export class Project extends EventTarget implements IDisposable {
+                         it.Description,
+                         it.Footprint,
+                         it.DNP,
++                        it.Fields,
+                     ),
+                 );
+             }

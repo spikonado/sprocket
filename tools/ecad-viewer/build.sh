@@ -14,6 +14,8 @@ trap 'rm -rf "$src"' EXIT
 git clone --quiet https://github.com/krishna-swaroop/ecad-viewer "$src"
 git -C "$src" checkout --quiet "$commit"
 # bom-reload: redraws the BOM table when the frame loads edited files.
+# bom-sourcing: adds the sourcing fields from the working-with-kicad skill, such as MPN and
+# distributor part numbers, to the BOM, and keeps parts with different ones on separate rows.
 # clear-selection: closes the property panels when the frame clears the selection on Escape.
 # footprint-transform: KiCad 10.99 places footprints with
 # `(transform (translate x y) (rotate r) (scale sx sy))` instead of `(at x y r)`.
