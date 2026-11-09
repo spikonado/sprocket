@@ -400,9 +400,6 @@ impl CommandSessionManager {
         let started_at = now_ms();
         let timeout = timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1)));
         history.process = process_record(&child, started_at, timeout);
-        if history.process.is_some() && history.save(&history_path).await.is_err() {
-            history.process = None;
-        }
         let session = self.start_session(
             session_id.clone(),
             started_at,
@@ -570,6 +567,9 @@ impl CommandSessionManager {
 
         if session.completion.borrow().is_none() {
             match action {
+                CommandAction::Write if !session.accepts_input => {
+                    bail!("command stdin is closed because the command outlived a server restart")
+                }
                 CommandAction::Write => {
                     if let Err(error) = session
                         .write(chars.as_bytes().to_vec(), &cancellation)
@@ -720,6 +720,7 @@ impl CommandSessionManager {
         stdin: Option<ChildStdin>,
         supervision: Supervision,
     ) -> Arc<CommandSession> {
+        let accepts_input = stdin.is_some();
         let (stdin_sender, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(stdin, stdin_requests));
         let (control, controls) = mpsc::unbounded_channel();
@@ -731,6 +732,7 @@ impl CommandSessionManager {
             workdir: history.workdir.clone(),
             started_at,
             control,
+            accepts_input,
             stdin: stdin_sender,
             completion,
             output: supervision.output.clone(),
@@ -796,6 +798,7 @@ struct CommandSession {
     workdir: String,
     started_at: u64,
     control: mpsc::UnboundedSender<Control>,
+    accepts_input: bool,
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,

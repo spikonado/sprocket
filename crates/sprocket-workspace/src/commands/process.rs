@@ -149,6 +149,12 @@ pub(super) async fn supervise_command(
         lifetime_guard,
         history,
     } = supervision;
+    let (path, mut history) = history;
+    // Saved here, so a cancelled `exec_cmd` can't drop a started command before its supervisor
+    // owns it. Without the record, the next server couldn't find the command to adopt it.
+    if history.process.is_some() && history.save(&path).await.is_err() {
+        history.process = None;
+    }
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
     let mut poll = tokio::time::interval(PROCESS_POLL_INTERVAL);
@@ -165,9 +171,8 @@ pub(super) async fn supervise_command(
                 }
             },
             control = controls.recv() => match control {
-                // Without a saved record, the next server couldn't find the command to adopt it.
                 #[cfg(unix)]
-                Some(Control::Detach) if history.1.process.is_some() => break None,
+                Some(Control::Detach) if history.process.is_some() => break None,
                 Some(_) | None => match process.terminate().await {
                     Ok(exit_code) => break Some((exit_code, false, None)),
                     Err(error) => break Some((None, false, Some(error.to_string()))),
@@ -221,7 +226,6 @@ pub(super) async fn supervise_command(
         error,
         saved: false,
     };
-    let (path, mut history) = history;
     history.result = completion_output(&completed, output.lock().await.full_preview());
     match history.save(&path).await {
         Ok(()) => {

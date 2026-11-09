@@ -1939,6 +1939,10 @@ async fn a_restarted_server_adopts_a_running_command_and_reports_its_exit() {
         .unwrap();
     let restarted = CommandSessionManager::new(root.clone(), logs);
     restarted.adopt(&id, history).await.unwrap();
+    let write_error = control(&restarted, &id, CommandAction::Write, "x", 0)
+        .await
+        .unwrap_err();
+    assert!(write_error.to_string().contains("stdin is closed"));
     fs::write(root.join("end"), "").unwrap();
 
     let mut output = String::new();
