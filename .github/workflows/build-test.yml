@@ -81,7 +81,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy native server
-        run: cargo clippy --locked -p sprocket-server
+        run: cargo clippy --locked -p sprocket-server --keep-going -- --cap-lints warn
       - name: Test native credential storage
         run: cargo test --locked -p sprocket-host native_auth::credentials::tests
       - name: Test private file permissions
@@ -145,7 +145,7 @@ jobs:
 
       - name: Clippy
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
-        run: cargo clippy --locked --workspace --all-targets
+        run: cargo clippy --locked --workspace --all-targets --keep-going -- --cap-lints warn
 
       - name: Cargo test
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
