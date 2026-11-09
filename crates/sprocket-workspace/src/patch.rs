@@ -39,7 +39,6 @@ pub enum PatchOperation {
 #[derive(Clone)]
 struct FileContents {
     bytes: Vec<u8>,
-    /// `None` for files the patch creates, so they get the OS default mode.
     permissions: Option<Permissions>,
 }
 
@@ -61,8 +60,6 @@ impl TrackedFile {
     }
 }
 
-/// Sections apply in order against this in-memory view, so later sections see
-/// earlier ones; nothing touches disk until every section has applied.
 struct PatchFiles<'a> {
     cwd: &'a Path,
     files: BTreeMap<PathBuf, TrackedFile>,
@@ -112,7 +109,7 @@ impl PatchFiles<'_> {
     async fn apply(&mut self, section: PatchSection) -> Result<PatchChangeOutput> {
         Ok(match section {
             PatchSection::Add { path, contents } => {
-                let path = self.resolve(&path)?;
+                let path = self.resolve_unconfined(&path)?;
                 self.ensure_vacant(&path).await?;
                 self.set(
                     &path,
@@ -136,7 +133,7 @@ impl PatchFiles<'_> {
                 let (source, file) = self.existing_file(&path).await?;
                 let file = updated(&source, file, &chunks)?;
                 let destination = move_to
-                    .map(|destination| self.resolve(&destination))
+                    .map(|destination| self.resolve_unconfined(&destination))
                     .transpose()?
                     .filter(|destination| *destination != source);
                 match destination {
@@ -163,7 +160,7 @@ impl PatchFiles<'_> {
             } => {
                 let (source, file) = self.existing_file(&path).await?;
                 let file = updated(&source, file, &chunks)?;
-                let destination = self.resolve(&copy_to)?;
+                let destination = self.resolve_unconfined(&copy_to)?;
                 self.ensure_vacant(&destination).await?;
                 self.set(&destination, FileState::File(file));
                 change(&destination, PatchOperation::Copied, Some(source.as_path()))
@@ -171,10 +168,7 @@ impl PatchFiles<'_> {
         })
     }
 
-    /// Join relative paths against the cwd, normalize `.`/`..`, and
-    /// canonicalize the deepest existing ancestor. Does not confine results
-    /// to the cwd.
-    fn resolve(&self, path: &str) -> Result<PathBuf> {
+    fn resolve_unconfined(&self, path: &str) -> Result<PathBuf> {
         let candidate = self.cwd.join(expand_home(path));
         canonicalize_with_missing_tail(&normalize_path(&candidate)?)
     }
@@ -194,7 +188,7 @@ impl PatchFiles<'_> {
     }
 
     async fn existing_file(&mut self, path: &str) -> Result<(PathBuf, &FileContents)> {
-        let path = self.resolve(path)?;
+        let path = self.resolve_unconfined(path)?;
         let cwd = self.cwd;
         match self.tracked(&path).await?.current() {
             FileState::File(contents) => Ok((path, contents)),

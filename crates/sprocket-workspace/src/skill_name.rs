@@ -1,5 +1,3 @@
-//! Shared skill-name rules for discovery and `build.rs` (via `#[path]`).
-
 pub const MAX_NAME_CHARS: usize = 64;
 
 pub fn validate_skill_name(name: &str) -> Result<(), String> {

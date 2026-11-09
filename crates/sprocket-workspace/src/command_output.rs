@@ -220,8 +220,6 @@ impl CapturedOutput {
     }
 }
 
-/// Renders `output.log` from byte `from_offset` on. Until the stream is final,
-/// a trailing incomplete character is left for a later read to complete.
 pub(crate) async fn read_log_from(
     log_path: &Path,
     from_offset: u64,
@@ -349,7 +347,6 @@ impl PreviewBuffer {
             let noun = if lines == 1 { "line" } else { "lines" };
             let marker = format!("\n<{lines} {noun} omitted>\n");
             let retained = self.head.len() + self.tail.len();
-            // A tiny internal limit must not cut the omission notice itself.
             if retained == 0 || retained + marker.len() <= self.max_chars {
                 return self
                     .head

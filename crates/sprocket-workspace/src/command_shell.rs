@@ -7,17 +7,16 @@ pub fn default_command_shell() -> String {
     default_shell_for(std::env::var_os("PATH").as_deref())
 }
 
-/// Finds the default shell on `path`, the `PATH` its commands will run with.
-pub(crate) fn default_shell_for(path: Option<&OsStr>) -> String {
+pub(crate) fn default_shell_for(command_path: Option<&OsStr>) -> String {
     #[cfg(unix)]
     {
         let configured = std::env::var("SHELL").ok();
         let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-        unix::default_shell(configured.as_deref(), path, &cwd)
+        unix::default_shell(configured.as_deref(), command_path, &cwd)
     }
     #[cfg(windows)]
     {
-        windows::default_shell(path)
+        windows::default_shell(command_path)
     }
 }
 
@@ -121,6 +120,7 @@ mod unix {
         let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
             return false;
         };
+        // SAFETY: `path` is a NUL-terminated string that outlives the call.
         unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
     }
 
