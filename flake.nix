@@ -17,6 +17,7 @@
           inherit system;
           overlays = [ bunOverlay ];
         };
+        rustToolchain = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain;
         # Uses the Bun release the host installs for agents, so one pin covers both.
         bunOverlay = final: prev: {
           bun =
@@ -90,19 +91,20 @@
             [
               bun
               commitlint
-              cargo
               cargo-edit
-              clippy
               gcc
               nodejs_26
               prek
-              rustc
-              rustfmt
-              rust-analyzer
+              rustup
             ]
             ++ electronRuntimeLibs;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath electronRuntimeLibs;
+
+          shellHook = ''
+            export PATH="''${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+            export PATH="''${RUSTUP_HOME:-$HOME/.rustup}/toolchains/${rustToolchain.channel}-${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin:$PATH"
+          '';
         };
       }
     );
