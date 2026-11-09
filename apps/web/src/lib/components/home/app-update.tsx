@@ -65,7 +65,7 @@ export default function AppUpdate({
 
 	const working = busy || sprocketWorking || connectorsInstalling;
 	const restartReady = updateState?.status === 'installed' || updateState?.status === 'downloaded';
-	const restartAwaitsConnectors = restartReady && pending.length > 0;
+	const restartAwaitsConnectors = restartReady && pending.some((connector) => !connector.error);
 	const restartNow = restartReady && !restartAwaitsConnectors;
 
 	const requestError =
@@ -193,7 +193,7 @@ export default function AppUpdate({
 		try {
 			await Promise.all([
 				restartAwaitsConnectors ? undefined : updateSprocket(startedRevision),
-				updateConnectors()
+				restartNow ? undefined : updateConnectors()
 			]);
 		} catch (error) {
 			setTracked(withRestartWhenReady(false));

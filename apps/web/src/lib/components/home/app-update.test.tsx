@@ -158,6 +158,14 @@ it('installs outdated connectors before restarting into an installed update', as
 	expect(fetcher).not.toHaveBeenCalled();
 });
 
+it('offers the Sprocket restart once a connector update has failed', async () => {
+	const localApi = connectorApi();
+	localApi.fetchConnectors.mockResolvedValue([{ ...outdatedKiCad, error: 'Download failed' }]);
+	mount(true, false, localApi)({ ...available, status: 'installed' });
+	expect(await screen.findByText('Download failed')).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toBeTruthy();
+});
+
 it('restarts once the update installs when automatic continuation is on', async () => {
 	const restarted = Promise.withResolvers<Response>();
 
