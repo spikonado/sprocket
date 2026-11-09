@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Verification stand-in on cli.sh's PATH: records the launch instead of starting Electron.
+printf '%s sprocket-desktop %s\n' "$(date -Is)" "$*" >>"$VERIFY_CLI_OPENED"

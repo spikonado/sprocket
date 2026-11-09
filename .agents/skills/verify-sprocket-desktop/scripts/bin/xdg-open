@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stands in for the system browser: main.mjs opens external URLs with xdg-open on Linux.
+printf '%s %s\n' "$(date -Is)" "$1" >>"${SPROCKET_VERIFY_OPENED_URLS:?}"

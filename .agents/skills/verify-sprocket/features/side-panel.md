@@ -10,6 +10,7 @@ The right side panel holds panes of tabs. A new tab offers a view picker for Art
 - `panel-split` splits a pane right or down, resizes the split, and closes a pane with its last tab.
 - `panel-expand` toggles full workspace.
 - `panel-restore` brings back the tabs after a close and reopen.
+- `panel-browser` starts the agent browser dashboard in the Browser view.
 
 ## How to get to it (user POV)
 
@@ -27,6 +28,7 @@ Precondition: the new-thread screen is open and the panel is closed.
 - **Expand.** Click `button "Expand to full workspace"`. It becomes `button "Exit full workspace"` and the resize separator is gone. `agent-browser press Escape` restores both.
 - **Close.** Click `button "Close panel"`. No `tab` remains in `snapshot -i`.
 - **Restore.** Click `button "Open side panel"`. The same tabs return, with the last selected one still selected.
+- **Browser.** In a new tab, click `button "Browser"`. The tab shows `status` `Browser ready`, `link "Open browser dashboard in a new tab"` and `Iframe "Agent browser dashboard"`, whose page has the tabs `Sessions`, `Viewport` and `Activity`. On a cold start, when the server must install or start the dashboard, `status` `Setting up the browser…` shows first. A failed setup shows an `alert` with the error and `button "Retry setup"`.
 - **Last tab.** Close each tab with its `button "Close <name> tab"`. After the last one, the panel is gone and `button "Open side panel"` is back.
 
 ## Gotchas
