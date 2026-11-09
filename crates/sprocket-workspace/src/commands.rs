@@ -11,17 +11,20 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::async_tools::ZeroPollCooldown;
 use crate::cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use crate::command_container::CommandContainer;
-use crate::command_history::{CommandHistory, history_path};
+use crate::command_history::{CommandHistory, ProcessRecord, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, UnreturnedOutput, read_log_from};
 use crate::command_shell::{default_shell_for, resolve_command_shell};
 use crate::paths::resolve_directory;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use tokio::process::ChildStdin;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
+#[cfg(unix)]
+use self::process::{AdoptedProcess, Spools};
 use self::process::{
-    CommandCompletion, StdinRequest, build_shell_command, capture_pipes, completion_output,
-    signal_change, supervise_command, write_command_input,
+    CommandCompletion, CommandProcess, Control, StdinRequest, Supervision, build_shell_command,
+    completion_output, signal_change, start_capture, supervise_command, write_command_input,
 };
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
@@ -318,17 +321,6 @@ impl CommandSessionManager {
             )
             .await?,
         ));
-        let mut process = build_shell_command(command, &shell);
-        process
-            .current_dir(&cwd)
-            .envs(self.environment.iter().map(|(key, value)| (key, value)))
-            .envs(github_environment)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(unix)]
-        process.process_group(0);
 
         let mut sessions = self.sessions.lock().await;
         cancellation.ensure_active()?;
@@ -338,7 +330,11 @@ impl CommandSessionManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let history_path = history_path(&self.log_directory, &session_id)?;
         let preview = output.lock().await.preview_metadata();
-        let history = CommandHistory {
+        let log_directory = Path::new(&preview.complete_log_path)
+            .parent()
+            .context("command log has no directory")?
+            .to_path_buf();
+        let mut history = CommandHistory {
             user_id: self.history_scope.user_id.clone(),
             thread_id: self.history_scope.thread_id.clone(),
             machine_id: self.history_scope.machine_id.clone(),
@@ -355,6 +351,7 @@ impl CommandSessionManager {
                 events_path: preview.events_path,
                 error: None,
             },
+            process: None,
         };
         history.save(&history_path).await?;
         let launch: Result<_> = (|| {
@@ -362,6 +359,17 @@ impl CommandSessionManager {
             if self.stopped.load(Ordering::Acquire) {
                 bail!("command sessions are shutting down");
             }
+            let (mut process, output_source) =
+                build_shell_command(command, &shell, &log_directory)?;
+            process
+                .current_dir(&cwd)
+                .envs(self.environment.iter().map(|(key, value)| (key, value)))
+                .envs(github_environment)
+                .stdin(Stdio::piped())
+                // Unix commands can outlive this server, so only an explicit stop kills them.
+                .kill_on_drop(cfg!(windows));
+            #[cfg(unix)]
+            process.process_group(0);
             let lifetime_guard = self
                 .lifetime_guard_factory
                 .as_ref()
@@ -372,9 +380,9 @@ impl CommandSessionManager {
                 None => process.spawn(),
             }
             .with_context(|| format!("failed to start shell \"{shell}\" in {}", cwd.display()))?;
-            Ok((child, lifetime_guard))
+            Ok((child, output_source, lifetime_guard))
         })();
-        let (mut child, lifetime_guard) = match launch {
+        let (mut child, output_source, lifetime_guard) = match launch {
             Ok(launched) => launched,
             Err(error) => {
                 let history_cleanup = tokio::fs::remove_file(&history_path).await;
@@ -390,45 +398,27 @@ impl CommandSessionManager {
                 return Err(error);
             }
         };
-        let process_id = child.id();
-        let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
-        let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
-        let capture_task = tokio::spawn(capture_pipes(
-            child.stdout.take().expect("stdout is piped"),
-            child.stderr.take().expect("stderr is piped"),
-            output.clone(),
-        ));
-        let (control, controls) = mpsc::unbounded_channel();
-        let (completion_sender, completion) = watch::channel(None);
-        tokio::spawn(supervise_command(
-            child,
-            process_id,
-            controls,
-            completion_sender,
-            stdin_task,
-            capture_task,
-            output.clone(),
-            timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
-            lifetime_guard,
-            (history_path, history),
-            self.changes.clone(),
-        ));
-
-        let session = Arc::new(CommandSession {
-            id: session_id.clone(),
-            command: command.to_string(),
-            workdir: cwd.to_string_lossy().to_string(),
-            started_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-            control,
+        let capture = start_capture(output_source, &mut child, output.clone());
+        let stdin = child.stdin.take();
+        let started_at = now_ms();
+        let timeout = timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1)));
+        history.process = process_record(&child, started_at, timeout);
+        if history.process.is_some() && history.save(&history_path).await.is_err() {
+            history.process = None;
+        }
+        let session = self.start_session(
+            session_id.clone(),
+            started_at,
             stdin,
-            completion,
-            output,
-            max_output_chars,
-            observation: Mutex::new(CommandObservation::default()),
-        });
+            Supervision {
+                process: CommandProcess::spawned(child),
+                capture,
+                output,
+                timeout,
+                lifetime_guard,
+                history: (history_path, history),
+            },
+        );
         sessions.insert(session_id.clone(), session.clone());
         drop(sessions);
         signal_change(&self.changes);
@@ -643,6 +633,126 @@ impl CommandSessionManager {
         self.prune_completed().await;
     }
 
+    /// Leaves running commands to the server that replaces this one, which adopts them.
+    #[cfg(unix)]
+    pub async fn detach_all(&self) {
+        self.stopped.store(true, Ordering::Release);
+        let sessions = self
+            .sessions
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for session in &sessions {
+            let _ = session.control.send(Control::Detach);
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            for session in &sessions {
+                session.released().await;
+            }
+        })
+        .await;
+    }
+
+    /// Takes over a command that an earlier server left running.
+    #[cfg(unix)]
+    pub async fn adopt(&self, session_id: &str, history: CommandHistory) -> Result<()> {
+        let record = history
+            .process
+            .clone()
+            .context("command has no process record")?;
+        let history_path = history_path(&self.log_directory, session_id)?;
+        let log_directory = Path::new(&history.result.complete_log_path)
+            .parent()
+            .context("command log has no directory")?
+            .to_path_buf();
+        let process = AdoptedProcess::new(record.pid, record.start_token, &log_directory);
+        let resumed = async {
+            let lifetime_guard = self
+                .lifetime_guard_factory
+                .as_ref()
+                .map(|factory| factory())
+                .transpose()?;
+            let (output, captured) = CapturedOutput::resume(
+                history.result.complete_log_path.clone(),
+                history.result.events_path.clone(),
+                history.max_output_chars,
+                self.output_limits,
+            )
+            .await?;
+            let spools = Spools::open(&log_directory, captured)?;
+            anyhow::Ok((lifetime_guard, output, spools))
+        }
+        .await;
+        let (lifetime_guard, output, spools) = match resumed {
+            Ok(resumed) => resumed,
+            Err(error) => {
+                // Unwatched, the command would outlive every later quit.
+                let _ = process.terminate().await;
+                return Err(error);
+            }
+        };
+        let output = Arc::new(Mutex::new(output));
+        let capture = spools.capture(output.clone());
+        let timeout = record
+            .deadline_ms
+            .map(|deadline_ms| Duration::from_millis(deadline_ms.saturating_sub(now_ms()).max(1)));
+        let session = self.start_session(
+            session_id.to_string(),
+            record.started_at,
+            None,
+            Supervision {
+                process: CommandProcess::Adopted(process),
+                capture,
+                output,
+                timeout,
+                lifetime_guard,
+                history: (history_path, history),
+            },
+        );
+        self.sessions
+            .lock()
+            .await
+            .insert(session_id.to_string(), session);
+        signal_change(&self.changes);
+        Ok(())
+    }
+
+    fn start_session(
+        &self,
+        id: String,
+        started_at: u64,
+        stdin: Option<ChildStdin>,
+        supervision: Supervision,
+    ) -> Arc<CommandSession> {
+        let (stdin_sender, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
+        let stdin_task = tokio::spawn(write_command_input(stdin, stdin_requests));
+        let (control, controls) = mpsc::unbounded_channel();
+        let (completion_sender, completion) = watch::channel(None);
+        let history = &supervision.history.1;
+        let session = Arc::new(CommandSession {
+            id,
+            command: history.command.clone(),
+            workdir: history.workdir.clone(),
+            started_at,
+            control,
+            stdin: stdin_sender,
+            completion,
+            output: supervision.output.clone(),
+            max_output_chars: history.max_output_chars,
+            observation: Mutex::new(CommandObservation::default()),
+        });
+        tokio::spawn(supervise_command(
+            supervision,
+            stdin_task,
+            controls,
+            completion_sender,
+            self.changes.clone(),
+        ));
+        session
+    }
+
     async fn observe_session(
         &self,
         session: Arc<CommandSession>,
@@ -691,7 +801,7 @@ struct CommandSession {
     command: String,
     workdir: String,
     started_at: u64,
-    control: mpsc::UnboundedSender<()>,
+    control: mpsc::UnboundedSender<Control>,
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,
@@ -719,8 +829,14 @@ impl CommandSession {
 
     fn terminate(&self) -> Result<()> {
         self.control
-            .send(())
+            .send(Control::Terminate)
             .map_err(|_| anyhow!("command session {} is no longer running", self.id))
+    }
+
+    /// The supervisor drops the stdin queue once it no longer touches the process or its logs.
+    #[cfg(unix)]
+    async fn released(&self) {
+        self.stdin.closed().await;
     }
 
     async fn output_snapshot(
@@ -846,6 +962,38 @@ async fn wait_for_completion(
             }
         }
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[cfg(unix)]
+fn process_record(
+    child: &tokio::process::Child,
+    started_at: u64,
+    timeout: Option<Duration>,
+) -> Option<ProcessRecord> {
+    let pid = child.id()?;
+    Some(ProcessRecord {
+        pid,
+        start_token: process::start_token(pid)?,
+        started_at,
+        deadline_ms: timeout.map(|timeout| started_at + timeout.as_millis() as u64),
+    })
+}
+
+/// Windows kills commands with the server, so there is nothing for a later server to adopt.
+#[cfg(windows)]
+fn process_record(
+    _child: &tokio::process::Child,
+    _started_at: u64,
+    _timeout: Option<Duration>,
+) -> Option<ProcessRecord> {
+    None
 }
 
 #[derive(Clone, Debug, Serialize)]

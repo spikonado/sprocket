@@ -37,8 +37,8 @@ pub use browse::{
 pub use builtin_skills::BUILTIN_SKILLS;
 pub use cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
 pub use command_container::CommandContainer;
-pub use command_history::{CommandHistory, history_path};
-pub use command_output::CommandOutputLimits;
+pub use command_history::{CommandHistory, ProcessRecord, history_path};
+pub use command_output::{CommandOutputLimits, rebuild_output};
 pub use command_shell::default_command_shell;
 pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,

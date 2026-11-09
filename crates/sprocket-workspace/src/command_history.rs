@@ -19,6 +19,20 @@ pub struct CommandHistory {
     pub workdir: String,
     pub max_output_chars: usize,
     pub result: CommandOutput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<ProcessRecord>,
+}
+
+/// What a later server needs to adopt a command that outlived the server that started it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProcessRecord {
+    pub pid: u32,
+    /// The kernel's start time for `pid`, which tells the process apart from a later one that
+    /// reuses its pid.
+    pub start_token: String,
+    pub started_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_ms: Option<u64>,
 }
 
 #[cfg(test)]

@@ -219,7 +219,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         }
     }
 
-    let host_tasks = host.start();
+    let host_tasks = host.start().await;
     let router = build_router(state, static_dir);
 
     let lifetime = Arc::clone(&host.lifetime);
@@ -232,7 +232,9 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         let host = host.clone();
         async move {
             tokio::select! {
-                _ = shutdown_signal() => {},
+                restart = shutdown_signal() => if restart {
+                    let _ = lifetime.request_restart();
+                },
                 _ = async {
                     loop {
                         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -263,16 +265,25 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
     })
 }
 
-async fn shutdown_signal() {
+/// Returns whether the signal asks for a restart, which the desktop app sends before it
+/// installs an update.
+async fn shutdown_signal() -> bool {
     #[cfg(unix)]
     {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("install SIGTERM handler");
-        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut restart = signal(SignalKind::user_defined1()).expect("install SIGUSR1 handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => false,
+            _ = terminate.recv() => false,
+            _ = restart.recv() => true,
+        }
     }
     #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        false
+    }
 }
 
 async fn open_browser_when_ready(health_base_url: String, open_target: String) {

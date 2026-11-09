@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    CommandCompletion, build_shell_command, completion_output, join_capture_task, supervise_command,
+    Capture, CommandCompletion, CommandProcess, Supervision, build_shell_command,
+    completion_output, join_capture_task, supervise_command,
 };
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::CapturedOutput;
@@ -34,26 +35,34 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         workdir: root.to_string_lossy().into_owned(),
         max_output_chars: 100,
         result: completion_output(&CommandCompletion::default(), output.preview_metadata()),
+        process: None,
     };
-    let mut process = build_shell_command(command, &default_command_shell());
+    let log_directory = std::path::Path::new(&history.result.complete_log_path)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let (mut process, _source) =
+        build_shell_command(command, &default_command_shell(), &log_directory).unwrap();
     process.current_dir(&root).kill_on_drop(true);
     #[cfg(unix)]
     process.process_group(0);
-    let child = process.spawn().unwrap();
-    let pid = child.id();
     let (_control, controls) = mpsc::unbounded_channel();
     let (completion, mut completed) = watch::channel(None);
     let supervisor = tokio::spawn(supervise_command(
-        child,
-        pid,
+        Supervision {
+            process: CommandProcess::spawned(process.spawn().unwrap()),
+            capture: Capture {
+                task: tokio::spawn(async { anyhow::bail!("injected log write failure") }),
+                stop: watch::channel(false).0,
+            },
+            output: Arc::new(Mutex::new(output)),
+            timeout: Some(Duration::from_secs(5)),
+            lifetime_guard: None,
+            history: (history_path, history),
+        },
+        tokio::spawn(std::future::pending()),
         controls,
         completion,
-        tokio::spawn(std::future::pending()),
-        tokio::spawn(async { anyhow::bail!("injected log write failure") }),
-        Arc::new(Mutex::new(output)),
-        Some(Duration::from_secs(5)),
-        None,
-        (history_path, history),
         None,
     ));
     tokio::time::timeout(Duration::from_secs(2), completed.changed())

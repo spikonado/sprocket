@@ -17,7 +17,7 @@ use job_object as platform;
 mod platform {
     pub enum Container {}
 
-    pub fn create() -> anyhow::Result<Option<Container>> {
+    pub fn create(_name: &str) -> anyhow::Result<Option<Container>> {
         Ok(None)
     }
 
@@ -41,9 +41,10 @@ mod platform {
 pub struct CommandContainer(Arc<platform::Container>);
 
 impl CommandContainer {
-    /// Returns `None` on operating systems without a way to contain a process tree.
-    pub fn create() -> Result<Option<Self>> {
-        Ok(platform::create()?.map(|container| Self(Arc::new(container))))
+    /// Returns `None` on operating systems without a way to contain a process tree. On Linux, a
+    /// server that restarts under the same `name` takes over the earlier server's processes.
+    pub fn create(name: &str) -> Result<Option<Self>> {
+        Ok(platform::create(name)?.map(|container| Self(Arc::new(container))))
     }
 
     pub(crate) fn spawn(&self, command: &mut Command) -> std::io::Result<Child> {

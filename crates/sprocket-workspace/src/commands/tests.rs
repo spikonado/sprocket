@@ -127,6 +127,7 @@ async fn stub_session(root: &Path) -> StubSession {
             running: true,
             ..super::completion_output(&CommandCompletion::default(), output.preview_metadata())
         },
+        process: None,
     };
     let (completion, completion_rx) = watch::channel(None);
     let (control, _controls) = mpsc::unbounded_channel();
@@ -1794,7 +1795,7 @@ async fn terminate_kills_the_whole_process_tree() {
 
 #[tokio::test]
 async fn container_kill_stops_processes_that_left_the_process_group() {
-    let container = match CommandContainer::create() {
+    let container = match CommandContainer::create(&uuid::Uuid::new_v4().to_string()) {
         Ok(Some(container)) => container,
         Ok(None) => return,
         Err(error) => {
@@ -1897,5 +1898,59 @@ async fn unknown_session_ids_are_rejected() {
         .await
         .expect_err("unknown sessions must be rejected");
     assert!(error.to_string().contains("unknown command session"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_restarted_server_adopts_a_running_command_and_reports_its_exit() {
+    let root = temp_workspace();
+    let logs = root.join("logs");
+    let sessions = CommandSessionManager::new(root.clone(), logs.clone());
+    let started = sessions
+        .exec_command(
+            WorkspaceCancellation::new(),
+            "echo before; until [ -e go ]; do sleep 0.02; done; echo during; \
+             until [ -e end ]; do sleep 0.02; done; echo after; exit 7",
+            ".",
+            &default_command_shell(),
+            Some(30_000),
+            0,
+            20_000,
+        )
+        .await
+        .unwrap();
+    let id = started.session_id.unwrap();
+    wait_for_log(&started.result.complete_log_path, b"before\n").await;
+    sessions.detach_all().await;
+
+    fs::write(root.join("go"), "").unwrap();
+    let spool = Path::new(&started.result.complete_log_path).with_file_name("stdout.spool");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while fs::read(&spool).unwrap() != b"before\nduring\n" {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let history = super::CommandHistory::read(&super::history_path(&logs, &id).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let restarted = CommandSessionManager::new(root.clone(), logs);
+    restarted.adopt(&id, history).await.unwrap();
+    fs::write(root.join("end"), "").unwrap();
+
+    let mut output = String::new();
+    let result = loop {
+        let polled = poll(&restarted, &id, 5_000).await;
+        output.push_str(&polled.output);
+        if !polled.running {
+            break polled;
+        }
+    };
+    assert_eq!(output, "before\nduring\nafter\n");
+    assert_eq!(result.exit_code, Some(7));
+    assert!(!spool.exists());
     fs::remove_dir_all(root).unwrap();
 }

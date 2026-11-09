@@ -323,7 +323,9 @@ async function stopServer() {
 	const child = serverProcess;
 
 	if (!child) return;
-	await stopUpdateProcess(child);
+	// SIGUSR1 leaves agent commands running for the updated server. Windows can't keep them.
+	const updating = phase === 'updating' || updates.getState().status === 'installing';
+	await stopUpdateProcess(child, updating && process.platform !== 'win32' ? 'SIGUSR1' : 'SIGTERM');
 	serverProcess = null;
 }
 
