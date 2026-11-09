@@ -777,6 +777,28 @@ async fn exec_command_defaults_to_workspace_root() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn commands_are_the_oom_killers_preferred_victims() {
+    let root = temp_workspace();
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let output = sessions
+        .exec_command(
+            WorkspaceCancellation::new(),
+            "cat /proc/self/oom_score_adj",
+            ".",
+            &default_command_shell(),
+            Some(5_000),
+            5_000,
+            20_000,
+        )
+        .await
+        .expect("command should succeed");
+
+    assert_eq!(output.result.output.trim(), "500");
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn exec_command_allows_workdir_outside_workspace() {
     let root = temp_workspace();

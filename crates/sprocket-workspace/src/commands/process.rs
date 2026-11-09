@@ -64,6 +64,7 @@ pub(super) async fn supervise_command(
     lifetime_guard: Option<Box<dyn Send + Sync>>,
     history: (PathBuf, CommandHistory),
     changes: Option<watch::Sender<()>>,
+    oom_kills_at_start: Option<u64>,
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
@@ -117,6 +118,11 @@ pub(super) async fn supervise_command(
     if let Err(capture_error) = output.lock().await.finish().await {
         error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));
     }
+    if status.is_none_or(|status| !status.success())
+        && let Some(note) = oom_kills_since(oom_kills_at_start).await
+    {
+        append_error(&mut error, note);
+    }
     let mut completed = CommandCompletion {
         exit_code: status.as_ref().and_then(ExitStatus::code),
         success: status.is_some_and(|status| status.success()) && !timed_out && error.is_none(),
@@ -130,11 +136,10 @@ pub(super) async fn supervise_command(
         Ok(()) => completed.saved = true,
         Err(error) => {
             completed.success = false;
-            let message = format!("failed to save command result: {error:#}");
-            completed.error = Some(match completed.error {
-                Some(error) => format!("{error}; {message}"),
-                None => message,
-            });
+            append_error(
+                &mut completed.error,
+                format!("failed to save command result: {error:#}"),
+            );
         }
     }
     stdin_task.abort();
@@ -144,11 +149,65 @@ pub(super) async fn supervise_command(
     signal_change(&changes);
 }
 
+fn append_error(error: &mut Option<String>, message: String) {
+    *error = Some(match error.take() {
+        Some(error) => format!("{error}; {message}"),
+        None => message,
+    });
+}
+
 async fn wait_for_timeout(timeout: Option<Duration>) {
     match timeout {
         Some(timeout) => tokio::time::sleep(timeout).await,
         None => std::future::pending::<()>().await,
     }
+}
+
+/// Agent commands become the kernel's preferred victims when the machine runs out of memory,
+/// so it kills them instead of the server or the user's session. Raising the score needs no
+/// privileges, and everything the shell starts inherits it.
+#[cfg(target_os = "linux")]
+pub(super) fn prefer_as_oom_victim(command: &mut Command) {
+    const OOM_SCORE_ADJ: &[u8] = b"500";
+    // SAFETY: open, write, and close are async-signal-safe.
+    unsafe {
+        command.pre_exec(|| {
+            let file = libc::open(
+                c"/proc/self/oom_score_adj".as_ptr(),
+                libc::O_WRONLY | libc::O_CLOEXEC,
+            );
+            if file >= 0 {
+                let _ = libc::write(file, OOM_SCORE_ADJ.as_ptr().cast(), OOM_SCORE_ADJ.len());
+                libc::close(file);
+            }
+            Ok(())
+        });
+    }
+}
+
+/// The server's cgroup holds other processes, so cgroup v2 can't enable the memory controller
+/// for a command cgroup. This machine-wide Linux count is the only OOM kill record left.
+pub(super) async fn oom_kill_count() -> Option<u64> {
+    let vmstat = tokio::fs::read_to_string("/proc/vmstat").await.ok()?;
+    vmstat
+        .lines()
+        .find_map(|line| line.strip_prefix("oom_kill "))?
+        .parse()
+        .ok()
+}
+
+async fn oom_kills_since(start: Option<u64>) -> Option<String> {
+    let start = start?;
+    let kills = oom_kill_count().await?.saturating_sub(start);
+    let processes = match kills {
+        0 => return None,
+        1 => "1 process".to_string(),
+        kills => format!("{kills} processes"),
+    };
+    Some(format!(
+        "the kernel's out-of-memory killer killed {processes} on this machine while this \
+         command ran, and it kills agent commands first"
+    ))
 }
 
 pub(super) async fn write_command_input(

@@ -55,6 +55,7 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         None,
         (history_path, history),
         None,
+        None,
     ));
     tokio::time::timeout(Duration::from_secs(2), completed.changed())
         .await
