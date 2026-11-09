@@ -1,0 +1,111 @@
+diff --git a/packages/ecad-viewer-app/src/kc-ui/tab-view.ts b/packages/ecad-viewer-app/src/kc-ui/tab-view.ts
+index e00e672..8e1d725 100644
+--- a/packages/ecad-viewer-app/src/kc-ui/tab-view.ts
++++ b/packages/ecad-viewer-app/src/kc-ui/tab-view.ts
+@@ -19,6 +19,7 @@ export class TabView extends KCUIElement {
+     #tabs: HTMLElement[] = [];
+     #close: KCUIButtonElement;
+     #tabContents: HTMLElement[] = [];
++    #active = 0;
+
+     static override styles = [
+         ...KCUIElement.styles,
+@@ -118,13 +119,18 @@ export class TabView extends KCUIElement {
+
+         return tab;
+     }
+-    private showTab(index: number): void {
++    public get active_index() {
++        return this.#active;
++    }
++
++    public showTab(index: number): void {
+         for (const i of [this.#tabs, this.#tabContents])
+             i.forEach((tab) => {
+                 tab.classList.remove("active");
+             });
+
+         if (this.#tabContents[index]) {
++            this.#active = index;
+             this.#tabContents[index]!.classList.add("active");
+             this.#tabs[index]!.classList.add("active");
+         }
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/common/app.ts b/packages/ecad-viewer-app/src/kicanvas/elements/common/app.ts
+index 8769e92..2fd0866 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/common/app.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/common/app.ts
+@@ -309,6 +309,31 @@ export abstract class KCViewerAppElement<
+
+     protected abstract make_fitter_menu(): HTMLElement;
+
++    #build_fitter_menu(hidden: boolean) {
++        const menu = this.make_fitter_menu();
++        menu.hidden = hidden;
++        menu.addEventListener(
++            TabMenuVisibleChangeEvent.type,
++            (e: TabMenuVisibleChangeEvent) => {
++                this.tabMenuHidden = e.detail;
++            },
++        );
++        return menu;
++    }
++
++    /**
++     * Swaps in a freshly built fitter menu, for panels that build their
++     * lists once from the document they first saw.
++     */
++    protected replace_fitter_menu() {
++        const previous = this.#fitter_menu;
++        if (!previous?.isConnected) return null;
++        const menu = this.#build_fitter_menu(previous.hidden);
++        previous.replaceWith(menu);
++        this.#fitter_menu = menu;
++        return { previous, menu };
++    }
++
+     /**
+      * Headless mode: render only the viewer canvas, omitting the built-in
+      * fitter menu (layers/objects/nets) and property panel, so a host app can
+@@ -326,14 +351,7 @@ export abstract class KCViewerAppElement<
+             return html` ${this.#viewer_elm} `;
+         }
+
+-        this.#fitter_menu = this.make_fitter_menu();
+-        this.#fitter_menu.hidden = true;
+-        this.#fitter_menu.addEventListener(
+-            TabMenuVisibleChangeEvent.type,
+-            (e: TabMenuVisibleChangeEvent) => {
+-                this.tabMenuHidden = e.detail;
+-            },
+-        );
++        this.#fitter_menu = this.#build_fitter_menu(true);
+         this.#property_viewer = this.make_property_element();
+
+         let elements: ElementOrFragment[] = [
+diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/app.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/app.ts
+index 38d4149..57e9947 100644
+--- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/app.ts
++++ b/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/app.ts
+@@ -53,6 +53,22 @@ export class KCBoardAppElement extends KCViewerAppElement<KCBoardViewerElement>
+             (this.viewer as BoardViewer).layer_visibility_ctrl = this.#layer;
+     }
+
++    // The layer, object and net panels list what the first board had, and
++    // picking reads layer visibility from them, so an edited board needs new ones.
++    override async load(src: KicadAssert) {
++        await this.viewerReady;
++        const viewer = this.viewer as BoardViewer;
++        const previous = viewer.board;
++        await super.load(src);
++        if (!previous || viewer.board === previous) return;
++        const replaced = this.replace_fitter_menu();
++        if (!replaced) return;
++        (replaced.menu as TabView).showTab(
++            (replaced.previous as TabView).active_index,
++        );
++        viewer.layer_visibility_ctrl = this.#layer;
++    }
++
+     protected override make_fitter_menu(): HTMLElement {
+         this.#layer = new KCBoardLayersPanelElement();
+         const obj = new KCBoardObjectsPanelElement();

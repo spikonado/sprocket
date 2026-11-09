@@ -72,5 +72,5 @@ export function createToolbar(viewer: EcadViewerElement) {
 	});
 	update();
 
-	return { update };
+	return { update, tab: () => tab };
 }

@@ -13,6 +13,8 @@ trap 'rm -rf "$src"' EXIT
 
 git clone --quiet https://github.com/krishna-swaroop/ecad-viewer "$src"
 git -C "$src" checkout --quiet "$commit"
+# board-menu-reload: rebuilds the board's layer, object and net panels when the frame loads
+# an edited board, so new layers get controls and can be picked, and nets stay current.
 # bom-reload: redraws the BOM table when the frame loads edited files.
 # bom-sourcing: adds the sourcing fields from the working-with-kicad skill, such as MPN and
 # distributor part numbers, to the BOM, and keeps parts with different ones on separate rows.

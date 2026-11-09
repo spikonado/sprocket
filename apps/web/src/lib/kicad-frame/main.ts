@@ -147,6 +147,7 @@ async function start() {
 	// Each call gets its own key, since the viewer skips sources it thinks it already shows.
 	// The viewer refits on every load, so a file edit would otherwise lose the user's view.
 	const replace = async (sources: KicadSource[]) => {
+		const tab = toolbar.tab();
 		const camera = viewer.camera;
 		// The viewer reports a file it can't read with this event and still resolves.
 		const failures: string[] = [];
@@ -177,7 +178,8 @@ async function start() {
 
 		if (failures.length) throw new Error(failures.join('\n'));
 
-		viewer.camera = camera;
+		// The camera belongs to the tab shown before the load, not one the user switched to since.
+		if (toolbar.tab() === tab) viewer.camera = camera;
 	};
 
 	const load = async ({ revision, sources, boardVersion }: Load) => {
