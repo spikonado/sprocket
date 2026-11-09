@@ -261,19 +261,22 @@ async fn lease_version(lease: &Mutex<Option<File>>, version_dir: &Path) {
     if lease.is_some() {
         return;
     }
-    let path = version_dir.join(LEASE_LOCK);
-    let result = tokio::task::spawn_blocking(move || -> std::io::Result<File> {
-        let file = open_lock_file(&path)?;
-        file.lock_shared()?;
-        Ok(file)
-    })
-    .await
-    .map_err(std::io::Error::other)
-    .and_then(|result| result);
+    let dir = version_dir.to_owned();
+    let result = tokio::task::spawn_blocking(move || lock_lease(&dir))
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|result| result);
     match result {
         Ok(file) => *lease = Some(file),
         Err(error) => tracing::warn!("Couldn't lease {}: {error}", version_dir.display()),
     }
+}
+
+/// `remove_version` keeps a version while any process holds this lock.
+pub(crate) fn lock_lease(version_dir: &Path) -> std::io::Result<File> {
+    let file = open_lock_file(&version_dir.join(LEASE_LOCK))?;
+    file.lock_shared()?;
+    Ok(file)
 }
 
 pub(crate) fn prune_versions(tool_dir: &Path, current: &str) {

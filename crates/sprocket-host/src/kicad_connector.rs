@@ -1,6 +1,6 @@
 mod unpack;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
@@ -16,8 +16,8 @@ use tokio::process::Command;
 use crate::python_install::PythonTools;
 use crate::tool_install::{
     Asset, INSTALL_LOCK, acquire_lock, download_atomic, is_dir, is_tombstone, is_version,
-    large_download_client, open_lock_file, prune_versions, release_platform, remove_version,
-    set_executable,
+    large_download_client, lock_lease, open_lock_file, prune_versions, release_platform,
+    remove_version, set_executable,
 };
 
 const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
@@ -94,6 +94,8 @@ pub struct KiCadConnector {
     python: Arc<PythonTools>,
     client: reqwest::Client,
     activity: Mutex<Activity>,
+    /// Runs keep the environment they launched with, so versions handed out stay until exit.
+    leases: Mutex<HashMap<String, File>>,
     /// A board's export loads every component's STEP model, which takes seconds of CPU and
     /// hundreds of MB, so boards export one at a time.
     board_exports: tokio::sync::Semaphore,
@@ -109,6 +111,7 @@ impl KiCadConnector {
             python,
             client: large_download_client()?,
             activity: Mutex::new(Activity::Idle),
+            leases: Mutex::new(HashMap::new()),
             board_exports: tokio::sync::Semaphore::new(1),
         })
     }
@@ -117,13 +120,33 @@ impl KiCadConnector {
     pub(crate) fn prepare(self: &Arc<Self>) {
         let connector = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            let installed = installed_version(&connector.root, &connector.pinned);
+            if let Some(version) = &installed {
+                connector.lease(version);
+            }
             if let Err(error) = repair_unless_installing(&connector.root, &connector.pinned) {
                 tracing::warn!("KiCad cleanup failed: {error}");
             }
-            if connector.outdated(installed_version(&connector.root, &connector.pinned)) {
+            if connector.outdated(installed) {
                 connector.start_install_or_update();
             }
         });
+    }
+
+    fn lease(&self, version: &str) {
+        if self.leases().contains_key(version) {
+            return;
+        }
+        match lock_lease(&self.root.join(version)) {
+            Ok(file) => {
+                self.leases().insert(version.to_owned(), file);
+            }
+            Err(error) => tracing::warn!("Couldn't lease KiCad {version}: {error}"),
+        }
+    }
+
+    fn leases(&self) -> MutexGuard<'_, HashMap<String, File>> {
+        self.leases.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn outdated(&self, installed: Option<String>) -> bool {
@@ -183,6 +206,7 @@ impl KiCadConnector {
         ensure!(!installing, "KiCad is still installing");
         tokio::fs::create_dir_all(&self.root).await?;
         let _lock = acquire_lock(self.root.join(INSTALL_LOCK)).await?;
+        self.leases().clear();
         let root = self.root.clone();
         tokio::task::spawn_blocking(move || remove_installs(&root)).await??;
         let mut activity = self.activity();
@@ -262,7 +286,7 @@ impl KiCadConnector {
         self.root.join(&self.pinned)
     }
 
-    async fn install_pinned(&self) -> anyhow::Result<()> {
+    async fn install_pinned(self: &Arc<Self>) -> anyhow::Result<()> {
         tokio::fs::create_dir_all(&self.root).await?;
         let _lock = acquire_lock(self.root.join(INSTALL_LOCK)).await?;
         let version_dir = self.version_dir();
@@ -281,10 +305,11 @@ impl KiCadConnector {
             tokio::task::spawn_blocking(move || drop(staging)).await?;
             published?;
         }
-        let (root, current) = (self.root.clone(), self.pinned.clone());
+        let connector = Arc::clone(self);
         tokio::task::spawn_blocking(move || -> io::Result<()> {
-            sync_launchers(&root, Some(&current))?;
-            prune_versions(&root, &current);
+            sync_launchers(&connector.root, Some(&connector.pinned))?;
+            connector.lease(&connector.pinned);
+            prune_versions(&connector.root, &connector.pinned);
             Ok(())
         })
         .await??;
@@ -520,7 +545,10 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
             let installed = installed_version(root, pinned);
             sync_launchers(root, installed.as_deref())?;
             match installed {
-                Some(dir) => refresh_files(&root.join(dir)),
+                Some(dir) => {
+                    prune_versions(root, &dir);
+                    refresh_files(&root.join(dir))
+                }
                 None => Ok(()),
             }
         }

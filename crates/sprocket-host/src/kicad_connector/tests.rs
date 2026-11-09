@@ -60,6 +60,11 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     assert_eq!(status.error.as_deref(), Some("Download failed"));
     assert!(status.update_available);
 
+    connector.lease("v0.0.1");
+    fs::create_dir_all(connector.version_dir()).unwrap();
+    prune_versions(&connector.root, &connector.pinned);
+    assert!(old.is_dir());
+
     connector.uninstall().await.unwrap();
     assert_eq!(connector.status().await.state, ConnectorState::NotInstalled);
     assert!(!connector.bin_dir().exists());
