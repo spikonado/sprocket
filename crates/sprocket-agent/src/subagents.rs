@@ -113,10 +113,8 @@ pub struct SubagentMonitorInfo {
     pub active: bool,
     pub pending_questions: Vec<SubagentQuestion>,
     pub transcript: RemoteTranscriptState,
-    /// The latest run, or the requested target run.
     #[serde(default)]
     pub run_id: Option<String>,
-    /// Runs whose prompts the caller's thread sent.
     #[serde(default)]
     pub caller_prompt_run_ids: BTreeSet<String>,
 }

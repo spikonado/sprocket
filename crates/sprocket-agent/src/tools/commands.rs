@@ -14,11 +14,6 @@ use super::job::execute_serialized_tool_job;
 
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 
-/// Where each command session's next read starts. A result's `nextOffset`
-/// only counts once `executor:complete` accepts it, which is the mutation that
-/// records it in the transcript, so later runs resume from the transcript.
-/// Parallel reads of one session may return the same output; serializing them
-/// would let a waiting poll block the control call it waits for.
 #[derive(Clone, Default)]
 pub(crate) struct CommandCursors(Arc<Mutex<HashMap<String, u64>>>);
 

@@ -18,7 +18,6 @@ const APP_TITLE: &str = "Sprocket";
 const OPENROUTER_APP_CATEGORIES: &str = "programming-app,cloud-agent";
 const USER_AGENT: &str = concat!("sprocket/", env!("CARGO_PKG_VERSION"));
 
-/// A third-party gateway serving the Responses API for every vendor's models.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ResponsesGateway {
     Vercel,

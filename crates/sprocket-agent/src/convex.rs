@@ -549,8 +549,6 @@ impl RuntimeClient {
             .await
     }
 
-    /// Writes the handoff, workspace context, and prompt the run's first model
-    /// call sees.
     pub(crate) async fn begin_run(
         &self,
         run_id: &str,
@@ -717,8 +715,6 @@ impl RuntimeClient {
         args
     }
 
-    /// The run-scoped execution capability. Used to key derived child
-    /// secrets; never reused as a child secret itself.
     pub(crate) fn execution_secret(&self) -> &str {
         &self.execution_secret
     }

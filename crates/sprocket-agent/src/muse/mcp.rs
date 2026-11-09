@@ -16,14 +16,12 @@ use tokio::task::JoinHandle;
 
 use crate::cli_session::{McpReply, mcp_reply};
 
-/// A `tools/call` Muse waits on until Sprocket answers `reply`.
 pub(super) struct McpCall {
     pub(super) name: String,
     pub(super) arguments: Value,
     pub(super) reply: oneshot::Sender<Value>,
 }
 
-/// Stops serving when dropped.
 pub(super) struct McpEndpoint {
     pub(super) url: String,
     pub(super) token: String,

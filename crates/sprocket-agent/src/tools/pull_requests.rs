@@ -120,8 +120,7 @@ async fn link(
     Ok(json!({}))
 }
 
-/// GitHub matches repositories case-insensitively, so one spelling keeps
-/// relinks from adding a duplicate.
+/// GitHub matches repositories case-insensitively.
 fn pull_request_ref(repository: &str, number: u32) -> PullRequestRef {
     PullRequestRef {
         repository: repository.trim().to_ascii_lowercase(),
@@ -210,7 +209,6 @@ async fn poll_pr(
         }
         let next_read = Instant::now() + POLL_PR_INTERVAL;
         sleep_until(next_read.min(deadline)).await;
-        // The cursor comes from this read, so news after it waits for the next poll.
         if next_read >= deadline {
             return poll_pr_output(&activity, &report);
         }

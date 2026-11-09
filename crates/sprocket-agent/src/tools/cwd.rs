@@ -43,8 +43,6 @@ impl rig::tool::Tool for SetCwdTool {
             Ok(json!({ "cwd": simplified_path(cwd).to_string_lossy() }))
         })
         .await?;
-        // Convex persists the thread's cwd when the job completes, so only
-        // switch locally once that has succeeded.
         if let Some(cwd) = output["cwd"].as_str() {
             self.0.cwd.set(PathBuf::from(cwd));
         }

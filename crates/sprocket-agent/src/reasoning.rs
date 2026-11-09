@@ -6,8 +6,6 @@ use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 use crate::now_ms;
 
-/// Durable OpenAI-shaped metadata already stored on transcript reasoning items.
-/// `encrypted` is gateway envelope bytes: persist and replay as-is, never decode.
 pub(crate) fn openai_reasoning_metadata(
     item_id: Option<&str>,
     encrypted: Option<&str>,

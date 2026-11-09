@@ -7,9 +7,8 @@ use sprocket_workspace::{CommandSessionManager, WorkspaceOperationCancelled};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
-/// Builds the model-visible failure for an agent tool. Constructing rig's
-/// canonical error directly means its default `map_error` downcast preserves
-/// the message instead of redacting it to "the tool failed".
+/// Rig's default `map_error` downcast keeps this error's message instead of
+/// redacting it to "the tool failed".
 pub(super) fn tool_failure(message: impl Into<String>) -> ToolExecutionError {
     ToolExecutionError::other(message.into())
 }

@@ -102,8 +102,6 @@ pub(crate) struct GatewayClient {
 }
 
 impl GatewayClient {
-    /// `credential` was issued before the run began, so an exhausted quota
-    /// fails the run before its prompt is written.
     pub(crate) fn new<F, Fut>(
         base_url: String,
         credential: GatewayCredential,

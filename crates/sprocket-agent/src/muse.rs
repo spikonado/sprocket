@@ -78,7 +78,6 @@ impl Cli for MuseCli {
     }
 }
 
-/// The error event for a turn Muse ended with `error`, an MSP `TurnError`.
 fn turn_error(error: &Value, now_ms: u64) -> Value {
     let message = error["message"].as_str().unwrap_or_default();
     if !error["quota"].is_null() || is_usage_limit_refusal(message) {

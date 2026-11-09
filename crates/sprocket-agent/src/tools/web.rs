@@ -322,9 +322,6 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
     }
 }
 
-/// Reads a document fully, but stops after the first bytes when they show it
-/// is not one. Expected documents that fail to download or arrive as another
-/// body, such as a bot challenge, go to the raw fetch instead of the page scrape.
 async fn download_document(
     client: &reqwest::Client,
     url: reqwest::Url,
@@ -382,8 +379,6 @@ async fn download_document(
     }))
 }
 
-/// Cheap checks only: the conversion worker identifies the exact format.
-/// `None` means the bytes so far cannot tell yet.
 fn sniff_document(bytes: &[u8], complete: bool, csv: bool) -> Option<bool> {
     const OLE_SIGNATURE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
     let prefix = &bytes[..bytes.len().min(DOCUMENT_SNIFF_BYTES)];

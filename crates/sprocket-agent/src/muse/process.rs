@@ -1,6 +1,3 @@
-//! One Muse Code session driven over MSP. Muse runs the model loop, Sprocket's tools reach
-//! it over MCP, and its model events become the Messages stream `cli_session` reads.
-
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -59,7 +56,6 @@ pub(super) struct Process {
 }
 
 impl Drop for Process {
-    /// Stops the driver, which kills Muse and closes the MCP server.
     fn drop(&mut self) {
         self.driver.abort();
     }
@@ -127,8 +123,6 @@ struct Session {
     start: SessionStart,
 }
 
-/// The settings that make Muse a model transport: Sprocket's prompt and tools only, without
-/// Muse's reminder agents, skills, or context blocks.
 fn arguments(system_prompt: &str) -> Vec<OsString> {
     let bundled = skills_off(
         BUNDLED_SKILLS
@@ -211,7 +205,6 @@ impl Driver {
         }
     }
 
-    /// Handles a message from Muse, returning false once Muse stops.
     fn incoming(&mut self, session_id: &str, message: Option<Incoming>) -> bool {
         match message {
             Some(Incoming::Notification { method, params }) => {
@@ -234,8 +227,7 @@ impl Driver {
         }
     }
 
-    /// Ends the model step with `call`, which Muse holds until Sprocket answers it. Muse runs
-    /// MCP calls one at a time, so each call is a step of its own.
+    /// Muse runs MCP calls one at a time, so each call is a model step of its own.
     fn tool_call(&mut self, call: McpCall) {
         let id = format!("toolu_{}", uuid::Uuid::new_v4().simple());
         let mut events = self.translator.tool_use(&id, &call.name, &call.arguments);
@@ -253,7 +245,6 @@ impl Driver {
     }
 }
 
-/// Starts Muse and its session, or explains why it can't run the turn.
 async fn start(
     session: &Session,
     endpoint: &McpEndpoint,
@@ -325,7 +316,6 @@ async fn start_turn(
     msp.call("turn/start", params).await.map(drop)
 }
 
-/// Muse's input parts for Messages user content.
 async fn msp_input(content: Vec<Value>) -> Vec<Value> {
     let mut input = Vec::with_capacity(content.len());
     for mut block in content {
@@ -365,11 +355,9 @@ struct OpenBlock {
     item_id: String,
     index: usize,
     kind: BlockKind,
-    /// The reasoning summary part the last delta extended.
     part: Option<String>,
 }
 
-/// Turns Muse's item notifications into Messages stream events, one message per model step.
 struct Translator {
     model: String,
     items: HashMap<String, Item>,
@@ -447,7 +435,6 @@ impl Translator {
         events.push(block_delta(index, kind, &format!("{separator}{delta}")));
     }
 
-    /// Closes the item's block, or writes the whole item when Muse streamed none of it.
     fn completed(&mut self, item: &Value, events: &mut Vec<Event>) {
         let Some(item_id) = item["itemId"].as_str() else {
             return;

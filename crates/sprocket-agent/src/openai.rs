@@ -7,7 +7,6 @@ use rig::providers::openai::{OpenAI, OpenAIConfig};
 use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
 
-/// For transports that set `Authorization` themselves.
 pub(crate) fn transport_auth_config() -> OpenAIConfig {
     OpenAIConfig::new("").with_auth(Auth::OptionalBearer)
 }
@@ -20,7 +19,6 @@ pub(crate) fn stateless_responses_model(
     Model::new(StatelessResponses::new(model.wire), model.transport).erase()
 }
 
-/// Sends system messages as `developer` items in `input`.
 pub(crate) fn developer_messages(mut wire: Responses) -> Responses {
     wire.provider.dialect.quirks.responses.system_role = "developer";
     wire.with_system_instructions_as_messages()

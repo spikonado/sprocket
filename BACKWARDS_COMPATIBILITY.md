@@ -176,3 +176,4 @@ Stored executor jobs, transcripts and local data files keep accepting these hist
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.
 - Local readers of `scrape_url` and `read_skill` `truncated`, `jobId` pairing and command parts without input.
 - `project-attachments.json` records without `lastMessageSentAt`, which load as 0 so those projects sort by `lastUsedAt`.
+- Tool-output images cached before they were fitted for models, which `replay_image_output` fits on replay.

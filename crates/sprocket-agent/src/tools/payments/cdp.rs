@@ -86,7 +86,6 @@ enum Command {
         session_id: Option<String>,
         reply: oneshot::Sender<Result<Value, String>>,
     },
-    /// Answered once every frame attached so far intercepts requests.
     Settle(oneshot::Sender<()>),
     Close,
 }
@@ -261,8 +260,8 @@ fn is_checkout_detach(message: &Value) -> bool {
         && message.get("method").and_then(Value::as_str) == Some("Target.detachedFromTarget")
 }
 
-/// Payment card fields load in cross-origin iframes, which are their own
-/// targets. New ones wait until they intercept requests too.
+/// Payment card fields load in cross-origin iframes, which CDP exposes as
+/// their own targets.
 fn auto_attach_params() -> Value {
     json!({ "autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true })
 }
@@ -272,7 +271,6 @@ struct Pump {
     recognizers: Vec<Recognizer>,
     next_id: u64,
     replies: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
-    /// Commands that arm attached frames, so `Settle` knows when they're done.
     arming: HashSet<u64>,
     settle_waiters: Vec<oneshot::Sender<()>>,
     payment: Option<oneshot::Sender<PausedPayment>>,

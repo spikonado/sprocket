@@ -102,7 +102,6 @@ fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     crate::chatgpt::user_facing_error(error)
 }
 
-/// A provider-switch handoff writes on the previous provider.
 fn usage_source(
     target: &AgentProvider,
     fast_mode: bool,
@@ -131,7 +130,6 @@ fn usage_source(
     }
 }
 
-/// The CLIs on this computer that subscription providers run through.
 #[derive(Clone)]
 pub(crate) struct LocalClis {
     pub(crate) claude_code: ClaudeCode,
@@ -157,9 +155,7 @@ pub(crate) struct AgentProvider {
 pub(crate) enum ProviderSwitch {
     #[default]
     None,
-    /// The previous provider writes a context handoff before the selected one continues.
     Handoff(ProviderSwitchHandoff),
-    /// The selected provider continues without the previous provider's reasoning.
     WithoutHandoff,
 }
 
@@ -170,8 +166,6 @@ pub(crate) struct ProviderSwitchHandoff {
     pub(crate) usage_pricing: UsagePricing,
 }
 
-/// A provider-switch handoff in progress, with the conversation to resume
-/// without it if it fails.
 struct PendingProviderSwitch {
     switch: ProviderSwitchHandoff,
     history: Vec<Message>,
@@ -306,8 +300,8 @@ impl AgentProvider {
                     .await
                 {
                     Ok(model) => {
-                        // Fallback already stripped replay in Convex; drop it locally too.
-                        omit_prior_reasoning |= self.completion_provider != provider;
+                        let fell_back = self.completion_provider != provider;
+                        omit_prior_reasoning |= fell_back;
                         (model, None)
                     }
                     Err(error) => {
@@ -318,7 +312,6 @@ impl AgentProvider {
                 }
             }
         };
-        // Models started later join mid-run, after replies the resumed session didn't write.
         self.cli_resume = None;
         match run_with_completion_model(model, runtime, request, self, switch, omit_prior_reasoning)
             .await
@@ -330,8 +323,6 @@ impl AgentProvider {
         }
     }
 
-    /// The handoff writes the prompt before the target model starts, so a
-    /// target that cannot start (such as exhausted usage) skips the handoff.
     async fn handoff_model(
         &self,
         runtime: &RuntimeClient,
@@ -399,7 +390,6 @@ impl AgentProvider {
         }
     }
 
-    /// Moves the run to its next fallback provider. False when none remain.
     async fn fall_back(
         &mut self,
         runtime: &RuntimeClient,
@@ -846,7 +836,6 @@ async fn run_with_completion_model(
 
     'agent_run: {
         'generations: loop {
-            // A handoff before the prompt begins the run once its summary exists.
             if deferred_prompt.is_none()
                 && let Some(begin_prompts) = pending_begin.take()
             {
@@ -1014,8 +1003,6 @@ async fn run_with_completion_model(
                                         None => Ok(None),
                                     }
                                 };
-                                // Parts before the cutoff leave the history, so
-                                // the context the model keeps must follow it.
                                 let live_context = request.workspace_context.prompts(&cwd.get());
                                 let handoff = ContextHandoffWrite {
                                     summary: &summary,
@@ -1111,7 +1098,6 @@ async fn run_with_completion_model(
                                     }
                                     continue 'generations;
                                 }
-                                // A provider-switch handoff writes on the previous provider.
                                 if provider_switch.is_none()
                                     && !target.fallback_providers.is_empty()
                                     && is_provider_failure(&error)

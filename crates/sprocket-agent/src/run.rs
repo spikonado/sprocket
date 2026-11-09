@@ -333,8 +333,6 @@ async fn claim_run(
     )))
 }
 
-/// Anchored to the start of the request that granted it, so the local
-/// deadline never falls after the server's.
 #[derive(Clone, Copy, Debug)]
 struct ClaimLease {
     granted_at: Instant,
@@ -415,8 +413,6 @@ where
 #[error(transparent)]
 struct ClaimLeaseLost(anyhow::Error);
 
-/// Renewals continue past the local lease deadline estimate because the
-/// server decides lease ownership.
 async fn drive_claim_lease<R, RFut, F, T>(
     run_id: &str,
     mut lease: ClaimLease,
@@ -473,8 +469,6 @@ where
 
 pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRun> {
     eprintln!("sprocket-agent: starting thread {}", request.thread_id);
-    // Pin the ChatGPT account active at submission. When it is unavailable the
-    // run starts anyway and falls back to the user's next provider.
     let chatgpt_client = if request.completion_provider == crate::types::CompletionProvider::Chatgpt
     {
         request
@@ -526,9 +520,6 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     };
     let mut request = request;
     request.thread_id = created_run.thread_id.clone();
-    // The browser token is only needed to create and bind the run. Every later
-    // operation uses the run-scoped capability, so browser lifetime and token
-    // refresh can no longer interrupt an active local executor.
     runtime.client.clear_auth().await;
     if created_run.created {
         eprintln!("sprocket-agent: created run {}", created_run.run_id);
@@ -919,7 +910,6 @@ pub async fn run_agent(
     eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     let Some(lease) = claim_run(&runtime, &run_id, &claim_id).await? else {
-        // Another executor owns the run and begins it.
         return Ok(());
     };
 
@@ -1020,18 +1010,13 @@ pub async fn run_agent(
     .await
     {
         Ok(result) => result,
-        Err(ClaimLeaseLost(error)) => {
-            // The lease is gone, so the server's lifecycle check marks the run
-            // abandoned. A renewal tick can also race the operation's own
-            // finalization, which this acknowledges instead.
-            match runtime.run_finished(&run_id).await {
-                Ok(true) => {
-                    acknowledge_stop(&runtime, &run_id, &claim_id).await?;
-                    Ok(())
-                }
-                _ => Err(error),
+        Err(ClaimLeaseLost(error)) => match runtime.run_finished(&run_id).await {
+            Ok(true) => {
+                acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+                Ok(())
             }
-        }
+            _ => Err(error),
+        },
     }
 }
 

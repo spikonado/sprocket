@@ -119,7 +119,6 @@ impl ContextHandoffHook {
         }
     }
 
-    /// Every update is one assignment, so a poisoned state is still consistent.
     fn state(&self) -> MutexGuard<'_, HandoffState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }

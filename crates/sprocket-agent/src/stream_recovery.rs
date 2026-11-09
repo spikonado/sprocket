@@ -12,7 +12,6 @@ const MAX_STREAM_RECOVERIES: u32 = 3;
 const MAX_STREAM_TIMEOUT_RECOVERIES: u32 = 1;
 const GATEWAY_STREAM_TIMEOUT_CODE: &str = "gateway_stream_timeout";
 
-/// The agent hook that records each completion call's input.
 #[derive(Clone, Default)]
 pub(crate) struct CompletionInput(Arc<Mutex<Option<(Vec<Message>, Message)>>>);
 
@@ -68,7 +67,6 @@ pub(crate) fn provider_response<'a>(
     }
 }
 
-/// Failures another provider may not have.
 pub(crate) fn is_provider_failure(error: &PromptError) -> bool {
     match error {
         PromptError::Provider(_) => true,

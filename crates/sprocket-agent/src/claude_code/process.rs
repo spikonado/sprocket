@@ -22,8 +22,6 @@ const TOOL_PREFIX: &str = "mcp__sprocket__";
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const EXIT_GRACE: Duration = Duration::from_secs(5);
 
-/// One Claude Code CLI session driven over its stream-json control protocol, with
-/// Sprocket's tools served to it as an in-process MCP server.
 pub(super) struct Process {
     child: Option<Child>,
     _system_prompt: tempfile::NamedTempFile,
@@ -34,8 +32,7 @@ pub(super) struct Process {
 }
 
 impl Drop for Process {
-    /// Closing stdin alone lets Claude Code finish an open turn, so this sends an interrupt
-    /// first, a no-op when idle. A process that doesn't exit in time is killed.
+    /// Closing stdin alone lets Claude Code finish an open turn, so this interrupts it first.
     fn drop(&mut self) {
         self.send(&json!({
             "type": "control_request",

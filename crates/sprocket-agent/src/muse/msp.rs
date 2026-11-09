@@ -19,7 +19,6 @@ use crate::cli_session::read_stderr;
 
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// A JSON-RPC error Muse answered a request with.
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct RpcError {
@@ -33,7 +32,6 @@ pub enum Incoming {
     Exited(String),
 }
 
-/// The calls awaiting replies, or None once Muse has stopped.
 type Pending = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>>>>;
 
 /// One `muse serve` process. Dropping it kills the process.
@@ -135,7 +133,7 @@ fn stopped() -> RpcError {
     }
 }
 
-/// A new MSP command ID. Muse takes UUIDv7s.
+/// Muse takes UUIDv7 command IDs.
 pub fn command_id() -> String {
     uuid::Uuid::now_v7().to_string()
 }
