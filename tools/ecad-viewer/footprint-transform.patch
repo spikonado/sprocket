@@ -4,7 +4,7 @@ index efe37d1..4e7bdc7 100644
 +++ b/packages/kicad-parser/src/board_parser.ts
 @@ -651,7 +651,7 @@ function parseBoardVariant(expr: Parseable): B.I_BoardVariant {
  }
-
+ 
  function parseFootprint(expr: Parseable): B.I_Footprint {
 -    return parse_expr(
 +    const footprint = parse_expr(
@@ -45,5 +45,5 @@ index efe37d1..4e7bdc7 100644
 +
 +    return footprint as B.I_Footprint;
  }
-
+ 
  function parseLineSegment(expr: Parseable): B.I_LineSegment {

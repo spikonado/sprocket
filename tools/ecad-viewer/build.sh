@@ -24,6 +24,8 @@ git -C "$src" checkout --quiet "$commit"
 # `(transform (translate x y) (rotate r) (scale sx sy))` instead of `(at x y r)`.
 # fresh-apps: builds new document apps when the set of documents changes, since moving
 # the old ones into the new tabs breaks their nested elements.
+# fresh-insets: redraws a schematic inset from the edited file instead of its cached scene.
+# fullscreen-toggle: enters fullscreen on the first click after the user left it with Escape.
 # hidden-tab-layout: lays out the board and schematic on hidden tabs, so their loads
 # finish and schematic insets can draw a board that was never shown.
 # load-settle: a failed load rejects only after its other files finish parsing, so none of
@@ -33,7 +35,8 @@ git -C "$src" checkout --quiet "$commit"
 # relative-sheets: loads sheets outside the opened file's folder, such as `../shared/x.kicad_sch`.
 # reopen-sheet: reopens the sheet the user navigated to after the frame reloads edited files.
 # sheet-instances: lists each instance of a reused sheet in the sheet panel and shows
-# that instance's references, even when switching between instances of one file.
+# that instance's references, even when switching between instances of one file with the
+# panel or the keyboard.
 # show-tab: lets the frame open the other document after a cross-probe, and keeps
 # the tab header in step when the viewer switches tabs itself.
 # sprocket-theme: swaps hard-coded chrome colors for the theme variables the frame sets,

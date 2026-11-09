@@ -1,0 +1,28 @@
+diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+index 08bd664..8be8a0d 100644
+--- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
++++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+@@ -605,7 +605,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+     #content: HTMLElement;
+     #step_viewer_placeholder: HTMLElement | undefined;
+     #viewers_container: HTMLDivElement;
+-    #is_full_screen = false;
+     #host_active = true;
+     #revision_key: string | null = null;
+     #source_manifest_key: string | null = null;
+@@ -4850,12 +4849,10 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+             return show_ecad_viewer();
+         }
+ 
+-        if (!this.#is_full_screen) {
+-            window.document.documentElement.requestFullscreen();
+-            this.#is_full_screen = true;
++        if (!document.fullscreenElement) {
++            void document.documentElement.requestFullscreen();
+         } else {
+-            window.document.exitFullscreen();
+-            this.#is_full_screen = false;
++            void document.exitFullscreen();
+         }
+         if (this.#ov_d_app) this.#ov_d_app.on_show();
+     }

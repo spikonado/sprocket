@@ -1,5 +1,5 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index bb7ea2e..ef2a3a7 100644
+index d433858..7467de3 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 @@ -471,7 +471,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
@@ -13,7 +13,7 @@ index bb7ea2e..ef2a3a7 100644
              }
 @@ -526,6 +526,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
              }
-
+ 
              .bottom-left-icon {
 +                /* Sprocket shows no Prism branding over the BOM and canvases. */
 +                display: none !important;
@@ -26,19 +26,19 @@ index 8ca3725..18f2d2b 100644
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/tab_button.ts
 @@ -45,7 +45,7 @@ export class TabButtonElement extends KCUIElement {
              }
-
+ 
              :host {
 -                fill: var(--button-fg);
 +                fill: currentColor;
              }
-
+ 
              button:hover {
 diff --git a/packages/ecad-viewer-app/src/kc-ui/spinner.ts b/packages/ecad-viewer-app/src/kc-ui/spinner.ts
 index 1484afe..8744a2f 100644
 --- a/packages/ecad-viewer-app/src/kc-ui/spinner.ts
 +++ b/packages/ecad-viewer-app/src/kc-ui/spinner.ts
 @@ -33,7 +33,7 @@ export class Spinner extends KCUIElement {
-
+ 
              .loading-spinner {
                  border: 8px solid rgba(0, 0, 0, 0.1);
 -                border-left-color: #333;
@@ -58,12 +58,12 @@ index a7c5696..aa71bb2 100644
 +                background-color: var(--bg);
                  color: var(--fg);
              }
-
+ 
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
-index 5ac46f7..3fb70e5 100644
+index 05892d7..6ec8f68 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
-@@ -59,7 +59,7 @@ export class BomViewer extends KCUIElement {
+@@ -70,7 +70,7 @@ export class BomViewer extends KCUIElement {
                  width: 100%;
                  height: 100%;
                  aspect-ratio: 1.414;
@@ -72,7 +72,7 @@ index 5ac46f7..3fb70e5 100644
                  color: var(--fg);
                  contain: layout paint;
              }
-@@ -78,12 +78,12 @@ export class BomViewer extends KCUIElement {
+@@ -89,12 +89,12 @@ export class BomViewer extends KCUIElement {
              }
              th,
              td {
@@ -87,16 +87,16 @@ index 5ac46f7..3fb70e5 100644
                  text-align: left;
                  vertical-align: top;
                  word-break: break-word; /* Add this line */
-@@ -93,7 +93,7 @@ export class BomViewer extends KCUIElement {
+@@ -104,7 +104,7 @@ export class BomViewer extends KCUIElement {
              th {
                  top: 0;
                  position: sticky;
 -                background: #666;
 +                background: var(--panel-title-bg);
              }
-
+ 
              .narrow {
-@@ -106,15 +106,15 @@ export class BomViewer extends KCUIElement {
+@@ -117,15 +117,15 @@ export class BomViewer extends KCUIElement {
                  text-overflow: ellipsis;
              }
              #summary {
@@ -149,12 +149,12 @@ index 8a1da3c..032851b 100644
                  padding: 0 0.25em 0 0.25em;
 @@ -341,7 +341,7 @@ class KCBoardLayerControlElement extends KCUIElement {
              }
-
+ 
              .for-hidden {
 -                color: #888;
 +                color: var(--button-disabled-fg);
              }
-
+ 
              :host {
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/objects-panel.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/objects-panel.ts
 index 52bd7cc..31dff65 100644
@@ -193,12 +193,12 @@ index 443b457..dff1d24 100644
                  padding: 0 0.25em 0 0.25em;
 @@ -196,7 +196,7 @@ class ObjVisibilityCtrl extends KCUIElement {
              }
-
+ 
              .for-hidden {
 -                color: #888;
 +                color: var(--button-disabled-fg);
              }
-
+ 
              :host {
 diff --git a/packages/ecad-viewer-app/src/kicanvas/icons/sprites.svg b/packages/ecad-viewer-app/src/kicanvas/icons/sprites.svg
 index bb513f2..7dfbb03 100644

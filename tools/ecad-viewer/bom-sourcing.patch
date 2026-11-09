@@ -5,7 +5,7 @@ index b3c7c29..10f4ab2 100644
 @@ -1,4 +1,4 @@
 -import type { BomItem } from "./bom_item";
 +import type { BomFields, BomItem } from "./bom_item";
-
+ 
  export class ItemsGroupedByFpValueDNP implements BomItem {
      #references: string[] = [];
 @@ -25,5 +25,6 @@ export class ItemsGroupedByFpValueDNP implements BomItem {
@@ -21,16 +21,16 @@ index 48cac91..8af2508 100644
 +++ b/packages/ecad-viewer-app/src/kicad/board.ts
 @@ -1111,13 +1111,21 @@ export class Footprint implements BoardNode {
      }
-
+ 
      get Datasheet() {
 -        return this.properties["Datasheet"] ?? "";
 +        return this.field("Datasheet") ?? "";
      }
-
+ 
      get Description() {
          return this.descr ?? this.properties["Description"] ?? "";
      }
-
+ 
 +    field(name: string): string | undefined {
 +        return (
 +            this.properties[name] ??
@@ -51,13 +51,13 @@ index 0aa1269..f988ee4 100644
  import { BoardVisitorBase } from "./board_visitor_base";
 -import type { BomItem } from "./bom_item";
 +import { read_bom_fields, type BomItem } from "./bom_item";
-
+ 
  export interface DesignatorRef {
      uuid: string;
 @@ -19,6 +19,10 @@ export class BoardBomItemVisitor extends BoardVisitorBase {
-
+ 
      #designator_refs = new Map<string, DesignatorRef[]>();
-
+ 
 +    constructor(private readonly variant: string | null = null) {
 +        super();
 +    }
@@ -67,7 +67,7 @@ index 0aa1269..f988ee4 100644
      }
 @@ -28,18 +32,21 @@ export class BoardBomItemVisitor extends BoardVisitorBase {
      }
-
+ 
      protected override visitFootprint(node: Footprint) {
 -        const schematicSymbol: BomItem = {
 -            Reference: node.Reference,
@@ -220,13 +220,13 @@ index 7945086..05892d7 100644
 +        className: "narrow",
 +    },
 +];
-
+ 
  export class BomViewer extends KCUIElement {
      #project: Project;
 @@ -61,36 +107,14 @@ export class BomViewer extends KCUIElement {
                  background: #666;
              }
-
+ 
 -            /* Adjust column widths */
 -            th:nth-child(1),
 -            td:nth-child(1) {
@@ -269,7 +269,7 @@ index 7945086..05892d7 100644
                  color: white;
 @@ -138,54 +162,40 @@ export class BomViewer extends KCUIElement {
      }
-
+ 
      override initialContentCallback() {}
 -    generateBomItemHtml(bomItem: BomItem, index: number) {
 -        return html`
@@ -369,7 +369,7 @@ index bfdd21d..6c1c0db 100644
 @@ -521,8 +521,14 @@ export class Project extends EventTarget implements IDisposable {
      _sort_bom(bom_list: BomItem[]) {
          const grouped_it_map: Map<string, ItemsGroupedByFpValueDNP> = new Map();
-
+ 
 +        // Parts with different sourcing fields are different parts to buy.
          const group_by_fp_value = (itm: BomItem) =>
 -            `${itm.Footprint}-${itm.Name}-${itm.DNP}`;
@@ -379,7 +379,7 @@ index bfdd21d..6c1c0db 100644
 +                itm.DNP,
 +                ...Object.values(itm.Fields),
 +            ]);
-
+ 
          for (const it of bom_list) {
              const key = group_by_fp_value(it);
 @@ -536,10 +542,14 @@ export class Project extends EventTarget implements IDisposable {

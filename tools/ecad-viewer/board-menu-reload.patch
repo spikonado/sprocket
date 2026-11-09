@@ -7,11 +7,11 @@ index e00e672..8e1d725 100644
      #close: KCUIButtonElement;
      #tabContents: HTMLElement[] = [];
 +    #active = 0;
-
+ 
      static override styles = [
          ...KCUIElement.styles,
 @@ -118,13 +119,18 @@ export class TabView extends KCUIElement {
-
+ 
          return tab;
      }
 -    private showTab(index: number): void {
@@ -24,7 +24,7 @@ index e00e672..8e1d725 100644
              i.forEach((tab) => {
                  tab.classList.remove("active");
              });
-
+ 
          if (this.#tabContents[index]) {
 +            this.#active = index;
              this.#tabContents[index]!.classList.add("active");
@@ -35,9 +35,9 @@ index 8769e92..2fd0866 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/elements/common/app.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/elements/common/app.ts
 @@ -309,6 +309,31 @@ export abstract class KCViewerAppElement<
-
+ 
      protected abstract make_fitter_menu(): HTMLElement;
-
+ 
 +    #build_fitter_menu(hidden: boolean) {
 +        const menu = this.make_fitter_menu();
 +        menu.hidden = hidden;
@@ -69,7 +69,7 @@ index 8769e92..2fd0866 100644
 @@ -326,14 +351,7 @@ export abstract class KCViewerAppElement<
              return html` ${this.#viewer_elm} `;
          }
-
+ 
 -        this.#fitter_menu = this.make_fitter_menu();
 -        this.#fitter_menu.hidden = true;
 -        this.#fitter_menu.addEventListener(
@@ -80,7 +80,7 @@ index 8769e92..2fd0866 100644
 -        );
 +        this.#fitter_menu = this.#build_fitter_menu(true);
          this.#property_viewer = this.make_property_element();
-
+ 
          let elements: ElementOrFragment[] = [
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/app.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-board/app.ts
 index 38d4149..57e9947 100644
@@ -89,7 +89,7 @@ index 38d4149..57e9947 100644
 @@ -53,6 +53,22 @@ export class KCBoardAppElement extends KCViewerAppElement<KCBoardViewerElement>
              (this.viewer as BoardViewer).layer_visibility_ctrl = this.#layer;
      }
-
+ 
 +    // The layer, object and net panels list what the first board had, and
 +    // picking reads layer visibility from them, so an edited board needs new ones.
 +    override async load(src: KicadAssert) {

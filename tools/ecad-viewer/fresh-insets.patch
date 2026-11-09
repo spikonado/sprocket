@@ -1,0 +1,17 @@
+diff --git a/packages/ecad-viewer-app/src/ecad-viewer/insets/schematic-provider.ts b/packages/ecad-viewer-app/src/ecad-viewer/insets/schematic-provider.ts
+index f52a5a2..1be1afb 100644
+--- a/packages/ecad-viewer-app/src/ecad-viewer/insets/schematic-provider.ts
++++ b/packages/ecad-viewer-app/src/ecad-viewer/insets/schematic-provider.ts
+@@ -213,6 +213,12 @@ export class SchematicInsetProvider implements InsetProvider {
+ 
+     #acquire(page: SchematicInsetPage): Scene {
+         let scene = this.#scenes.get(page.key);
++        // Edited files load as new documents under the same instance keys.
++        if (scene && !scene.refs && scene.page.document !== page.document) {
++            this.#scenes.delete(scene.key);
++            this.#drop(scene);
++            scene = undefined;
++        }
+         if (!scene) {
+             const canvas = document.createElement("canvas");
+             Object.assign(canvas.style, {

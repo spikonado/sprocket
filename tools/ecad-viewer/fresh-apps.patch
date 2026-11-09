@@ -1,8 +1,8 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index 6517822..37cfbc9 100644
+index 4936e90..08bd664 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-@@ -4894,12 +4896,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+@@ -4870,12 +4870,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
          if (!this.loaded) return this.#spinner;
          this.#spinner.hidden = true;
          this.#tab_contents = {};
@@ -20,6 +20,6 @@ index 6517822..37cfbc9 100644
 +        this.#step_viewer_placeholder = undefined;
 +        this.#ov_d_app = undefined!;
 +        this.#bom_app = undefined;
-
+ 
          this.#tab_header = new TabHeaderElement({
              has_3d: this.has_3d,

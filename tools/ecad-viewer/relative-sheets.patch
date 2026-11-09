@@ -4,12 +4,12 @@ index 137b96c..59f33c0 100644
 +++ b/packages/ecad-viewer-app/src/kicanvas/project.ts
 @@ -471,7 +471,7 @@ export class Project extends EventTarget implements IDisposable {
          }
-
+ 
          for (const blob of sources.blobs) {
 -            if (blob.filename.startsWith(".")) continue;
 +            if (blob.filename.split("/").pop()!.startsWith(".")) continue;
              if (blob.filename === root_sch_file_name) continue;
-
+ 
              if (blob.filename.endsWith(KICAD_PCB_EXT)) {
 @@ -1107,7 +1107,9 @@ export class Project extends EventTarget implements IDisposable {
              const parts: string[] = [];

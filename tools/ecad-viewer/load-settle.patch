@@ -5,7 +5,7 @@ index 6c1c0db..137b96c 100644
 @@ -490,7 +490,14 @@ export class Project extends EventTarget implements IDisposable {
              }
          }
-
+ 
 -        await Promise.all(promises);
 +        // A failed parse rejects only after the others finish, since each
 +        // writes into this project and a reload resets it next.
@@ -15,6 +15,6 @@ index 6c1c0db..137b96c 100644
 +                result.status === "rejected",
 +        );
 +        if (failure) throw failure.reason;
-
+ 
          if (this._found_cjk) {
              await Project.import_cjk_glyphs();

@@ -2,9 +2,10 @@ diff --git a/packages/kicad-parser/src/tokenizer.ts b/packages/kicad-parser/src/
 index 5305839..6c7f300 100644
 --- a/packages/kicad-parser/src/tokenizer.ts
 +++ b/packages/kicad-parser/src/tokenizer.ts
-@@ -446,4 +446,10 @@ export function listify(src: string): List {
+@@ -445,6 +445,12 @@ export function listify(src: string): List {
+         i = j;
      }
-
+ 
 +    // A file cut short, such as one read mid-write, would otherwise parse as
 +    // a document missing everything after the cut.
 +    if (stack.length > 1) {
@@ -13,3 +14,4 @@ index 5305839..6c7f300 100644
 +
      return root;
  }
+ 

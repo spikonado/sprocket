@@ -1,5 +1,5 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index d60d01f..a7b5372 100644
+index d60d01f..4936e90 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 @@ -2544,9 +2544,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {

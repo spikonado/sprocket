@@ -1,3 +1,16 @@
+diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+index a520bb6..922897d 100644
+--- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
++++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
+@@ -3436,8 +3436,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+         const viewer = this.#safe_schematic_viewer();
+         if (!page || !viewer || !(page.document instanceof KicadSch))
+             return false;
+-        const context = page.schematic_context;
+-        if (context) viewer.set_instance_context(context);
+         this.#active_schematic_project_path = page.project_path;
+         this.#project.activate_sch(page.project_path);
+         return true;
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts
 index e259c7c..c6cde30 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/app.ts
@@ -26,7 +39,7 @@ index 9dd1521..d7de797 100644
 @@ -4,11 +4,11 @@
      Full text available at: https://opensource.org/licenses/MIT
  */
-
+ 
 +import { listen } from "../../../base/events";
  import { css, html } from "../../../base/web-components";
  import { KCUIElement } from "../../../kc-ui";
@@ -35,14 +48,14 @@ index 9dd1521..d7de797 100644
 -import type { SchematicViewer } from "../../../viewers/schematic/viewer";
  import type { Project } from "../../project";
  import { SchPreviewElement } from "./sch-preview";
-
+ 
 @@ -64,17 +64,16 @@ export class SchPreviewListElement extends KCUIElement {
      ];
-
+ 
      #project: Project;
 -    #viewers: SchPreviewElement[] = [];
 -    #sch_viewer: SchematicViewer;
-
+ 
      override connectedCallback() {
          (async () => {
              this.#project = await this.requestContext("project");
@@ -57,11 +70,11 @@ index 9dd1521..d7de797 100644
 +            );
          })();
      }
-
+ 
 @@ -85,13 +84,14 @@ export class SchPreviewListElement extends KCUIElement {
          const vertical_layout = html`<div
              class="vertical-layout"></div>` as HTMLElement;
-
+ 
 -        for (const sch of this.#project.sch_in_order()) {
 -            if (!(sch instanceof KicadSch)) continue;
 -            const viewer = new SchPreviewElement(sch);
@@ -76,7 +89,7 @@ index 9dd1521..d7de797 100644
 -                this.#sch_viewer.load(sch);
 +                this.#project.activate_sch(page.project_path);
              });
-
+ 
              vertical_layout.appendChild(viewer);
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview.ts b/packages/ecad-viewer-app/src/kicanvas/elements/kc-schematic/sch-preview.ts
 index 6893771..50b5007 100644
@@ -88,15 +101,15 @@ index 6893771..50b5007 100644
  import { KicadSch } from "../../../kicad";
 +import type { ProjectPage } from "../../project";
  import { KCSchematicViewerElement } from "./viewer";
-
+ 
  export class SchPreviewElement extends KCUIElement {
 @@ -65,19 +66,20 @@ export class SchPreviewElement extends KCUIElement {
-
+ 
      #preview: KCSchematicViewerElement = new KCSchematicViewerElement();
-
+ 
 -    #sch: KicadSch;
 +    #page: ProjectPage;
-
+ 
 -    #sch_name: string;
 -
 -    constructor(sch: KicadSch) {
@@ -107,7 +120,7 @@ index 6893771..50b5007 100644
 +        this.#page = page;
          this.#preview.classList.add("preview");
      }
-
+ 
      override initialContentCallback() {
 -        this.#preview.load(this.#sch);
 +        const sch = this.#page.document;
@@ -116,7 +129,7 @@ index 6893771..50b5007 100644
 +        if (context) this.#preview.viewer.set_instance_context(context);
 +        this.#preview.load(sch);
      }
-
+ 
      override render() {
 @@ -86,7 +88,7 @@ export class SchPreviewElement extends KCUIElement {
                  <div class="viewer-panel">

@@ -9,9 +9,11 @@ repos:
       - id: check-yaml
       - id: check-xml
       - id: end-of-file-fixer
+        exclude: \.patch$
       - id: fix-byte-order-marker
       - id: mixed-line-ending
       - id: trailing-whitespace
+        exclude: \.patch$
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3

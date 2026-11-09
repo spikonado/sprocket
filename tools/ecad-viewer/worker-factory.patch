@@ -3,7 +3,7 @@ index 8d1ef3c..2360a28 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/worker_pool.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/worker_pool.ts
 @@ -23,10 +23,13 @@ export class WorkerPool {
-
+ 
      constructor(workerCount: number) {
          for (let i = 0; i < workerCount; i++) {
 -            const worker = new Worker(
@@ -17,6 +17,6 @@ index 8d1ef3c..2360a28 100644
 +                new Worker(new URL("./parser.worker.js", import.meta.url), {
 +                    type: "module",
 +                });
-
+ 
              const wrapped = Comlink.wrap<ParserAPI>(worker);
              this.workerHandles.push(worker);

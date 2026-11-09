@@ -1,11 +1,11 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index d60d01f..670be27 100644
+index 922897d..d433858 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-@@ -3746,6 +3746,11 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+@@ -3763,6 +3763,11 @@ export class ECadViewer extends KCUIElement implements InputContainer {
          return result;
      }
-
+ 
 +    /** Show a tab, such as the other document after a cross-probe. */
 +    public async showTab(view: "SCH" | "PCB" | "3D" | "BOM"): Promise<void> {
 +        await this.#switchToTab(this.#viewTypeToTabKind(view));
@@ -14,12 +14,16 @@ index d60d01f..670be27 100644
      #viewTypeToTabKind(viewType: "SCH" | "PCB" | "3D" | "BOM"): TabKind {
          switch (viewType) {
              case "PCB":
-@@ -3767,6 +3772,12 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+@@ -3784,6 +3789,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
              return;
          }
-
+ 
 +        // The header's activation does all the bookkeeping and tells listeners.
-+        if (this.#tab_contents[tabKind] && this.#tab_header && !this.#tab_header.hidden) {
++        if (
++            this.#tab_contents[tabKind] &&
++            this.#tab_header &&
++            !this.#tab_header.hidden
++        ) {
 +            this.#tab_header.activateTab(tabKind, true);
 +            return;
 +        }
@@ -34,9 +38,9 @@ index 9655d95..14d38d5 100644
 @@ -407,7 +407,7 @@ export class TabHeaderElement extends KCUIElement {
          }
      }
-
+ 
 -    private activateTab(kind: TabKind, userInitiated = false) {
 +    public activateTab(kind: TabKind, userInitiated = false) {
          if (this.#current_tab === kind) return;
-
+ 
          for (const [section, elements] of this.#elements) {

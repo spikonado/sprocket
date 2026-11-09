@@ -149,6 +149,8 @@ async function start() {
 	const replace = async (sources: KicadSource[]) => {
 		const tab = toolbar.tab();
 		const camera = viewer.camera;
+		// Net codes can change between versions of a board, so highlights carry over by name.
+		const highlighted = viewer.getHighlightedNets().map(({ name }) => ({ name }));
 		// The viewer reports a file it can't read with this event and still resolves.
 		const failures: string[] = [];
 
@@ -177,6 +179,8 @@ async function start() {
 		}
 
 		if (failures.length) throw new Error(failures.join('\n'));
+
+		highlight(highlighted);
 
 		// The camera belongs to the tab shown before the load, not one the user switched to since.
 		if (toolbar.tab() === tab) viewer.camera = camera;

@@ -1,14 +1,17 @@
 diff --git a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
-index f349cbd..98798d4 100644
+index f3cd8be..7945086 100644
 --- a/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
 +++ b/packages/ecad-viewer-app/src/kicanvas/elements/bom/viewer.ts
-@@ -6,4 +6,5 @@
-
+@@ -5,6 +5,7 @@
+ */
+ 
  import { KCUIElement } from "../../../kc-ui";
 +import { listen } from "../../../base/events";
  import { css, html } from "../../../base/web-components";
  import "./viewer";
-@@ -131,4 +132,7 @@ export class BomViewer extends KCUIElement {
+ import type { Project } from "../../project";
+@@ -130,6 +131,9 @@ export class BomViewer extends KCUIElement {
+             this.#project = await this.requestContext("project");
              await this.#project.loaded;
              super.connectedCallback();
 +            this.addDisposable(
@@ -16,3 +19,4 @@ index f349cbd..98798d4 100644
 +            );
          })();
      }
+ 

@@ -1,11 +1,11 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index d60d01f..b927ca2 100644
+index 8be8a0d..e814cf0 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 @@ -514,6 +514,17 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                  display: inherit;
              }
-
+ 
 +            /* Laid out but unseen, so a document app on a hidden tab still
 +               finishes loading, and a board that was never shown paints for
 +               insets. */
@@ -20,15 +20,15 @@ index d60d01f..b927ca2 100644
              .bottom-left-icon {
                  position: absolute;
                  bottom: 16px;
-@@ -5042,6 +5053,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+@@ -5048,6 +5059,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                  });
              }
              this.#board_app.showPropertyPanel = this.showSelectionPanel;
 +            this.#board_app.classList.add("warm");
              embed_to_tab(this.#board_app, TabKind.pcb);
          }
-
-@@ -5073,6 +5085,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+ 
+@@ -5079,6 +5091,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                  );
              }
              this.#schematic_app.showPropertyPanel = this.showSelectionPanel;
@@ -41,12 +41,12 @@ index f89c424..2ce796d 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/insets/board-provider.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/insets/board-provider.ts
 @@ -88,7 +88,8 @@ export class BoardInsetProvider implements InsetProvider {
-
+ 
      ready() {
          this.#hook();
 -        return !!this.viewer()?.board;
 +        // A board that was never laid out has no layers to draw yet.
 +        return !!this.viewer()?.layers;
      }
-
+ 
      async resolve(

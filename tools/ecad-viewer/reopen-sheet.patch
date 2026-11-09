@@ -1,8 +1,8 @@
 diff --git a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-index 6517822..37cfbc9 100644
+index e814cf0..a520bb6 100644
 --- a/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
 +++ b/packages/ecad-viewer-app/src/ecad-viewer/ecad_viewer.ts
-@@ -567,6 +567,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
+@@ -566,6 +566,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                      )
                  ) {
                      this.#active_schematic_project_path = active;
