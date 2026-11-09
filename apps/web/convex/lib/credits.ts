@@ -5,7 +5,6 @@ import type { CreditPackExpiry } from '@convex/lib/pricingValidators';
 
 const DAY = 24 * 60 * 60 * 1_000;
 
-/** Months and years land on the same UTC day, or the last day of a shorter month. */
 export function creditExpiresAt(paidAt: number, { count, unit }: CreditPackExpiry): number {
 	if (unit === 'day') return paidAt + count * DAY;
 
@@ -22,7 +21,6 @@ export function grantForPayment(ctx: QueryCtx, paymentId: string) {
 		.unique();
 }
 
-/** Unrevoked, unexpired grants with units left, soonest expiry first. */
 export async function spendableGrants(
 	ctx: QueryCtx,
 	userId: string,
@@ -40,7 +38,6 @@ export function remainingCredits(grants: Doc<'creditGrants'>[]): number {
 	return grants.reduce((sum, grant) => sum + grant.units - grant.used, 0);
 }
 
-/** Spends `units`, at most `remainingCredits(grants)`, from `grants` in order. */
 export async function drawCredits(
 	ctx: MutationCtx,
 	grants: Doc<'creditGrants'>[],

@@ -12,8 +12,6 @@ const vQuota = v.object({
 	message: v.optional(v.string())
 });
 
-// A single model call charges a small multiple of UNITS_PER_DOLLAR; anything
-// above this is a caller bug or a replayed token, not real usage.
 const MAX_QUOTA_CHARGE_UNITS = 1_000_000_000_000;
 
 async function userFromGatewayToken(token: string) {

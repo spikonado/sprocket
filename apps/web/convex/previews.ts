@@ -13,7 +13,6 @@ const TIERS = [
 	{ tierId: 'ultra', label: 'Ultra', dollars: 300 }
 ];
 
-/** Seeds the pricing catalog of a preview deployment that has none, from `apps/site/scripts/vercel-build.sh`. */
 export const seed = internalMutation({
 	args: {},
 	returns: v.null(),
@@ -35,7 +34,6 @@ export const seed = internalMutation({
 			units: 5 * MODEL_USAGE_UNITS_PER_DOLLAR,
 			expiresAfter: { count: 30, unit: 'day' }
 		});
-		// The pack is sellable once the price sync confirms its Dodo price.
 		await ctx.scheduler.runAfter(0, internal.dodo.syncPrices, {});
 
 		return null;

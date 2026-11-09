@@ -5,7 +5,6 @@ import { parseAgentcardWebhook, verifyAgentcardSignature } from '@convex/lib/pay
 
 const http = httpRouter();
 
-// Handles the event before acknowledging. Any throw answers 500, so Dodo redelivers.
 http.route({
 	path: '/dodopayments-webhook',
 	method: 'POST',

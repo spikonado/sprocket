@@ -6,7 +6,6 @@ const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
 const METER_CAPACITY = 4_000_000_000_000_000;
 
-/** Usage the rate limiter counted in a window before the usage table replaced it. */
 export async function legacyUsage(
 	ctx: QueryCtx,
 	userId: string,

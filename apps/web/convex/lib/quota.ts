@@ -70,7 +70,6 @@ export async function gatewayQuotaStatus(
 	};
 }
 
-/** Draws the allowance window first, then credit grants; what grants can't cover overdraws the window. */
 export async function chargeUsage(ctx: MutationCtx, userId: string, units: number): Promise<void> {
 	if (units <= 0) return;
 	const now = Date.now();

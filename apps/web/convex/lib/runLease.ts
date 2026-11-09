@@ -42,7 +42,6 @@ export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: numb
 	return run.claimId === claimId && isRunClaimLeaseActive(run, now);
 }
 
-/** Wind-down calls such as lease renewal and tool results use `ownsActiveRunClaim` instead. */
 export function runAcceptsNewWork(run: ClaimableRun, claimId: string, now: number): boolean {
 	return run.cancellationRequestedAt === undefined && ownsActiveRunClaim(run, claimId, now);
 }
@@ -60,9 +59,6 @@ export function assertRunAcceptsWork(
 }
 
 export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
-	// Requiring an active lease here would strand runs whose executor only
-	// reports the failure after expiry. No other executor can claim the run
-	// meanwhile; an expired claim can only be abandoned.
 	return isClaimedRunStatus(run.status) && run.claimId === claimId;
 }
 

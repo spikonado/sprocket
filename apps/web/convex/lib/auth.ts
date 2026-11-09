@@ -75,9 +75,6 @@ export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Pro
 	return created;
 }
 
-/** Canonical ownership gate for documents whose `userId` holds the auth
- * subject. Throws for missing docs and foreign docs alike so existence
- * never leaks. */
 export async function requireOwner<T extends { userId: string }>(
 	ctx: GenericActionCtx<DataModel> | GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
 	doc: T | null

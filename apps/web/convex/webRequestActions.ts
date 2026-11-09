@@ -5,7 +5,6 @@ import { internal } from '@convex/_generated/api';
 import { internalAction } from '@convex/_generated/server';
 import { executeQueuedWebRequest } from '@convex/webTools';
 
-/** A blob whose publish never lands is unregistered, so `storageCleanup.cleanupUnregistered` sweeps it. */
 export const execute = internalAction({
 	args: { id: v.id('webRequests') },
 	returns: v.null(),

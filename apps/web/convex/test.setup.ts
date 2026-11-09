@@ -42,7 +42,6 @@ export function tickPastLastCommit() {
 	vi.setSystemTime(Date.now() + 1);
 }
 
-/** Runs scheduled functions until none are due, allowing for the lead described at `tickPastLastCommit`. */
 export async function finishDueScheduledFunctions(t: ConvexTestInstance) {
 	for (let iteration = 0; iteration < 1000; iteration++) {
 		const pending = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
@@ -132,7 +131,6 @@ export function stubDodoEnv() {
 	);
 }
 
-/** Posts a webhook signed with the secret `stubDodoEnv` configures. */
 export async function sendDodoWebhook<Data>(
 	t: ConvexTestInstance,
 	type: string,

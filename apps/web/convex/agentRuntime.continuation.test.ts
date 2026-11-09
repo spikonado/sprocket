@@ -56,7 +56,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			submissionId: 'sub-continue'
 		});
 		expect(continuation).not.toHaveProperty('serviceTier');
-		// Keeps attachments past retention while the continuation still sends their URLs.
 		expect(
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.lastMessageAt
 		).toBeGreaterThan(0);

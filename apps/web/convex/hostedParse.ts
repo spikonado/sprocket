@@ -33,7 +33,6 @@ function configuredFirecrawlApiKey(): string | undefined {
 	return env.FIRECRAWL_API_KEY?.trim() || undefined;
 }
 
-/** `scrape_url` sends a remote PDF's scanned pages for OCR. */
 function isHostedParseJob(job: Doc<'executorJobs'>): boolean {
 	return job.kind === 'parse_file' || job.kind === 'scrape_url';
 }

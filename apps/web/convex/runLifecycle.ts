@@ -37,6 +37,10 @@ export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Pr
 	if (deadline !== null) await scheduleRunLifecycleCheck(ctx, state, deadline);
 }
 
+async function releaseLifecycleOwnership(ctx: MutationCtx, state: Doc<'runExecutionStates'>) {
+	await ctx.db.patch('runExecutionStates', state._id, { lifecycleCheckId: undefined });
+}
+
 export const checkRun = internalMutation({
 	args: { runId: v.id('runs'), generation: v.number() },
 	returns: v.null(),
@@ -44,8 +48,7 @@ export const checkRun = internalMutation({
 		const state = await getRunExecutionState(ctx.db, runId);
 
 		if (!state?.lifecycleCheckId || state.lifecycleGeneration !== generation) return null;
-		// Clear ownership before finalization so it cannot cancel this mutation's descendants.
-		await ctx.db.patch('runExecutionStates', state._id, { lifecycleCheckId: undefined });
+		await releaseLifecycleOwnership(ctx, state);
 		const run = await getRunWithExecution(ctx.db, runId);
 
 		if (!run) return null;
@@ -85,7 +88,6 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			current.machineId !== undefined &&
 			isAutomaticallyRecoverableRun(current, current.machineId)
 		) {
-			// A stopped abandoned run must stay terminal when its local agent returns.
 			await markCancellationRequested(ctx, current);
 
 			return true;
@@ -135,8 +137,6 @@ const vTreeCancellationBatch = v.object({
 	cursor: v.union(v.string(), v.null())
 });
 
-// A thread's children are listed only after its own run is told to cancel, and
-// a cancelling run cannot spawn subagents, so the top-down sweep needs no lock.
 async function cancelDescendantsPage(
 	ctx: MutationCtx,
 	args: Infer<typeof vTreeCancellationBatch>

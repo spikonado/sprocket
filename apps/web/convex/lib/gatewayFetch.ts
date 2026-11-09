@@ -2,8 +2,7 @@ import { ConvexError } from 'convex/values';
 import { env } from '@convex/_generated/server';
 import { GATEWAY_NOT_CONFIGURED_MESSAGE } from '@convex/lib/gatewayProtocol';
 
-/** Public origin of ai-gateway, e.g. `https://ai-gateway.spikonado.com` (no `/api` suffix). */
-export function modelGatewayUrl(): string {
+export function modelGatewayOrigin(): string {
 	const url = env.MODEL_GATEWAY_URL?.trim();
 
 	if (!url) throw new ConvexError(GATEWAY_NOT_CONFIGURED_MESSAGE);

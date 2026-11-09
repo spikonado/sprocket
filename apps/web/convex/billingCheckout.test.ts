@@ -12,7 +12,6 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-/** Serves the Dodo endpoints checkout uses and records every request. */
 function stubDodo({
 	subscriptionStatuses = [],
 	session = { payment_id: null, payment_status: null }
@@ -111,8 +110,7 @@ describe('checkout', () => {
 		).resolves.toEqual({
 			checkout_url: 'https://checkout.example/cks_1',
 			mode: 'test',
-			attemptId: 'cks_1',
-			sessionId: 'cks_1'
+			attemptId: 'cks_1'
 		});
 
 		expect(paths(requests)).toEqual(['POST /customers', 'POST /checkouts']);

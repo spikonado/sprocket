@@ -69,8 +69,6 @@ export const vSubscriptionTier = v.string();
 
 export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'));
 
-// Public checkout mode surfaced to the website; never exposes raw provider
-// environment naming.
 export const vDodoMode = v.union(v.literal('test'), v.literal('live'));
 
 export const vSubscriptionStatus = v.union(
@@ -830,7 +828,6 @@ export const vListModelsResult = v.object({
 export const vArtifactResult = v.object({
 	artifactId: v.string(),
 	path: v.optional(v.string()),
-	// The remaining fields come from older results.
 	revision: v.optional(v.number()),
 	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),

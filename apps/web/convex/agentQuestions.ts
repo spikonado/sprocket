@@ -131,8 +131,7 @@ async function scheduleDeadlineCheck(
 	timeoutAt: number
 ): Promise<void> {
 	const remaining = timeoutAt - now;
-	// Convex caps scheduled timestamps about five years out; checkpoint distant
-	// deadlines at a bounded interval so the durable deadline never changes.
+	// Convex caps scheduled timestamps about five years out.
 	const delay = Math.min(Math.max(remaining, 0), QUESTION_TIMEOUT_CHECKPOINT_MS);
 
 	await ctx.scheduler.runAfter(delay, internal.agentQuestions.timeout, { questionId });
@@ -352,6 +351,18 @@ export async function questionContinuation(
 	return { runId: continuationOfRunId, prompt: formatQuestionContinuationPrompt(answered) };
 }
 
+async function rootQuestionWaitsForUser(
+	ctx: MutationCtx,
+	question: Doc<'agentQuestions'>,
+	run: Doc<'runs'> | null
+): Promise<boolean> {
+	if (run === null || !isRunFinalStatus(run.status)) return false;
+
+	const thread = await ctx.db.get('threadRecords', question.threadId);
+
+	return thread?.parentThreadId === undefined;
+}
+
 export const timeout = internalMutation({
 	args: {
 		questionId: v.id('agentQuestions')
@@ -385,15 +396,7 @@ export const timeout = internalMutation({
 			return null;
 		}
 
-		// After a root run ends, the pending question is how the user continues.
-		// Child questions still time out so the parent subtree can go idle.
-		if (run !== null && isRunFinalStatus(run.status)) {
-			const thread = await ctx.db.get('threadRecords', question.threadId);
-
-			if (thread?.parentThreadId === undefined) {
-				return null;
-			}
-		}
+		if (await rootQuestionWaitsForUser(ctx, question, run)) return null;
 
 		await changeThreadActivity(ctx, question.threadId, () =>
 			ctx.db.patch('agentQuestions', question._id, { status: 'timedOut' })

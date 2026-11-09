@@ -107,14 +107,17 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 
 	if (!thread) throw new Error('Thread not found.');
 
-	// A newly initialized ancestor has no stored contribution to reconcile later.
-	await applyAncestorCountChanges(ctx, thread, {
-		total: 0,
-		active: Number(await threadOwnActivity(ctx.db, threadId)),
-		working: Number(thread.status === 'running')
-	});
+	await addOwnActivityToAncestors(ctx, thread);
 
 	return state;
+}
+
+async function addOwnActivityToAncestors(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+	await applyAncestorCountChanges(ctx, thread, {
+		total: 0,
+		active: Number(await threadOwnActivity(ctx.db, thread._id)),
+		working: Number(thread.status === 'running')
+	});
 }
 
 async function applyAncestorCountChanges(
@@ -222,7 +225,6 @@ export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadReco
 	};
 }
 
-/** Returns false, leaving the thread unsettled, while its tree has active work. */
 export async function settleRoot(ctx: MutationCtx, root: Doc<'threadRecords'>): Promise<boolean> {
 	if (root.parentThreadId !== undefined) throw new Error('Only root threads can be settled.');
 

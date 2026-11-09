@@ -27,9 +27,11 @@ export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
 }
 
-/** `scope` keeps retries of one write idempotent and separates later writes. */
-export function hiddenPromptSourceKey(scope: string, kind: HiddenPrompt['kind']): string {
-	return `hiddenPrompt:${scope}:${kind}`;
+export function hiddenPromptSourceKey(
+	idempotencyScope: string,
+	kind: HiddenPrompt['kind']
+): string {
+	return `hiddenPrompt:${idempotencyScope}:${kind}`;
 }
 
 export async function getPromptPart(

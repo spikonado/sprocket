@@ -134,12 +134,7 @@ export async function createQueuedRunRecord(
 		}
 	}
 
-	const existingRun = await ctx.db
-		.query('runs')
-		.withIndex('by_userId_submissionId', (query) =>
-			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
-		)
-		.unique();
+	const existingRun = await runForSubmission(ctx, args.userId, args.submissionId);
 
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash);
@@ -356,7 +351,6 @@ export async function generateTitleAfterFirstPrompt(
 	promptPart: Doc<'threadTranscriptParts'>
 ): Promise<void> {
 	if (
-		// A renamed thread keeps its name.
 		thread.titleRenameKey !== undefined ||
 		(await firstUserPromptPart(ctx, thread._id))?._id !== promptPart._id ||
 		(await getUiPreferences(ctx.db, thread.userId))?.automaticThreadTitles === false
@@ -420,6 +414,32 @@ async function reconcileExistingQueuedRun(
 	return reconciled;
 }
 
+function runForSubmission(ctx: MutationCtx, userId: string, submissionId: string) {
+	return ctx.db
+		.query('runs')
+		.withIndex('by_userId_submissionId', (query) =>
+			query.eq('userId', userId).eq('submissionId', submissionId)
+		)
+		.unique();
+}
+
+async function runForExecutionSecret(ctx: MutationCtx, executionSecret: string) {
+	const secretHash = await executionSecretHash(executionSecret);
+
+	return await ctx.db
+		.query('runs')
+		.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
+		.unique();
+}
+
+async function submittedByCaller(ctx: MutationCtx, submissionId: string): Promise<boolean> {
+	const identity = await ctx.auth.getUserIdentity();
+
+	return (
+		identity !== null && (await runForSubmission(ctx, identity.subject, submissionId)) !== null
+	);
+}
+
 export async function finalizeFailedQueuedStart(
 	ctx: MutationCtx,
 	args: {
@@ -433,36 +453,9 @@ export async function finalizeFailedQueuedStart(
 		executionSecret: string;
 	}
 ): Promise<'finalized' | 'pending' | 'standDown'> {
-	// The browser identity can be gone by the time this cleanup runs; the
-	// execution secret is the capability. A secret match on a still-queued
-	// run means it is waiting on this executor, so terminalizing is safe.
-	const secretHash = await executionSecretHash(args.executionSecret);
+	const run = await runForExecutionSecret(ctx, args.executionSecret);
 
-	const run = await ctx.db
-		.query('runs')
-		.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
-		.unique();
-
-	if (!run) {
-		// When the caller is still authenticated, distinguish a duplicate
-		// submission owned by another executor from an insert still in flight.
-		const identity = await ctx.auth.getUserIdentity();
-
-		if (identity !== null) {
-			const submittedRun = await ctx.db
-				.query('runs')
-				.withIndex('by_userId_submissionId', (query) =>
-					query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
-				)
-				.unique();
-
-			if (submittedRun) {
-				return 'standDown';
-			}
-		}
-
-		return 'pending';
-	}
+	if (!run) return (await submittedByCaller(ctx, args.submissionId)) ? 'standDown' : 'pending';
 
 	if (
 		run.status !== 'queued' ||

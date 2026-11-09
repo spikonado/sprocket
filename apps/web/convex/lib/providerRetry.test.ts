@@ -12,8 +12,8 @@ function retryOptions(
 		deadline: Date.now() + deadlineInMs,
 		maxAttemptMs: 60_000,
 		attempt,
-		retryAfterMs: (error: Error) => (error instanceof RateLimited ? 0 : undefined),
-		failure: (error: Error) => new Error(`mapped: ${error.message}`),
+		rateLimitWaitMs: (error: Error) => (error instanceof RateLimited ? 0 : undefined),
+		finalError: (error: Error) => new Error(`mapped: ${error.message}`),
 		shouldContinue
 	};
 }

@@ -103,7 +103,6 @@ function nextPurchaseStatus(current: PurchaseStatus, incoming: PurchaseStatus): 
 }
 
 export const paymentActor = internalQuery({
-	// Cancelling often happens because the run just ended, so it skips the lease check.
 	args: { ...runAuth, allowEndedRun: v.optional(v.boolean()) },
 	returns: vCompletionActor,
 	handler: async (ctx, args) => {

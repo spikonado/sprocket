@@ -4,19 +4,12 @@ const BACKOFF_MAX_MS = 16_000;
 
 const MIN_ATTEMPT_MS = 5_000;
 
-/**
- * Retries rate-limited calls with jittered backoff until `deadline`. Each
- * attempt gets the remaining time, capped at `maxAttemptMs`. `retryAfterMs`
- * returns the provider's wait for a rate-limit error and `undefined` for any
- * other error, which `failure` maps and throws at once. `shouldContinue` runs
- * after each wait so cancelled work stops calling the provider.
- */
 export async function retryRateLimited<T>(options: {
 	deadline: number;
 	maxAttemptMs: number;
 	attempt: (timeoutMs: number) => Promise<T>;
-	retryAfterMs: (error: Error) => number | undefined;
-	failure: (error: Error) => Error;
+	rateLimitWaitMs: (error: Error) => number | undefined;
+	finalError: (error: Error) => Error;
 	shouldContinue: () => Promise<boolean>;
 }): Promise<T> {
 	for (let retry = 0; ; retry++) {
@@ -28,18 +21,18 @@ export async function retryRateLimited<T>(options: {
 			const error =
 				caught instanceof Error ? caught : new Error('Provider request failed.', { cause: caught });
 
-			const retryAfter = options.retryAfterMs(error);
+			const retryAfter = options.rateLimitWaitMs(error);
 
-			if (retryAfter === undefined) throw options.failure(error);
+			if (retryAfter === undefined) throw options.finalError(error);
 
 			const backoff = Math.min(BACKOFF_BASE_MS * 2 ** retry, BACKOFF_MAX_MS);
 			const delay = Math.max(retryAfter, backoff / 2) + Math.random() * (backoff / 2);
 
-			if (Date.now() + delay + MIN_ATTEMPT_MS > options.deadline) throw options.failure(error);
+			if (Date.now() + delay + MIN_ATTEMPT_MS > options.deadline) throw options.finalError(error);
 
 			await new Promise((resolve) => setTimeout(resolve, delay));
 
-			if (!(await options.shouldContinue())) throw options.failure(error);
+			if (!(await options.shouldContinue())) throw options.finalError(error);
 		}
 	}
 }

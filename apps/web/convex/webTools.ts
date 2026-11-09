@@ -209,8 +209,8 @@ async function requestContextDevScrape(
 				},
 				{ timeout: timeoutMs + SDK_TIMEOUT_MARGIN_MS }
 			),
-		retryAfterMs: contextDevRetryAfterMs,
-		failure: contextDevFailure,
+		rateLimitWaitMs: contextDevRetryAfterMs,
+		finalError: contextDevFailure,
 		shouldContinue
 	});
 }

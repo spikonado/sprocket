@@ -38,7 +38,6 @@ function dodoSubscription(overrides: Partial<DodoSubscription> = {}): DodoSubscr
 	};
 }
 
-/** Serves Dodo's subscription retrieve and list endpoints from `subscriptions`. */
 function stubDodo(subscriptions: DodoSubscription[]) {
 	stubDodoEnv();
 	const requests: URL[] = [];

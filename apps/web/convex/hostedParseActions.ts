@@ -71,8 +71,8 @@ export const executeHostedParse = internalAction({
 					},
 					{ ...firecrawlParseOptions(pages), timeout: timeoutMs }
 				),
-			retryAfterMs: firecrawlRetryAfterMs,
-			failure: (error) =>
+			rateLimitWaitMs: firecrawlRetryAfterMs,
+			finalError: (error) =>
 				new NonRetryableError(
 					shortHostedParseError(firecrawlFailure('Firecrawl parse', error).message)
 				),

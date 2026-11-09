@@ -24,10 +24,6 @@ export const getSellablePack = internalQuery({
 	}
 });
 
-/**
- * Grants a paid pack once per payment, on the terms recorded at checkout, and revokes its
- * unused units on any refund or dispute. Grants only move forward, so delivery order doesn't matter.
- */
 export const syncPayment = internalMutation({
 	args: {
 		paymentId: v.string(),

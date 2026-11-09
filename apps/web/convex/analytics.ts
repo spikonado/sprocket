@@ -11,8 +11,6 @@ const THREAD_PAGE_MAX_BYTES = 4_000_000;
 
 const vPage = { dayStart: v.number(), cursor: v.union(v.string(), v.null()) };
 
-// Per-user usage goes out as daily totals stamped at the day's start, so it can't be
-// matched to the anonymous per-run and per-thread events by time.
 export const sendDailyUsage = internalMutation({
 	args: {},
 	returns: v.null(),

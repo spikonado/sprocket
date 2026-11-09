@@ -14,7 +14,7 @@ import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
-import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
+import { modelGatewayOrigin, modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { gatewayQuotaStatus } from '@convex/lib/quota';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
@@ -195,7 +195,7 @@ export const createGatewayRun = action({
 			storageIds: args.storageIds
 		});
 
-		const gatewayUrl = modelGatewayUrl();
+		const gatewayUrl = modelGatewayOrigin();
 
 		const request: ClientRunRequest = {
 			userId,
@@ -472,7 +472,6 @@ const vHandoffSummary = {
 	handoffCalls: v.optional(v.array(vModelCallUsage))
 };
 
-/** Returns false when the claim or the completion attempt is no longer current. */
 async function recordContextHandoff(
 	ctx: MutationCtx,
 	run: ExecutionRun,
@@ -484,9 +483,9 @@ async function recordContextHandoff(
 		handoffCalls?: Infer<typeof vModelCallUsage>[];
 		workspaceContext?: HiddenPrompt[];
 	}
-): Promise<boolean> {
+): Promise<'recorded' | 'stale'> {
 	if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
-		return false;
+		return 'stale';
 	}
 
 	if (!args.summary.trim()) {
@@ -514,7 +513,7 @@ async function recordContextHandoff(
 			throw new Error('Conflicting context handoff retry.');
 		}
 
-		return true;
+		return 'recorded';
 	}
 
 	if (existingPartCount !== undefined && partCount < existingPartCount) {
@@ -531,7 +530,7 @@ async function recordContextHandoff(
 	await recordHiddenPrompts(ctx, {
 		threadId: thread._id,
 		runId: run._id,
-		scope: handoffKey,
+		idempotencyScope: handoffKey,
 		prompts: args.workspaceContext ?? []
 	});
 
@@ -545,7 +544,7 @@ async function recordContextHandoff(
 
 	await setThreadContextTokens(ctx, thread, undefined);
 
-	return true;
+	return 'recorded';
 }
 
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
@@ -566,7 +565,7 @@ export const saveContextHandoff = mutation({
 
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
 
-		return await recordContextHandoff(ctx, run, args);
+		return (await recordContextHandoff(ctx, run, args)) === 'recorded';
 	}
 });
 
@@ -595,18 +594,18 @@ export const beginRun = mutation({
 		if (run.cancellationRequestedAt !== undefined) return await promptAlreadyBegun(ctx, run);
 
 		if (args.handoff) {
-			const recorded = await recordContextHandoff(ctx, run, {
+			const handoff = await recordContextHandoff(ctx, run, {
 				...args.handoff,
 				claimId: args.claimId,
 				workspaceContext: args.workspaceContext
 			});
 
-			if (!recorded) return false;
+			if (handoff === 'stale') return false;
 		} else {
 			await recordHiddenPrompts(ctx, {
 				threadId: run.threadId,
 				runId: run._id,
-				scope: `${run._id}:${args.claimId}`,
+				idempotencyScope: `${run._id}:${args.claimId}`,
 				prompts: args.workspaceContext
 			});
 		}
@@ -752,6 +751,27 @@ function itemNeedsWorkRange(
 	return item.type === 'reasoning' ? item.text.trim() !== '' : invocation?.sectionKey !== undefined;
 }
 
+function existingJobConflicts(
+	job: Doc<'executorJobs'> | null,
+	expected: {
+		callId: string;
+		sectionKey?: string;
+		sectionOrdinal?: number;
+		attemptSeq: number;
+		streamId: string;
+	}
+): boolean {
+	if (!job) return false;
+
+	return (
+		job.callId !== expected.callId ||
+		job.sectionKey !== expected.sectionKey ||
+		(expected.sectionKey !== undefined && job.sectionOrdinal !== expected.sectionOrdinal) ||
+		job.attemptSeq !== expected.attemptSeq ||
+		job.streamId !== expected.streamId
+	);
+}
+
 export const finalizeCompletionCall = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -825,17 +845,17 @@ export const finalizeCompletionCall = mutation({
 				)
 				.unique();
 
-			// Agents persist a turn before its tools start, so its jobs may not exist yet.
 			if (
-				job &&
-				(job.callId !== invocation.callId ||
-					job.sectionKey !== invocation.sectionKey ||
-					job.sectionOrdinal !==
-						(invocation.sectionKey === undefined
-							? job.sectionOrdinal
-							: sectionOrdinals.get(invocation.sectionKey)) ||
-					job.attemptSeq !== args.attemptSeq ||
-					job.streamId !== args.streamId)
+				existingJobConflicts(job, {
+					callId: invocation.callId,
+					sectionKey: invocation.sectionKey,
+					sectionOrdinal:
+						invocation.sectionKey === undefined
+							? undefined
+							: sectionOrdinals.get(invocation.sectionKey),
+					attemptSeq: args.attemptSeq,
+					streamId: args.streamId
+				})
 			) {
 				throw new Error('Invalid tool invocation assignment.');
 			}
