@@ -3,18 +3,22 @@ import { z } from 'zod';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
 
 const INSTALL_POLL_MS = 2000;
+const UPDATE_POLL_MS = 10 * 60_000;
 
 export const caughtMessage = z
 	.instanceof(Error)
 	.transform((error) => error.message)
 	.catch('');
 
-export function useConnectors(userId: string, localApi: Pick<LocalApi, 'fetchConnectors'> | null) {
+export function useConnectors(
+	userId: string | null,
+	localApi: Pick<LocalApi, 'fetchConnectors'> | null
+) {
 	const [connectors, setConnectors] = useState<ConnectorStatus[] | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
-		if (!localApi) return;
+		if (!localApi || !userId) return;
 
 		try {
 			setConnectors(await localApi.fetchConnectors(userId));
@@ -31,8 +35,7 @@ export function useConnectors(userId: string, localApi: Pick<LocalApi, 'fetchCon
 	const installing = connectors?.some((connector) => connector.state === 'installing') ?? false;
 
 	useEffect(() => {
-		if (!installing) return;
-		const timer = setInterval(() => void load(), INSTALL_POLL_MS);
+		const timer = setInterval(() => void load(), installing ? INSTALL_POLL_MS : UPDATE_POLL_MS);
 
 		return () => clearInterval(timer);
 	}, [installing, load]);

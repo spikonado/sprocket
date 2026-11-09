@@ -92,22 +92,24 @@ it('installs a package update on the first click and prevents another request wh
 	);
 });
 
+const outdatedKiCad: ConnectorStatus = {
+	id: 'kicad',
+	name: 'KiCad',
+	state: 'installed',
+	error: null,
+	updateAvailable: true
+};
+
+function connectorApi() {
+	return {
+		fetchConnectors: vi.fn().mockResolvedValue([outdatedKiCad]),
+		installOrUpdateConnector: vi.fn().mockResolvedValue({ ...outdatedKiCad, state: 'installing' })
+	};
+}
+
 it('offers connector updates when Sprocket itself is current', async () => {
-	const kicad: ConnectorStatus = {
-		id: 'kicad',
-		name: 'KiCad',
-		state: 'installed',
-		error: null,
-		updateAvailable: true
-	};
-
-	const localApi = {
-		fetchConnectors: vi.fn().mockResolvedValue([kicad]),
-		installOrUpdateConnector: vi.fn().mockResolvedValue({ ...kicad, state: 'installing' })
-	};
-
-	const publish = mount(true, false, localApi);
-	publish({ ...available, status: 'idle', version: null });
+	const localApi = connectorApi();
+	mount(true, false, localApi)({ ...available, status: 'idle', version: null });
 	const button = await screen.findByRole('button', { name: 'Update available' });
 	expect(button.title).toBe('KiCad connector');
 
@@ -117,9 +119,30 @@ it('offers connector updates when Sprocket itself is current', async () => {
 		'disabled',
 		true
 	);
+});
 
+it('updates Sprocket and connectors together and restarts only after both finish', async () => {
+	const fetcher = vi
+		.fn()
+		.mockResolvedValueOnce(Response.json({ ...available, status: 'installing' }));
+
+	vi.stubGlobal('fetch', fetcher);
+	const localApi = connectorApi();
+	const publish = mount(true, false, localApi);
 	publish(available);
-	expect(screen.getByRole('button', { name: 'Update available' }).title).toBe('Sprocket 1.1.0');
+	const button = await screen.findByRole('button', { name: 'Update available' });
+	expect(button.title).toBe('Sprocket 1.1.0, KiCad connector');
+
+	await act(async () => fireEvent.click(button));
+	expect(fetcher).toHaveBeenCalledWith(
+		expect.stringContaining('/api/update/install'),
+		expect.objectContaining({ method: 'POST' })
+	);
+	expect(localApi.installOrUpdateConnector).toHaveBeenCalledWith('user-test', 'kicad');
+
+	publish({ ...available, status: 'installed' });
+	expect(screen.getByRole('button', { name: 'Installing update…' })).toBeTruthy();
+	expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it('restarts once the update installs when automatic continuation is on', async () => {

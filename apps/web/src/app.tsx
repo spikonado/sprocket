@@ -165,7 +165,6 @@ type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
 function InboxSidebarContainer(
 	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
-		signedInUserId: string | null;
 		repositoryKeys: string[];
 		pullRequestRefresher: PullRequestRefresher | null;
 	}

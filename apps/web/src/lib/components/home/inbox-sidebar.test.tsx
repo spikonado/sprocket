@@ -95,6 +95,8 @@ function props(records: Thread[]) {
 		models: [{ id: 'model', label: 'Model Name', provider: 'openai' }],
 		selectedProjects: [],
 		currentThreadId: null,
+		signedInUserId: null,
+		localApi: null,
 		mutationsEnabled: true,
 		theme: 'dark' as const,
 		onThemeChange: vi.fn(),

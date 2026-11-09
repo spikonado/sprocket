@@ -83,8 +83,8 @@ type ThreadTreeRowProps = {
 
 type InboxSidebarProps = {
 	sections: InboxSectionData[];
-	signedInUserId?: string | null;
-	localApi?: ConnectorUpdatesApi | null;
+	signedInUserId: string | null;
+	localApi: ConnectorUpdatesApi | null;
 	projects: Project[];
 	models: readonly Pick<CatalogModel, 'id' | 'label' | 'provider'>[];
 	selectedProjects: string[];
@@ -112,8 +112,8 @@ type InboxSidebarProps = {
 
 export default function InboxSidebar({
 	sections,
-	signedInUserId = null,
-	localApi = null,
+	signedInUserId,
+	localApi,
 	projects,
 	models,
 	selectedProjects,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -15,7 +15,7 @@ import { caughtMessage, useConnectors } from './use-connectors';
 
 export type ConnectorUpdatesApi = Pick<LocalApi, 'fetchConnectors' | 'installOrUpdateConnector'>;
 
-type FailedRequest = { error: string; status: UpdateState['status'] };
+type FailedRequest = { error: string; status: UpdateState['status'] | null };
 
 type TrackedUpdate = { state: UpdateState; restartWhenReady: boolean };
 
@@ -31,6 +31,7 @@ function withRestartWhenReady(restartWhenReady: boolean) {
 	return (current: TrackedUpdate | null) => current && { ...current, restartWhenReady };
 }
 
+/** One button updates Sprocket and every connector, and restarts once both finish. */
 export default function AppUpdate({
 	userId,
 	localApi
@@ -50,19 +51,46 @@ export default function AppUpdate({
 	const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null);
 	const [busy, setBusy] = useState(false);
 	const revisionRef = useRef(0);
+	const { connectors, replace } = useConnectors(userId, localApi);
 	const updateState = tracked?.state ?? null;
-	const label = updateState ? updateLabel(updateState) : null;
+	const sprocketLabel = updateState ? updateLabel(updateState) : null;
+	const outdated = connectors?.filter((connector) => connector.updateAvailable) ?? [];
+	const connectorsInstalling = outdated.some((connector) => connector.state === 'installing');
+	const connectorError = outdated.find((connector) => connector.error)?.error ?? null;
+
+	const sprocketWorking =
+		updateState?.status === 'downloading' || updateState?.status === 'installing';
+
+	const working = busy || sprocketWorking || connectorsInstalling;
+	const restartReady = updateState?.status === 'installed' || updateState?.status === 'downloaded';
 
 	const requestError =
-		failedRequest && failedRequest.status === updateState?.status ? failedRequest.error : null;
-
-	const working =
-		busy || updateState?.status === 'downloading' || updateState?.status === 'installing';
-
-	const restartReady = updateState?.status === 'installed' || updateState?.status === 'downloaded';
+		failedRequest && failedRequest.status === (updateState?.status ?? null)
+			? failedRequest.error
+			: null;
 
 	const continuesAgents =
 		preferences.status === 'success' && preferences.data?.automaticAgentContinuation !== false;
+
+	const connectorLabel = outdated.length
+		? connectorError
+			? 'Retry update'
+			: 'Update available'
+		: null;
+
+	const label =
+		busy && restartReady
+			? 'Restarting Sprocket...'
+			: connectorsInstalling && !sprocketWorking
+				? 'Installing update…'
+				: (sprocketLabel ?? connectorLabel);
+
+	const title = [
+		sprocketLabel && updateState?.version ? `Sprocket ${updateState.version}` : null,
+		...outdated.map((connector) => `${connector.name} connector`)
+	]
+		.filter(Boolean)
+		.join(', ');
 
 	useEffect(() => {
 		const watch = new AbortController();
@@ -108,8 +136,40 @@ export default function AppUpdate({
 		void update();
 	});
 
+	async function updateSprocket(startedRevision: number) {
+		const updates = window.sprocketDesktopBridge?.updates;
+
+		if (!updateState || !sprocketLabel) return;
+
+		if (updateState.method === 'desktop' && updates) {
+			const next = await (updateState.status === 'downloaded'
+				? updates.install()
+				: updates.download());
+
+			if (revisionRef.current === startedRevision) setTracked(withState(next));
+		} else if (updateState.method === 'package') {
+			if (updateState.status === 'installed' && updateState.version) {
+				await restartPackageUpdate(updateState.version);
+			} else {
+				const next = await installPackageUpdate();
+
+				if (revisionRef.current === startedRevision) setTracked(withState(next));
+			}
+		}
+	}
+
+	async function updateConnectors() {
+		if (!userId || !localApi) return;
+
+		await Promise.all(
+			outdated.map(async (connector) =>
+				replace(await localApi.installOrUpdateConnector(userId, connector.id))
+			)
+		);
+	}
+
 	async function update(confirmed = false) {
-		if (!updateState || working) return;
+		if (!label || working) return;
 
 		if (restartReady && !confirmed && !continuesAgents) {
 			setConfirmRestart(true);
@@ -125,117 +185,25 @@ export default function AppUpdate({
 		setFailedRequest(null);
 
 		try {
-			const updates = window.sprocketDesktopBridge?.updates;
-
-			if (updateState.method === 'desktop' && updates) {
-				const next = await (updateState.status === 'downloaded'
-					? updates.install()
-					: updates.download());
-
-				if (revisionRef.current === startedRevision) setTracked(withState(next));
-			} else if (updateState.method === 'package') {
-				if (updateState.status === 'installed' && updateState.version) {
-					await restartPackageUpdate(updateState.version);
-				} else {
-					const next = await installPackageUpdate();
-
-					if (revisionRef.current === startedRevision) setTracked(withState(next));
-				}
-			}
+			await Promise.all([
+				updateSprocket(startedRevision),
+				restartReady ? undefined : updateConnectors()
+			]);
 		} catch (error) {
 			setTracked(withRestartWhenReady(false));
 			setFailedRequest({
-				error: error instanceof Error ? error.message : String(error),
-				status: updateState.status
+				error: caughtMessage.parse(error) || String(error),
+				status: updateState?.status ?? null
 			});
 		} finally {
 			setBusy(false);
 		}
 	}
 
-	if (!label || !updateState) {
-		return userId && localApi ? <ConnectorUpdate userId={userId} localApi={localApi} /> : null;
-	}
+	if (!label) return null;
 
-	return (
-		<UpdateButton
-			label={busy && restartReady ? 'Restarting Sprocket...' : label}
-			title={updateState.version ? `Sprocket ${updateState.version}` : undefined}
-			working={working}
-			restartReady={restartReady}
-			error={requestError || updateState.error}
-			onClick={() => void update()}
-		>
-			{confirmRestart && (
-				<ConfirmDialog
-					title="Restart Sprocket?"
-					description="Restarting interrupts active agents. They resume afterward only when automatic continuation is on in Settings."
-					confirmLabel="Restart Sprocket"
-					onCancel={() => setConfirmRestart(false)}
-					onConfirm={() => void update(true)}
-				/>
-			)}
-		</UpdateButton>
-	);
-}
+	const error = requestError || updateState?.error || connectorError;
 
-/** Shown only when Sprocket is current, since a Sprocket update also updates connectors on startup. */
-function ConnectorUpdate({ userId, localApi }: { userId: string; localApi: ConnectorUpdatesApi }) {
-	const { connectors, replace } = useConnectors(userId, localApi);
-	const [busy, setBusy] = useState(false);
-	const [requestError, setRequestError] = useState<string | null>(null);
-	const outdated = connectors?.filter((connector) => connector.updateAvailable) ?? [];
-	const installing = outdated.some((connector) => connector.state === 'installing');
-	const error = requestError ?? outdated.find((connector) => connector.error)?.error ?? null;
-
-	async function update() {
-		setBusy(true);
-		setRequestError(null);
-
-		try {
-			await Promise.all(
-				outdated.map(async (connector) =>
-					replace(await localApi.installOrUpdateConnector(userId, connector.id))
-				)
-			);
-		} catch (caught) {
-			setRequestError(caughtMessage.parse(caught) || 'Something went wrong.');
-		} finally {
-			setBusy(false);
-		}
-	}
-
-	if (outdated.length === 0) return null;
-
-	return (
-		<UpdateButton
-			label={installing ? 'Installing update…' : error ? 'Retry update' : 'Update available'}
-			title={outdated.map((connector) => `${connector.name} connector`).join(', ')}
-			working={busy || installing}
-			restartReady={false}
-			error={error}
-			onClick={() => void update()}
-		/>
-	);
-}
-
-function UpdateButton({
-	label,
-	title,
-	working,
-	restartReady,
-	error,
-	onClick,
-	children
-}: {
-	label: string;
-	title: string | undefined;
-	working: boolean;
-	restartReady: boolean;
-	error: string | null;
-	onClick: () => void;
-	children?: ReactNode;
-}) {
 	return (
 		<div className="mb-1" aria-live="polite">
 			<button
@@ -243,8 +211,8 @@ function UpdateButton({
 				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
 				disabled={working}
 				data-ph-capture-attribute-action={restartReady ? 'restart_to_update' : 'install_update'}
-				onClick={onClick}
-				title={title}
+				onClick={() => void update()}
+				title={title || undefined}
 				aria-busy={working}
 			>
 				{working ? (
@@ -256,7 +224,15 @@ function UpdateButton({
 				)}
 				<span>{label}</span>
 			</button>
-			{children}
+			{confirmRestart && (
+				<ConfirmDialog
+					title="Restart Sprocket?"
+					description="Restarting interrupts active agents. They resume afterward only when automatic continuation is on in Settings."
+					confirmLabel="Restart Sprocket"
+					onCancel={() => setConfirmRestart(false)}
+					onConfirm={() => void update(true)}
+				/>
+			)}
 			{error && (
 				<p className="text-destructive px-2 pb-2 text-xs break-words" role="alert">
 					{error}
