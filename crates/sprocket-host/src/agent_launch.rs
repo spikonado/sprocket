@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 use crate::Host;
+use crate::kicad_connector::KiCadConnector;
 use crate::run_recovery::RunOwner;
 
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
@@ -228,6 +229,7 @@ async fn launch_agent_inner(
     let command_machine_id = host.machine_identity.installation_id.clone();
     let command_auth = Arc::clone(&host.native_auth);
     let command_deployment = host.convex_deployment_url.clone();
+    let kicad = Arc::clone(&host.kicad);
     let live = Arc::clone(&host.live_completions);
     let transcript = Arc::clone(&host.transcript);
     let transcript_watchers = Arc::clone(&host.transcript_watchers);
@@ -301,7 +303,14 @@ async fn launch_agent_inner(
                             .chain(thread_tool_sessions(&thread_id)),
                     )
                     .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
-                    .with_github_credentials(user_id.clone())
+                    .with_command_environment({
+                        let user_id = user_id.clone();
+                        move || {
+                            let kicad = Arc::clone(&kicad);
+                            let user_id = user_id.clone();
+                            async move { command_environment(&kicad, &user_id).await }
+                        }
+                    })
                     .with_history_resolver({
                         let user_id = user_id.clone();
                         let thread_id = thread_id.clone();
@@ -370,6 +379,21 @@ async fn launch_agent_inner(
 /// `--session` or `--agent-id`, so parallel agents get their own browser and cursor.
 fn thread_tool_sessions(thread_id: &str) -> [(std::ffi::OsString, std::ffi::OsString); 2] {
     ["AGENT_BROWSER_SESSION", "AGENT_DESKTOP_AGENT_ID"].map(|name| (name.into(), thread_id.into()))
+}
+
+/// Read for every command, since connector installs and GitHub sign-ins change during a run.
+async fn command_environment(
+    kicad: &KiCadConnector,
+    user_id: &str,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let mut environment = kicad.environment();
+    environment.extend(
+        sprocket_workspace::github::agent_environment(user_id)
+            .await
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into())),
+    );
+    environment
 }
 
 #[cfg(test)]

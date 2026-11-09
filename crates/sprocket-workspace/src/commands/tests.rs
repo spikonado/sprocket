@@ -389,6 +389,33 @@ async fn output_preserves_observed_stream_order() {
 }
 
 #[tokio::test]
+async fn command_environment_is_read_for_every_command() {
+    let root = temp_workspace();
+    let commands = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
+        .with_environment([("STATIC".into(), "run".into())])
+        .with_command_environment(move || {
+            let count = commands.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            async move { vec![("FRESH".into(), count.to_string().into())] }
+        });
+    for expected in ["run 0", "run 1"] {
+        let output = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf '%s %s' \"$STATIC\" \"$FRESH\"",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                5_000,
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.result.output, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn exec_and_control_have_distinct_flat_output_contracts() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
