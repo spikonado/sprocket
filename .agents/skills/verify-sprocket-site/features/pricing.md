@@ -4,7 +4,7 @@
 
 ## Sub-features
 
-- `pricing-catalog` renders plan cards from `pricing:getPublicCatalog`, first in the server HTML and again from the browser.
+- `pricing-catalog` renders plan cards from `pricing:getPublicCatalog` in the server HTML.
 - `pricing-interval` switches `Monthly` and `Yearly`.
 - `pricing-free` sends `Start free` to `/#download`.
 - `pricing-packs` lists credit packs with a `Buy for $N` button.
@@ -20,7 +20,7 @@
 Preconditions:
 
 - Baseline from [README.md](./README.md).
-- The dev catalog has plans `Free`, `Lite`, `Pro`, `Ultra` without prices and one `$5` credit pack. Check it read-only with `curl -s -X POST https://rosy-warthog-871.convex.cloud/api/action -H 'content-type: application/json' -d '{"path":"pricing:getPublicCatalog","args":{},"format":"json"}'`.
+- The dev catalog has plans `Free`, `Lite`, `Pro`, `Ultra` without prices and one `$5` credit pack. Check it read-only with `curl -s -X POST https://rosy-warthog-871.convex.cloud/api/query -H 'content-type: application/json' -d '{"path":"pricing:getPublicCatalog","args":{},"format":"json"}'`.
 
 - **Open.** Run `agent-browser open http://localhost:4335/pricing`, then `agent-browser wait --text "Sign-in is not configured"` and `$S/hide-dev-toolbar.sh`. The session check has then finished and the buttons are enabled.
 - **Catalog.** Plain `snapshot` shows `heading "Free"` with `$0`, then `Lite`, `Pro` and `Ultra`, each reading `Unavailable` with a disabled `Unavailable` button, then `region "Credit packs"` with `$5 of AI usage` and `button "Buy for $5"`. `curl -s http://localhost:4335/pricing | grep -c 'Everything in'` is 3, which shows the server rendered the catalog too.
@@ -28,7 +28,7 @@ Preconditions:
 - **FAQ.** Run `agent-browser click "details > summary"`. Plain `snapshot` shows `DisclosureTriangle "Are there other limits on AI usage?" [expanded=true]` followed by its answer, and `agent-browser eval "document.querySelectorAll('details[open]').length"` prints `1`.
 - **Start free.** Run `agent-browser click $($R 'button "Start free"')`. The URL becomes `http://localhost:4335/#download`.
 - **Credit pack checkout.** Reopen `/pricing`, wait as in Open, and run `agent-browser click $($R 'button "Buy for $5"')`. The browser goes to `/api/pricing/sign-in?pack=pdt_...` and shows the JSON `{"error":"Sign-in is not configured (missing WORKOS_API_KEY)."}` with status 503. On this machine that is the expected result; report the checkout journey as failed with this reason.
-- **Network.** `agent-browser network requests --filter convex` on `/pricing` shows the browser's `POST https://rosy-warthog-871.convex.cloud/api/action`. The server log gets `POST .../api/action` from the server render and `POST .../api/query` from the session check, both on the dev host.
+- **Network.** The server log gets `POST .../api/query` from the server render and from the session check, both on the dev host.
 - **Mobile.** Run `agent-browser set device "iPhone 14"`, reopen `/pricing`, and wait as in Open. `agent-browser eval "visualViewport.width"` prints `390`, and the cards stack in one column.
 - **Proof.** Screenshot each step, and the whole page at 1440 px and at `iPhone 14`.
 

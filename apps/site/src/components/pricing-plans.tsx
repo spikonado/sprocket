@@ -5,7 +5,6 @@ import {
 	fetchCheckoutStatus,
 	fetchCustomerPortalUrl,
 	fetchMySubscription,
-	fetchPricingCatalog,
 	loadPricingSession,
 	readCheckoutAttempt,
 	signInForCheckout,
@@ -68,12 +67,7 @@ function purchaseProps(purchase: Purchase) {
 		: { plan: purchase.tier, interval: purchase.interval };
 }
 
-export default function PricingPlans({
-	initialCatalog
-}: {
-	initialCatalog: PublicPricingCatalog | null;
-}) {
-	const [catalog, setCatalog] = useState(initialCatalog);
+export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalog | null }) {
 	const [interval, setBillingInterval] = useState<BillingInterval>('monthly');
 	const [user, setUser] = useState<User | null>(null);
 	const [subscription, setSubscription] = useState<MySubscription | null>(null);
@@ -116,8 +110,7 @@ export default function PricingPlans({
 		if ('pack' in purchase) {
 			if (status.creditsAdded !== true) return null;
 
-			const pack =
-				catalog && buildCreditPackCards(catalog).find((card) => card.productId === purchase.pack);
+			const pack = packs.find((card) => card.productId === purchase.pack);
 
 			return pack
 				? `${pack.usage} of AI usage was added to your account. It expires ${pack.expiresAfter} after purchase.`
@@ -348,10 +341,6 @@ export default function PricingPlans({
 		}
 	});
 
-	const reportCatalogFailure = useEffectEvent(() => {
-		if (!catalog) setNotice({ text: 'Could not load plans. Reload to try again.', error: true });
-	});
-
 	useEffect(() => {
 		const url = new URL(window.location.href);
 		const params = new URLSearchParams(url.search);
@@ -361,9 +350,6 @@ export default function PricingPlans({
 		CHECKOUT_PARAMS.forEach((name) => url.searchParams.delete(name));
 		window.history.replaceState(window.history.state, '', url);
 
-		fetchPricingCatalog()
-			.then(setCatalog)
-			.catch(() => reportCatalogFailure());
 		void initialize(params);
 
 		const onPageShow = (event: PageTransitionEvent) => {
@@ -476,8 +462,8 @@ export default function PricingPlans({
 				</div>
 
 				{cards.length === 0 ? (
-					<p className="text-muted-foreground mt-12 text-center text-sm" role="status">
-						Loading plan details…
+					<p className="text-muted-foreground mt-12 text-center text-sm" role="alert">
+						Could not load plans. Reload to try again.
 					</p>
 				) : (
 					<div className="mt-12 flex flex-wrap justify-center gap-6">
