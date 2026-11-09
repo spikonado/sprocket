@@ -180,6 +180,8 @@ async function start() {
 
 		if (failures.length) throw new Error(failures.join('\n'));
 
+		// The selected object belongs to the previous document, so its properties would be stale.
+		viewer.clearSelection({ keepHighlights: true });
 		highlight(highlighted);
 
 		// The camera belongs to the tab shown before the load, not one the user switched to since.
@@ -242,6 +244,8 @@ async function start() {
 
 		if (selection.operation !== 'toggle') {
 			if (selection.reference) crossProbe(viewer, selection);
+			// Picking a net in the Nets panel highlights it without a highlight-change event.
+			toolbar.update();
 
 			return;
 		}

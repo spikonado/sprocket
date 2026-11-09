@@ -32,7 +32,7 @@ export interface EcadViewerElement extends HTMLElement {
 	requestCrossProbe(request: CrossProbeRequest): boolean;
 	getHighlightedNets(): NetRef[];
 	setHighlightedNets(nets: NetRef[]): void;
-	clearSelection(): void;
+	clearSelection(options?: { keepHighlights?: boolean }): void;
 	setMeasureMode(on: boolean): void;
 	escapeMeasure(): boolean;
 	setInsetPeer(peer: EcadViewerElement | null): void;
