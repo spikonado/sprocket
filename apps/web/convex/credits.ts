@@ -3,6 +3,7 @@ import { internalMutation, internalQuery, type QueryCtx } from '@convex/_generat
 import { resolveCustomerOwner } from '@convex/billingCustomers';
 import { creditExpiresAt, grantForPayment } from '@convex/lib/credits';
 import { vCreditPackExpiry, vCreditPackTerms, vPackPrice } from '@convex/lib/pricingValidators';
+import { priceForProduct } from '@convex/pricing';
 
 function getPackRow(ctx: QueryCtx, productId: string) {
 	return ctx.db
@@ -11,14 +12,13 @@ function getPackRow(ctx: QueryCtx, productId: string) {
 		.unique();
 }
 
-/** A pack is sellable once the price sync confirmed its product is a paid one-time product. */
 export const getSellablePack = internalQuery({
 	args: { productId: v.string() },
 	returns: v.union(vCreditPackTerms, v.null()),
 	handler: async (ctx, { productId }) => {
 		const pack = await getPackRow(ctx, productId);
 
-		if (pack?.price?.productId !== productId) return null;
+		if (!pack || !priceForProduct(productId, pack.price)) return null;
 
 		return { units: pack.units, expiresAfter: pack.expiresAfter };
 	}

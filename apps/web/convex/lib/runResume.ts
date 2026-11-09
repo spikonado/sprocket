@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { ConvexError } from 'convex/values';
+import { runHasBegun } from '@convex/lib/runs';
 
 export const RUN_CANNOT_CONTINUE = 'This run cannot continue.';
 
@@ -19,10 +20,9 @@ export function assertContinuableParent<
 		throw new ConvexError(ONLY_LATEST_RUN_CAN_CONTINUE);
 	}
 
-	// The client restores an unsent prompt to the composer, so continuing must not send it too.
 	if (
 		!isContinuableRunStatus(latest.status, recordsPrompt) ||
-		(!recordsPrompt && latest.pendingPrompt !== undefined)
+		(!recordsPrompt && !runHasBegun(latest))
 	) {
 		throw new ConvexError(RUN_CANNOT_CONTINUE);
 	}

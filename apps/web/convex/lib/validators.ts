@@ -341,7 +341,6 @@ export const purchaseStatuses = [
 	'expired',
 	'cancelled',
 	'settled',
-	// The agent saw the store reject the payment after approval.
 	'failed'
 ] as const;
 

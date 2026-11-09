@@ -96,6 +96,10 @@ function utf8Bytes(text: string): number {
 /** The parse API sends `pages: null` when pages were not requested, though the SDK types it as optional. */
 type FirecrawlParseDocument = Omit<Document, 'pages'> & { pages?: PdfPage[] | null };
 
+export function serializeParsePages(pages: FirecrawlParsedPage[]): string {
+	return JSON.stringify({ pages });
+}
+
 export function parseFirecrawlParseDocument(
 	document: FirecrawlParseDocument,
 	pages = false
@@ -118,8 +122,7 @@ export function parseFirecrawlParseDocument(
 
 		if (!parsedPages) return { error: 'Firecrawl parse did not return pages.' };
 
-		// executeHostedParse stores, and the agent downloads, this exact serialization.
-		if (utf8Bytes(JSON.stringify({ pages: parsedPages })) > HOSTED_PARSE_MAX_OUTPUT_BYTES) {
+		if (utf8Bytes(serializeParsePages(parsedPages)) > HOSTED_PARSE_MAX_OUTPUT_BYTES) {
 			return { error: 'Firecrawl parse response is too large.' };
 		}
 

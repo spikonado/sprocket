@@ -153,12 +153,36 @@ export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadR
 	});
 }
 
+const threadsChangingActivity = new WeakMap<MutationCtx['db'], Set<Id<'threadRecords'>>>();
+
 /**
  * Wrap every write to `threadRecords.status`, `runs.status`,
  * `runs.cancellationRequestedAt`, or `agentQuestions.status` so ancestor counters
- * follow it. Calls for the same thread must not nest, or the inner change counts twice.
+ * follow it.
  */
 export async function changeThreadActivity<T>(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>,
+	change: () => Promise<T>
+): Promise<T> {
+	let changing = threadsChangingActivity.get(ctx.db);
+
+	if (!changing) {
+		changing = new Set();
+		threadsChangingActivity.set(ctx.db, changing);
+	}
+
+	if (changing.has(threadId)) throw new Error('Thread activity changes must not nest.');
+	changing.add(threadId);
+
+	try {
+		return await countActivityChange(ctx, threadId, change);
+	} finally {
+		changing.delete(threadId);
+	}
+}
+
+async function countActivityChange<T>(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>,
 	change: () => Promise<T>

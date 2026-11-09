@@ -6,11 +6,10 @@ import {
 	vPublicPricingCatalog,
 	type PublicPricingCatalog
 } from '@convex/lib/pricingValidators';
-import { getTierRow, MODEL_USAGE_UNITS_PER_DOLLAR, tierForProduct } from '@convex/lib/tiers';
+import { assertSingleTierSells, getTierRow, MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { vBillingInterval } from '@convex/lib/validators';
 
-/** Hides a price synced for a product the tier no longer sells. */
-function currentPrice<T extends { productId: string }>(
+export function priceForProduct<T extends { productId: string }>(
 	productId: string | undefined,
 	price: T | undefined
 ): T | null {
@@ -43,8 +42,8 @@ export const getCatalog = internalQuery({
 				displayOrder: tier.displayOrder ?? (tier.tierId === 'free' ? 0 : 100),
 				highlighted: tier.highlighted ?? false,
 				prices: {
-					monthly: currentPrice(tier.monthlyProductId, tier.monthlyPrice),
-					annual: currentPrice(tier.annualProductId, tier.annualPrice)
+					monthly: priceForProduct(tier.monthlyProductId, tier.monthlyPrice),
+					annual: priceForProduct(tier.annualProductId, tier.annualPrice)
 				}
 			};
 		});
@@ -66,7 +65,7 @@ export const getCatalog = internalQuery({
 			productId: pack.productId,
 			usageDollars: pack.units / MODEL_USAGE_UNITS_PER_DOLLAR,
 			expiresAfter: pack.expiresAfter,
-			price: currentPrice(pack.productId, pack.price)
+			price: priceForProduct(pack.productId, pack.price)
 		}));
 
 		return { plans, creditPacks };
@@ -82,8 +81,7 @@ export const getTierProduct = internalQuery({
 
 		if (!productId) return null;
 
-		// Throws when another tier also sells this product.
-		await tierForProduct(ctx, productId);
+		await assertSingleTierSells(ctx, productId);
 
 		return productId;
 	}

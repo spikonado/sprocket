@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
-import { runStartedAt } from '@convex/lib/runs';
+import { runHasBegun, runStartedAt } from '@convex/lib/runs';
 import {
 	isRunFinalStatus,
 	vRunFailureKind,
@@ -165,7 +165,7 @@ export function projectSelectedThreadLifecycle(args: {
 		projected.failureKind = args.run.failureKind;
 	}
 
-	if (args.run.pendingPrompt !== undefined) projected.promptUnsent = true;
+	if (!runHasBegun(args.run)) projected.promptUnsent = true;
 
 	if (args.executorFriendlyName) {
 		projected.executorFriendlyName = args.executorFriendlyName;

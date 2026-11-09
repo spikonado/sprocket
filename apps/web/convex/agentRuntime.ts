@@ -50,14 +50,14 @@ import {
 	finalizeFailedQueuedStart,
 	generateTitleAfterFirstPrompt,
 	submissionReadiness,
-	type QueuedRunRequest
+	type ClientRunRequest
 } from '@convex/lib/runCreate';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { enabledProviders, releasedClientProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, hydratePromptUrls } from '@convex/lib/transcriptParts';
-import { runStartedAt } from '@convex/lib/runs';
+import { runHasBegun, runStartedAt } from '@convex/lib/runs';
 import {
 	assertRunAcceptsWork,
 	canRegisterCompletionAttempt,
@@ -83,6 +83,7 @@ import {
 	vRunStatus,
 	vTranscriptCompletionItem,
 	type HiddenPrompt,
+	type TranscriptCompletionItem,
 	type TranscriptPromptBody
 } from '@convex/lib/validators';
 
@@ -196,7 +197,7 @@ export const createGatewayRun = action({
 
 		const gatewayUrl = modelGatewayUrl();
 
-		const request: QueuedRunRequest = {
+		const request: ClientRunRequest = {
 			userId,
 			submissionId: args.submissionId,
 			threadId: args.threadId,
@@ -569,6 +570,10 @@ export const saveContextHandoff = mutation({
 	}
 });
 
+async function promptAlreadyBegun(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
+	return runHasBegun(run) && (await getPromptPart(ctx, run.threadId, run._id)) !== null;
+}
+
 /**
  * Writes what the model sees before the run's first call, in model order: an
  * optional handoff summary, the workspace context, then the run's prompt.
@@ -587,13 +592,7 @@ export const beginRun = mutation({
 
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
 
-		// A retry after Stop still reports a begin that already wrote the prompt.
-		if (run.cancellationRequestedAt !== undefined) {
-			return (
-				run.pendingPrompt === undefined &&
-				(await getPromptPart(ctx, run.threadId, run._id)) !== null
-			);
-		}
+		if (run.cancellationRequestedAt !== undefined) return await promptAlreadyBegun(ctx, run);
 
 		if (args.handoff) {
 			const recorded = await recordContextHandoff(ctx, run, {
@@ -746,6 +745,13 @@ export const recordModelCall = mutation({
 	}
 });
 
+function itemNeedsWorkRange(
+	item: TranscriptCompletionItem,
+	invocation: { sectionKey?: string } | undefined
+): boolean {
+	return item.type === 'reasoning' ? item.text.trim() !== '' : invocation?.sectionKey !== undefined;
+}
+
 export const finalizeCompletionCall = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -862,22 +868,14 @@ export const finalizeCompletionCall = mutation({
 
 			for (let index = range.start; index < range.end; index++) {
 				const item = args.items[index];
+				const invocation = invocationsByItem.get(index);
 
-				if (
-					!item ||
-					item.type === 'text' ||
-					(item.type === 'reasoning' && item.text.trim() === '') ||
-					assignedItems.has(index)
-				) {
+				if (!item || assignedItems.has(index) || !itemNeedsWorkRange(item, invocation)) {
 					throw new Error('Invalid work assignment.');
 				}
 
-				if (item.type === 'tool-call') {
-					const invocation = invocationsByItem.get(index);
-
-					if (invocation?.sectionKey !== range.sectionKey) {
-						throw new Error('Tool call assigned to a different section.');
-					}
+				if (item.type === 'tool-call' && invocation?.sectionKey !== range.sectionKey) {
+					throw new Error('Tool call assigned to a different section.');
 				}
 
 				assignedItems.add(index);
@@ -885,20 +883,8 @@ export const finalizeCompletionCall = mutation({
 		}
 
 		for (const [index, item] of args.items.entries()) {
-			const invocation = invocationsByItem.get(index);
-
-			// Empty reasoning carries only the encrypted envelope for replay and has
-			// no display text. The agent tracker and read path both skip it as work,
-			// so it must not carry a work range. Require work only for visible
-			// reasoning and section-bound tool calls.
-			const needsWork =
-				(item.type === 'reasoning' && item.text.trim() !== '') ||
-				invocation?.sectionKey !== undefined;
-
-			if (needsWork) {
-				if (!assignedItems.has(index)) throw new Error('Missing work assignment.');
-			} else if (assignedItems.has(index)) {
-				throw new Error('Non-work item has a work assignment.');
+			if (itemNeedsWorkRange(item, invocationsByItem.get(index)) && !assignedItems.has(index)) {
+				throw new Error('Missing work assignment.');
 			}
 		}
 

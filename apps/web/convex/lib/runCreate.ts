@@ -45,7 +45,6 @@ export type QueuedRunRequest = {
 	submissionId: string;
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
-	// Native delegation only; never accepted from ordinary client submissions.
 	parentThreadId?: Id<'threadRecords'>;
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
@@ -61,6 +60,8 @@ export type QueuedRunRequest = {
 	taskDeadlineAt?: number;
 	deferPrompt?: boolean;
 };
+
+export type ClientRunRequest = Omit<QueuedRunRequest, 'parentThreadId' | 'taskDeadlineAt'>;
 
 type CreatedGatewayRun = {
 	created: boolean;
