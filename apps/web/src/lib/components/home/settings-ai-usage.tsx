@@ -56,7 +56,7 @@ export default function SettingsAiUsage({
 
 	const usage = useQuery_experimental({
 		query: api.aiUsage.getMyUsageBuckets,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? rangeQuery(range, now) : 'skip'
+		args: convexAuth.isAuthenticated ? rangeQuery(range, now) : 'skip'
 	});
 
 	// Keeps the last result on screen while another range loads, instead of blanking the page.

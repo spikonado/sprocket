@@ -52,7 +52,7 @@ import RunUsageFooter from '$lib/components/home/run-usage-footer';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsCredentials from '$lib/components/home/settings-credentials';
-import type { ApiKeyProvider } from '$lib/components/home/api-key-card';
+import { providerConfigKey, type ApiKeyProvider } from '$lib/components/home/api-key-card';
 import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsVersionControl from '$lib/components/home/settings-version-control';
 import SettingsConnectors from '$lib/components/home/settings-connectors';
@@ -63,7 +63,9 @@ import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle
 import { minLayoutSize } from '$lib/chat/side-panel';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
 import { useExistingThreadCwd } from '$lib/home/thread-cwd';
-import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
+import ArtifactScreenFullscreen, {
+	requestArtifactFullscreen
+} from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
 import {
@@ -291,7 +293,6 @@ export default function App({
 		!auth.isLoading &&
 		isSignedIn &&
 		(auth.nativeSession === 'notRequired' || auth.nativeSession === 'ready') &&
-		!convexAuth.isLoading &&
 		convexAuth.isAuthenticated;
 
 	const authConnectionFailed =
@@ -350,17 +351,19 @@ export default function App({
 	const savedProvidersRef = useLatest(savedProviders);
 	const claudeTokenSaved = savedProviders?.claude === true;
 
-	const apiKeysSaved = useMemo(
-		() => ({
-			openai: savedProviders?.openai === true,
-			anthropic: savedProviders?.anthropic === true,
-			vercel: savedProviders?.vercel === true,
-			openrouter: savedProviders?.openrouter === true,
-			opencode: savedProviders?.opencode === true,
-			'opencode-go': savedProviders?.opencodeGo === true
-		}),
-		[savedProviders]
-	);
+	const apiKeysSaved = useMemo(() => {
+		const saved = (provider: ApiKeyProvider) =>
+			savedProviders?.[providerConfigKey(provider)] === true;
+
+		return {
+			openai: saved('openai'),
+			anthropic: saved('anthropic'),
+			vercel: saved('vercel'),
+			openrouter: saved('openrouter'),
+			opencode: saved('opencode'),
+			'opencode-go': saved('opencode-go')
+		};
+	}, [savedProviders]);
 
 	const providerConfigurationError =
 		providerConfiguration.status === 'failed'
@@ -548,14 +551,15 @@ export default function App({
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
+
+	const [artifactFullscreenRequest, setArtifactFullscreenRequest] =
+		useState<Promise<boolean> | null>(null);
+
 	const phoneViewport = viewportWidth > 0 && viewportWidth < 768;
 	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
 	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
 
-	// Queries stay skipped until Convex confirms the token; running them on the
-	// account id alone surfaces a spurious auth error during sign-in.
-	const authenticatedQueryArgs =
-		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
+	const authenticatedQueryArgs = signedInUserId && convexAuth.isAuthenticated ? {} : 'skip';
 
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
 
@@ -878,7 +882,7 @@ export default function App({
 		return artifactPanel.watch({
 			localApi,
 			artifactClient,
-			cloudReady: !convexAuth.isLoading && convexAuth.isAuthenticated,
+			cloudReady: convexAuth.isAuthenticated,
 			scope
 		});
 	}, [
@@ -888,12 +892,11 @@ export default function App({
 		currentWorkspacePath,
 		localApi,
 		artifactClient,
-		convexAuth.isLoading,
 		convexAuth.isAuthenticated
 	]);
 
 	const deleteArtifact =
-		currentRepositoryKey && convexAuth.isAuthenticated && !convexAuth.isLoading
+		currentRepositoryKey && convexAuth.isAuthenticated
 			? async (artifactId: string) => {
 					if (localApi && signedInUserId && currentWorkspacePath) {
 						await localApi.deleteArtifact({
@@ -1381,10 +1384,13 @@ export default function App({
 		configured: boolean;
 	}) {
 		const saved = savedProvidersRef.current;
-		// Convex object keys can't contain '-'.
-		const key = change.provider === 'opencode-go' ? 'opencodeGo' : change.provider;
 
-		if (saved) setProviderConfiguration({ ...saved, [key]: change.configured });
+		if (saved) {
+			setProviderConfiguration({
+				...saved,
+				[providerConfigKey(change.provider)]: change.configured
+			});
+		}
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {
@@ -2822,13 +2828,8 @@ export default function App({
 							}
 							onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
 							onOpenFullscreen={(key) => {
+								setArtifactFullscreenRequest(requestArtifactFullscreen());
 								artifactPanel.setFullscreenKey(key);
-
-								// Request in the click gesture so Firefox keeps true browser
-								// fullscreen; the overlay only observes/exits the session.
-								if (!document.fullscreenElement) {
-									void document.documentElement.requestFullscreen?.().catch(() => {});
-								}
 							}}
 							onToggleExpanded={
 								phoneViewport
@@ -2840,10 +2841,11 @@ export default function App({
 					</div>
 				)}
 
-				{artifactPanel.fullscreenArtifact && (
+				{artifactPanel.fullscreenArtifact && artifactFullscreenRequest && (
 					<ArtifactScreenFullscreen
 						workspacePath={localApi ? currentProject?.workspacePath : undefined}
 						artifact={artifactPanel.fullscreenArtifact}
+						fullscreenRequest={artifactFullscreenRequest}
 						onClose={() => artifactPanel.setFullscreenKey(null)}
 					/>
 				)}

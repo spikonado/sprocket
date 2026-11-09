@@ -489,7 +489,6 @@ export default function SettingsCredentials({
 					</div>
 
 					<ClaudeSubscriptionCard
-						key={userId}
 						userId={userId}
 						localApi={localApi}
 						tokenSaved={claudeTokenSaved}
@@ -503,7 +502,6 @@ export default function SettingsCredentials({
 					/>
 
 					<MuseSubscriptionCard
-						key={`${userId}:muse`}
 						userId={userId}
 						localApi={localApi}
 						status={museStatus}

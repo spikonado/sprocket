@@ -123,7 +123,7 @@ export default function SpikonadoUsage() {
 
 	const usageQuery = useConvexQueryResult({
 		query: api.usage.getMyUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now } : 'skip'
+		args: convexAuth.isAuthenticated ? { now } : 'skip'
 	});
 
 	if (usageQuery.status === 'error') {

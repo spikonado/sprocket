@@ -24,6 +24,7 @@ import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
+import { useEscapeLayer } from '$lib/use-escape-layer';
 import {
 	layoutRects,
 	leafName,
@@ -77,7 +78,7 @@ const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIc
 ];
 
 const ICON_BUTTON =
-	'touch-target relative text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40';
+	'touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1 transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40';
 
 function tabIndexForKey(key: string, index: number, count: number) {
 	switch (key) {
@@ -182,29 +183,7 @@ export default function SidePanel(props: Props) {
 		else onCloseTab(id);
 	}
 
-	useEffect(() => {
-		if (!expanded || !onToggleExpanded) return;
-
-		const onKeyDown = (event: globalThis.KeyboardEvent) => {
-			if (event.key !== 'Escape') return;
-
-			// Artifact screen-fullscreen (browser FS or CSS fallback) owns Escape.
-			if (
-				document.fullscreenElement ||
-				document.querySelector('[data-artifact-screen-fullscreen]') ||
-				document.querySelector('[data-image-viewer]')
-			) {
-				return;
-			}
-
-			event.preventDefault();
-			onToggleExpanded();
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-
-		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [expanded, onToggleExpanded]);
+	useEscapeLayer(() => onToggleExpanded?.(), Boolean(expanded && onToggleExpanded));
 
 	return (
 		<aside
@@ -642,7 +621,7 @@ function ArtifactsView({
 									</ArtifactMenu>
 									<button
 										type="button"
-										className="touch-target text-muted-foreground hover:text-foreground touch:opacity-100 relative shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+										className="touch-target text-muted-foreground hover:text-foreground touch:opacity-100 shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
 										onClick={() => onOpenFullscreen(artifact.key)}
 										aria-label={`Open ${artifact.title} fullscreen`}
 										title="Open fullscreen"

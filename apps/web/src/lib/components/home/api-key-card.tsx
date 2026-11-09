@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAction } from 'convex/react';
-import type { FunctionArgs } from 'convex/server';
+import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
 import Button from '$lib/components/ui/button/button';
@@ -10,6 +10,14 @@ import { completionProviderLabels } from '$lib/chat/providers';
 import { convexClientErrorMessage } from '$lib/convex-error';
 
 export type ApiKeyProvider = FunctionArgs<typeof api.providerCredentials.saveApiKey>['provider'];
+
+type ProviderConfiguration = FunctionReturnType<typeof api.providerCredentials.getMyConfiguration>;
+
+export function providerConfigKey(
+	provider: ApiKeyProvider | 'claude'
+): keyof ProviderConfiguration {
+	return provider === 'opencode-go' ? 'opencodeGo' : provider;
+}
 
 const keyPlaceholders: Record<ApiKeyProvider, string> = {
 	openai: 'sk-…',

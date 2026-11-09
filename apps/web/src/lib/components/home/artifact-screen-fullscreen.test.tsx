@@ -30,6 +30,7 @@ it('leaves the artifact open when opening an image exits native fullscreen', asy
 				artifactType: 'markdown',
 				content: '![Board](https://example.com/board.png)'
 			}}
+			fullscreenRequest={Promise.resolve(true)}
 			onClose={onClose}
 		/>
 	);
@@ -39,6 +40,7 @@ it('leaves the artifact open when opening an image exits native fullscreen', asy
 
 	expect(document.exitFullscreen).toHaveBeenCalledOnce();
 	expect(onClose).not.toHaveBeenCalled();
+	expect(getByRole('button', { name: 'Exit fullscreen' })).toBeTruthy();
 	fireEvent.keyDown(window, { key: 'Escape' });
 	expect(queryByRole('dialog', { name: 'Image preview: Board' })).toBeNull();
 	fireEvent.keyDown(window, { key: 'Escape' });
@@ -57,6 +59,7 @@ it('resolves images beside the artifact and closes the image before the fullscre
 				content: '![Board](./board.png)',
 				localPath: '/tmp/docs/notes.md'
 			}}
+			fullscreenRequest={Promise.resolve(false)}
 			onClose={onClose}
 		/>
 	);
@@ -74,5 +77,33 @@ it('resolves images beside the artifact and closes the image before the fullscre
 	expect(queryByRole('dialog', { name: 'Image preview: Board' })).toBeNull();
 	expect(onClose).not.toHaveBeenCalled();
 	fireEvent.keyDown(window, { key: 'Escape' });
+	expect(onClose).toHaveBeenCalledOnce();
+});
+
+it('offers a close button when browser fullscreen was refused', async () => {
+	const onClose = vi.fn();
+
+	const { findByRole } = render(
+		<ArtifactScreenFullscreen
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown', content: 'Hi' }}
+			fullscreenRequest={Promise.resolve(false)}
+			onClose={onClose}
+		/>
+	);
+
+	fireEvent.click(await findByRole('button', { name: 'Exit fullscreen' }));
+	expect(onClose).toHaveBeenCalledOnce();
+});
+
+it('closes when the browser leaves fullscreen', () => {
+	const onClose = vi.fn();
+	render(
+		<ArtifactScreenFullscreen
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown', content: 'Hi' }}
+			fullscreenRequest={Promise.resolve(true)}
+			onClose={onClose}
+		/>
+	);
+	document.dispatchEvent(new Event('fullscreenchange'));
 	expect(onClose).toHaveBeenCalledOnce();
 });

@@ -24,20 +24,25 @@ function ExternalTextLink({ href, children }: { href: string; children: string }
 	);
 }
 
-/** Mount with `key={userId}` so a user switch drops and cancels any pending sign-in. */
-export default function MuseSubscriptionCard({
-	userId,
-	localApi,
-	status,
-	statusError,
-	onStatusChange
-}: {
+type Props = {
 	userId: string;
 	localApi: LocalApi | null;
 	status: MuseStatus | null;
 	statusError: string | null;
 	onStatusChange: (status: MuseStatus) => void;
-}) {
+};
+
+export default function MuseSubscriptionCard(props: Props) {
+	return <UserMuseSubscriptionCard key={props.userId} {...props} />;
+}
+
+function UserMuseSubscriptionCard({
+	userId,
+	localApi,
+	status,
+	statusError,
+	onStatusChange
+}: Props) {
 	const [login, setLogin] = useState<MuseLoginStart | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);

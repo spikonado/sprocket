@@ -126,7 +126,7 @@ function ThreadUsagePanel({
 
 	const usage = useQuery_experimental({
 		query: api.aiUsage.getThreadUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { threadId } : 'skip'
+		args: convexAuth.isAuthenticated ? { threadId } : 'skip'
 	});
 
 	if (usage.status === 'error') {

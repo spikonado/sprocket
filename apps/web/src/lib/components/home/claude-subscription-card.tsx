@@ -14,17 +14,7 @@ function errorMessage(error: Error, fallback: string): string {
 	return convexClientErrorMessage(error) ?? fallback;
 }
 
-/** Mount with `key={userId}` so a user switch drops and cancels any pending sign-in. */
-export default function ClaudeSubscriptionCard({
-	userId,
-	localApi,
-	tokenSaved,
-	loading,
-	status,
-	statusError,
-	onStatusChange,
-	onTokenSavedChange
-}: {
+type Props = {
 	userId: string;
 	localApi: LocalApi | null;
 	tokenSaved: boolean;
@@ -33,7 +23,22 @@ export default function ClaudeSubscriptionCard({
 	statusError: string | null;
 	onStatusChange: (status: ClaudeCodeStatus) => void;
 	onTokenSavedChange: (saved: boolean) => void;
-}) {
+};
+
+export default function ClaudeSubscriptionCard(props: Props) {
+	return <UserClaudeSubscriptionCard key={props.userId} {...props} />;
+}
+
+function UserClaudeSubscriptionCard({
+	userId,
+	localApi,
+	tokenSaved,
+	loading,
+	status,
+	statusError,
+	onStatusChange,
+	onTokenSavedChange
+}: Props) {
 	const saveClaudeToken = useAction(api.providerCredentials.saveClaudeToken);
 	const removeClaudeToken = useAction(api.providerCredentials.removeClaudeToken);
 	const [loginId, setLoginId] = useState<string | null>(null);
