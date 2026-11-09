@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    CommandCompletion, build_shell_command, completion_output, join_capture_task, supervise_command,
+    CommandCompletion, CommandProcess, build_shell_command, completion_output, join_capture_task,
+    supervise_command,
 };
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::CapturedOutput;
@@ -40,19 +41,19 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
     #[cfg(unix)]
     process.process_group(0);
     let child = process.spawn().unwrap();
-    let pid = child.id();
     let (_control, controls) = mpsc::unbounded_channel();
     let (completion, mut completed) = watch::channel(None);
     let supervisor = tokio::spawn(supervise_command(
-        child,
-        pid,
+        CommandProcess {
+            child,
+            stdin_task: tokio::spawn(std::future::pending()),
+            capture_task: tokio::spawn(async { anyhow::bail!("injected log write failure") }),
+            lifetime_guard: None,
+        },
         controls,
         completion,
-        tokio::spawn(std::future::pending()),
-        tokio::spawn(async { anyhow::bail!("injected log write failure") }),
         Arc::new(Mutex::new(output)),
         Some(Duration::from_secs(5)),
-        None,
         (history_path, history),
         None,
     ));

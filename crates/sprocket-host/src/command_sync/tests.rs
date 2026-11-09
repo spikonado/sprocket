@@ -30,7 +30,6 @@ async fn captured_command_events_rebuild_the_original_log() {
             &default_command_shell(),
             None,
             5_000,
-            20_000,
         )
         .await
         .unwrap();
@@ -238,8 +237,19 @@ async fn pending_batches_and_failed_uploads_retry_until_acknowledged() {
 #[tokio::test]
 async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
     let directory = tempfile::tempdir().unwrap();
-    let store = TranscriptStore::new(directory.path().to_path_buf());
-    let records = store
+    let auth = NativeAuthManager::configured_for_test(
+        crate::native_auth::NativeAuthConfig {
+            workos_client_id: "test".into(),
+        },
+        "http://localhost/callback".into(),
+    );
+    let host = Host::for_test(
+        auth,
+        directory.path(),
+        crate::package_update::PackageUpdateManager::disabled(),
+    );
+    let records = host
+        .transcript
         .thread_dir("user", "thread")
         .join("command-logs/sessions");
     tokio::fs::create_dir_all(&records).await.unwrap();
@@ -249,24 +259,10 @@ async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
     let mut history = running_history(directory.path()).await;
     history.machine_id = "another machine".into();
     history.save(&foreign).await.unwrap();
-    let auth = NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
-            workos_client_id: "test".into(),
-        },
-        "http://localhost/callback".into(),
-    );
-    let registry = ThreadCommandSessions::default();
     assert_eq!(
-        sync_directory(
-            &store,
-            &registry,
-            &auth,
-            "http://localhost",
-            "machine",
-            &mut IdleSessions::new(),
-        )
-        .await
-        .unwrap(),
+        sync_directory(&host, &mut IdleSessions::new())
+            .await
+            .unwrap(),
         RecordSync::Waiting
     );
     assert_eq!(tokio::fs::read(&path).await.unwrap(), b"interrupted write");

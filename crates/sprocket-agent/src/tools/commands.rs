@@ -12,8 +12,6 @@ use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_serialized_tool_job;
 
-pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
-
 #[derive(Clone, Default)]
 pub(crate) struct CommandCursors(Arc<Mutex<HashMap<String, u64>>>);
 
@@ -244,7 +242,6 @@ impl rig::tool::Tool for ExecCmdTool {
                             .unwrap_or_else(|| self.0.command_sessions.default_shell()),
                         args.timeout_ms,
                         YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms),
-                        DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
                     )
                     .await
                     .map_err(tool_error)

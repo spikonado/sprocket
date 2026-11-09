@@ -165,7 +165,6 @@ async fn exec_running_with_timeout(
             &default_command_shell(),
             timeout_ms,
             0,
-            20_000,
         )
         .await
         .expect("command should start");
@@ -368,7 +367,6 @@ async fn output_preserves_observed_stream_order() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .unwrap();
@@ -403,7 +401,6 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .unwrap();
@@ -463,7 +460,12 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
 #[tokio::test]
 async fn output_limit_keeps_head_and_tail() {
     let root = temp_workspace();
-    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs")).with_output_limits(
+        super::CommandOutputLimits {
+            max_output_chars: 22,
+            ..Default::default()
+        },
+    );
     let output = sessions
         .exec_command(
             WorkspaceCancellation::new(),
@@ -472,7 +474,6 @@ async fn output_limit_keeps_head_and_tail() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            22,
         )
         .await
         .unwrap();
@@ -488,7 +489,12 @@ async fn output_limit_keeps_head_and_tail() {
 #[tokio::test]
 async fn large_output_survives_preview_limits_and_session_cleanup() {
     let root = temp_workspace();
-    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs")).with_output_limits(
+        super::CommandOutputLimits {
+            max_output_chars: 26,
+            ..Default::default()
+        },
+    );
     let output = sessions
         .exec_command(
             WorkspaceCancellation::new(),
@@ -497,7 +503,6 @@ async fn large_output_survives_preview_limits_and_session_cleanup() {
             &default_command_shell(),
             Some(20_000),
             20_000,
-            26,
         )
         .await
         .unwrap();
@@ -517,7 +522,12 @@ async fn large_output_survives_preview_limits_and_session_cleanup() {
 #[tokio::test]
 async fn preview_truncation_does_not_discard_prior_increments() {
     let root = temp_workspace();
-    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+    let sessions = CommandSessionManager::new(root.clone(), root.join("logs")).with_output_limits(
+        super::CommandOutputLimits {
+            max_output_chars: 4,
+            ..Default::default()
+        },
+    );
     let started = sessions
         .exec_command(
             WorkspaceCancellation::new(),
@@ -526,7 +536,6 @@ async fn preview_truncation_does_not_discard_prior_increments() {
             &default_command_shell(),
             Some(5_000),
             0,
-            4,
         )
         .await
         .unwrap();
@@ -560,7 +569,6 @@ async fn unavailable_log_directory_prevents_command_side_effects() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            100,
         )
         .await
         .unwrap_err();
@@ -586,7 +594,6 @@ async fn low_disk_space_prevents_command_side_effects() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            100,
         )
         .await
         .unwrap_err();
@@ -612,7 +619,6 @@ async fn log_quota_terminates_capture_instead_of_reporting_success() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            100,
         )
         .await
         .unwrap();
@@ -641,7 +647,6 @@ async fn reads_from_the_same_cursor_return_the_same_output() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .unwrap();
@@ -684,7 +689,6 @@ async fn exec_command_reports_the_shell_and_workdir_when_spawn_fails() {
             shell.to_str().unwrap(),
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .expect_err("a missing shell must not fall back to another executable");
@@ -703,7 +707,6 @@ async fn exec_command_reports_the_shell_and_workdir_when_spawn_fails() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .unwrap();
@@ -737,7 +740,6 @@ async fn failed_process_launch_removes_unstarted_logs_and_history() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .unwrap_err();
@@ -762,7 +764,6 @@ async fn exec_command_defaults_to_workspace_root() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .expect("command should succeed");
@@ -790,7 +791,6 @@ async fn exec_command_allows_workdir_outside_workspace() {
             &default_command_shell(),
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .expect("outside workdir should be allowed");
@@ -849,7 +849,6 @@ async fn exec_and_control_return_running_snapshots_after_short_waits() {
             &default_command_shell(),
             Some(5_000),
             1,
-            20_000,
         )
         .await
         .unwrap();
@@ -875,7 +874,6 @@ async fn command_without_timeout_continues_after_yield() {
             &default_command_shell(),
             None,
             0,
-            20_000,
         )
         .await
         .expect("command should start");
@@ -915,7 +913,6 @@ async fn blocked_stdin_does_not_prevent_command_timeout() {
             &default_command_shell(),
             Some(100),
             0,
-            20_000,
         )
         .await
         .expect("command should start");
@@ -960,7 +957,6 @@ async fn reports_input_dropped_during_normal_command_completion() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .expect("command should start");
@@ -1016,7 +1012,6 @@ async fn cancelled_observation_preserves_command_for_a_later_run() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .expect("command should start");
@@ -1087,7 +1082,6 @@ async fn cancelled_exec_keeps_the_started_command_discoverable() {
         &shell,
         Some(5_000),
         5_000,
-        20_000,
     );
     let (result, _) = tokio::join!(exec, cancel);
     assert!(
@@ -1292,7 +1286,6 @@ async fn another_machine_resolves_the_same_session_and_keeps_a_local_replica() {
             &default_command_shell(),
             None,
             5_000,
-            20_000,
         )
         .await
         .unwrap();
@@ -1352,7 +1345,6 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
             &default_command_shell(),
             None,
             5_000,
-            20_000,
         )
         .await
         .unwrap();
@@ -1448,7 +1440,6 @@ async fn shutdown_rejects_commands_from_existing_manager_clones() {
             &default_command_shell(),
             None,
             0,
-            20_000,
         )
         .await
         .unwrap_err();
@@ -1469,7 +1460,6 @@ async fn terminate_stops_running_command() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .expect("command should start");
@@ -1495,7 +1485,6 @@ async fn timeout_stops_running_command() {
             &default_command_shell(),
             Some(25),
             5_000,
-            20_000,
         )
         .await
         .expect("timed out command should return a result");
@@ -1824,7 +1813,6 @@ async fn container_kill_stops_processes_that_left_the_process_group() {
             &shell,
             None,
             10_000,
-            20_000,
         )
         .await
         .unwrap()

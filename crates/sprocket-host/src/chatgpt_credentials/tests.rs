@@ -12,6 +12,16 @@ impl ChatGptService {
     }
 }
 
+fn sign_in(connection: Option<&str>, nonce: &str, verifier: &str) -> SignIn {
+    SignIn {
+        user: "user-a".into(),
+        connection: connection.map(str::to_owned),
+        redirect_uri: "http://127.0.0.1:1/auth/callback".into(),
+        nonce: nonce.into(),
+        verifier: verifier.into(),
+    }
+}
+
 const GRANTED: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const RSA_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCrZ9ZLr29AUzPN\nLs0LovbC5x+v4WOaQX9Eo4Bc709L0ShbuJx5ji/Da20c95Q1fvSMtsH7TGcKP+39\noYbghsbmZoCLp58DyyRbXlEU5/lfPefy0vuqZtIY3Ofe/89Ofe0TfxxWdRGyYn2y\n6rwWysR1jsigVFHoW7E0UKcXq24ZocAd0vWQfxABH1ydUfAMzk71PH3lMFsTbusy\nRSkrXdyHkcvPHpwEXJlsSQTr6E7RCLbtwXVuIsF6kD+NXlIjx50rCZX/gcpltAht\nRWsxrq3iKoUnnxWfCm4/Oh/20SgHoShbNEmNRcE2QIeDLdWC75tzq8IZE8p4/Yts\nUfHIC8htAgMBAAECggEAA7G6vCndT3kbmjYChFgwUlYR6EQG1gnIWO3fM+GSh3NM\nF+H8OWB3phIYKXIqlxaT5b6Aos5sQBvNoNRM6GTvP4MBDUGBG19S+scnHzi6trNK\nXwDuHKeXqqKEOtmvmaT8KZnpPfHK/lnCFMubXzBimJgJue7nTwc+4/5DA68Vseay\nCVsMLsamqTduCYPtUIDp0Qp95/qR9MQuzSluOVACgVOOBCahDP8QiSUvOI4tP/Mk\njhxv7a6FREbDPQUVZFgLxVRFwKWCz8POX8wKAr8qht85BmbhNri8ga/hdirjmEod\nowzv1wnva0agPo7EHFdvS8UYtd9DDU2B0yqzlqF1XwKBgQDXUi8qxwEeOh3z7hSu\n6wCo/bIzbmAxO43yFU4+KTZnE9dV9GRSfyeQFdSiPRLwqVzI660tArbpADu0q6fv\n/b7TYp1+mWFjtBwL0yKqqAQKveKzpHe6BwwrQjFPptT8q5c54eXDuOHIHDcRCH/w\nipz99LSIQKe/dZhmMxgnSI39PwKBgQDLybi34Sx9LJLOpDCwbOK0YjvqJBT0lrK+\nsRXXBy+8+wMqa/bgBDwZVt4po8vjV7gplvfpbclfzzxA+cJFQQzYZS+iJurDE1nL\n67V/9wMfdviLiBCAL4Sb5mZljdCIqku8Dy2On8gGSzw0vy+KVL8P0hVQr+uO8YhI\nWjTZ7wkTUwKBgDzOzNs70CkFKKhWuCid3VXcL5MuvKOque9/7NTJNr/tboaruhlC\nJ54dTCt1LAAjFDz5sbJgbd9nXXUsdQTlmBqCYw/5qPNLThBY1BV11Y5jCb7J17YF\nf35H9z0TVFr26oJCNW0MrVaiATsiN19rBeMCVGmWOMltIFjcXRna955pAoGAC6H3\nLl/nJzoNI0iSEvAUPNHCs8ndfFzB1UrMgVrCqdn2Q0yoaf8z4wpnYh8ce1y9gXpB\nqox+yz5MJTVclpFxB0U3Y90u13XaUV6iHKzf+8LRyz04G+kae7+6Jp/iwHpgGlsP\nca3DQEC5LhWfxBi0U1Xdq55vJti4u9CSZcJUVUsCgYBWOm2Ws0VruHWj4WGqylfV\nuURcTGoADEkkAohtILu9zzqh21Il0irSQVRLvxY36h4rR4w+RH9VjQi0Vg0lmmAT\nKKzQgjnyGdgHclULok7DUtZwjZ7TYOqFWp2O2al7As/uivowpvTlV2AAR7zNVcRV\n12gHMJ6qoYyS2u/dU5hR7Q==\n-----END PRIVATE KEY-----\n";
@@ -490,11 +500,7 @@ async fn exchange_and_commit_round_trip_persists_and_notifies() {
     let grant = fixture
         .service
         .exchange(
-            "user-a",
-            None,
-            "http://127.0.0.1:1/auth/callback",
-            &nonce,
-            "verifier",
+            &sign_in(None, &nonce, "verifier"),
             "code-1",
             Some("client-1"),
         )
@@ -793,11 +799,7 @@ async fn exchange_rejects_a_different_subject_for_a_returning_account() {
     let error = fixture
         .service
         .exchange(
-            "user-a",
-            Some("connection-1"),
-            "http://127.0.0.1:1/auth/callback",
-            &nonce,
-            "verifier",
+            &sign_in(Some("connection-1"), &nonce, "verifier"),
             "code-1",
             Some("client-1"),
         )
@@ -1395,14 +1397,7 @@ async fn authorization_builds_pkce_urls_for_dynamic_and_returning_clients() {
     let nonce = Uuid::new_v4().to_string();
     let url = fixture
         .service
-        .authorization(
-            "user-a",
-            None,
-            "http://127.0.0.1:1/auth/callback",
-            "state-1",
-            &nonce,
-            "verifier-1",
-        )
+        .authorization(&sign_in(None, &nonce, "verifier-1"), "state-1")
         .await
         .unwrap();
     let url = url::Url::parse(&url).unwrap();
@@ -1443,12 +1438,8 @@ async fn authorization_builds_pkce_urls_for_dynamic_and_returning_clients() {
     let url = fixture
         .service
         .authorization(
-            "user-a",
-            Some("connection-1"),
-            "http://127.0.0.1:1/auth/callback",
+            &sign_in(Some("connection-1"), &nonce, "verifier-2"),
             "state-2",
-            &nonce,
-            "verifier-2",
         )
         .await
         .unwrap();
@@ -1583,7 +1574,7 @@ async fn unavailable_storage_preserves_the_file_and_reports_repair_guidance() {
     let nonce = Uuid::new_v4().to_string();
     assert!(
         service
-            .authorization("user-a", None, "callback", "state", &nonce, "verifier")
+            .authorization(&sign_in(None, &nonce, "verifier"), "state")
             .await
             .is_err()
     );

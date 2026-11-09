@@ -425,13 +425,11 @@ impl RuntimeClient {
             .await
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn finalize_completion_call(
         &self,
         run_id: &str,
         claim_id: &str,
         attempt_seq: u64,
-        stream_id: &str,
         items: Vec<serde_json::Value>,
         assignments: crate::hooks::CompletionAssignments,
         context_tokens: Option<u64>,
@@ -439,7 +437,10 @@ impl RuntimeClient {
         let empty_completion = items.is_empty();
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
-        args.insert("streamId".to_string(), stream_id.to_string().into());
+        args.insert(
+            "streamId".to_string(),
+            crate::hooks::completion_stream_id(run_id, claim_id, attempt_seq).into(),
+        );
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,

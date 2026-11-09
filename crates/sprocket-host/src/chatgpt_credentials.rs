@@ -91,6 +91,15 @@ pub struct PendingGrant {
     tokens: Tokens,
 }
 
+#[derive(Clone)]
+pub struct SignIn {
+    pub user: String,
+    pub connection: Option<String>,
+    pub redirect_uri: String,
+    pub nonce: String,
+    pub verifier: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceStatus {
@@ -489,22 +498,16 @@ impl ChatGptService {
         })
     }
 
-    pub async fn authorization(
-        &self,
-        user: &str,
-        connection: Option<&str>,
-        redirect_uri: &str,
-        state: &str,
-        nonce: &str,
-        verifier: &str,
-    ) -> anyhow::Result<String> {
+    pub async fn authorization(&self, sign_in: &SignIn, state: &str) -> anyhow::Result<String> {
         self.require_storage()?;
         let stored = self.state.lock().await;
-        let account = connection
+        let account = sign_in
+            .connection
+            .as_deref()
             .map(|connection| {
                 stored
                     .users
-                    .get(user)
+                    .get(&sign_in.user)
                     .and_then(|accounts| {
                         accounts
                             .accounts
@@ -516,7 +519,7 @@ impl ChatGptService {
             .transpose()?;
         let mut url = url::Url::parse("https://auth.openai.com/api/accounts/authorize")?;
         let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(Sha256::digest(verifier.as_bytes()));
+            .encode(Sha256::digest(sign_in.verifier.as_bytes()));
         url.query_pairs_mut().extend_pairs([
             (
                 "client_id",
@@ -524,11 +527,11 @@ impl ChatGptService {
             ),
             ("ext_agent_host_id", stored.host_id.as_str()),
             ("response_type", "code"),
-            ("redirect_uri", redirect_uri),
+            ("redirect_uri", sign_in.redirect_uri.as_str()),
             ("scope", SCOPES),
             ("resource", RESOURCE),
             ("state", state),
-            ("nonce", nonce),
+            ("nonce", sign_in.nonce.as_str()),
             ("code_challenge_method", "S256"),
             ("code_challenge", challenge.as_str()),
         ]);
@@ -570,24 +573,21 @@ impl ChatGptService {
         verify_identity(token, &keys.keys, client_id, nonce)
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub async fn exchange(
         &self,
-        user: &str,
-        connection: Option<&str>,
-        redirect_uri: &str,
-        nonce: &str,
-        verifier: &str,
+        sign_in: &SignIn,
         code: &str,
         callback_client: Option<&str>,
     ) -> anyhow::Result<PendingGrant> {
         let account = {
             let state = self.state.lock().await;
-            connection
+            sign_in
+                .connection
+                .as_deref()
                 .map(|connection| {
                     state
                         .users
-                        .get(user)
+                        .get(&sign_in.user)
                         .and_then(|accounts| {
                             accounts
                                 .accounts
@@ -611,8 +611,8 @@ impl ChatGptService {
                 ("grant_type", "authorization_code"),
                 ("client_id", client_id.as_str()),
                 ("code", code),
-                ("code_verifier", verifier),
-                ("redirect_uri", redirect_uri),
+                ("code_verifier", sign_in.verifier.as_str()),
+                ("redirect_uri", sign_in.redirect_uri.as_str()),
                 ("resource", RESOURCE),
             ])
             .send()
@@ -627,7 +627,7 @@ impl ChatGptService {
         let outcome = async {
             let tokens = token_tuple(response, None, sent_at)?;
             let identity = self
-                .identity(&tokens.id_token, &client_id, Some(nonce))
+                .identity(&tokens.id_token, &client_id, Some(sign_in.nonce.as_str()))
                 .await?;
             if let Some(account) = &account {
                 ensure!(
@@ -636,8 +636,8 @@ impl ChatGptService {
                 );
             }
             Ok(PendingGrant {
-                user: user.to_owned(),
-                expected_connection: connection.map(str::to_owned),
+                user: sign_in.user.clone(),
+                expected_connection: sign_in.connection.clone(),
                 expected_session: account.as_ref().map(|account| account.session_id.clone()),
                 client_id: client_id.clone(),
                 subject: identity.sub,

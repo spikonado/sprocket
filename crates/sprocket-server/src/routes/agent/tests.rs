@@ -40,7 +40,6 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .unwrap();

@@ -119,7 +119,6 @@ async fn exec_command_accepts_conventional_bash_path() {
             "/bin/bash",
             Some(5_000),
             5_000,
-            20_000,
         )
         .await
         .unwrap();

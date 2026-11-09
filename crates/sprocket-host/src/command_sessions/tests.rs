@@ -35,7 +35,6 @@ async fn pruning_busy_thread_does_not_block_unrelated_commands() {
             &default_command_shell(),
             None,
             0,
-            20_000,
         )
         .await
     });
@@ -95,7 +94,6 @@ async fn registry_keeps_commands_after_run_drop_and_isolates_thread_scopes() {
             &default_command_shell(),
             Some(5_000),
             0,
-            20_000,
         )
         .await
         .unwrap();
@@ -130,7 +128,6 @@ async fn registry_keeps_commands_after_run_drop_and_isolates_thread_scopes() {
                 &default_command_shell(),
                 None,
                 0,
-                20_000,
             )
             .await
             .unwrap_err()

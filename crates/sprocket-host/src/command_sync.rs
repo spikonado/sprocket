@@ -7,11 +7,10 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
-use sprocket_transcript::TranscriptStore;
 use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
-use crate::command_sessions::ThreadCommandSessions;
+use crate::Host;
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
 
@@ -146,26 +145,11 @@ async fn sync_session(
     })
 }
 
-pub fn spawn(
-    store: Arc<TranscriptStore>,
-    registry: Arc<ThreadCommandSessions>,
-    auth: Arc<NativeAuthManager>,
-    deployment: String,
-    machine_id: String,
-) -> tokio::task::JoinHandle<()> {
+pub fn spawn(host: Host) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut idle = IdleSessions::new();
         loop {
-            if let Err(error) = sync_directory(
-                &store,
-                &registry,
-                &auth,
-                &deployment,
-                &machine_id,
-                &mut idle,
-            )
-            .await
-            {
+            if let Err(error) = sync_directory(&host, &mut idle).await {
                 tracing::warn!("command sync will retry: {error:#}");
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -173,16 +157,10 @@ pub fn spawn(
     })
 }
 
-pub async fn flush(
-    store: &TranscriptStore,
-    registry: &ThreadCommandSessions,
-    auth: &Arc<NativeAuthManager>,
-    deployment: &str,
-    machine_id: &str,
-) -> Result<()> {
+pub async fn flush(host: &Host) -> Result<()> {
     let mut idle = IdleSessions::new();
     loop {
-        match sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await? {
+        match sync_directory(host, &mut idle).await? {
             RecordSync::Settled => return Ok(()),
             RecordSync::Uploading => {}
             RecordSync::Waiting => tokio::time::sleep(FLUSH_RETRY_DELAY).await,
@@ -190,16 +168,9 @@ pub async fn flush(
     }
 }
 
-async fn sync_directory(
-    store: &TranscriptStore,
-    registry: &ThreadCommandSessions,
-    auth: &Arc<NativeAuthManager>,
-    deployment: &str,
-    machine_id: &str,
-    idle: &mut IdleSessions,
-) -> Result<RecordSync> {
+async fn sync_directory(host: &Host, idle: &mut IdleSessions) -> Result<RecordSync> {
     let mut pass = RecordSync::Settled;
-    let mut users = match tokio::fs::read_dir(store.root()).await {
+    let mut users = match tokio::fs::read_dir(host.transcript.root()).await {
         Ok(users) => users,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(RecordSync::Settled);
@@ -226,16 +197,7 @@ async fn sync_directory(
                 }
                 let result = tokio::time::timeout(
                     Duration::from_secs(15),
-                    sync_record(
-                        &path,
-                        &directory,
-                        registry,
-                        auth,
-                        deployment,
-                        machine_id,
-                        &mut client,
-                        idle,
-                    ),
+                    sync_record(host, &path, &directory, &mut client, idle),
                 )
                 .await
                 .context("command sync timed out")
@@ -254,14 +216,10 @@ async fn sync_directory(
     Ok(pass)
 }
 
-#[expect(clippy::too_many_arguments)]
 async fn sync_record(
+    host: &Host,
     path: &Path,
     directory: &Path,
-    registry: &ThreadCommandSessions,
-    auth: &Arc<NativeAuthManager>,
-    deployment: &str,
-    machine_id: &str,
     client: &mut Option<UserConvexClient>,
     idle: &mut IdleSessions,
 ) -> Result<RecordSync> {
@@ -271,11 +229,16 @@ async fn sync_record(
         return Ok(RecordSync::Settled);
     }
     let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-    if history.machine_id != machine_id || history.user_id.is_empty() {
+    if history.machine_id != host.machine_identity.installation_id || history.user_id.is_empty() {
         tokio::fs::write(&marker, b"").await?;
         return Ok(RecordSync::Settled);
     }
-    if auth.require_user(&history.user_id).await.is_err() {
+    if host
+        .native_auth
+        .require_user(&history.user_id)
+        .await
+        .is_err()
+    {
         return Ok(RecordSync::Settled);
     }
     let session_id = path
@@ -283,20 +246,18 @@ async fn sync_record(
         .context("session record has no ID")?
         .to_str()
         .context("invalid session ID")?;
-    match registry.get(&history.user_id, &history.thread_id).await {
+    match host
+        .command_sessions
+        .get(&history.user_id, &history.thread_id)
+        .await
+    {
         Some(manager) => manager.history_snapshot(session_id, &mut history).await?,
         None => history.recover_if_running(directory, session_id).await?,
     }
     let sync = sync_when_changed(idle, path, &history, async {
         let client = match client {
             Some(client) => client,
-            None => client.insert(
-                UserConvexClient::connect_with_fetcher(
-                    deployment,
-                    auth.auth_token_fetcher_for_user(history.user_id.clone()),
-                )
-                .await?,
-            ),
+            None => client.insert(host.convex_client_for(&history.user_id).await?),
         };
         sync_session(client, session_id, &history).await
     })

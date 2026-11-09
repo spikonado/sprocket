@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::auth::AuthState;
-use sprocket_host::chatgpt_credentials::ChatGptService;
+use sprocket_host::chatgpt_credentials::{ChatGptService, SignIn};
 
 const LOGIN_LIFETIME: Duration = Duration::from_secs(5 * 60);
 
@@ -38,8 +38,6 @@ impl PendingLogins {
         connection: Option<String>,
     ) -> Result<StartedLogin, StartError> {
         let value = secret();
-        let nonce = secret();
-        let verifier = secret();
         let mut logins = self.logins.lock().await;
         logins.expire();
         if logins.listener.is_none() {
@@ -51,20 +49,21 @@ impl PendingLogins {
             logins.generation = logins.generation.wrapping_add(1);
             tokio::spawn(expire_logins(Arc::clone(self), logins.generation));
         }
-        let redirect_uri = logins.redirect_uri.clone();
+        let sign_in = SignIn {
+            user,
+            connection,
+            redirect_uri: logins.redirect_uri.clone(),
+            nonce: secret(),
+            verifier: secret(),
+        };
         let authorize_url = self
             .service
-            .authorization(
-                &user,
-                connection.as_deref(),
-                &redirect_uri,
-                &value,
-                &nonce,
-                &verifier,
-            )
+            .authorization(&sign_in, &value)
             .await
             .map_err(StartError::Failed)?;
-        logins.attempts.retain(|_, login| login.user != user);
+        logins
+            .attempts
+            .retain(|_, login| login.sign_in.user != sign_in.user);
         if logins.attempts.len() >= 64 {
             return Err(StartError::Failed(anyhow::anyhow!(
                 "Too many pending sign-ins. Retry later."
@@ -74,12 +73,8 @@ impl PendingLogins {
             value.clone(),
             PendingLogin {
                 session,
-                user,
-                connection,
+                sign_in,
                 expires: Instant::now() + LOGIN_LIFETIME,
-                nonce,
-                verifier,
-                redirect_uri,
                 processing: false,
                 result: None,
             },
@@ -93,7 +88,7 @@ impl PendingLogins {
     pub(crate) async fn poll(&self, session: &str, user: &str, state: &str) -> LoginResult {
         let logins = self.logins.lock().await;
         let Some(login) = logins.attempts.get(state).filter(|login| {
-            login.session == session && login.user == user && login.expires > Instant::now()
+            login.session == session && login.sign_in.user == user && login.expires > Instant::now()
         }) else {
             return LoginResult::Error {
                 error: "ChatGPT sign-in expired or was cancelled. Start sign-in again.".into(),
@@ -113,7 +108,7 @@ impl PendingLogins {
         if logins
             .attempts
             .get(state)
-            .is_some_and(|login| login.session == session && login.user == user)
+            .is_some_and(|login| login.session == session && login.sign_in.user == user)
         {
             logins.attempts.remove(state);
             logins.stop_if_idle();
@@ -122,7 +117,9 @@ impl PendingLogins {
 
     pub(crate) async fn forget_user(&self, user: &str) {
         let mut logins = self.logins.lock().await;
-        logins.attempts.retain(|_, login| login.user != user);
+        logins
+            .attempts
+            .retain(|_, login| login.sign_in.user != user);
         logins.stop_if_idle();
     }
 
@@ -159,12 +156,8 @@ impl LoginState {
 #[derive(Clone)]
 struct PendingLogin {
     session: String,
-    user: String,
-    connection: Option<String>,
+    sign_in: SignIn,
     expires: Instant,
-    nonce: String,
-    verifier: String,
-    redirect_uri: String,
     processing: bool,
     result: Option<Result<(), String>>,
 }
@@ -243,15 +236,7 @@ async fn finish_callback(
         (Some(code), None) if !code.is_empty() && code.len() <= 4096 => {
             pending
                 .service
-                .exchange(
-                    &login.user,
-                    login.connection.as_deref(),
-                    &login.redirect_uri,
-                    &login.nonce,
-                    &login.verifier,
-                    &code,
-                    query.client_id.as_deref(),
-                )
+                .exchange(&login.sign_in, &code, query.client_id.as_deref())
                 .await
         }
         _ => Err(anyhow::anyhow!("ChatGPT sign-in was cancelled or failed.")),
@@ -259,11 +244,11 @@ async fn finish_callback(
     let mut logins = pending.logins.lock().await;
     let session_guard = pending
         .auth
-        .lock_session_user(&login.session, &login.user)
+        .lock_session_user(&login.session, &login.sign_in.user)
         .await;
     let valid = logins.attempts.get(&state).is_some_and(|current| {
         current.session == login.session
-            && current.user == login.user
+            && current.sign_in.user == login.sign_in.user
             && current.expires > Instant::now()
     }) && session_guard.is_ok();
     if !valid {
@@ -275,14 +260,14 @@ async fn finish_callback(
         return;
     }
     let result = match outcome {
-        Ok(grant) => pending.service.commit(&login.user, grant).await,
+        Ok(grant) => pending.service.commit(&login.sign_in.user, grant).await,
         Err(error) => Err(error),
     };
     drop(session_guard);
     if let Some(current) = logins.attempts.get_mut(&state) {
         current.result = Some(result.map_err(|error| error.to_string()));
-        current.verifier.clear();
-        current.nonce.clear();
+        current.sign_in.verifier.clear();
+        current.sign_in.nonce.clear();
     }
 }
 

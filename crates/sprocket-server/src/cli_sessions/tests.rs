@@ -60,7 +60,6 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
                 &default_command_shell(),
                 Some(5_000),
                 0,
-                20_000,
             )
             .await
             .unwrap();
@@ -109,7 +108,6 @@ async fn failed_command_spawn_releases_temporary_server_guard() {
             missing_shell.to_str().unwrap(),
             None,
             0,
-            20_000,
         )
         .await
         .unwrap_err();

@@ -20,11 +20,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use self::process::{
-    CommandCompletion, StdinRequest, build_shell_command, capture_pipes, completion_output,
-    signal_change, supervise_command, write_command_input,
+    CommandCompletion, CommandProcess, StdinRequest, build_shell_command, capture_pipes,
+    completion_output, signal_change, supervise_command, write_command_input,
 };
 
-const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
 const STDIN_QUEUE_CAPACITY: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
@@ -286,7 +285,6 @@ impl CommandSessionManager {
         self
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub async fn exec_command(
         &self,
         cancellation: WorkspaceCancellation,
@@ -295,14 +293,13 @@ impl CommandSessionManager {
         shell: &str,
         timeout_ms: Option<u64>,
         yield_time_ms: u64,
-        max_output_chars: usize,
     ) -> Result<CommandExecOutput> {
         cancellation.ensure_active()?;
         self.prune_completed().await;
         if command.trim().is_empty() {
             bail!("command cannot be empty");
         }
-        let max_output_chars = max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS);
+        let max_output_chars = self.output_limits.max_output_chars;
 
         let cwd = resolve_directory(&self.workspace_root, workdir)?;
         let shell = resolve_command_shell(shell, &cwd, self.command_path().as_deref())?;
@@ -312,12 +309,7 @@ impl CommandSessionManager {
         };
         cancellation.ensure_active()?;
         let output = Arc::new(Mutex::new(
-            CapturedOutput::create_with_limits(
-                &self.log_directory,
-                max_output_chars,
-                self.output_limits,
-            )
-            .await?,
+            CapturedOutput::create_with_limits(&self.log_directory, self.output_limits).await?,
         ));
         let mut process = build_shell_command(command, &shell);
         process
@@ -391,7 +383,6 @@ impl CommandSessionManager {
                 return Err(error);
             }
         };
-        let process_id = child.id();
         let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
         let capture_task = tokio::spawn(capture_pipes(
@@ -402,15 +393,16 @@ impl CommandSessionManager {
         let (control, controls) = mpsc::unbounded_channel();
         let (completion_sender, completion) = watch::channel(None);
         tokio::spawn(supervise_command(
-            child,
-            process_id,
+            CommandProcess {
+                child,
+                stdin_task,
+                capture_task,
+                lifetime_guard,
+            },
             controls,
             completion_sender,
-            stdin_task,
-            capture_task,
             output.clone(),
             timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
-            lifetime_guard,
             (history_path, history),
             self.changes.clone(),
         ));
