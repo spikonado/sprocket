@@ -8,26 +8,26 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.102"
-fs4 = { version = "1.1.0", default-features = false }
-gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
-hex = "0.4.3"
-libc = "0.2.186"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
+anyhow.workspace = true
+fs4.workspace = true
+gix.workspace = true
+hex.workspace = true
+libc.workspace = true
+reqwest = { workspace = true, features = ["rustls"] }
+serde.workspace = true
+serde_json.workspace = true
 serde_yaml_ng = "0.10.0"
-sha2 = "0.11.0"
-tempfile = "3.27.0"
-thiserror = "2.0.18"
-tokio = { version = "1.52.1", features = ["full"] }
-tokio-util = "0.7.18"
-uuid = { version = "1.21.0", features = ["v4"] }
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-tracing = "0.1.44"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
+tracing.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
-gix = { version = "0.90", default-features = false, features = ["worktree-mutation"] }
-tokio = { version = "1.52.1", features = ["test-util"] }
+gix = { workspace = true, features = ["worktree-mutation"] }
+tokio = { workspace = true, features = ["test-util"] }

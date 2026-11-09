@@ -77,9 +77,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Check native server
-        run: cargo check --locked -p sprocket-server
+      - name: Clippy native server
+        run: cargo clippy --locked -p sprocket-server -- -D warnings
       - name: Test native credential storage
         run: cargo test --locked -p sprocket-host native_auth::credentials::tests
       - name: Test private file permissions
@@ -140,6 +142,10 @@ jobs:
           cmd-format: nix develop ./sprocket-shell -c {0}
           # Cached build scripts embed Nix interpreter paths from flake.lock.
           prefix-key: v0-rust-${{ hashFiles('flake.lock') }}
+
+      - name: Clippy
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Cargo test
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'

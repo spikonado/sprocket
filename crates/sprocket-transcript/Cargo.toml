@@ -8,18 +8,18 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.102"
-base64 = "0.23.0"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
+anyhow.workspace = true
+base64.workspace = true
+reqwest = { workspace = true, features = ["rustls", "stream"] }
 rusqlite = { version = "0.41.0", features = ["bundled"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-sprocket-convex = { path = "../sprocket-convex" }
-tempfile = "3.27.0"
-thiserror = "2.0.18"
-tokio = { version = "1.52.1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
-uuid = { version = "1.21.0", features = ["v4"] }
+serde.workspace = true
+serde_json.workspace = true
+sprocket-convex.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+uuid.workspace = true
 
 [dev-dependencies]
-futures = "0.3.32"
-tokio = { version = "1.52.1", features = ["net", "rt", "test-util"] }
+futures.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "test-util"] }

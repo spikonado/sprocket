@@ -92,6 +92,7 @@
               commitlint
               cargo
               cargo-edit
+              clippy
               gcc
               nodejs_26
               prek
