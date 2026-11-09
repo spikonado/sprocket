@@ -166,7 +166,10 @@ impl CommandSessionManager {
             let preview = capture.full_preview();
             match completion {
                 Some(completion) => history.result = completion_output(&completion, preview),
-                None => history.result.output = preview.output,
+                None => {
+                    history.result.output = preview.output;
+                    history.result.log_cut_off = preview.log_cut_off;
+                }
             }
         } else {
             history
@@ -353,6 +356,7 @@ impl CommandSessionManager {
                 output: String::new(),
                 complete_log_path: preview.complete_log_path,
                 events_path: preview.events_path,
+                log_cut_off: preview.log_cut_off,
                 error: None,
             },
         };
@@ -733,9 +737,7 @@ impl CommandSession {
         let mut observation = self.observation.lock().await;
         let (mut output, next_offset) = match observation.final_output.clone() {
             Some(mut output) => {
-                let unreturned = self
-                    .read_output(&output.complete_log_path, from_offset, true, mode)
-                    .await?;
+                let unreturned = self.read_output(&output, from_offset, true, mode).await?;
                 output.output = unreturned.output;
                 (output, unreturned.next_offset)
             }
@@ -762,7 +764,7 @@ impl CommandSession {
 
     async fn read_output(
         &self,
-        log_path: &str,
+        result: &CommandOutput,
         from_offset: u64,
         final_stream: bool,
         mode: ObservationMode,
@@ -770,8 +772,14 @@ impl CommandSession {
         if matches!(mode, ObservationMode::Metadata) {
             return Ok(UnreturnedOutput::none(from_offset));
         }
+        if result.log_cut_off.is_some() {
+            return Ok(UnreturnedOutput {
+                output: self.output.lock().await.full_preview().output,
+                next_offset: from_offset,
+            });
+        }
         read_log_from(
-            Path::new(log_path),
+            Path::new(&result.complete_log_path),
             from_offset,
             self.max_output_chars,
             final_stream,
@@ -789,32 +797,20 @@ impl CommandSession {
         let preview = self.output.lock().await.preview_metadata();
         let completion = completion.or_else(|| self.completion.borrow().clone());
         let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
+        let running = completion.is_none();
+        let mut output = CommandOutput {
+            running,
+            ..completion_output(&completion.unwrap_or_default(), preview)
+        };
         let unreturned = observation
             .zero_poll_cooldown
             .observe(
                 pending_zero_poll,
                 |error| anyhow!(error.message("Command is still running.")),
-                self.read_output(
-                    &preview.complete_log_path,
-                    from_offset,
-                    completion.is_some(),
-                    mode,
-                ),
+                self.read_output(&output, from_offset, !running, mode),
             )
             .await?;
-        let running = completion.is_none();
-        let completion = completion.unwrap_or_default();
-
-        let output = CommandOutput {
-            exit_code: completion.exit_code,
-            success: completion.success,
-            running,
-            timed_out: completion.timed_out,
-            output: unreturned.output,
-            complete_log_path: preview.complete_log_path,
-            events_path: preview.events_path,
-            error: completion.error,
-        };
+        output.output = unreturned.output;
         Ok((output, unreturned.next_offset))
     }
 }
@@ -886,6 +882,8 @@ fn serialize_for_model<S: serde::Serializer>(
         output: Option<&'a str>,
         complete_log_path: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]
+        log_cut_off: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<&'a str>,
     }
 
@@ -896,6 +894,7 @@ fn serialize_for_model<S: serde::Serializer>(
         timed_out: (!output.running).then_some(output.timed_out),
         output: (!output.output.is_empty()).then_some(output.output.as_str()),
         complete_log_path: &output.complete_log_path,
+        log_cut_off: output.log_cut_off.as_deref(),
         error: output.error.as_deref(),
     }
     .serialize(serializer)
@@ -914,6 +913,8 @@ pub struct CommandOutput {
     pub complete_log_path: String,
     #[serde(default)]
     pub events_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_cut_off: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

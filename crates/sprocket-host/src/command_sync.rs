@@ -91,6 +91,9 @@ fn snapshot_value(history: &CommandHistory, running: bool) -> Value {
     if let Some(error) = &history.result.error {
         result.insert("error".into(), error.clone().into());
     }
+    if let Some(log_cut_off) = &history.result.log_cut_off {
+        result.insert("logCutOff".into(), log_cut_off.clone().into());
+    }
     Value::Object(BTreeMap::from([
         ("command".into(), history.command.clone().into()),
         ("workdir".into(), history.workdir.clone().into()),

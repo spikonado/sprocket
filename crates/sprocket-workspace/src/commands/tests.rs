@@ -570,7 +570,7 @@ async fn unavailable_log_directory_prevents_command_side_effects() {
 }
 
 #[tokio::test]
-async fn low_disk_space_prevents_command_side_effects() {
+async fn low_disk_space_runs_the_command_and_returns_its_preview() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs")).with_output_limits(
         super::CommandOutputLimits {
@@ -578,10 +578,10 @@ async fn low_disk_space_prevents_command_side_effects() {
             ..Default::default()
         },
     );
-    let error = sessions
+    let output = sessions
         .exec_command(
             WorkspaceCancellation::new(),
-            "touch ran",
+            "printf ran",
             ".",
             &default_command_shell(),
             Some(5_000),
@@ -589,9 +589,23 @@ async fn low_disk_space_prevents_command_side_effects() {
             100,
         )
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("free-space reserve"));
-    assert!(!root.join("ran").exists());
+        .unwrap();
+    assert!(output.result.success);
+    assert_eq!(output.result.output, "ran");
+    assert!(output.result.log_cut_off.is_some());
+    assert!(
+        fs::read(&output.result.complete_log_path)
+            .unwrap()
+            .is_empty()
+    );
+    let id = output.session_id.unwrap();
+    sessions.prune_completed().await;
+    let replay = sessions
+        .poll_command(WorkspaceCancellation::new(), &id, 0, output.next_offset)
+        .await
+        .unwrap();
+    assert_eq!(replay.result.output, "ran");
+    assert_eq!(replay.result.log_cut_off, output.result.log_cut_off);
     fs::remove_dir_all(root).unwrap();
 }
 

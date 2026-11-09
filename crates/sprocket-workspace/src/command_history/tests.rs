@@ -26,6 +26,7 @@ async fn interrupted_session_recovers_output_without_claiming_success() {
             output: String::new(),
             complete_log_path: preview.complete_log_path,
             events_path: preview.events_path,
+            log_cut_off: None,
             error: None,
         },
     };

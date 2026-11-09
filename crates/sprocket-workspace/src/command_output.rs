@@ -59,6 +59,7 @@ pub(crate) struct OutputPreview {
     pub output: String,
     pub complete_log_path: String,
     pub events_path: String,
+    pub log_cut_off: Option<String>,
 }
 
 pub(crate) struct CapturedOutput {
@@ -69,6 +70,7 @@ pub(crate) struct CapturedOutput {
     sequence: u64,
     log_bytes: u64,
     limits: CommandOutputLimits,
+    log_cut_off: Option<String>,
     pending_utf8: Vec<u8>,
     full_preview: PreviewBuffer,
 }
@@ -83,7 +85,8 @@ impl CapturedOutput {
             .await
             .context("failed to create command log directory")?;
         let log_root = tokio::fs::canonicalize(log_root).await?;
-        ensure_disk_reserve(log_root.clone(), 0, limits.min_free_disk_bytes).await?;
+        let log_cut_off =
+            reserve_shortfall(log_root.clone(), 0, limits.min_free_disk_bytes).await?;
         let mut builder = tempfile::Builder::new();
         builder.prefix("command-");
         #[cfg(unix)]
@@ -115,6 +118,7 @@ impl CapturedOutput {
             sequence: 0,
             log_bytes: 0,
             limits,
+            log_cut_off,
             pending_utf8: Vec::new(),
             full_preview: PreviewBuffer::new(max_chars),
         })
@@ -132,6 +136,14 @@ impl CapturedOutput {
     }
 
     pub(crate) async fn append(&mut self, channel: OutputChannel, bytes: &[u8]) -> Result<()> {
+        if self.log_cut_off.is_none() {
+            self.spool(channel, bytes).await?;
+        }
+        self.decode(bytes, false);
+        Ok(())
+    }
+
+    async fn spool(&mut self, channel: OutputChannel, bytes: &[u8]) -> Result<()> {
         let event = OutputEvent {
             sequence: self.sequence,
             timestamp_ms: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
@@ -146,7 +158,7 @@ impl CapturedOutput {
             "command output log quota of {} bytes reached",
             self.limits.max_log_bytes,
         );
-        ensure_disk_reserve(
+        self.log_cut_off = reserve_shortfall(
             Path::new(&self.log_path)
                 .parent()
                 .expect("log has a directory")
@@ -155,6 +167,9 @@ impl CapturedOutput {
             self.limits.min_free_disk_bytes,
         )
         .await?;
+        if self.log_cut_off.is_some() {
+            return Ok(());
+        }
         let log = self.log.as_mut().context("command output log is closed")?;
         let events = self
             .events
@@ -177,7 +192,6 @@ impl CapturedOutput {
             .context("failed to flush command output events")?;
         self.sequence += 1;
         self.log_bytes += next_bytes;
-        self.decode(bytes, false);
         Ok(())
     }
 
@@ -216,6 +230,7 @@ impl CapturedOutput {
             output: String::new(),
             complete_log_path: self.log_path.clone(),
             events_path: self.events_path.clone(),
+            log_cut_off: self.log_cut_off.clone(),
         }
     }
 }
@@ -287,16 +302,19 @@ fn decode_utf8(
     pending.extend_from_slice(remaining);
 }
 
-async fn ensure_disk_reserve(path: PathBuf, next_bytes: u64, reserve: u64) -> Result<()> {
+async fn reserve_shortfall(path: PathBuf, next_bytes: u64, reserve: u64) -> Result<Option<String>> {
     let available = tokio::task::spawn_blocking(move || fs4::available_space(path))
         .await
         .context("command log disk-space check failed")?
         .context("failed to read command log filesystem space")?;
-    ensure!(
-        available.saturating_sub(next_bytes) >= reserve && available >= next_bytes,
-        "command output would cross the free-space reserve of {reserve} bytes",
-    );
-    Ok(())
+    let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    Ok((available < next_bytes.saturating_add(reserve)).then(|| {
+        format!(
+            "The log was cut off because its filesystem has {:.1} MiB free, below the {:.1} MiB reserve, so completeLogPath is incomplete. `output` previews everything the command printed.",
+            mib(available),
+            mib(reserve),
+        )
+    }))
 }
 
 #[derive(Clone)]

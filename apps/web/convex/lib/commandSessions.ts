@@ -10,6 +10,7 @@ export const commandSnapshot = v.object({
 		success: v.boolean(),
 		running: v.boolean(),
 		timedOut: v.boolean(),
-		error: v.optional(v.string())
+		error: v.optional(v.string()),
+		logCutOff: v.optional(v.string())
 	})
 });

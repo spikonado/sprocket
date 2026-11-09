@@ -120,6 +120,7 @@ async fn running_history(directory: &Path) -> CommandHistory {
             output: String::new(),
             complete_log_path: output.to_string_lossy().into_owned(),
             events_path: events.to_string_lossy().into_owned(),
+            log_cut_off: None,
             error: None,
         },
     }
