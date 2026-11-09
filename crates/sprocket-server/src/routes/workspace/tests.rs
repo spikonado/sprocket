@@ -1,5 +1,6 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use sprocket_host::workspace_search::MAX_QUERY_CHARS;
 use tower::ServiceExt;
 
 use super::*;
@@ -214,7 +215,7 @@ async fn file_list_events_follow_new_files() {
         },
     );
     let lists = |listing: &serde_json::Value, path: &str| {
-        listing["paths"]
+        listing["files"]
             .as_array()
             .is_some_and(|paths| paths.iter().any(|entry| entry == path))
     };

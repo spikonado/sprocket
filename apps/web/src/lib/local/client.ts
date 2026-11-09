@@ -50,7 +50,8 @@ const workspaceSearchResultSchema = z.object({
 });
 
 const workspaceFilesResultSchema = z.object({
-	paths: z.array(z.string()),
+	directories: z.array(z.string()),
+	files: z.array(z.string()),
 	gitStatus: z.array(
 		z.object({
 			path: z.string(),

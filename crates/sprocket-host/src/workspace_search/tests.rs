@@ -38,14 +38,13 @@ fn returns_files_and_directories_as_workspace_relative_paths() {
     let index = WorkspaceSearchIndex::new();
     wait_for_scan(&index, &root);
 
-    let outcome = index.search(&root, "button").expect("search");
+    let outcome = index.search_blocking(&root, "button").expect("search");
 
     assert!(!outcome.scanning);
     assert!(
-        outcome
-            .entries
-            .iter()
-            .any(|entry| { entry.path == "src/components/button.tsx" && !entry.is_dir }),
+        outcome.entries.iter().any(|entry| {
+            entry.path == "src/components/button.tsx" && entry.kind == WorkspaceEntryKind::File
+        }),
         "expected the tsx file, got {:?}",
         outcome.entries
     );
@@ -58,23 +57,21 @@ fn matches_directories_with_mixed_search() {
     let index = WorkspaceSearchIndex::new();
     wait_for_scan(&index, &root);
 
-    let outcome = index.search(&root, "components").expect("search");
+    let outcome = index.search_blocking(&root, "components").expect("search");
 
     assert!(
         outcome
             .entries
             .iter()
-            .any(|entry| entry.path == "src/components" && entry.is_dir),
+            .any(|entry| entry.path == "src/components"
+                && entry.kind == WorkspaceEntryKind::Directory),
         "expected the directory, got {:?}",
         outcome.entries
     );
-    let empty = index.search(&root, "empty").unwrap();
-    assert!(
-        empty
-            .entries
-            .iter()
-            .any(|entry| entry.path == "empty directory" && entry.is_dir)
-    );
+    let empty = index.search_blocking(&root, "empty").unwrap();
+    assert!(empty.entries.iter().any(
+        |entry| entry.path == "empty directory" && entry.kind == WorkspaceEntryKind::Directory
+    ));
 }
 
 #[test]
@@ -107,11 +104,16 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
     let index = WorkspaceSearchIndex::new();
     wait_for_scan(&index, &root);
 
-    let outcome = index.search(&root, "").expect("search");
+    let outcome = index.search_blocking(&root, "").expect("search");
     let indexed: BTreeSet<(&str, bool)> = outcome
         .entries
         .iter()
-        .map(|entry| (entry.path.as_str(), entry.is_dir))
+        .map(|entry| {
+            (
+                entry.path.as_str(),
+                entry.kind == WorkspaceEntryKind::Directory,
+            )
+        })
         .collect();
 
     assert_eq!(
@@ -129,20 +131,18 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
         ])
     );
 
-    let listing = index.list_paths(&root).expect("list paths");
+    let listing = index.list_paths_blocking(&root).expect("list paths");
     assert!(!listing.scanning && !listing.truncated);
     assert_eq!(
-        listing
-            .paths
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>(),
+        BTreeSet::from_iter(listing.directories.iter().map(String::as_str)),
+        BTreeSet::from(["src", "src/nested"])
+    );
+    assert_eq!(
+        BTreeSet::from_iter(listing.files.iter().map(String::as_str)),
         BTreeSet::from([
             ".gitignore",
-            "src/",
             "src/main.rs",
             "src/notes.txt",
-            "src/nested/",
             "src/nested/.gitignore",
             "src/nested/keep.rs",
             "src/nested/important.tmp",
@@ -155,7 +155,7 @@ fn completion_respects_gitignore_rules_in_a_git_workspace() {
     // fff publishes git status from a background worker after the scan finishes.
     let deadline = Instant::now() + Duration::from_secs(30);
     while !index
-        .list_paths(&root)
+        .list_paths_blocking(&root)
         .unwrap()
         .git_status
         .contains(&untracked)
@@ -172,7 +172,7 @@ fn bare_at_query_offers_workspace_entries() {
     let index = WorkspaceSearchIndex::new();
 
     wait_for_scan(&index, &root);
-    let outcome = index.search(&root, "").expect("search");
+    let outcome = index.search_blocking(&root, "").expect("search");
 
     assert!(!outcome.entries.is_empty());
     assert!(!outcome.scanning);
@@ -189,7 +189,7 @@ fn results_are_capped() {
     let index = WorkspaceSearchIndex::new();
     wait_for_scan(&index, &root);
 
-    let outcome = index.search(&root, "match").expect("search");
+    let outcome = index.search_blocking(&root, "match").expect("search");
 
     assert_eq!(outcome.entries.len(), SEARCH_RESULT_LIMIT);
 }
@@ -201,9 +201,9 @@ fn cache_is_reused_and_bounded() {
     let index = WorkspaceSearchIndex::new();
     wait_for_scan(&index, &root);
 
-    index.search(&root, "main").expect("first");
+    index.search_blocking(&root, "main").expect("first");
     assert_eq!(index.cached_count(), 1);
-    let second = index.search(&root, "main").expect("second");
+    let second = index.search_blocking(&root, "main").expect("second");
     assert!(
         second
             .entries
@@ -216,7 +216,7 @@ fn cache_is_reused_and_bounded() {
     for i in 0..MAX_CACHED_WORKSPACES {
         let dir = tempfile::tempdir().expect("temp workspace");
         let path = dir.path().canonicalize().unwrap();
-        index.search(&path, "anything").expect("search");
+        index.search_blocking(&path, "anything").expect("search");
         extra.push(dir);
         assert!(
             index.cached_count() <= MAX_CACHED_WORKSPACES,
@@ -237,7 +237,7 @@ fn cached_index_reflects_created_files() {
 
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let outcome = index.search(&root, "new-file").unwrap();
+        let outcome = index.search_blocking(&root, "new-file").unwrap();
         if outcome
             .entries
             .iter()

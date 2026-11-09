@@ -337,9 +337,9 @@ export type WorkspaceSearchResult = {
 export type WorkspaceGitStatus =
 	'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'ignored';
 
-/** Directory paths end with `/`. */
 export type WorkspaceFilesResult = {
-	paths: string[];
+	directories: string[];
+	files: string[];
 	gitStatus: { path: string; status: WorkspaceGitStatus }[];
 	scanning: boolean;
 	truncated: boolean;
