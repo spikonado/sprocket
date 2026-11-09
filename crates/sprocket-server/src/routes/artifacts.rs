@@ -87,8 +87,6 @@ async fn delete_handler(
         ("repositoryKey".into(), Value::String(repository_key.into())),
         ("artifactId".into(), Value::String(artifact_id.into())),
     ]);
-    // Keep the store exclusive until Convex removes the artifact so a
-    // concurrent save cannot recreate the file from the still-visible record.
     let result = timeout(AUTHORIZE_TIMEOUT, async {
         let client = state.host.convex_client_for(&payload.user_id).await?;
         client
@@ -96,6 +94,7 @@ async fn delete_handler(
             .await
     })
     .await;
+    drop(bindings);
     match result {
         Ok(Ok(_)) => Ok(Json(())),
         Ok(Err(error)) if is_native_account_revoked(&error) => Err(ApiError::unauthorized(error)),

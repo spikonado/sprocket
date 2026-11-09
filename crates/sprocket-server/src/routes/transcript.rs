@@ -18,6 +18,8 @@ use crate::routes::events::Authorized;
 use crate::routes::session::{AuthorizedJson, UserScoped};
 use sprocket_host::transcript_watch::TranscriptWatchEvent;
 
+const RESYNC: TranscriptWatchEvent = TranscriptWatchEvent::UPDATED;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TranscriptScope {
@@ -250,14 +252,11 @@ pub(crate) async fn watch_events(
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
         .await;
-    // The first event makes a reconnecting client refresh what it missed.
-    stream::once(async { TranscriptWatchEvent::UPDATED })
+    stream::once(async { RESYNC })
         .chain(unfold(session, |mut session| async move {
             match session.receiver().recv().await {
                 Ok(event) => Some((event, session)),
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    Some((TranscriptWatchEvent::UPDATED, session))
-                }
+                Err(broadcast::error::RecvError::Lagged(_)) => Some((RESYNC, session)),
                 Err(broadcast::error::RecvError::Closed) => None,
             }
         }))

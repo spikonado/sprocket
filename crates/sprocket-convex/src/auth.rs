@@ -31,9 +31,22 @@ struct AuthSlots {
     pending_user_token: Option<Result<String, AuthSignedOut>>,
 }
 
+#[derive(Default)]
+struct FetchEpoch(AtomicU64);
+
+impl FetchEpoch {
+    fn current(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn invalidate_in_flight(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst) + 1
+    }
+}
+
 pub(crate) struct AuthState {
     generation: watch::Sender<u64>,
-    fetch_epoch: AtomicU64,
+    fetch_epoch: FetchEpoch,
     slots: Mutex<AuthSlots>,
     refresh: std::sync::Mutex<Option<JoinHandle<()>>>,
     on_apply: std::sync::OnceLock<ApplyRefresh>,
@@ -45,7 +58,7 @@ impl AuthState {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             generation: watch::channel(0).0,
-            fetch_epoch: AtomicU64::new(0),
+            fetch_epoch: FetchEpoch::default(),
             slots: Mutex::new(AuthSlots {
                 fetcher: None,
                 pending_user_token: None,
@@ -83,12 +96,16 @@ impl AuthState {
 
     pub(crate) fn shutdown(&self) {
         self.generation.send_modify(|generation| *generation += 1);
-        self.fetch_epoch.fetch_add(1, Ordering::SeqCst);
+        self.fetch_epoch.invalidate_in_flight();
         self.abort_refresh();
     }
 
     pub(crate) fn generation(&self) -> u64 {
         *self.generation.borrow()
+    }
+
+    fn is_current(&self, generation: u64, epoch: u64) -> bool {
+        self.generation() == generation && self.fetch_epoch.current() == epoch
     }
 
     pub(crate) async fn install(self: &Arc<Self>, fetcher: AuthTokenFetcher) -> u64 {
@@ -174,9 +191,9 @@ impl AuthState {
                 slots.pending_user_token.take()
             };
             let epoch = if pending.is_some() {
-                self.fetch_epoch.load(Ordering::SeqCst)
+                self.fetch_epoch.current()
             } else {
-                self.fetch_epoch.fetch_add(1, Ordering::SeqCst) + 1
+                self.fetch_epoch.invalidate_in_flight()
             };
             (slots.fetcher.clone(), pending, epoch)
         };
@@ -187,7 +204,7 @@ impl AuthState {
             let fetcher = fetcher.context("auth fetcher missing")?;
             fetcher(force_refresh).await
         };
-        if self.generation() != generation || self.fetch_epoch.load(Ordering::SeqCst) != epoch {
+        if !self.is_current(generation, epoch) {
             anyhow::bail!("stale auth callback");
         }
         result
@@ -198,7 +215,7 @@ impl AuthState {
             return;
         }
         self.abort_refresh();
-        self.fetch_epoch.fetch_add(1, Ordering::SeqCst);
+        self.fetch_epoch.invalidate_in_flight();
         let Some(delay) = refresh_delay_for_token(token, SystemTime::now()) else {
             return;
         };
@@ -241,9 +258,7 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
         if auth.generation() != generation {
             return;
         }
-        // Capture, don't bump: bumping here would make a concurrent SDK
-        // reconnect fetch look stale and skip Authenticate.
-        let epoch = auth.fetch_epoch.load(Ordering::SeqCst);
+        let epoch = auth.fetch_epoch.current();
         let fetcher = auth.slots.lock().await.fetcher.clone();
         (fetcher, epoch)
     };
@@ -262,7 +277,7 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
             tokio::time::sleep(retry_delay).await;
             retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
             let auth = weak.upgrade()?;
-            if auth.generation() != generation || auth.fetch_epoch.load(Ordering::SeqCst) != epoch {
+            if !auth.is_current(generation, epoch) {
                 return None;
             }
         }
@@ -272,8 +287,7 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
         Ok(None) => return,
         Err(_) => {
             if let Some(auth) = weak.upgrade()
-                && auth.generation() == generation
-                && auth.fetch_epoch.load(Ordering::SeqCst) == epoch
+                && auth.is_current(generation, epoch)
                 && let Some(on_failure) = auth.on_failure.get()
             {
                 on_failure(generation, recovery_timeout_error(last_error.as_deref())).await;
@@ -284,7 +298,7 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
     let Some(auth) = weak.upgrade() else {
         return;
     };
-    if auth.generation() != generation || auth.fetch_epoch.load(Ordering::SeqCst) != epoch {
+    if !auth.is_current(generation, epoch) {
         return;
     }
     auth.slots.lock().await.pending_user_token = Some(token);

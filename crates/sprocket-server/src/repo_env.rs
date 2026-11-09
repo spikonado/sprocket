@@ -3,10 +3,6 @@ use std::collections::BTreeMap;
 include!(concat!(env!("OUT_DIR"), "/repo_env.rs"));
 
 pub fn compile_time_env_var(key: &str) -> Option<&'static str> {
-    if !key.starts_with("PUBLIC_") {
-        return None;
-    }
-
     COMPILE_TIME_ENV
         .iter()
         .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
@@ -34,23 +30,9 @@ pub fn repo_env_vars() -> BTreeMap<String, String> {
 ///
 /// Must run during single-threaded startup before other threads read the environment.
 pub unsafe fn load_repo_env() {
-    apply_env_entries(COMPILE_TIME_ENV);
-}
-
-fn apply_env_entries<K, V>(entries: &[(K, V)])
-where
-    K: AsRef<str>,
-    V: AsRef<str>,
-{
-    for (key, value) in entries {
-        if !key.as_ref().starts_with("PUBLIC_") {
-            continue;
-        }
-        if std::env::var(key.as_ref()).is_err() {
-            // SAFETY: callers guarantee single-threaded startup.
-            unsafe {
-                std::env::set_var(key.as_ref(), value.as_ref());
-            }
+    for (key, value) in COMPILE_TIME_ENV {
+        if std::env::var_os(key).is_none() {
+            unsafe { std::env::set_var(key, value) };
         }
     }
 }

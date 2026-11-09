@@ -24,7 +24,7 @@ async fn fixture() -> (tempfile::TempDir, AppState, String) {
         native_auth,
         directory.path().to_owned(),
         true,
-        sprocket_host::package_update::PackageUpdateManager::from_env(),
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
     (directory, state, session)
 }

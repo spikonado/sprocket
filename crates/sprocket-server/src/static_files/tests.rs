@@ -4,7 +4,7 @@ use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceExt;
 
-use super::{resolve_static_file, static_router};
+use super::{IMMUTABLE_ASSETS_PREFIX, resolve_static_file, static_router};
 
 const INDEX: &str = "index-shell";
 const PAIR: &str = "pair-page";
@@ -126,6 +126,18 @@ async fn successful_static_responses_set_cache_control() {
             "{path}"
         );
     }
+}
+
+#[test]
+fn vite_emits_assets_under_the_immutable_prefix() {
+    let vite_config = include_str!("../../../../apps/web/vite.config.ts");
+    let assets_dir = IMMUTABLE_ASSETS_PREFIX.trim_matches('/');
+    assert!(vite_config.contains(&format!("const IMMUTABLE_ASSETS_DIR = '{assets_dir}';")));
+    assert!(
+        vite_config
+            .lines()
+            .any(|line| line.trim() == "assetsDir: IMMUTABLE_ASSETS_DIR")
+    );
 }
 
 #[tokio::test]

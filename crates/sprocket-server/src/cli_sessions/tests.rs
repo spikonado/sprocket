@@ -26,11 +26,14 @@ async fn temporary_server_waits_for_all_clients_and_runs() {
     lifetime.connect(&second, "b").await.unwrap();
     let run = host.run_guard().unwrap();
     lifetime.release(&first, "a").await.unwrap();
-    assert!(!lifetime.tick(Instant::now()).await);
+    lifetime.tick(Instant::now()).await;
+    assert!(!host.is_stopping());
     lifetime.release(&second, "b").await.unwrap();
-    assert!(!lifetime.tick(Instant::now()).await);
+    lifetime.tick(Instant::now()).await;
+    assert!(!host.is_stopping());
     drop(run);
-    assert!(lifetime.tick(Instant::now()).await);
+    lifetime.tick(Instant::now()).await;
+    assert!(host.is_stopping());
     assert!(lifetime.connect(&first, "a").await.is_err());
 }
 
@@ -64,8 +67,8 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
         let session_id = started.session_id.unwrap();
         lifetime.release(&client_id, "client").await.unwrap();
         drop(run_guard);
-        assert!(!lifetime.tick(Instant::now()).await);
-        assert!(!host.shutdown.is_cancelled());
+        lifetime.tick(Instant::now()).await;
+        assert!(!host.is_stopping());
         if terminate {
             assert!(sessions.terminate_command(&session_id).await);
         } else {
@@ -77,8 +80,8 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
             .unwrap();
         assert!(!finished.result.running);
         assert_eq!(finished.result.success, !terminate);
-        assert!(lifetime.tick(Instant::now()).await);
-        assert!(host.shutdown.is_cancelled());
+        lifetime.tick(Instant::now()).await;
+        assert!(host.is_stopping());
         sessions.stop_all().await;
     }
 }
@@ -113,7 +116,8 @@ async fn failed_command_spawn_releases_temporary_server_guard() {
     assert!(error.to_string().contains("failed to start shell"));
     assert!(sessions.running_commands().await.is_empty());
     lifetime.release(&client_id, "client").await.unwrap();
-    assert!(lifetime.tick(Instant::now()).await);
+    lifetime.tick(Instant::now()).await;
+    assert!(host.is_stopping());
 }
 
 #[tokio::test]
@@ -125,7 +129,8 @@ async fn lost_clients_end_their_run_and_auth_session_but_not_the_shared_server()
     assert!(auth.session_state(Some("a")).await.authenticated);
     let client = lifetime.client(&id, "a").unwrap();
     assert!(lifetime.client(&id, "b").is_err());
-    assert!(!lifetime.tick(Instant::now() + CLIENT_GRACE).await);
+    lifetime.tick(Instant::now() + CLIENT_GRACE).await;
+    assert!(!host.is_stopping());
     assert!(client.cancellation.is_cancelled());
     assert!(!auth.session_state(Some("a")).await.authenticated);
     assert!(lifetime.client(&id, "a").is_err());

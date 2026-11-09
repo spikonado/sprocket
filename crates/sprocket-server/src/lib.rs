@@ -140,6 +140,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
         browser_sessions: Some(
             Arc::clone(&auth) as Arc<dyn sprocket_host::native_auth::BrowserSessions>
         ),
+        temporary: options.temporary,
     })?;
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
@@ -235,7 +236,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
                 _ = async {
                     loop {
                         tokio::time::sleep(Duration::from_millis(500)).await;
-                        if cli_sessions.tick(std::time::Instant::now()).await { break; }
+                        cli_sessions.tick(std::time::Instant::now()).await;
+                        if lifetime.is_stopping() { break; }
                     }
                 } => {},
             }

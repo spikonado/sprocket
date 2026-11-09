@@ -25,7 +25,7 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         native_auth,
         root.clone(),
         true,
-        sprocket_host::package_update::PackageUpdateManager::from_env(),
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
     let sessions = state
         .host

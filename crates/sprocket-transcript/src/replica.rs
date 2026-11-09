@@ -139,25 +139,28 @@ impl WorkReplica {
             .as_str()
             .context("row kind missing")?
             .to_owned();
-        let previous: Option<String> = db
-            .query_row(
-                "SELECT body FROM rows WHERE id=? AND body IS NOT NULL",
-                [&id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        value["revision"] = json!(0);
-        if let Some(previous) = previous {
-            let mut previous: Value = serde_json::from_str(&previous)?;
-            previous["revision"] = json!(0);
-            if previous == value {
-                return Ok(());
-            }
-        }
         value["revision"] = json!(generation);
         db.execute("INSERT INTO rows VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET sequence=excluded.sequence, kind=excluded.kind, generation=excluded.generation, body=excluded.body",
             params![id, sequence, kind, generation, value.to_string()])?;
         Ok(())
+    }
+
+    fn row_unchanged(db: &Connection, value: &Value) -> anyhow::Result<bool> {
+        let previous: Option<String> = db
+            .query_row(
+                "SELECT body FROM rows WHERE id=? AND body IS NOT NULL",
+                [value["id"].as_str().context("row ID missing")?],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(previous) = previous else {
+            return Ok(false);
+        };
+        let mut previous: Value = serde_json::from_str(&previous)?;
+        if let Some(previous) = previous.as_object_mut() {
+            previous.remove("revision");
+        }
+        Ok(previous == *value)
     }
 
     fn delete_row(db: &Connection, id: &str, generation: i64) -> anyhow::Result<()> {
@@ -173,6 +176,7 @@ impl WorkReplica {
         thread_id: &str,
         key: &str,
         generation: i64,
+        details_changed: bool,
     ) -> anyhow::Result<()> {
         let index = ReadIndex(db);
         let items = index.page(key, -1, i64::MAX, false, u32::MAX)?;
@@ -225,15 +229,12 @@ impl WorkReplica {
                 }
             }
         }
-        let pending_tools = items
-            .iter()
-            .filter(|item| item.call_id.is_some() && item.result_part.is_none())
-            .count();
-        // The UI reloads open details when the row revision changes, so detail-only changes must change the row.
         let row = json!({"id":key,"threadId":thread_id,"runId":run_id,"sequence":first.sequence(),"kind":"work",
-            "closed":closed,"toolCounts":index.tool_counts(key)?,"unpersistedToolCallIds":index.unpersisted_tool_call_ids(key)?,
-            "itemCount":items.len(),"pendingTools":pending_tools});
-        Self::put_row(db, row, generation)
+            "closed":closed,"toolCounts":index.tool_counts(key)?,"unpersistedToolCallIds":index.unpersisted_tool_call_ids(key)?});
+        if details_changed || !Self::row_unchanged(db, &row)? {
+            Self::put_row(db, row, generation)?;
+        }
+        Ok(())
     }
 
     pub fn save_parts(&mut self, thread_id: &str, parts: &[TranscriptPart]) -> anyhow::Result<()> {
@@ -266,7 +267,8 @@ impl WorkReplica {
                 params![part.number, part.source_key, part.run_id, body],
             )?;
             ReadIndex(&tx).insert_part(part)?;
-            let mut affected = ReadIndex(&tx).affected_sections(part.number)?;
+            let with_new_details = ReadIndex(&tx).affected_sections(part.number)?;
+            let mut affected = with_new_details.clone();
             affected.extend(
                 tx.prepare(
                     "SELECT DISTINCT section FROM source_refs WHERE run=? AND section IS NOT NULL",
@@ -313,7 +315,8 @@ impl WorkReplica {
                 }
             }
             for section in affected {
-                Self::rebuild_section(&tx, thread_id, &section, generation)?;
+                let details_changed = with_new_details.contains(&section);
+                Self::rebuild_section(&tx, thread_id, &section, generation, details_changed)?;
             }
         }
         let mut prefix: u32 = read_state(&tx, "downloadedPrefix")?.unwrap_or(0);
