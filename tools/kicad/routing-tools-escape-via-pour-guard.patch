@@ -1,0 +1,163 @@
+diff --git a/py_router/plane_pad_tap.py b/py_router/plane_pad_tap.py
+index 64d3113b..eb6780c5 100644
+--- a/py_router/plane_pad_tap.py
++++ b/py_router/plane_pad_tap.py
+@@ -1295,15 +1295,17 @@ def try_tap_pad(
+     # A net-filtered keep-out that forbids the net's vias (net_keepouts): this
+     # search places on maps of its own, which the per-route region stamp never
+     # reaches, so skip the sites inside such a region and go on to the next
+-    # one. tap_pad_with_escalation still audits the result, which also covers
++    # one. The pour islands this run must not cut (#1260) likewise.
++    # tap_pad_with_escalation still audits the result, which also covers
+     # the via -> pad trace and the edge clamp's move.
+     from net_keepouts import via_site_filter
+-    _ko_ok = via_site_filter(pcb_data, net_id, via_size)
+-    if _ko_ok is not None:
+-        _zone_ok = zone_filter
+-
++    from pour_guard import barrier_via_site_filter
++    _site_oks = [f for f in (via_site_filter(pcb_data, net_id, via_size),
++                             barrier_via_site_filter(config, pcb_data, via_size),
++                             zone_filter) if f is not None]
++    if _site_oks:
+         def zone_filter(x, y):
+-            return _ko_ok(x, y) and (_zone_ok is None or _zone_ok(x, y))
++            return all(ok(x, y) for ok in _site_oks)
+
+     ghost_pref = None
+     if corridor_ghosts is not None:
+@@ -1422,6 +1424,11 @@ def _tap_in_net_keepout(pcb_data: PCBData, net_id: int, result: TapResult) -> Li
+     if not getattr(pcb_data, '_net_keepouts', None):
+         return []
+     from net_keepouts import audit
++    segs, vias = _tap_copper(net_id, result)
++    return audit(pcb_data, segs, vias) or []
++
++
++def _tap_copper(net_id: int, result: TapResult) -> Tuple[List[Segment], List[Via]]:
+     vias = []
+     if result.via is not None:
+         v = result.via
+@@ -1431,7 +1438,16 @@ def _tap_in_net_keepout(pcb_data: PCBData, net_id: int, result: TapResult) -> Li
+                     end_x=sd['end'][0], end_y=sd['end'][1],
+                     width=sd['width'], layer=sd['layer'], net_id=net_id)
+             for sd in (result.segments or [])]
+-    return audit(pcb_data, segs, vias) or []
++    return segs, vias
++
++
++def _tap_cuts_barrier(config: GridRouteConfig, pcb_data: PCBData, net_id: int,
++                      result: TapResult) -> Optional[str]:
++    """The net of a pour barrier (#1260) a tap's new copper enters, else None."""
++    if not getattr(config, 'pour_barriers', None):
++        return None
++    from pour_guard import barrier_entered
++    return barrier_entered(config, pcb_data, *_tap_copper(net_id, result))
+
+
+ def tap_pad_with_escalation(
+@@ -1473,6 +1489,7 @@ def tap_pad_with_escalation(
+     """
+     last_failure = TapResult(success=False)
+     ko_refused: List[Dict] = []     # the last rung a net keep-out refused
++    barrier_refused: Optional[str] = None
+     if try_default:
+         result = try_tap_pad(
+             pad, pad_layer, net_id, pcb_data, config, max_search_radius,
+@@ -1486,6 +1503,10 @@ def tap_pad_with_escalation(
+             _ko = _tap_in_net_keepout(pcb_data, net_id, result)
+             if _ko:
+                 ko_refused, result = _ko, TapResult(success=False)
++        if result.success:
++            _cut = _tap_cuts_barrier(config, pcb_data, net_id, result)
++            if _cut:
++                barrier_refused, result = _cut, TapResult(success=False)
+         if result.success:
+             result.params_label = 'default'
+             result.clearance_used = config.clearance
+@@ -1550,6 +1571,10 @@ def tap_pad_with_escalation(
+                 _ko = _tap_in_net_keepout(pcb_data, net_id, result)
+                 if _ko:
+                     ko_refused, result = _ko, TapResult(success=False)
++            if result.success:
++                _cut = _tap_cuts_barrier(fine_config, pcb_data, net_id, result)
++                if _cut:
++                    barrier_refused, result = _cut, TapResult(success=False)
+             if result.success:
+                 result.params_label = 'fine'
+                 result.clearance_used = fine_config.clearance
+@@ -1565,6 +1590,9 @@ def tap_pad_with_escalation(
+               f"is inside net keep-out(s) " + '; '.join(
+                   f"{r['region']}: {r['net']} ({r['tracks']} track(s), {r['vias']} via(s))"
+                   for r in ko_refused))
++    if barrier_refused:
++        print(f"    tap of {pad.component_ref}.{pad.pad_number} refused: its copper "
++              f"would cut the {barrier_refused} pour (#1260)")
+     # Return the last failure so a rip-up caller sees its via_blocked /
+     # blocked_cells diagnostics.
+     return last_failure
+diff --git a/py_router/pour_guard.py b/py_router/pour_guard.py
+index 5a222066..c0ab829d 100644
+--- a/py_router/pour_guard.py
++++ b/py_router/pour_guard.py
+@@ -407,6 +407,60 @@ def install_pour_barriers(config, pcb_data, routed_ids, net_names,
+     return report
+
+
++def _barrier_keepouts(config, pcb_data):
++    """[(net, layer, polygons, bbox, clearance)] of the `config.pour_barriers`
++    islands, at the clearance `add_pour_barrier_obstacles` stamps."""
++    name_to_id = {n.name: nid for nid, n in (pcb_data.nets or {}).items()}
++    rows = []
++    for b in getattr(config, 'pour_barriers', None) or ():
++        polys = [p for p in b.get('polygons') or () if p]
++        if not polys:
++            continue
++        nid = name_to_id.get(b.get('net'))
++        pair = (config.obstacle_clearance(nid) if nid is not None
++                else config.clearance)
++        bbox = (min(x for p in polys for x, _ in p), min(y for p in polys for _, y in p),
++                max(x for p in polys for x, _ in p), max(y for p in polys for _, y in p))
++        rows.append((b.get('net'), b.get('layer'), polys, bbox,
++                     max(pair, b.get('clearance') or 0.0)))
++    return rows
++
++
++def _via_enters(row, x, y, size) -> bool:
++    from check_drc import _point_to_polys_distance
++    _net, _layer, polys, (x0, y0, x1, y1), clear = row
++    reach = clear + size / 2
++    if not (x0 - reach <= x <= x1 + reach and y0 - reach <= y <= y1 + reach):
++        return False
++    return _point_to_polys_distance(x, y, polys) < reach - 1e-6
++
++
++def barrier_via_site_filter(config, pcb_data, via_size: float):
++    """An (x, y) -> bool predicate: may a through via sit at (x, y) outside
++    every pour barrier's keep-out? None when the run has no barrier. For the
++    pad taps' via search, which `add_pour_barrier_obstacles` never reaches."""
++    rows = _barrier_keepouts(config, pcb_data)
++    if not rows:
++        return None
++    return lambda x, y: not any(_via_enters(r, x, y, via_size) for r in rows)
++
++
++def barrier_entered(config, pcb_data, segments, vias) -> Optional[str]:
++    """The net of the first pour barrier whose keep-out one of `segments` or
++    `vias` (through vias) enters, else None."""
++    from check_drc import _segment_to_polys_distance
++    for row in _barrier_keepouts(config, pcb_data):
++        net, layer, polys, _bbox, clear = row
++        if any(_via_enters(row, v.x, v.y, v.size) for v in vias):
++            return net
++        for s in segments:
++            if s.layer == layer and _segment_to_polys_distance(
++                    s.start_x, s.start_y, s.end_x, s.end_y,
++                    polys)[0] < clear + s.width / 2 - 1e-6:
++                return net
++    return None
++
++
+ # ------------------------------------------------------------------ the audit
+ def snapshot_copper(pcb_data):
+     """Value copies of the board's tracks and vias, taken before the run
