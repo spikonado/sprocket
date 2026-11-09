@@ -141,6 +141,7 @@ async fn stub_session(root: &Path) -> StubSession {
             workdir: root.to_string_lossy().into_owned(),
             started_at: 0,
             control,
+            accepts_input: true,
             stdin,
             completion: completion_rx,
             output: output.clone(),
