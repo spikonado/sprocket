@@ -64,10 +64,10 @@ pub(super) async fn supervise_command(
     lifetime_guard: Option<Box<dyn Send + Sync>>,
     history: (PathBuf, CommandHistory),
     changes: Option<watch::Sender<()>>,
+    oom_kills_at_start: Option<u64>,
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
-    let oom_kills_at_start = oom_kill_count().await;
     let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut capture_finished = false;
@@ -95,12 +95,10 @@ pub(super) async fn supervise_command(
             },
             _ = poll.tick() => match child.try_wait() {
                 Ok(Some(status)) => {
-                    let error = match stop_remaining_processes(process_id) {
-                        Err(stop_error) => Some(stop_error.to_string()),
-                        Ok(()) if status.success() => None,
-                        Ok(()) => oom_kills_since(oom_kills_at_start).await,
-                    };
-                    break (Some(status), false, error);
+                    if let Err(stop_error) = stop_remaining_processes(process_id) {
+                        break (Some(status), false, Some(stop_error.to_string()));
+                    }
+                    break (Some(status), false, None);
                 }
                 Ok(None) => {}
                 Err(wait_error) => {
@@ -120,6 +118,11 @@ pub(super) async fn supervise_command(
     if let Err(capture_error) = output.lock().await.finish().await {
         error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));
     }
+    if status.is_none_or(|status| !status.success())
+        && let Some(note) = oom_kills_since(oom_kills_at_start).await
+    {
+        append_error(&mut error, note);
+    }
     let mut completed = CommandCompletion {
         exit_code: status.as_ref().and_then(ExitStatus::code),
         success: status.is_some_and(|status| status.success()) && !timed_out && error.is_none(),
@@ -133,11 +136,10 @@ pub(super) async fn supervise_command(
         Ok(()) => completed.saved = true,
         Err(error) => {
             completed.success = false;
-            let message = format!("failed to save command result: {error:#}");
-            completed.error = Some(match completed.error {
-                Some(error) => format!("{error}; {message}"),
-                None => message,
-            });
+            append_error(
+                &mut completed.error,
+                format!("failed to save command result: {error:#}"),
+            );
         }
     }
     stdin_task.abort();
@@ -145,6 +147,13 @@ pub(super) async fn supervise_command(
     drop(lifetime_guard);
     let _ = completion.send(Some(completed));
     signal_change(&changes);
+}
+
+fn append_error(error: &mut Option<String>, message: String) {
+    *error = Some(match error.take() {
+        Some(error) => format!("{error}; {message}"),
+        None => message,
+    });
 }
 
 async fn wait_for_timeout(timeout: Option<Duration>) {
@@ -178,7 +187,7 @@ pub(super) fn prefer_as_oom_victim(command: &mut Command) {
 
 /// The server's cgroup holds other processes, so cgroup v2 can't enable the memory controller
 /// for a command cgroup. This machine-wide Linux count is the only OOM kill record left.
-async fn oom_kill_count() -> Option<u64> {
+pub(super) async fn oom_kill_count() -> Option<u64> {
     let vmstat = tokio::fs::read_to_string("/proc/vmstat").await.ok()?;
     vmstat
         .lines()

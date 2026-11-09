@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use self::process::{
     CommandCompletion, StdinRequest, build_shell_command, capture_pipes, completion_output,
-    signal_change, supervise_command, write_command_input,
+    oom_kill_count, signal_change, supervise_command, write_command_input,
 };
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
@@ -322,6 +322,7 @@ impl CommandSessionManager {
         process.process_group(0);
         #[cfg(target_os = "linux")]
         self::process::prefer_as_oom_victim(&mut process);
+        let oom_kills_at_start = oom_kill_count().await;
 
         let mut sessions = self.sessions.lock().await;
         cancellation.ensure_active()?;
@@ -405,6 +406,7 @@ impl CommandSessionManager {
             lifetime_guard,
             (history_path, history),
             self.changes.clone(),
+            oom_kills_at_start,
         ));
 
         let session = Arc::new(CommandSession {
