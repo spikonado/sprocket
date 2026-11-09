@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
-use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
+use sprocket_workspace::{CommandHistory, CommandOutput, CommandOutputLimits, history_path};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::Host;
@@ -408,7 +408,7 @@ pub async fn fetch(
         machine_id: remote.machine_id,
         command: remote.command,
         workdir: remote.workdir,
-        max_output_chars: 20_000,
+        max_output_chars: CommandOutputLimits::default().max_output_chars,
         result: CommandOutput {
             complete_log_path: output.to_string_lossy().into_owned(),
             events_path: events.to_string_lossy().into_owned(),
