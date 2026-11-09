@@ -590,18 +590,16 @@ if (!buildChanged && pinned.kicad.version === build.version) {
 
 const notes = releaseNotes(build, kipyCommit, routingToolsRelease, buildCommit);
 
-let version = nextVersion(pinned.version, buildChanged ? 'minor' : 'patch');
-
-let release = publishedRelease(`${TAG_PREFIX}${version}`);
-
-// An unmerged update's version may already be installed for testing, so other contents get the
-// next free version instead of replacing it.
-while (release && release.body?.trim() !== notes) {
-	version = nextVersion(version, 'patch');
-	release = publishedRelease(`${TAG_PREFIX}${version}`);
-}
-
+const version = nextVersion(pinned.version, buildChanged ? 'minor' : 'patch');
 const tag = `${TAG_PREFIX}${version}`;
+
+let release = publishedRelease(tag);
+
+// Versions above the pinned one belong to the unmerged update PR, so its release is rebuilt in place.
+if (release && release.body?.trim() !== notes) {
+	run('gh', ['release', 'delete', tag, '--repo', REPOSITORY, '--cleanup-tag', '--yes']);
+	release = undefined;
+}
 
 release ??= await createRelease(tag, notes, build, kipyCommit, routingToolsRelease);
 
