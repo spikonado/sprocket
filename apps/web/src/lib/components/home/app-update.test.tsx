@@ -145,6 +145,19 @@ it('updates Sprocket and connectors together and restarts only after both finish
 	expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
+it('installs outdated connectors before restarting into an installed update', async () => {
+	const fetcher = vi.fn();
+	vi.stubGlobal('fetch', fetcher);
+	const localApi = connectorApi();
+	mount(false, false, localApi)({ ...available, status: 'installed' });
+	const button = await screen.findByRole('button', { name: 'Update available' });
+
+	await act(async () => fireEvent.click(button));
+	expect(screen.queryByRole('dialog')).toBeNull();
+	expect(localApi.installOrUpdateConnector).toHaveBeenCalledWith('user-test', 'kicad');
+	expect(fetcher).not.toHaveBeenCalled();
+});
+
 it('restarts once the update installs when automatic continuation is on', async () => {
 	const restarted = Promise.withResolvers<Response>();
 

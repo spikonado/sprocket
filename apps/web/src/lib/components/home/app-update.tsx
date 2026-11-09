@@ -55,7 +55,9 @@ export default function AppUpdate({
 	const updateState = tracked?.state ?? null;
 	const sprocketLabel = updateState ? updateLabel(updateState) : null;
 	const outdated = connectors?.filter((connector) => connector.updateAvailable) ?? [];
-	const connectorsInstalling = outdated.some((connector) => connector.state === 'installing');
+	const pending = outdated.filter((connector) => connector.state !== 'installing');
+	const updatesInstalling = outdated.length > pending.length;
+	const connectorsInstalling = connectors?.some((connector) => connector.state === 'installing');
 	const connectorError = outdated.find((connector) => connector.error)?.error ?? null;
 
 	const sprocketWorking =
@@ -63,6 +65,8 @@ export default function AppUpdate({
 
 	const working = busy || sprocketWorking || connectorsInstalling;
 	const restartReady = updateState?.status === 'installed' || updateState?.status === 'downloaded';
+	const restartAwaitsConnectors = restartReady && pending.length > 0;
+	const restartNow = restartReady && !restartAwaitsConnectors;
 
 	const requestError =
 		failedRequest && failedRequest.status === (updateState?.status ?? null)
@@ -79,11 +83,13 @@ export default function AppUpdate({
 		: null;
 
 	const label =
-		busy && restartReady
+		busy && restartNow
 			? 'Restarting Sprocket...'
-			: connectorsInstalling && !sprocketWorking
+			: updatesInstalling && !sprocketWorking
 				? 'Installing update…'
-				: (sprocketLabel ?? connectorLabel);
+				: restartAwaitsConnectors
+					? connectorLabel
+					: (sprocketLabel ?? connectorLabel);
 
 	const title = [
 		sprocketLabel && updateState?.version ? `Sprocket ${updateState.version}` : null,
@@ -132,14 +138,14 @@ export default function AppUpdate({
 	}, []);
 
 	useEffect(() => {
-		if (!restartReady || working || !continuesAgents || !tracked?.restartWhenReady) return;
+		if (!restartNow || working || !continuesAgents || !tracked?.restartWhenReady) return;
 		void update();
 	});
 
 	async function updateSprocket(startedRevision: number) {
-		const updates = window.sprocketDesktopBridge?.updates;
-
 		if (!updateState || !sprocketLabel) return;
+
+		const updates = window.sprocketDesktopBridge?.updates;
 
 		if (updateState.method === 'desktop' && updates) {
 			const next = await (updateState.status === 'downloaded'
@@ -162,7 +168,7 @@ export default function AppUpdate({
 		if (!userId || !localApi) return;
 
 		await Promise.all(
-			outdated.map(async (connector) =>
+			pending.map(async (connector) =>
 				replace(await localApi.installOrUpdateConnector(userId, connector.id))
 			)
 		);
@@ -171,14 +177,14 @@ export default function AppUpdate({
 	async function update(confirmed = false) {
 		if (!label || working) return;
 
-		if (restartReady && !confirmed && !continuesAgents) {
+		if (restartNow && !confirmed && !continuesAgents) {
 			setConfirmRestart(true);
 
 			return;
 		}
 
 		setConfirmRestart(false);
-		setTracked(withRestartWhenReady(!restartReady && continuesAgents));
+		setTracked(withRestartWhenReady(!restartNow && continuesAgents));
 
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
@@ -186,8 +192,8 @@ export default function AppUpdate({
 
 		try {
 			await Promise.all([
-				updateSprocket(startedRevision),
-				restartReady ? undefined : updateConnectors()
+				restartAwaitsConnectors ? undefined : updateSprocket(startedRevision),
+				updateConnectors()
 			]);
 		} catch (error) {
 			setTracked(withRestartWhenReady(false));
@@ -210,14 +216,14 @@ export default function AppUpdate({
 				type="button"
 				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
 				disabled={working}
-				data-ph-capture-attribute-action={restartReady ? 'restart_to_update' : 'install_update'}
+				data-ph-capture-attribute-action={restartNow ? 'restart_to_update' : 'install_update'}
 				onClick={() => void update()}
 				title={title || undefined}
 				aria-busy={working}
 			>
 				{working ? (
 					<LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-				) : restartReady ? (
+				) : restartNow ? (
 					<RefreshCw className="size-4 shrink-0" aria-hidden="true" />
 				) : (
 					<Download className="size-4 shrink-0" aria-hidden="true" />

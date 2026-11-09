@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
-use reqwest::header::ACCEPT;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
@@ -26,6 +25,7 @@ use crate::tool_install::{
 const REF_VARIABLE: &str = "SPROCKET_KICAD_CONNECTOR_REF";
 const COMMITS_URL: &str = "https://api.github.com/repos/spikonado/sprocket/commits";
 const FILES_URL: &str = "https://raw.githubusercontent.com/spikonado/sprocket";
+const TOOL_DIR: &str = "tools/kicad";
 const RELEASES_FILE: &str = "releases.json";
 const REQUIREMENTS_FILE: &str = "requirements.txt";
 const KIPY_API_FILE: &str = "kipy-api.py";
@@ -88,7 +88,6 @@ struct RoutingTools {
     platforms: BTreeMap<String, Asset>,
 }
 
-/// The release `main` pins, with the commit its other files are read from.
 struct Latest {
     version: String,
     commit: String,
@@ -98,6 +97,11 @@ struct Latest {
 struct Check {
     at: Instant,
     latest: Result<Arc<Latest>, String>,
+}
+
+#[derive(Deserialize)]
+struct Commit {
+    sha: String,
 }
 
 enum Activity {
@@ -189,16 +193,19 @@ impl KiCadConnector {
 
     async fn fetch_latest(&self) -> anyhow::Result<Latest> {
         let reference = std::env::var(REF_VARIABLE).unwrap_or_else(|_| "main".into());
-        let commit = self
-            .client
-            .get(format!("{COMMITS_URL}/{reference}"))
-            .header(ACCEPT, "application/vnd.github.sha")
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
+        // The scripts and requirements must come from the commit that released the pin, since
+        // later commits can change them before the next release.
+        let commits = self
+            .fetch_text(&format!(
+                "{COMMITS_URL}?sha={reference}&path={TOOL_DIR}/{RELEASES_FILE}&per_page=1"
+            ))
             .await?;
-        let commit = commit.trim().to_owned();
+        let commits: Vec<Commit> = serde_json::from_str(&commits)?;
+        let commit = commits
+            .into_iter()
+            .next()
+            .context("GitHub found no KiCad connector release")?
+            .sha;
         let release: Release =
             serde_json::from_str(&self.fetch_file(&commit, RELEASES_FILE).await?)?;
         Ok(Latest {
@@ -209,9 +216,14 @@ impl KiCadConnector {
     }
 
     async fn fetch_file(&self, commit: &str, name: &str) -> anyhow::Result<String> {
+        self.fetch_text(&format!("{FILES_URL}/{commit}/{TOOL_DIR}/{name}"))
+            .await
+    }
+
+    async fn fetch_text(&self, url: &str) -> anyhow::Result<String> {
         Ok(self
             .client
-            .get(format!("{FILES_URL}/{commit}/tools/kicad/{name}"))
+            .get(url)
             .send()
             .await?
             .error_for_status()?
