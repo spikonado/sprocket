@@ -54,7 +54,7 @@
       "devDependencies": {
         "@astrojs/check": "0.9.12",
         "@astrojs/ts-plugin": "^1.10.7",
-        "@posthog/cli": "^0.18.12",
+        "@posthog/cli": "^0.19.0",
         "@posthog/rollup-plugin": "^1.6.2",
         "@types/bun": "^1.3.14",
         "@types/react": "^19.3.0",
@@ -110,7 +110,7 @@
       },
       "devDependencies": {
         "@edge-runtime/vm": "^5.0.0",
-        "@posthog/cli": "^0.18.12",
+        "@posthog/cli": "^0.19.0",
         "@posthog/rollup-plugin": "^1.6.2",
         "@sprocket/typescript-config": "workspace:*",
         "@tailwindcss/vite": "^4.2.4",
@@ -682,7 +682,7 @@
 
     "@posthog/browser-common": ["@posthog/browser-common@0.9.11", "", { "dependencies": { "@posthog/core": "^1.60.1", "@posthog/types": "^1.416.0", "preact": "^10.29.3" } }, "sha512-ZCwJIgiDBRoEAlrlYxaIIIAUfITmBDpWDQJp+IZmAcTyvJka5/ebEKu8uV+jSSA/RhpvDKKte1WmhLUbkIWQjA=="],
 
-    "@posthog/cli": ["@posthog/cli@0.18.12", "", { "dependencies": { "detect-libc": "^2.1.2" }, "bin": { "posthog-cli": "run-posthog-cli.js" } }, "sha512-/eT9riWOkBb9uwsdOxQgW3fan/T3hwT8rvwZCzPl3DAgSBEhzpP59usD0fyFS++X2967E5AQe74nrBw1rywf6A=="],
+    "@posthog/cli": ["@posthog/cli@0.19.0", "", { "dependencies": { "detect-libc": "^2.1.2" }, "hasInstallScript": true, "bin": { "posthog-cli": "run-posthog-cli.js" } }, "sha512-2fh0UepeCIjyW9MJR0lpMfxaGIgQMj30nI8Nn+wR78Rghk9kJMolxwmh2XaQkOKws4IpuV3y3G2dF2BW8D22iQ=="],
 
     "@posthog/convex": ["@posthog/convex@2.1.8", "", { "dependencies": { "@posthog/core": "^1.60.1", "posthog-node": "^5.57.1" }, "peerDependencies": { "convex": "^1.39.0" } }, "sha512-K8R1SZGBRRlDQDhIY6eTrnt0u3BbggwI1KDazV/1HLJUY/93Ajjj7gSDDMMt9GQ5wSDb/A5p620Q30CtsSYZ1Q=="],
 
@@ -2543,6 +2543,8 @@
     "@mermaid-lint/core/mermaid": ["mermaid@11.16.1", "", { "dependencies": { "@braintree/sanitize-url": "^7.1.2", "@iconify/utils": "^3.0.2", "@mermaid-js/parser": "^1.2.0", "@types/d3": "^7.4.3", "@upsetjs/venn.js": "^2.0.0", "cytoscape": "^3.33.3", "cytoscape-cose-bilkent": "^4.1.0", "cytoscape-fcose": "^2.2.0", "d3": "^7.9.0", "d3-sankey": "^0.12.3", "dagre-d3-es": "7.0.14", "dayjs": "^1.11.20", "dompurify": "^3.3.3", "es-toolkit": "^1.45.1", "katex": "^0.16.45", "khroma": "^2.1.0", "marked": "^16.3.0", "roughjs": "^4.6.6", "stylis": "^4.3.6", "ts-dedent": "^2.2.0", "uuid": "^11.1.0 || ^12 || ^13 || ^14.0.0" } }, "sha512-TQsq6u22fAn3rek5VOubrhKPo1g5hwC3FXUN9hiyupTckcYiGuuKGkNQrKYwGJkXUxZdojwRG46gsSCFZMDp4g=="],
 
     "@pierre/trees/preact": ["preact@11.0.0-beta.0", "", {}, "sha512-IcODoASASYwJ9kxz7+MJeiJhvLriwSb4y4mHIyxdgaRZp6kPUud7xytrk/6GZw8U3y6EFJaRb5wi9SrEK+8+lg=="],
+
+    "@posthog/rollup-plugin/@posthog/cli": ["@posthog/cli@0.18.12", "", { "dependencies": { "detect-libc": "^2.1.2" }, "bin": { "posthog-cli": "run-posthog-cli.js" } }, "sha512-/eT9riWOkBb9uwsdOxQgW3fan/T3hwT8rvwZCzPl3DAgSBEhzpP59usD0fyFS++X2967E5AQe74nrBw1rywf6A=="],
 
     "@shuding/opentype.js/fflate": ["fflate@0.7.5", "", {}, "sha512-QieYf//cis6ywHNi5qW1+PXPQ4bC+XVJAtS4AXIML8P76GroEiOxm/oQtn1f02UkJY1+KsXMJcC+R2v/Eg4G3g=="],
 
