@@ -73,6 +73,10 @@ export class LocalResponseError extends Error {
 	}
 }
 
+export function isServerRejection(error: unknown): error is LocalResponseError {
+	return error instanceof LocalResponseError;
+}
+
 async function requireSuccessfulResponse(response: Response, baseUrl: string): Promise<Response> {
 	if (!response.ok) {
 		throw await failedResponseError(response, baseUrl);

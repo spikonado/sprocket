@@ -66,12 +66,9 @@ impl NativeAuthManager {
         });
     }
 
-    pub async fn expire_login_for_test(&self, session_token: &str) {
-        let mut session = self.session.lock().await;
-        if let Some(LoginAttempt::Pending { started_at, .. }) =
-            session.logins.get_mut(session_token)
-        {
-            *started_at = Instant::now() - LOGIN_ATTEMPT_TTL - Duration::from_secs(1);
+    pub async fn expire_login_for_test(&self, login_id: &str) {
+        if let Some(attempt) = self.session.lock().await.logins.get_mut(login_id) {
+            attempt.started_at = Instant::now() - LOGIN_ATTEMPT_TTL - Duration::from_secs(1);
         }
     }
 }

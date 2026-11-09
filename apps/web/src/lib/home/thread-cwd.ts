@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LocalResponseError } from '$lib/local/transport';
+import { isServerRejection } from '$lib/local/transport';
 import type { LocalApi } from '$lib/types/sprocket';
 
 export function useExistingThreadCwd(
@@ -21,8 +21,7 @@ export function useExistingThreadCwd(
 
 				if (active) setMissingCwd((missing) => (missing === cwd ? null : missing));
 			} catch (error) {
-				// Only the server's rejection proves the directory is gone; a dropped connection doesn't.
-				if (active && error instanceof LocalResponseError && error.status === 400) {
+				if (active && isServerRejection(error) && error.status === 400) {
 					setMissingCwd(cwd);
 				}
 			}
