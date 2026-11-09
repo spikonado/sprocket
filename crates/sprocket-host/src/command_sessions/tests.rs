@@ -19,7 +19,6 @@ async fn pruning_busy_thread_does_not_block_unrelated_commands() {
         .with_lifetime_guard_factory({
             let entered = entered.clone();
             move || {
-                // Hold the manager lock while acquiring the process guard.
                 entered.notify_one();
                 released
                     .lock()
@@ -55,7 +54,6 @@ async fn pruning_busy_thread_does_not_block_unrelated_commands() {
     })
     .await;
 
-    // Unblock the worker even when the access check times out.
     release.send(()).unwrap();
     assert!(
         spawn

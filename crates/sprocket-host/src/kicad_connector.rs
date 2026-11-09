@@ -15,8 +15,9 @@ use tokio::process::Command;
 
 use crate::python_install::PythonTools;
 use crate::tool_install::{
-    Asset, INSTALL_LOCK, acquire_lock, download_atomic, is_dir, is_version, large_download_client,
-    open_lock_file, prune_versions, release_platform, remove_version, set_executable,
+    Asset, INSTALL_LOCK, acquire_lock, download_atomic, is_dir, is_tombstone, is_version,
+    large_download_client, open_lock_file, prune_versions, release_platform, remove_version,
+    set_executable,
 };
 
 const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
@@ -63,7 +64,6 @@ pub struct ConnectorStatus {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Release {
-    /// The connector's semver, which changes whenever any asset does.
     version: String,
     kicad: KiCadBuild,
     platforms: BTreeMap<String, Asset>,
@@ -76,7 +76,6 @@ struct KiCadBuild {
     version: String,
 }
 
-/// KiCadRoutingTools, which only some platforms have a router binary for.
 #[derive(Deserialize)]
 struct RoutingTools {
     platforms: BTreeMap<String, Asset>,
@@ -91,7 +90,6 @@ enum Activity {
 pub struct KiCadConnector {
     root: PathBuf,
     release: Release,
-    /// The pinned release's install directory name.
     pinned: String,
     python: Arc<PythonTools>,
     client: reqwest::Client,
@@ -115,7 +113,6 @@ impl KiCadConnector {
         })
     }
 
-    /// Deletes what an install interrupted by a restart left behind and resyncs the launchers.
     pub(crate) fn prepare(&self) {
         let (root, pinned) = (self.root.clone(), self.pinned.clone());
         tokio::task::spawn_blocking(move || {
@@ -269,7 +266,6 @@ impl KiCadConnector {
                 .prefix(STAGING_PREFIX)
                 .tempdir_in(&self.root)?;
             let published = match self.stage(staging.path(), &version_dir).await {
-                // Publishing by a rename means the version directory exists only once complete.
                 Ok(()) => tokio::fs::rename(staging.path(), &version_dir)
                     .await
                     .map_err(anyhow::Error::from),
@@ -488,8 +484,6 @@ fn remove_installs(root: &Path) -> anyhow::Result<()> {
     Ok(sync_launchers(root, None)?)
 }
 
-/// Points the stable launcher directory at `version`'s launchers, or removes it for `None`.
-/// Each launcher is replaced by a rename, so a command starting meanwhile sees a whole file.
 fn sync_launchers(root: &Path, version: Option<&str>) -> io::Result<()> {
     let target = root.join(LAUNCHER_DIR);
     let Some(version) = version else {
@@ -528,8 +522,6 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     }
 }
 
-/// These files come from Sprocket and the host rather than the release, so changes to either
-/// reach installs on start.
 fn refresh_files(dir: &Path) -> io::Result<()> {
     for (name, contents) in [
         (KIPY_API_FILE, KIPY_API.to_owned()),
@@ -600,10 +592,11 @@ fn host_fontconfig(host: &Path) -> String {
         .collect()
 }
 
-/// Removes staging directories and tombstones, which are the only hidden directories.
 fn remove_leftovers(root: &Path) -> io::Result<()> {
     for entry in fs::read_dir(root)?.flatten() {
-        if entry.file_name().to_string_lossy().starts_with('.')
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if (name.starts_with(STAGING_PREFIX) || is_tombstone(&name))
             && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
             && let Err(error) = fs::remove_dir_all(entry.path())
         {

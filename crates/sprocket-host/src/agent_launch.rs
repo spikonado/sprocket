@@ -49,9 +49,7 @@ pub struct AgentLaunchRequest {
     pub workspace_path: String,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
-    /// Pre-committed run capability for native delegation: the child run was
-    /// already durably created by `subagents:createOrSend` with this fresh
-    /// secret; the launch reuses it instead of minting its own.
+    /// Set when `subagents:createOrSend` already created the run with this secret.
     #[serde(default)]
     pub execution_secret: Option<String>,
 }
@@ -236,11 +234,8 @@ async fn launch_agent_inner(
     let artifact_watchers = Arc::clone(&host.artifact_watchers);
     let (start_result_sender, start_result_receiver) = oneshot::channel();
 
-    // Detach the complete launch before waiting for its acknowledgement. Hyper
-    // may drop this handler when the browser closes the tab; the executor must
-    // still either run or durably reconcile the submitted run. The launch is
-    // acknowledged once Convex holds the run; later outcomes reach clients
-    // through the run's lifecycle.
+    // Hyper may drop this handler when the browser closes the tab, so the launch runs
+    // detached and this only waits for Convex to hold the run.
     tokio::spawn(async move {
         let _guard = guard;
         let _recovery_guard = recovery_guard;
@@ -300,14 +295,10 @@ async fn launch_agent_inner(
                             .join("command-logs"),
                     )
                     .await
-                    // Each command runs in a fresh shell, so exported sessions don't persist.
-                    // Defaulting to the thread keeps parallel agents out of each other's browser
-                    // and gives each its own agent-desktop cursor. `--session` and `--agent-id` win.
                     .with_environment(
-                        tool_environment.into_iter().chain(
-                            ["AGENT_BROWSER_SESSION", "AGENT_DESKTOP_AGENT_ID"]
-                                .map(|name| (name.into(), thread_id.as_str().into())),
-                        ),
+                        tool_environment
+                            .into_iter()
+                            .chain(thread_tool_sessions(&thread_id)),
                     )
                     .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
                     .with_github_credentials(user_id.clone())
@@ -373,6 +364,12 @@ async fn launch_agent_inner(
             "failed to start agent run: agent launch task stopped unexpectedly"
         ))
     })?
+}
+
+/// agent-browser and agent-desktop fall back to these when a command passes no
+/// `--session` or `--agent-id`, so parallel agents get their own browser and cursor.
+fn thread_tool_sessions(thread_id: &str) -> [(std::ffi::OsString, std::ffi::OsString); 2] {
+    ["AGENT_BROWSER_SESSION", "AGENT_DESKTOP_AGENT_ID"].map(|name| (name.into(), thread_id.into()))
 }
 
 #[cfg(test)]

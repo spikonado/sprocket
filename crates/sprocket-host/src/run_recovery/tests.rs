@@ -137,15 +137,19 @@ async fn dropping_a_caller_does_not_interrupt_the_disk_and_memory_commit() {
         let store = Arc::clone(&store);
         async move { store.begin(record(), RunOwner::Host).await }
     });
-    // Let begin reserve its submission and enqueue the detached insert
-    // behind our held lock before cancelling the requesting task.
-    tokio::task::yield_now().await;
-    tokio::task::yield_now().await;
-    assert!(store.active.lock().unwrap().contains_key(&record().key()));
+    while !store.active.lock().unwrap().contains_key(&record().key()) {
+        tokio::task::yield_now().await;
+    }
     writer.abort();
     let _ = writer.await;
     drop(held);
-    assert!(store.saved("alice", "submission").await.is_some());
+    timeout(Duration::from_secs(5), async {
+        while store.saved("alice", "submission").await.is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the detached insert commits");
     assert!(
         RunRecovery::load(directory.path())
             .unwrap()

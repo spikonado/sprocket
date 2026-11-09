@@ -56,10 +56,16 @@ impl From<&DashboardState> for BrowserStatus {
     }
 }
 
+enum Supervisor {
+    Idle,
+    Running(JoinHandle<()>),
+    ShutDown,
+}
+
 pub struct BrowserManager {
     installer: BrowserInstaller,
     state: watch::Sender<DashboardState>,
-    supervisor: std::sync::Mutex<Option<JoinHandle<()>>>,
+    supervisor: std::sync::Mutex<Supervisor>,
     dashboard_client: reqwest::Client,
     shutdown: WorkspaceCancellation,
 }
@@ -69,7 +75,7 @@ impl BrowserManager {
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(&data_dir)?,
             state: watch::Sender::new(DashboardState::Stopped),
-            supervisor: std::sync::Mutex::new(None),
+            supervisor: std::sync::Mutex::new(Supervisor::Idle),
             dashboard_client: reqwest::Client::builder()
                 .no_proxy()
                 .retry(reqwest::retry::never())
@@ -132,7 +138,7 @@ impl BrowserManager {
                 };
                 match result {
                     Ok(dashboard) => manager.supervise(dashboard),
-                    Err(error) => manager.replace_state(
+                    Err(error) => manager.replace_state_if(
                         |state| matches!(state, DashboardState::Installing),
                         DashboardState::Error(format!("{error:#}")),
                     ),
@@ -142,8 +148,11 @@ impl BrowserManager {
         BrowserStatus::from(&*self.state.borrow())
     }
 
-    /// `shutdown` resets the state to `Stopped`, so a late update from a task it outlived is dropped.
-    fn replace_state(&self, expected: impl FnOnce(&DashboardState) -> bool, next: DashboardState) {
+    fn replace_state_if(
+        &self,
+        expected: impl FnOnce(&DashboardState) -> bool,
+        next: DashboardState,
+    ) {
         self.state.send_if_modified(|state| {
             let replace = expected(state);
             if replace {
@@ -156,8 +165,7 @@ impl BrowserManager {
     fn supervise(self: &Arc<Self>, dashboard: Dashboard) {
         let Dashboard { mut child, port } = dashboard;
         let mut supervisor = self.supervisor.lock().expect("browser supervisor lock");
-        // Holding the lock orders this against `shutdown`, which cancels before taking it.
-        if self.shutdown.is_cancelled() {
+        if matches!(*supervisor, Supervisor::ShutDown) {
             return;
         }
         self.state.send_replace(DashboardState::Ready { port });
@@ -168,7 +176,7 @@ impl BrowserManager {
                 _ = manager.shutdown.cancelled() => false,
             };
             if exited {
-                manager.replace_state(
+                manager.replace_state_if(
                     |state| matches!(state, DashboardState::Ready { port: current } if *current == port),
                     DashboardState::Error(DASHBOARD_STOPPED.into()),
                 );
@@ -176,7 +184,9 @@ impl BrowserManager {
                 let _ = child.kill().await;
             }
         });
-        if let Some(previous) = supervisor.replace(task) {
+        if let Supervisor::Running(previous) =
+            std::mem::replace(&mut *supervisor, Supervisor::Running(task))
+        {
             previous.abort();
         }
     }
@@ -265,14 +275,13 @@ impl BrowserManager {
 
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let supervisor = self
-            .supervisor
-            .lock()
-            .expect("browser supervisor lock")
-            .take();
+        let supervisor = std::mem::replace(
+            &mut *self.supervisor.lock().expect("browser supervisor lock"),
+            Supervisor::ShutDown,
+        );
         self.state.send_replace(DashboardState::Stopped);
-        if let Some(supervisor) = supervisor {
-            let _ = supervisor.await;
+        if let Supervisor::Running(task) = supervisor {
+            let _ = task.await;
         }
     }
 

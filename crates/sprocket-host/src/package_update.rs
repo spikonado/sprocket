@@ -460,8 +460,7 @@ impl Drop for UpdateProcessGroup {
 
 #[cfg(unix)]
 fn kill_process_group(leader: u32) {
-    // SAFETY: kill has no memory preconditions. spawn_helper makes the helper
-    // lead its own group, so this reaches only the helper and its children.
+    // SAFETY: kill has no memory preconditions.
     unsafe {
         libc::kill(-(leader as i32), libc::SIGKILL);
     }
@@ -473,13 +472,14 @@ async fn collect_helper_output(
     stderr: Option<tokio::process::ChildStderr>,
     limit: Duration,
 ) -> Result<(std::process::ExitStatus, LimitedOutput, LimitedOutput), HelperCollectError> {
-    let pid = child.id();
     let mut stdout_task = tokio::spawn(read_limited(stdout, MAX_HELPER_STREAM_BYTES));
     let mut stderr_task = tokio::spawn(read_limited(stderr, MAX_HELPER_STREAM_BYTES));
+    // An unreaped leader keeps its pid, and so the group id, from being reused, so the
+    // group can be killed safely until `wait` returns.
     let collect = async {
-        let status = child.wait().await.map_err(HelperCollectError::Wait)?;
         let stdout = (&mut stdout_task).await.unwrap_or_default();
         let stderr = (&mut stderr_task).await.unwrap_or_default();
+        let status = child.wait().await.map_err(HelperCollectError::Wait)?;
         Ok((status, stdout, stderr))
     };
     let error = match tokio::time::timeout(limit, collect).await {
@@ -487,7 +487,7 @@ async fn collect_helper_output(
         Ok(Err(error)) => error,
         Err(_) => HelperCollectError::TimedOut,
     };
-    kill_helper(child, pid).await;
+    kill_helper(child).await;
     stdout_task.abort();
     stderr_task.abort();
     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
@@ -512,7 +512,8 @@ fn spawn_helper(
     process.spawn()
 }
 
-async fn kill_helper(child: &mut tokio::process::Child, pid: Option<u32>) {
+async fn kill_helper(child: &mut tokio::process::Child) {
+    let pid = child.id();
     #[cfg(unix)]
     if let Some(pid) = pid {
         kill_process_group(pid);

@@ -16,9 +16,9 @@ use crate::agent_launch::{AgentLaunchRequest, WorkspaceAccess, launch_recovery};
 const MAX_RECOVERIES: u8 = 3;
 const MAX_RECORDS: usize = 256;
 const MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
-const RETRY_DELAY_MS: u64 = 30_000;
-/// 30 minutes of recovery rounds.
-const MAX_MISSING_RETRY_ROUNDS: u64 = 60;
+const ROUND_INTERVAL: Duration = Duration::from_secs(30);
+const MAX_MISSING_RETRY_DELAY: Duration = Duration::from_secs(30 * 60);
+const MAX_MISSING_RETRY_ROUNDS: u64 = MAX_MISSING_RETRY_DELAY.as_secs() / ROUND_INTERVAL.as_secs();
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -36,8 +36,6 @@ impl RecoveryRecord {
         workspace_access: WorkspaceAccess,
         allow_interaction: bool,
     ) -> Self {
-        // Only continuations are replayed; the original prompt and attachment
-        // references already belong to the durable cloud transcript.
         request.prompt.clear();
         request.storage_ids.clear();
         Self {
@@ -64,8 +62,6 @@ impl RecoveryRecord {
         next.request.thread_id = Some(thread_id);
         next.request.repository_key = None;
         next.request.continuation_of_run_id = Some(run_id);
-        next.request.prompt.clear();
-        next.request.storage_ids.clear();
         Some(next)
     }
 }
@@ -81,8 +77,6 @@ pub struct RunRecovery {
     missing_retries: MissingRetries,
 }
 
-/// Spaces out relaunches of continuations that never reached Convex, which keep failing
-/// for as long as their cause lasts.
 #[derive(Default)]
 struct MissingRetries(Mutex<HashMap<String, MissingRetry>>);
 
@@ -134,8 +128,6 @@ impl Drop for ActiveRun {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RunOwner {
-    /// The CLI awaits the run's result and controls its cancellation, so a
-    /// recovered continuation could not stand in for it.
     Client,
     Host,
 }
@@ -317,8 +309,6 @@ async fn recover_one(host: &Host, record: RecoveryRecord, round: u64) -> anyhow:
             let Some(next) = record.continuation(run_id, thread_id) else {
                 return host.run_recovery.replace(&key, None).await;
             };
-            // Persist the new id and capability before submitting it. Replaying
-            // this record after a crash reconciles that exact submission.
             host.run_recovery.replace(&key, Some(next.clone())).await?;
             next
         }
@@ -329,7 +319,7 @@ async fn recover_one(host: &Host, record: RecoveryRecord, round: u64) -> anyhow:
 
 pub fn spawn(host: Host) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut ticks = interval(Duration::from_millis(RETRY_DELAY_MS));
+        let mut ticks = interval(ROUND_INTERVAL);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
         for round in 0.. {
             tokio::select! {
