@@ -136,7 +136,7 @@ fn vite_emits_assets_under_the_immutable_prefix() {
     assert!(
         vite_config
             .lines()
-            .any(|line| line.trim() == "assetsDir: IMMUTABLE_ASSETS_DIR")
+            .any(|line| line.trim().trim_end_matches(',') == "assetsDir: IMMUTABLE_ASSETS_DIR")
     );
 }
 
