@@ -71,50 +71,60 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 		onLoadOlder: vi.fn()
 	};
 
-	const rendered = render(<ThreadTranscript {...props} />);
-	const container = rendered.container;
-	const viewport = container.querySelector<HTMLDivElement>('[aria-label="Conversation history"]');
+	const viewportSelector = '[aria-label="Conversation history"]';
 
-	if (!viewport) throw new Error('Missing transcript viewport');
-
-	const messageElements = () => [
+	const messageElements = (viewport: Element) => [
 		...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]')
 	];
 
-	let scrollTop = 0;
-	Object.defineProperties(viewport, {
-		clientHeight: { configurable: true, get: () => viewportHeight },
-		scrollHeight: {
-			configurable: true,
-			get: () => Math.max(viewportHeight, messageElements().length * 300)
-		},
-		scrollTop: {
-			configurable: true,
-			get: () => {
-				scrollTop = Math.min(scrollTop, viewport.scrollHeight - viewport.clientHeight);
+	const scrollHeightOf = (viewport: HTMLElement) =>
+		Math.max(viewportHeight, messageElements(viewport).length * 300);
 
-				return scrollTop;
-			},
-			set: (top: number) => {
-				scrollTop = Math.max(0, Math.min(top, viewport.scrollHeight - viewport.clientHeight));
-			}
+	let scrollTop = 0;
+	vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (
+		this: HTMLElement
+	) {
+		return this.matches(viewportSelector) ? viewportHeight : 0;
+	});
+	vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
+		this: HTMLElement
+	) {
+		return this.matches(viewportSelector) ? scrollHeightOf(this) : 0;
+	});
+	vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function (
+		this: HTMLElement
+	) {
+		if (!this.matches(viewportSelector)) return 0;
+		scrollTop = Math.min(scrollTop, this.scrollHeight - this.clientHeight);
+
+		return scrollTop;
+	});
+	vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (
+		this: HTMLElement,
+		top: number
+	) {
+		if (this.matches(viewportSelector)) {
+			scrollTop = Math.max(0, Math.min(top, this.scrollHeight - this.clientHeight));
 		}
 	});
 	vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 		this: HTMLElement
 	) {
-		const index = messageElements().indexOf(this);
+		const viewport = this.closest<HTMLElement>(viewportSelector);
+		const index = viewport ? messageElements(viewport).indexOf(this) : -1;
 
 		return new DOMRect(
 			0,
-			index < 0 ? 0 : index * 300 - viewport.scrollTop,
+			viewport && index >= 0 ? index * 300 - viewport.scrollTop : 0,
 			800,
 			index < 0 ? viewportHeight : 300
 		);
 	});
-	// Layout is only observable after the mocks above, so deliver a fresh actions
-	// array to make the first commit re-measure the mocked viewport.
-	rendered.rerender(<ThreadTranscript {...props} actions={[...props.actions]} />);
+
+	const rendered = render(<ThreadTranscript {...props} />);
+	const viewport = rendered.container.querySelector<HTMLDivElement>(viewportSelector);
+
+	if (!viewport) throw new Error('Missing transcript viewport');
 	await settle();
 
 	return {
@@ -1482,7 +1492,7 @@ describe('transcript viewport paging', () => {
 
 	it('does not write the scroll position for a resize that leaves the bottom unchanged', async () => {
 		const { viewport } = await renderTranscript([1, 2, 3, 4].map(message));
-		const writeScrollTop = vi.spyOn(viewport, 'scrollTop', 'set');
+		const writeScrollTop = vi.spyOn(viewport, 'scrollTop', 'set').mockClear();
 		act(() => resize());
 		act(() => resize());
 		expect(writeScrollTop).not.toHaveBeenCalled();

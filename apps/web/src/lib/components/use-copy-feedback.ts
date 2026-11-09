@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 const COPIED_FEEDBACK_MS = 2_000;
 
-/** Tracks which item shows "Copied" feedback; it clears itself after a short delay. */
 export function useCopyFeedback<Key = true>() {
 	const [copied, setCopied] = useState<Key | null>(null);
 	const timer = useRef<ReturnType<typeof setTimeout>>(undefined);

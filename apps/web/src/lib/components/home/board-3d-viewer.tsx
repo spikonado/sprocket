@@ -4,11 +4,7 @@ import type { LocalApi } from '$lib/types/sprocket';
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 
-/**
- * Shows KiCad's own glTF export, so copper, mask, silkscreen and component models match KiCad's
- * 3D viewer. Exports take seconds, so this exports only while `shown` and only when `revision`
- * moves past the last export.
- */
+/** KiCad's export takes seconds, so this exports only while `shown` and for a new `revision`. */
 export default function Board3dViewer({
 	api,
 	workspacePath,
@@ -43,7 +39,6 @@ export default function Board3dViewer({
 
 		if (!shown || !container) return;
 
-		// Such as an edit undone while its export ran, which brings back the shown board.
 		if (exported.current === key) {
 			setStatus({ kind: 'ready' });
 

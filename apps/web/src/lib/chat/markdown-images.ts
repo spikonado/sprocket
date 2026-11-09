@@ -1,4 +1,5 @@
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
+import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 import { isAbsoluteImagePath, isWindowsImagePath } from './markdown-image-path';
 
 export type MarkdownImageScope = {
@@ -46,6 +47,10 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope, ren
 	return baseUrl && baseUrl !== globalThis.window?.location.origin
 		? `${baseUrl}${pathUrl}`
 		: pathUrl;
+}
+
+export function workspaceImageUrl({ workspacePath, path }: WorkspaceFileTarget) {
+	return markdownImageUrl(path.split('/').map(encodeURIComponent).join('/'), { workspacePath });
 }
 
 let renderCount = 0;

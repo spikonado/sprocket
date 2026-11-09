@@ -7,7 +7,6 @@ export type FileDraft = { doc: Text; base: Text; version: string };
 
 export type SidePanelTab = {
 	id: string;
-	/** `null` shows the view picker. */
 	view: SidePanelView | null;
 	selectedKey: string | null;
 	file?: WorkspaceFileTarget;
@@ -35,7 +34,6 @@ export function renamedPath(path: string, from: string, to: string) {
 
 export type SidePanelSnapshot = {
 	open: boolean;
-	/** When true, the panel covers the full Sprocket workspace UI. */
 	expanded: boolean;
 	layout: SidePanelLayout;
 	activePaneId: string;
@@ -89,12 +87,11 @@ export function minLayoutSize(node: SidePanelLayout, direction: SplitDirection):
 		: Math.max(first, second);
 }
 
-/** Fractions of the whole panel. */
-export type LayoutRect = { left: number; top: number; width: number; height: number };
+export type FractionalRect = { left: number; top: number; width: number; height: number };
 
 type PlacedLayout = {
-	panes: { pane: SidePanelPane; rect: LayoutRect }[];
-	splits: { split: SidePanelSplit; rect: LayoutRect }[];
+	panes: { pane: SidePanelPane; rect: FractionalRect }[];
+	splits: { split: SidePanelSplit; rect: FractionalRect }[];
 };
 
 export function panesOf(node: SidePanelLayout): SidePanelPane[] {
@@ -134,7 +131,7 @@ export function mapSplit(
 
 export function layoutRects(
 	node: SidePanelLayout,
-	rect: LayoutRect = { left: 0, top: 0, width: 1, height: 1 }
+	rect: FractionalRect = { left: 0, top: 0, width: 1, height: 1 }
 ): PlacedLayout {
 	if (node.type === 'pane') return { panes: [{ pane: node, rect }], splits: [] };
 

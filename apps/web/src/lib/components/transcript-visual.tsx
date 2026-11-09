@@ -21,7 +21,6 @@ export default function TranscriptVisual({ kind, source }: { kind: VisualKind; s
 	const frameRef = useRef<HTMLIFrameElement>(null);
 	const [height, setHeight] = useState(INITIAL_HEIGHT);
 
-	// Later theme changes are posted to the page, so they restyle it without a reload.
 	const srcDoc = useMemo(
 		() => buildVisualDocument(kind, source, readVisualThemeCss()),
 		[kind, source]

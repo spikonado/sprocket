@@ -234,7 +234,6 @@ export default function InboxSidebar({
 		writeStorage(SETTLED_INBOX_OPEN_KEY, String(next));
 	}
 
-	/** Runs one thread mutation at a time. `mutating` blocks a second click before `busy` renders. */
 	async function mutate(failureMessage: string, action: () => Promise<void> | void) {
 		if (!mutationsEnabled || mutating.current) return;
 		mutating.current = true;
@@ -705,7 +704,6 @@ function ThreadTreeRow({
 							</span>
 						)}
 					</span>
-					{/* The title button's overlay makes the whole row clickable while the PR button stays outside it. */}
 					{renaming ? (
 						<form
 							className="contents"

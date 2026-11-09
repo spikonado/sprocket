@@ -6,16 +6,19 @@ const thread = '/repo/.worktrees/feature';
 const roots = [thread, '/repo'];
 
 it.each([
-	['src/main%20file.rs', { workspacePath: thread, path: 'src/main file.rs', directory: false }],
-	['./src/main.rs', { workspacePath: thread, path: 'src/main.rs', directory: false }],
-	['/repo/README.md#L3', { workspacePath: '/repo', path: 'README.md', directory: false }],
-	['/repo/.worktrees/feature/a.ts', { workspacePath: thread, path: 'a.ts', directory: false }],
-	['../../Cargo.toml', { workspacePath: '/repo', path: 'Cargo.toml', directory: false }],
-	['src/', { workspacePath: thread, path: 'src', directory: true }],
-	['/repo', { workspacePath: '/repo', path: '', directory: true }],
-	['/etc/hosts', { workspacePath: '/etc', path: 'hosts', directory: false }],
-	['../../../notes.txt', { workspacePath: '/', path: 'notes.txt', directory: false }],
-	['/home/me/', { workspacePath: '/home/me', path: '', directory: true }]
+	[
+		'src/main%20file.rs',
+		{ workspacePath: thread, path: 'src/main file.rs', knownDirectory: false }
+	],
+	['./src/main.rs', { workspacePath: thread, path: 'src/main.rs', knownDirectory: false }],
+	['/repo/README.md#L3', { workspacePath: '/repo', path: 'README.md', knownDirectory: false }],
+	['/repo/.worktrees/feature/a.ts', { workspacePath: thread, path: 'a.ts', knownDirectory: false }],
+	['../../Cargo.toml', { workspacePath: '/repo', path: 'Cargo.toml', knownDirectory: false }],
+	['src/', { workspacePath: thread, path: 'src', knownDirectory: true }],
+	['/repo', { workspacePath: '/repo', path: '', knownDirectory: true }],
+	['/etc/hosts', { workspacePath: '/etc', path: 'hosts', knownDirectory: false }],
+	['../../../notes.txt', { workspacePath: '/', path: 'notes.txt', knownDirectory: false }],
+	['/home/me/', { workspacePath: '/home/me', path: '', knownDirectory: true }]
 ])('resolves %s', (href, target) => {
 	expect(markdownFileTarget(href, roots)).toEqual(target);
 });
@@ -33,19 +36,19 @@ it('resolves links relative to the Markdown document', () => {
 			workspacePath: '/repo',
 			documentPath: 'docs/notes.md'
 		})
-	).toEqual({ workspacePath: '/repo', path: 'src/lib.rs', directory: false });
+	).toEqual({ workspacePath: '/repo', path: 'src/lib.rs', knownDirectory: false });
 });
 
 it('matches Windows paths without regard to case', () => {
 	expect(markdownFileTarget('c:/Repo/src/main.rs', ['C:\\repo'])).toEqual({
 		workspacePath: 'C:\\repo',
 		path: 'src/main.rs',
-		directory: false
+		knownDirectory: false
 	});
 	expect(markdownFileTarget('D:\\notes.md', ['C:\\repo'])).toEqual({
 		workspacePath: 'D:/',
 		path: 'notes.md',
-		directory: false
+		knownDirectory: false
 	});
 });
 

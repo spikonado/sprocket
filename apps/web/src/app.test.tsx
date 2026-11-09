@@ -96,7 +96,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
-		startBrowser: vi.fn<LocalApi['startBrowser']>(async () => ({ state: 'ready', error: null })),
+		ensureBrowser: vi.fn<LocalApi['ensureBrowser']>(async () => ({ state: 'ready', error: null })),
 		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
 		watchBrowserStatus: ({ onEvent }) => {
 			onEvent({ state: 'ready', error: null });
@@ -149,7 +149,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchGitHubStatus: unused,
 		updateGitHubSettings: unused,
 		fetchConnectors: unused,
-		installConnector: unused,
+		installOrUpdateConnector: unused,
 		uninstallConnector: unused,
 		fetchClaudeCodeStatus: async () => claudeCodeStatus('installed'),
 		installClaudeCode: unused,
@@ -526,28 +526,28 @@ it('deletes an attached project artifact through the local server and keeps fail
 });
 
 it('opens the managed browser dashboard without a thread and keeps it mounted when expanded', async () => {
-	const startBrowser = vi.fn<LocalApi['startBrowser']>(async () => ({
+	const ensureBrowser = vi.fn<LocalApi['ensureBrowser']>(async () => ({
 		state: 'ready',
 		error: null
 	}));
 
 	const localApi = createLocalApi({
 		listProjectAttachments: async () => [projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')],
-		startBrowser
+		ensureBrowser
 	});
 
 	await renderApp(createConvexFixtures(), createRuntime(localApi));
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
-	expect(startBrowser).not.toHaveBeenCalled();
+	expect(ensureBrowser).not.toHaveBeenCalled();
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
 	const iframe = await screen.findByTitle('Agent browser dashboard');
 	expect(iframe.getAttribute('src')).toBe(localApi.browserDashboardUrl);
-	expect(startBrowser).toHaveBeenCalledOnce();
+	expect(ensureBrowser).toHaveBeenCalledOnce();
 	fireEvent.click(screen.getByRole('button', { name: 'Expand to full workspace' }));
 	expect(screen.getByTitle('Agent browser dashboard')).toBe(iframe);
 	expect(screen.getByRole('button', { name: 'Exit full workspace' })).toBeTruthy();
-	expect(startBrowser).toHaveBeenCalledOnce();
+	expect(ensureBrowser).toHaveBeenCalledOnce();
 });
 
 it('shares local message recency across the project menus and recent directories', async () => {

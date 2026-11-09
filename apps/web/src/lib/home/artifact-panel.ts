@@ -106,7 +106,6 @@ export class ArtifactPanel implements Store<number> {
 		const hasDraft = (panel: SidePanelSnapshot) =>
 			panesOf(panel.layout).some((pane) => pane.tabs.some((tab) => tab.draft));
 
-		// The current scope's snapshot is stale until the panel leaves it again.
 		return (
 			hasDraft(this.panel) ||
 			[...this.#snapshots].some(
@@ -137,7 +136,6 @@ export class ArtifactPanel implements Store<number> {
 	}) {
 		const scopeKey = args.scope ? artifactWatchScopeKey(args.scope) : null;
 
-		// Restarting the same scope keeps the last artifacts until fresh ones arrive.
 		if (scopeKey !== this.#watchScope) {
 			this.#watchScope = scopeKey;
 			this.#cloud = STALE_CLOUD_ARTIFACTS;
@@ -269,7 +267,6 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	/** Runs on every keystroke, so it only re-renders when the tab gains or loses its draft. */
 	setFileDraft(id: string, draft: FileDraft | undefined) {
 		const tab = this.tabs.find((candidate) => candidate.id === id);
 

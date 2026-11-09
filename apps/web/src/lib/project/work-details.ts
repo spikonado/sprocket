@@ -125,7 +125,6 @@ export class WorkDetails {
 				)
 					break;
 
-				// A removed tail must not turn a refresh into a download of the whole section.
 				if (pages.length > this.parts.length)
 					throw new Error('Work detail range changed too much.');
 				cursor = { after: page.nextAfter };

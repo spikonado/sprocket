@@ -5,8 +5,7 @@ import type { LocalApi } from '$lib/types/sprocket';
 export function useExistingThreadCwd(
 	api: Pick<LocalApi, 'resolveWorkspacePath'> | null,
 	cwd: string | undefined,
-	// A run can recreate a missing cwd and set_cwd to the same path, so recheck when runs change.
-	threadStatus: string | undefined
+	recheckKey: string | undefined
 ) {
 	const [missingCwd, setMissingCwd] = useState<string | null>(null);
 
@@ -30,7 +29,7 @@ export function useExistingThreadCwd(
 		return () => {
 			active = false;
 		};
-	}, [api, cwd, threadStatus]);
+	}, [api, cwd, recheckKey]);
 
 	return cwd === missingCwd ? undefined : cwd;
 }

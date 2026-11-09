@@ -22,8 +22,6 @@ const available: UpdateState = {
 	error: null
 };
 
-let nextPort = 7300;
-
 function preferences(automaticAgentContinuation?: boolean): Doc<'uiPreferences'> | null {
 	return automaticAgentContinuation === undefined
 		? null
@@ -43,8 +41,7 @@ function mount(automaticAgentContinuation?: boolean, loading = false) {
 		client.registerQuery(api.uiPreferences.getMine, preferences(automaticAgentContinuation));
 	}
 
-	// Each server URL gets its own socket, so tests do not share one.
-	vi.stubEnv('VITE_LOCAL_API_URL', `http://127.0.0.1:${nextPort++}`);
+	vi.stubEnv('VITE_LOCAL_API_URL', 'http://127.0.0.1:7300');
 	const sockets = stubWebSocket();
 
 	render(

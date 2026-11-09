@@ -182,7 +182,7 @@ describe('tool rows', () => {
 		expect(open).toHaveBeenCalledWith({
 			workspacePath: '/repo',
 			path: 'docs/design.pdf',
-			directory: false
+			knownDirectory: false
 		});
 	});
 });

@@ -147,7 +147,6 @@ import { syncShareConversationContent } from '$lib/analytics';
 
 type ConvexQuery = FunctionReference<'query'>;
 
-// Query failures belong in the page's inline error UI, not the startup boundary.
 function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArgs<Query> | 'skip') {
 	const result = useConvexQueryResult({ query, args });
 
@@ -507,7 +506,6 @@ export default function App({
 		failureMessage: 'Couldn’t check Muse on this computer.'
 	});
 
-	// A window without the local server can't see Claude Code, so it trusts the saved token.
 	const claudeConfigured =
 		claudeTokenSaved && (!localApi || claudeCode.status?.state === 'installed');
 
@@ -946,7 +944,6 @@ export default function App({
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.failureKind);
 
-	// A run that never sent its prompt has nothing to continue. The composer holds that prompt.
 	const canContinueWorking = latestRunResumeKind != null && !currentLifecycle?.run?.promptUnsent;
 
 	const isLatestRunReady = isLatestRunReadyForThread({
@@ -1763,17 +1760,16 @@ export default function App({
 			submissionId
 		});
 
-		const recoverSubmission = (message: string | null, submissionId?: string) => {
+		const recoverSubmission = (message: string | null, { freshSubmission = false } = {}) => {
+			const reusedSubmissionId =
+				!selectedThreadId && recoveryScope === originatingRecoveryScope
+					? threadSubmissionId
+					: runSubmissionId;
+
 			submissions.storeRecovery(
 				submittedUserId,
 				recoveryScope,
-				submissionRecovery(
-					message,
-					submissionId ??
-						(!selectedThreadId && recoveryScope === originatingRecoveryScope
-							? threadSubmissionId
-							: runSubmissionId)
-				)
+				submissionRecovery(message, freshSubmission ? crypto.randomUUID() : reusedSubmissionId)
 			);
 		};
 
@@ -1882,10 +1878,7 @@ export default function App({
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					clearLaunch();
-					recoverSubmission(
-						error.message,
-						isServerRejection(error) ? crypto.randomUUID() : undefined
-					);
+					recoverSubmission(error.message, { freshSubmission: isServerRejection(error) });
 				},
 				onStarted: (runId, createdThreadId) => {
 					if (isSubmittedUserCurrent()) {

@@ -25,7 +25,6 @@ type RecentProjectPath = {
 
 type ProjectPickerLocalApi = Pick<LocalApi, 'browseFilesystem' | 'resolveWorkspacePath'>;
 
-// A browse error blocks submitting that path; a submit error leaves retrying open.
 type PickerError = { source: 'browse' | 'submit'; message: string };
 
 export type ProjectSelection = {
@@ -330,7 +329,6 @@ export default function ProjectPicker({
 			});
 			onClose();
 		} catch (submitError) {
-			// The path may have changed and failed to browse while this submit was pending.
 			setError((current) =>
 				current?.source === 'browse'
 					? current

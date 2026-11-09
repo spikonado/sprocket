@@ -11,7 +11,6 @@ import {
 } from '$lib/updates';
 import ConfirmDialog from './confirm-dialog';
 
-// An error belongs to the update status it was raised from and hides once that status moves on.
 type FailedRequest = { error: string; status: UpdateState['status'] };
 
 type TrackedUpdate = { state: UpdateState; restartWhenReady: boolean };

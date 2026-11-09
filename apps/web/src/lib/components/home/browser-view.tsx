@@ -4,7 +4,7 @@ import type { BrowserStatus, LocalApi } from '$lib/types/sprocket';
 
 export type BrowserApi = Pick<
 	LocalApi,
-	'startBrowser' | 'watchBrowserStatus' | 'browserDashboardUrl'
+	'ensureBrowser' | 'watchBrowserStatus' | 'browserDashboardUrl'
 >;
 
 type Props = {
@@ -24,12 +24,11 @@ export default function BrowserView({ browserApi }: Props) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		setStatus({ state: 'installing', error: null });
 
-		// Starting is a no-op while the dashboard runs, and relaunches it after a server restart.
 		async function run() {
 			let started: BrowserStatus;
 
 			try {
-				started = await api.startBrowser(signal);
+				started = await api.ensureBrowser(signal);
 			} catch (error) {
 				if (signal.aborted) return;
 				setStatus({

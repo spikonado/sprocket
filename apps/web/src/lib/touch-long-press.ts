@@ -85,7 +85,6 @@ export function installTouchLongPress(): () => void {
 	function onPointerEnd(event: PointerEvent) {
 		if (!press || event.pointerId !== press.pointerId) return;
 
-		// The menu opened under the finger, so the release would otherwise hit its backdrop and close it.
 		if (press.opened) swallowReleaseEvents();
 		cancel();
 	}

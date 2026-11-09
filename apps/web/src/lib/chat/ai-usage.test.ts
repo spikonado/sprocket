@@ -37,7 +37,6 @@ const catalog: ModelCatalog = {
 };
 
 describe('apiCost', () => {
-	// Standard 0.8 + 0.05 + writes + 1, long context 4 + 1.5, all doubled for fast.
 	it.each([
 		['30m', 15.2],
 		['12h', 15.7],

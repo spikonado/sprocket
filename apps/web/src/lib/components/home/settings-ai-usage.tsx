@@ -8,19 +8,19 @@ import {
 	axisTicks,
 	breakdownOf,
 	bucketLabel,
-	bucketStartFor,
 	cacheHitRate,
-	costByTypeOf,
 	costOf,
 	formatCost,
 	formatRate,
 	formatTokens,
 	modelUsageKey,
 	newTokens,
+	pricedCostByTypeOf,
 	rangeBucketStarts,
 	rangeQuery,
 	usageByModel,
 	usageRanges,
+	utcBucketStartFor,
 	type ModelUsage,
 	type UsageRange
 } from '$lib/chat/ai-usage';
@@ -133,7 +133,7 @@ function UsageReport({
 
 	const buckets = rangeBucketStarts(range, now).map((start): Bucket => ({
 		start,
-		rows: visibleRows.filter((row) => bucketStartFor(range.unit, row.bucketStart) === start)
+		rows: visibleRows.filter((row) => utcBucketStartFor(range.unit, row.bucketStart) === start)
 	}));
 
 	function toggleModel(key: string) {
@@ -225,7 +225,7 @@ function UsageReport({
 				<div className="mt-3 max-w-xl">
 					{metric === 'cost' ? (
 						<TokenTypeBreakdown
-							amounts={costByTypeOf(visibleRows, modelCatalog)}
+							amounts={pricedCostByTypeOf(visibleRows, modelCatalog)}
 							format={(usd) => formatCost({ usd: cost.usd === null ? null : usd, partial: false })}
 						/>
 					) : (
@@ -284,7 +284,6 @@ function UsageChart({
 }) {
 	const [hovered, setHovered] = useState<number | null>(null);
 
-	// Null marks a model with usage in the bucket but no price, so it isn't shown as idle.
 	const stacks = buckets.map((bucket) =>
 		models.map((model) => {
 			const rows = bucket.rows.filter((row) => modelUsageKey(row) === model.key);

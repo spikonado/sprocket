@@ -69,12 +69,10 @@ function specialBlock(
 		const isDiagram = language === 'mermaid';
 		const codeHtml = () => sanitizeMarkdown(marked.parser([token]));
 
-		// JSONL patches render as they stream in.
 		if (language === 'json-render') {
 			return { type: 'json-render', source: token.text, codeHtml: codeHtml() };
 		}
 
-		// A diagram or visual still streaming in stays a code block until its fence closes.
 		if (!(kind || isDiagram) || !fenceIsClosed(token.raw)) return;
 
 		if (kind) return { type: 'visual', kind, source: token.text };

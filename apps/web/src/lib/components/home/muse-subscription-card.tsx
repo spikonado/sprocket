@@ -98,7 +98,6 @@ function UserMuseSubscriptionCard({
 
 				if (next.state !== 'signedOut') break;
 
-				// A signed-out status with an error means the sign-in ended without succeeding.
 				if (next.error) {
 					cancelOnServer(loginId);
 					break;

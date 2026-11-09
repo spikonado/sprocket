@@ -38,7 +38,6 @@ type Props = {
 	api: FilesApi | null;
 	projectPath?: string;
 	threadCwd?: string;
-	/** A linked folder to reveal; a `workspacePath` outside both roots becomes the tree root. */
 	location?: WorkspaceFileTarget;
 	onLocationChange: (location: WorkspaceFileTarget | undefined) => void;
 	active: boolean;
@@ -92,7 +91,6 @@ function expandedDirectories(model: TreeModel, paths: readonly string[]) {
 	});
 }
 
-/** Picks an unused `untitled` path inside `directory` (`''` or ending in `/`). */
 function placeholderPath(model: TreeModel, directory: string, isFolder: boolean) {
 	for (let index = 1; ; index++) {
 		const name = index === 1 ? 'untitled' : `untitled-${index}`;
@@ -183,7 +181,6 @@ export default function FilesView({
 	handlers.current.applyListing = () => {
 		const next = unapplied.current;
 
-		// Optimistic tree edits win until their request settles.
 		if (!next || mutations.current > 0 || pendingCreate.current) return;
 		unapplied.current = null;
 		const known = shown.current?.path === next.path ? shown.current : null;

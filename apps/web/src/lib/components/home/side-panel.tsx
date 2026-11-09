@@ -31,7 +31,7 @@ import {
 	MIN_PANE_SIZE,
 	topRightPane,
 	type FileDraft,
-	type LayoutRect,
+	type FractionalRect,
 	type SidePanelLayout,
 	type SidePanelPane,
 	type SidePanelTab,
@@ -51,7 +51,6 @@ type Props = {
 	activePaneId: string;
 	browserApi: BrowserApi | null;
 	filesApi: (FilesApi & FileEditorApi) | null;
-	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
 	error?: string | null;
@@ -268,8 +267,7 @@ function Pane({
 	onClose
 }: Props & {
 	pane: SidePanelPane;
-	rect: LayoutRect;
-	/** Whether chat links open here; only shown when the panel is split. */
+	rect: FractionalRect;
 	focused: boolean;
 	showsPanelButtons: boolean;
 	canSplitRight: boolean;
@@ -445,7 +443,6 @@ function Pane({
 				) : null}
 			</div>
 			{tabs.map((tab) => (
-				// Inactive tabs stay mounted so their browser session, scroll, and artifact state survive.
 				<section
 					key={tab.id}
 					id={`side-panel-tabpanel-${tab.id}`}
@@ -495,7 +492,7 @@ function Pane({
 						<FileEditor
 							api={filesApi}
 							file={tab.file}
-							draft={tab.draft}
+							initialDraft={tab.draft}
 							active={tab.id === activeTabId}
 							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
 						/>

@@ -53,8 +53,7 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 		}
 
 		function blur() {
-			// Entering a preview iframe blurs the parent window. Do not restore focus
-			// to the trigger while the user is interacting with that preview.
+			// Entering a preview iframe blurs the parent window, so focus must stay in the iframe.
 			setPosition(null);
 		}
 

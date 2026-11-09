@@ -274,13 +274,11 @@ export type GitHubStatus = {
 	hosts: GitHubHostStatus[];
 };
 
-/** One switch on this machine at a time. Tokens are saved through Convex. */
 export type GitHubSettingsUpdate = {
 	enabled?: boolean;
 	host?: { host: string; enabled: boolean };
 };
 
-/** A connector on this machine. Install also updates and retries. */
 export type ConnectorStatus = {
 	id: 'kicad';
 	name: string;
@@ -294,7 +292,6 @@ export type ChatGptBrowserLoginResult = {
 	error?: string;
 };
 
-/** Claude Code installed on this machine, which the Claude Subscription provider runs. */
 export type ClaudeCodeStatus = {
 	state: 'notInstalled' | 'installing' | 'outdated' | 'installed';
 	version: string | null;
@@ -308,7 +305,6 @@ export type ClaudeCodeLoginStart = {
 	url: string;
 };
 
-/** Muse on this machine, which the Muse Code Subscription provider runs with the user's own Muse login. */
 export type MuseStatus = {
 	state: 'notInstalled' | 'installing' | 'outdated' | 'signedOut' | 'planRequired' | 'ready';
 	version: string | null;
@@ -356,7 +352,6 @@ export type DiskEvent<T> = ({ kind: 'snapshot' } & T) | { kind: 'error'; message
 
 export type WatchHandlers<T> = { onEvent: (event: T) => void; signal: AbortSignal };
 
-/** Handlers for a watch that resubscribes after each interruption until `signal` aborts. */
 export type SubscriptionHandlers<T> = WatchHandlers<T> & { onError: (error: Error) => void };
 
 export type WorkspaceFileWriteResult = { status: 'saved' | 'conflict'; version: string };
@@ -376,7 +371,7 @@ export type BrowserStatus = {
 };
 
 export type LocalApi = {
-	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
+	ensureBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
 	browserDashboardUrl: string;
 	watchBrowserStatus: (handlers: WatchHandlers<BrowserStatus>) => Promise<void>;
 	watchRunningCommands: (
@@ -407,12 +402,10 @@ export type LocalApi = {
 		input: WorkspaceFileTarget,
 		handlers: WatchHandlers<DiskEvent<WorkspaceFileContent>>
 	) => Promise<void>;
-	/** Reads a whole text file, past the editor's size limit, with the version its watch reports. */
 	readWorkspaceText: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<{ content: string; version: string }>;
-	/** Exports a `.kicad_pcb` as binary glTF with KiCad's CLI, which takes seconds per board. */
 	exportBoard3d: (input: WorkspaceFileTarget, signal?: AbortSignal) => Promise<ArrayBuffer>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
@@ -482,7 +475,7 @@ export type LocalApi = {
 	fetchGitHubStatus: (userId: string) => Promise<GitHubStatus>;
 	updateGitHubSettings: (userId: string, update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
-	installConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
+	installOrUpdateConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	fetchClaudeCodeStatus: (userId: string) => Promise<ClaudeCodeStatus>;
 	installClaudeCode: (userId: string) => Promise<ClaudeCodeStatus>;

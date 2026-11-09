@@ -287,7 +287,6 @@ function summarizePatchInput(input: JsonValue | undefined) {
 		);
 
 		if (destinationHeader && paths.length > 0) {
-			// A rename or copy: report the destination, matching the applied-patch result.
 			paths[paths.length - 1] = line.slice(destinationHeader.length).trim();
 		}
 	}

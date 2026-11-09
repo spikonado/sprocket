@@ -119,8 +119,7 @@ export function apiCost(row: TokenUsageTotals, catalog: ModelCatalog | undefined
 	return cost && cost.uncachedInput + cost.cacheRead + cost.cacheWrite + cost.output;
 }
 
-/** Summed over the rows the catalog can price; `costOf` reports whether any were left out. */
-export function costByTypeOf(
+export function pricedCostByTypeOf(
 	rows: readonly TokenUsageTotals[],
 	catalog: ModelCatalog | undefined
 ): TokenTypeAmounts {
@@ -245,8 +244,7 @@ const HOUR_MS = 60 * 60 * 1000;
 
 const DAY_MS = 24 * HOUR_MS;
 
-/** UTC; weeks start on Monday. */
-export function bucketStartFor(unit: BucketUnit, time: number): number {
+export function utcBucketStartFor(unit: BucketUnit, time: number): number {
 	if (unit === 'hour') return time - (time % HOUR_MS);
 
 	const day = time - (time % DAY_MS);
@@ -271,7 +269,7 @@ function shiftBucket(unit: BucketUnit, start: number, count: number): number {
 }
 
 export function rangeBucketStarts(range: UsageRange, now: number): number[] {
-	const last = bucketStartFor(range.unit, now);
+	const last = utcBucketStartFor(range.unit, now);
 
 	return Array.from({ length: range.count }, (_, index) =>
 		shiftBucket(range.unit, last, index - range.count + 1)

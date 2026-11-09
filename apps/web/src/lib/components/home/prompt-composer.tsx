@@ -514,8 +514,6 @@ export default function PromptComposer({
 			onSelectedQuestionOptionIdChange?.(null);
 		}
 
-		// Drop answer draft when the pending question changes or clears so it
-		// cannot leak into the next question or a later normal send.
 		if (prompt.trim()) {
 			onPromptChange?.('');
 		}

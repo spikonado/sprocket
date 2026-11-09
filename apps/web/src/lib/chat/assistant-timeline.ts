@@ -47,7 +47,6 @@ export function isAssistantResponseStreaming(
 	return message.runId === activeRunId;
 }
 
-/** Tool type used for grouping: prefer streamed call name so groups stay stable as jobs attach. */
 export function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
 	return tool.name || tool.job?.kind || 'tool';
 }
@@ -192,11 +191,6 @@ export function resolveCommandSessionLabel(
 	);
 }
 
-/**
- * Split a work section's blocks into settled content (reasoning + finished tools) and
- * currently running async tools displayed after the settled content.
- * Unfinished synchronous calls stay hidden until they settle or the run stops.
- */
 export type PartitionedWorkSectionTools = {
 	settledBlocks: AssistantTimelineWorkBlock[];
 	runningTools: AssistantTimelineTool[];

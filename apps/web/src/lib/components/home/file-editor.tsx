@@ -6,7 +6,7 @@ import { classHighlighter } from '@lezer/highlight';
 import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import KicadViewer from '$lib/components/home/kicad-viewer';
-import { markdownImageUrl } from '$lib/chat/markdown-images';
+import { workspaceImageUrl } from '$lib/chat/markdown-images';
 import { leafName, type FileDraft } from '$lib/chat/side-panel';
 import { usePageVisible } from '$lib/page-visibility';
 import { KICAD_FILE } from '$lib/kicad';
@@ -20,8 +20,7 @@ export type FileEditorApi = Pick<
 type Props = {
 	api: FileEditorApi | null;
 	file: WorkspaceFileTarget;
-	/** Read on mount; changes are reported through `onDraftChange`. */
-	draft: FileDraft | undefined;
+	initialDraft?: FileDraft;
 	active: boolean;
 	onDraftChange: (draft: FileDraft | undefined) => void;
 };
@@ -70,9 +69,7 @@ export default function FileEditor(props: Props) {
 }
 
 function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
-	// Encoded so `#`, `?`, and `%` in filenames survive the Markdown URL parsing.
-	const source = file.path.split('/').map(encodeURIComponent).join('/');
-	const src = markdownImageUrl(source, { workspacePath: file.workspacePath });
+	const src = workspaceImageUrl(file);
 
 	return (
 		<div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
@@ -81,19 +78,16 @@ function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
 	);
 }
 
-function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
+function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [readError, setReadError] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
-	/** Disk state the buffer has not absorbed because it has unsaved edits. */
 	const [diskChange, setDiskChange] = useState<WorkspaceFileContent | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const savedDoc = useRef<Text | null>(null);
 	const version = useRef<string | null>(null);
-	/** Snapshots arriving mid-save could undo it or the edits made since; `rewatch` re-reads after. */
-	const saves = useRef(0);
-	/** Starts a fresh watch, so a snapshot read before a save can't arrive after it. */
+	const savesInFlight = useRef(0);
 	const rewatch = useRef(() => {});
 	const visible = usePageVisible();
 	const language = useRef(new Compartment());
@@ -111,7 +105,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		const view = viewRef.current;
 		const base = savedDoc.current;
 
-		// A save can settle after unmount; the tab's draft is newer than this editor then.
 		if (!view || !base || version.current === null) return;
 		latest.current.onDraftChange(
 			view.state.doc.eq(base) ? undefined : { doc: view.state.doc, base, version: version.current }
@@ -221,7 +214,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		if (!api || !view || version.current === null) return;
 
 		const doc = view.state.doc;
-		saves.current++;
+		savesInFlight.current++;
 
 		try {
 			const result = await api.writeWorkspaceFile({
@@ -230,7 +223,6 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 				expectedVersion: overwrite ? null : version.current
 			});
 
-			// The rewatch below reads the conflicting disk state and offers it as a reload.
 			if (result.status === 'conflict') return;
 
 			savedDoc.current = doc;
@@ -241,7 +233,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : 'Could not save the file.');
 		} finally {
-			saves.current--;
+			savesInFlight.current--;
 			rewatch.current();
 		}
 	}
@@ -253,7 +245,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		replace: replaceContent
 	};
 
-	const initialDraft = useRef(draft);
+	const initialDraftRef = useRef(initialDraft);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -262,8 +254,8 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 
 		viewRef.current = view;
 
-		if (initialDraft.current) {
-			const { doc, version, base } = initialDraft.current;
+		if (initialDraftRef.current) {
+			const { doc, version, base } = initialDraftRef.current;
 
 			actions.current.replace(doc, version, base);
 			setStatus({ kind: 'text' });
@@ -293,7 +285,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 				await api!.watchWorkspaceFile(target, {
 					signal: current.signal,
 					onEvent: (event) => {
-						if (saves.current > 0) return;
+						if (savesInFlight.current > 0) return;
 
 						if (event.kind === 'error') return actions.current.readFailed(event.message);
 						actions.current.absorb(event, false);
@@ -311,7 +303,7 @@ function TextFileEditor({ api, file, draft, active, onDraftChange }: Props) {
 		}
 
 		rewatch.current = () => {
-			if (saves.current > 0) return;
+			if (savesInFlight.current > 0) return;
 			controller.abort();
 			clearTimeout(timer);
 			void watch();

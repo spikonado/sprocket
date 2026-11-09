@@ -3,7 +3,10 @@ import { LoaderCircle } from 'lucide-react';
 import { z } from 'zod';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
 
-type ConnectorsApi = Pick<LocalApi, 'fetchConnectors' | 'installConnector' | 'uninstallConnector'>;
+type ConnectorsApi = Pick<
+	LocalApi,
+	'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'
+>;
 
 const INSTALL_POLL_MS = 2000;
 
@@ -79,7 +82,7 @@ export default function SettingsConnectors({
 							<ConnectorCard
 								key={connector.id}
 								connector={connector}
-								onInstall={() => localApi.installConnector(userId, connector.id)}
+								onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
 								onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
 								onStatus={replace}
 							/>
