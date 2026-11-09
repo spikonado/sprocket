@@ -135,7 +135,7 @@ Older releases restricted private files to OWNER RIGHTS, so files an elevated ru
 
 ### Completion item metadata
 
-Transcripts from released clients lack `providerMetadata.rigNative` and `origin`. In `crates/sprocket-agent/src/history.rs`, `legacy_text_native_item` and `legacy_tool_call_fields` rebuild native items from their older `providerMetadata` fields, and a missing `reasoningIssuer` means `LEGACY_REASONING_ISSUER`. `assign_unidentified_legacy_history_origin` in `crates/sprocket-agent/src/types.rs` assigns the selected model's origin. Keep these fallbacks until a versioned migration rewrites all stored local JSONL and Convex transcripts.
+Transcripts from released clients lack `providerMetadata.rigNative` and `origin`. In `crates/sprocket-agent/src/history.rs`, `legacy_text_native_item` and `legacy_tool_call_fields` rebuild native items from their older `providerMetadata` fields, and a missing `reasoningIssuer` means `LEGACY_REASONING_ISSUER`. Released clients stored Anthropic thinking signatures as `openai.reasoningEncryptedContent`, so `legacy_anthropic_thinking` rebuilds the `thinking` block for an `anthropic.messages` origin. `assign_unidentified_legacy_history_origin` in `crates/sprocket-agent/src/types.rs` assigns the selected model's origin. Keep these fallbacks until a versioned migration rewrites all stored local JSONL and Convex transcripts.
 
 ## Launcher process shims
 
