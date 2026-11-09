@@ -10,6 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandOutputLimits {
+    pub max_output_chars: usize,
     pub max_log_bytes: u64,
     pub min_free_disk_bytes: u64,
 }
@@ -17,6 +18,7 @@ pub struct CommandOutputLimits {
 impl Default for CommandOutputLimits {
     fn default() -> Self {
         Self {
+            max_output_chars: 20_000,
             max_log_bytes: 64 * 1024 * 1024,
             min_free_disk_bytes: 256 * 1024 * 1024,
         }
@@ -76,7 +78,6 @@ pub(crate) struct CapturedOutput {
 impl CapturedOutput {
     pub(crate) async fn create_with_limits(
         log_root: &Path,
-        max_chars: usize,
         limits: CommandOutputLimits,
     ) -> Result<Self> {
         tokio::fs::create_dir_all(log_root)
@@ -116,7 +117,7 @@ impl CapturedOutput {
             log_bytes: 0,
             limits,
             pending_utf8: Vec::new(),
-            full_preview: PreviewBuffer::new(max_chars),
+            full_preview: PreviewBuffer::new(limits.max_output_chars),
         })
     }
 

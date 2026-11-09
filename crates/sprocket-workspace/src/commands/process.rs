@@ -30,6 +30,13 @@ pub(super) struct CommandCompletion {
     pub saved: bool,
 }
 
+pub(super) struct CommandProcess {
+    pub child: Child,
+    pub stdin_task: tokio::task::JoinHandle<()>,
+    pub capture_task: tokio::task::JoinHandle<Result<()>>,
+    pub lifetime_guard: Option<Box<dyn Send + Sync>>,
+}
+
 pub(super) fn signal_change(changes: &Option<watch::Sender<()>>) {
     if let Some(changes) = changes {
         changes.send_replace(());
@@ -52,20 +59,22 @@ pub(super) fn completion_output(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 pub(super) async fn supervise_command(
-    mut child: Child,
-    process_id: Option<u32>,
+    process: CommandProcess,
     mut controls: mpsc::UnboundedReceiver<()>,
     completion: watch::Sender<Option<CommandCompletion>>,
-    stdin_task: tokio::task::JoinHandle<()>,
-    mut capture_task: tokio::task::JoinHandle<Result<()>>,
     output: Arc<Mutex<CapturedOutput>>,
     timeout: Option<Duration>,
-    lifetime_guard: Option<Box<dyn Send + Sync>>,
     history: (PathBuf, CommandHistory),
     changes: Option<watch::Sender<()>>,
 ) {
+    let CommandProcess {
+        mut child,
+        stdin_task,
+        mut capture_task,
+        lifetime_guard,
+    } = process;
+    let process_id = child.id();
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
     let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));

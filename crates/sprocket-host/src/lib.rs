@@ -286,13 +286,7 @@ impl Host {
             }
         });
         HostTasks {
-            command_sync: command_sync::spawn(
-                Arc::clone(&self.transcript),
-                Arc::clone(&self.command_sessions),
-                Arc::clone(&self.native_auth),
-                self.convex_deployment_url.clone(),
-                self.machine_identity.installation_id.clone(),
-            ),
+            command_sync: command_sync::spawn(self.clone()),
             recovery: run_recovery::spawn(self.clone()),
             host: self.clone(),
             attachment_cleanup,
@@ -320,18 +314,10 @@ impl HostTasks {
         host.browsers.shutdown().await;
         self.command_sync.abort();
         let _ = self.command_sync.await;
-        if let Err(error) = tokio::time::timeout(
-            Duration::from_secs(10),
-            command_sync::flush(
-                &host.transcript,
-                &host.command_sessions,
-                &host.native_auth,
-                &host.convex_deployment_url,
-                &host.machine_identity.installation_id,
-            ),
-        )
-        .await
-        .unwrap_or_else(|error| Err(error.into()))
+        if let Err(error) =
+            tokio::time::timeout(Duration::from_secs(10), command_sync::flush(&host))
+                .await
+                .unwrap_or_else(|error| Err(error.into()))
         {
             tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
         }

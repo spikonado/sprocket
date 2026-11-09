@@ -144,7 +144,6 @@ impl TranscriptSink {
                 &self.run_id,
                 &self.claim_id,
                 self.attempt_seq,
-                &self.stream_id,
                 self.items_json(),
                 self.tool_call_tracker.completion_assignments(),
                 self.context_tokens,

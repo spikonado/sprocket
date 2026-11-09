@@ -22,11 +22,6 @@ mod url_fetch;
 mod web;
 mod web_request;
 
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
-
 use self::artifacts::{BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool};
 pub(crate) use self::async_tools::max_yield_ms;
 pub(crate) use self::commands::CommandCursors;
@@ -47,6 +42,7 @@ use self::subagents::{
 use self::web::{ScrapeUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
+use crate::provider::AgentProviderRequest;
 
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
@@ -147,48 +143,33 @@ pub(crate) async fn hydrate_tool_history(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn agent_tools(
     runtime: RuntimeClient,
-    run_id: String,
-    claim_id: String,
-    user_id: String,
-    workspace_root: PathBuf,
-    cwd: PathBuf,
-    transcript_dir: PathBuf,
-    gateway_url: String,
-    transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
-    artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
-    supports_images: bool,
+    request: &AgentProviderRequest,
     tool_call_tracker: ToolCallTracker,
-    skills: Arc<[WorkspaceSkill]>,
-    command_sessions: CommandSessionManager,
-    command_cursors: CommandCursors,
-    subagent_models: Arc<crate::catalog::SubagentModelChoices>,
-    subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     max_yield_ms: u64,
 ) -> AgentToolSet {
     let context = AgentToolContext {
         runtime,
-        run_id,
-        claim_id,
-        user_id,
-        workspace_root,
-        cwd: WorkingDirectory::new(cwd),
-        transcript_dir,
-        gateway_url,
-        transcript_store,
-        artifact_bindings,
-        supports_images,
+        run_id: request.run_id.clone(),
+        claim_id: request.claim_id.clone(),
+        user_id: request.user_id.clone(),
+        workspace_root: request.workspace_root.clone(),
+        cwd: WorkingDirectory::new(request.cwd.clone()),
+        transcript_dir: request.transcript_dir.clone(),
+        gateway_url: request.gateway_url.clone(),
+        transcript_store: request.transcript_store.clone(),
+        artifact_bindings: request.artifact_bindings.clone(),
+        supports_images: request.supports_images,
         tool_call_tracker,
-        command_sessions,
-        command_cursors,
+        command_sessions: request.command_sessions.clone(),
+        command_cursors: request.command_cursors.clone(),
         max_yield_ms,
         question_polls: questions::QuestionPolls::default(),
         checkouts: payments::Checkouts::default(),
         subagent_polls: subagents::SubagentPolls::default(),
-        subagent_models,
-        subagent_launcher,
+        subagent_models: request.subagent_models.clone(),
+        subagent_launcher: request.subagent_launcher.clone(),
     };
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
@@ -206,7 +187,7 @@ pub(crate) fn agent_tools(
         poll_cmd: PollCmdTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),
-            skills,
+            skills: request.skills.clone(),
         },
         scrape_url: ScrapeUrlTool(context.clone()),
         spawn_subagent: SpawnSubagentTool {

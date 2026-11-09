@@ -652,22 +652,8 @@ async fn run_with_completion_model(
     let offer_github_tools = !sprocket_workspace::github::settings().disabled;
     let tools = agent_tools(
         runtime.clone(),
-        request.run_id.clone(),
-        request.claim_id.clone(),
-        request.user_id.clone(),
-        request.workspace_root.clone(),
-        request.cwd.clone(),
-        request.transcript_dir.clone(),
-        request.gateway_url.clone(),
-        request.transcript_store.clone(),
-        request.artifact_bindings.clone(),
-        request.supports_images,
+        &request,
         tool_call_tracker.clone(),
-        request.skills.clone(),
-        request.command_sessions.clone(),
-        request.command_cursors.clone(),
-        request.subagent_models.clone(),
-        request.subagent_launcher.clone(),
         target.max_yield_ms(request.usage_pricing.cache_write_ttl.as_deref()),
     );
     let cwd = tools.cwd.clone();

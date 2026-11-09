@@ -25,12 +25,14 @@ async fn callback_records_failure_once_without_exposing_oauth_material() {
         value.clone(),
         PendingLogin {
             session,
-            user: "user-a".into(),
-            connection: None,
+            sign_in: SignIn {
+                user: "user-a".into(),
+                connection: None,
+                redirect_uri: "http://127.0.0.1:1234/auth/callback".into(),
+                nonce: secret(),
+                verifier: secret(),
+            },
             expires: Instant::now() + LOGIN_LIFETIME,
-            nonce: secret(),
-            verifier: secret(),
-            redirect_uri: "http://127.0.0.1:1234/auth/callback".into(),
             processing: false,
             result: None,
         },
@@ -52,8 +54,8 @@ async fn callback_records_failure_once_without_exposing_oauth_material() {
             let login = logins.attempts.get(&value).unwrap();
             if let Some(Err(error)) = &login.result {
                 assert_eq!(error, "ChatGPT sign-in was cancelled or failed.");
-                assert!(login.verifier.is_empty());
-                assert!(login.nonce.is_empty());
+                assert!(login.sign_in.verifier.is_empty());
+                assert!(login.sign_in.nonce.is_empty());
                 break;
             }
             drop(logins);
