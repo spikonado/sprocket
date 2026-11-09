@@ -36,6 +36,7 @@ use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::muse::Muse;
 use crate::openai::stateless_responses_model;
 use crate::request_compression::ZstdResponsesRequests;
+use crate::request_images::RequestImageLimit;
 use crate::responses_gateway::{ResponsesGateway, gateway_responses_model};
 use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, max_yield_ms};
@@ -850,6 +851,7 @@ async fn run_with_completion_model(
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(completion_origin.clone())
                 .add_hook(context_handoff_hook.clone())
+                .add_hook(RequestImageLimit)
                 .add_hook(prompt_hook.clone())
                 .add_hook(stream_recovery.hook())
                 .add_hook(generation_tracker.clone())

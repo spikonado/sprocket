@@ -16,6 +16,7 @@ mod output;
 mod provider;
 mod reasoning;
 mod request_compression;
+mod request_images;
 mod responses_gateway;
 mod run;
 mod run_settings;

@@ -17,9 +17,10 @@ pub(crate) const MAX_PARSE_FILE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const MAX_PARSE_FILE_IMAGE_DIMENSION: u32 = 8192;
 pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
 /// Anthropic rejects images over 2000 px per side once a request holds more
-/// than 20 images, and Bedrock/Vertex cap each image at 5 MB of base64.
+/// than 20 images. The byte cap keeps `MAX_REQUEST_IMAGES` of them, as base64,
+/// at about 20 MB of Bedrock's 32 MiB request limit.
 pub(crate) const MAX_MODEL_IMAGE_EDGE: u32 = 2000;
-pub(crate) const MAX_MODEL_IMAGE_BYTES: usize = 3_750_000;
+pub(crate) const MAX_MODEL_IMAGE_BYTES: usize = 750_000;
 const MODEL_IMAGE_JPEG_QUALITY: u8 = 85;
 pub(crate) const MAX_PARSE_FILE_PREVIEW_CHARS: usize = 20_000;
 
