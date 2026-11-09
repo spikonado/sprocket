@@ -6,6 +6,11 @@ import { fetchPricingCatalog } from '@/lib/pricing/billing';
 import { pricingFaqs } from '@/lib/pricing/catalog';
 import { ORGANIZATION_NAME, SITE_URL } from '@/lib/seo';
 
+// Plans live in Convex and change without a site deploy, so a build-time copy goes stale.
+export const prerender = false;
+
+Astro.response.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+
 const description =
 	'Compare Sprocket plans and choose the AI usage limits that fit your engineering work.';
 
@@ -19,7 +24,7 @@ const productLd = {
 	description,
 	brand: { '@type': 'Brand', name: ORGANIZATION_NAME },
 	url: `${SITE_URL}/pricing`,
-	// Paid prices can change after this static page is built, so only the free plan is listed.
+	// Paid prices can change while this page is cached, so only the free plan is listed.
 	offers: freePlan
 		? [{ '@type': 'Offer', name: `Sprocket ${freePlan.label}`, price: '0', priceCurrency: 'USD' }]
 		: []
