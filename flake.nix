@@ -100,6 +100,8 @@
             ++ electronRuntimeLibs;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath electronRuntimeLibs;
+          # rustup's bundled rust-lld skips the Nix ld wrapper, so binaries lose the rpaths to Nix libraries.
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C linker-features=-lld";
 
           shellHook = ''
             export PATH="''${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
