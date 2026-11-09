@@ -77,6 +77,8 @@ const DESKTOP_LOGIN_POLL_INTERVAL_MS = 1_500;
 
 const DESKTOP_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
 
+const DESKTOP_LOGIN_REQUEST_TIMEOUT_MS = 15_000;
+
 const TRANSIENT_AUTH_ERROR = 'Native sign-in is temporarily unavailable. Try again.';
 
 let convexRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -705,12 +707,25 @@ async function errorMessageFromFailedResponse(
 async function startDesktopLogin(
 	flow: AuthFlow
 ): Promise<{ authorizationUrl: string; loginId: string }> {
-	const response = await fetch('/api/auth/desktop-login/start', {
-		method: 'POST',
-		credentials: 'include',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ flow })
-	});
+	let response: Response;
+
+	try {
+		response = await fetch('/api/auth/desktop-login/start', {
+			method: 'POST',
+			credentials: 'include',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ flow }),
+			signal: AbortSignal.timeout(DESKTOP_LOGIN_REQUEST_TIMEOUT_MS)
+		});
+	} catch (error) {
+		if (error instanceof DOMException && error.name === 'TimeoutError') {
+			throw new Error('The local server took too long to start sign-in. Try again.', {
+				cause: error
+			});
+		}
+
+		throw error;
+	}
 
 	if (!response.ok) {
 		throw new Error(
@@ -752,9 +767,8 @@ async function startDesktopLoginInOrder(
 	try {
 		requireCurrentDesktopSignIn(attempt);
 
-		// Do not abort this request: a client-side abort does not prove the server
-		// stopped processing it. Serializing complete responses guarantees that a
-		// replacement attempt is the last /start request handled by the server.
+		// The server keeps only the last /start it handles, so starts run one at a time.
+		// A timed-out start can still land after a later one.
 		const { authorizationUrl, loginId } = await startDesktopLogin(flow);
 		attempt.loginId = loginId;
 		requireCurrentDesktopSignIn(attempt);
@@ -772,7 +786,7 @@ async function fetchDesktopLoginResult(signal: AbortSignal) {
 		response = await fetch('/api/auth/desktop-login/result', {
 			method: 'POST',
 			credentials: 'include',
-			signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+			signal: AbortSignal.any([signal, AbortSignal.timeout(DESKTOP_LOGIN_REQUEST_TIMEOUT_MS)])
 		});
 	} catch (error) {
 		if (signal.aborted) throw error;
