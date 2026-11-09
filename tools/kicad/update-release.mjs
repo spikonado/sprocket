@@ -65,6 +65,7 @@ const TAG_PREFIX = 'kicad-connector-v';
 const BUILD_FILES = [
 	'update-release.mjs',
 	'kipy-cli-env.patch',
+	'kipy-item-results.patch',
 	'routing-tools-transform-pose.patch'
 ];
 
@@ -293,6 +294,8 @@ function buildKipy(work, expectedCommit) {
 	}
 
 	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-cli-env.patch')]);
+	// When this stops applying because upstream fixed the double unpack, delete the patch.
+	run('git', ['-C', source, 'apply', join(toolDir, 'kipy-item-results.patch')]);
 	// Poetry emits a platform wheel; the build script writes the pure one to the source's dist.
 	run(
 		'uv',
@@ -465,7 +468,7 @@ function releaseNotes(build, kipyCommit, routingToolsRelease, buildCommit) {
 		'',
 		`Corresponding source: https://gitlab.com/kicad/code/kicad/-/tree/${build.commit}`,
 		'',
-		`The kicad-python wheel is built from ${KIPY_REPOSITORY}/-/tree/${kipyCommit} with one patch: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path.`,
+		`The kicad-python wheel is built from ${KIPY_REPOSITORY}/-/tree/${kipyCommit} with two patches: \`find_kicad_cli()\` uses \`KICAD_CLI_PATH\` when given no path, and \`create_items()\` and \`update_items()\` stop unpacking each returned item twice.`,
 		'',
 		`The \`kicad-routing-tools-*\` archives are https://github.com/${ROUTING_TOOLS_REPOSITORY}/releases/tag/${routingToolsRelease.tag_name} with one patch that reads the footprint poses of board format 20260616 and later, without its example boards. Each holds its platform's \`grid_router\` binary.`,
 		'',
