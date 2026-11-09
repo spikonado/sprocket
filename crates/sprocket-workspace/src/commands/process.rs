@@ -67,6 +67,7 @@ pub(super) async fn supervise_command(
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
+    let oom_kills_at_start = oom_kill_count().await;
     let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut capture_finished = false;
@@ -94,10 +95,12 @@ pub(super) async fn supervise_command(
             },
             _ = poll.tick() => match child.try_wait() {
                 Ok(Some(status)) => {
-                    if let Err(stop_error) = stop_remaining_processes(process_id) {
-                        break (Some(status), false, Some(stop_error.to_string()));
-                    }
-                    break (Some(status), false, None);
+                    let error = match stop_remaining_processes(process_id) {
+                        Err(stop_error) => Some(stop_error.to_string()),
+                        Ok(()) if status.success() => None,
+                        Ok(()) => oom_kills_since(oom_kills_at_start).await,
+                    };
+                    break (Some(status), false, error);
                 }
                 Ok(None) => {}
                 Err(wait_error) => {
@@ -149,6 +152,53 @@ async fn wait_for_timeout(timeout: Option<Duration>) {
         Some(timeout) => tokio::time::sleep(timeout).await,
         None => std::future::pending::<()>().await,
     }
+}
+
+/// Agent commands become the kernel's preferred victims when the machine runs out of memory,
+/// so it kills them instead of the server or the user's session. Raising the score needs no
+/// privileges, and everything the shell starts inherits it.
+#[cfg(target_os = "linux")]
+pub(super) fn prefer_as_oom_victim(command: &mut Command) {
+    const OOM_SCORE_ADJ: &[u8] = b"500";
+    // SAFETY: open, write, and close are async-signal-safe.
+    unsafe {
+        command.pre_exec(|| {
+            let file = libc::open(
+                c"/proc/self/oom_score_adj".as_ptr(),
+                libc::O_WRONLY | libc::O_CLOEXEC,
+            );
+            if file >= 0 {
+                let _ = libc::write(file, OOM_SCORE_ADJ.as_ptr().cast(), OOM_SCORE_ADJ.len());
+                libc::close(file);
+            }
+            Ok(())
+        });
+    }
+}
+
+/// The server's cgroup holds other processes, so cgroup v2 can't enable the memory controller
+/// for a command cgroup. This machine-wide Linux count is the only OOM kill record left.
+async fn oom_kill_count() -> Option<u64> {
+    let vmstat = tokio::fs::read_to_string("/proc/vmstat").await.ok()?;
+    vmstat
+        .lines()
+        .find_map(|line| line.strip_prefix("oom_kill "))?
+        .parse()
+        .ok()
+}
+
+async fn oom_kills_since(start: Option<u64>) -> Option<String> {
+    let start = start?;
+    let kills = oom_kill_count().await?.saturating_sub(start);
+    let processes = match kills {
+        0 => return None,
+        1 => "1 process".to_string(),
+        kills => format!("{kills} processes"),
+    };
+    Some(format!(
+        "the kernel's out-of-memory killer killed {processes} on this machine while this \
+         command ran, and it kills agent commands first"
+    ))
 }
 
 pub(super) async fn write_command_input(

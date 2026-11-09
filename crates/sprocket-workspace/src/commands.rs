@@ -320,6 +320,8 @@ impl CommandSessionManager {
             .kill_on_drop(true);
         #[cfg(unix)]
         process.process_group(0);
+        #[cfg(target_os = "linux")]
+        self::process::prefer_as_oom_victim(&mut process);
 
         let mut sessions = self.sessions.lock().await;
         cancellation.ensure_active()?;
