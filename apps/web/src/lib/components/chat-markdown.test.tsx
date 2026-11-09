@@ -222,7 +222,8 @@ describe('code blocks', () => {
 	});
 
 	it('highlights nested fences while preserving literal code, tabs, and blank lines', async () => {
-		const code = 'const markup = "<img src=x onerror=alert(1)>";\n\n\tconsole.log(markup);\n';
+		// marked >=18.1.2 expands a tab right after `> ` into spaces (markedjs/marked#4110), unlike CommonMark.
+		const code = 'const markup = "<img src=x onerror=alert(1)>";\n\nconsole.log(markup);\t// raw\n';
 
 		const { container } = render(
 			<ChatMarkdown
