@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
-/// Capture writes each event from one read of at most 8 KiB, so a valid event line is shorter.
+/// Capture appends at most this much output per event, which keeps every encoded event line
+/// under `MAX_EVENT_LINE_BYTES`.
+pub(crate) const MAX_EVENT_OUTPUT_BYTES: usize = 8 * 1024;
 const MAX_EVENT_LINE_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]

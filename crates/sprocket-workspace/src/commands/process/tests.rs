@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::{
     Capture, CommandCompletion, CommandProcess, Supervision, build_shell_command,
-    completion_output, join_capture_task, supervise_command,
+    completion_output, supervise_command,
 };
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::CapturedOutput;
@@ -12,10 +12,11 @@ use crate::default_command_shell;
 use crate::test_support::temp_workspace;
 use tokio::sync::{Mutex, mpsc, watch};
 
+#[cfg(windows)]
 #[tokio::test]
 async fn unfinished_capture_is_an_error_not_successful_truncation() {
     let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
-    let error = join_capture_task(task).await.unwrap_err();
+    let error = super::join_capture_task(task).await.unwrap_err();
     assert!(error.to_string().contains("logs may be incomplete"));
 }
 
@@ -37,12 +38,12 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         result: completion_output(&CommandCompletion::default(), output.preview_metadata()),
         process: None,
     };
-    let log_directory = std::path::Path::new(&history.result.complete_log_path)
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let (mut process, _source) =
-        build_shell_command(command, &default_command_shell(), &log_directory).unwrap();
+    let (mut process, _source) = build_shell_command(
+        command,
+        &default_command_shell(),
+        history.result.log_directory().unwrap(),
+    )
+    .unwrap();
     process.current_dir(&root).kill_on_drop(true);
     #[cfg(unix)]
     process.process_group(0);

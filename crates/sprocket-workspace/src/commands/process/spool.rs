@@ -10,14 +10,12 @@ use tokio::sync::{Mutex, watch};
 use tokio::time::Instant;
 
 use super::{Capture, PROCESS_POLL_INTERVAL, stop_remaining_processes};
-use crate::command_output::{CapturedBytes, CapturedOutput, OutputChannel};
+use crate::command_output::{CapturedBytes, CapturedOutput, MAX_EVENT_OUTPUT_BYTES, OutputChannel};
 
 const STDOUT_SPOOL: &str = "stdout.spool";
 const STDERR_SPOOL: &str = "stderr.spool";
 const EXIT_STATUS: &str = "exit-status";
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
-// Each read becomes one event line, which must stay under `MAX_EVENT_LINE_BYTES` once encoded.
-const READ_BYTES: usize = 8 * 1024;
 
 /// Saves the shell's exit code to `$1`, so a server that didn't start the shell can still learn
 /// how it ended.
@@ -63,7 +61,7 @@ impl Spools {
         }
     }
 
-    /// The next chunk of each spool, and the spools' total length.
+    /// The spools' total length, and the next chunk of each.
     fn read_chunks(
         &mut self,
         stopping: bool,
@@ -90,7 +88,7 @@ impl Spools {
             if unread == 0 {
                 continue;
             }
-            let mut bytes = vec![0; unread.min(READ_BYTES as u64) as usize];
+            let mut bytes = vec![0; unread.min(MAX_EVENT_OUTPUT_BYTES as u64) as usize];
             let read = file.read(&mut bytes)?;
             if read > 0 {
                 bytes.truncate(read);

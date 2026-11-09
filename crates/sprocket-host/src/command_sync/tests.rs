@@ -182,14 +182,10 @@ async fn log_batches_resume_in_order_and_hold_back_partial_events() {
     let path = directory.path().join("output.log");
     let mut bytes: Vec<u8> = (0..CHUNK_BYTES * 5 + 17).map(|index| index as u8).collect();
     bytes.push(b'\n');
-    tokio::fs::write(&path, &bytes).await.unwrap();
-    let mut torn_event = tokio::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
+    let torn_event: &[u8] = b"{\"sequence\":";
+    tokio::fs::write(&path, [bytes.as_slice(), torn_event].concat())
         .await
         .unwrap();
-    torn_event.write_all(b"{\"sequence\":").await.unwrap();
-    torn_event.flush().await.unwrap();
     let path = path.to_str().unwrap();
     let mut downloaded = bytes[..23].to_vec();
 

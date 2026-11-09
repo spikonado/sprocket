@@ -18,7 +18,7 @@ use super::CommandOutput;
 use crate::command_history::CommandHistory;
 use crate::command_output::CapturedOutput;
 #[cfg(windows)]
-use crate::command_output::OutputChannel;
+use crate::command_output::{MAX_EVENT_OUTPUT_BYTES, OutputChannel};
 
 #[cfg(unix)]
 pub(super) use self::spool::{AdoptedProcess, Spools, start_token};
@@ -227,7 +227,7 @@ pub(super) async fn supervise_command(
         Ok(()) => {
             completed.saved = true;
             #[cfg(unix)]
-            if let Some(log_directory) = Path::new(&history.result.complete_log_path).parent() {
+            if let Ok(log_directory) = history.result.log_directory() {
                 spool::remove_files(log_directory);
             }
         }
@@ -315,8 +315,8 @@ where
     O: AsyncRead + Unpin,
     E: AsyncRead + Unpin,
 {
-    let mut stdout_buffer = [0_u8; 8_192];
-    let mut stderr_buffer = [0_u8; 8_192];
+    let mut stdout_buffer = [0_u8; MAX_EVENT_OUTPUT_BYTES];
+    let mut stderr_buffer = [0_u8; MAX_EVENT_OUTPUT_BYTES];
     let mut stdout_open = true;
     let mut stderr_open = true;
     while stdout_open || stderr_open {

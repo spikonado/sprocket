@@ -330,10 +330,6 @@ impl CommandSessionManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let history_path = history_path(&self.log_directory, &session_id)?;
         let preview = output.lock().await.preview_metadata();
-        let log_directory = Path::new(&preview.complete_log_path)
-            .parent()
-            .context("command log has no directory")?
-            .to_path_buf();
         let mut history = CommandHistory {
             user_id: self.history_scope.user_id.clone(),
             thread_id: self.history_scope.thread_id.clone(),
@@ -353,6 +349,7 @@ impl CommandSessionManager {
             },
             process: None,
         };
+        let log_directory = history.result.log_directory()?.to_path_buf();
         history.save(&history_path).await?;
         let launch: Result<_> = (|| {
             cancellation.ensure_active()?;
@@ -663,10 +660,7 @@ impl CommandSessionManager {
             .clone()
             .context("command has no process record")?;
         let history_path = history_path(&self.log_directory, session_id)?;
-        let log_directory = Path::new(&history.result.complete_log_path)
-            .parent()
-            .context("command log has no directory")?
-            .to_path_buf();
+        let log_directory = history.result.log_directory()?.to_path_buf();
         let process = AdoptedProcess::new(record.pid, record.start_token, &log_directory);
         let resumed = async {
             let lifetime_guard = self
@@ -1064,6 +1058,14 @@ pub struct CommandOutput {
     pub events_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+impl CommandOutput {
+    fn log_directory(&self) -> Result<&Path> {
+        Path::new(&self.complete_log_path)
+            .parent()
+            .context("command log has no directory")
+    }
 }
 
 #[cfg(test)]
