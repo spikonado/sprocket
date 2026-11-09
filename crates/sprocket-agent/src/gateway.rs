@@ -53,6 +53,7 @@ where
         }
     }
 
+    #[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
     async fn resolve_credential(&self) -> http_client::Result<String> {
         let mut cached = self.cached.lock().await;
         if let Some(cached) = cached.as_ref()

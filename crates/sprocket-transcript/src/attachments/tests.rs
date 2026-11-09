@@ -42,7 +42,8 @@ async fn serve(status: u16, body: &str) -> (String, tokio::task::JoinHandle<()>)
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut request = [0; 4096];
-        stream.read(&mut request).await.unwrap();
+        let read = stream.read(&mut request).await.unwrap();
+        assert!(read > 0);
         stream.write_all(response.as_bytes()).await.unwrap();
     });
     (url, server)

@@ -775,7 +775,7 @@ pub async fn run_agent(
     });
     let (provider_switch, history_supports_images) = match handoff_model {
         Ok(Some((handoff, handoff_capabilities))) => (
-            ProviderSwitch::Handoff(ProviderSwitchHandoff {
+            ProviderSwitch::Handoff(Box::new(ProviderSwitchHandoff {
                 base_instructions: base_instructions(
                     &handoff_capabilities.label,
                     &handoff.selected_model,
@@ -784,7 +784,7 @@ pub async fn run_agent(
                 usage_pricing: handoff_capabilities.usage_pricing,
                 route: handoff_capabilities.route,
                 handoff,
-            }),
+            })),
             handoff_capabilities.supports_images,
         ),
         Ok(None) => (ProviderSwitch::None, capabilities.supports_images),

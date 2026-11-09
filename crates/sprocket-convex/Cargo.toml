@@ -8,13 +8,13 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.102"
-base64 = "0.23.0"
-convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
+anyhow.workspace = true
+base64.workspace = true
+convex.workspace = true
 rustls = { version = "0.23.40", features = ["ring"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-tokio = { version = "1.52.1", features = ["rt", "sync", "time"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
-tokio = { version = "1.52.1", features = ["macros", "rt", "sync", "test-util", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }

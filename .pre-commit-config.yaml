@@ -44,6 +44,12 @@ repos:
         entry: cargo fmt
         pass_filenames: false
 
+      - id: nix-fmt
+        name: nix-fmt
+        language: system
+        entry: nix fmt
+        pass_filenames: false
+
       - id: commitlint
         name: commitlint
         language: system

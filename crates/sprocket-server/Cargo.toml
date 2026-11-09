@@ -8,43 +8,43 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.102"
-axum = { version = "0.8.8", features = ["macros", "ws"] }
+anyhow.workspace = true
+axum = { workspace = true, features = ["macros", "ws"] }
 axum-extra = { version = "0.12.0", features = ["cookie"] }
-clap = { version = "4.5.60", features = ["derive", "env"] }
+clap = { workspace = true, features = ["env"] }
+convex.workspace = true
 cookie = { version = "0.18.1", features = ["percent-encode"] }
-hmac = "0.13.0"
-keyring = "4.2.0"
-open = "5.4.2"
-reqwest = { version = "0.13.4", default-features = false, features = ["form", "rustls", "stream"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-sha2 = "0.11.0"
-sprocket-agent = { path = "../sprocket-agent" }
-sprocket-convex = { path = "../sprocket-convex" }
-sprocket-host = { path = "../sprocket-host" }
-sprocket-transcript = { path = "../sprocket-transcript" }
-sprocket-workspace = { path = "../sprocket-workspace" }
-tokio = { version = "1.52.1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io"] }
-tokio-tungstenite = "0.30.0"
-tempfile = "3.27.0"
+futures.workspace = true
+hmac.workspace = true
+keyring.workspace = true
+open.workspace = true
+reqwest = { workspace = true, features = ["form", "rustls", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sprocket-agent.workspace = true
+sprocket-convex.workspace = true
+sprocket-host.workspace = true
+sprocket-transcript.workspace = true
+sprocket-workspace.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
 tower = "0.5.3"
-convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
-futures = "0.3.32"
 tower-http = { version = "0.7.0", features = ["fs", "trace"] }
-tracing = "0.1.44"
-url = "2.5.8"
-uuid = { version = "1.21.0", features = ["v4"] }
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.186"
+libc.workspace = true
 
 [build-dependencies]
 dotenvy = "0.15.7"
-serde_json = "1.0.149"
+serde_json.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1.52.1", features = ["test-util"] }
-sprocket-host = { path = "../sprocket-host", features = ["test-support"] }
-workos = "3.4.1"
+sprocket-host = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
+workos.workspace = true

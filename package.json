@@ -30,5 +30,22 @@
 	"workspaces": [
 		"apps/*",
 		"packages/*"
-	]
+	],
+	"catalog": {
+		"@fontsource-variable/geist": "^5.3.0",
+		"@fontsource-variable/geist-mono": "^5.3.0",
+		"@posthog/cli": "^0.19.0",
+		"@posthog/rollup-plugin": "^1.6.2",
+		"@tailwindcss/vite": "^4.2.4",
+		"@types/react": "^19.3.0",
+		"@types/react-dom": "^19.3.0",
+		"clsx": "^2.1.1",
+		"convex": "^1.45.0",
+		"posthog-js": "^1.438.15",
+		"react": "^19.3.0",
+		"react-dom": "^19.3.0",
+		"tailwind-merge": "^3.5.0",
+		"tailwindcss": "^4.2.4",
+		"zod": "^4.1.8"
+	}
 }

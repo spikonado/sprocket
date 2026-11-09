@@ -5,8 +5,7 @@
 			"$lib/*": ["./src/lib/*"],
 			"@convex/*": ["./convex/*"]
 		},
-		"types": ["node", "vite/client"],
-		"noEmit": true
+		"types": ["node", "vite/client"]
 	},
 	"include": ["src/**/*.ts", "src/**/*.tsx", "convex/**/*.ts", "vite.config.ts"]
 }

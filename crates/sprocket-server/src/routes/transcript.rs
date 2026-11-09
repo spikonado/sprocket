@@ -163,14 +163,13 @@ async fn display_handler(
     {
         return Err(ApiError::bad_request(anyhow!("invalid display page limit")));
     }
-    if let Some(cursor) = &payload.changes_after {
-        if cursor.revision > 9_007_199_254_740_991
-            || !(-1..=9_007_199_254_740_991).contains(&cursor.position)
-        {
-            return Err(ApiError::bad_request(anyhow!(
-                "invalid display change cursor"
-            )));
-        }
+    if let Some(cursor) = &payload.changes_after
+        && (cursor.revision > 9_007_199_254_740_991
+            || !(-1..=9_007_199_254_740_991).contains(&cursor.position))
+    {
+        return Err(ApiError::bad_request(anyhow!(
+            "invalid display change cursor"
+        )));
     }
     let changes = payload.changes_after.map(|c| (c.revision, c.position));
     let streams = payload

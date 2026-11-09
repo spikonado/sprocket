@@ -286,6 +286,7 @@ impl CommandSessionManager {
         self
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub async fn exec_command(
         &self,
         cancellation: WorkspaceCancellation,

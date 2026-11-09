@@ -12,7 +12,7 @@ async fn serve(body: &str, declared_size: usize) -> reqwest::Url {
     tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut request = [0; 4096];
-        stream.read(&mut request).await.unwrap();
+        assert!(stream.read(&mut request).await.unwrap() > 0);
         let _ = stream.write_all(response.as_bytes()).await;
     });
     url

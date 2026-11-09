@@ -425,6 +425,7 @@ impl RuntimeClient {
             .await
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn finalize_completion_call(
         &self,
         run_id: &str,
@@ -464,10 +465,8 @@ impl RuntimeClient {
         let persisted: Option<PersistedTranscriptPart> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
-        if empty_completion {
-            if let Some(output) = &self.output {
-                output.empty_completion();
-            }
+        if empty_completion && let Some(output) = &self.output {
+            output.empty_completion();
         }
         if let (Some(output), Some(persisted)) = (&self.output, persisted) {
             output.record_part(persisted.into()).await;

@@ -155,7 +155,7 @@ pub(crate) struct AgentProvider {
 pub(crate) enum ProviderSwitch {
     #[default]
     None,
-    Handoff(ProviderSwitchHandoff),
+    Handoff(Box<ProviderSwitchHandoff>),
     WithoutHandoff,
 }
 
@@ -260,6 +260,7 @@ impl AgentProvider {
         let mut omit_prior_reasoning = false;
         let switch = match std::mem::take(&mut request.provider_switch) {
             ProviderSwitch::Handoff(switch) => {
+                let switch = *switch;
                 match self
                     .handoff_model(
                         &runtime,

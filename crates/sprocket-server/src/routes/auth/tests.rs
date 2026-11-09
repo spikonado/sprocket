@@ -302,8 +302,7 @@ async fn unbound_remote_session_cannot_open_the_auth_event_stream() {
 
     let rejected = authorize_session_changes(&state, &headers, &CookieJar::from_headers(&headers))
         .await
-        .err()
-        .expect("unbound remote session is rejected");
+        .expect_err("unbound remote session is rejected");
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 }
 

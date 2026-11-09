@@ -142,6 +142,7 @@ fn stream_error(message: impl Into<String>) -> http_client::Error {
     http_client::Error::Instance(message.into().into())
 }
 
+#[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn check_connection(connection: &SharedConnection) -> http_client::Result<()> {
     lock_connection(connection)
         .check()
@@ -293,6 +294,7 @@ impl HttpClientExt for SiwcHttpClient {
     }
 }
 
+#[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn streaming_response(
     response: reqwest::Response,
     connection: SharedConnection,
@@ -488,6 +490,7 @@ where
     }
 }
 
+#[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn rewrite_request_body(body: &Bytes) -> http_client::Result<Bytes> {
     let mut body: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| stream_error(format!("invalid Responses request body: {error}")))?;
@@ -497,6 +500,7 @@ fn rewrite_request_body(body: &Bytes) -> http_client::Result<Bytes> {
         .map_err(|error| stream_error(error.to_string()))
 }
 
+#[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn shape_siwc_body(body: &mut serde_json::Value) -> http_client::Result<()> {
     let object = body
         .as_object_mut()
@@ -521,6 +525,7 @@ fn shape_siwc_body(body: &mut serde_json::Value) -> http_client::Result<()> {
     namespace_function_tools(object)
 }
 
+#[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn namespace_function_tools(
     object: &mut serde_json::Map<String, serde_json::Value>,
 ) -> http_client::Result<()> {

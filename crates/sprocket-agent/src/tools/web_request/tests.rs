@@ -15,7 +15,7 @@ async fn serve(status: u16, body: &str, content_length: Option<usize>) -> String
     tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut request = [0; 4096];
-        socket.read(&mut request).await.unwrap();
+        assert!(socket.read(&mut request).await.unwrap() > 0);
         let _ = socket.write_all(response.as_bytes()).await;
     });
     url

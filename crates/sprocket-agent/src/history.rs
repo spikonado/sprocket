@@ -334,16 +334,16 @@ pub fn agent_history_from_parts(
                 }
             }
             TranscriptPartKind::Tool => {
-                if let Some(tool) = &part.tool {
-                    if let Some(ready) = take_matching_tool(
+                if let Some(tool) = &part.tool
+                    && let Some(ready) = take_matching_tool(
                         tool,
                         &protocol_call_ids,
                         &opened_call_ids,
                         &mut emitted_results,
                         &mut pending_tools,
-                    ) {
-                        history.push(tool_result_message(ready));
-                    }
+                    )
+                {
+                    history.push(tool_result_message(ready));
                 }
             }
         }
@@ -356,7 +356,7 @@ fn openai_field<'a>(item: &'a serde_json::Value, key: &str) -> Option<&'a serde_
     item.get("providerMetadata")?.get("openai")?.get(key)
 }
 
-fn non_empty_str<'a>(value: Option<&'a serde_json::Value>) -> Option<&'a str> {
+fn non_empty_str(value: Option<&serde_json::Value>) -> Option<&str> {
     value?.as_str().filter(|value| !value.is_empty())
 }
 

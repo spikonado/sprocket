@@ -395,11 +395,11 @@ async fn check_auth(
 ) {
     loop {
         tokio::time::sleep(Duration::from_secs(15)).await;
-        if let Ok(Err(error)) = timeout(NETWORK_TIMEOUT, auth.require_user(&user_id)).await {
-            if is_native_account_revoked(&error) {
-                let _ = output.send(Err(error)).await;
-                return;
-            }
+        if let Ok(Err(error)) = timeout(NETWORK_TIMEOUT, auth.require_user(&user_id)).await
+            && is_native_account_revoked(&error)
+        {
+            let _ = output.send(Err(error)).await;
+            return;
         }
     }
 }
@@ -600,16 +600,15 @@ impl ArtifactFeed {
             let mut guard = guard?;
             let mut changed = false;
             for (id, previous, hash) in baseline_updates {
-                if let Some(current) = guard.get(&id) {
-                    if current.local_path == previous.local_path
-                        && current.content_hash == previous.content_hash
-                        && current.registration_id == previous.registration_id
-                    {
-                        let mut binding = current.clone();
-                        binding.content_hash = hash;
-                        guard.bind(binding)?;
-                        changed = true;
-                    }
+                if let Some(current) = guard.get(&id)
+                    && current.local_path == previous.local_path
+                    && current.content_hash == previous.content_hash
+                    && current.registration_id == previous.registration_id
+                {
+                    let mut binding = current.clone();
+                    binding.content_hash = hash;
+                    guard.bind(binding)?;
+                    changed = true;
                 }
             }
             if changed {

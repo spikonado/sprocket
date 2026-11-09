@@ -111,7 +111,7 @@ impl AuthState {
 
         let pairing_credential = load_or_create_pairing_credential(data_dir)?;
 
-        let sessions = load_sessions(&data_dir)?;
+        let sessions = load_sessions(data_dir)?;
 
         Ok(Arc::new(Self {
             instance_id: Uuid::new_v4().to_string(),

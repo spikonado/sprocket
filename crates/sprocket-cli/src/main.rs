@@ -113,21 +113,21 @@ fn entry() -> anyhow::Result<u8> {
                 !cli.web && workspace_path.is_none(),
                 "run does not accept app launch arguments; use run --directory instead"
             );
-            return commands::run(args);
+            commands::run(args)
         }
         Some(Commands::Login(args)) => {
             anyhow::ensure!(
                 !cli.web && workspace_path.is_none(),
                 "login does not accept app launch arguments"
             );
-            return commands::login(args);
+            commands::login(args)
         }
         Some(Commands::Logout) => {
             anyhow::ensure!(
                 !cli.web && workspace_path.is_none(),
                 "logout does not accept app launch arguments"
             );
-            return commands::logout();
+            commands::logout()
         }
         Some(Commands::Serve(serve)) => {
             if cli.web {

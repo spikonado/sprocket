@@ -293,7 +293,7 @@ async fn cancellation_does_not_trigger_fallback() {
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut request = [0; 4096];
-        stream.read(&mut request).await.unwrap();
+        assert!(stream.read(&mut request).await.unwrap() > 0);
         cancel.cancel();
         let mut eof = [0];
         assert_eq!(stream.read(&mut eof).await.unwrap(), 0);

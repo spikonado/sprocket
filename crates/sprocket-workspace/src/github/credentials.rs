@@ -19,8 +19,9 @@ const TOKEN_VARIABLES: [&str; 4] = [
     "GITHUB_ENTERPRISE_TOKEN",
 ];
 
-static TOKENS: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
-    LazyLock::new(Default::default);
+type TokenCache = HashMap<String, (Option<String>, Instant)>;
+
+static TOKENS: LazyLock<Mutex<TokenCache>> = LazyLock::new(Default::default);
 
 static PINNED_GH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -108,7 +109,7 @@ async fn cached_gh_token(host: &str) -> Option<String> {
     token
 }
 
-fn lock_tokens() -> std::sync::MutexGuard<'static, HashMap<String, (Option<String>, Instant)>> {
+fn lock_tokens() -> std::sync::MutexGuard<'static, TokenCache> {
     TOKENS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

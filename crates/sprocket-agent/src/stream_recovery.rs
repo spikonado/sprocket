@@ -12,11 +12,13 @@ const MAX_STREAM_RECOVERIES: u32 = 3;
 const MAX_STREAM_TIMEOUT_RECOVERIES: u32 = 1;
 const GATEWAY_STREAM_TIMEOUT_CODE: &str = "gateway_stream_timeout";
 
+type HistoryAndPrompt = (Vec<Message>, Message);
+
 #[derive(Clone, Default)]
-pub(crate) struct CompletionInput(Arc<Mutex<Option<(Vec<Message>, Message)>>>);
+pub(crate) struct CompletionInput(Arc<Mutex<Option<HistoryAndPrompt>>>);
 
 impl CompletionInput {
-    fn take(&self) -> Option<(Vec<Message>, Message)> {
+    fn take(&self) -> Option<HistoryAndPrompt> {
         self.0.lock().ok()?.take()
     }
 }
@@ -104,7 +106,7 @@ impl StreamRecovery {
         self.input.clone()
     }
 
-    pub(crate) fn take_input(&self) -> Option<(Vec<Message>, Message)> {
+    pub(crate) fn take_input(&self) -> Option<HistoryAndPrompt> {
         self.input.take()
     }
 

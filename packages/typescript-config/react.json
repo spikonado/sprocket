@@ -6,7 +6,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
 		"skipLibCheck": true,
-		"sourceMap": true,
+		"noEmit": true,
 		"strict": true,
 		"moduleResolution": "bundler",
 		"module": "esnext",

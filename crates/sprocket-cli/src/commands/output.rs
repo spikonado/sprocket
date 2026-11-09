@@ -86,11 +86,11 @@ impl Output {
             .map(serde_json::to_value)
             .transpose()?;
         if live != self.live {
-            if let Some(live) = &live {
-                if let Some(parts) = live.get("parts").and_then(|parts| parts.as_array()) {
-                    for part in parts {
-                        self.tool_progress(part);
-                    }
+            if let Some(live) = &live
+                && let Some(parts) = live.get("parts").and_then(|parts| parts.as_array())
+            {
+                for part in parts {
+                    self.tool_progress(part);
                 }
             }
             self.live = live;

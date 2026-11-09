@@ -30,7 +30,3 @@ jobs:
       - name: Run prek
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: prek run -a
-
-      - name: Run fmt
-        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
-        run: nix fmt

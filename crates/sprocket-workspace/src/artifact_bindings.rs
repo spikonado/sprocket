@@ -263,10 +263,10 @@ async fn path_identity(workspace: &Path, path: &str) -> PathBuf {
     if let Ok(canonical) = tokio::fs::canonicalize(&destination).await {
         return canonical;
     }
-    if let (Some(parent), Some(name)) = (destination.parent(), destination.file_name()) {
-        if let Ok(parent) = tokio::fs::canonicalize(parent).await {
-            return parent.join(name);
-        }
+    if let (Some(parent), Some(name)) = (destination.parent(), destination.file_name())
+        && let Ok(parent) = tokio::fs::canonicalize(parent).await
+    {
+        return parent.join(name);
     }
     destination.components().collect()
 }

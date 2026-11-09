@@ -1,8 +1,6 @@
 {
-	"extends": "astro/tsconfigs/strict",
+	"extends": ["astro/tsconfigs/strict", "@sprocket/typescript-config/react.json"],
 	"compilerOptions": {
-		"jsx": "react-jsx",
-		"jsxImportSource": "react",
 		"types": ["bun"],
 		"paths": {
 			"@/*": ["./src/*"],

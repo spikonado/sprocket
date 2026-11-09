@@ -132,10 +132,8 @@ pub(crate) async fn watch_events(
     let stream = unfold(
         (true, session.latest_event(), session),
         |(first, last, mut session)| async move {
-            if first {
-                if let Some(event) = last.clone() {
-                    return Some((event, (false, last, session)));
-                }
+            if first && let Some(event) = last.clone() {
+                return Some((event, (false, last, session)));
             }
             loop {
                 match session.receiver().recv().await {

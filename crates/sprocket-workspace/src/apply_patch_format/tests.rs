@@ -247,8 +247,7 @@ fn out_of_order_hunk_must_match_one_place() {
             chunk(None, &["x"], &["y"]),
         ],
     )
-    .err()
-    .expect("second hunk must not match");
+    .expect_err("second hunk must not match");
     assert!(error.to_string().starts_with("hunk 2 of 3 did not match"));
 
     let error = apply_update(
@@ -256,8 +255,7 @@ fn out_of_order_hunk_must_match_one_place() {
         b"x\nx\nend\n",
         &[chunk(None, &["end"], &["END"]), chunk(None, &["x"], &["z"])],
     )
-    .err()
-    .expect("both x lines are candidates");
+    .expect_err("both x lines are candidates");
     assert!(
         error
             .to_string()
@@ -273,8 +271,7 @@ fn out_of_order_hunk_must_match_one_place() {
             chunk(Some("b"), &[], &["inserted"]),
         ],
     )
-    .err()
-    .expect("insertion inside an earlier hunk must fail");
+    .expect_err("insertion inside an earlier hunk must fail");
     assert!(
         error
             .to_string()
@@ -297,8 +294,7 @@ fn mismatch_error_shows_the_closest_region() {
             &["new"],
         )],
     )
-    .err()
-    .expect("context must not match");
+    .expect_err("context must not match");
 
     assert_eq!(
         error.to_string(),

@@ -298,14 +298,13 @@ pub(crate) fn login(args: LoginArgs) -> anyhow::Result<u8> {
 }
 
 async fn login_connected(connection: &Connection, args: LoginArgs) -> anyhow::Result<u8> {
-    if args.credential_store.is_none() {
-        if let LoginStatus::Authenticated { user, .. } = connection
+    if args.credential_store.is_none()
+        && let LoginStatus::Authenticated { user, .. } = connection
             .call("auth", &connection.client_request())
             .await?
-        {
-            eprintln!("Signed in as {}", user.email);
-            return Ok(0);
-        }
+    {
+        eprintln!("Signed in as {}", user.email);
+        return Ok(0);
     }
     let authorization: DeviceLoginResponse = connection
         .call(

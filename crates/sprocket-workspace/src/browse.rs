@@ -131,7 +131,7 @@ fn list_directory_entries(directory: &Path) -> Result<Vec<FilesystemBrowseEntry>
         })
         .collect();
 
-    entries.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    entries.sort_by_key(|entry| entry.name.to_lowercase());
     Ok(entries)
 }
 
@@ -190,12 +190,12 @@ fn list_windows_volumes() -> Result<FilesystemBrowseResult> {
 }
 
 fn default_browse_directory() -> Result<PathBuf> {
-    if let Some(home) = crate::paths::home_dir() {
-        if home.exists() {
-            return home
-                .canonicalize()
-                .with_context(|| format!("failed to resolve home directory {}", home.display()));
-        }
+    if let Some(home) = crate::paths::home_dir()
+        && home.exists()
+    {
+        return home
+            .canonicalize()
+            .with_context(|| format!("failed to resolve home directory {}", home.display()));
     }
 
     PathBuf::from("/")
