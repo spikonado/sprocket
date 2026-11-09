@@ -160,7 +160,8 @@ fn rejects_unified_style_hunk_headers_in_begin_patch() {
              +after\n\
              *** End Patch",
     )
-    .expect_err("unified @@ ranges must not parse as Begin Patch anchors");
+    .err()
+    .expect("unified @@ ranges must not parse as Begin Patch anchors");
 
     let message = format!("{error:#}");
     assert!(
