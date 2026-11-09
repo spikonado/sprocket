@@ -302,6 +302,12 @@ impl WorkspaceSearchIndex {
     }
 }
 
+impl Default for WorkspaceSearchIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn evict_idle(pickers: &mut HashMap<PathBuf, CachedPicker>) {
     pickers.retain(|_, cached| cached.last_used.elapsed() < PICKER_TTL);
 }

@@ -27,7 +27,7 @@ async fn serve_split(head: String, get: String, body: Vec<u8>) -> reqwest::Url {
                 break;
             };
             let mut request = [0; 4096];
-            stream.read(&mut request).await.unwrap();
+            assert!(stream.read(&mut request).await.unwrap() > 0);
             if request.starts_with(b"HEAD ") {
                 stream.write_all(head.as_bytes()).await.unwrap();
             } else {
@@ -190,7 +190,7 @@ async fn html_is_left_to_the_scraper() {
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut request = [0; 4096];
-        stream.read(&mut request).await.unwrap();
+        assert!(stream.read(&mut request).await.unwrap() > 0);
         assert!(request.starts_with(b"HEAD "));
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\nConnection: close\r\n\r\n").await.unwrap();
         listener

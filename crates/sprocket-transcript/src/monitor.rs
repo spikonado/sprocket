@@ -223,11 +223,11 @@ fn read_page(
         } else {
             None
         };
-        if let Some((true, identity)) = &patch_identity {
-            if cursor.fallback_patches.remove(identity) {
-                cursor.scanned = sequence + 1;
-                continue;
-            }
+        if let Some((true, identity)) = &patch_identity
+            && cursor.fallback_patches.remove(identity)
+        {
+            cursor.scanned = sequence + 1;
+            continue;
         }
         if !filter.keeps(&run, &entry) {
             cursor.scanned = sequence + 1;

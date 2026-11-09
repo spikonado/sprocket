@@ -108,21 +108,21 @@ impl RunOutput {
             )
             .await;
         self.update(|state| {
-            if state.numbers.insert(part.number) {
-                if let Some(completion) = &part.completion {
-                    state.answer = completion
-                        .items
-                        .iter()
-                        .filter(|item| item["type"] == "text")
-                        .filter_map(|item| item["text"].as_str())
-                        .collect();
-                    if completion
-                        .items
-                        .iter()
-                        .any(|item| item["type"] == "tool-call")
-                    {
-                        state.answer.clear();
-                    }
+            if state.numbers.insert(part.number)
+                && let Some(completion) = &part.completion
+            {
+                state.answer = completion
+                    .items
+                    .iter()
+                    .filter(|item| item["type"] == "text")
+                    .filter_map(|item| item["text"].as_str())
+                    .collect();
+                if completion
+                    .items
+                    .iter()
+                    .any(|item| item["type"] == "tool-call")
+                {
+                    state.answer.clear();
                 }
             }
             if let Err(error) = saved {

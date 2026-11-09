@@ -506,11 +506,11 @@ impl TranscriptStore {
         tokio::task::spawn_blocking(move || {
             let _guard = guard;
             let result = (|| operation(&mut WorkReplica::open(path.clone())?))();
-            if let Err(error) = &result {
-                if WorkReplica::is_corrupt(error) {
-                    WorkReplica::rebuild(path)?;
-                    let _ = resets.send(scope);
-                }
+            if let Err(error) = &result
+                && WorkReplica::is_corrupt(error)
+            {
+                WorkReplica::rebuild(path)?;
+                let _ = resets.send(scope);
             }
             result
         })

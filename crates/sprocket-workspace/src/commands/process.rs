@@ -52,6 +52,7 @@ pub(super) fn completion_output(
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(super) async fn supervise_command(
     mut child: Child,
     process_id: Option<u32>,
@@ -108,11 +109,8 @@ pub(super) async fn supervise_command(
         }
     };
 
-    if !capture_finished {
-        if let Err(capture_error) = join_capture_task(capture_task).await {
-            error
-                .get_or_insert_with(|| format!("command output capture failed: {capture_error:#}"));
-        }
+    if !capture_finished && let Err(capture_error) = join_capture_task(capture_task).await {
+        error.get_or_insert_with(|| format!("command output capture failed: {capture_error:#}"));
     }
     if let Err(capture_error) = output.lock().await.finish().await {
         error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));

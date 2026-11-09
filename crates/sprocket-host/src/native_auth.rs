@@ -445,9 +445,11 @@ impl NativeAuthManager {
         let _credential_operation = self.credential_operation.lock().await;
         self.clear_refresh_token().await?;
         let login_generation = self.session.lock().await.login_generation.wrapping_add(1);
-        let mut session = NativeSession::default();
-        session.suppress_persisted_resume = true;
-        session.login_generation = login_generation;
+        let session = NativeSession {
+            suppress_persisted_resume: true,
+            login_generation,
+            ..Default::default()
+        };
         {
             let mut current = self.session.lock().await;
             for attempt in current.devices.values() {

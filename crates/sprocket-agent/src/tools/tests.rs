@@ -179,7 +179,7 @@ fn mutation_args_from_payload_merges_run_claim() {
     assert_eq!(job_args.get("runId"), Some(&Value::from("run-1")));
     assert_eq!(job_args.get("claimId"), Some(&Value::from("claim-1")));
     assert_eq!(job_args.get("path"), Some(&Value::from("doc.md")));
-    assert!(job_args.get("content").is_none());
+    assert!(!job_args.contains_key("content"));
 
     let mutation_payload = serde_json::json!({
         "localPath": "doc.md",

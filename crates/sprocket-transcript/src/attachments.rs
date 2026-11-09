@@ -103,10 +103,10 @@ where
         store
             .save_attachment_metadata(user_id, thread_id, attachment)
             .await?;
-        if let Err(error) = tokio::fs::remove_file(staged).await {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("sprocket-transcript: failed to remove staged attachment: {error}");
-            }
+        if let Err(error) = tokio::fs::remove_file(staged).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("sprocket-transcript: failed to remove staged attachment: {error}");
         }
     } else {
         store

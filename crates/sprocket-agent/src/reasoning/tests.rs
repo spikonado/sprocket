@@ -33,10 +33,10 @@ fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Reasoning
     else {
         unreachable!()
     };
-    if encrypted.is_some_and(|content| !content.is_empty()) {
-        if let Some(native) = reasoning.native.as_mut() {
-            native.blob_slot = Some("/encrypted_content".into());
-        }
+    if encrypted.is_some_and(|content| !content.is_empty())
+        && let Some(native) = reasoning.native.as_mut()
+    {
+        native.blob_slot = Some("/encrypted_content".into());
     }
     reasoning
 }

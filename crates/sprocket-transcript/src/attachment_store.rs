@@ -175,20 +175,19 @@ impl TranscriptStore {
         let _guard = lock.lock().await;
         if let Err(error) =
             tokio::fs::remove_file(self.pending_attachment_path(user_id, storage_id)).await
+            && error.kind() != std::io::ErrorKind::NotFound
         {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                return Err(error.into());
-            }
+            return Err(error.into());
         }
         if let Some(thread_id) = thread_id {
             let dir = self
                 .thread_dir(user_id, thread_id)
                 .join("attachments")
                 .join(safe_segment(storage_id));
-            if let Err(error) = tokio::fs::remove_dir_all(dir).await {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    return Err(error.into());
-                }
+            if let Err(error) = tokio::fs::remove_dir_all(dir).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.into());
             }
         }
         Ok(())

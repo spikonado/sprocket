@@ -570,6 +570,7 @@ impl ChatGptService {
         verify_identity(token, &keys.keys, client_id, nonce)
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub async fn exchange(
         &self,
         user: &str,
@@ -1071,17 +1072,18 @@ impl ChatGptService {
             }
             let connected = {
                 let state = service.state.lock().await;
-                if service.memory_ahead_of_disk.load(Ordering::Acquire) {
-                    if let Err(failure) = service.persist(&state).await {
-                        error = Some(failure.to_string());
-                    }
+                if service.memory_ahead_of_disk.load(Ordering::Acquire)
+                    && let Err(failure) = service.persist(&state).await
+                {
+                    error = Some(failure.to_string());
                 }
                 state.users.get(&user).and_then(session).is_some()
             };
-            if connected && error.is_none() {
-                if let Err(failure) = service.access(&user).await {
-                    error = Some(failure.to_string());
-                }
+            if connected
+                && error.is_none()
+                && let Err(failure) = service.access(&user).await
+            {
+                error = Some(failure.to_string());
             }
             let state = service.state.lock().await;
             let accounts = state.users.get(&user).cloned().unwrap_or_default();

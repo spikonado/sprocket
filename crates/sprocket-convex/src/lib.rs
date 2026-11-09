@@ -117,7 +117,6 @@ impl Client {
             timeout(CONVEX_RPC_TIMEOUT, convex.query(function, args))
                 .await
                 .with_context(|| format!("query timed out for {function}"))?
-                .map_err(Into::into)
         })
         .await
     }
@@ -132,7 +131,6 @@ impl Client {
             timeout(CONVEX_RPC_TIMEOUT, convex.subscribe(function, args))
                 .await
                 .with_context(|| format!("subscription timed out for {function}"))?
-                .map_err(Into::into)
         })
         .await
     }
@@ -151,7 +149,6 @@ impl Client {
             timeout(CONVEX_RPC_TIMEOUT, convex.mutation(function, args))
                 .await
                 .with_context(|| format!("mutation timed out for {function}"))?
-                .map_err(Into::into)
         })
         .await
     }
@@ -166,7 +163,6 @@ impl Client {
             timeout(CONVEX_RPC_TIMEOUT, convex.action(function, args))
                 .await
                 .with_context(|| format!("action timed out for {function}"))?
-                .map_err(Into::into)
         })
         .await
     }

@@ -254,6 +254,7 @@ async fn sync_directory(
     Ok(pass)
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn sync_record(
     path: &Path,
     directory: &Path,

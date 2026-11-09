@@ -147,6 +147,7 @@ pub(crate) async fn hydrate_tool_history(
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn agent_tools(
     runtime: RuntimeClient,
     run_id: String,

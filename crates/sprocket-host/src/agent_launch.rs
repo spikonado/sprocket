@@ -338,10 +338,10 @@ async fn launch_agent_inner(
                 if let Some(output) = &output {
                     output.finish(result.as_ref().err().map(ToString::to_string));
                 }
-                if let Some(watch) = &artifact_watch {
-                    if let Err(error) = watch.flush().await {
-                        tracing::warn!("artifact sync after run {run_id} failed: {error:#}");
-                    }
+                if let Some(watch) = &artifact_watch
+                    && let Err(error) = watch.flush().await
+                {
+                    tracing::warn!("artifact sync after run {run_id} failed: {error:#}");
                 }
                 drop(artifact_watch);
                 drop(transcript_watch);

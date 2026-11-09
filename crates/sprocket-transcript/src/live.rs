@@ -250,19 +250,18 @@ impl LiveAssistantParts {
         now_ms: u64,
     ) {
         let key = format!("reasoning:{id}");
-        if let Some(&index) = self.text_index.get(&key) {
-            if let LiveAssistantPart::Reasoning {
+        if let Some(&index) = self.text_index.get(&key)
+            && let LiveAssistantPart::Reasoning {
                 text: existing,
                 completed_at,
                 turn_id: existing_turn,
                 ..
             } = &mut self.parts[index]
-            {
-                *existing = text;
-                *completed_at = Some(now_ms);
-                *existing_turn = turn_id;
-                return;
-            }
+        {
+            *existing = text;
+            *completed_at = Some(now_ms);
+            *existing_turn = turn_id;
+            return;
         }
         self.text_index.insert(key, self.parts.len());
         self.parts.push(LiveAssistantPart::Reasoning {
@@ -298,6 +297,7 @@ struct Slot {
     events: broadcast::Sender<LiveCompletionWatchEvent>,
 }
 
+#[derive(Default)]
 pub struct LiveCompletionHub {
     inner: Mutex<HashMap<String, Slot>>,
 }
@@ -309,9 +309,7 @@ pub struct LiveCompletionSubscription {
 
 impl LiveCompletionHub {
     pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(HashMap::new()),
-        }
+        Self::default()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {

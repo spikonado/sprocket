@@ -273,15 +273,14 @@ async fn desktop_login_callback(
             .unwrap_or("Sign-in was cancelled or failed.");
         let message = format!("{error}: {description}");
 
-        if let Some(callback_state) = callback_state {
-            if let Err(fail_error) = state
+        if let Some(callback_state) = callback_state
+            && let Err(fail_error) = state
                 .host
                 .native_auth
                 .fail_login(callback_state, &message)
                 .await
-            {
-                return desktop_login_error_response(StatusCode::BAD_REQUEST, &fail_error);
-            }
+        {
+            return desktop_login_error_response(StatusCode::BAD_REQUEST, &fail_error);
         }
 
         return desktop_login_html_response(StatusCode::BAD_REQUEST, "Sign-in failed", &message);

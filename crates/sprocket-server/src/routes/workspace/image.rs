@@ -149,13 +149,15 @@ fn is_avif(contents: &[u8]) -> bool {
         return false;
     }
     let box_size = u32::from_be_bytes(contents[..4].try_into().unwrap()) as usize;
-    if box_size < 16 || box_size > contents.len() || box_size % 4 != 0 {
+    if box_size < 16 || box_size > contents.len() || !box_size.is_multiple_of(4) {
         return false;
     }
     &contents[8..12] == b"avif"
         || &contents[8..12] == b"avis"
         || contents[16..box_size]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|brand| brand == b"avif" || brand == b"avis")
 }
 
