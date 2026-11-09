@@ -1,40 +1,40 @@
 {
-	"version": "0.41.1",
+	"version": "0.41.2",
 	"platforms": {
 		"darwin-arm64": {
-			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.1/agent-browser-darwin-arm64",
-			"bytes": 15919216,
-			"sha256": "63b0a97b85a54b4c9b2871318af74104c29b80abd507b53a30316884e062854b"
+			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.2/agent-browser-darwin-arm64",
+			"bytes": 16068000,
+			"sha256": "19680f06cf87d0095c318a2e80bea6b71523d95d3b651cd18d81885cd182477a"
 		},
 		"darwin-x64": {
-			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.1/agent-browser-darwin-x64",
-			"bytes": 17577048,
-			"sha256": "7802f053e7fb25e10548ee10ca60d892c73d42ed2dbb7fc30c2d5925a5c82859"
+			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.2/agent-browser-darwin-x64",
+			"bytes": 17761648,
+			"sha256": "fc55608c2222650e6e0d0154f9edebd203b63bf853b85d22240bfbddbb006ea1"
 		},
 		"linux-arm64": {
-			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.1/agent-browser-linux-musl-arm64",
-			"bytes": 15770392,
-			"sha256": "3afdec8f37bfd80b2ecc30e2297c95c3bae9ddb3775ebe531534ea6e3662f44c"
+			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.2/agent-browser-linux-musl-arm64",
+			"bytes": 15924440,
+			"sha256": "730a5168153e27ad1243ebe960157e69de0f24531fbbac9a040856a491bf491f"
 		},
 		"linux-x64": {
-			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.1/agent-browser-linux-musl-x64",
-			"bytes": 18242656,
-			"sha256": "951c795e21fddab1d4091ad2ca4f0e69f1eea6534288e6a251598df11ca8e9af"
+			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.2/agent-browser-linux-musl-x64",
+			"bytes": 18434688,
+			"sha256": "5d452d57772330fe4cef9b7aeb5e7137890dde20bbb65e82b990e0bc0b35d9cd"
 		},
 		"win32-arm64": {
-			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.1/agent-browser-win32-x64.exe",
-			"bytes": 18063872,
-			"sha256": "ddab45e8bae84e5bc6aa1b084bceca9b579aff2e8272474d7d26953cf10965ee"
+			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.2/agent-browser-win32-x64.exe",
+			"bytes": 18248192,
+			"sha256": "c2eadee7b67e326dfff02d5dd51a16ce7673eb165699d134b3ea5f05b4a7a9d0"
 		},
 		"win32-x64": {
-			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.1/agent-browser-win32-x64.exe",
-			"bytes": 18063872,
-			"sha256": "ddab45e8bae84e5bc6aa1b084bceca9b579aff2e8272474d7d26953cf10965ee"
+			"url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.2/agent-browser-win32-x64.exe",
+			"bytes": 18248192,
+			"sha256": "c2eadee7b67e326dfff02d5dd51a16ce7673eb165699d134b3ea5f05b4a7a9d0"
 		}
 	},
 	"skillData": {
-		"url": "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/refs/tags/v0.41.1",
-		"bytes": 2649240,
-		"sha256": "b3d9d60b8a38f05e0f9b4d84d9e0b6995c21df2eb963eefb703008682a69f3bb"
+		"url": "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/refs/tags/v0.41.2",
+		"bytes": 2632612,
+		"sha256": "5deccde57db7ed416d46a57e3c2767fba74f96e750d1d8fabe79bfa1f4bd228b"
 	}
 }
