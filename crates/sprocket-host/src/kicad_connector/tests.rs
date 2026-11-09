@@ -4,16 +4,28 @@ fn connector(data_dir: &Path) -> KiCadConnector {
     KiCadConnector::new(data_dir, Arc::new(PythonTools::new(data_dir).unwrap())).unwrap()
 }
 
+async fn check_finds(connector: &KiCadConnector, version: &str) {
+    *connector.check.lock().await = Some(Check {
+        at: Instant::now(),
+        latest: Ok(Arc::new(Latest {
+            version: version.to_owned(),
+            commit: String::new(),
+            release: serde_json::from_str(include_str!("../../../../tools/kicad/releases.json"))
+                .unwrap(),
+        })),
+    });
+}
+
 #[tokio::test]
 async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     let data_dir = tempfile::tempdir().unwrap();
     let connector = connector(data_dir.path());
+    check_finds(&connector, "v0.2.0").await;
     let old = connector.root.join("v0.0.1");
     fs::create_dir_all(old.join("bin")).unwrap();
     fs::write(old.join("bin/kicad-cli"), "old launcher").unwrap();
     fs::write(old.join(KICAD_VERSION_FILE), "11.0.1\n").unwrap();
     fs::write(old.join(LIBRARIES_FILE), "/kicad/share\n").unwrap();
-    fs::write(old.join(KIPY_API_FILE), "old script").unwrap();
     fs::create_dir_all(old.join(ROUTING_TOOLS_DIR)).unwrap();
     fs::create_dir_all(connector.root.join(".staging-interrupted")).unwrap();
 
@@ -38,22 +50,28 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
         ]
     );
 
-    repair_unless_installing(&connector.root, &connector.pinned).unwrap();
+    repair_unless_installing(&connector.root).unwrap();
     assert!(!connector.root.join(".staging-interrupted").exists());
     assert_eq!(
         fs::read_to_string(connector.bin_dir().join("kicad-cli")).unwrap(),
         "old launcher"
     );
-    assert_eq!(
-        fs::read_to_string(old.join(KIPY_API_FILE)).unwrap(),
-        KIPY_API
-    );
+
+    *connector.activity() = Activity::Installing;
+    let status = connector.status().await;
+    assert_eq!(status.state, ConnectorState::Installing);
+    assert!(status.update_available);
 
     *connector.activity() = Activity::Failed("Download failed".into());
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);
     assert_eq!(status.error.as_deref(), Some("Download failed"));
     assert!(status.update_available);
+
+    *connector.activity() = Activity::Idle;
+    fs::create_dir_all(connector.root.join("v0.10.0")).unwrap();
+    check_finds(&connector, "v0.10.0").await;
+    assert!(!connector.status().await.update_available);
 
     connector.uninstall().await.unwrap();
     assert_eq!(connector.status().await.state, ConnectorState::NotInstalled);
@@ -64,6 +82,7 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
 async fn uninstall_keeps_an_install_queued_behind_its_lock() {
     let data_dir = tempfile::tempdir().unwrap();
     let connector = connector(data_dir.path());
+    check_finds(&connector, "v0.2.0").await;
     fs::create_dir_all(&connector.root).unwrap();
     let held = acquire_lock(connector.root.join(INSTALL_LOCK))
         .await

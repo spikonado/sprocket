@@ -165,7 +165,6 @@ type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
 function InboxSidebarContainer(
 	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
-		signedInUserId: string | null;
 		repositoryKeys: string[];
 		pullRequestRefresher: PullRequestRefresher | null;
 	}
@@ -2510,6 +2509,7 @@ export default function App({
 					) : (
 						<InboxSidebarContainer
 							signedInUserId={signedInUserId}
+							localApi={localApi}
 							pullRequestRefresher={sidebarVisible ? pullRequestRefresher : null}
 							repositoryKeys={inboxProjectKeys}
 							sections={inbox.sections}

@@ -84,7 +84,14 @@ const ROUTING_TOOLS_PATCHES = [
 	'routing-tools-escape-via-pour-guard.patch'
 ];
 
-const BUILD_FILES = ['update-release.mjs', ...KIPY_PATCHES, ...ROUTING_TOOLS_PATCHES];
+// Sprocket installs these scripts from the commit that pins a release, so changing one needs a release.
+const BUILD_FILES = [
+	'update-release.mjs',
+	'kipy-api.py',
+	'kicad-view.py',
+	...KIPY_PATCHES,
+	...ROUTING_TOOLS_PATCHES
+];
 
 function run(command, args, options = {}) {
 	return execFileSync(command, args, {

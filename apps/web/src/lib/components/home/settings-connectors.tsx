@@ -1,21 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
-import { z } from 'zod';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
+import { caughtMessage, useConnectors } from './use-connectors';
 
 type ConnectorsApi = Pick<
 	LocalApi,
 	'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'
 >;
 
-const INSTALL_POLL_MS = 2000;
-
 const logos: Record<ConnectorStatus['id'], string> = { kicad: '/kicad.svg' };
-
-const caughtMessage = z
-	.instanceof(Error)
-	.transform((error) => error.message)
-	.catch('');
 
 const primaryButtonClass =
 	'bg-primary text-primary-foreground inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] transition hover:opacity-90 disabled:opacity-50';
@@ -30,39 +23,7 @@ export default function SettingsConnectors({
 	userId: string;
 	localApi: ConnectorsApi | null;
 }) {
-	const [connectors, setConnectors] = useState<ConnectorStatus[] | null>(null);
-	const [loadError, setLoadError] = useState<string | null>(null);
-
-	const load = useCallback(async () => {
-		if (!localApi) return;
-
-		try {
-			setConnectors(await localApi.fetchConnectors(userId));
-			setLoadError(null);
-		} catch (caught) {
-			setLoadError(caughtMessage.parse(caught) || 'Couldn’t check connectors on this computer.');
-		}
-	}, [localApi, userId]);
-
-	useEffect(() => {
-		void load();
-	}, [load]);
-
-	const installing = connectors?.some((connector) => connector.state === 'installing') ?? false;
-
-	useEffect(() => {
-		if (!installing) return;
-		const timer = setInterval(() => void load(), INSTALL_POLL_MS);
-
-		return () => clearInterval(timer);
-	}, [installing, load]);
-
-	function replace(status: ConnectorStatus) {
-		setConnectors(
-			(current) =>
-				current && current.map((connector) => (connector.id === status.id ? status : connector))
-		);
-	}
+	const { connectors, loadError, replace } = useConnectors(userId, localApi);
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">

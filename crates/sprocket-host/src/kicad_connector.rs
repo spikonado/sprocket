@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
@@ -20,12 +20,19 @@ use crate::tool_install::{
     set_executable,
 };
 
-const RELEASES: &str = include_str!("../../../tools/kicad/releases.json");
-const REQUIREMENTS: &str = include_str!("../../../tools/kicad/requirements.txt");
-const KIPY_API: &str = include_str!("../../../tools/kicad/kipy-api.py");
+/// The connector releases separately from Sprocket, and `main` pins its latest release.
+/// Setting this variable to a branch installs that branch's pin, to try a release before it merges.
+const REF_VARIABLE: &str = "SPROCKET_KICAD_CONNECTOR_REF";
+const COMMITS_URL: &str = "https://api.github.com/repos/spikonado/sprocket/commits";
+const FILES_URL: &str = "https://raw.githubusercontent.com/spikonado/sprocket";
+const TOOL_DIR: &str = "tools/kicad";
+const RELEASES_FILE: &str = "releases.json";
+const REQUIREMENTS_FILE: &str = "requirements.txt";
 const KIPY_API_FILE: &str = "kipy-api.py";
-const KICAD_VIEW: &str = include_str!("../../../tools/kicad/kicad-view.py");
 const KICAD_VIEW_FILE: &str = "kicad-view.py";
+const CHECK_TTL: Duration = Duration::from_secs(60 * 60);
+const FAILED_CHECK_TTL: Duration = Duration::from_secs(5 * 60);
+const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const FONTS_CONF_FILE: &str = "fonts.conf";
 const HOST_FONTCONFIG_DIR: &str = "/etc/fonts";
 const LIBRARIES_FILE: &str = "libraries-dir";
@@ -81,6 +88,22 @@ struct RoutingTools {
     platforms: BTreeMap<String, Asset>,
 }
 
+struct Latest {
+    version: String,
+    commit: String,
+    release: Release,
+}
+
+struct Check {
+    at: Instant,
+    latest: Result<Arc<Latest>, String>,
+}
+
+#[derive(Deserialize)]
+struct Commit {
+    sha: String,
+}
+
 enum Activity {
     Idle,
     Installing,
@@ -89,11 +112,10 @@ enum Activity {
 
 pub struct KiCadConnector {
     root: PathBuf,
-    release: Release,
-    pinned: String,
     python: Arc<PythonTools>,
     client: reqwest::Client,
     activity: Mutex<Activity>,
+    check: tokio::sync::Mutex<Option<Check>>,
     /// A board's export loads every component's STEP model, which takes seconds of CPU and
     /// hundreds of MB, so boards export one at a time.
     board_exports: tokio::sync::Semaphore,
@@ -101,29 +123,28 @@ pub struct KiCadConnector {
 
 impl KiCadConnector {
     pub(crate) fn new(data_dir: &Path, python: Arc<PythonTools>) -> anyhow::Result<Self> {
-        let release: Release = serde_json::from_str(RELEASES)?;
         Ok(Self {
             root: data_dir.join("connectors").join("kicad"),
-            pinned: format!("v{}", release.version),
-            release,
             python,
             client: large_download_client()?,
             activity: Mutex::new(Activity::Idle),
+            check: tokio::sync::Mutex::new(None),
             board_exports: tokio::sync::Semaphore::new(1),
         })
     }
 
     pub(crate) fn prepare(&self) {
-        let (root, pinned) = (self.root.clone(), self.pinned.clone());
+        let root = self.root.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(error) = repair_unless_installing(&root, &pinned) {
+            if let Err(error) = repair_unless_installing(&root) {
                 tracing::warn!("KiCad cleanup failed: {error}");
             }
         });
     }
 
     pub async fn status(&self) -> ConnectorStatus {
-        let installed = installed_version(&self.root, &self.pinned);
+        let latest = self.latest(false).await.ok();
+        let installed = installed_version(&self.root);
         let idle_state = if installed.is_some() {
             ConnectorState::Installed
         } else {
@@ -138,11 +159,76 @@ impl KiCadConnector {
         ConnectorStatus {
             id: "kicad",
             name: NAME,
-            update_available: state == ConnectorState::Installed
-                && installed.is_some_and(|installed| installed != self.pinned),
+            update_available: installed
+                .zip(latest)
+                .is_some_and(|(installed, latest)| installed != latest.version),
             state,
             error,
         }
+    }
+
+    async fn latest(&self, refresh: bool) -> anyhow::Result<Arc<Latest>> {
+        let mut check = self.check.lock().await;
+        if !refresh && let Some(check) = &*check {
+            let ttl = if check.latest.is_ok() {
+                CHECK_TTL
+            } else {
+                FAILED_CHECK_TTL
+            };
+            if check.at.elapsed() < ttl {
+                return check.latest.clone().map_err(anyhow::Error::msg);
+            }
+        }
+        let latest = tokio::time::timeout(CHECK_TIMEOUT, self.fetch_latest())
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("timed out")))
+            .map(Arc::new)
+            .map_err(|error| format!("Couldn't check for KiCad connector updates: {error:#}"));
+        *check = Some(Check {
+            at: Instant::now(),
+            latest: latest.clone(),
+        });
+        latest.map_err(anyhow::Error::msg)
+    }
+
+    async fn fetch_latest(&self) -> anyhow::Result<Latest> {
+        let reference = std::env::var(REF_VARIABLE).unwrap_or_else(|_| "main".into());
+        // The scripts and requirements must come from the commit that released the pin, since
+        // later commits can change them before the next release.
+        let commits = self
+            .fetch_text(&format!(
+                "{COMMITS_URL}?sha={reference}&path={TOOL_DIR}/{RELEASES_FILE}&per_page=1"
+            ))
+            .await?;
+        let commits: Vec<Commit> = serde_json::from_str(&commits)?;
+        let commit = commits
+            .into_iter()
+            .next()
+            .context("GitHub found no KiCad connector release")?
+            .sha;
+        let release: Release =
+            serde_json::from_str(&self.fetch_file(&commit, RELEASES_FILE).await?)?;
+        Ok(Latest {
+            version: format!("v{}", release.version),
+            commit,
+            release,
+        })
+    }
+
+    async fn fetch_file(&self, commit: &str, name: &str) -> anyhow::Result<String> {
+        self.fetch_text(&format!("{FILES_URL}/{commit}/{TOOL_DIR}/{name}"))
+            .await
+    }
+
+    async fn fetch_text(&self, url: &str) -> anyhow::Result<String> {
+        Ok(self
+            .client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?)
     }
 
     pub fn start_install_or_update(self: &Arc<Self>) {
@@ -157,7 +243,7 @@ impl KiCadConnector {
         tokio::spawn(async move {
             let install = tokio::spawn({
                 let connector = Arc::clone(&connector);
-                async move { connector.install_pinned().await }
+                async move { connector.install_latest().await }
             });
             let outcome = match install.await {
                 Ok(Ok(())) => Activity::Idle,
@@ -186,7 +272,7 @@ impl KiCadConnector {
     }
 
     pub fn installed(&self) -> Option<String> {
-        let dir = installed_version(&self.root, &self.pinned)?;
+        let dir = installed_version(&self.root)?;
         let kicad = fs::read_to_string(self.root.join(&dir).join(KICAD_VERSION_FILE)).ok()?;
         Some(format!("{NAME} connector {dir} ({NAME} {})", kicad.trim()))
     }
@@ -232,7 +318,7 @@ impl KiCadConnector {
     }
 
     pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {
-        let Some(dir) = installed_version(&self.root, &self.pinned) else {
+        let Some(dir) = installed_version(&self.root) else {
             return Vec::new();
         };
         let dir = self.root.join(dir);
@@ -251,21 +337,18 @@ impl KiCadConnector {
         self.activity.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn version_dir(&self) -> PathBuf {
-        self.root.join(&self.pinned)
-    }
-
-    async fn install_pinned(&self) -> anyhow::Result<()> {
+    async fn install_latest(&self) -> anyhow::Result<()> {
+        let latest = self.latest(true).await?;
         tokio::fs::create_dir_all(&self.root).await?;
         let _lock = acquire_lock(self.root.join(INSTALL_LOCK)).await?;
-        let version_dir = self.version_dir();
+        let version_dir = self.root.join(&latest.version);
         if !is_dir(&version_dir).await {
             let root = self.root.clone();
             tokio::task::spawn_blocking(move || remove_leftovers(&root)).await??;
             let staging = tempfile::Builder::new()
                 .prefix(STAGING_PREFIX)
                 .tempdir_in(&self.root)?;
-            let published = match self.stage(staging.path(), &version_dir).await {
+            let published = match self.stage(&latest, staging.path(), &version_dir).await {
                 Ok(()) => tokio::fs::rename(staging.path(), &version_dir)
                     .await
                     .map_err(anyhow::Error::from),
@@ -274,7 +357,7 @@ impl KiCadConnector {
             tokio::task::spawn_blocking(move || drop(staging)).await?;
             published?;
         }
-        let (root, current) = (self.root.clone(), self.pinned.clone());
+        let (root, current) = (self.root.clone(), latest.version.clone());
         tokio::task::spawn_blocking(move || -> io::Result<()> {
             sync_launchers(&root, Some(&current))?;
             prune_versions(&root, &current);
@@ -284,7 +367,13 @@ impl KiCadConnector {
         Ok(())
     }
 
-    async fn stage(&self, staging: &Path, version_dir: &Path) -> anyhow::Result<()> {
+    async fn stage(
+        &self,
+        latest: &Latest,
+        staging: &Path,
+        version_dir: &Path,
+    ) -> anyhow::Result<()> {
+        let release = &latest.release;
         self.python
             .ensure_installed()
             .await
@@ -293,7 +382,7 @@ impl KiCadConnector {
         let (cli, published_cli) = match &user_kicad {
             Some(cli) => (cli.clone(), cli.clone()),
             None => {
-                self.download_kicad(staging).await?;
+                self.download_kicad(release, staging).await?;
                 (
                     unpack::cli(&staging.join("kicad")),
                     unpack::cli(&version_dir.join("kicad")),
@@ -305,7 +394,7 @@ impl KiCadConnector {
         let kicad_version = if user_kicad.is_some() {
             &version
         } else {
-            &self.release.kicad.version
+            &release.kicad.version
         };
         tokio::fs::write(staging.join(KICAD_VERSION_FILE), kicad_version).await?;
         if let Some(libraries) = libraries_dir(&published_cli) {
@@ -315,16 +404,16 @@ impl KiCadConnector {
             )
             .await?;
         }
-        self.create_venv(staging).await?;
-        let routing_tools = match self.routing_tools_asset() {
+        self.create_venv(latest, staging).await?;
+        let routing_tools = match routing_tools_asset(release) {
             Some(asset) => {
                 self.download_routing_tools(asset, staging).await?;
-                tokio::fs::write(staging.join(KICAD_VIEW_FILE), KICAD_VIEW).await?;
+                self.write_file(latest, KICAD_VIEW_FILE, staging).await?;
                 Some(version_dir.join(ROUTING_TOOLS_DIR))
             }
             None => None,
         };
-        tokio::fs::write(staging.join(KIPY_API_FILE), KIPY_API).await?;
+        self.write_file(latest, KIPY_API_FILE, staging).await?;
         // Only the AppImage bundles its own fontconfig.
         let fonts_conf = (cfg!(target_os = "linux") && user_kicad.is_none())
             .then(|| version_dir.join(FONTS_CONF_FILE));
@@ -361,9 +450,14 @@ impl KiCadConnector {
         Ok(())
     }
 
-    async fn download_kicad(&self, staging: &Path) -> anyhow::Result<()> {
-        let asset = self
-            .release
+    async fn write_file(&self, latest: &Latest, name: &str, dir: &Path) -> anyhow::Result<()> {
+        let contents = self.fetch_file(&latest.commit, name).await?;
+        tokio::fs::write(dir.join(name), contents).await?;
+        Ok(())
+    }
+
+    async fn download_kicad(&self, release: &Release, staging: &Path) -> anyhow::Result<()> {
+        let asset = release
             .platforms
             .get(release_platform()?)
             .context("KiCad has no build for this platform")?;
@@ -383,13 +477,6 @@ impl KiCadConnector {
         .await?
     }
 
-    fn routing_tools_asset(&self) -> Option<&Asset> {
-        self.release
-            .routing_tools
-            .platforms
-            .get(release_platform().ok()?)
-    }
-
     async fn download_routing_tools(&self, asset: &Asset, staging: &Path) -> anyhow::Result<()> {
         let download = staging.join(download_name(&asset.url));
         download_atomic(&self.client, &asset.url, &asset.checksum, &download).await?;
@@ -404,7 +491,7 @@ impl KiCadConnector {
         .await?
     }
 
-    async fn create_venv(&self, staging: &Path) -> anyhow::Result<()> {
+    async fn create_venv(&self, latest: &Latest, staging: &Path) -> anyhow::Result<()> {
         let uv = self.python.uv();
         let venv = staging.join("venv");
         run_checked(
@@ -416,8 +503,8 @@ impl KiCadConnector {
         )
         .await?;
         let python = venv_python(staging);
-        let requirements = staging.join("requirements.txt");
-        tokio::fs::write(&requirements, REQUIREMENTS).await?;
+        self.write_file(latest, REQUIREMENTS_FILE, staging).await?;
+        let requirements = staging.join(REQUIREMENTS_FILE);
         run_checked(
             "Installing kipy's dependencies",
             Command::new(&uv)
@@ -433,7 +520,7 @@ impl KiCadConnector {
                 .arg(&requirements),
         )
         .await?;
-        let kipy = &self.release.kipy;
+        let kipy = &latest.release.kipy;
         let wheel = staging.join(download_name(&kipy.url));
         download_atomic(&self.client, &kipy.url, &kipy.checksum, &wheel).await?;
         run_checked(
@@ -450,11 +537,22 @@ impl KiCadConnector {
     }
 }
 
-fn installed_version(root: &Path, pinned: &str) -> Option<String> {
-    if root.join(pinned).is_dir() {
-        return Some(pinned.to_owned());
-    }
-    installed_versions(root).into_iter().next()
+fn routing_tools_asset(release: &Release) -> Option<&Asset> {
+    release
+        .routing_tools
+        .platforms
+        .get(release_platform().ok()?)
+}
+
+/// An update leaves an older version behind only when Windows kept its files open.
+fn installed_version(root: &Path) -> Option<String> {
+    installed_versions(root).into_iter().max_by_key(|version| {
+        version
+            .trim_start_matches('v')
+            .split(['.', '-', '+'])
+            .map(|part| part.parse::<u64>().unwrap_or(0))
+            .collect::<Vec<_>>()
+    })
 }
 
 fn installed_versions(root: &Path) -> Vec<String> {
@@ -502,7 +600,7 @@ fn sync_launchers(root: &Path, version: Option<&str>) -> io::Result<()> {
     Ok(())
 }
 
-fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
+fn repair_unless_installing(root: &Path) -> io::Result<()> {
     if !root.is_dir() {
         return Ok(());
     }
@@ -510,10 +608,10 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     match lock.try_lock() {
         Ok(()) => {
             remove_leftovers(root)?;
-            let installed = installed_version(root, pinned);
+            let installed = installed_version(root);
             sync_launchers(root, installed.as_deref())?;
             match installed {
-                Some(dir) => refresh_files(&root.join(dir)),
+                Some(dir) => refresh_fonts_conf(&root.join(dir)),
                 None => Ok(()),
             }
         }
@@ -522,21 +620,13 @@ fn repair_unless_installing(root: &Path, pinned: &str) -> io::Result<()> {
     }
 }
 
-fn refresh_files(dir: &Path) -> io::Result<()> {
-    for (name, contents) in [
-        (KIPY_API_FILE, KIPY_API.to_owned()),
-        (KICAD_VIEW_FILE, KICAD_VIEW.to_owned()),
-        (
-            FONTS_CONF_FILE,
-            host_fontconfig(Path::new(HOST_FONTCONFIG_DIR)),
-        ),
-    ] {
-        let path = dir.join(name);
-        if fs::read_to_string(&path).is_ok_and(|current| current != contents) {
-            let temporary = tempfile::NamedTempFile::new_in(dir)?;
-            fs::write(temporary.path(), contents)?;
-            temporary.persist(&path).map_err(|error| error.error)?;
-        }
+fn refresh_fonts_conf(dir: &Path) -> io::Result<()> {
+    let path = dir.join(FONTS_CONF_FILE);
+    let contents = host_fontconfig(Path::new(HOST_FONTCONFIG_DIR));
+    if fs::read_to_string(&path).is_ok_and(|current| current != contents) {
+        let temporary = tempfile::NamedTempFile::new_in(dir)?;
+        fs::write(temporary.path(), contents)?;
+        temporary.persist(&path).map_err(|error| error.error)?;
     }
     Ok(())
 }

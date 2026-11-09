@@ -32,7 +32,7 @@ import { readStorage, writeStorage } from '$lib/storage';
 import { useLatest } from '$lib/use-latest';
 import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
-import AppUpdate from './app-update';
+import AppUpdate, { type ConnectorUpdatesApi } from './app-update';
 import InboxLoadMore from './inbox-load-more';
 import LinkedPullRequests from './linked-pull-requests';
 import SidebarTopActions from './sidebar-top-actions';
@@ -83,6 +83,8 @@ type ThreadTreeRowProps = {
 
 type InboxSidebarProps = {
 	sections: InboxSectionData[];
+	signedInUserId: string | null;
+	localApi: ConnectorUpdatesApi | null;
 	projects: Project[];
 	models: readonly Pick<CatalogModel, 'id' | 'label' | 'provider'>[];
 	selectedProjects: string[];
@@ -110,6 +112,8 @@ type InboxSidebarProps = {
 
 export default function InboxSidebar({
 	sections,
+	signedInUserId,
+	localApi,
 	projects,
 	models,
 	selectedProjects,
@@ -524,7 +528,7 @@ export default function InboxSidebar({
 					<Settings size={15} />
 					Settings
 				</button>
-				<AppUpdate />
+				<AppUpdate userId={signedInUserId} localApi={localApi} />
 			</footer>
 
 			{menu && menuThread && (

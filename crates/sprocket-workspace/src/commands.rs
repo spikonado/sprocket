@@ -81,6 +81,9 @@ type CommandLifetimeGuardFactory = Arc<dyn Fn() -> Result<CommandLifetimeGuard> 
 type HistoryFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<CommandHistory>>> + Send>>;
 type HistoryResolver = Arc<dyn Fn(String, PathBuf) -> HistoryFuture + Send + Sync>;
+type Environment = Vec<(OsString, OsString)>;
+type EnvironmentFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Environment> + Send>>;
+type CommandEnvironment = Arc<dyn Fn() -> EnvironmentFuture + Send + Sync>;
 
 #[derive(Clone, Default)]
 struct HistoryScope {
@@ -93,8 +96,8 @@ struct HistoryScope {
 pub struct CommandSessionManager {
     workspace_root: PathBuf,
     log_directory: PathBuf,
-    environment: Vec<(OsString, OsString)>,
-    github_user_id: Option<String>,
+    environment: Environment,
+    command_environment: Option<CommandEnvironment>,
     output_limits: CommandOutputLimits,
     sessions: Arc<Mutex<HashMap<String, Arc<CommandSession>>>>,
     stopped: Arc<AtomicBool>,
@@ -112,7 +115,7 @@ impl CommandSessionManager {
             workspace_root,
             log_directory,
             environment: Vec::new(),
-            github_user_id: None,
+            command_environment: None,
             output_limits: CommandOutputLimits::default(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             stopped: Arc::new(AtomicBool::new(false)),
@@ -279,9 +282,13 @@ impl CommandSessionManager {
             .or_else(|| std::env::var_os("PATH"))
     }
 
-    /// Gives each command git and `gh` access with this user's GitHub credentials.
-    pub fn with_github_credentials(mut self, user_id: String) -> Self {
-        self.github_user_id = Some(user_id);
+    /// Adds variables read again for every command, on top of the run's environment.
+    pub fn with_command_environment<F, Fut>(mut self, environment: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Environment> + Send + 'static,
+    {
+        self.command_environment = Some(Arc::new(move || Box::pin(environment())));
         self
     }
 
@@ -303,8 +310,8 @@ impl CommandSessionManager {
 
         let cwd = resolve_directory(&self.workspace_root, workdir)?;
         let shell = resolve_command_shell(shell, &cwd, self.command_path().as_deref())?;
-        let github_environment = match &self.github_user_id {
-            Some(user_id) => crate::github::agent_environment(user_id).await,
+        let command_environment = match &self.command_environment {
+            Some(environment) => environment().await,
             None => Vec::new(),
         };
         cancellation.ensure_active()?;
@@ -315,7 +322,7 @@ impl CommandSessionManager {
         process
             .current_dir(&cwd)
             .envs(self.environment.iter().map(|(key, value)| (key, value)))
-            .envs(github_environment)
+            .envs(command_environment)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
