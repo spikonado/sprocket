@@ -303,11 +303,6 @@ fn streaming_response(
         .version(response.version());
     if let Some(headers) = res.headers_mut() {
         *headers = response.headers().clone();
-        // The SIWC route can omit the SSE content type that Rig requires. Remove once
-        // it always sends one or Rig accepts its absence.
-        headers
-            .entry(http::header::CONTENT_TYPE)
-            .or_insert(HeaderValue::from_static("text/event-stream"));
     }
     let stream: rig::http_client::BoxedStream =
         Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
@@ -576,6 +571,12 @@ fn namespace_function_tools(
     Ok(())
 }
 
+// The SIWC route can omit the SSE content type.
+fn siwc_wire(config: openai::OpenAIConfig, model: impl Into<String>) -> StatelessResponses {
+    StatelessResponses::new(openai::responses_api::wire::Responses::new(config, model))
+        .with_relaxed_content_type()
+}
+
 impl ChatGptClient {
     pub(crate) fn completion_model(
         &self,
@@ -583,12 +584,11 @@ impl ChatGptClient {
         instructions: &str,
         session_id: &str,
     ) -> DynModel<Completion> {
-        let wire = openai::responses_api::wire::Responses::new(
-            transport_auth_config().with_instructions(instructions),
-            model,
-        );
         Model::new(
-            StatelessResponses(wire),
+            siwc_wire(
+                transport_auth_config().with_instructions(instructions),
+                model,
+            ),
             SiwcHttpClient {
                 inner: self.http.clone(),
                 authorization: Some((Arc::clone(&self.credentials), Arc::clone(&self.connection))),

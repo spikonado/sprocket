@@ -81,7 +81,7 @@ fn gateway_responses(
         config.dialect.quirks.responses.reasoning_ciphertext = false;
     }
     Ok(GatewayResponses {
-        wire: StatelessResponses(Responses::new(config, model)),
+        wire: StatelessResponses::new(Responses::new(config, model)),
         gateway,
         claude,
         cache_write_ttl: cache_write_ttl.map(str::to_string),

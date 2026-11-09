@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::now_ms;
-use crate::openai::{DeveloperResponses, transport_auth_config};
+use crate::openai::{developer_messages, transport_auth_config};
 use crate::request_compression::ZstdResponsesRequests;
 use crate::types::GatewayCredential;
 
@@ -130,7 +130,7 @@ impl GatewayClient {
             .with_instructions(instructions)
             .connect(self.http.clone())
             .responses(model);
-        Model::new(DeveloperResponses(model.wire), model.transport).erase()
+        Model::new(developer_messages(model.wire), model.transport).erase()
     }
 }
 
