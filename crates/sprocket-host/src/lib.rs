@@ -172,7 +172,9 @@ impl Host {
             ),
             native_auth,
             live_completions: Arc::new(LiveCompletionHub::new()),
-            command_sessions: Arc::new(ThreadCommandSessions::new()),
+            command_sessions: Arc::new(ThreadCommandSessions::new(
+                &machine_identity.installation_id,
+            )),
             convex_deployment_url,
             machine_identity,
             run_recovery: RunRecovery::load(data_dir)?,
@@ -262,8 +264,16 @@ impl Host {
         self.native_auth.sign_out().await
     }
 
-    pub fn start(&self) -> HostTasks {
+    pub async fn start(&self) -> HostTasks {
         self.prepare_tools();
+        #[cfg(unix)]
+        self.command_sessions
+            .adopt(
+                &self.transcript.root(),
+                &self.machine_identity.installation_id,
+                &self.lifetime,
+            )
+            .await;
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
@@ -312,15 +322,23 @@ pub struct HostTasks {
 impl HostTasks {
     pub async fn shutdown(self) {
         let host = self.host;
-        for task in [self.attachment_cleanup, self.recovery, self.command_cleanup] {
+        // Sync stops first so it can't see a detached command without its manager and end it.
+        for task in [
+            self.command_sync,
+            self.attachment_cleanup,
+            self.recovery,
+            self.command_cleanup,
+        ] {
             task.abort();
             let _ = task.await;
         }
-        host.command_sessions.stop_all().await;
+        if host.lifetime.restart_requested() {
+            host.command_sessions.detach_all().await;
+        } else {
+            host.command_sessions.stop_all().await;
+        }
         host.browsers.shutdown().await;
-        self.command_sync.abort();
-        let _ = self.command_sync.await;
-        if let Err(error) = tokio::time::timeout(
+        if tokio::time::timeout(
             Duration::from_secs(10),
             command_sync::flush(
                 &host.transcript,
@@ -331,9 +349,9 @@ impl HostTasks {
             ),
         )
         .await
-        .unwrap_or_else(|error| Err(error.into()))
+        .is_err()
         {
-            tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
+            tracing::warn!("command sync remains pending on disk after shutdown");
         }
         host.machines.shutdown().await;
     }

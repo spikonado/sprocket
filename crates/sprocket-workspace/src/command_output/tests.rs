@@ -307,3 +307,149 @@ async fn disk_write_failure_does_not_advance_preview() {
         assert!(output.events.is_none());
     }
 }
+
+fn event(sequence: u64, channel: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut encoded = serde_json::to_vec(&serde_json::json!({
+        "sequence": sequence,
+        "timestampMs": 123,
+        "channel": channel,
+        "bytes": bytes,
+    }))
+    .unwrap();
+    encoded.push(b'\n');
+    encoded
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn captured_command_events_rebuild_the_original_log() {
+    use crate::{CommandSessionManager, WorkspaceCancellation, default_command_shell};
+
+    let directory = tempfile::tempdir().unwrap();
+    let sessions =
+        CommandSessionManager::new(directory.path().into(), directory.path().join("logs"));
+    let captured = sessions
+        .exec_command(
+            WorkspaceCancellation::new(),
+            "printf '\\033[32mready\\000\\377\\n'; printf 'warning\\n' >&2",
+            ".",
+            &default_command_shell(),
+            None,
+            5_000,
+            20_000,
+        )
+        .await
+        .unwrap();
+    assert!(captured.result.success);
+    let output = directory.path().join("rebuilt.log");
+    rebuild_output(Path::new(&captured.result.events_path), &output, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::fs::read(output).await.unwrap(),
+        tokio::fs::read(captured.result.complete_log_path)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn downloaded_events_rebuild_exact_combined_output_across_partial_batches() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events.jsonl");
+    let output = directory.path().join("output.log");
+    tokio::fs::write(&events, b"").await.unwrap();
+    rebuild_output(&events, &output, false).await.unwrap();
+    assert_eq!(tokio::fs::read(&output).await.unwrap(), b"");
+    let first = event(0, "stdout", b"\x1b[32mready\x00\xff\n");
+    let second = event(1, "stderr", b"warning\n");
+    let third = event(2, "stdout", "done \u{1f680}\n".as_bytes());
+    let mut downloaded = first.clone();
+    downloaded.extend_from_slice(&second[..second.len() / 2]);
+    tokio::fs::write(&events, &downloaded).await.unwrap();
+    rebuild_output(&events, &output, true).await.unwrap();
+    assert_eq!(
+        tokio::fs::read(&output).await.unwrap(),
+        b"\x1b[32mready\x00\xff\n"
+    );
+
+    downloaded.extend_from_slice(&second[second.len() / 2..]);
+    downloaded.extend_from_slice(&third);
+    tokio::fs::write(&events, &downloaded).await.unwrap();
+    let expected = [
+        b"\x1b[32mready\x00\xff\nwarning\n".as_slice(),
+        "done \u{1f680}\n".as_bytes(),
+    ]
+    .concat();
+    for _ in 0..2 {
+        rebuild_output(&events, &output, false).await.unwrap();
+        assert_eq!(tokio::fs::read(&output).await.unwrap(), expected);
+    }
+    assert_eq!(tokio::fs::read(&events).await.unwrap(), downloaded);
+}
+
+#[tokio::test]
+async fn invalid_events_preserve_the_previous_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events.jsonl");
+    let output = directory.path().join("output.log");
+    tokio::fs::write(&output, b"previous output").await.unwrap();
+    let incomplete = event(0, "stdout", b"unfinished");
+    for bytes in [
+        event(1, "stdout", b"sequence gap"),
+        b"not JSON\n".to_vec(),
+        incomplete[..incomplete.len() - 1].to_vec(),
+    ] {
+        tokio::fs::write(&events, bytes).await.unwrap();
+        assert!(rebuild_output(&events, &output, false).await.is_err());
+        assert_eq!(tokio::fs::read(&output).await.unwrap(), b"previous output");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resumed_output_continues_from_the_last_complete_event() {
+    let root = tempfile::tempdir().unwrap();
+    let mut output = CapturedOutput::create(root.path(), 100).await.unwrap();
+    output.append(OutputChannel::Stdout, b"out ").await.unwrap();
+    output.append(OutputChannel::Stderr, b"err").await.unwrap();
+    output.finish().await.unwrap();
+    let preview = output.preview_metadata();
+    // A server that died mid-append leaves a torn event, and log bytes that no event covers.
+    let mut events = std::fs::read(&preview.events_path).unwrap();
+    events.extend_from_slice(&event(2, "stdout", b"lost")[..10]);
+    std::fs::write(&preview.events_path, events).unwrap();
+    std::fs::write(&preview.complete_log_path, b"out errlost").unwrap();
+
+    let (mut resumed, captured) = CapturedOutput::resume(
+        preview.complete_log_path.clone(),
+        preview.events_path.clone(),
+        100,
+        CommandOutputLimits::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        captured,
+        CapturedBytes {
+            stdout: 4,
+            stderr: 3
+        }
+    );
+    resumed
+        .append(OutputChannel::Stdout, b" more")
+        .await
+        .unwrap();
+    resumed.finish().await.unwrap();
+
+    assert_eq!(resumed.full_preview().output, "out err more");
+    assert_eq!(
+        std::fs::read(&preview.complete_log_path).unwrap(),
+        b"out err more"
+    );
+    let rebuilt = root.path().join("rebuilt.log");
+    rebuild_output(Path::new(&preview.events_path), &rebuilt, false)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(rebuilt).unwrap(), b"out err more");
+}

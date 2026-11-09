@@ -28,6 +28,7 @@ async fn interrupted_session_recovers_output_without_claiming_success() {
             events_path: preview.events_path,
             error: None,
         },
+        process: None,
     };
     history
         .save(&history_path(root.path(), &id).unwrap())

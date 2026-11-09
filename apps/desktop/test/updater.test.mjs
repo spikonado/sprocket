@@ -158,13 +158,13 @@ test('owned server shutdown is bounded even with long-lived connections', async 
 		if (signal === 'SIGKILL') child.emit('exit', null, signal);
 	};
 
-	await stopUpdateProcess(child, 1, 100);
+	await stopUpdateProcess(child, 'SIGTERM', 1, 100);
 	assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
 	assert.equal(child.listenerCount('exit'), 0);
 	assert.equal(child.listenerCount('error'), 0);
 });
 
-test('a graceful server exit is not force-killed', async () => {
+test('a graceful server exit after the requested signal is not force-killed', async () => {
 	const child = new EventEmitter();
 	child.exitCode = null;
 	child.signalCode = null;
@@ -174,6 +174,6 @@ test('a graceful server exit is not force-killed', async () => {
 		child.emit('exit', 0, null);
 	};
 
-	await stopUpdateProcess(child, 1, 100);
-	assert.deepEqual(signals, ['SIGTERM']);
+	await stopUpdateProcess(child, 'SIGUSR1', 1, 100);
+	assert.deepEqual(signals, ['SIGUSR1']);
 });

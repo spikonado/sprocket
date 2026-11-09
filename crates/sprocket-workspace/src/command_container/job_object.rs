@@ -17,7 +17,7 @@ pub struct Container {
 unsafe impl Send for Container {}
 unsafe impl Sync for Container {}
 
-pub fn create() -> Result<Option<Container>> {
+pub fn create(_name: &str) -> Result<Option<Container>> {
     // SAFETY: null attributes and name create an unnamed job with a handle children can't inherit.
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if job.is_null() {

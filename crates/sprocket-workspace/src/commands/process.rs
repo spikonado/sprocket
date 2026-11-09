@@ -1,20 +1,29 @@
-use std::path::PathBuf;
-use std::process::ExitStatus;
+#[cfg(unix)]
+mod spool;
+
+use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use anyhow::{Context, Result};
+use tokio::io::AsyncWriteExt;
+#[cfg(windows)]
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use super::CommandOutput;
 use crate::command_history::CommandHistory;
-use crate::command_output::{CapturedOutput, OutputChannel};
+use crate::command_output::CapturedOutput;
+#[cfg(windows)]
+use crate::command_output::{MAX_EVENT_OUTPUT_BYTES, OutputChannel};
 
-const PROCESS_POLL_INTERVAL_MS: u64 = 25;
+#[cfg(unix)]
+pub(super) use self::spool::{AdoptedProcess, Spools, start_token};
+
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 pub(super) struct StdinRequest {
     pub chars: Vec<u8>,
@@ -52,82 +61,180 @@ pub(super) fn completion_output(
     }
 }
 
+pub(super) enum Control {
+    Terminate,
+    /// Leaves the command running for the server that replaces this one.
+    #[cfg(unix)]
+    Detach,
+}
+
+pub(super) enum CommandProcess {
+    Spawned {
+        child: Child,
+        pid: Option<u32>,
+    },
+    #[cfg(unix)]
+    Adopted(AdoptedProcess),
+}
+
+impl CommandProcess {
+    pub(super) fn spawned(child: Child) -> Self {
+        let pid = child.id();
+        Self::Spawned { child, pid }
+    }
+
+    fn process_group(&self) -> Option<u32> {
+        match self {
+            Self::Spawned { pid, .. } => *pid,
+            #[cfg(unix)]
+            Self::Adopted(process) => process.process_group(),
+        }
+    }
+
+    /// `Some` once the shell exited, holding its exit code if it had one.
+    fn try_exit(&mut self) -> std::io::Result<Option<Option<i32>>> {
+        match self {
+            Self::Spawned { child, .. } => Ok(child.try_wait()?.map(|status| status.code())),
+            #[cfg(unix)]
+            Self::Adopted(process) => Ok(process.try_exit()),
+        }
+    }
+
+    async fn terminate(&mut self) -> Result<Option<i32>> {
+        match self {
+            Self::Spawned { child, pid } => {
+                let tree_result = stop_remaining_processes(*pid);
+                let _ = child.start_kill();
+                let wait_result = child.wait().await;
+                tree_result?;
+                Ok(wait_result?.code())
+            }
+            #[cfg(unix)]
+            Self::Adopted(process) => process.terminate().await,
+        }
+    }
+}
+
+pub(super) struct Capture {
+    pub task: tokio::task::JoinHandle<Result<()>>,
+    /// Asks a spool capture to read what's left and stop. Pipe captures end at EOF instead.
+    pub stop: watch::Sender<bool>,
+}
+
+pub(super) struct Supervision {
+    pub process: CommandProcess,
+    pub capture: Capture,
+    pub output: Arc<Mutex<CapturedOutput>>,
+    pub timeout: Option<Duration>,
+    pub lifetime_guard: Option<Box<dyn Send + Sync>>,
+    pub history: (PathBuf, CommandHistory),
+}
+
 pub(super) async fn supervise_command(
-    mut child: Child,
-    process_id: Option<u32>,
-    mut controls: mpsc::UnboundedReceiver<()>,
-    completion: watch::Sender<Option<CommandCompletion>>,
+    supervision: Supervision,
     stdin_task: tokio::task::JoinHandle<()>,
-    mut capture_task: tokio::task::JoinHandle<Result<()>>,
-    output: Arc<Mutex<CapturedOutput>>,
-    timeout: Option<Duration>,
-    lifetime_guard: Option<Box<dyn Send + Sync>>,
-    history: (PathBuf, CommandHistory),
+    mut controls: mpsc::UnboundedReceiver<Control>,
+    completion: watch::Sender<Option<CommandCompletion>>,
     changes: Option<watch::Sender<()>>,
 ) {
+    let Supervision {
+        mut process,
+        capture:
+            Capture {
+                task: mut capture_task,
+                stop: capture_stop,
+            },
+        output,
+        timeout,
+        lifetime_guard,
+        history,
+    } = supervision;
+    let (path, mut history) = history;
+    // Saved here, so a cancelled `exec_cmd` can't drop a started command before its supervisor
+    // owns it. Without the record, the next server couldn't find the command to adopt it.
+    if history.process.is_some() && history.save(&path).await.is_err() {
+        history.process = None;
+    }
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
-    let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
+    let mut poll = tokio::time::interval(PROCESS_POLL_INTERVAL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut capture_finished = false;
 
-    let (status, timed_out, mut error) = loop {
+    let ending = loop {
         tokio::select! {
             result = &mut capture_task, if !capture_finished => {
                 capture_finished = true;
                 if let Err(error) = result.context("command output task failed").and_then(|result| result) {
-                    let status = terminate_child(&mut child, process_id).await.ok();
-                    break (status, false, Some(format!("command was stopped because its output could not be captured: {error:#}")));
+                    let exit_code = process.terminate().await.ok().flatten();
+                    break Some((exit_code, false, Some(format!("command was stopped because its output could not be captured: {error:#}"))));
                 }
             },
-            _ = controls.recv() => {
-                match terminate_child(&mut child, process_id).await {
-                    Ok(status) => break (Some(status), false, None),
-                    Err(error) => break (None, false, Some(error.to_string())),
-                }
+            control = controls.recv() => match control {
+                #[cfg(unix)]
+                Some(Control::Detach) if history.process.is_some() => break None,
+                Some(_) | None => match process.terminate().await {
+                    Ok(exit_code) => break Some((exit_code, false, None)),
+                    Err(error) => break Some((None, false, Some(error.to_string()))),
+                },
             },
             _ = &mut timeout => {
-                match terminate_child(&mut child, process_id).await {
-                    Ok(status) => break (Some(status), true, None),
-                    Err(error) => break (None, true, Some(error.to_string())),
+                match process.terminate().await {
+                    Ok(exit_code) => break Some((exit_code, true, None)),
+                    Err(error) => break Some((None, true, Some(error.to_string()))),
                 }
             },
-            _ = poll.tick() => match child.try_wait() {
-                Ok(Some(status)) => {
-                    if let Err(stop_error) = stop_remaining_processes(process_id) {
-                        break (Some(status), false, Some(stop_error.to_string()));
+            _ = poll.tick() => match process.try_exit() {
+                Ok(Some(exit_code)) => {
+                    if let Err(stop_error) = stop_remaining_processes(process.process_group()) {
+                        break Some((exit_code, false, Some(stop_error.to_string())));
                     }
-                    break (Some(status), false, None);
+                    break Some((exit_code, false, None));
                 }
                 Ok(None) => {}
                 Err(wait_error) => {
-                    let _ = terminate_child(&mut child, process_id).await;
-                    break (None, false, Some(wait_error.to_string()));
+                    let _ = process.terminate().await;
+                    break Some((None, false, Some(wait_error.to_string())));
                 }
             }
         }
     };
 
-    if !capture_finished {
-        if let Err(capture_error) = join_capture_task(capture_task).await {
-            error
-                .get_or_insert_with(|| format!("command output capture failed: {capture_error:#}"));
-        }
+    let _ = capture_stop.send(true);
+    let capture_result = if capture_finished {
+        Ok(())
+    } else {
+        join_capture_task(capture_task).await
+    };
+    let finish_result = output.lock().await.finish().await;
+    let Some((exit_code, timed_out, mut error)) = ending else {
+        // The next server resumes from what reached the logs, so their errors don't matter here.
+        stdin_task.abort();
+        let _ = stdin_task.await;
+        return;
+    };
+    if let Err(capture_error) = capture_result {
+        error.get_or_insert_with(|| format!("command output capture failed: {capture_error:#}"));
     }
-    if let Err(capture_error) = output.lock().await.finish().await {
+    if let Err(capture_error) = finish_result {
         error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));
     }
     let mut completed = CommandCompletion {
-        exit_code: status.as_ref().and_then(ExitStatus::code),
-        success: status.is_some_and(|status| status.success()) && !timed_out && error.is_none(),
+        exit_code,
+        success: exit_code == Some(0) && !timed_out && error.is_none(),
         timed_out,
         error,
         saved: false,
     };
-    let (path, mut history) = history;
     history.result = completion_output(&completed, output.lock().await.full_preview());
     match history.save(&path).await {
-        Ok(()) => completed.saved = true,
+        Ok(()) => {
+            completed.saved = true;
+            #[cfg(unix)]
+            if let Ok(log_directory) = history.result.log_directory() {
+                spool::remove_files(log_directory);
+            }
+        }
         Err(error) => {
             completed.success = false;
             let message = format!("failed to save command result: {error:#}");
@@ -170,7 +277,40 @@ pub(super) async fn write_command_input(
     }
 }
 
-pub(super) async fn capture_pipes<O, E>(
+/// Where a launched command's output is read from.
+#[cfg(unix)]
+pub(super) type OutputSource = Spools;
+#[cfg(windows)]
+pub(super) struct OutputSource;
+
+#[cfg(unix)]
+pub(super) fn start_capture(
+    source: OutputSource,
+    _child: &mut Child,
+    output: Arc<Mutex<CapturedOutput>>,
+) -> Capture {
+    source.capture(output)
+}
+
+#[cfg(windows)]
+pub(super) fn start_capture(
+    _source: OutputSource,
+    child: &mut Child,
+    output: Arc<Mutex<CapturedOutput>>,
+) -> Capture {
+    let (stop, _) = watch::channel(false);
+    Capture {
+        task: tokio::spawn(capture_pipes(
+            child.stdout.take().expect("stdout is piped"),
+            child.stderr.take().expect("stderr is piped"),
+            output,
+        )),
+        stop,
+    }
+}
+
+#[cfg(windows)]
+async fn capture_pipes<O, E>(
     mut stdout: O,
     mut stderr: E,
     output: Arc<Mutex<CapturedOutput>>,
@@ -179,8 +319,8 @@ where
     O: AsyncRead + Unpin,
     E: AsyncRead + Unpin,
 {
-    let mut stdout_buffer = [0_u8; 8_192];
-    let mut stderr_buffer = [0_u8; 8_192];
+    let mut stdout_buffer = [0_u8; MAX_EVENT_OUTPUT_BYTES];
+    let mut stderr_buffer = [0_u8; MAX_EVENT_OUTPUT_BYTES];
     let mut stdout_open = true;
     let mut stderr_open = true;
     while stdout_open || stderr_open {
@@ -204,25 +344,25 @@ where
     Ok(())
 }
 
+/// Spool reads stop at the length the spools had when the command ended, so they always finish.
+#[cfg(unix)]
+async fn join_capture_task(task: tokio::task::JoinHandle<Result<()>>) -> Result<()> {
+    task.await.context("command output task failed")?
+}
+
+/// A pipe stays open while any process that escaped the command's tree still holds it.
+#[cfg(windows)]
 async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Result<()> {
     match tokio::time::timeout(Duration::from_secs(1), &mut task).await {
         Ok(result) => result.context("command output task failed")?,
         Err(_) => {
             task.abort();
             let _ = task.await;
-            bail!(
+            anyhow::bail!(
                 "command output did not reach EOF before the drain deadline; logs may be incomplete"
             )
         }
     }
-}
-
-async fn terminate_child(child: &mut Child, process_id: Option<u32>) -> Result<ExitStatus> {
-    let tree_result = stop_remaining_processes(process_id);
-    let _ = child.start_kill();
-    let wait_result = child.wait().await;
-    tree_result?;
-    wait_result.map_err(Into::into)
 }
 
 #[cfg(unix)]
@@ -257,23 +397,32 @@ fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
-pub(super) fn build_shell_command(command: &str, shell: &str) -> Command {
-    let mut process = Command::new(shell);
-    process.arg("-c").arg(command);
-    process
+#[cfg(unix)]
+pub(super) fn build_shell_command(
+    command: &str,
+    shell: &str,
+    log_directory: &Path,
+) -> std::io::Result<(Command, OutputSource)> {
+    spool::shell_command(command, shell, log_directory)
 }
 
 #[cfg(windows)]
-pub(super) fn build_shell_command(command: &str, shell: &str) -> Command {
+pub(super) fn build_shell_command(
+    command: &str,
+    shell: &str,
+    _log_directory: &Path,
+) -> std::io::Result<(Command, OutputSource)> {
     let mut process = Command::new(shell);
     if crate::command_shell::is_powershell(shell) {
         process.args(["-NoLogo", "-NoProfile", "-Command"]);
     } else {
         process.arg("-c");
     }
-    process.arg(command);
     process
+        .arg(command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    Ok((process, OutputSource))
 }
 
 #[cfg(test)]

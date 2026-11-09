@@ -2,104 +2,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
-fn event(sequence: u64, channel: &str, bytes: &[u8]) -> Vec<u8> {
-    let mut encoded = serde_json::to_vec(&serde_json::json!({
-        "sequence": sequence,
-        "timestampMs": 123,
-        "channel": channel,
-        "bytes": bytes,
-    }))
-    .unwrap();
-    encoded.push(b'\n');
-    encoded
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn captured_command_events_rebuild_the_original_log() {
-    use sprocket_workspace::{CommandSessionManager, WorkspaceCancellation, default_command_shell};
-
-    let directory = tempfile::tempdir().unwrap();
-    let sessions =
-        CommandSessionManager::new(directory.path().into(), directory.path().join("logs"));
-    let captured = sessions
-        .exec_command(
-            WorkspaceCancellation::new(),
-            "printf '\\033[32mready\\000\\377\\n'; printf 'warning\\n' >&2",
-            ".",
-            &default_command_shell(),
-            None,
-            5_000,
-            20_000,
-        )
-        .await
-        .unwrap();
-    assert!(captured.result.success);
-    let output = directory.path().join("rebuilt.log");
-    rebuild_output(Path::new(&captured.result.events_path), &output, false)
-        .await
-        .unwrap();
-    assert_eq!(
-        tokio::fs::read(output).await.unwrap(),
-        tokio::fs::read(captured.result.complete_log_path)
-            .await
-            .unwrap()
-    );
-}
-
-#[tokio::test]
-async fn downloaded_events_rebuild_exact_combined_output_across_partial_batches() {
-    let directory = tempfile::tempdir().unwrap();
-    let events = directory.path().join("events.jsonl");
-    let output = directory.path().join("output.log");
-    tokio::fs::write(&events, b"").await.unwrap();
-    rebuild_output(&events, &output, false).await.unwrap();
-    assert_eq!(tokio::fs::read(&output).await.unwrap(), b"");
-    let first = event(0, "stdout", b"\x1b[32mready\x00\xff\n");
-    let second = event(1, "stderr", b"warning\n");
-    let third = event(2, "stdout", "done \u{1f680}\n".as_bytes());
-    let mut downloaded = first.clone();
-    downloaded.extend_from_slice(&second[..second.len() / 2]);
-    tokio::fs::write(&events, &downloaded).await.unwrap();
-    rebuild_output(&events, &output, true).await.unwrap();
-    assert_eq!(
-        tokio::fs::read(&output).await.unwrap(),
-        b"\x1b[32mready\x00\xff\n"
-    );
-
-    downloaded.extend_from_slice(&second[second.len() / 2..]);
-    downloaded.extend_from_slice(&third);
-    tokio::fs::write(&events, &downloaded).await.unwrap();
-    let expected = [
-        b"\x1b[32mready\x00\xff\nwarning\n".as_slice(),
-        "done \u{1f680}\n".as_bytes(),
-    ]
-    .concat();
-    for _ in 0..2 {
-        rebuild_output(&events, &output, false).await.unwrap();
-        assert_eq!(tokio::fs::read(&output).await.unwrap(), expected);
-    }
-    assert_eq!(tokio::fs::read(&events).await.unwrap(), downloaded);
-}
-
-#[tokio::test]
-async fn invalid_events_preserve_the_previous_output() {
-    let directory = tempfile::tempdir().unwrap();
-    let events = directory.path().join("events.jsonl");
-    let output = directory.path().join("output.log");
-    tokio::fs::write(&output, b"previous output").await.unwrap();
-    let incomplete = event(0, "stdout", b"unfinished");
-    for bytes in [
-        event(1, "stdout", b"sequence gap"),
-        b"not JSON\n".to_vec(),
-        incomplete[..incomplete.len() - 1].to_vec(),
-    ] {
-        tokio::fs::write(&events, bytes).await.unwrap();
-        assert!(rebuild_output(&events, &output, false).await.is_err());
-        assert_eq!(tokio::fs::read(&output).await.unwrap(), b"previous output");
-    }
-}
-
 async fn running_history(directory: &Path) -> CommandHistory {
     let output = directory.join("output.log");
     let events = directory.join("events.jsonl");
@@ -122,6 +24,7 @@ async fn running_history(directory: &Path) -> CommandHistory {
             events_path: events.to_string_lossy().into_owned(),
             error: None,
         },
+        process: None,
     }
 }
 
@@ -265,8 +168,7 @@ async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
             "machine",
             &mut IdleSessions::new(),
         )
-        .await
-        .unwrap(),
+        .await,
         RecordSync::Waiting
     );
     assert_eq!(tokio::fs::read(&path).await.unwrap(), b"interrupted write");
@@ -275,11 +177,15 @@ async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
 }
 
 #[tokio::test]
-async fn log_batches_resume_in_order_without_changing_retry_bytes() {
+async fn log_batches_resume_in_order_and_hold_back_partial_events() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("output.log");
-    let bytes: Vec<u8> = (0..CHUNK_BYTES * 5 + 17).map(|index| index as u8).collect();
-    tokio::fs::write(&path, &bytes).await.unwrap();
+    let mut bytes: Vec<u8> = (0..CHUNK_BYTES * 5 + 17).map(|index| index as u8).collect();
+    bytes.push(b'\n');
+    let torn_event: &[u8] = b"{\"sequence\":";
+    tokio::fs::write(&path, [bytes.as_slice(), torn_event].concat())
+        .await
+        .unwrap();
     let path = path.to_str().unwrap();
     let mut downloaded = bytes[..23].to_vec();
 

@@ -133,7 +133,7 @@ export class DesktopUpdater {
 	}
 }
 
-export function stopUpdateProcess(child, graceMs = 5_000, killWaitMs = 5_000) {
+export function stopUpdateProcess(child, signal = 'SIGTERM', graceMs = 5_000, killWaitMs = 5_000) {
 	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
 
 	return new Promise((resolve, reject) => {
@@ -162,7 +162,7 @@ export function stopUpdateProcess(child, graceMs = 5_000, killWaitMs = 5_000) {
 		}, graceMs);
 
 		try {
-			child.kill('SIGTERM');
+			child.kill(signal);
 		} catch (error) {
 			finish(error);
 		}

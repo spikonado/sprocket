@@ -8,8 +8,8 @@ use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
 use sprocket_transcript::TranscriptStore;
-use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
+use sprocket_workspace::{CommandHistory, CommandOutput, history_path, rebuild_output};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::command_sessions::ThreadCommandSessions;
 use crate::native_auth::NativeAuthManager;
@@ -101,20 +101,26 @@ fn snapshot_value(history: &CommandHistory, running: bool) -> Value {
 
 async fn log_chunks(path: &str, mut offset: u64) -> Result<Vec<Value>> {
     let mut file = tokio::fs::File::open(path).await?;
-    file.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut chunks = Vec::new();
     for _ in 0..2 {
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
         let mut bytes = vec![0; CHUNK_BYTES];
         let read = file.read(&mut bytes).await?;
-        if read == 0 {
+        // An event still being written, or torn by a crash, stays local. A server that adopts
+        // the command replaces a torn one, so the remote copy must not hold its start.
+        let complete = bytes[..read]
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |end| end + 1);
+        if complete == 0 {
             break;
         }
-        bytes.truncate(read);
+        bytes.truncate(complete);
         chunks.push(Value::Object(BTreeMap::from([
             ("offset".into(), Value::Float64(offset as f64)),
             ("bytes".into(), Value::Bytes(bytes)),
         ])));
-        offset += read as u64;
+        offset += complete as u64;
     }
     Ok(chunks)
 }
@@ -156,7 +162,7 @@ pub fn spawn(
     tokio::spawn(async move {
         let mut idle = IdleSessions::new();
         loop {
-            if let Err(error) = sync_directory(
+            sync_directory(
                 &store,
                 &registry,
                 &auth,
@@ -164,10 +170,7 @@ pub fn spawn(
                 &machine_id,
                 &mut idle,
             )
-            .await
-            {
-                tracing::warn!("command sync will retry: {error:#}");
-            }
+            .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     })
@@ -179,11 +182,11 @@ pub async fn flush(
     auth: &Arc<NativeAuthManager>,
     deployment: &str,
     machine_id: &str,
-) -> Result<()> {
+) {
     let mut idle = IdleSessions::new();
     loop {
-        match sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await? {
-            RecordSync::Settled => return Ok(()),
+        match sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await {
+            RecordSync::Settled => return,
             RecordSync::Uploading => {}
             RecordSync::Waiting => tokio::time::sleep(FLUSH_RETRY_DELAY).await,
         }
@@ -197,61 +200,92 @@ async fn sync_directory(
     deployment: &str,
     machine_id: &str,
     idle: &mut IdleSessions,
-) -> Result<RecordSync> {
+) -> RecordSync {
     let mut pass = RecordSync::Settled;
-    let mut users = match tokio::fs::read_dir(store.root()).await {
-        Ok(users) => users,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RecordSync::Settled);
-        }
-        Err(error) => return Err(error.into()),
-    };
-    while let Some(user) = users.next_entry().await? {
-        if !user.file_type().await?.is_dir() {
-            continue;
-        }
-        let mut threads = tokio::fs::read_dir(user.path()).await?;
+    for records in session_records(&store.root()).await {
         let mut client = None;
-        while let Some(thread) = threads.next_entry().await? {
-            let directory = thread.path().join("command-logs");
-            let mut records = match tokio::fs::read_dir(directory.join("sessions")).await {
-                Ok(records) => records,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            while let Some(record) = records.next_entry().await? {
-                let path = record.path();
-                if path.extension().is_none_or(|extension| extension != "json") {
-                    continue;
-                }
-                let result = tokio::time::timeout(
-                    Duration::from_secs(15),
-                    sync_record(
-                        &path,
-                        &directory,
-                        registry,
-                        auth,
-                        deployment,
-                        machine_id,
-                        &mut client,
-                        idle,
-                    ),
-                )
-                .await
-                .context("command sync timed out")
-                .and_then(|result| result);
-                let record = result.unwrap_or_else(|error| {
-                    tracing::warn!(
-                        "command record {} sync will retry: {error:#}",
-                        path.display()
-                    );
-                    RecordSync::Waiting
-                });
-                pass = pass.max(record);
-            }
+        for SessionRecord { directory, path } in records {
+            let result = tokio::time::timeout(
+                Duration::from_secs(15),
+                sync_record(
+                    &path,
+                    &directory,
+                    registry,
+                    auth,
+                    deployment,
+                    machine_id,
+                    &mut client,
+                    idle,
+                ),
+            )
+            .await
+            .context("command sync timed out")
+            .and_then(|result| result);
+            let record = result.unwrap_or_else(|error| {
+                tracing::warn!(
+                    "command record {} sync will retry: {error:#}",
+                    path.display()
+                );
+                RecordSync::Waiting
+            });
+            pass = pass.max(record);
         }
     }
-    Ok(pass)
+    pass
+}
+
+pub(crate) struct SessionRecord {
+    /// The thread's `command-logs` directory.
+    pub directory: PathBuf,
+    pub path: PathBuf,
+}
+
+/// Every saved command record under `store_root`, grouped by user directory. Unreadable
+/// directories are skipped so they don't hide the records in the others.
+pub(crate) async fn session_records(store_root: &Path) -> Vec<Vec<SessionRecord>> {
+    let mut found = Vec::new();
+    for user in directory_entries(store_root).await {
+        let mut user_records = Vec::new();
+        for thread in directory_entries(&user).await {
+            let directory = thread.join("command-logs");
+            for path in directory_entries(&directory.join("sessions")).await {
+                if path
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+                {
+                    user_records.push(SessionRecord {
+                        directory: directory.clone(),
+                        path,
+                    });
+                }
+            }
+        }
+        found.push(user_records);
+    }
+    found
+}
+
+async fn directory_entries(directory: &Path) -> Vec<PathBuf> {
+    let entries = async {
+        let mut entries = tokio::fs::read_dir(directory).await?;
+        let mut paths = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            paths.push(entry.path());
+        }
+        Ok::<_, std::io::Error>(paths)
+    };
+    entries.await.unwrap_or_else(|error| {
+        if !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ) {
+            tracing::warn!(
+                "skipping unreadable command directory {}: {error}",
+                directory.display()
+            );
+        }
+        Vec::new()
+    })
 }
 
 async fn sync_record(
@@ -275,6 +309,10 @@ async fn sync_record(
         return Ok(RecordSync::Settled);
     }
     if auth.require_user(&history.user_id).await.is_err() {
+        return Ok(RecordSync::Settled);
+    }
+    if registry.is_detached() && history.result.running && history.process.is_some() {
+        // The server that replaces this one adopts the command and syncs it from there.
         return Ok(RecordSync::Settled);
     }
     let session_id = path
@@ -311,50 +349,6 @@ struct RemoteChunk {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     offset: u64,
     bytes: Vec<u8>,
-}
-
-#[derive(Deserialize)]
-struct CapturedEvent {
-    sequence: u64,
-    bytes: Vec<u8>,
-}
-
-async fn rebuild_output(events: &Path, output: &Path, allow_partial: bool) -> Result<()> {
-    let mut reader = BufReader::new(tokio::fs::File::open(events).await?);
-    let temporary =
-        tempfile::NamedTempFile::new_in(output.parent().context("log has no directory")?)?;
-    let (file, temporary_path) = temporary.into_parts();
-    let mut file = BufWriter::new(tokio::fs::File::from_std(file));
-    let mut line = Vec::new();
-    let mut sequence = 0;
-    loop {
-        line.clear();
-        let read = (&mut reader)
-            .take(64 * 1024)
-            .read_until(b'\n', &mut line)
-            .await?;
-        if read == 0 {
-            break;
-        }
-        if line.last() != Some(&b'\n') {
-            if read == 64 * 1024 || !allow_partial {
-                bail!("command event log has an incomplete or oversized record");
-            }
-            break;
-        }
-        let event: CapturedEvent =
-            serde_json::from_slice(&line).context("invalid command event")?;
-        if event.sequence != sequence {
-            bail!("command event log has an unexpected sequence");
-        }
-        file.write_all(&event.bytes).await?;
-        sequence += 1;
-    }
-    file.flush().await?;
-    file.get_ref().sync_all().await?;
-    drop(file);
-    temporary_path.persist(output)?;
-    Ok(())
 }
 
 async fn download_log(
@@ -452,6 +446,7 @@ pub async fn fetch(
             events_path: events.to_string_lossy().into_owned(),
             ..remote.result
         },
+        process: None,
     };
     history.save(&history_path(directory, session_id)?).await?;
     Ok(Some(history))

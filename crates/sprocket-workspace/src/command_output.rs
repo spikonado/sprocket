@@ -4,9 +4,14 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
+
+/// Capture appends at most this much output per event, which keeps every encoded event line
+/// under `MAX_EVENT_LINE_BYTES`.
+pub(crate) const MAX_EVENT_OUTPUT_BYTES: usize = 8 * 1024;
+const MAX_EVENT_LINE_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandOutputLimits {
@@ -23,11 +28,19 @@ impl Default for CommandOutputLimits {
     }
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum OutputChannel {
     Stdout,
     Stderr,
+}
+
+/// How many bytes of each stream are already captured, which is where reading its spool resumes.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct CapturedBytes {
+    pub stdout: u64,
+    pub stderr: u64,
 }
 
 #[derive(Serialize)]
@@ -129,6 +142,61 @@ impl CapturedOutput {
         tokio::fs::remove_dir_all(directory)
             .await
             .context("failed to remove unstarted command logs")
+    }
+
+    /// Reopens the logs of a command that an earlier server captured. `events.jsonl` is what
+    /// gets synced, so `output.log` is rebuilt from it and a torn last event is dropped.
+    #[cfg(unix)]
+    pub(crate) async fn resume(
+        log_path: String,
+        events_path: String,
+        max_chars: usize,
+        limits: CommandOutputLimits,
+    ) -> Result<(Self, CapturedBytes)> {
+        let mut captured = CapturedBytes::default();
+        let mut pending_utf8 = Vec::new();
+        let mut full_preview = PreviewBuffer::new(max_chars);
+        let replayed = replay_events(
+            Path::new(&events_path),
+            Path::new(&log_path),
+            true,
+            |channel, bytes| {
+                match channel {
+                    OutputChannel::Stdout => captured.stdout += bytes.len() as u64,
+                    OutputChannel::Stderr => captured.stderr += bytes.len() as u64,
+                }
+                decode_utf8(&mut pending_utf8, bytes, false, |text| {
+                    full_preview.push_text(text);
+                });
+            },
+        )
+        .await?;
+        let events = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&events_path)
+            .await?;
+        events.set_len(replayed.events_bytes).await?;
+        let log = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&log_path)
+            .await?;
+        let output = Self {
+            log: Some(log),
+            events: Some(events),
+            log_path,
+            events_path,
+            sequence: replayed.sequence,
+            log_bytes: replayed.events_bytes + captured.stdout + captured.stderr,
+            limits,
+            pending_utf8,
+            full_preview,
+        };
+        Ok((output, captured))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn max_log_bytes(&self) -> u64 {
+        self.limits.max_log_bytes
     }
 
     pub(crate) async fn append(&mut self, channel: OutputChannel, bytes: &[u8]) -> Result<()> {
@@ -253,6 +321,75 @@ pub(crate) async fn read_log_from(
         output: preview.render(),
         next_offset,
     })
+}
+
+/// Rewrites `output` from the events in `events`, leaving it untouched on failure. With
+/// `allow_partial`, a torn last event, such as one still downloading, is left out.
+pub async fn rebuild_output(events: &Path, output: &Path, allow_partial: bool) -> Result<()> {
+    replay_events(events, output, allow_partial, |_, _| {})
+        .await
+        .map(drop)
+}
+
+struct ReplayedEvents {
+    sequence: u64,
+    events_bytes: u64,
+}
+
+async fn replay_events(
+    events: &Path,
+    output: &Path,
+    allow_partial: bool,
+    mut on_event: impl FnMut(OutputChannel, &[u8]),
+) -> Result<ReplayedEvents> {
+    #[derive(Deserialize)]
+    struct SavedEvent {
+        sequence: u64,
+        channel: OutputChannel,
+        bytes: Vec<u8>,
+    }
+
+    let mut reader = BufReader::new(File::open(events).await?);
+    let temporary =
+        tempfile::NamedTempFile::new_in(output.parent().context("log has no directory")?)?;
+    let (file, temporary_path) = temporary.into_parts();
+    let mut file = BufWriter::new(File::from_std(file));
+    let mut line = Vec::new();
+    let mut replayed = ReplayedEvents {
+        sequence: 0,
+        events_bytes: 0,
+    };
+    loop {
+        line.clear();
+        let read = (&mut reader)
+            .take(MAX_EVENT_LINE_BYTES)
+            .read_until(b'\n', &mut line)
+            .await?;
+        if read == 0 {
+            break;
+        }
+        if line.last() != Some(&b'\n') {
+            ensure!(
+                allow_partial && (read as u64) < MAX_EVENT_LINE_BYTES,
+                "command event log has an incomplete or oversized record"
+            );
+            break;
+        }
+        let event: SavedEvent = serde_json::from_slice(&line).context("invalid command event")?;
+        ensure!(
+            event.sequence == replayed.sequence,
+            "command event log has an unexpected sequence"
+        );
+        file.write_all(&event.bytes).await?;
+        on_event(event.channel, &event.bytes);
+        replayed.sequence += 1;
+        replayed.events_bytes += line.len() as u64;
+    }
+    file.flush().await?;
+    file.get_ref().sync_all().await?;
+    drop(file);
+    temporary_path.persist(output)?;
+    Ok(replayed)
 }
 
 fn decode_utf8(

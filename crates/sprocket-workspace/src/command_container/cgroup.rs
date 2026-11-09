@@ -16,7 +16,7 @@ pub struct Container {
     procs: File,
 }
 
-pub fn create() -> Result<Option<Container>> {
+pub fn create(name: &str) -> Result<Option<Container>> {
     let membership =
         fs::read_to_string("/proc/self/cgroup").context("failed to read /proc/self/cgroup")?;
     let Some(own) = membership.lines().find_map(|line| line.strip_prefix("0::")) else {
@@ -28,8 +28,12 @@ pub fn create() -> Result<Option<Container>> {
         .write(true)
         .open(parent.join("cgroup.procs"))
         .with_context(|| format!("cannot move processes out of {}", parent.display()))?;
-    let path = parent.join(format!("sprocket-commands-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&path).with_context(|| format!("failed to create {}", path.display()))?;
+    let path = parent.join(format!("sprocket-commands-{name}"));
+    if let Err(error) = fs::create_dir(&path)
+        && error.kind() != io::ErrorKind::AlreadyExists
+    {
+        return Err(error).with_context(|| format!("failed to create {}", path.display()));
+    }
     let procs = if path.join("cgroup.kill").exists() {
         OpenOptions::new()
             .write(true)
