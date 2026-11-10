@@ -381,15 +381,16 @@ impl AgentProvider {
                     self.model
                 )
             };
-            if !self.fall_back(runtime, run_id, claim_id, &error).await? {
-                return Err(usage_limit.or(first_error).unwrap_or(error));
+            let fell_back = self.fall_back(runtime, run_id, claim_id, &error).await?;
+            if convex_error_code(&error) == Some(ConvexErrorCode::UsageLimitReached) {
+                usage_limit.get_or_insert(error);
+            } else {
+                first_error.get_or_insert(error);
             }
-            if usage_limit.is_none()
-                && convex_error_code(&error) == Some(ConvexErrorCode::UsageLimitReached)
-            {
-                usage_limit = Some(error);
-            } else if first_error.is_none() {
-                first_error = Some(error);
+            if !fell_back {
+                return Err(usage_limit
+                    .or(first_error)
+                    .expect("start_model keeps every failure"));
             }
         }
     }
