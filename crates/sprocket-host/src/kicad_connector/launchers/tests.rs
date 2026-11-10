@@ -3,7 +3,6 @@ use std::fs;
 use super::*;
 use crate::tool_install::set_executable;
 
-#[cfg(unix)]
 #[tokio::test]
 async fn launchers_run_kicad_and_point_kipy_and_the_routing_tools_at_its_cli() {
     let directory = tempfile::tempdir().unwrap();

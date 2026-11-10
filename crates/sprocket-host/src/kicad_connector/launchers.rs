@@ -146,5 +146,5 @@ pub(super) async fn write(bin: &Path, launchers: Vec<(&'static str, String)>) ->
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
