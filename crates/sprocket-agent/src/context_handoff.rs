@@ -7,7 +7,7 @@ use rig::agent::{
 use rig::completion::{Message, Usage};
 use rig::message::AssistantContent;
 
-pub(crate) const HANDOFF_PROMPT: &str = "Your context is filled up; reply with only a handoff document summarising the current conversation so a fresh agent can continue the work. Do not call any tools. Don't talk about the handoff document itself. Include the user's last request, your decisions and the reasoning behind them, and a summary of the work you have completed. Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead. Redact any sensitive information, such as API keys, passwords, or personally identifiable information.";
+pub(crate) const HANDOFF_PROMPT: &str = "Sprocket sent this message, not the user. Your context is filled up; reply with only a handoff document summarising the current conversation so a fresh agent can continue the work. Do not call any tools. Don't talk about the handoff document itself, and don't record this message as a user request. Include the user's last request from the conversation before this message, your decisions and the reasoning behind them, and a summary of the work you have completed. Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead. Redact any sensitive information, such as API keys, passwords, or personally identifiable information.";
 pub(crate) const HANDOFF_SUBMITTED: &str = "SPROCKET_CONTEXT_HANDOFF_SUBMITTED";
 const HANDOFF_REQUESTED: &str = "SPROCKET_CONTEXT_HANDOFF_REQUESTED";
 const MAX_DOCUMENT_BYTES: usize = 256_000;
@@ -22,7 +22,7 @@ pub(crate) fn handoff_prompt() -> Message {
 
 pub(crate) fn context_summary_text(summary: &str) -> String {
     format!(
-        "A handoff document was created automatically from the conversation context.\n\n<handoff_document>\n{summary}\n</handoff_document>"
+        "Your context filled up, so Sprocket had you write this handoff document and started a fresh context with it. Continue the user's work from where the document leaves off. Writing the handoff was Sprocket's request, not the user's, so don't write another one.\n\n<handoff_document>\n{summary}\n</handoff_document>"
     )
 }
 
