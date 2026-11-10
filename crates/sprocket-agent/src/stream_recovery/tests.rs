@@ -52,3 +52,16 @@ fn retries_one_gateway_stream_timeout_per_run() {
         );
     }
 }
+
+#[test]
+fn retries_overloaded_responses() {
+    let mut recovery = StreamRecovery::default();
+    *recovery.input.0.lock().unwrap() = Some((vec![], Message::user("continue")));
+    assert!(
+        recovery
+            .resume(&PromptError::Provider(ProviderError::from_provider_body(
+                r#"{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"Overloaded"}}}"#
+            )))
+            .is_some()
+    );
+}

@@ -177,7 +177,7 @@ export const saveClaudeToken = action({
 		const token = args.token.trim();
 
 		if (token.length > 512 || !CLAUDE_TOKEN_PATTERN.test(token)) {
-			throw new Error("That isn't a valid Claude token. Sign in with Claude again.");
+			throw new ConvexError("That isn't a valid Claude token. Sign in with Claude again.");
 		}
 
 		await storeVaultObject(name, token);
@@ -217,7 +217,7 @@ export const authorizeRunCredential = internalQuery({
 			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
 				?.completionProvider !== args.provider
 		) {
-			throw new Error(`Run is not configured to use ${args.provider} credentials.`);
+			throw new ConvexError(`Run is not configured to use ${args.provider} credentials.`);
 		}
 
 		return run.userId;
@@ -252,7 +252,7 @@ async function issueApiKeyHandler(
 	const apiKey = await readRunCredential(ctx, args, provider);
 
 	if (apiKey === null) {
-		throw new Error(
+		throw new ConvexError(
 			`${apiKeyProviders[provider].label} is no longer configured. Add an API key in Settings.`
 		);
 	}
@@ -278,7 +278,9 @@ export const issueClaudeCredential = action({
 	handler: async (ctx, args) => {
 		const token = await readRunCredential(ctx, args, 'claude');
 
-		if (token === null) throw new Error('Claude is no longer connected. Add a token in Settings.');
+		if (token === null) {
+			throw new ConvexError('Claude is no longer connected. Add a token in Settings.');
+		}
 
 		return { token };
 	}

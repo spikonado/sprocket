@@ -364,6 +364,7 @@ impl AgentProvider {
         base_instructions: &str,
     ) -> anyhow::Result<DynModel<Completion>> {
         let mut usage_limit = None;
+        let mut first_error = None;
         loop {
             let error = if self.completion_provider.serves(&self.model_route) {
                 match self
@@ -381,12 +382,14 @@ impl AgentProvider {
                 )
             };
             if !self.fall_back(runtime, run_id, claim_id, &error).await? {
-                return Err(usage_limit.unwrap_or(error));
+                return Err(usage_limit.or(first_error).unwrap_or(error));
             }
             if usage_limit.is_none()
                 && convex_error_code(&error) == Some(ConvexErrorCode::UsageLimitReached)
             {
                 usage_limit = Some(error);
+            } else if first_error.is_none() {
+                first_error = Some(error);
             }
         }
     }
@@ -1098,9 +1101,24 @@ async fn run_with_completion_model(
                                             &request.base_instructions,
                                         ).await
                                     };
-                                    match next_model.await {
+                                    let next_model = next_model.await;
+                                    match next_model {
                                         Ok(model) => agent.set_model(model),
-                                        Err(error) => break 'agent_run transcript_error(error),
+                                        Err(fallback_error)
+                                            if classify_provider_error(&fallback_error)
+                                                != ProviderErrorDisposition::Failed
+                                                || convex_error_code(&fallback_error)
+                                                    == Some(ConvexErrorCode::UsageLimitReached) =>
+                                        {
+                                            break 'agent_run transcript_error(fallback_error);
+                                        }
+                                        Err(fallback_error) => {
+                                            eprintln!(
+                                                "sprocket-agent: no fallback provider could continue run {} ({fallback_error:#})",
+                                                request.run_id
+                                            );
+                                            break 'agent_run transcript_error(anyhow!(error));
+                                        }
                                     }
                                     history = without_reasoning_traces(next_history);
                                     prompt = next_prompt;

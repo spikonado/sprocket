@@ -250,7 +250,7 @@ export const issueGatewayCredential = mutation({
 			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
 				?.completionProvider !== 'spikonado'
 		) {
-			throw new Error('Run is not configured to use the Spikonado gateway.');
+			throw new ConvexError('Run is not configured to use the Spikonado gateway.');
 		}
 
 		const quota = await gatewayQuotaStatus(ctx, run.userId);
