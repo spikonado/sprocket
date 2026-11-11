@@ -50,10 +50,11 @@ function UserMuseSubscriptionCard({
 	const [error, setError] = useState<string | null>(null);
 	const loginIdRef = useRef<string | null>(null);
 	const attemptRef = useRef(0);
-	const lastStateRef = useRef(status?.state);
-	const state = status?.state;
+	const state = status?.error ? undefined : status?.state;
+	const lastStateRef = useRef(state);
 
 	useEffect(() => {
+		if (!state) return;
 		const last = lastStateRef.current;
 		lastStateRef.current = state;
 
