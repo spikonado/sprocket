@@ -71,13 +71,19 @@ function UserMuseSubscriptionCard({
 		[localApi, userId]
 	);
 
+	function reportStatus(next: MuseStatus) {
+		onStatusChange(next);
+
+		if (next.state === 'ready') onConnected();
+	}
+
 	async function install() {
 		if (!localApi || pending) return;
 		setPending(true);
 		setError(null);
 
 		try {
-			onStatusChange(await localApi.installMuse(userId));
+			reportStatus(await localApi.installMuse(userId));
 		} catch (caught) {
 			setError(caughtError.parse(caught).message || 'Couldn’t start installing Muse.');
 		} finally {
@@ -96,9 +102,7 @@ function UserMuseSubscriptionCard({
 				const next = await api.fetchMuseStatus(userId);
 
 				if (stale()) return;
-				onStatusChange(next);
-
-				if (next.state === 'ready') onConnected();
+				reportStatus(next);
 
 				if (next.state !== 'signedOut') break;
 
@@ -155,7 +159,7 @@ function UserMuseSubscriptionCard({
 		setError(null);
 
 		try {
-			onStatusChange(await localApi.fetchMuseStatus(userId));
+			reportStatus(await localApi.fetchMuseStatus(userId));
 		} catch (caught) {
 			setError(caughtError.parse(caught).message || 'Couldn’t check Muse on this computer.');
 		} finally {

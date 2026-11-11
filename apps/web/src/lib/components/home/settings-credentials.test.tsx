@@ -287,13 +287,21 @@ it('signs in to Muse with a device code and waits until Muse is ready', async ()
 	expect(screen.queryByText('ABCD-EFGH')).toBeNull();
 });
 
-it('links to a plan upgrade when the Muse plan lacks Muse Wonder Full', () => {
-	mount(new ConvexTestClient(), { museStatus: museFixture({ state: 'planRequired' }) });
+it('links to a plan upgrade when the Muse plan lacks Muse Wonder Full', async () => {
+	const view = mount(new ConvexTestClient(), {
+		museStatus: museFixture({ state: 'planRequired' }),
+		localApi: createChatGptApi({
+			fetchMuseStatus: async () => museFixture({ state: 'ready', account: 'a@example.com' })
+		})
+	});
+
 	expect(screen.getByRole('link', { name: 'Upgrade in Accounts Center' })).toHaveProperty(
 		'href',
 		'https://accountscenter.meta.com/'
 	);
 	expect(screen.queryByRole('button', { name: 'Sign in with Muse' })).toBeNull();
+	fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+	await waitFor(() => expect(view.onProviderConnected).toHaveBeenCalledWith('muse'));
 });
 
 it('signs in with Claude and saves the token', async () => {
