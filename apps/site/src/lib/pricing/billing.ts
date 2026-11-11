@@ -36,7 +36,7 @@ function convexClient(token?: string): ConvexHttpClient {
 }
 
 export async function fetchPricingCatalog(): Promise<PublicPricingCatalog> {
-	return convexClient().action(api.pricing.getPublicCatalog, {});
+	return convexClient().query(api.pricing.getPublicCatalog, {});
 }
 
 async function postPricingAuth<T>(path: string): Promise<T> {
