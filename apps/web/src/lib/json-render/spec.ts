@@ -15,8 +15,16 @@ function parseSpecDocument(source: string): Spec | undefined {
 	}
 }
 
+function parseSpecStream(source: string): Spec | undefined {
+	try {
+		return specSchema.safeParse(compileSpecStream(source)).data;
+	} catch {
+		return undefined;
+	}
+}
+
 export function parseJsonRenderSpec(source: string): Spec | null {
-	const spec = parseSpecDocument(source) ?? specSchema.safeParse(compileSpecStream(source)).data;
+	const spec = parseSpecDocument(source) ?? parseSpecStream(source);
 
 	return spec?.elements[spec.root] ? spec : null;
 }
