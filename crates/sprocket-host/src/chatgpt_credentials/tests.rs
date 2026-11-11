@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use base64::Engine;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, jwk::Jwk};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::oauth::{SCOPES, TokenResponse, scopes, token_tuple, verify_identity};
