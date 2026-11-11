@@ -10,6 +10,7 @@ import type {
 	LocalApi,
 	MuseStatus
 } from '$lib/types/sprocket';
+import type { CompletionProvider } from '@convex/lib/validators';
 import ApiKeyCard, { type ApiKeyProvider } from './api-key-card';
 import ClaudeSubscriptionCard from './claude-subscription-card';
 import MuseSubscriptionCard from './muse-subscription-card';
@@ -50,7 +51,8 @@ export default function SettingsCredentials({
 	onChatGptStatusChange,
 	onClaudeCodeStatusChange,
 	onMuseStatusChange,
-	onConfigurationChange
+	onConfigurationChange,
+	onProviderConnected
 }: {
 	userId: string;
 	localApi: LocalApi | null;
@@ -69,6 +71,7 @@ export default function SettingsCredentials({
 	onClaudeCodeStatusChange: (status: ClaudeCodeStatus) => void;
 	onMuseStatusChange: (status: MuseStatus) => void;
 	onConfigurationChange: (change: ProviderConfigurationChange) => void;
+	onProviderConnected: (provider: CompletionProvider) => void;
 }) {
 	const [chatGptPending, setChatGptPending] = useState(false);
 	const [browserLoginActive, setBrowserLoginActive] = useState(false);
@@ -89,6 +92,12 @@ export default function SettingsCredentials({
 
 	function errorMessage(error: Error, fallback: string): string {
 		return convexClientErrorMessage(error) ?? fallback;
+	}
+
+	function configurationChanged(change: ProviderConfigurationChange) {
+		onConfigurationChange(change);
+
+		if (change.configured) onProviderConnected(change.provider);
 	}
 
 	function cancelLoginOnServer(pending: PendingBrowserLogin) {
@@ -158,6 +167,7 @@ export default function SettingsCredentials({
 
 				if (generation !== generationRef.current || api !== localApi) return;
 				onChatGptStatusChange(status);
+				onProviderConnected('chatgpt');
 
 				return;
 			} catch (error) {
@@ -497,7 +507,7 @@ export default function SettingsCredentials({
 						statusError={claudeCodeStatusError}
 						onStatusChange={onClaudeCodeStatusChange}
 						onTokenSavedChange={(configured) =>
-							onConfigurationChange({ provider: 'claude', configured })
+							configurationChanged({ provider: 'claude', configured })
 						}
 					/>
 
@@ -507,6 +517,7 @@ export default function SettingsCredentials({
 						status={museStatus}
 						statusError={museStatusError}
 						onStatusChange={onMuseStatusChange}
+						onConnected={() => onProviderConnected('muse')}
 					/>
 
 					{apiKeyProviders.map((provider) => (
@@ -515,7 +526,7 @@ export default function SettingsCredentials({
 							provider={provider}
 							configured={apiKeysSaved[provider]}
 							loading={loading}
-							onConfiguredChange={(configured) => onConfigurationChange({ provider, configured })}
+							onConfiguredChange={(configured) => configurationChanged({ provider, configured })}
 						/>
 					))}
 

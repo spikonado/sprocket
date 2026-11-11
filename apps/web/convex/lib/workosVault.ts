@@ -1,4 +1,5 @@
 import { env } from '@convex/_generated/server';
+import { ConvexError } from 'convex/values';
 import { z } from 'zod';
 
 const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
@@ -19,7 +20,9 @@ export type VaultObject = z.infer<typeof vaultObjectSchema>;
 function workosApiKey(): string {
 	const key = env.WORKOS_API_KEY?.trim();
 
-	if (!key) throw new Error('Provider settings are not configured on this Sprocket deployment.');
+	if (!key) {
+		throw new ConvexError('Provider settings are not configured on this Sprocket deployment.');
+	}
 
 	return key;
 }
@@ -28,7 +31,7 @@ function workosClientId(): string {
 	const clientId = env.WORKOS_CLIENT_ID?.trim();
 
 	if (!clientId) {
-		throw new Error('Provider settings are not configured on this Sprocket deployment.');
+		throw new ConvexError('Provider settings are not configured on this Sprocket deployment.');
 	}
 
 	return clientId;
@@ -67,12 +70,12 @@ async function responseJson<T>(
 	const contentLength = Number(response.headers.get('content-length'));
 
 	if (Number.isFinite(contentLength) && contentLength > MAX_PROVIDER_RESPONSE_BYTES) {
-		throw new Error(`${service} returned an oversized response.`);
+		throw new ConvexError(`${service} returned an oversized response.`);
 	}
 
 	const reader = response.body?.getReader();
 
-	if (!reader) throw new Error(`${service} returned an invalid response.`);
+	if (!reader) throw new ConvexError(`${service} returned an invalid response.`);
 	const chunks: Uint8Array[] = [];
 	let byteLength = 0;
 
@@ -84,7 +87,7 @@ async function responseJson<T>(
 
 		if (byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
 			await reader.cancel();
-			throw new Error(`${service} returned an oversized response.`);
+			throw new ConvexError(`${service} returned an oversized response.`);
 		}
 
 		chunks.push(value);
@@ -103,7 +106,7 @@ async function responseJson<T>(
 	try {
 		data = schema.parse(JSON.parse(new TextDecoder().decode(bytes)));
 	} catch {
-		throw new Error(invalidMessage);
+		throw new ConvexError(invalidMessage);
 	}
 
 	return data;
@@ -117,7 +120,7 @@ export async function readVaultObject(name: string): Promise<VaultObject | null>
 
 	if (response.status === 404) return null;
 
-	if (!response.ok) throw new Error('Couldn’t read the credential from WorkOS Vault.');
+	if (!response.ok) throw new ConvexError('Couldn’t read the credential from WorkOS Vault.');
 
 	const object = await responseJson(
 		response,
@@ -127,7 +130,7 @@ export async function readVaultObject(name: string): Promise<VaultObject | null>
 	);
 
 	if (object.name !== name) {
-		throw new Error('WorkOS Vault returned an invalid credential.');
+		throw new ConvexError('WorkOS Vault returned an invalid credential.');
 	}
 
 	return object;
@@ -156,7 +159,7 @@ export async function storeVaultObject(
 				})
 			});
 
-	if (!response.ok) throw new Error('Couldn’t save the credential in WorkOS Vault.');
+	if (!response.ok) throw new ConvexError('Couldn’t save the credential in WorkOS Vault.');
 }
 
 export async function deleteVaultObject(name: string, expectedObject?: VaultObject | null) {
@@ -168,6 +171,6 @@ export async function deleteVaultObject(name: string, expectedObject?: VaultObje
 	const response = await providerFetch(url, { method: 'DELETE', headers: workosHeaders() });
 
 	if (!response.ok && response.status !== 404) {
-		throw new Error('Couldn’t remove the credential from WorkOS Vault.');
+		throw new ConvexError('Couldn’t remove the credential from WorkOS Vault.');
 	}
 }

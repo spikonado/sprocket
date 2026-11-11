@@ -1,25 +1,18 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Doc } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
-import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import type { ProviderOrderEntry } from '@convex/lib/providerOrder';
 import type { CompletionProvider } from '@convex/lib/validators';
 import SettingsProviders from './settings-providers';
 
-const preferences: Doc<'uiPreferences'> = {
-	_id: fixtureId<'uiPreferences'>('preferences-test'),
-	_creationTime: 1,
-	userId: 'user-test',
-	theme: 'light'
-};
-
 async function mount(
-	data: Doc<'uiPreferences'> | null,
+	providerOrder: ProviderOrderEntry[],
 	onOpenCredentials = vi.fn(),
 	configuredProviders: CompletionProvider[] = ['spikonado', 'openai', 'chatgpt', 'claude']
 ) {
 	const client = new ConvexTestClient();
-	client.registerQuery(api.uiPreferences.getMine, data);
+	client.registerQuery(api.uiPreferences.getMyProviderOrder, providerOrder);
 	client.registerMutation(api.uiPreferences.setProviderOrder, new Promise<null>(() => {}));
 	const mutation = vi.spyOn(client, 'mutation');
 	await act(async () => {
@@ -43,7 +36,15 @@ function providerNames() {
 }
 
 it('lists configured providers in the saved order and saves toggles', async () => {
-	const mutation = await mount(null);
+	const order: ProviderOrderEntry[] = [
+		{ provider: 'spikonado', enabled: true },
+		{ provider: 'openai', enabled: true },
+		{ provider: 'muse', enabled: false },
+		{ provider: 'chatgpt', enabled: false },
+		{ provider: 'claude', enabled: true }
+	];
+
+	const mutation = await mount(order);
 	expect(providerNames()).toEqual([
 		'Spikonado',
 		'OpenAI API',
@@ -58,18 +59,9 @@ it('lists configured providers in the saved order and saves toggles', async () =
 	expect(mutation).toHaveBeenCalledWith(
 		expect.anything(),
 		{
-			providerOrder: [
-				{ provider: 'spikonado', enabled: true },
-				{ provider: 'openai', enabled: false },
-				{ provider: 'chatgpt', enabled: true },
-				{ provider: 'claude', enabled: true },
-				{ provider: 'opencode-go', enabled: true },
-				{ provider: 'muse', enabled: true },
-				{ provider: 'anthropic', enabled: true },
-				{ provider: 'vercel', enabled: true },
-				{ provider: 'openrouter', enabled: true },
-				{ provider: 'opencode', enabled: true }
-			]
+			providerOrder: order.map((entry) =>
+				entry.provider === 'openai' ? { ...entry, enabled: false } : entry
+			)
 		},
 		expect.anything()
 	);
@@ -78,14 +70,11 @@ it('lists configured providers in the saved order and saves toggles', async () =
 it('hides unconfigured providers and keeps the last shown provider on', async () => {
 	const onOpenCredentials = vi.fn();
 	await mount(
-		{
-			...preferences,
-			providerOrder: [
-				{ provider: 'openai', enabled: true },
-				{ provider: 'spikonado', enabled: false },
-				{ provider: 'chatgpt', enabled: true }
-			]
-		},
+		[
+			{ provider: 'openai', enabled: true },
+			{ provider: 'spikonado', enabled: false },
+			{ provider: 'chatgpt', enabled: true }
+		],
 		onOpenCredentials,
 		['spikonado', 'openai']
 	);

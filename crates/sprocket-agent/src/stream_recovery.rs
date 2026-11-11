@@ -11,6 +11,14 @@ use rig::{ErrorReport, ProviderError};
 const MAX_STREAM_RECOVERIES: u32 = 3;
 const MAX_STREAM_TIMEOUT_RECOVERIES: u32 = 1;
 const GATEWAY_STREAM_TIMEOUT_CODE: &str = "gateway_stream_timeout";
+const SERVER_FAILURE_CODES: &[&str] = &[
+    "server_error",
+    "api_error",
+    "overloaded",
+    "overloaded_error",
+    "server_is_overloaded",
+    "unavailable",
+];
 
 type HistoryAndPrompt = (Vec<Message>, Message);
 
@@ -44,6 +52,19 @@ fn is_truncation(error: &PromptError) -> bool {
 
 fn is_gateway_stream_timeout(error: &PromptError) -> bool {
     provider_error_code(error).as_deref() == Some(GATEWAY_STREAM_TIMEOUT_CODE)
+}
+
+/// Rate limits are left to provider fallback, which can serve the turn sooner.
+fn is_transient_server_failure(error: &PromptError) -> bool {
+    let Some(response) = provider_response(error) else {
+        return false;
+    };
+    match response.status.filter(|status| !status.is_success()) {
+        Some(status) => status.is_server_error(),
+        None => response
+            .machine_code()
+            .is_some_and(|code| SERVER_FAILURE_CODES.contains(&code.as_str())),
+    }
 }
 
 pub(crate) fn provider_error_code(error: &(dyn std::error::Error + 'static)) -> Option<String> {
@@ -115,7 +136,8 @@ impl StreamRecovery {
         error: &PromptError,
     ) -> Option<(Vec<Message>, Message, Duration)> {
         let timed_out = is_gateway_stream_timeout(error);
-        if !(timed_out || is_truncation(error)) || self.recoveries >= MAX_STREAM_RECOVERIES {
+        let recoverable = timed_out || is_truncation(error) || is_transient_server_failure(error);
+        if !recoverable || self.recoveries >= MAX_STREAM_RECOVERIES {
             return None;
         }
         if timed_out && self.timeout_recoveries >= MAX_STREAM_TIMEOUT_RECOVERIES {

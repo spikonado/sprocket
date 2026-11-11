@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
+import { defaultProviderOrder } from '@convex/lib/providerOrder';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
 import { authState, resetAuthRuntime } from '$lib/auth';
@@ -188,6 +189,7 @@ function museStatus(state: MuseStatus['state']): MuseStatus {
 function createConvexFixtures(): ConvexTestClient {
 	const client = new ConvexTestClient();
 	client.registerQuery(api.uiPreferences.getMine, null);
+	client.registerQuery(api.uiPreferences.getMyProviderOrder, [...defaultProviderOrder]);
 	client.registerQuery(api.usage.getMyUsage, {
 		tier: 'free',
 		tierLabel: 'Free',

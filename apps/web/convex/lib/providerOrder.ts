@@ -20,7 +20,7 @@ export const releasedClientProviders: readonly CompletionProvider[] = [
 ];
 
 export const defaultProviderOrder: readonly ProviderOrderEntry[] = completionProviderIds.map(
-	(provider) => ({ provider, enabled: true })
+	(provider) => ({ provider, enabled: provider === 'spikonado' })
 );
 
 export function resolveProviderOrder(

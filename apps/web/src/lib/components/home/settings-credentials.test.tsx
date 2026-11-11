@@ -152,6 +152,7 @@ function mount(
 	} = {}
 ) {
 	const onConfigurationChange = vi.fn();
+	const onProviderConnected = vi.fn();
 	const onChatGptStatusChange = vi.fn();
 	const onClaudeCodeStatusChange = vi.fn();
 	const onMuseStatusChange = vi.fn();
@@ -189,6 +190,7 @@ function mount(
 					onMuseStatusChange(next);
 				}}
 				onConfigurationChange={onConfigurationChange}
+				onProviderConnected={onProviderConnected}
 			/>
 		);
 	}
@@ -202,6 +204,7 @@ function mount(
 	return {
 		...view,
 		onConfigurationChange,
+		onProviderConnected,
 		onChatGptStatusChange,
 		onClaudeCodeStatusChange,
 		onMuseStatusChange
@@ -223,6 +226,7 @@ it('saves an API key, clears the input, and reports the configured provider', as
 		})
 	);
 	expect(save).toHaveBeenCalledWith({ provider: 'vercel', apiKey: 'vck_not-a-secret' });
+	expect(view.onProviderConnected).toHaveBeenCalledWith('vercel');
 	expect(card.getByLabelText('API key')).toHaveProperty('value', '');
 });
 
@@ -278,17 +282,26 @@ it('signs in to Muse with a device code and waits until Muse is ready', async ()
 		await vi.advanceTimersByTimeAsync(4_000);
 	});
 	expect(view.onMuseStatusChange).toHaveBeenLastCalledWith(ready);
+	expect(view.onProviderConnected).toHaveBeenCalledWith('muse');
 	expect(screen.getByText('Connected as a@example.com')).toBeTruthy();
 	expect(screen.queryByText('ABCD-EFGH')).toBeNull();
 });
 
-it('links to a plan upgrade when the Muse plan lacks Muse Wonder Full', () => {
-	mount(new ConvexTestClient(), { museStatus: museFixture({ state: 'planRequired' }) });
+it('links to a plan upgrade when the Muse plan lacks Muse Wonder Full', async () => {
+	const view = mount(new ConvexTestClient(), {
+		museStatus: museFixture({ state: 'planRequired' }),
+		localApi: createChatGptApi({
+			fetchMuseStatus: async () => museFixture({ state: 'ready', account: 'a@example.com' })
+		})
+	});
+
 	expect(screen.getByRole('link', { name: 'Upgrade in Accounts Center' })).toHaveProperty(
 		'href',
 		'https://accountscenter.meta.com/'
 	);
 	expect(screen.queryByRole('button', { name: 'Sign in with Muse' })).toBeNull();
+	fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+	await waitFor(() => expect(view.onProviderConnected).toHaveBeenCalledWith('muse'));
 });
 
 it('signs in with Claude and saves the token', async () => {
@@ -644,6 +657,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 				onClaudeCodeStatusChange={() => {}}
 				onMuseStatusChange={() => {}}
 				onConfigurationChange={() => {}}
+				onProviderConnected={() => {}}
 			/>
 		</ConvexTestProvider>
 	);

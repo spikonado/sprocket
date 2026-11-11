@@ -85,7 +85,7 @@ describe('provider fallback', () => {
 					knownProviders: ['openai', 'chatgpt', 'claude', 'vercel']
 				})
 			).providerPreferences.enabledProviders
-		).toEqual(['chatgpt', 'openai', 'claude', 'vercel']);
+		).toEqual(['chatgpt', 'openai']);
 		expect(context.shareConversationContent).toBe(false);
 		expect(context.coAuthorCommits).toBe(false);
 	});

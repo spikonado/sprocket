@@ -30,6 +30,7 @@ type Props = {
 	status: MuseStatus | null;
 	statusError: string | null;
 	onStatusChange: (status: MuseStatus) => void;
+	onConnected: () => void;
 };
 
 export default function MuseSubscriptionCard(props: Props) {
@@ -41,13 +42,22 @@ function UserMuseSubscriptionCard({
 	localApi,
 	status,
 	statusError,
-	onStatusChange
+	onStatusChange,
+	onConnected
 }: Props) {
 	const [login, setLogin] = useState<MuseLoginStart | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const loginIdRef = useRef<string | null>(null);
 	const attemptRef = useRef(0);
+	const connectingRef = useRef(false);
+	const ready = status?.state === 'ready';
+
+	useEffect(() => {
+		if (!ready || !connectingRef.current) return;
+		connectingRef.current = false;
+		onConnected();
+	}, [ready, onConnected]);
 
 	function cancelOnServer(loginId: string) {
 		localApi?.cancelMuseLogin(userId, loginId).catch(() => {});
@@ -71,6 +81,7 @@ function UserMuseSubscriptionCard({
 
 	async function install() {
 		if (!localApi || pending) return;
+		connectingRef.current = true;
 		setPending(true);
 		setError(null);
 
@@ -115,6 +126,7 @@ function UserMuseSubscriptionCard({
 	async function startLogin() {
 		if (!localApi || pending) return;
 		const attempt = ++attemptRef.current;
+		connectingRef.current = true;
 		setPending(true);
 		setError(null);
 
@@ -147,6 +159,7 @@ function UserMuseSubscriptionCard({
 
 	async function checkAgain() {
 		if (!localApi || pending) return;
+		connectingRef.current = true;
 		setPending(true);
 		setError(null);
 
