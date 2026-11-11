@@ -1,0 +1,32 @@
+---
+title: GitHub
+description: Connect GitHub so Sprocket's agent can link pull requests to threads, watch their checks and reviews, and settle threads when they merge.
+---
+
+The agent uses the [GitHub CLI](https://cli.github.com) for pull requests and other GitHub work. Sprocket installs it for you.
+
+## Sign in
+
+Run this on the computer that runs Sprocket:
+
+```sh
+gh auth login
+```
+
+**Settings → Version Control** then shows **Signed in as** and your GitHub username. You can add a token there instead. It needs read access to pull requests.
+
+For GitHub Enterprise, add each host with its own token on the same page.
+
+## Pull requests in threads
+
+The agent links the pull requests it works on to the thread. They appear in the thread's **Pull requests** list with their current status. The agent can wait on a pull request until its checks finish or a reviewer comments.
+
+To settle a thread when its pull requests merge, turn on **Settle threads when their PRs merge** in [Settings → General](/reference/settings#general).
+
+## Commits
+
+Sprocket tells the agent to add Sprocket as a co-author on its commits. Turn this off in [Settings → General](/reference/settings#general).
+
+## Turn off GitHub
+
+Turn off GitHub in **Settings → Version Control**. The agent then can't link pull requests, and their status stops refreshing.

@@ -1,0 +1,76 @@
+{
+	"$schema": "https://mintlify.com/docs.json",
+	"name": "Sprocket",
+	"description": "Docs for Sprocket, the AI agent for hardware and software.",
+	"colors": {
+		"primary": "#006AC0",
+		"light": "#8CC0E7",
+		"dark": "#006AC0"
+	},
+	"logo": {
+		"light": "/logo/light.svg",
+		"dark": "/logo/dark.svg",
+		"href": "https://usesprocket.dev"
+	},
+	"favicon": "/favicon.svg",
+	"navbar": {
+		"links": [{ "label": "Pricing", "href": "https://usesprocket.dev/pricing" }],
+		"primary": { "type": "github", "href": "https://github.com/spikonado/sprocket" }
+	},
+	"footer": {
+		"socials": {
+			"github": "https://github.com/spikonado",
+			"x": "https://x.com/spikonado",
+			"youtube": "https://youtube.com/spikonado"
+		}
+	},
+	"seo": {
+		"organization": {
+			"name": "Spikonado",
+			"url": "https://spikonado.com",
+			"sameAs": ["https://github.com/spikonado", "https://x.com/spikonado"]
+		}
+	},
+	"navigation": {
+		"tabs": [
+			{
+				"tab": "Documentation",
+				"groups": [
+					{
+						"group": "Get started",
+						"pages": ["index", "quickstart", "install"]
+					},
+					{
+						"group": "Use Sprocket",
+						"pages": [
+							"use/projects-and-threads",
+							"use/models-and-providers",
+							"use/agent-tools",
+							"use/instructions-and-skills",
+							"use/hardware",
+							"use/purchases",
+							"use/github"
+						]
+					},
+					{
+						"group": "Account",
+						"pages": ["account/plans-and-usage", "account/data-and-privacy"]
+					},
+					{
+						"group": "Reference",
+						"pages": [
+							"reference/cli",
+							"reference/configuration",
+							"reference/settings",
+							"reference/keyboard-shortcuts",
+							"troubleshooting"
+						]
+					}
+				]
+			}
+		]
+	},
+	"x-margin": {
+		"search": { "mode": "static" }
+	}
+}

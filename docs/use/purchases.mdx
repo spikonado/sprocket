@@ -1,0 +1,35 @@
+---
+title: Purchases
+description: Let Sprocket's agent buy parts and subscriptions at online checkouts with your saved card, approving each purchase with your passkey.
+---
+
+The agent can pay at an online checkout with a card you saved in Sprocket. You approve every purchase with your passkey. [Agentcard](https://agentcard.sh) stores your cards, and Sprocket never sees the card number.
+
+## Save a card
+
+Open **Settings → Payments** and click **Add a card**. Agentcard opens in a popup to save it.
+
+## How a purchase works
+
+<Steps>
+	<Step title="The agent shops">
+		The agent opens the store in its browser and confirms the items, quantity, shipping address,
+		shipping method, and total with you.
+	</Step>
+	<Step title="You approve">
+		The thread shows the amount and the store, such as **Approve $24.99 at Adafruit**. Click
+		**Approve** and confirm with your passkey in the Agentcard popup.
+	</Step>
+	<Step title="Agentcard pays">
+		Agentcard fills in your real card and Sprocket submits the order. The agent then reports the
+		order number, or the store's error if payment failed.
+	</Step>
+</Steps>
+
+The checkout page must use HTTPS. If you stop the run while a purchase waits for approval, Sprocket cancels the purchase.
+
+The agent can only start a purchase in a thread you started from the app. Subagents and `sprocket run` tasks can't start purchases.
+
+## Purchase history
+
+**Settings → Payments** lists your last 100 purchases with their status, such as Awaiting approval, Declined, Expired, Cancelled, or Completed.

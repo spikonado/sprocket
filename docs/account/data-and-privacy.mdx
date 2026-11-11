@@ -1,0 +1,35 @@
+---
+title: Data and privacy
+description: What Sprocket stores on its servers, what stays on your computer, and how attachments, credentials, and usage data are handled.
+---
+
+Read the full [privacy policy](https://spikonado.com/privacy).
+
+## Stored on Sprocket's servers
+
+- Threads and their transcripts, including tool output.
+- Command output from agent runs.
+- Artifact contents.
+- Attachments. Sprocket deletes them 7 days after a thread's last message.
+- Files the agent can't parse on your computer. Sprocket uploads them for a short time to parse them.
+- Your settings and UI preferences.
+- Each machine's name, hostname, platform, architecture, and Sprocket version.
+- Usage and purchase records.
+- API keys, GitHub tokens you add in Settings, and Claude sign-in tokens, encrypted in [WorkOS Vault](https://workos.com/vault).
+
+## Kept on your computer
+
+- Your project files. The agent reads and edits them in place.
+- Your Sprocket sign-in, in the OS keyring or a private file. See [Credentials](/reference/configuration#credentials).
+- ChatGPT and Muse sign-ins.
+- Whether GitHub is on, and your `gh auth login` sign-in.
+- Connectors and the tools Sprocket installs.
+- A cache of thread transcripts.
+
+## Conversation data
+
+**Share anonymous conversation data to help improve Sprocket for everyone** in [Settings → General](/reference/settings#general) is on by default. Turn it off to stop sharing. Spikonado doesn't sell your data.
+
+## Deleting data
+
+You can delete artifacts, remove saved API keys and subscriptions, and remove projects from your list. Deleting an artifact also deletes its file in your project. To delete threads or your account, email [aarav@spikonado.com](mailto:aarav@spikonado.com).

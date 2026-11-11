@@ -1,0 +1,67 @@
+---
+title: Install
+description: Install the Sprocket desktop app or CLI on macOS, Windows, or Linux, pick a release channel, and keep Sprocket up to date.
+---
+
+## Desktop app
+
+Download the installer from the [latest release](https://github.com/spikonado/sprocket/releases/latest).
+
+| OS      | Architectures        | File             |
+| ------- | -------------------- | ---------------- |
+| macOS   | Apple silicon, Intel | `.dmg`           |
+| Windows | x64                  | `.exe` installer |
+| Linux   | x64, arm64           | `.AppImage`      |
+
+Each release also has a `SHA256SUMS` file for checking downloads.
+
+The desktop app starts its own local Sprocket server. If a server is already running on the same port with the same data directory, the app uses it.
+
+<Warning>
+	Unsigned macOS and Windows builds may need a Gatekeeper or SmartScreen override the first time you
+	open them.
+</Warning>
+
+### Updates
+
+The desktop app checks for updates when it starts and every hour after that. It asks before downloading and installing an update, then restarts. On Linux, updates work only when you run the AppImage itself.
+
+## CLI and web app
+
+The `usesprocket` npm package has the `sprocket` CLI and the web app. It needs Node.js 20.11 or newer.
+
+Run it once without installing:
+
+```sh
+npx usesprocket
+```
+
+Or install it globally with npm, bun, pnpm, or yarn:
+
+```sh
+npm install -g usesprocket
+```
+
+The package supports Linux x64 and arm64 with glibc, macOS on Apple silicon and Intel, and Windows x64. It doesn't support musl Linux or Windows on Arm.
+
+Running `sprocket` opens the desktop app when the CLI can find it and falls back to your browser otherwise. See [Open Sprocket](/reference/cli#open-sprocket).
+
+### Updates
+
+```sh
+sprocket update
+```
+
+This updates a global npm, bun, pnpm, or yarn install and stays on the channel you installed. Run `sprocket update --check` to see whether an update is available without installing it.
+
+## Release channels
+
+| Channel | What it is                             | CLI                                 | Desktop app                                                             |
+| ------- | -------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
+| Stable  | Tagged releases, such as `v0.5.0`      | `npm install -g usesprocket`        | [Latest release](https://github.com/spikonado/sprocket/releases/latest) |
+| Canary  | Prereleases before a stable release    | `npm install -g usesprocket@canary` | [Prereleases](https://github.com/spikonado/sprocket/releases)           |
+| Dev     | Builds of `main` after its checks pass | `npm install -g usesprocket@dev`    | Not available                                                           |
+
+Canary desktop builds update to newer canary releases.
+
+These docs follow `main`. Pages mark features that aren't in a stable release yet.

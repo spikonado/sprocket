@@ -1,0 +1,38 @@
+---
+title: Hardware
+description: Install the KiCad connector so Sprocket can edit schematics and PCBs, view designs in 2D and 3D, pick parts, and draw wiring diagrams.
+---
+
+## KiCad connector
+
+The KiCad connector gives the agent its own KiCad install, the KiCad Python API, routing tools, and libraries. The agent uses it to create and edit schematics and boards, run ERC and DRC, and export Gerbers, renders, and BOMs.
+
+<Steps>
+	<Step title="Open Settings → Connectors">
+		Do this in Sprocket on the computer that will run the agent. Connectors install on that
+		computer.
+	</Step>
+	<Step title="Install KiCad">
+		Click **Install**. The connector needs about 10 GiB of free disk space.
+	</Step>
+</Steps>
+
+The connector runs on macOS on Apple silicon and Intel, Windows on x64 and Arm, and Linux x64. It uses a KiCad nightly build, separate from any KiCad you already have.
+
+When a connector update is ready, **Settings → Connectors** shows an **Update** button.
+
+<Info>Connectors are experimental.</Info>
+
+## View designs
+
+When the agent works on a KiCad project, it can add a project card to its reply. The card opens the schematics and board in a viewer with 2D and 3D board views.
+
+## Hardware skills
+
+Sprocket's [built-in skills](/use/instructions-and-skills#built-in-skills) cover these hardware tasks:
+
+- `working-with-kicad` for schematics, boards, and exports.
+- `selecting-hardware-parts` for picking parts and suppliers and writing a BOM.
+- `designing-wiring-diagram` for projects built from modules and dev boards rather than a custom PCB.
+
+To order the parts, see [Purchases](/use/purchases).

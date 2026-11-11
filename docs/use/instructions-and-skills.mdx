@@ -1,0 +1,71 @@
+---
+title: Instructions and skills
+description: Give the agent project rules with AGENTS.md files, and teach it repeatable workflows with skills stored as SKILL.md files.
+---
+
+## AGENTS.md
+
+`AGENTS.md` files hold instructions the agent follows, such as how to run tests or which branch to open pull requests against. Sprocket loads them before each run:
+
+1. `~/.agents/AGENTS.md`, your personal file for every project.
+2. Every `AGENTS.md` from the project root down to the folder you opened.
+
+Each file applies to the folder that contains it and everything below it. Deeper files win when instructions conflict. Sprocket tells the agent to check for more `AGENTS.md` files when it moves into a subfolder.
+
+Sprocket reads up to 32 KiB from your personal file and up to 32 KiB across all project files. It cuts off text past those limits.
+
+## Skills
+
+A skill is a folder with a `SKILL.md` file that teaches the agent a workflow. The agent sees each skill's name and description and reads the full file when a task matches. You can also load a skill yourself by typing `$name` in the composer, or `/name` for skills that load only when you type their names.
+
+### Add a skill
+
+Create a folder named after the skill with a `SKILL.md` inside it:
+
+```md .agents/skills/release-notes/SKILL.md
+---
+name: release-notes
+description: Use when writing release notes from merged pull requests.
+---
+
+1. List the pull requests merged since the last tag with `gh pr list --state merged`.
+2. Group them under Features, Fixes, and Other.
+```
+
+`name` must match the folder name and use 1 to 64 lowercase letters, digits, and single hyphens. Both `name` and `description` are required.
+
+Add `disable-model-invocation: true` to the frontmatter to hide a skill from the agent's list. It then loads only when you type its name.
+
+### Where skills live
+
+Sprocket looks in these folders. When two skills share a name, the first folder in this list wins:
+
+1. `.sprocket/skills/` in the project root
+2. `.agents/skills/` in the project root
+3. `~/.sprocket/skills/`
+4. `~/.agents/skills/`
+5. Skills built into Sprocket
+
+The project root is the git repository root, or the working directory outside git. Sprocket loads up to 64 skills.
+
+### Built-in skills
+
+These skills ship with Sprocket and update with it:
+
+| Skill                          | What it covers                                                 |
+| ------------------------------ | -------------------------------------------------------------- |
+| `agent-browser`                | Browsing, testing, and automating websites                     |
+| `agent-desktop`                | Operating desktop apps                                         |
+| `making-artifacts-and-visuals` | Making artifacts and inline visuals                            |
+| `working-with-kicad`           | Editing KiCad schematics and boards, and exporting from KiCad  |
+| `designing-wiring-diagram`     | Wiring diagrams for projects built from modules and dev boards |
+| `selecting-hardware-parts`     | Choosing parts and suppliers, and writing a BOM                |
+| `paying-at-checkout`           | Paying at online checkouts                                     |
+
+These load only when you type their names:
+
+| Skill         | What it does                                         |
+| ------------- | ---------------------------------------------------- |
+| `/cleanup`    | Cleans up the agent's latest design and code changes |
+| `/recover-pr` | Brings an old pull request up to date                |
+| `/bro`        | Restates the agent's last message in plain language  |
