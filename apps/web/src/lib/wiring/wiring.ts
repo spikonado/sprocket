@@ -42,6 +42,9 @@ export const MAX_WIRES_PER_STEP = 6;
 
 const id = z.string().regex(/^[A-Za-z0-9_-]+$/, 'Use only letters, digits, - and _');
 
+const uniqueIds = <T extends { id: string }>(items: T[]) =>
+	new Set(items.map((item) => item.id)).size === items.length;
+
 const partSchema = z.object({
 	id,
 	name: z.string(),
@@ -57,8 +60,11 @@ const partSchema = z.object({
 
 const wiringSchema = z.object({
 	title: z.string().optional(),
-	parts: z.array(partSchema).min(1),
-	rails: z.array(z.object({ id, volts: z.number().min(0) })).default([]),
+	parts: z.array(partSchema).min(1).refine(uniqueIds, 'Give every part its own id'),
+	rails: z
+		.array(z.object({ id, volts: z.number().min(0) }))
+		.default([])
+		.refine(uniqueIds, 'Give every rail its own id'),
 	steps: z
 		.array(
 			z.object({
@@ -207,9 +213,7 @@ function endpointRole(endpoint: Endpoint): PinRole {
 }
 
 function endpointVolts(endpoint: Endpoint) {
-	if (endpoint.type === 'rail') return endpoint.rail.volts;
-
-	return endpoint.pin.role === 'ground' ? 0 : endpoint.pin.volts;
+	return endpoint.type === 'rail' ? endpoint.rail.volts : endpoint.pin.volts;
 }
 
 export function analyzeWiring(spec: WiringSpec, geometry: ReadonlyMap<string, PartGeometry>) {
@@ -345,28 +349,24 @@ function checkNets(wires: ResolvedWire[]): WiringIssue[] {
 	const error = (message: string) => issues.push({ level: 'error', message });
 
 	for (const net of nets.values()) {
-		const sources = net.flatMap((endpoint) => {
-			const volts = endpointVolts(endpoint);
+		const ground = net.find((endpoint) => endpointRole(endpoint) === 'ground');
+		const power = net.find((endpoint) => endpointRole(endpoint) === 'power');
 
-			return volts === undefined ? [] : [{ endpoint, volts }];
-		});
-
-		const ground = sources.find((source) => source.volts === 0);
-
-		const supplies = sources
-			.filter((source) => source.volts > 0)
-			.toSorted((a, b) => b.volts - a.volts);
-
-		const highest = supplies[0];
-
-		if (ground && highest) {
-			error(
-				`${highest.endpoint.label} is wired to ${ground.endpoint.label}. That shorts power to ground.`
-			);
+		if (ground && power) {
+			error(`${power.label} is wired to ${ground.label}. That shorts power to ground.`);
 
 			continue;
 		}
 
+		const supplies = net
+			.flatMap((endpoint) => {
+				const volts = endpointVolts(endpoint);
+
+				return volts !== undefined && volts > 0 ? [{ endpoint, volts }] : [];
+			})
+			.toSorted((a, b) => b.volts - a.volts);
+
+		const highest = supplies[0];
 		const other = supplies.find((source) => source.volts !== highest?.volts);
 
 		if (highest && other) {

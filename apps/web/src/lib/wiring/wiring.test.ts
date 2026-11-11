@@ -15,7 +15,8 @@ function analyze(source: string) {
 
 const parts = [
 	{ id: 'esp', name: 'ESP32', logic: 3.3, pins: { right: ['3V3', 'GND.1', 'G12'] } },
-	{ id: 'uno', name: 'Uno', logic: 5, pins: { left: ['5V', 'GND', 'D3'] } }
+	{ id: 'uno', name: 'Uno', logic: 5, pins: { left: ['5V', 'GND', 'D3'] } },
+	{ id: 'bat', name: 'Battery', pins: { right: ['+', '-'] } }
 ];
 
 describe('analyzeWiring', () => {
@@ -54,7 +55,8 @@ describe('analyzeWiring', () => {
 						wires: [
 							{ from: 'uno.5V', to: 'esp.G12' },
 							{ from: 'esp.3V3', to: 'GND' },
-							{ from: 'uno.D3', to: 'esp.G99' }
+							{ from: 'uno.D3', to: 'esp.G99' },
+							{ from: 'bat.+', to: 'bat.-' }
 						]
 					}
 				]
@@ -64,7 +66,8 @@ describe('analyzeWiring', () => {
 		expect(issues.map((issue) => issue.message)).toEqual([
 			'Step "Mistakes": ESP32 has no pin "G99". Its pins are 3V3, GND.1, G12.',
 			'ESP32 G12 is a 3.3 V pin, but Uno 5V puts 5 V on it.',
-			'ESP32 3V3 is wired to GND rail. That shorts power to ground.'
+			'ESP32 3V3 is wired to GND rail. That shorts power to ground.',
+			'Battery + is wired to Battery -. That shorts power to ground.'
 		]);
 	});
 });

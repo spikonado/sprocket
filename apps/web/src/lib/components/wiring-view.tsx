@@ -2,6 +2,7 @@ import '@wokwi/elements';
 import type { ElementPin } from '@wokwi/elements';
 import { CircleAlert, Cpu, ExternalLink, TriangleAlert } from 'lucide-react';
 import { createElement, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createStore, useStore } from '$lib/store';
 import {
 	analyzeWiring,
 	baseName,
@@ -24,6 +25,9 @@ import {
 
 const WOKWI_SCALE = 1.6;
 const RAIL_STUB = 30;
+const NO_WIRES_DONE: ReadonlySet<string> = new Set();
+
+const doneWires = createStore<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
 
 type WokwiElement = HTMLElement & { pinInfo?: ElementPin[]; updateComplete?: Promise<unknown> };
 
@@ -71,17 +75,17 @@ export default function WiringView({ source }: { source: string }) {
 		);
 	}
 
-	return <WiringDiagram spec={parsed.spec} />;
+	return <WiringDiagram source={source} spec={parsed.spec} />;
 }
 
 type Step = number | 'all';
 
-function WiringDiagram({ spec }: { spec: WiringSpec }) {
+function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
 	const [measured, setMeasured] = useState<ReadonlyMap<string, PartGeometry>>(new Map());
 	const [step, setStep] = useState<Step>(0);
 	const [focus, setFocus] = useState<string | null>(null);
 	const [hover, setHover] = useState<string | null>(null);
-	const [done, setDone] = useState<ReadonlySet<string>>(new Set());
+	const done = useStore(doneWires).get(source) ?? NO_WIRES_DONE;
 	const frameRef = useRef<HTMLDivElement | null>(null);
 	const [frameWidth, setFrameWidth] = useState(0);
 
@@ -143,12 +147,12 @@ function WiringDiagram({ spec }: { spec: WiringSpec }) {
 			: (currentStep?.note ?? (step === 'all' ? 'Every wire in the build.' : ''));
 
 	const toggleDone = (key: string) =>
-		setDone((current) => {
-			const next = new Set(current);
+		doneWires.update((current) => {
+			const next = new Set(current.get(source));
 
 			if (!next.delete(key)) next.add(key);
 
-			return next;
+			return new Map(current).set(source, next);
 		});
 
 	const stepButton = (value: Step, label: string) => (
@@ -319,6 +323,10 @@ function PartView({
 	return (
 		<div
 			className="absolute cursor-pointer"
+			role="button"
+			tabIndex={0}
+			aria-label={`Show only the wires on ${part.name}`}
+			aria-pressed={focused}
 			style={{
 				left: position?.x ?? 0,
 				top: position?.y ?? 0,
@@ -326,6 +334,12 @@ function PartView({
 				height: geometry?.height
 			}}
 			onClick={onClick}
+			onKeyDown={(event) => {
+				if (event.key !== 'Enter' && event.key !== ' ') return;
+
+				event.preventDefault();
+				onClick();
+			}}
 			title={`${part.name}: click to show only its wires`}
 		>
 			{tag ? (
@@ -381,11 +395,13 @@ function BoxPart({
 
 type Anchor = { point: Point; direction: Point; row: number };
 
-function wirePath(a: Anchor, b: Anchor) {
+function wirePath(a: Anchor, b: Anchor, bounds: { width: number; height: number }) {
 	const reach = Math.max(50, Math.hypot(b.point.x - a.point.x, b.point.y - a.point.y) * 0.3);
+	const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max);
 
+	// A Bézier curve stays inside its control points, so clamping them keeps the wire on the canvas.
 	const control = ({ point, direction }: Anchor) =>
-		`${point.x + direction.x * reach} ${point.y + direction.y * reach}`;
+		`${clamp(point.x + direction.x * reach, bounds.width)} ${clamp(point.y + direction.y * reach, bounds.height)}`;
 
 	return `M${a.point.x} ${a.point.y} C${control(a)} ${control(b)} ${b.point.x} ${b.point.y}`;
 }
@@ -505,7 +521,7 @@ function WireLayer({
 
 				if (!a || !b) return null;
 
-				const d = wirePath(a, b);
+				const d = wirePath(a, b, layout);
 				const current = isCurrent(wire);
 				const opacity = !current ? 0.15 : hover && hover !== wire.key ? 0.35 : 1;
 				const width = hover === wire.key ? 7 : 4.5;
