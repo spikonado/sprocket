@@ -805,7 +805,7 @@ fn omitted_reasoning_replay_keeps_visible_history_and_later_reasoning() {
     }));
     items.push(serde_json::json!({
         "type": "tool-call",
-        "callId": "call_keep",
+        "callId": "toolu_keep",
         "name": "exec_cmd",
         "input": { "cmd": "pwd" },
         "providerMetadata": {
@@ -827,9 +827,20 @@ fn omitted_reasoning_replay_keeps_visible_history_and_later_reasoning() {
         }),
     );
     let history = agent_history_from_parts(&state, &[covered, later], None);
+    let tool_call = history
+        .iter()
+        .flat_map(|message| &message.contents)
+        .find_map(|content| match content {
+            AgentHistoryContent::ToolCall {
+                call_id,
+                native_item,
+                ..
+            } => Some((call_id.as_str(), native_item)),
+            _ => None,
+        });
+    assert!(matches!(tool_call, Some(("toolu_keep", None))));
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("visible answer"));
-    assert!(serialized.contains("call_keep"));
     assert!(serialized.contains("rs_new"));
     assert!(serialized.contains("sgr1.new"));
     assert!(!serialized.contains("secret trace"));
