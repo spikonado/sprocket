@@ -6,12 +6,15 @@ import { fetchPricingCatalog } from '@/lib/pricing/billing';
 import { pricingFaqs } from '@/lib/pricing/catalog';
 import { ORGANIZATION_NAME, SITE_URL } from '@/lib/seo';
 
+// Plans live in Convex and change without a site deploy, so each visit renders the current ones.
+export const prerender = false;
+
 const description =
 	'Compare Sprocket plans and choose the AI usage limits that fit your engineering work.';
 
-const initialCatalog = await fetchPricingCatalog().catch(() => null);
+const catalog = await fetchPricingCatalog().catch(() => null);
 
-const freePlan = initialCatalog?.plans.find((plan) => plan.id === 'free');
+const freePlan = catalog?.plans.find((plan) => plan.id === 'free');
 
 const productLd = {
 	'@type': 'Product',
@@ -19,7 +22,6 @@ const productLd = {
 	description,
 	brand: { '@type': 'Brand', name: ORGANIZATION_NAME },
 	url: `${SITE_URL}/pricing`,
-	// Paid prices can change after this static page is built, so only the free plan is listed.
 	offers: freePlan
 		? [{ '@type': 'Offer', name: `Sprocket ${freePlan.label}`, price: '0', priceCurrency: 'USD' }]
 		: []
@@ -43,7 +45,7 @@ const faqLd = {
 			>
 				Pricing
 			</h1>
-			<PricingPlans client:load {initialCatalog} />
+			<PricingPlans client:load {catalog} />
 
 			<section
 				class="mx-auto mt-20 max-w-6xl"

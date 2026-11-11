@@ -1,6 +1,5 @@
 import { v } from 'convex/values';
-import { internal } from '@convex/_generated/api';
-import { action, internalMutation, internalQuery } from '@convex/_generated/server';
+import { internalMutation, internalQuery, query } from '@convex/_generated/server';
 import {
 	vPrice,
 	vPublicPricingCatalog,
@@ -16,16 +15,10 @@ export function priceForProduct<T extends { productId: string }>(
 	return price && price.productId === productId ? price : null;
 }
 
-export const getPublicCatalog = action({
+export const getPublicCatalog = query({
 	args: {},
 	returns: vPublicPricingCatalog,
-	handler: (ctx): Promise<PublicPricingCatalog> => ctx.runQuery(internal.pricing.getCatalog, {})
-});
-
-export const getCatalog = internalQuery({
-	args: {},
-	returns: vPublicPricingCatalog,
-	handler: async (ctx) => {
+	handler: async (ctx): Promise<PublicPricingCatalog> => {
 		const tiers = await ctx.db.query('tiers').collect();
 		const seen = new Set<string>();
 

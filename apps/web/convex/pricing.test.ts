@@ -59,7 +59,7 @@ describe('public pricing catalog', () => {
 			});
 		});
 
-		await expect(t.action(api.pricing.getPublicCatalog, {})).resolves.toEqual({
+		await expect(t.query(api.pricing.getPublicCatalog, {})).resolves.toEqual({
 			plans: [
 				{
 					id: 'free',
@@ -180,7 +180,7 @@ describe('public pricing catalog', () => {
 		products.delete('prod_annual');
 		await t.action(internal.dodo.syncPrices, {});
 
-		const { plans, creditPacks } = await t.action(api.pricing.getPublicCatalog, {});
+		const { plans, creditPacks } = await t.query(api.pricing.getPublicCatalog, {});
 		expect(plans.map(({ id, prices }) => ({ id, prices }))).toEqual([
 			{ id: 'max', prices: { monthly: null, annual: null } },
 			{
