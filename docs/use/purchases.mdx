@@ -1,9 +1,9 @@
 ---
 title: Purchases
-description: Let Sprocket's agent buy parts and subscriptions at online checkouts with your saved card, approving each purchase with your passkey.
+description: Let Sprocket's agent buy parts and subscriptions at online checkouts with your saved card, approving purchases with your passkey.
 ---
 
-The agent can pay at an online checkout with a card you saved in Sprocket. You approve every purchase with your passkey. [Agentcard](https://agentcard.sh) stores your cards, and Sprocket never sees the card number.
+The agent can pay at an online checkout with a card you saved in Sprocket. You approve each purchase with your passkey, unless you turned on auto-approval in Agentcard. [Agentcard](https://agentcard.sh) stores your cards, and Sprocket never sees the card number.
 
 ## Save a card
 
@@ -18,7 +18,8 @@ Open **Settings → Payments** and click **Add a card**. Agentcard opens in a po
 	</Step>
 	<Step title="You approve">
 		The thread shows the amount and the store, such as **Approve $24.99 at Adafruit**. Click
-		**Approve** and confirm with your passkey in the Agentcard popup.
+		**Approve** and confirm with your passkey in the Agentcard popup. Purchases that Agentcard
+		auto-approves skip this step.
 	</Step>
 	<Step title="Agentcard pays">
 		Agentcard fills in your real card and Sprocket submits the order. The agent then reports the

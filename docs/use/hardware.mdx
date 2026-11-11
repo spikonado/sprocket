@@ -5,7 +5,7 @@ description: Install the KiCad connector so Sprocket can edit schematics and PCB
 
 ## KiCad connector
 
-The KiCad connector gives the agent its own KiCad install, the KiCad Python API, routing tools, and libraries. The agent uses it to create and edit schematics and boards, run ERC and DRC, and export Gerbers, renders, and BOMs.
+The KiCad connector gives the agent KiCad, the KiCad Python API, routing tools, and libraries. The agent uses it to create and edit schematics and boards, run ERC and DRC, and export Gerbers, renders, and BOMs.
 
 <Steps>
 	<Step title="Open Settings → Connectors">
@@ -17,7 +17,7 @@ The KiCad connector gives the agent its own KiCad install, the KiCad Python API,
 	</Step>
 </Steps>
 
-The connector runs on macOS on Apple silicon and Intel, Windows on x64 and Arm, and Linux x64. It uses a KiCad nightly build, separate from any KiCad you already have.
+The connector runs on macOS on Apple silicon and Intel, Windows on x64 and Arm, and Linux x64. It needs KiCad 10.99 or newer. If you already have one installed, the connector uses it. Otherwise it downloads its own KiCad nightly build. If you uninstall or downgrade a KiCad the connector uses, reinstall the connector.
 
 When a connector update is ready, **Settings → Connectors** shows an **Update** button.
 
