@@ -1102,8 +1102,7 @@ async fn run_with_completion_model(
                                             &request.base_instructions,
                                         ).await
                                     };
-                                    let next_model = next_model.await;
-                                    match next_model {
+                                    match next_model.await {
                                         Ok(model) => agent.set_model(model),
                                         Err(fallback_error)
                                             if classify_provider_error(&fallback_error)
