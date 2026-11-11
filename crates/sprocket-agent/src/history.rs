@@ -384,13 +384,17 @@ fn completion_item_to_history(
             let name = item.get("name")?.as_str()?;
             let arguments = item.get("input").cloned().unwrap_or(serde_json::json!({}));
             Some(AgentHistoryContent::ToolCall {
-                native_item: Some(tool_call_native_item(
-                    metadata,
-                    item_id.unwrap_or(call_id),
-                    call_id,
-                    name,
-                    &arguments,
-                )),
+                // Omitted turns lose their origin, so a native item here would be
+                // replayed as the current provider's legacy history.
+                native_item: (!omit_reasoning).then(|| {
+                    tool_call_native_item(
+                        metadata,
+                        item_id.unwrap_or(call_id),
+                        call_id,
+                        name,
+                        &arguments,
+                    )
+                }),
                 call_id: call_id.to_string(),
                 name: name.to_string(),
                 arguments,
