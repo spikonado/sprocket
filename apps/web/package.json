@@ -32,6 +32,7 @@
 		"@opentelemetry/api": "^1.10.0",
 		"@pierre/trees": "1.0.0-beta.6",
 		"@posthog/convex": "2.1.8",
+		"@wokwi/elements": "1.9.2",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"clsx": "catalog:",
 		"codemirror": "^6.0.2",

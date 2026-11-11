@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import LazyJsonRender from '$lib/components/lazy-json-render';
+import LazyWiringView from '$lib/components/lazy-wiring-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 import { useEscapeLayer } from '$lib/use-escape-layer';
@@ -104,6 +105,13 @@ export default function ArtifactScreenFullscreen({
 			) : artifact.artifactType === 'json-render' ? (
 				<div className="min-h-0 flex-1 overflow-auto px-6">
 					<LazyJsonRender
+						source={artifact.content}
+						fallback={<pre className="text-[13px] leading-6">{artifact.content}</pre>}
+					/>
+				</div>
+			) : artifact.artifactType === 'wiring' ? (
+				<div className="min-h-0 flex-1 overflow-auto px-6">
+					<LazyWiringView
 						source={artifact.content}
 						fallback={<pre className="text-[13px] leading-6">{artifact.content}</pre>}
 					/>

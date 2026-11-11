@@ -1,9 +1,11 @@
-export type ArtifactPreviewType = 'markdown' | 'html' | 'react' | 'json-render';
+export type ArtifactPreviewType = 'markdown' | 'html' | 'react' | 'json-render' | 'wiring';
 
 export function artifactPreviewType(title: string): ArtifactPreviewType {
 	const name = title.toLowerCase();
 
 	if (name.endsWith('.render.json')) return 'json-render';
+
+	if (name.endsWith('.wiring.json')) return 'wiring';
 
 	if (name.endsWith('.html') || name.endsWith('.htm')) return 'html';
 

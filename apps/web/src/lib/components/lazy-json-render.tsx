@@ -1,21 +1,7 @@
-import { Component, lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
+import RenderErrorBoundary from '$lib/components/render-error-boundary';
 
 const JsonRenderView = lazy(() => import('$lib/components/json-render-view'));
-
-class RenderErrorBoundary extends Component<
-	{ fallback: ReactNode; children: ReactNode },
-	{ failed: boolean }
-> {
-	state = { failed: false };
-
-	static getDerivedStateFromError() {
-		return { failed: true };
-	}
-
-	render() {
-		return this.state.failed ? this.props.fallback : this.props.children;
-	}
-}
 
 export default function LazyJsonRender({
 	source,

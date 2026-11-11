@@ -9,10 +9,16 @@ import {
 describe('artifact-preview', () => {
 	it('picks the renderer from the title extension', () => {
 		expect(
-			['notes.md', 'page.HTM', 'app.jsx', 'board.render.json', 'data.json', 'README'].map(
-				artifactPreviewType
-			)
-		).toEqual(['markdown', 'html', 'react', 'json-render', 'markdown', 'markdown']);
+			[
+				'notes.md',
+				'page.HTM',
+				'app.jsx',
+				'board.render.json',
+				'robot.wiring.json',
+				'data.json',
+				'README'
+			].map(artifactPreviewType)
+		).toEqual(['markdown', 'html', 'react', 'json-render', 'wiring', 'markdown', 'markdown']);
 	});
 
 	it('escapes script breakouts in react artifact source', () => {

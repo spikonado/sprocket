@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import LazyJsonRender from '$lib/components/lazy-json-render';
+import LazyWiringView from '$lib/components/lazy-wiring-view';
 import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 import { buildArtifactPreviewDocument, type ArtifactPreviewType } from '$lib/chat/artifact-preview';
 
@@ -36,7 +37,8 @@ export default function ArtifactDisplay({
 		[artifactType, content]
 	);
 
-	const hasPreview = previewDocument !== null || artifactType === 'json-render';
+	const hasPreview =
+		previewDocument !== null || artifactType === 'json-render' || artifactType === 'wiring';
 
 	const [showSource, setShowSource] = useState(false);
 	const { copied, markCopied, resetCopied } = useCopyFeedback();
@@ -68,6 +70,10 @@ export default function ArtifactDisplay({
 						sandbox="allow-scripts"
 						className={`block w-full bg-white ${frameClass}`}
 					></iframe>
+				) : artifactType === 'wiring' ? (
+					<div className={`overflow-auto pr-10 pl-3 ${frameClass}`}>
+						<LazyWiringView source={content} fallback={source} />
+					</div>
 				) : hasPreview ? (
 					<div className={`overflow-auto pr-10 pl-3 ${frameClass}`}>
 						<LazyJsonRender source={content} fallback={source} />
