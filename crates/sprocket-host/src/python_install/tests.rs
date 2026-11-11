@@ -55,3 +55,22 @@ fn unpacks_uv_executables_from_the_release_zip() {
     assert_eq!(std::fs::read(bin.join(executable("uv"))).unwrap(), b"uv");
     assert_eq!(std::fs::read(bin.join(executable("uvw"))).unwrap(), b"uvw");
 }
+
+#[test]
+fn skips_uv_zip_entries_that_escape_the_archive() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("uv.zip");
+    let mut writer = zip::ZipWriter::new(File::create(&archive).unwrap());
+    let escaped = format!("../{}", executable("uv"));
+    writer
+        .start_file(&escaped, zip::write::SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(b"uv").unwrap();
+    writer.finish().unwrap();
+    let bin = directory.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+
+    unpack_zip(&archive, &bin).unwrap();
+
+    assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 0);
+}
