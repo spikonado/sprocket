@@ -55,32 +55,37 @@ fn retries_one_gateway_stream_timeout_per_run() {
 
 #[test]
 fn retries_overloaded_responses() {
-    let overloaded = r#"{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"Overloaded"}}}"#;
-    let rate_limited = r#"{"error":{"type":"rate_limit_error","message":"Slow down"}}"#;
-    let cases = [
-        (ProviderError::from_provider_body(overloaded), true),
+    const OVERLOADED: &str = r#"{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"Overloaded"}}}"#;
+    fn status(status: http::StatusCode, body: &str) -> ProviderError {
+        ProviderError::ProviderResponse(rig::ProviderResponseError::new(status, body))
+    }
+    let cases: [(fn() -> ProviderError, bool); 4] = [
+        (|| ProviderError::from_provider_body(OVERLOADED), true),
         (
-            ProviderError::ProviderResponse(rig::ProviderResponseError::new(
-                http::StatusCode::SERVICE_UNAVAILABLE,
-                "busy",
-            )),
+            || status(http::StatusCode::SERVICE_UNAVAILABLE, "busy"),
             true,
         ),
         (
-            ProviderError::ProviderResponse(rig::ProviderResponseError::new(
-                http::StatusCode::TOO_MANY_REQUESTS,
-                overloaded,
-            )),
+            || status(http::StatusCode::TOO_MANY_REQUESTS, OVERLOADED),
             false,
         ),
-        (ProviderError::from_provider_body(rate_limited), false),
+        (
+            || {
+                ProviderError::from_provider_body(
+                    r#"{"error":{"type":"rate_limit_error","message":"Slow down"}}"#,
+                )
+            },
+            false,
+        ),
     ];
     for (error, retried) in cases {
-        let mut recovery = StreamRecovery::default();
-        *recovery.input.0.lock().unwrap() = Some((vec![], Message::user("continue")));
-        assert_eq!(
-            recovery.resume(&PromptError::Provider(error)).is_some(),
-            retried
-        );
+        for error in [
+            PromptError::Provider(error()),
+            PromptError::Report(error().report()),
+        ] {
+            let mut recovery = StreamRecovery::default();
+            *recovery.input.0.lock().unwrap() = Some((vec![], Message::user("continue")));
+            assert_eq!(recovery.resume(&error).is_some(), retried);
+        }
     }
 }
