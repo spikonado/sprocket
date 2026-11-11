@@ -50,16 +50,14 @@ function UserMuseSubscriptionCard({
 	const [error, setError] = useState<string | null>(null);
 	const loginIdRef = useRef<string | null>(null);
 	const attemptRef = useRef(0);
-	const state = status?.error ? undefined : status?.state;
-	const lastStateRef = useRef(state);
+	const connectingRef = useRef(false);
+	const ready = status?.state === 'ready';
 
 	useEffect(() => {
-		if (!state) return;
-		const last = lastStateRef.current;
-		lastStateRef.current = state;
-
-		if (last && last !== 'ready' && state === 'ready') onConnected();
-	}, [state, onConnected]);
+		if (!ready || !connectingRef.current) return;
+		connectingRef.current = false;
+		onConnected();
+	}, [ready, onConnected]);
 
 	function cancelOnServer(loginId: string) {
 		localApi?.cancelMuseLogin(userId, loginId).catch(() => {});
@@ -83,6 +81,7 @@ function UserMuseSubscriptionCard({
 
 	async function install() {
 		if (!localApi || pending) return;
+		connectingRef.current = true;
 		setPending(true);
 		setError(null);
 
@@ -127,6 +126,7 @@ function UserMuseSubscriptionCard({
 	async function startLogin() {
 		if (!localApi || pending) return;
 		const attempt = ++attemptRef.current;
+		connectingRef.current = true;
 		setPending(true);
 		setError(null);
 
@@ -159,6 +159,7 @@ function UserMuseSubscriptionCard({
 
 	async function checkAgain() {
 		if (!localApi || pending) return;
+		connectingRef.current = true;
 		setPending(true);
 		setError(null);
 
