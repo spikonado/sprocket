@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use base64::Engine;
-use jsonwebtoken::{EncodingKey, Header, encode};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, jwk::Jwk};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use super::oauth::{SCOPES, TokenResponse, scopes, token_tuple, verify_identity};
 use super::*;
 
 impl ChatGptService {

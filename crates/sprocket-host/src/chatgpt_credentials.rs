@@ -1,3 +1,5 @@
+mod oauth;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -5,21 +7,16 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
-use base64::Engine;
 use futures::future::BoxFuture;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::Jwk};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 use sprocket_agent::{ChatGptAccess, ChatGptCredentials};
 use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 
-const ISSUER: &str = "https://auth.openai.com";
-const RESOURCE: &str = "https://api.openai.com/v1";
-const SCOPES: &str =
-    "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
-const DYNAMIC_CLIENT: &str = "dynamic_agent_client";
-const RESPONSE_LIMIT: usize = 1024 * 1024;
+use oauth::{
+    DYNAMIC_CLIENT, ISSUER, Refresh, ReturningAccount, authorization_url, issued_client,
+    require_scopes,
+};
 
 #[derive(Clone)]
 pub struct ChatGptService {
@@ -75,12 +72,6 @@ struct Tokens {
     refresh_in_flight: bool,
 }
 
-enum Refresh {
-    Refreshed(Tokens),
-    Retry(&'static str),
-    Disconnect(anyhow::Error),
-}
-
 pub struct PendingGrant {
     user: String,
     expected_connection: Option<String>,
@@ -117,35 +108,6 @@ struct AccountStatus {
     connected: bool,
 }
 
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    refresh_token: String,
-    id_token: Option<String>,
-    token_type: String,
-    expires_in: u64,
-    scope: Option<String>,
-    earliest_refresh_at: Option<u64>,
-}
-
-#[derive(Clone, Deserialize)]
-struct Identity {
-    sub: String,
-    nonce: Option<String>,
-    email: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Discovery {
-    issuer: String,
-    revocation_endpoint: String,
-}
-
-#[derive(Deserialize)]
-struct OAuthError {
-    error: String,
-}
-
 fn now() -> u64 {
     crate::now_ms() / 1000
 }
@@ -173,157 +135,6 @@ fn active_account<'a>(state: &'a mut Store, user: &str) -> anyhow::Result<&'a mu
         .iter_mut()
         .find(|account| account.connection_id == active)
         .context("Select a ChatGPT account in Settings.")
-}
-
-fn scopes(value: &str) -> Vec<String> {
-    value.split_whitespace().map(str::to_owned).collect()
-}
-
-fn require_scopes(granted: &[String]) -> anyhow::Result<()> {
-    ensure!(
-        [
-            "chatgpt.tokens.use.direct",
-            "resource.invoke",
-            "offline_access"
-        ]
-        .iter()
-        .all(|required| granted.iter().any(|scope| scope == required)),
-        "ChatGPT plan usage was not authorized. Reconnect and approve plan access."
-    );
-    Ok(())
-}
-
-fn issued_client(selected: Option<&str>, callback: Option<&str>) -> anyhow::Result<String> {
-    let client = match (selected, callback) {
-        (Some(selected), Some(callback)) => {
-            ensure!(
-                selected == callback,
-                "ChatGPT returned a different client registration."
-            );
-            selected
-        }
-        (Some(selected), None) => selected,
-        (None, Some(callback)) => callback,
-        (None, None) => {
-            bail!("ChatGPT registration did not return an issued client ID. Start sign-in again.")
-        }
-    };
-    ensure!(
-        client != DYNAMIC_CLIENT && !client.is_empty() && client.len() <= 512,
-        "ChatGPT returned an invalid client registration."
-    );
-    Ok(client.to_owned())
-}
-
-fn token_tuple(
-    response: TokenResponse,
-    previous: Option<&Tokens>,
-    received_at: u64,
-) -> anyhow::Result<Tokens> {
-    ensure!(
-        response.token_type.eq_ignore_ascii_case("bearer"),
-        "ChatGPT returned an unsupported token type."
-    );
-    ensure!(
-        !response.access_token.is_empty()
-            && !response.refresh_token.is_empty()
-            && response.access_token.len() <= 128 * 1024
-            && response.refresh_token.len() <= 128 * 1024,
-        "ChatGPT returned invalid credentials."
-    );
-    ensure!(
-        response.expires_in > 0 && response.expires_in <= 24 * 60 * 60,
-        "ChatGPT returned invalid credential expiry."
-    );
-    let granted = match response.scope {
-        Some(scope) => scopes(&scope),
-        None => previous
-            .context("ChatGPT did not return granted scopes.")?
-            .scopes
-            .clone(),
-    };
-    require_scopes(&granted)?;
-    let id_token = response
-        .id_token
-        .or_else(|| previous.map(|tokens| tokens.id_token.clone()))
-        .context("ChatGPT did not return an ID token.")?;
-    ensure!(
-        !id_token.is_empty() && id_token.len() <= 128 * 1024,
-        "ChatGPT returned an invalid ID token."
-    );
-    Ok(Tokens {
-        access_token: response.access_token,
-        refresh_token: response.refresh_token,
-        id_token,
-        scopes: granted,
-        expires_at: received_at
-            .checked_add(response.expires_in)
-            .context("Invalid expiry.")?,
-        earliest_refresh_at: response.earliest_refresh_at.unwrap_or(received_at),
-        refresh_in_flight: false,
-    })
-}
-
-fn verify_identity(
-    token: &str,
-    keys: &[Jwk],
-    client_id: &str,
-    nonce: Option<&str>,
-) -> anyhow::Result<Identity> {
-    let header = decode_header(token).map_err(|_| anyhow::anyhow!("Invalid ChatGPT ID token."))?;
-    ensure!(
-        header.alg == Algorithm::RS256,
-        "Unsupported ChatGPT ID token signature."
-    );
-    let key_id = header.kid.context("ChatGPT ID token has no signing key.")?;
-    let key = keys
-        .iter()
-        .find(|key| key.common.key_id.as_deref() == Some(key_id.as_str()))
-        .context("Unknown ChatGPT signing key.")?;
-    let key = DecodingKey::from_jwk(key).context("Invalid ChatGPT signing key.")?;
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[ISSUER]);
-    validation.set_audience(&[client_id]);
-    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-    validation.leeway = 0;
-    validation.validate_nbf = true;
-    let identity = decode::<Identity>(token, &key, &validation)
-        .map_err(|_| anyhow::anyhow!("ChatGPT ID token verification failed."))?
-        .claims;
-    ensure!(
-        !identity.sub.is_empty() && identity.sub.len() <= 1024,
-        "Invalid ChatGPT subject."
-    );
-    if let Some(nonce) = nonce {
-        ensure!(
-            identity.nonce.as_deref() == Some(nonce),
-            "ChatGPT ID token nonce did not match."
-        );
-    }
-    Ok(identity)
-}
-
-async fn json<T: DeserializeOwned>(mut response: reqwest::Response) -> anyhow::Result<T> {
-    ensure!(
-        response
-            .content_length()
-            .is_none_or(|length| length <= RESPONSE_LIMIT as u64),
-        "Provider returned an oversized response."
-    );
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .context("Could not read provider response.")?
-    {
-        ensure!(
-            bytes.len().saturating_add(chunk.len()) <= RESPONSE_LIMIT,
-            "Provider returned an oversized response."
-        );
-        bytes.extend_from_slice(&chunk);
-    }
-    serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("Provider returned an invalid response."))
 }
 
 impl ChatGptService {
@@ -517,60 +328,19 @@ impl ChatGptService {
                     .context("Saved ChatGPT account was not found.")
             })
             .transpose()?;
-        let mut url = url::Url::parse("https://auth.openai.com/api/accounts/authorize")?;
-        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(Sha256::digest(sign_in.verifier.as_bytes()));
-        url.query_pairs_mut().extend_pairs([
-            (
-                "client_id",
-                account.map_or(DYNAMIC_CLIENT, |account| account.client_id.as_str()),
-            ),
-            ("ext_agent_host_id", stored.host_id.as_str()),
-            ("response_type", "code"),
-            ("redirect_uri", sign_in.redirect_uri.as_str()),
-            ("scope", SCOPES),
-            ("resource", RESOURCE),
-            ("state", state),
-            ("nonce", sign_in.nonce.as_str()),
-            ("code_challenge_method", "S256"),
-            ("code_challenge", challenge.as_str()),
-        ]);
-        match account {
-            None => {
-                url.query_pairs_mut()
-                    .append_pair("agent_name_hint", "Sprocket");
-            }
-            Some(account) => {
-                if let Some(tokens) = &account.tokens {
-                    url.query_pairs_mut()
-                        .append_pair("id_token_hint", &tokens.id_token);
-                }
-                if let Some(email) = &account.email {
-                    url.query_pairs_mut().append_pair("login_hint", email);
-                }
-            }
-        }
-        Ok(url.to_string())
-    }
-
-    async fn identity(
-        &self,
-        token: &str,
-        client_id: &str,
-        nonce: Option<&str>,
-    ) -> anyhow::Result<Identity> {
-        let response = self
-            .client
-            .get(format!("{}/.well-known/jwks.json", self.issuer))
-            .send()
-            .await
-            .context("Could not retrieve ChatGPT signing keys.")?;
-        ensure!(
-            response.status().is_success(),
-            "Could not retrieve ChatGPT signing keys."
-        );
-        let keys: jsonwebtoken::jwk::JwkSet = json(response).await?;
-        verify_identity(token, &keys.keys, client_id, nonce)
+        authorization_url(
+            sign_in,
+            state,
+            &stored.host_id,
+            account.map_or(DYNAMIC_CLIENT, |account| account.client_id.as_str()),
+            account.map(|account| ReturningAccount {
+                id_token: account
+                    .tokens
+                    .as_ref()
+                    .map(|tokens| tokens.id_token.as_str()),
+                email: account.email.as_deref(),
+            }),
+        )
     }
 
     pub async fn exchange(
@@ -603,53 +373,25 @@ impl ChatGptService {
             account.as_ref().map(|account| account.client_id.as_str()),
             callback_client,
         )?;
-        let sent_at = now();
-        let response = self
-            .client
-            .post(&self.token_endpoint)
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("client_id", client_id.as_str()),
-                ("code", code),
-                ("code_verifier", sign_in.verifier.as_str()),
-                ("redirect_uri", sign_in.redirect_uri.as_str()),
-                ("resource", RESOURCE),
-            ])
-            .send()
-            .await
-            .context("Could not exchange ChatGPT sign-in. Start sign-in again.")?;
-        ensure!(
-            response.status().is_success(),
-            "ChatGPT rejected sign-in. Start sign-in again."
-        );
-        let response: TokenResponse = json(response).await?;
-        let refresh_token = response.refresh_token.clone();
-        let outcome = async {
-            let tokens = token_tuple(response, None, sent_at)?;
-            let identity = self
-                .identity(&tokens.id_token, &client_id, Some(sign_in.nonce.as_str()))
-                .await?;
-            if let Some(account) = &account {
-                ensure!(
-                    identity.sub == account.subject,
-                    "ChatGPT signed in to a different account. Select Add account instead."
-                );
-            }
-            Ok(PendingGrant {
-                user: sign_in.user.clone(),
-                expected_connection: sign_in.connection.clone(),
-                expected_session: account.as_ref().map(|account| account.session_id.clone()),
-                client_id: client_id.clone(),
-                subject: identity.sub,
-                email: identity.email,
-                tokens,
-            })
-        }
-        .await;
-        if outcome.is_err() {
-            self.revoke(&client_id, &refresh_token).await;
-        }
-        outcome
+        let (tokens, identity) = oauth::exchange(
+            &self.client,
+            &self.token_endpoint,
+            &self.issuer,
+            &client_id,
+            code,
+            sign_in,
+            account.as_ref().map(|account| account.subject.as_str()),
+        )
+        .await?;
+        Ok(PendingGrant {
+            user: sign_in.user.clone(),
+            expected_connection: sign_in.connection.clone(),
+            expected_session: account.as_ref().map(|account| account.session_id.clone()),
+            client_id,
+            subject: identity.sub,
+            email: identity.email,
+            tokens,
+        })
     }
 
     pub async fn discard(&self, grant: PendingGrant) {
@@ -793,55 +535,7 @@ impl ChatGptService {
     }
 
     async fn revoke(&self, client_id: &str, refresh_token: &str) -> bool {
-        let discovery = async {
-            let response = self
-                .client
-                .get(format!("{}/.well-known/openid-configuration", self.issuer))
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await
-                .ok()?;
-            if !response.status().is_success() {
-                return None;
-            }
-            let discovery: Discovery = json(response).await.ok()?;
-            let endpoint = url::Url::parse(&discovery.revocation_endpoint).ok()?;
-            let issuer = url::Url::parse(&self.issuer).ok()?;
-            if discovery.issuer != self.issuer
-                || endpoint.origin() != issuer.origin()
-                || !endpoint.username().is_empty()
-                || endpoint.password().is_some()
-            {
-                return None;
-            }
-            Some(endpoint)
-        }
-        .await;
-        let Some(endpoint) = discovery else {
-            return false;
-        };
-        for attempt in 0..2 {
-            let response = self
-                .client
-                .post(endpoint.clone())
-                .timeout(Duration::from_secs(5))
-                .form(&[
-                    ("token", refresh_token),
-                    ("token_type_hint", "refresh_token"),
-                    ("client_id", client_id),
-                ])
-                .send()
-                .await;
-            match response {
-                Ok(response) if response.status().as_u16() == 200 => return true,
-                Ok(response) if !response.status().is_server_error() => return false,
-                _ => {}
-            }
-            if attempt == 0 {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-        }
-        false
+        oauth::revoke(&self.client, &self.issuer, client_id, refresh_token).await
     }
 
     pub async fn disconnect(&self, user: &str, connection: &str) -> anyhow::Result<Option<String>> {
@@ -961,83 +655,15 @@ impl ChatGptService {
     }
 
     async fn refresh(&self, client_id: &str, subject: &str, tokens: &Tokens) -> Refresh {
-        let sent_at = now();
-        let result = self
-            .client
-            .post(&self.token_endpoint)
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", client_id),
-                ("refresh_token", tokens.refresh_token.as_str()),
-                ("resource", RESOURCE),
-            ])
-            .send()
-            .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(error) if error.is_timeout() => {
-                return Refresh::Retry(
-                    "ChatGPT refresh timed out. Retry when connectivity returns.",
-                );
-            }
-            Err(error) if error.is_connect() => {
-                return Refresh::Retry(
-                    "Could not connect to ChatGPT to refresh credentials. Retry when connectivity returns.",
-                );
-            }
-            Err(_) => {
-                return Refresh::Disconnect(anyhow::anyhow!(
-                    "ChatGPT refresh was interrupted. Reconnect locally in Settings."
-                ));
-            }
-        };
-        let status = response.status();
-        if !status.is_success() {
-            let terminal = json::<OAuthError>(response)
-                .await
-                .ok()
-                .is_some_and(|error| {
-                    [
-                        "invalid_grant",
-                        "refresh_token_expired",
-                        "refresh_token_reused",
-                        "refresh_token_invalidated",
-                        "token_revoked",
-                    ]
-                    .contains(&error.error.as_str())
-                });
-            if !terminal && (status.is_server_error() || status.as_u16() == 429) {
-                return Refresh::Retry("ChatGPT refresh is temporarily unavailable. Retry later.");
-            }
-            return Refresh::Disconnect(anyhow::anyhow!(if terminal {
-                "ChatGPT session expired. Reconnect locally in Settings."
-            } else {
-                "ChatGPT refresh could not be completed safely. Reconnect locally in Settings."
-            }));
-        }
-        let response: TokenResponse = match json(response).await {
-            Ok(response) => response,
-            Err(error) => return Refresh::Disconnect(error),
-        };
-        let issued_refresh = response.refresh_token.clone();
-        let refreshed = async {
-            if let Some(id_token) = &response.id_token {
-                let identity = self.identity(id_token, client_id, None).await?;
-                ensure!(
-                    identity.sub == subject,
-                    "ChatGPT refresh returned another identity."
-                );
-            }
-            token_tuple(response, Some(tokens), sent_at)
-        }
-        .await;
-        match refreshed {
-            Ok(refreshed) => Refresh::Refreshed(refreshed),
-            Err(error) => {
-                self.revoke(client_id, &issued_refresh).await;
-                Refresh::Disconnect(error)
-            }
-        }
+        oauth::refresh(
+            &self.client,
+            &self.token_endpoint,
+            &self.issuer,
+            client_id,
+            subject,
+            tokens,
+        )
+        .await
     }
 
     pub async fn status(&self, user: &str) -> anyhow::Result<ServiceStatus> {
