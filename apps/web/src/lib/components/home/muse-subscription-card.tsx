@@ -30,6 +30,7 @@ type Props = {
 	status: MuseStatus | null;
 	statusError: string | null;
 	onStatusChange: (status: MuseStatus) => void;
+	onConnected: () => void;
 };
 
 export default function MuseSubscriptionCard(props: Props) {
@@ -41,7 +42,8 @@ function UserMuseSubscriptionCard({
 	localApi,
 	status,
 	statusError,
-	onStatusChange
+	onStatusChange,
+	onConnected
 }: Props) {
 	const [login, setLogin] = useState<MuseLoginStart | null>(null);
 	const [pending, setPending] = useState(false);
@@ -95,6 +97,8 @@ function UserMuseSubscriptionCard({
 
 				if (stale()) return;
 				onStatusChange(next);
+
+				if (next.state === 'ready') onConnected();
 
 				if (next.state !== 'signedOut') break;
 

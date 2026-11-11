@@ -8,6 +8,7 @@ import {
 	assertValidProviderOrder,
 	enabledProviders,
 	releasedClientProviders,
+	resolveProviderOrder,
 	vProviderOrderEntry
 } from '@convex/lib/providerOrder';
 import { vCompletionProvider } from '@convex/lib/validators';
@@ -72,6 +73,22 @@ export const setProviderOrder = mutation({
 	}
 });
 
+export const enableProvider = mutation({
+	args: { provider: vCompletionProvider },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
+
+		const providerOrder = resolveProviderOrder(preferences?.providerOrder).map((entry) =>
+			entry.provider === args.provider ? { ...entry, enabled: true } : entry
+		);
+
+		await savePreferences(ctx, { providerOrder });
+
+		return null;
+	}
+});
+
 export const setRestrictSubagentsToProvider = mutation({
 	args: { enabled: v.boolean() },
 	returns: v.null(),
@@ -87,6 +104,16 @@ export const getMine = query({
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx) => {
 		return await getUiPreferences(ctx.db, await getUserId(ctx));
+	}
+});
+
+export const getMyProviderOrder = query({
+	args: {},
+	returns: v.array(vProviderOrderEntry),
+	handler: async (ctx) => {
+		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
+
+		return resolveProviderOrder(preferences?.providerOrder);
 	}
 });
 

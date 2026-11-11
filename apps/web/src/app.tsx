@@ -331,6 +331,7 @@ export default function App({
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const skipAgentQuestion = useMutation(api.agentQuestions.skip);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
+	const enableProvider = useMutation(api.uiPreferences.enableProvider);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 	const updatePullRequestStates = useMutation(api.pullRequests.updateStates);
 
@@ -2614,6 +2615,9 @@ export default function App({
 								onClaudeCodeStatusChange={claudeCode.update}
 								onMuseStatusChange={muse.update}
 								onConfigurationChange={handleProviderConfigurationChange}
+								onProviderConnected={(provider) =>
+									void enableProvider({ provider }).catch(() => {})
+								}
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments onOpenThread={openPurchaseThread} />

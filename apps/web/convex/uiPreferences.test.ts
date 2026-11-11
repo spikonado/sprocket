@@ -53,18 +53,14 @@ describe('theme preferences', () => {
 		await expect(t.query(api.uiPreferences.getMine, {})).rejects.toThrow('Authentication required');
 	});
 
-	it('lists enabled providers in the saved order', async () => {
+	it('enables only Spikonado until the user enables more providers', async () => {
 		const alice = initConvexTest().withIdentity({ subject: 'alice' });
-		expect(await alice.query(api.uiPreferences.getMyEnabledProviders, {})).toEqual([
-			'spikonado',
-			'openai',
-			'chatgpt'
-		]);
+		expect(await alice.query(api.uiPreferences.getMyEnabledProviders, {})).toEqual(['spikonado']);
 		expect(
 			await alice.query(api.uiPreferences.getMyEnabledProviders, {
 				knownProviders: ['spikonado', 'claude', 'anthropic', 'vercel', 'openrouter']
 			})
-		).toEqual(['spikonado', 'claude', 'anthropic', 'vercel', 'openrouter']);
+		).toEqual(['spikonado']);
 
 		await alice.mutation(api.uiPreferences.setProviderOrder, {
 			providerOrder: [
@@ -78,6 +74,8 @@ describe('theme preferences', () => {
 			'chatgpt',
 			'openai'
 		]);
+
+		await alice.mutation(api.uiPreferences.enableProvider, { provider: 'anthropic' });
 		expect(
 			await alice.query(api.uiPreferences.getMyEnabledProviders, {
 				knownProviders: ['openai', 'chatgpt', 'spikonado', 'anthropic']

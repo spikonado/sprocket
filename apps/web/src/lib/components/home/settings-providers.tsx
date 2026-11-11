@@ -10,7 +10,7 @@ import {
 	useQuery_experimental as useConvexQueryResult
 } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { resolveProviderOrder, type ProviderOrderEntry } from '@convex/lib/providerOrder';
+import type { ProviderOrderEntry } from '@convex/lib/providerOrder';
 import type { CompletionProvider } from '@convex/lib/validators';
 import { completionProviderLabels, reorderShownProviders } from '$lib/chat/providers';
 import { SwitchTrack } from '$lib/components/home/preference-toggle';
@@ -75,8 +75,8 @@ export default function SettingsProviders({
 }) {
 	const convexAuth = useConvexAuth();
 
-	const preferencesQuery = useConvexQueryResult({
-		query: api.uiPreferences.getMine,
+	const orderQuery = useConvexQueryResult({
+		query: api.uiPreferences.getMyProviderOrder,
 		args: convexAuth.isAuthenticated ? {} : 'skip'
 	});
 
@@ -86,9 +86,8 @@ export default function SettingsProviders({
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const saveGeneration = useRef(0);
 	const listRef = useRef<HTMLOListElement>(null);
-	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
-	const disabled = preferencesQuery.status !== 'success';
-	const order = pendingOrder ?? resolveProviderOrder(preferences?.providerOrder);
+	const disabled = orderQuery.status !== 'success';
+	const order = pendingOrder ?? (orderQuery.status === 'success' ? orderQuery.data : []);
 	const shown = order.filter((entry) => configuredProviders.includes(entry.provider));
 	const shownEnabledCount = shown.filter((entry) => entry.enabled).length;
 
@@ -175,7 +174,7 @@ export default function SettingsProviders({
 							{saveError}
 						</p>
 					)}
-					{preferencesQuery.status === 'error' && (
+					{orderQuery.status === 'error' && (
 						<p role="alert" className="text-destructive px-3 text-sm">
 							Couldn't load your preferences right now.
 						</p>
