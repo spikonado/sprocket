@@ -1,4 +1,10 @@
-import { compileSpecStream, type Spec, type UIElement } from '@json-render/core';
+import {
+	applySpecStreamPatch,
+	compileSpecStream,
+	parseSpecStreamLine,
+	type Spec,
+	type UIElement
+} from '@json-render/core';
 import { z } from 'zod';
 
 const specSchema = z.object({
@@ -16,11 +22,19 @@ function parseSpecDocument(source: string): Spec | undefined {
 }
 
 function parseSpecStream(source: string): Spec | undefined {
-	try {
-		return specSchema.safeParse(compileSpecStream(source)).data;
-	} catch {
-		return undefined;
+	const compiled = compileSpecStream('');
+
+	for (const line of source.split('\n')) {
+		const patch = parseSpecStreamLine(line);
+
+		if (!patch) continue;
+
+		try {
+			applySpecStreamPatch(compiled, patch);
+		} catch {}
 	}
+
+	return specSchema.safeParse(compiled).data;
 }
 
 export function parseJsonRenderSpec(source: string): Spec | null {

@@ -33,4 +33,16 @@ describe('parseJsonRenderSpec', () => {
 			)
 		).toBeNull();
 	});
+
+	it('keeps a spec after a later patch walks through null children', () => {
+		const spec = parseJsonRenderSpec(
+			[
+				'{"op":"add","path":"/root","value":"ci"}',
+				`{"op":"add","path":"/elements/ci","value":{"type":"Card","props":{"title":"CI"},"children":null}}`,
+				'{"op":"add","path":"/elements/ci/children/0","value":"jobs"}'
+			].join('\n')
+		);
+
+		expect(spec?.elements.ci?.type).toBe('Card');
+	});
 });
