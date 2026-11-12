@@ -50,7 +50,10 @@ describe('analyzeWiring', () => {
 		const { issues } = analyze(
 			JSON.stringify({
 				parts,
-				rails: [{ id: 'GND', volts: 0 }],
+				rails: [
+					{ id: 'GND', volts: 0 },
+					{ id: '5V', volts: 5 }
+				],
 				steps: [
 					{
 						title: 'Mistakes',
@@ -58,7 +61,8 @@ describe('analyzeWiring', () => {
 							{ from: 'uno.5V', to: 'esp.G12' },
 							{ from: 'esp.3V3', to: 'GND' },
 							{ from: 'uno.D3', to: 'esp.G99' },
-							{ from: 'bat.+', to: 'bat.-' }
+							{ from: 'bat.+', to: 'bat.-' },
+							{ from: '5V', to: 'GND' }
 						]
 					}
 				]
@@ -67,6 +71,7 @@ describe('analyzeWiring', () => {
 
 		expect(issues.map((issue) => issue.message)).toEqual([
 			'Step "Mistakes": ESP32 has no pin "G99". Its pins are 3V3, GND.1, G12.',
+			'Step "Mistakes": a wire joins the 5V and GND rails. Use one rail for parts that share a supply.',
 			'ESP32 G12 is a 3.3 V pin, but Uno 5V puts 5 V on it.',
 			'ESP32 3V3 is wired to GND rail. That shorts power to ground.',
 			'Battery + is wired to Battery -. That shorts power to ground.'

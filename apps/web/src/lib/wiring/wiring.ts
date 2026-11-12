@@ -296,6 +296,15 @@ export function analyzeWiring(spec: WiringSpec, geometry: ReadonlyMap<string, Pa
 
 			if (!from || !to) return;
 
+			if (from.type === 'rail' && to.type === 'rail') {
+				issues.push({
+					level: 'error',
+					message: `Step "${step.title}": a wire joins the ${from.rail.id} and ${to.rail.id} rails. Use one rail for parts that share a supply.`
+				});
+
+				return;
+			}
+
 			const roles = [endpointRole(from), endpointRole(to)];
 
 			const color =

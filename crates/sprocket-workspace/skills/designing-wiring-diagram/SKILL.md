@@ -77,7 +77,7 @@ A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`).
 
 ## Wires
 
-- Each wire is one physical jumper. `from` and `to` are `part.pin` or a rail id.
+- Each wire is one physical jumper. `from` and `to` are `part.pin` or a rail id, and at least one of them is a pin.
 - Put every connection that many parts share, such as ground, 5 V, 3.3 V or battery power, on a rail with its `volts`. Each part then gets one short wire to the rail.
 - Split the build into steps in wiring order, starting with power, with at most 6 wires per step.
 - Give `why` only when the reason isn't obvious, in a few words. Put advice for the whole step in its `note`.
