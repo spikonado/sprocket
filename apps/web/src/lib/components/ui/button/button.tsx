@@ -7,6 +7,7 @@ export default function Button({
 	className = '',
 	disabled = false,
 	href,
+	newTab = false,
 	onclick,
 	children
 }: {
@@ -15,6 +16,7 @@ export default function Button({
 	className?: string;
 	disabled?: boolean;
 	href?: string;
+	newTab?: boolean;
 	onclick?: (event: MouseEvent) => void;
 	children?: ReactNode;
 }) {
@@ -31,7 +33,13 @@ export default function Button({
 
 	if (href && !disabled) {
 		return (
-			<a href={href} className={sharedClass} onClick={onclick}>
+			<a
+				href={href}
+				target={newTab ? '_blank' : undefined}
+				rel={newTab ? 'noreferrer' : undefined}
+				className={sharedClass}
+				onClick={onclick}
+			>
 				{children}
 			</a>
 		);

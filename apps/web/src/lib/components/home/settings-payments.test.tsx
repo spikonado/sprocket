@@ -76,19 +76,21 @@ it('keeps the newest card list when an older reload finishes last', async () => 
 	expect(screen.getByText('•••• 1111')).toBeTruthy();
 });
 
-it('offers the Agentcard link as a QR code and a popup on this computer', async () => {
-	const open = vi.spyOn(window, 'open').mockReturnValue(null);
+it('offers the Agentcard link and shows the new card once the dialog closes', async () => {
 	const client = new ConvexTestClient();
 	client.handleAction(api.payments.createCardLink, async () => ({ url: 'https://vault.test' }));
 	await mount(client);
+	await screen.findByText('•••• 4242');
 	fireEvent.click(screen.getByRole('button', { name: 'Add a card' }));
 	expect(await screen.findByRole('img', { name: 'QR code for the Agentcard link' })).toBeTruthy();
-	fireEvent.click(screen.getByRole('button', { name: 'Open on this computer' }));
-	expect(open).toHaveBeenCalledWith(
-		'https://vault.test',
-		'agentcard',
-		'popup,width=480,height=760'
+	expect(screen.getByRole('link', { name: 'Open on this computer' }).getAttribute('href')).toBe(
+		'https://vault.test'
 	);
+	client.handleAction(api.payments.listMyCards, async () => [
+		{ id: 'new', brand: 'visa', last4: '1111', expiryMonth: 1, expiryYear: 2031 }
+	]);
+	fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+	expect(await screen.findByText('•••• 1111')).toBeTruthy();
 });
 
 it('shows why the card link could not be created', async () => {

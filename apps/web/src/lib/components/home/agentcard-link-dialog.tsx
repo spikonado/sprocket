@@ -2,10 +2,6 @@ import { encode } from 'uqr';
 import Button from '$lib/components/ui/button/button';
 import ModalDialog from '$lib/components/ui/modal-dialog';
 
-function openOnThisComputer(url: string) {
-	window.open(url, 'agentcard', 'popup,width=480,height=760');
-}
-
 function qrPath(url: string) {
 	const { data } = encode(url, { ecc: 'M', border: 2 });
 
@@ -51,11 +47,7 @@ export default function AgentcardLinkDialog({
 				password manager.
 			</p>
 			<div className="mt-3 flex justify-end gap-2">
-				<Button
-					variant="outline"
-					className="h-9 px-4 text-xs"
-					onclick={() => openOnThisComputer(url)}
-				>
+				<Button variant="outline" className="h-9 px-4 text-xs" href={url} newTab>
 					Open on this computer
 				</Button>
 				<Button className="h-9 px-4 text-xs" onclick={onClose}>
