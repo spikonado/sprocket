@@ -64,6 +64,7 @@ enum Supervisor {
 
 pub struct BrowserManager {
     installer: BrowserInstaller,
+    signed_in_profile: PathBuf,
     state: watch::Sender<DashboardState>,
     supervisor: std::sync::Mutex<Supervisor>,
     dashboard_client: reqwest::Client,
@@ -74,6 +75,7 @@ impl BrowserManager {
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(&data_dir)?,
+            signed_in_profile: data_dir.join("browser-profile"),
             state: watch::Sender::new(DashboardState::Stopped),
             supervisor: std::sync::Mutex::new(Supervisor::Idle),
             dashboard_client: reqwest::Client::builder()
@@ -267,6 +269,10 @@ impl BrowserManager {
                 (
                     "AGENT_BROWSER_ARGS".into(),
                     "--disable-blink-features=AutomationControlled".into(),
+                ),
+                (
+                    "SPROCKET_BROWSER_PROFILE".into(),
+                    self.signed_in_profile.clone().into_os_string(),
                 ),
             ],
             [self.installer.bin_dir()],

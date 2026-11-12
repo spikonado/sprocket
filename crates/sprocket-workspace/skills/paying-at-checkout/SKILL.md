@@ -5,8 +5,7 @@ description: Use when the user asks to buy, order, or pay for something online.
 
 # Paying at checkout
 
-- You shop on the store's real website with `$agent-browser` in this thread's browser session.
-  - If you get blocked by a CAPTCHA you aren't able to get through yourself, try using a headed agent-browser instead of headless.
+- You shop on the store's real website in the signed-in browser from `$using-the-signed-in-browser`, so store sign-ins and cleared captchas carry over.
 - The user's card never reaches you: you type a placeholder card, and Sprocket swaps in the real payment after the user approves it with their passkey.
 
 ## 1. Agree on the order
