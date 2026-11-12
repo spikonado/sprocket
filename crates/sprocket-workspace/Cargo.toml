@@ -16,7 +16,7 @@ libc.workspace = true
 reqwest = { workspace = true, features = ["rustls"] }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_ng = "0.10.0"
+serde_yaml_ng.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

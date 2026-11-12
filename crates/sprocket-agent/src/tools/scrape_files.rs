@@ -2,12 +2,16 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context;
-use serde_json::Value;
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncWriteExt;
 
 pub(super) const MAX_SCRAPE_BYTES: u64 = 64 * 1024 * 1024;
 const SCRAPE_INLINE_MAX_CHARS: usize = 20_000;
+const OUTLINE_MAX_CHARS: usize = 8_000;
+const OUTLINE_HEADING_MAX_CHARS: usize = 200;
+const OUTLINE_DESCRIPTION_MAX_CHARS: usize = 1_000;
 
 pub(super) async fn localize_scrape(
     mut result: Value,
@@ -16,30 +20,132 @@ pub(super) async fn localize_scrape(
     saved_file: &mut Option<tempfile::NamedTempFile>,
 ) -> anyhow::Result<Value> {
     let fields = result.as_object_mut().context("invalid scrape response")?;
-    if let Some(download) = fields.remove("scrapeUrl") {
+    let temp = if let Some(download) = fields.remove("scrapeUrl") {
         let url = reqwest::Url::parse(download.as_str().context("invalid scrape download URL")?)?;
         anyhow::ensure!(
             matches!(url.scheme(), "http" | "https"),
             "scrape download requires an http(s) URL"
         );
-        let temp = download_scrape(url, cache_file(cache_dir, ".md").await?, cancellation).await?;
-        record_saved_scrape(fields, temp, saved_file);
+        download_scrape(url, cache_file(cache_dir, ".md").await?, cancellation).await?
     } else {
         let markdown = fields
             .get("markdown")
             .and_then(Value::as_str)
             .context("scrape response is missing markdown")?;
-        if exceeds_inline_limit(markdown) {
-            let temp = save_text(cache_dir, markdown, ".md", cancellation).await?;
-            record_saved_scrape(fields, temp, saved_file);
+        if !exceeds_inline_limit(markdown) {
+            return Ok(result);
         }
-    }
+        save_text(cache_dir, markdown, ".md", cancellation).await?
+    };
+    let path = temp.path().to_owned();
+    let outline = super::convert::run_cancellable_blocking(cancellation, move || {
+        Ok(markdown_outline(&String::from_utf8_lossy(&std::fs::read(
+            path,
+        )?)))
+    })
+    .await?;
+    fields.remove("markdown");
+    fields.insert(
+        "savedTo".into(),
+        Value::String(temp.path().display().to_string()),
+    );
+    fields.insert("outline".into(), outline);
+    *saved_file = Some(temp);
     Ok(result)
 }
 
 /// Counts UTF-16 units to match the backend's `markdown.length`.
 pub(super) fn exceeds_inline_limit(text: &str) -> bool {
     text.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
+}
+
+#[derive(serde::Deserialize)]
+struct FrontMatter {
+    title: Option<String>,
+    description: Option<String>,
+}
+
+/// Keeps every h1 and h2 before any h3, then every h3 before any h4, and so on, so a long page
+/// loses its deepest headings rather than its last chapters.
+fn markdown_outline(markdown: &str) -> Value {
+    let mut events =
+        Parser::new_ext(markdown, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS).peekable();
+    let mut outline = json!({"headings": []});
+    if matches!(events.peek(), Some(Event::Start(Tag::MetadataBlock(_)))) {
+        let front_matter: String = events
+            .by_ref()
+            .skip(1)
+            .map_while(|event| match event {
+                Event::Text(text) => Some(text.into_string()),
+                _ => None,
+            })
+            .collect();
+        if let Ok(FrontMatter { title, description }) = serde_yaml_ng::from_str(&front_matter) {
+            for (key, value, max_chars) in [
+                ("title", title, OUTLINE_HEADING_MAX_CHARS),
+                ("description", description, OUTLINE_DESCRIPTION_MAX_CHARS),
+            ] {
+                let value = clip(value.as_deref().unwrap_or_default().trim(), max_chars);
+                if !value.is_empty() {
+                    outline[key] = value.into();
+                }
+            }
+        }
+    }
+
+    let mut headings = Vec::new();
+    let mut heading = None;
+    for event in events {
+        let text = match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                heading = Some((level, String::new()));
+                continue;
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some((level, text)) = heading.take() {
+                    let level = level as u8;
+                    let text = clip(text.trim(), OUTLINE_HEADING_MAX_CHARS);
+                    if !text.is_empty() {
+                        headings.push((level, json!({"level": level, "text": text})));
+                    }
+                }
+                continue;
+            }
+            Event::Text(text) | Event::Code(text) => text,
+            Event::SoftBreak | Event::HardBreak => " ".into(),
+            _ => continue,
+        };
+        if let Some((_, heading_text)) = heading.as_mut() {
+            heading_text.push_str(&text);
+        }
+    }
+
+    let mut by_rank: Vec<usize> = (0..headings.len()).collect();
+    by_rank.sort_by_key(|&index| headings[index].0.max(2));
+    let mut size = json_chars(&outline);
+    let mut kept: Vec<usize> = by_rank
+        .into_iter()
+        .take_while(|&index| {
+            size += json_chars(&headings[index].1) + 1;
+            size <= OUTLINE_MAX_CHARS
+        })
+        .collect();
+    kept.sort_unstable();
+    outline["headings"] = kept
+        .into_iter()
+        .map(|index| headings[index].1.take())
+        .collect();
+    outline
+}
+
+fn json_chars(value: &Value) -> usize {
+    value.to_string().chars().count()
+}
+
+fn clip(text: &str, max_chars: usize) -> &str {
+    text.char_indices()
+        .nth(max_chars)
+        .map_or(text, |(end, _)| &text[..end])
 }
 
 async fn cache_file(cache_dir: &Path, suffix: &str) -> anyhow::Result<tempfile::NamedTempFile> {
@@ -69,19 +175,6 @@ pub(super) async fn save_text(
         } => result?,
     }
     Ok(temp)
-}
-
-fn record_saved_scrape(
-    fields: &mut serde_json::Map<String, Value>,
-    temp: tempfile::NamedTempFile,
-    saved_file: &mut Option<tempfile::NamedTempFile>,
-) {
-    fields.remove("markdown");
-    fields.insert(
-        "savedTo".into(),
-        Value::String(temp.path().display().to_string()),
-    );
-    *saved_file = Some(temp);
 }
 
 async fn download_scrape(

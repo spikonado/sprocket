@@ -7753,6 +7753,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9334,11 +9345,13 @@ dependencies = [
  "pdf-inspector",
  "percent-encoding",
  "posthog-rs",
+ "pulldown-cmark",
  "reqwest 0.13.5",
  "rig",
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2 0.11.1",
  "sprocket-convex",
  "sprocket-transcript",

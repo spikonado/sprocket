@@ -113,21 +113,6 @@ function contextDevError(
 	return APIError.generate(status, body, undefined, new Headers(headers));
 }
 
-async function scrapedOutline(t: ConvexTestInstance, metadata: WebScrapeResponse.Metadata) {
-	scrape.mockResolvedValue(
-		scrapeResponse({
-			markdown: { data: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1), requested: true, success: true },
-			metadata
-		})
-	);
-
-	const result = await scrapePage(t, { url: PAGE_URL });
-
-	if (!('outline' in result)) throw new Error('Expected a stored page transport.');
-
-	return result.outline;
-}
-
 function lastScrapeCall() {
 	const call = scrape.mock.lastCall;
 
@@ -262,51 +247,6 @@ describe('context.dev scrape', () => {
 		}
 	);
 
-	it('maps metadata to an outline', async () => {
-		const t = initConvexTest();
-
-		const outline = await scrapedOutline(t, {
-			title: '  Docs  ',
-			description: '   ',
-			headings: [
-				{ level: 1, text: ' Docs ' },
-				{ level: 2, text: '   ' },
-				{ level: 2, text: 'Install' }
-			]
-		});
-
-		expect(outline).toEqual({
-			title: 'Docs',
-			headings: [
-				{ level: 1, text: 'Docs' },
-				{ level: 2, text: 'Install' }
-			]
-		});
-	});
-
-	it('bounds the outline of a page with long metadata and many long headings', async () => {
-		const t = initConvexTest();
-		const longText = 'h'.repeat(100_000);
-
-		const outline = await scrapedOutline(t, {
-			title: longText,
-			description: longText,
-			headings: Array.from({ length: 5_000 }, () => ({ level: 2, text: longText }))
-		});
-
-		expect(outline.headings.length).toBeGreaterThan(0);
-		expect(JSON.stringify(outline).length).toBeLessThan(SCRAPE_INLINE_MAX_CHARS / 2);
-	});
-
-	it('clips outline text at whole characters', async () => {
-		const t = initConvexTest();
-		const title = `${'a'.repeat(199)}😀`;
-
-		const outline = await scrapedOutline(t, { title, headings: [] });
-
-		expect(outline.title).toBe('a'.repeat(199));
-	});
-
 	it('fails with the page error from a failed markdown output', async () => {
 		const t = initConvexTest();
 
@@ -415,7 +355,7 @@ describe('scrape transport size', () => {
 		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('stores oversized markdown and returns the outline and scrapeUrl', async () => {
+	it('stores oversized markdown and returns the scrapeUrl', async () => {
 		const t = initConvexTest();
 		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
 		mockPage(markdown);
@@ -424,7 +364,6 @@ describe('scrape transport size', () => {
 
 		expect(result).toEqual({
 			url: PAGE_URL,
-			outline: { headings: [] },
 			scrapeUrl: expect.any(String)
 		});
 

@@ -526,7 +526,6 @@ export const vScrapeUrlTransport = v.union(
 	}),
 	v.object({
 		url: v.string(),
-		outline: vPageOutline,
 		scrapeUrl: v.string()
 	})
 );
