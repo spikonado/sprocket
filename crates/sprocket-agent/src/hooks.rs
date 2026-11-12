@@ -213,9 +213,15 @@ impl ToolCallTracker {
     ) -> Option<ToolInvocationAssignment> {
         let mut state = self.0.lock().ok()?;
         let pending = state.dispatches_by_tool.get_mut(tool_name)?;
+        // Omitted defaults make a payload compatible with calls that set them, so exact matches go first.
         let index = pending
             .iter()
-            .position(|dispatch| tool_payload_compatible(&dispatch.args, args))?;
+            .position(|dispatch| dispatch.args == *args)
+            .or_else(|| {
+                pending
+                    .iter()
+                    .position(|dispatch| tool_payload_compatible(&dispatch.args, args))
+            })?;
         pending.remove(index).map(|dispatch| dispatch.assignment)
     }
 
