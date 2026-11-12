@@ -18,7 +18,7 @@ sprocket [--web] [DIRECTORY]
 | `DIRECTORY` | Opens this folder in a new thread.                                     |
 | `--web`     | Opens Sprocket in your browser even when the desktop app is installed. |
 
-The CLI looks for the desktop app at `SPROCKET_DESKTOP_EXECUTABLE`, then for `sprocket-desktop` on your `PATH`.
+The CLI looks for the desktop app at `SPROCKET_DESKTOP_EXECUTABLE`, then at the location the app saved in the [data directory](/reference/configuration#data-directory) the last time it started. Open the desktop app once after installing it so the CLI can find it.
 
 ## sprocket run
 

@@ -25,7 +25,7 @@ The CLI and the running server must be the same version. Update both, then resta
 
 ## `sprocket` opens the browser instead of the desktop app
 
-The CLI can't find the desktop app. Set `SPROCKET_DESKTOP_EXECUTABLE` to the app's executable, or put it on your `PATH` as `sprocket-desktop`. On Linux, rename or link the AppImage to `sprocket-desktop`.
+The CLI finds the desktop app through the location the app saves each time it starts. Open the desktop app once, then run `sprocket` again. You can also set `SPROCKET_DESKTOP_EXECUTABLE` to the app's executable, such as the AppImage on Linux.
 
 ## Keyring errors when signing in
 
