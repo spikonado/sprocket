@@ -7,5 +7,28 @@
 		"deploymentEnabled": {
 			"main": false
 		}
-	}
+	},
+	"redirects": [
+		{
+			"source": "/",
+			"has": [{ "type": "host", "value": "docs.usesprocket.dev" }],
+			"destination": "https://usesprocket.dev/docs",
+			"permanent": true
+		},
+		{
+			"source": "/:path*",
+			"has": [{ "type": "host", "value": "docs.usesprocket.dev" }],
+			"destination": "https://usesprocket.dev/docs/:path*",
+			"permanent": true
+		}
+	],
+	"rewrites": [
+		{ "source": "/docs", "destination": "https://spikonado.manicule.dev/docs" },
+		{ "source": "/docs/:path*", "destination": "https://spikonado.manicule.dev/docs/:path*" },
+		{ "source": "/llms.txt", "destination": "https://spikonado.manicule.dev/docs/llms.txt" },
+		{
+			"source": "/.well-known/llms.txt",
+			"destination": "https://spikonado.manicule.dev/docs/llms.txt"
+		}
+	]
 }

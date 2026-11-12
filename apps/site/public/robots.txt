@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://usesprocket.dev/sitemap-index.xml
+Sitemap: https://usesprocket.dev/docs/sitemap.xml
