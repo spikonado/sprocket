@@ -1,5 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import ModalDialog from '$lib/components/ui/modal-dialog';
 
 type Props = {
 	title: string;
@@ -18,34 +17,8 @@ export default function ConfirmDialog({
 	onCancel,
 	onConfirm
 }: Props) {
-	const id = useId();
-	const dialogRef = useRef<HTMLDialogElement>(null);
-
-	useEffect(() => {
-		const previouslyFocused = document.activeElement;
-		dialogRef.current?.showModal();
-
-		return () => {
-			if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
-				previouslyFocused.focus();
-			}
-		};
-	}, []);
-
-	return createPortal(
-		<dialog
-			ref={dialogRef}
-			aria-labelledby={`${id}-title`}
-			aria-describedby={`${id}-description`}
-			className="bg-background text-foreground fixed inset-0 m-auto w-[min(28rem,calc(100%-2rem))] rounded-2xl border p-6 shadow-xl backdrop:bg-black/40"
-			onCancel={onCancel}
-		>
-			<h2 id={`${id}-title`} className="text-lg">
-				{title}
-			</h2>
-			<p id={`${id}-description`} className="text-muted-foreground mt-3 text-sm">
-				{description}
-			</p>
+	return (
+		<ModalDialog title={title} description={description} onCancel={onCancel}>
 			<div className="mt-6 flex justify-end gap-2">
 				<button
 					type="button"
@@ -66,7 +39,6 @@ export default function ConfirmDialog({
 					{confirmLabel}
 				</button>
 			</div>
-		</dialog>,
-		document.body
+		</ModalDialog>
 	);
 }

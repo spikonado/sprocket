@@ -53,6 +53,7 @@
 		"shiki": "^4.5.0",
 		"tailwind-merge": "catalog:",
 		"three": "^0.186.1",
+		"uqr": "^0.1.3",
 		"zod": "catalog:"
 	},
 	"devDependencies": {

@@ -16,11 +16,13 @@ function purchase(id: string) {
 	};
 }
 
-it('opens the Agentcard approval popup', () => {
+it('offers the approval link as a QR code and a popup on this computer', () => {
 	const open = vi.spyOn(window, 'open').mockReturnValue(null);
 	render(<PurchaseApprovals purchases={[purchase('a')]} />);
 	expect(screen.getByText('Approve $23.06 at shop.example.com')).toBeTruthy();
 	fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+	expect(screen.getByRole('img', { name: 'QR code for the Agentcard link' })).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Open on this computer' }));
 	expect(open).toHaveBeenCalledWith(
 		'https://approve.test/a',
 		'agentcard',
