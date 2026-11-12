@@ -20,8 +20,8 @@ const JLCPCB_SEARCH_URL: &str =
 const LCSC_SEARCH_URL: &str = "https://wmsc.lcsc.com/ftps/wm/search/v3/global";
 const LCSC_DETAIL_URL: &str = "https://wmsc.lcsc.com/ftps/wm/product/detail";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-/// JLCPCB answers 429 once more than about two searches are in flight.
-const JLCPCB_CONCURRENCY: usize = 2;
+/// JLCPCB answers 429 once more than about two searches are in flight from this machine.
+static JLCPCB_LIMIT: Semaphore = Semaphore::const_new(2);
 const JLCPCB_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
@@ -136,14 +136,13 @@ async fn lookup(args: &LookupPartsArgs) -> anyhow::Result<BTreeMap<String, PartR
         .user_agent(concat!("sprocket/", env!("CARGO_PKG_VERSION")))
         .timeout(REQUEST_TIMEOUT)
         .build()?;
-    let jlcpcb_limit = Semaphore::new(JLCPCB_CONCURRENCY);
     let mut quantities = BTreeMap::<&str, u64>::new();
     for PartQuery { part, quantity } in &args.parts {
         *quantities.entry(part.as_str()).or_default() += u64::from(quantity.get());
     }
-    let (client, jlcpcb_limit) = (&client, &jlcpcb_limit);
+    let client = &client;
     let lookups = quantities.into_iter().map(|(part, quantity)| async move {
-        let result = lookup_part(client, jlcpcb_limit, part.trim(), quantity).await;
+        let result = lookup_part(client, part.trim(), quantity).await;
         (part.to_owned(), result)
     });
     Ok(futures::future::join_all(lookups)
@@ -152,16 +151,8 @@ async fn lookup(args: &LookupPartsArgs) -> anyhow::Result<BTreeMap<String, PartR
         .collect())
 }
 
-async fn lookup_part(
-    client: &reqwest::Client,
-    jlcpcb_limit: &Semaphore,
-    part: &str,
-    quantity: u64,
-) -> PartResult {
-    let (jlcpcb, lcsc) = tokio::join!(
-        jlcpcb_rows(client, jlcpcb_limit, part),
-        lcsc_products(client, part)
-    );
+async fn lookup_part(client: &reqwest::Client, part: &str, quantity: u64) -> PartResult {
+    let (jlcpcb, lcsc) = tokio::join!(jlcpcb_rows(client, part), lcsc_products(client, part));
     let mut errors = BTreeMap::new();
     let jlcpcb = jlcpcb.unwrap_or_else(|error| {
         errors.insert("jlcpcb", error.to_string());
@@ -216,11 +207,7 @@ async fn read_json<T: DeserializeOwned>(
     }
 }
 
-async fn jlcpcb_rows(
-    client: &reqwest::Client,
-    limit: &Semaphore,
-    part: &str,
-) -> Result<Vec<JlcpcbRow>, SourceError> {
+async fn jlcpcb_rows(client: &reqwest::Client, part: &str) -> Result<Vec<JlcpcbRow>, SourceError> {
     let body = json!({
         "currentPage": 1,
         "pageSize": 50,
@@ -232,7 +219,10 @@ async fn jlcpcb_rows(
     let mut retry_delays = JLCPCB_RETRY_DELAYS.into_iter();
     let response = loop {
         let result = {
-            let _permit = limit.acquire().await.map_err(|_| SourceError::Failed)?;
+            let _permit = JLCPCB_LIMIT
+                .acquire()
+                .await
+                .map_err(|_| SourceError::Failed)?;
             read_json::<JlcpcbResponse>(client.post(JLCPCB_SEARCH_URL).json(&body)).await
         };
         match (result, retry_delays.next()) {
