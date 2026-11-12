@@ -67,6 +67,8 @@ struct FrontMatter {
 
 /// Keeps every h1 and h2 before any h3, then every h3 before any h4, and so on, so a long page
 /// loses its deepest headings rather than its last chapters.
+/// Evicting while parsing keeps memory bounded on pages with millions of headings. Once a heading
+/// is evicted, later headings of its rank or deeper can never fit either.
 fn markdown_outline(markdown: &str) -> Value {
     let mut events =
         Parser::new_ext(markdown, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS).peekable();
@@ -93,7 +95,11 @@ fn markdown_outline(markdown: &str) -> Value {
         }
     }
 
-    let mut headings = Vec::new();
+    let budget = OUTLINE_MAX_CHARS.saturating_sub(json_chars(&outline));
+    let mut used = 0;
+    let mut kept: Vec<(u8, usize, Value, usize)> = Vec::new();
+    let mut position = 0;
+    let mut full_rank = u8::MAX;
     let mut heading = None;
     for event in events {
         let text = match event {
@@ -104,9 +110,21 @@ fn markdown_outline(markdown: &str) -> Value {
             Event::End(TagEnd::Heading(_)) => {
                 if let Some((level, text)) = heading.take() {
                     let level = level as u8;
+                    let rank = level.max(2);
                     let text = clip(text.trim(), OUTLINE_HEADING_MAX_CHARS);
-                    if !text.is_empty() {
-                        headings.push((level, json!({"level": level, "text": text})));
+                    if rank < full_rank && !text.is_empty() {
+                        let entry = json!({"level": level, "text": text});
+                        let cost = json_chars(&entry) + 1;
+                        let at = kept.partition_point(|&(kept_rank, ..)| kept_rank <= rank);
+                        kept.insert(at, (rank, position, entry, cost));
+                        position += 1;
+                        used += cost;
+                        while used > budget
+                            && let Some((evicted_rank, .., cost)) = kept.pop()
+                        {
+                            used -= cost;
+                            full_rank = evicted_rank;
+                        }
                     }
                 }
                 continue;
@@ -120,21 +138,8 @@ fn markdown_outline(markdown: &str) -> Value {
         }
     }
 
-    let mut by_rank: Vec<usize> = (0..headings.len()).collect();
-    by_rank.sort_by_key(|&index| headings[index].0.max(2));
-    let mut size = json_chars(&outline);
-    let mut kept: Vec<usize> = by_rank
-        .into_iter()
-        .take_while(|&index| {
-            size += json_chars(&headings[index].1) + 1;
-            size <= OUTLINE_MAX_CHARS
-        })
-        .collect();
-    kept.sort_unstable();
-    outline["headings"] = kept
-        .into_iter()
-        .map(|index| headings[index].1.take())
-        .collect();
+    kept.sort_unstable_by_key(|&(_, position, ..)| position);
+    outline["headings"] = kept.into_iter().map(|(_, _, entry, _)| entry).collect();
     outline
 }
 

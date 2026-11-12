@@ -91,20 +91,16 @@ fn saved_markdown_outline_clips_long_text() {
 #[test]
 fn saved_markdown_outline_keeps_every_chapter_before_deeper_headings() {
     let section = format!("### {}\n", "s".repeat(OUTLINE_HEADING_MAX_CHARS));
-    let markdown: String = (0..20)
+    let mut markdown: String = (0..20)
         .map(|chapter| format!("## Chapter {chapter}\n{}", section.repeat(3)))
         .collect();
+    markdown.push_str("### Short\n");
     let outline = markdown_outline(&markdown);
     let headings = outline["headings"].as_array().unwrap();
-    let chapters: Vec<_> = headings
-        .iter()
-        .filter(|heading| heading["level"] == 2)
-        .map(|heading| heading["text"].as_str().unwrap())
-        .collect();
-    assert_eq!(chapters.len(), 20);
-    assert_eq!(chapters.last(), Some(&"Chapter 19"));
+    let chapters = headings.iter().filter(|heading| heading["level"] == 2);
+    assert_eq!(chapters.count(), 20);
     assert_eq!(headings[1]["level"], 3);
-    assert!(headings.len() < 80);
+    assert_eq!(headings.last().unwrap()["text"], "Chapter 19");
     assert!(json_chars(&outline) <= OUTLINE_MAX_CHARS);
 }
 
