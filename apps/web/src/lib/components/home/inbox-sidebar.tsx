@@ -391,7 +391,8 @@ export default function InboxSidebar({
 				return;
 			}
 
-			if (event.altKey && event.key.toLowerCase() === 'n') {
+			// macOS turns Option+N into a dead key, so match the physical key.
+			if (event.altKey && event.code === 'KeyN') {
 				event.preventDefault();
 				onNew();
 			}
