@@ -8,7 +8,7 @@ An agent can stop and ask the user something. A question from `ask_question` tak
 - `question-answer` sends a picked option, typed text, or both.
 - `question-skip` skips the question.
 - `question-collapse` collapses the question to its first line and expands it again.
-- `purchase-approve` shows `Approve <amount> at <merchant>` with an `Approve` button that opens the Agentcard popup.
+- `purchase-approve` shows `Approve <amount> at <merchant>` with an `Approve` button that opens a dialog with the approval link's QR code and `Open on this computer`.
 
 ## How to get to it (user POV)
 

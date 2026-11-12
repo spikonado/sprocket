@@ -35,7 +35,7 @@ Call `card_checkout` with the page's final total, its currency, and the Pay butt
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `awaiting_approval`                | Call `poll_checkout` until it changes. Don't end your turn or touch the checkout tab; ending the run cancels the purchase. |
 | `approved`                         | Go to step 4                                                                                                               |
-| `submitted_on_device`              | Tell the user to finish payment in the Agentcard popup, then go to step 4                                                  |
+| `submitted_on_device`              | Tell the user to finish payment on the Agentcard page, then go to step 4                                                   |
 | `card_required`                    | Ask the user to save a card (Save a card button or Settings → Payments), then call again                                   |
 | `declined`, `expired`, `cancelled` | Tell the user, with the `reason` if there is one; call again only if they ask                                              |
 | `no_payment_request`               | Check the page for errors or missing fields, fix them, then call again                                                     |

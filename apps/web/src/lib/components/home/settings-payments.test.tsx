@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
@@ -9,13 +9,6 @@ const threadId = fixtureId<'threadRecords'>('thread-test');
 const purchaseId = fixtureId<'purchases'>('purchase-test');
 
 afterEach(() => vi.restoreAllMocks());
-
-function stubPopup() {
-	const popup = { location: { href: '' }, close: vi.fn() };
-	const open = vi.spyOn(window, 'open').mockReturnValue(Object.assign(Object.create(null), popup));
-
-	return { popup, open };
-}
 
 async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => {})) {
 	client.handleAction(api.payments.listMyCards, async () => [
@@ -83,18 +76,24 @@ it('keeps the newest card list when an older reload finishes last', async () => 
 	expect(screen.getByText('•••• 1111')).toBeTruthy();
 });
 
-it('opens the card popup on click and points it at the Agentcard link', async () => {
-	const { popup, open } = stubPopup();
+it('offers the Agentcard link and shows the new card once the dialog closes', async () => {
 	const client = new ConvexTestClient();
 	client.handleAction(api.payments.createCardLink, async () => ({ url: 'https://vault.test' }));
 	await mount(client);
+	await screen.findByText('•••• 4242');
 	fireEvent.click(screen.getByRole('button', { name: 'Add a card' }));
-	expect(open).toHaveBeenCalledWith('', 'agentcard', 'popup,width=480,height=760');
-	await waitFor(() => expect(popup.location.href).toBe('https://vault.test'));
+	expect(await screen.findByRole('img', { name: 'QR code for the Agentcard link' })).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'Open on this computer' }).getAttribute('href')).toBe(
+		'https://vault.test'
+	);
+	client.handleAction(api.payments.listMyCards, async () => [
+		{ id: 'new', brand: 'visa', last4: '1111', expiryMonth: 1, expiryYear: 2031 }
+	]);
+	fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+	expect(await screen.findByText('•••• 1111')).toBeTruthy();
 });
 
-it('closes the card popup when the link cannot be created', async () => {
-	const { popup } = stubPopup();
+it('shows why the card link could not be created', async () => {
 	const client = new ConvexTestClient();
 	client.handleAction(api.payments.createCardLink, async () => {
 		throw new Error('Agentcard is down.');
@@ -102,5 +101,4 @@ it('closes the card popup when the link cannot be created', async () => {
 	await mount(client);
 	fireEvent.click(screen.getByRole('button', { name: 'Add a card' }));
 	expect(await screen.findByText('Agentcard is down.')).toBeTruthy();
-	expect(popup.close).toHaveBeenCalled();
 });

@@ -1,13 +1,20 @@
 import { useState } from 'react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { openCardLinkPopup } from '$lib/agentcard';
+import AgentcardLinkDialog from '$lib/components/home/agentcard-link-dialog';
 import Button from '$lib/components/ui/button/button';
 import { convexClientErrorMessage } from '$lib/convex-error';
 
-export default function SaveCardButton({ label = 'Save a card' }: { label?: string }) {
+export default function SaveCardButton({
+	label = 'Save a card',
+	onDone
+}: {
+	label?: string;
+	onDone?: () => void;
+}) {
 	const createCardLink = useAction(api.payments.createCardLink);
 	const [opening, setOpening] = useState(false);
+	const [url, setUrl] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	async function open() {
@@ -15,7 +22,7 @@ export default function SaveCardButton({ label = 'Save a card' }: { label?: stri
 		setError(null);
 
 		try {
-			await openCardLinkPopup(() => createCardLink({}));
+			setUrl((await createCardLink({})).url);
 		} catch (caught) {
 			setError(
 				(caught instanceof Error && convexClientErrorMessage(caught)) || 'Couldn’t open Agentcard.'
@@ -23,6 +30,11 @@ export default function SaveCardButton({ label = 'Save a card' }: { label?: stri
 		} finally {
 			setOpening(false);
 		}
+	}
+
+	function close() {
+		setUrl(null);
+		onDone?.();
 	}
 
 	return (
@@ -36,6 +48,9 @@ export default function SaveCardButton({ label = 'Save a card' }: { label?: stri
 				{label}
 			</Button>
 			{error ? <p className="text-destructive mt-2 text-sm">{error}</p> : null}
+			{url ? (
+				<AgentcardLinkDialog title="Add a card" action="save your card" url={url} onClose={close} />
+			) : null}
 		</div>
 	);
 }

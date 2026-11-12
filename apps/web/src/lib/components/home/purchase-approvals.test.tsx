@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import PurchaseApprovals from './purchase-approvals';
 import { fixtureId } from '$lib/convex-test-client';
 
@@ -16,15 +16,12 @@ function purchase(id: string) {
 	};
 }
 
-it('opens the Agentcard approval popup', () => {
-	const open = vi.spyOn(window, 'open').mockReturnValue(null);
+it('offers the approval link as a QR code and a link on this computer', () => {
 	render(<PurchaseApprovals purchases={[purchase('a')]} />);
 	expect(screen.getByText('Approve $23.06 at shop.example.com')).toBeTruthy();
 	fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-	expect(open).toHaveBeenCalledWith(
-		'https://approve.test/a',
-		'agentcard',
-		'popup,width=480,height=760'
+	expect(screen.getByRole('img', { name: 'QR code for the Agentcard link' })).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'Open on this computer' }).getAttribute('href')).toBe(
+		'https://approve.test/a'
 	);
-	open.mockRestore();
 });

@@ -68,7 +68,7 @@ export default function SettingsPayments({
 		}
 	}, [listMyCards]);
 
-	// Cards are saved in the Agentcard popup, so reload when the user comes back.
+	// Cards are saved on the Agentcard page, so reload when the user comes back.
 	useEffect(() => {
 		if (!signedIn) return;
 		void loadCards();
@@ -105,7 +105,7 @@ export default function SettingsPayments({
 								</p>
 							</div>
 							<div className="shrink-0">
-								<SaveCardButton label="Add a card" />
+								<SaveCardButton label="Add a card" onDone={() => void loadCards()} />
 							</div>
 						</div>
 						{cardsError && <p className="text-destructive mt-4 text-sm">{cardsError}</p>}
