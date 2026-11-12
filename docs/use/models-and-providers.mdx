@@ -37,11 +37,18 @@ A provider is where Sprocket sends model requests. Spikonado, Sprocket's own pro
 | OpenRouter             | API key                                                                                             |
 | OpenCode               | API key                                                                                             |
 | OpenCode Go            | API key                                                                                             |
+| Morph                  | API key. See [Morph](#morph).                                                                       |
 | Muse Code Subscription | Sign in with Muse through the Muse CLI. Sprocket can install the Muse CLI for you.                  |
 
 Add keys and subscriptions in **Settings → BYOK/BYOS**. Sprocket checks each API key with its provider before saving it.
 
 Claude and Muse sign-in run on the computer that runs Sprocket. Open Sprocket on that computer to install them or sign in.
+
+### Morph
+
+<Snippet file="unreleased.mdx" />
+
+Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and [Ultra plan](https://docs.morphllm.com/ultra-plan) keys connect the same way. On Ultra, neither model has a token meter, but each has a per-minute limit on uncached input and output tokens. Kimi K3.1 Pro's output limit is lower than one nonstop stream, so threads with several agents hit it quickly. Keep another provider enabled after Morph so those requests [fall back](#provider-order-and-fallback) instead of failing.
 
 ### Provider order and fallback
 

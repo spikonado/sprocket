@@ -360,7 +360,8 @@ export default function App({
 			vercel: saved('vercel'),
 			openrouter: saved('openrouter'),
 			opencode: saved('opencode'),
-			'opencode-go': saved('opencode-go')
+			'opencode-go': saved('opencode-go'),
+			morph: saved('morph')
 		};
 	}, [savedProviders]);
 

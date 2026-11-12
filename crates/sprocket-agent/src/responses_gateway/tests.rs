@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use rig::completion::{Effort, GenerationOptions, ToolDefinition};
-use rig::message::ToolName;
+use rig::message::{AssistantContent, AssistantMessage, Message, Origin, Reasoning, ToolName};
 use rig::wire::Body;
 
 fn encode(gateway: ResponsesGateway) -> (http::HeaderMap, Value) {
@@ -76,6 +76,47 @@ fn openrouter_claude_requests_cache_without_asking_for_ciphertext() {
 fn opencode_go_requests_carry_the_thread_as_session() {
     let (headers, _) = encode(ResponsesGateway::OpencodeGo);
     assert_eq!(headers["x-opencode-session"], "thread-1");
+}
+
+#[test]
+fn morph_replays_reasoning_without_ciphertext_on_the_thread_session() {
+    let wire = gateway_responses(
+        ResponsesGateway::Morph,
+        "key".to_string(),
+        "morph-kimik31",
+        false,
+        None,
+        "Be brief.",
+        "thread-1",
+    )
+    .unwrap();
+    let reasoning = json!({
+        "type": "reasoning", "id": "rs_1",
+        "content": [{"type": "reasoning_text", "text": "check the tests first"}],
+    });
+    let mut request = CompletionRequest::new("next");
+    request.chat_history.insert(
+        0,
+        Arc::new(Message::Assistant(
+            AssistantMessage::new(vec![
+                AssistantContent::Reasoning(Reasoning::new("check the tests first"))
+                    .with_native(reasoning.clone()),
+                AssistantContent::text("done"),
+            ])
+            .with_origin(Origin::new(
+                rig::message::Api::from_static("openai.responses"),
+                "openai",
+                "morph-kimik31",
+            )),
+        )),
+    );
+    let encoded = wire.encode(request, Mode::Streaming).unwrap();
+    assert_eq!(encoded.request.headers()["x-session-id"], "thread-1");
+    let Body::Bytes(bytes) = encoded.request.into_body() else {
+        panic!("Responses uses JSON");
+    };
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(body["input"].as_array().unwrap().contains(&reasoning));
 }
 
 #[test]

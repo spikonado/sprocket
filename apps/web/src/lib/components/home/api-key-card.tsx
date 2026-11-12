@@ -25,7 +25,8 @@ const keyPlaceholders: Record<ApiKeyProvider, string> = {
 	vercel: 'vck_…',
 	openrouter: 'sk-or-…',
 	opencode: 'oc_sk_…',
-	'opencode-go': 'oc_sk_…'
+	'opencode-go': 'oc_sk_…',
+	morph: 'sk-…'
 };
 
 const caughtError = z.instanceof(Error).catch(new Error());

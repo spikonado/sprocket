@@ -482,12 +482,14 @@ impl AgentProvider {
             CompletionProvider::Vercel
             | CompletionProvider::Openrouter
             | CompletionProvider::Opencode
-            | CompletionProvider::OpencodeGo => {
+            | CompletionProvider::OpencodeGo
+            | CompletionProvider::Morph => {
                 let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
                 let gateway = match provider {
                     CompletionProvider::Vercel => ResponsesGateway::Vercel,
                     CompletionProvider::Opencode => ResponsesGateway::Opencode,
                     CompletionProvider::OpencodeGo => ResponsesGateway::OpencodeGo,
+                    CompletionProvider::Morph => ResponsesGateway::Morph,
                     _ => ResponsesGateway::Openrouter,
                 };
                 gateway_responses_model(

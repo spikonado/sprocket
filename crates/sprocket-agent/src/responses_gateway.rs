@@ -24,6 +24,7 @@ pub(crate) enum ResponsesGateway {
     Openrouter,
     Opencode,
     OpencodeGo,
+    Morph,
 }
 
 impl ResponsesGateway {
@@ -33,12 +34,14 @@ impl ResponsesGateway {
             Self::Openrouter => "https://openrouter.ai/api/v1",
             Self::Opencode => "https://opencode.ai/inference/openai/v1",
             Self::OpencodeGo => "https://opencode.ai/inference/go/openai/v1",
+            Self::Morph => "https://api.morphllm.com/v1",
         }
     }
 }
 
 /// `cache_write_ttl` is the catalog's, which Claude's cache writes must match.
-/// `session_id` keeps an OpenCode thread on one route and prompt cache, which Go requires.
+/// `session_id` keeps an OpenCode or Morph thread on one route and prompt cache, which
+/// OpenCode Go requires.
 pub(crate) fn gateway_responses_model(
     gateway: ResponsesGateway,
     api_key: String,
@@ -75,8 +78,12 @@ fn gateway_responses(
     let mut config = OpenAIConfig::new(api_key)
         .with_base_url(gateway.base_url())
         .with_instructions(instructions);
-    if gateway == ResponsesGateway::Openrouter {
-        // OpenRouter replays Claude's thinking through the item's `signature`, not ciphertext.
+    if matches!(
+        gateway,
+        ResponsesGateway::Openrouter | ResponsesGateway::Morph
+    ) {
+        // OpenRouter replays Claude's thinking through the item's `signature`, and Morph
+        // replays reasoning as plain text.
         config.dialect.quirks.responses.reasoning_ciphertext = false;
     }
     Ok(GatewayResponses {
@@ -131,7 +138,8 @@ impl GatewayResponses {
                 }
                 params.insert("cache_control".to_string(), cache_control);
             }
-            ResponsesGateway::Opencode | ResponsesGateway::OpencodeGo => {}
+            ResponsesGateway::Opencode | ResponsesGateway::OpencodeGo | ResponsesGateway::Morph => {
+            }
         }
     }
 }
@@ -180,6 +188,9 @@ impl Wire for GatewayResponses {
                     http::HeaderValue::from_static(USER_AGENT),
                 );
                 headers.insert("x-opencode-session", self.session.clone());
+            }
+            ResponsesGateway::Morph => {
+                headers.insert("x-session-id", self.session.clone());
             }
         }
         Ok(encoded)

@@ -19,6 +19,7 @@ type Index = HashMap<String, HashMap<&'static str, String>>;
 #[derive(Deserialize)]
 struct Api {
     anthropic: Option<Provider>,
+    morph: Option<Provider>,
     opencode: Option<Provider>,
     #[serde(rename = "opencode-go")]
     opencode_go: Option<Provider>,
@@ -98,6 +99,7 @@ async fn fetch_index() -> anyhow::Result<Index> {
 fn index(api: Api) -> Index {
     let providers = [
         ("anthropic", api.anthropic),
+        ("morph", api.morph),
         ("opencode", api.opencode),
         ("opencode-go", api.opencode_go),
         ("openrouter", api.openrouter),

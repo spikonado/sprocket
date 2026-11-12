@@ -22,6 +22,7 @@ type ProviderConfigurationChange = {
 
 const apiKeyProviders: readonly ApiKeyProvider[] = [
 	'opencode-go',
+	'morph',
 	'anthropic',
 	'openai',
 	'opencode',
