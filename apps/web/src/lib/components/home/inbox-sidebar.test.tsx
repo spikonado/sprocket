@@ -264,10 +264,11 @@ it('starts a new thread with Alt+N', async () => {
 	const input = await render([]);
 
 	act(() => {
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', code: 'KeyL', altKey: true }));
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Dead', code: 'KeyN', altKey: true }));
 	});
 
-	expect(input.onNew).toHaveBeenCalledOnce();
+	expect(input.onNew).toHaveBeenCalledTimes(2);
 });
 
 it('does not render empty thread rows', async () => {
