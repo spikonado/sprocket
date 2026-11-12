@@ -7,6 +7,7 @@ use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
 const MARKDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const MARKDOWN_ACCEPT: &str = "text/markdown, text/plain;q=0.9, */*;q=0.8";
 
 pub(super) async fn try_markdown_url(
     url: Url,
@@ -51,7 +52,7 @@ fn markdown_urls(mut url: Url) -> Vec<Url> {
     vec![url]
 }
 
-async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<Value> {
+pub(super) async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<Value> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(MARKDOWN_TIMEOUT)
@@ -59,26 +60,16 @@ async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<Value> {
         .build()?;
     let mut response = client
         .get(url)
-        .header(reqwest::header::ACCEPT, "text/markdown, text/plain;q=0.9")
+        .header(reqwest::header::ACCEPT, MARKDOWN_ACCEPT)
         .send()
         .await?;
     anyhow::ensure!(
         response.status() == reqwest::StatusCode::OK,
         "no markdown endpoint"
     );
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
     anyhow::ensure!(
         matches!(
-            content_type.as_str(),
+            super::web::media_type(response.headers()).as_str(),
             "text/markdown" | "text/x-markdown" | "text/plain"
         ),
         "not a markdown response"
