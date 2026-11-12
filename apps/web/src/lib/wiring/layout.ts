@@ -88,7 +88,8 @@ export type RailLine = { rail: number; segments: [Point, Point][]; labels: Point
 
 export type PinLabel = { text: string; at: Point; side: number };
 
-export type WireRoute = { points: Point[]; labels: PinLabel[]; overlaps: boolean };
+/** `joins` lists the wires this one meets at a T instead of reaching their shared pin itself. */
+export type WireRoute = { points: Point[]; labels: PinLabel[]; overlaps: boolean; joins: string[] };
 
 export type WiringLayout = {
 	width: number;
@@ -318,7 +319,7 @@ function routeLayout(spec: WiringSpec, wires: ResolvedWire[], layout: Placement)
 			? { type: 'pin', terminal: end.terminal }
 			: { type: 'rail', rail: second.type === 'rail' ? spec.rails.indexOf(second.rail) : -1 };
 
-		return { start, end, connection: { start: start.terminal, target } };
+		return { start, end, connection: { start: start.terminal, target, rank: wire.step } };
 	});
 
 	const paths = routeGrid(
@@ -359,7 +360,8 @@ function routeLayout(spec: WiringSpec, wires: ResolvedWire[], layout: Placement)
 					...(endPin ? [endPin.point] : [])
 				],
 				labels: [startPin?.label, endPin?.label].flatMap((label) => label ?? []),
-				overlaps: false
+				overlaps: false,
+				joins: path.joins.map((host) => wires[host].key)
 			});
 
 			return;
@@ -368,7 +370,7 @@ function routeLayout(spec: WiringSpec, wires: ResolvedWire[], layout: Placement)
 		const a = fallbackPoint(wire.from);
 		const b = fallbackPoint(wire.to);
 
-		if (a && b) routes.set(wire.key, { points: [a, b], labels: [], overlaps: true });
+		if (a && b) routes.set(wire.key, { points: [a, b], labels: [], overlaps: true, joins: [] });
 	});
 
 	return routes;

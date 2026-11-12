@@ -18,9 +18,11 @@ export type Rect = { iMin: number; iMax: number; jMin: number; jMax: number };
 /** Where a pin's lead meets the grid, and the side it leaves the part on. */
 export type Terminal = { key: string; i: number; j: number; side: number };
 
+/** A wire may only join wires whose `rank` isn't higher, so the wire it joins is always drawn with it. */
 export type Connection = {
 	start: Terminal;
 	target: { type: 'pin'; terminal: Terminal } | { type: 'rail'; rail: number };
+	rank: number;
 };
 
 /**
@@ -36,8 +38,8 @@ export type Board = {
 	railEnd: number;
 };
 
-/** `cells` holds the path's ends and corners. An end that isn't at a pin joins a wire of that pin. */
-export type GridPath = { cells: Point[]; fromPin: boolean; toPin: boolean };
+/** `cells` holds the path's ends and corners. An end that isn't at a pin joins one of the `joins` wires. */
+export type GridPath = { cells: Point[]; fromPin: boolean; toPin: boolean; joins: number[] };
 
 const FREE = 0;
 const ALONG_X = 1;
@@ -207,10 +209,11 @@ export function routeGrid(board: Board, connections: (Connection | undefined)[])
 		};
 	};
 
-	const joinable = (grid: Grid, n: number, key: string) =>
+	const joinable = (grid: Grid, n: number, key: string, rank: number) =>
 		(grid.state[n] === ALONG_X || grid.state[n] === ALONG_Y) &&
 		grid.wireAt[n] >= 0 &&
-		keysOf(grid.wireAt[n]).includes(key);
+		keysOf(grid.wireAt[n]).includes(key) &&
+		(connections[grid.wireAt[n]]?.rank ?? Infinity) <= rank;
 
 	const cost = new Float64Array(nodeCount * CODES);
 	const prev = new Int32Array(nodeCount * CODES);
@@ -218,11 +221,11 @@ export function routeGrid(board: Board, connections: (Connection | undefined)[])
 
 	const search = (grid: Grid, connection: Connection) => {
 		const { state, reserved, railOf, used } = grid;
-		const { start, target } = connection;
+		const { start, target, rank } = connection;
 		const targetKey = target.type === 'pin' ? target.terminal.key : undefined;
 
 		const joins = (key: string) =>
-			(grid.joints.get(key) ?? []).filter((n) => joinable(grid, n, key));
+			(grid.joints.get(key) ?? []).filter((n) => joinable(grid, n, key, rank));
 
 		const goals =
 			target.type === 'pin' ? [terminalNode(target.terminal), ...joins(target.terminal.key)] : [];
@@ -245,7 +248,7 @@ export function routeGrid(board: Board, connections: (Connection | undefined)[])
 
 			if (n === terminalNode(target.terminal)) return true;
 
-			return joinable(grid, n, target.terminal.key) && (state[n] & axisBit(side)) === 0;
+			return joinable(grid, n, target.terminal.key, rank) && (state[n] & axisBit(side)) === 0;
 		};
 
 		const enterable = (n: number) =>
@@ -358,7 +361,7 @@ export function routeGrid(board: Board, connections: (Connection | undefined)[])
 		});
 	};
 
-	const toPath = (states: number[], connection: Connection): GridPath => {
+	const toPath = (grid: Grid, states: number[], connection: Connection): GridPath => {
 		const cells = states.flatMap((current, index) => {
 			const following = states[index + 1];
 			const n = Math.floor(current / CODES);
@@ -369,12 +372,20 @@ export function routeGrid(board: Board, connections: (Connection | undefined)[])
 			return isCorner ? [{ x: column(n), y: row(n) }] : [];
 		});
 
+		const first = Math.floor(states[0] / CODES);
 		const last = Math.floor((states.at(-1) ?? 0) / CODES);
+		const { target } = connection;
+		const fromPin = states[0] % CODES === FROM_PIN;
+		const toPin = target.type === 'pin' && last === terminalNode(target.terminal);
 
 		return {
 			cells,
-			fromPin: states[0] % CODES === FROM_PIN,
-			toPin: connection.target.type === 'pin' && last === terminalNode(connection.target.terminal)
+			fromPin,
+			toPin,
+			joins: [
+				...(fromPin ? [] : [grid.wireAt[first]]),
+				...(target.type === 'rail' || toPin ? [] : [grid.wireAt[last]])
+			]
 		};
 	};
 
@@ -410,8 +421,8 @@ export function routeGrid(board: Board, connections: (Connection | undefined)[])
 
 			if (!states) continue;
 
+			found.set(index, toPath(grid, states, connection));
 			commit(grid, states, index);
-			found.set(index, toPath(states, connection));
 		}
 
 		const failed = order.filter((index) => grid.claimed[index] && !found.has(index));

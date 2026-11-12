@@ -51,9 +51,14 @@ const spec = parseWiring(
 				wires: [
 					{ from: 'mcu.D2', to: 'sonar.TRIG' },
 					{ from: 'mcu.D3', to: 'sonar.ECHO' },
-					{ from: 'mcu.D4', to: 'led.A' },
-					{ from: 'led.K', to: 'GND' },
 					{ from: 'buck.IN+', to: 'led.A' }
+				]
+			},
+			{
+				title: 'LED',
+				wires: [
+					{ from: 'mcu.D4', to: 'led.A' },
+					{ from: 'led.K', to: 'GND' }
 				]
 			}
 		]
@@ -61,7 +66,7 @@ const spec = parseWiring(
 );
 
 describe('layoutWiring', () => {
-	it('routes every wire on its own grid lanes, clear of every part', () => {
+	it('routes every wire on its own grid lanes, clear of every part, joining only wires drawn with it', () => {
 		if ('error' in spec) throw new Error(spec.error);
 
 		const geometry = new Map(
@@ -81,6 +86,11 @@ describe('layoutWiring', () => {
 			for (const wire of wires) {
 				const route = layout.routes.get(wire.key);
 				expect(route?.overlaps).toBe(false);
+
+				for (const joined of route?.joins ?? []) {
+					expect(wires.find((other) => other.key === joined)?.step).toBeLessThanOrEqual(wire.step);
+				}
+
 				const points = route?.points ?? [];
 
 				points.forEach((point, index) => {

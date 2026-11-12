@@ -151,9 +151,17 @@ function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
 	const isCurrent = (wire: ResolvedWire) =>
 		focus ? touchesFocus(wire) : step === 'all' || wire.step === step;
 
-	const shown = wires.filter((wire) =>
-		focus ? touchesFocus(wire) : step === 'all' || wire.step <= step
+	const shownKeys = new Set(
+		wires
+			.filter((wire) => (focus ? touchesFocus(wire) : step === 'all' || wire.step <= step))
+			.map((wire) => wire.key)
 	);
+
+	for (const key of shownKeys) {
+		for (const joined of layout?.routes.get(key)?.joins ?? []) shownKeys.add(joined);
+	}
+
+	const shown = wires.filter((wire) => shownKeys.has(wire.key));
 
 	const rows = shown.filter(isCurrent);
 	const hovered = wires.find((wire) => wire.key === hover);
@@ -329,12 +337,18 @@ function PartView({
 		if (!tag || !element) return;
 
 		let active = true;
-		void Promise.resolve(element.updateComplete).then(() => {
-			if (active) onMeasureRef.current(wokwiGeometry(element));
+
+		const observer = new ResizeObserver(() => {
+			void Promise.resolve(element.updateComplete).then(() => {
+				if (active && element.offsetWidth > 0) onMeasureRef.current(wokwiGeometry(element));
+			});
 		});
+
+		observer.observe(element);
 
 		return () => {
 			active = false;
+			observer.disconnect();
 		};
 	}, [tag]);
 
