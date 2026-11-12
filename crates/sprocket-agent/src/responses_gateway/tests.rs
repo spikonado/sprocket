@@ -79,6 +79,13 @@ fn opencode_go_requests_carry_the_thread_as_session() {
 }
 
 #[test]
+fn morph_requests_carry_the_thread_as_session_without_asking_for_ciphertext() {
+    let (headers, body) = encode(ResponsesGateway::Morph);
+    assert_eq!(headers["x-session-id"], "thread-1");
+    assert!(body.get("include").is_none());
+}
+
+#[test]
 fn gateway_reasoning_events_take_their_spec_types() {
     let frame = spec_reasoning_event(WireFrame::Text(
         json!({"type": "response.reasoning.delta", "delta": "plan"}).to_string(),

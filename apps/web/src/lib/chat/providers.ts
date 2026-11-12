@@ -11,7 +11,8 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	openrouter: 'OpenRouter',
 	opencode: 'OpenCode',
 	'opencode-go': 'OpenCode Go',
-	muse: 'Muse Code Subscription'
+	muse: 'Muse Code Subscription',
+	morph: 'Morph'
 };
 
 export function reorderShownProviders(

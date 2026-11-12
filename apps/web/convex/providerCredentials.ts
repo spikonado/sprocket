@@ -19,7 +19,8 @@ const apiKeyProviderIds = [
 	'vercel',
 	'openrouter',
 	'opencode',
-	'opencode-go'
+	'opencode-go',
+	'morph'
 ] as const;
 
 type ApiKeyProvider = (typeof apiKeyProviderIds)[number];
@@ -67,6 +68,12 @@ const apiKeyProviders: Record<
 		label: 'OpenCode Go',
 		validationUrl: 'https://opencode.ai/inference/go/v1/models',
 		headers: bearer
+	},
+	morph: {
+		label: 'Morph',
+		// `/v1/models` accepts any `sk-` key.
+		validationUrl: 'https://api.morphllm.com/api/v1/dedicated/endpoints',
+		headers: bearer
 	}
 };
 
@@ -97,24 +104,27 @@ export const getMyConfiguration = action({
 		vercel: v.boolean(),
 		openrouter: v.boolean(),
 		opencode: v.boolean(),
-		opencodeGo: v.boolean()
+		opencodeGo: v.boolean(),
+		morph: v.boolean()
 	}),
 	handler: async (ctx) => {
-		const [openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo] = await Promise.all(
-			(
-				[
-					'openai',
-					'claude',
-					'anthropic',
-					'vercel',
-					'openrouter',
-					'opencode',
-					'opencode-go'
-				] as const
-			).map((provider) => isConfigured(ctx, provider))
-		);
+		const [openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo, morph] =
+			await Promise.all(
+				(
+					[
+						'openai',
+						'claude',
+						'anthropic',
+						'vercel',
+						'openrouter',
+						'opencode',
+						'opencode-go',
+						'morph'
+					] as const
+				).map((provider) => isConfigured(ctx, provider))
+			);
 
-		return { openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo };
+		return { openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo, morph };
 	}
 });
 

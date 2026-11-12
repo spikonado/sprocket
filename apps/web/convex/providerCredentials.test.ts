@@ -83,6 +83,11 @@ describe('provider credentials', () => {
 			provider: 'opencode-go',
 			url: 'https://opencode.ai/inference/go/v1/models',
 			headers: { authorization: 'Bearer sk-user' }
+		},
+		{
+			provider: 'morph',
+			url: 'https://api.morphllm.com/api/v1/dedicated/endpoints',
+			headers: { authorization: 'Bearer sk-user' }
 		}
 	] as const)('validates and stores a $provider key without returning it', async (expected) => {
 		const t = initConvexTest();
@@ -248,7 +253,8 @@ describe('provider credentials', () => {
 			vercel: false,
 			openrouter: false,
 			opencode: false,
-			opencodeGo: false
+			opencodeGo: false,
+			morph: false
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
@@ -290,7 +296,8 @@ describe('provider credentials', () => {
 			vercel: false,
 			openrouter: false,
 			opencode: false,
-			opencodeGo: false
+			opencodeGo: false,
+			morph: false
 		});
 
 		stubVaultFetch(new Map());
@@ -306,7 +313,8 @@ describe('provider credentials', () => {
 			vercel: false,
 			openrouter: true,
 			opencode: false,
-			opencodeGo: false
+			opencodeGo: false,
+			morph: false
 		});
 	});
 });

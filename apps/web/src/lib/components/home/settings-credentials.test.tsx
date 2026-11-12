@@ -13,7 +13,8 @@ const noApiKeysSaved = {
 	vercel: false,
 	openrouter: false,
 	opencode: false,
-	'opencode-go': false
+	'opencode-go': false,
+	morph: false
 };
 
 const loginWindow = {

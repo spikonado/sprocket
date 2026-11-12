@@ -27,10 +27,11 @@ pub enum CompletionProvider {
     Openrouter,
     Opencode,
     Muse,
+    Morph,
 }
 
 impl CompletionProvider {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Spikonado,
         Self::Openai,
         Self::Chatgpt,
@@ -41,6 +42,7 @@ impl CompletionProvider {
         Self::Openrouter,
         Self::Opencode,
         Self::Muse,
+        Self::Morph,
     ];
 
     /// The `knownProviders` argument, so Convex leaves out providers this build can't parse.
@@ -67,6 +69,7 @@ impl CompletionProvider {
             Self::Openrouter => "openrouter",
             Self::Opencode => "opencode",
             Self::OpencodeGo => "opencode-go",
+            Self::Morph => "morph",
         };
         route
             .provider_model_ids
@@ -84,7 +87,8 @@ impl CompletionProvider {
             | Self::Vercel
             | Self::Openrouter
             | Self::Opencode
-            | Self::Muse => None,
+            | Self::Muse
+            | Self::Morph => None,
         }
     }
 
@@ -100,6 +104,7 @@ impl CompletionProvider {
             Self::Openrouter => "openrouter",
             Self::Opencode => "opencode",
             Self::Muse => "muse",
+            Self::Morph => "morph",
         }
     }
 }
