@@ -9,6 +9,12 @@ import {
 import { ArrowLeft, Folder, LoaderCircle, X } from 'lucide-react';
 import type { LocalApi, FilesystemBrowseEntry, RepositoryVisibility } from '$lib/types/sprocket';
 import {
+	BackButton,
+	RepositoryForm,
+	SourceChooser,
+	type ProjectSource
+} from './project-picker-steps';
+import {
 	getBrowseLeafPathSegment,
 	isFilesystemBrowseQuery,
 	isWindowsVolumeListQuery,
@@ -30,25 +36,7 @@ type ProjectPickerLocalApi = Pick<
 
 type PickerError = { source: 'browse' | 'submit'; message: string };
 
-type ProjectSource = 'folder' | 'clone' | 'create';
-
-const projectSources: { id: ProjectSource; label: string }[] = [
-	{ id: 'folder', label: 'Open folder' },
-	{ id: 'clone', label: 'Clone repo' },
-	{ id: 'create', label: 'New GitHub repo' }
-];
-
-const visibilityOptions: { id: RepositoryVisibility; label: string }[] = [
-	{ id: 'private', label: 'Private' },
-	{ id: 'public', label: 'Public' }
-];
-
-const segmentClass = (active: boolean) =>
-	`rounded-md px-2.5 py-1 text-sm transition ${
-		active
-			? 'text-foreground bg-hover-fill-strong'
-			: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
-	}`;
+type Stage = 'choose' | 'repository' | 'location';
 
 export type ProjectSelection = {
 	workspacePath: string;
@@ -87,13 +75,13 @@ export default function ProjectPicker({
 	const [error, setError] = useState<PickerError | null>(null);
 	const [browseQuery, setBrowseQuery] = useState<string | null>(null);
 	const [opened, setOpened] = useState(false);
+	const [stage, setStage] = useState<Stage>(mode === 'reconnect' ? 'location' : 'choose');
 	const [source, setSource] = useState<ProjectSource>('folder');
 	const [repository, setRepository] = useState('');
 	const [visibility, setVisibility] = useState<RepositoryVisibility>('private');
 	const queryRef = useRef('~/');
 	const volumeListRef = useRef(false);
 	const pathInputRef = useRef<HTMLInputElement | null>(null);
-	const repositoryInputRef = useRef<HTMLInputElement | null>(null);
 	const directoryListRef = useRef<HTMLDivElement | null>(null);
 	const browseRequestIdRef = useRef(0);
 	const submissionRef = useRef(0);
@@ -209,8 +197,7 @@ export default function ProjectPicker({
 		!volumeList &&
 		error?.source !== 'browse' &&
 		resolvedWorkspacePath.length > 0 &&
-		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0) &&
-		(source === 'folder' || (userId !== null && repository.trim().length > 0));
+		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0);
 
 	const submitLabel =
 		mode === 'reconnect'
@@ -222,6 +209,13 @@ export default function ProjectPicker({
 					: willCreateDirectory
 						? 'Create & add'
 						: 'Add';
+
+	const locationPrompt =
+		source === 'clone'
+			? `Pick where to clone ${repository.trim()}. It gets its own new folder here.`
+			: source === 'create'
+				? `Pick where to put ${repository.trim()}. The ${visibility} repo is created on GitHub and cloned into a new folder here.`
+				: 'Pick a folder to add.';
 
 	const parentEntry = currentBrowseEntries.find((entry) => entry.name === '..');
 
@@ -285,23 +279,30 @@ export default function ProjectPicker({
 		setHighlightedPath(null);
 		setError(null);
 		setIsSubmitting(false);
+		setStage(mode === 'reconnect' ? 'location' : 'choose');
 		setSource('folder');
 		setRepository('');
 		setVisibility('private');
 		setVolumeListState(false);
 		setBrowseQuery(null);
 		void loadBrowse('~/');
-	}, [open, opened, loadBrowse, setQuery, setVolumeListState]);
+	}, [open, opened, mode, loadBrowse, setQuery, setVolumeListState]);
 
 	useEffect(() => {
-		if (opened) {
+		if (opened && stage === 'location') {
 			pathInputRef.current?.focus();
 		}
-	}, [opened]);
+	}, [opened, stage]);
 
-	useEffect(() => {
-		repositoryInputRef.current?.focus();
-	}, [source]);
+	function chooseSource(next: ProjectSource) {
+		setSource(next);
+		setStage(next === 'folder' ? 'location' : 'repository');
+	}
+
+	function leaveLocation() {
+		setError(null);
+		setStage(source === 'folder' ? 'choose' : 'repository');
+	}
 
 	useEffect(
 		() => () => {
@@ -481,6 +482,10 @@ export default function ProjectPicker({
 			return;
 		}
 
+		if (stage !== 'location') {
+			return;
+		}
+
 		if (event.target instanceof Element && event.target.closest('button:not([role="option"])')) {
 			return;
 		}
@@ -488,15 +493,6 @@ export default function ProjectPicker({
 		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSubmit && !isSubmitting) {
 			event.preventDefault();
 			void confirmSelection();
-
-			return;
-		}
-
-		if (event.target === repositoryInputRef.current) {
-			if (event.key === 'Enter' && canSubmit && !isSubmitting) {
-				event.preventDefault();
-				void confirmSelection();
-			}
 
 			return;
 		}
@@ -544,218 +540,189 @@ export default function ProjectPicker({
 			}}
 		>
 			<div
-				className="border-border bg-popover text-foreground flex h-[min(34rem,80dvh)] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-[1.4rem] border shadow-2xl"
+				className={`border-border bg-popover text-foreground flex w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-[1.4rem] border shadow-2xl ${
+					stage === 'location' ? 'h-[min(34rem,80dvh)]' : ''
+				}`}
 				role="dialog"
 				aria-modal="true"
 				aria-label={mode === 'reconnect' ? 'Reconnect project' : 'Add project'}
 				tabIndex={-1}
 				onKeyDown={handleDialogKeydown}
 			>
-				<header className="flex-none px-4 pt-3 pb-2">
-					<div className="flex min-h-10 items-center gap-1.5">
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground hover:bg-hover-fill flex size-8 shrink-0 items-center justify-center rounded-lg transition disabled:pointer-events-none disabled:opacity-30"
-							aria-label="Go to parent directory"
-							disabled={!parentEntry || isLoadingBrowse}
-							onClick={navigateBack}
-						>
-							<ArrowLeft className="size-4" strokeWidth={2} />
-						</button>
-						<input
-							className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent py-2 text-base outline-none"
-							ref={pathInputRef}
-							value={query}
-							onChange={(event) => setQuery(event.currentTarget.value)}
-							placeholder="Enter a project path"
-							aria-label="Project directory path"
-							aria-controls="project-picker-directories"
-							aria-activedescendant={
-								highlightedEntryIndex < 0
-									? undefined
-									: `project-picker-directory-${highlightedEntryIndex}`
-							}
-							aria-autocomplete="list"
-							aria-expanded="true"
-							role="combobox"
-							autoComplete="off"
-							spellCheck={false}
-						/>
-						{isLoadingBrowse && (
-							<LoaderCircle className="text-muted-foreground pointer-events-none size-4 shrink-0 animate-spin" />
-						)}
-						<button
-							type="button"
-							className="border-border text-foreground bg-hover-fill hover:bg-hover-fill-strong flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm transition disabled:cursor-not-allowed disabled:opacity-40"
-							data-project-submit
-							disabled={!canSubmit || isSubmitting}
-							onClick={() => {
-								void confirmSelection();
-							}}
-						>
-							<span>{isSubmitting ? 'Working…' : submitLabel}</span>
-							{!isSubmitting && (
-								<kbd className="text-muted-foreground font-sans text-xs">Ctrl Enter</kbd>
-							)}
-						</button>
-					</div>
-					{mode === 'reconnect' && expectedDisplayName && (
-						<p className="text-muted-foreground px-9 pb-1 text-xs">
-							Reconnect <span className="text-muted-foreground">{expectedDisplayName}</span> to a
-							local directory
-						</p>
-					)}
-					{mode === 'add' && (
-						<div className="flex flex-col gap-2 px-9 pb-1">
-							<div className="flex flex-wrap gap-1" role="group" aria-label="Project source">
-								{projectSources.map(({ id, label }) => (
-									<button
-										key={id}
-										type="button"
-										className={segmentClass(source === id)}
-										aria-pressed={source === id}
-										onClick={() => {
-											setSource(id);
-											setError(null);
-										}}
-									>
-										{label}
-									</button>
-								))}
+				{stage === 'choose' && <SourceChooser onChoose={chooseSource} />}
+				{stage === 'repository' && source !== 'folder' && (
+					<RepositoryForm
+						source={source}
+						repository={repository}
+						visibility={visibility}
+						signedIn={userId !== null}
+						onRepositoryChange={setRepository}
+						onVisibilityChange={setVisibility}
+						onBack={() => setStage('choose')}
+						onNext={() => setStage('location')}
+					/>
+				)}
+				{stage === 'location' && (
+					<>
+						{mode === 'add' && (
+							<div className="flex flex-none items-center gap-2 px-4 pt-3">
+								<BackButton onClick={leaveLocation} />
+								<p className="text-muted-foreground min-w-0 truncate text-sm">{locationPrompt}</p>
 							</div>
-							{source !== 'folder' && (
-								<div className="flex flex-wrap items-center gap-2">
-									<input
-										ref={repositoryInputRef}
-										className="border-border text-foreground placeholder:text-muted-foreground min-w-0 flex-1 rounded-lg border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-										value={repository}
-										onChange={(event) => setRepository(event.currentTarget.value)}
-										placeholder={source === 'clone' ? 'owner/repo or git URL' : 'Repository name'}
-										aria-label={source === 'clone' ? 'Repository to clone' : 'Repository name'}
-										autoComplete="off"
-										spellCheck={false}
-									/>
-									{source === 'create' && (
-										<div className="flex gap-1" role="group" aria-label="Visibility">
-											{visibilityOptions.map(({ id, label }) => (
-												<button
-													key={id}
-													type="button"
-													className={segmentClass(visibility === id)}
-													aria-pressed={visibility === id}
-													onClick={() => setVisibility(id)}
-												>
-													{label}
-												</button>
-											))}
-										</div>
-									)}
-									<p className="text-muted-foreground w-full text-xs">
-										{userId === null
-											? 'Sign in to use GitHub.'
-											: `Clones into a new directory in ${resolvedWorkspacePath || 'the chosen location'}`}
-									</p>
-								</div>
-							)}
-						</div>
-					)}
-				</header>
-
-				{recentProjectPaths.length > 0 && (
-					<div className="border-hairline flex flex-wrap gap-1.5 border-b px-5 py-2">
-						{recentProjectPaths.map((recent) => (
-							<div key={recent.workspacePath} className="flex items-center rounded-md">
+						)}
+						<header className="flex-none px-4 pt-3 pb-2">
+							<div className="flex min-h-10 items-center gap-1.5">
 								<button
 									type="button"
-									className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md px-2 py-0.5 text-[11px] transition"
+									className="text-muted-foreground hover:text-foreground hover:bg-hover-fill flex size-8 shrink-0 items-center justify-center rounded-lg transition disabled:pointer-events-none disabled:opacity-30"
+									aria-label="Go to parent directory"
+									disabled={!parentEntry || isLoadingBrowse}
+									onClick={navigateBack}
+								>
+									<ArrowLeft className="size-4" strokeWidth={2} />
+								</button>
+								<input
+									className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent py-2 text-base outline-none"
+									ref={pathInputRef}
+									value={query}
+									onChange={(event) => setQuery(event.currentTarget.value)}
+									placeholder="Enter a project path"
+									aria-label="Project directory path"
+									aria-controls="project-picker-directories"
+									aria-activedescendant={
+										highlightedEntryIndex < 0
+											? undefined
+											: `project-picker-directory-${highlightedEntryIndex}`
+									}
+									aria-autocomplete="list"
+									aria-expanded="true"
+									role="combobox"
+									autoComplete="off"
+									spellCheck={false}
+								/>
+								{isLoadingBrowse && (
+									<LoaderCircle className="text-muted-foreground pointer-events-none size-4 shrink-0 animate-spin" />
+								)}
+								<button
+									type="button"
+									className="border-border text-foreground bg-hover-fill hover:bg-hover-fill-strong flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm transition disabled:cursor-not-allowed disabled:opacity-40"
+									data-project-submit
+									disabled={!canSubmit || isSubmitting}
 									onClick={() => {
-										selectRecentProjectPath(recent);
+										void confirmSelection();
 									}}
 								>
-									{recent.displayName}
+									<span>{isSubmitting ? 'Working…' : submitLabel}</span>
+									{!isSubmitting && (
+										<kbd className="text-muted-foreground font-sans text-xs">Ctrl Enter</kbd>
+									)}
 								</button>
-								{onRemoveProject && (
-									<button
-										type="button"
-										className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md p-1 transition"
-										aria-label={`Remove ${recent.displayName} from project list`}
-										title={`Remove ${recent.workspacePath} from project list`}
-										disabled={isSubmitting}
-										onClick={() => onRemoveProject(recent)}
-									>
-										<X className="size-3" />
-									</button>
-								)}
 							</div>
-						))}
-					</div>
+							{mode === 'reconnect' && expectedDisplayName && (
+								<p className="text-muted-foreground px-9 pb-1 text-xs">
+									Reconnect <span className="text-muted-foreground">{expectedDisplayName}</span> to
+									a local directory
+								</p>
+							)}
+						</header>
+
+						{recentProjectPaths.length > 0 && (
+							<div className="border-hairline flex flex-wrap gap-1.5 border-b px-5 py-2">
+								{recentProjectPaths.map((recent) => (
+									<div key={recent.workspacePath} className="flex items-center rounded-md">
+										<button
+											type="button"
+											className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md px-2 py-0.5 text-[11px] transition"
+											onClick={() => {
+												selectRecentProjectPath(recent);
+											}}
+										>
+											{recent.displayName}
+										</button>
+										{onRemoveProject && (
+											<button
+												type="button"
+												className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md p-1 transition"
+												aria-label={`Remove ${recent.displayName} from project list`}
+												title={`Remove ${recent.workspacePath} from project list`}
+												disabled={isSubmitting}
+												onClick={() => onRemoveProject(recent)}
+											>
+												<X className="size-3" />
+											</button>
+										)}
+									</div>
+								))}
+							</div>
+						)}
+
+						<div className="text-muted-foreground flex-none px-6 pt-3 pb-1 text-sm">
+							{source === 'folder' ? 'Directories' : 'Location'}
+						</div>
+						<div
+							id="project-picker-directories"
+							className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+							ref={directoryListRef}
+							role="listbox"
+							aria-label="Directories"
+							aria-busy={isLoadingBrowse}
+						>
+							{displayedEntries.length === 0 ? (
+								<p className="text-muted-foreground px-3 py-8 text-center text-sm">
+									{emptyListMessage}
+								</p>
+							) : (
+								displayedEntries.map((entry, index) => (
+									<button
+										key={entry.fullPath}
+										id={`project-picker-directory-${index}`}
+										type="button"
+										className={`flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-base transition ${
+											highlightedPath === entry.fullPath
+												? 'text-foreground bg-hover-fill-strong'
+												: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
+										}`}
+										role="option"
+										aria-selected={highlightedPath === entry.fullPath}
+										onClick={() => {
+											selectEntry(entry);
+										}}
+										onPointerMove={() => {
+											setHighlightedPath(entry.fullPath);
+										}}
+									>
+										<Folder className="text-muted-foreground size-5 shrink-0" strokeWidth={1.8} />
+										<span className="truncate">{entry.name}</span>
+									</button>
+								))
+							)}
+						</div>
+
+						{error && (
+							<p className="text-destructive border-t border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm">
+								{error.message}
+							</p>
+						)}
+
+						<footer className="text-muted-foreground border-hairline flex-none border-t px-5 py-3 text-sm">
+							<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+								<span className="flex items-center gap-1.5">
+									<kbd className="shortcut-key">↑</kbd>
+									<kbd className="shortcut-key">↓</kbd> Navigate
+								</span>
+								<span className="flex items-center gap-1.5">
+									<kbd className="shortcut-key">Enter</kbd> Select
+								</span>
+								<span className="flex items-center gap-1.5">
+									<kbd className="shortcut-key">Backspace</kbd> Back
+								</span>
+								<span className="flex items-center gap-1.5">
+									<kbd className="shortcut-key">Esc</kbd> Close
+								</span>
+							</div>
+						</footer>
+					</>
 				)}
-
-				<div className="text-muted-foreground flex-none px-6 pt-3 pb-1 text-sm">
-					{source === 'folder' ? 'Directories' : 'Location'}
-				</div>
-				<div
-					id="project-picker-directories"
-					className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
-					ref={directoryListRef}
-					role="listbox"
-					aria-label="Directories"
-					aria-busy={isLoadingBrowse}
-				>
-					{displayedEntries.length === 0 ? (
-						<p className="text-muted-foreground px-3 py-8 text-center text-sm">
-							{emptyListMessage}
-						</p>
-					) : (
-						displayedEntries.map((entry, index) => (
-							<button
-								key={entry.fullPath}
-								id={`project-picker-directory-${index}`}
-								type="button"
-								className={`flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-base transition ${
-									highlightedPath === entry.fullPath
-										? 'text-foreground bg-hover-fill-strong'
-										: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
-								}`}
-								role="option"
-								aria-selected={highlightedPath === entry.fullPath}
-								onClick={() => {
-									selectEntry(entry);
-								}}
-								onPointerMove={() => {
-									setHighlightedPath(entry.fullPath);
-								}}
-							>
-								<Folder className="text-muted-foreground size-5 shrink-0" strokeWidth={1.8} />
-								<span className="truncate">{entry.name}</span>
-							</button>
-						))
-					)}
-				</div>
-
-				{error && (
-					<p className="text-destructive border-t border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm">
-						{error.message}
-					</p>
-				)}
-
-				<footer className="text-muted-foreground border-hairline flex-none border-t px-5 py-3 text-sm">
-					<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-						<span className="flex items-center gap-1.5">
-							<kbd className="shortcut-key">↑</kbd>
-							<kbd className="shortcut-key">↓</kbd> Navigate
-						</span>
-						<span className="flex items-center gap-1.5">
-							<kbd className="shortcut-key">Enter</kbd> Select
-						</span>
-						<span className="flex items-center gap-1.5">
-							<kbd className="shortcut-key">Backspace</kbd> Back
-						</span>
-						<span className="flex items-center gap-1.5">
-							<kbd className="shortcut-key">Esc</kbd> Close
-						</span>
-					</div>
-				</footer>
 			</div>
 		</div>
 	);

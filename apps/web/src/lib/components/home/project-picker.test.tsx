@@ -1,5 +1,5 @@
 import { act, type ComponentProps } from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import ProjectPicker from './project-picker';
@@ -67,8 +67,12 @@ type PickerProps = ComponentProps<typeof ProjectPicker>;
 
 function renderPicker({
 	localApi,
+	source = 'Local folder',
 	...overrides
-}: Omit<Partial<PickerProps>, 'localApi'> & { localApi?: Partial<PickerProps['localApi']> } = {}) {
+}: Omit<Partial<PickerProps>, 'localApi'> & {
+	localApi?: Partial<PickerProps['localApi']>;
+	source?: 'Local folder' | 'Clone a repo' | 'New GitHub repo';
+} = {}) {
 	const api = createLocalApi();
 
 	const props: PickerProps = {
@@ -81,6 +85,10 @@ function renderPicker({
 	};
 
 	render(<ProjectPicker {...props} />);
+
+	if (props.mode !== 'reconnect') {
+		fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${source}`) }));
+	}
 
 	return { ...api, props };
 }
@@ -458,11 +466,11 @@ describe('ProjectPicker', () => {
 
 	it('clones a repository into the browsed directory', async () => {
 		const user = userEvent.setup();
-		const { cloneRepository, props } = renderPicker();
-		await waitForDirectories();
+		const { cloneRepository, props } = renderPicker({ source: 'Clone a repo' });
 
-		await user.click(document.querySelectorAll('[aria-label="Project source"] button')[1]!);
 		await user.keyboard('octo/hello{Enter}');
+		await waitForDirectories();
+		await user.keyboard('{Control>}{Enter}{/Control}');
 
 		await waitFor(() => {
 			expect(cloneRepository).toHaveBeenCalledWith({
@@ -495,11 +503,11 @@ describe('ProjectPicker', () => {
 				})
 		);
 
-		const { props } = renderPicker({ localApi: { cloneRepository } });
-		await waitForDirectories();
+		const { props } = renderPicker({ localApi: { cloneRepository }, source: 'Clone a repo' });
 
-		await user.click(document.querySelectorAll('[aria-label="Project source"] button')[1]!);
 		await user.keyboard('octo/hello{Enter}');
+		await waitForDirectories();
+		await user.keyboard('{Control>}{Enter}{/Control}');
 		await waitFor(() => expect(cloneRepository).toHaveBeenCalled());
 		await user.keyboard('{Escape}');
 		await act(async () => finishClone());
@@ -510,12 +518,12 @@ describe('ProjectPicker', () => {
 
 	it('creates a public GitHub repository from its name', async () => {
 		const user = userEvent.setup();
-		const { createGitHubRepository } = renderPicker();
-		await waitForDirectories();
+		const { createGitHubRepository } = renderPicker({ source: 'New GitHub repo' });
 
-		await user.click(document.querySelectorAll('[aria-label="Project source"] button')[2]!);
 		await user.keyboard('hello');
-		await user.click(document.querySelectorAll('[aria-label="Visibility"] button')[1]!);
+		await user.click(screen.getByRole('radio', { name: /^Public/ }));
+		await user.click(screen.getByRole('button', { name: 'Choose folder' }));
+		await waitForDirectories();
 		await user.click(document.querySelector('[data-project-submit]')!);
 
 		await waitFor(() =>

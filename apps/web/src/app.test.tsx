@@ -434,6 +434,7 @@ it('removes a project without waiting for uploads and restores the draft text wh
 
 	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
 	const picker = screen.getByRole('dialog', { name: 'Add project' });
+	fireEvent.click(within(picker).getByRole('button', { name: /^Local folder/ }));
 	fireEvent.change(within(picker).getByRole('combobox'), {
 		target: { value: alpha.workspacePath }
 	});
@@ -589,6 +590,7 @@ it('shares local message recency across the project menus and recent directories
 	).toEqual(['All projects', 'Beta', 'Gamma', 'Alpha', 'Add project']);
 	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
 	const dialog = await screen.findByRole('dialog');
+	fireEvent.click(within(dialog).getByRole('button', { name: /^Local folder/ }));
 
 	const recents = within(dialog)
 		.getAllByRole('button')
