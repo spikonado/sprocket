@@ -52,6 +52,7 @@ struct RawDocumentTransport {
 #[derive(Debug)]
 enum LocalResource {
     Image(serde_json::Value),
+    Markdown(serde_json::Value),
     Document(WebDocument),
     UnreadableDocument,
     Page,
@@ -66,6 +67,7 @@ struct WebDocument {
 
 enum Probe {
     Image(reqwest::Url),
+    Markdown(reqwest::Url),
     Document(reqwest::Url),
     Unknown(reqwest::Url),
     Page,
@@ -146,6 +148,9 @@ impl rig::tool::Tool for ScrapeUrlTool {
                 };
                 let document = match local {
                     LocalResource::Image(metadata) => return Ok(metadata),
+                    LocalResource::Markdown(result) => {
+                        return super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error);
+                    }
                     LocalResource::Document(document) => Some(document),
                     LocalResource::UnreadableDocument => fetch_raw_document(&self.0, &job_id, &cancellation).await?,
                     LocalResource::Page => {
@@ -260,6 +265,12 @@ async fn fetch_local_resource(
                 .map(LocalResource::Image)
         }
         Probe::Document(document_url) => download_document(&client, document_url, true).await,
+        Probe::Markdown(markdown_url) => Ok(
+            match super::markdown_url::fetch_markdown(markdown_url, MAX_SCRAPE_BYTES).await {
+                Ok(result) => LocalResource::Markdown(result),
+                Err(_) => LocalResource::Page,
+            },
+        ),
         Probe::Unknown(unknown_url) => download_document(&client, unknown_url, false).await,
         Probe::Page => Ok(LocalResource::Page),
     }
@@ -301,12 +312,22 @@ async fn download_image(
 
 async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
     // HEAD avoids consuming a single-use page before the cloud scraper's GET.
-    let head = client.head(url.clone()).send().await.ok();
+    // Asking for markdown lets sites that negotiate it skip the cloud scraper.
+    let head = client
+        .head(url.clone())
+        .header(
+            reqwest::header::ACCEPT,
+            super::markdown_url::MARKDOWN_ACCEPT,
+        )
+        .send()
+        .await
+        .ok();
     let (url, media_type) = match head.filter(|response| response.status().is_success()) {
         Some(response) => (response.url().clone(), media_type(response.headers())),
         None => (url, String::new()),
     };
     match media_type.as_str() {
+        "text/markdown" | "text/x-markdown" => Probe::Markdown(url),
         "text/html" | "application/xhtml+xml" => Probe::Page,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp" => Probe::Image(url),
         "" | "application/octet-stream" if has_image_extension(&url) => Probe::Image(url),
@@ -317,6 +338,7 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
         {
             Probe::Document(url)
         }
+        "text/plain" => Probe::Markdown(url),
         _ if has_html_extension(&url) => Probe::Page,
         _ => Probe::Unknown(url),
     }

@@ -213,6 +213,42 @@ async fn image_extension_handles_generic_content_types() {
 }
 
 #[tokio::test]
+async fn negotiated_markdown_is_read_locally() {
+    let cache = tempfile::tempdir().unwrap();
+    for content_type in ["text/markdown; charset=utf-8", "text/plain"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = reqwest::Url::parse(&format!(
+            "http://{}/pcbnew.html",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let markdown = b"# PCB Editor\n";
+        let response = headers(content_type, markdown.len());
+        let server = tokio::spawn(async move {
+            for method in ["HEAD ", "GET "] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                let count = stream.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+                assert!(request.starts_with(&method.to_ascii_lowercase()));
+                assert!(request.contains("accept: text/markdown"));
+                stream.write_all(response.as_bytes()).await.unwrap();
+                if method == "GET " {
+                    stream.write_all(markdown).await.unwrap();
+                }
+            }
+        });
+        let LocalResource::Markdown(result) =
+            fetch_local_resource(url, true, cache.path()).await.unwrap()
+        else {
+            panic!("expected markdown");
+        };
+        assert_eq!(result["markdown"], "# PCB Editor\n");
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn unrecognized_content_is_scraped_but_text_only_models_reject_images() {
     let cache = tempfile::tempdir().unwrap();
     let url = serve("image/svg+xml", b"<svg></svg>".to_vec()).await;
