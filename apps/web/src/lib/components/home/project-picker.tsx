@@ -300,6 +300,8 @@ export default function ProjectPicker({
 	}
 
 	function leaveLocation() {
+		submissionRef.current += 1;
+		setIsSubmitting(false);
 		setError(null);
 		setStage(source === 'folder' ? 'choose' : 'repository');
 	}

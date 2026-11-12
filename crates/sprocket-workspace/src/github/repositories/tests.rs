@@ -4,6 +4,7 @@ use super::{clone_url, directory_name};
 fn clone_sources_resolve_to_url_and_directory() {
     for (source, url, directory) in [
         ("octo/hello", "https://github.com/octo/hello.git", "hello"),
+        ("../hello.git", "../hello.git", "hello"),
         (
             "octo/hello.git",
             "https://github.com/octo/hello.git",

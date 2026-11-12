@@ -117,7 +117,7 @@ async fn git_clone(target: CloneTarget<'_>, url: &str, destination: &Path) -> an
     Ok(())
 }
 
-/// Expands GitHub's `owner/name` shorthand; other sources go to git as written.
+/// Expands GitHub's `owner/name` shorthand; other sources, such as `../repo`, go to git as written.
 fn clone_url(source: &str) -> anyhow::Result<String> {
     let source = source.trim();
     if source.is_empty() {
@@ -125,7 +125,7 @@ fn clone_url(source: &str) -> anyhow::Result<String> {
     }
     let is_shorthand = !source.contains(':')
         && source.split_once('/').is_some_and(|(owner, name)| {
-            !owner.is_empty() && !name.is_empty() && !name.contains('/')
+            !owner.is_empty() && !owner.starts_with('.') && !name.is_empty() && !name.contains('/')
         });
     Ok(if is_shorthand {
         let repository = source.strip_suffix(".git").unwrap_or(source);
