@@ -1,0 +1,79 @@
+---
+title: Projects and threads
+description: Open project folders, start and manage threads, attach files, mention paths and skills, and use the side panel's artifacts, files, and browser views.
+---
+
+## Projects
+
+A project is a folder on your computer. Open one with **Add project**, which has a path field, a folder browser, and a list of recent folders. You can also open a folder from your terminal with `sprocket path/to/folder`.
+
+Sprocket identifies a project by its git `origin` remote. Every clone and worktree of the same repository shares one project and one thread list, even on different machines. A repository without an `origin` remote, or a folder outside git, is identified by its folder name, so two such folders with the same name share a project.
+
+Switch projects from the project menu. **Remove** takes a project off the list without touching its files.
+
+## Threads
+
+A thread is one conversation with the agent. The sidebar lists a project's threads in two groups:
+
+- **Unsettled** for threads you're still working on.
+- **Settled Threads** for finished ones.
+
+Open a thread's menu to settle or unsettle it, rename it, regenerate its title, move it to another project, or copy its ID. You can't settle or move a thread while it or its subagents are running. Sprocket names new threads for you unless you turn this off in [Settings](/reference/settings#general). It can also [settle threads when their pull requests merge](/use/github#pull-requests-in-threads).
+
+Threads can't be deleted.
+
+### Send messages
+
+Press Enter to send and Shift+Enter for a new line. The composer accepts new messages once the current run ends. While a run is going, you can still answer the agent's questions.
+
+Add context to a message:
+
+| To add                | Do this                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| Files                 | Click **Attach files**, drag them in, or paste them. Images show a preview.                    |
+| A file or folder path | Type `@` and pick from the workspace.                                                          |
+| A skill               | Type `$` or `/` followed by the skill name. See [Skills](/use/instructions-and-skills#skills). |
+
+### Stop and continue
+
+**Stop generation** ends the current run. Each running command also has its own **Stop command** button.
+
+If a run fails or the server restarts, **Continue working** resumes the thread. Sprocket also resumes interrupted runs by itself after a restart or crash, unless you turn this off in [Settings](/reference/settings#general).
+
+### Subagents
+
+The agent can start subagents to work on parts of a task in parallel. Each subagent is its own thread and appears under its parent in the sidebar. See [Subagents](/use/agent-tools#subagents).
+
+## Side panel
+
+The side panel has tabs that you can split right or down. It has three views:
+
+- **Artifacts** shows files the agent linked to the project, rendered. See [Artifacts](#artifacts).
+- **Files** is a file tree where you can search, create, rename, delete, and edit files. The editor asks before it discards unsaved changes.
+- **Browser** shows the browser the agent controls.
+
+### Artifacts
+
+An artifact is a project file the agent bound for you to view. Edits to the file show up in the artifact. Sprocket renders each artifact based on its file name:
+
+| File name ends with | Renders as                                                               |
+| ------------------- | ------------------------------------------------------------------------ |
+| `.html` or `.htm`   | A web page                                                               |
+| `.jsx`              | A React component                                                        |
+| `.render.json`      | A [json-render](https://json-render.dev) spec using the app's components |
+| Anything else       | Markdown                                                                 |
+
+### Rich replies
+
+Agent replies render GitHub-flavored Markdown plus:
+
+- Inline HTML and React visuals.
+- Mermaid diagrams.
+- Math with KaTeX.
+- KiCad project cards with 2D and 3D board views. See [Hardware](/use/hardware#view-designs).
+- Artifact cards.
+- Code blocks with syntax highlighting and a copy button.
+
+### Usage per thread
+
+The **AI usage** button in a thread shows what the thread and its subagents cost at direct API prices.

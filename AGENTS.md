@@ -45,6 +45,7 @@ Reliability comes from fewer moving parts. Add recovery, retries, validation, or
 - Put Rust unit tests for `foo.rs` in `foo/tests.rs`, declared as `#[cfg(test)] mod tests;`. Test-only helpers live there too, or in `foo/test_support.rs` when other modules' tests use them.
 - Before adding a Convex function, table field, or index, check whether an existing query or mutation already serves the need. Store only the state the feature needs and derive the rest.
 - Make sure that changes are made in all the layers of the app when needed.
+- User docs live in `docs/` and publish on every push to `main`. Update them in the PR that changes user-facing behavior. Mark features that aren't in a stable release with `<Snippet file="unreleased.mdx" />`, and remove the mark once they ship.
 
 ### Backwards compatibility
 

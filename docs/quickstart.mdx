@@ -1,0 +1,53 @@
+---
+title: Quickstart
+description: Install Sprocket, sign in, open a project folder, and send the agent its first task.
+---
+
+<Steps>
+  <Step title="Install Sprocket">
+    Download the desktop app for your OS from the [latest release](https://github.com/spikonado/sprocket/releases/latest) and open it.
+
+    To skip the install, run Sprocket in your browser with [Node.js](https://nodejs.org/) 20.11 or newer:
+
+    ```sh
+    npx usesprocket
+    ```
+
+    See [Install](/install) for every option.
+
+  </Step>
+  <Step title="Sign in">
+    Sign in with your Sprocket account. New accounts start on the Free plan, which includes some AI usage each month. You don't need an API key.
+  </Step>
+  <Step title="Open a project">
+    Choose **Add project** and pick a folder. Sprocket groups threads by project, so every clone with the same git `origin` remote shares one thread list.
+  </Step>
+  <Step title="Send a task">
+    Describe what you want in the composer and press Enter. For example:
+
+    ```text
+    Find out why the tests in this repo fail and fix them.
+    ```
+
+    The agent reads files, runs commands, and replies in the thread. Press **Stop generation** to end a run early.
+
+  </Step>
+</Steps>
+
+## Run a task from your terminal
+
+Install the CLI, sign in, and run a task in your project folder:
+
+```sh
+npm install -g usesprocket
+sprocket login
+sprocket run "Fix the failing tests"
+```
+
+`sprocket run` prints the agent's final answer to stdout. See the [CLI reference](/reference/cli).
+
+## Next steps
+
+- [Add AGENTS.md instructions and skills](/use/instructions-and-skills) so the agent follows your project's rules.
+- [Connect your own models](/use/models-and-providers) with API keys or a ChatGPT or Claude subscription.
+- [Install the KiCad connector](/use/hardware) for schematic and PCB work.

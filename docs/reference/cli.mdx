@@ -1,0 +1,96 @@
+---
+title: CLI
+description: Reference for the sprocket CLI, covering opening the app, running agent tasks, signing in and out, starting the server, and updating.
+---
+
+Install the CLI with `npm install -g usesprocket`. Run `sprocket --help` or `sprocket <command> --help` for the same details in your terminal.
+
+## Open Sprocket
+
+```sh
+sprocket [--web] [DIRECTORY]
+```
+
+`sprocket` opens the desktop app. If the CLI can't find the desktop app, it starts the server and opens Sprocket in your browser.
+
+| Argument    | Effect                                                                 |
+| ----------- | ---------------------------------------------------------------------- |
+| `DIRECTORY` | Opens this folder in a new thread.                                     |
+| `--web`     | Opens Sprocket in your browser even when the desktop app is installed. |
+
+The CLI looks for the desktop app at `SPROCKET_DESKTOP_EXECUTABLE`, then for `sprocket-desktop` on your `PATH`.
+
+## sprocket run
+
+Runs an agent task and waits for the result.
+
+```sh
+sprocket run [OPTIONS] [PROMPT]
+```
+
+| Option                    | Effect                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| `PROMPT`                  | The task to send.                                                                            |
+| `--prompt-file <PATH>`    | Reads the task from a UTF-8 file, or from stdin with `-`. Up to 1 MiB.                       |
+| `-C`, `--directory <DIR>` | Working directory. Defaults to the current directory.                                        |
+| `--thread <ID>`           | Sends a follow-up to an existing thread instead of starting a new one.                       |
+| `--model <ID>`            | Model to use.                                                                                |
+| `--reasoning <LEVEL>`     | Reasoning level, such as `low` or `high`.                                                    |
+| `--fast`, `--no-fast`     | Turns fast mode on or off.                                                                   |
+| `--timeout <DURATION>`    | Cancels the run after a duration such as `30s`, `10m`, or `2h`. A bare number means seconds. |
+| `--list-models`           | Lists the models your account can use with their reasoning levels, then exits.               |
+
+`sprocket run` needs you to be signed in. It writes the thread ID, run ID, model, and each tool call to stderr. It writes only the final answer to stdout, so you can pipe it:
+
+```sh
+sprocket run "Summarize the open TODOs in this repo" > todos.md
+```
+
+Copy a thread ID from the app's thread menu to continue that thread with `--thread`.
+
+| Exit code    | Meaning                                                  |
+| ------------ | -------------------------------------------------------- |
+| `0`          | The run finished.                                        |
+| `1`          | The run failed.                                          |
+| `124`        | The `--timeout` ran out.                                 |
+| `130`        | Ctrl+C stopped the run.                                  |
+| `129`, `143` | SIGHUP or SIGTERM stopped the run. macOS and Linux only. |
+
+When you stop a run with a signal or timeout, the CLI cancels it and waits up to 15 seconds for the server to confirm.
+
+Runs from `sprocket run` can't ask you questions or start purchases.
+
+## sprocket login
+
+```sh
+sprocket login [--credential-store keyring|file]
+```
+
+Prints a URL and a code. Open the URL in a browser on any device and approve the code. If you're already signed in, it prints your email.
+
+`--credential-store` picks where your sign-in is stored. See [Credentials](/reference/configuration#credentials).
+
+## sprocket logout
+
+Signs out of this Sprocket profile in both the app and the CLI.
+
+## sprocket serve
+
+Starts only the local server, without opening the app.
+
+| Option             | Environment variable | Default       |
+| ------------------ | -------------------- | ------------- |
+| `--host <HOST>`    | `SPROCKET_HOST`      | `127.0.0.1`   |
+| `--port <PORT>`    | `SPROCKET_PORT`      | `17731`       |
+| `--data-dir <DIR>` | `SPROCKET_DATA_DIR`  | `~/.sprocket` |
+| `--quiet`          | `SPROCKET_QUIET`     | Off           |
+
+`run`, `login`, and `logout` start a temporary server when none is running. It stops after the command ends and logs to `cli-server.log` in the data directory.
+
+## sprocket update
+
+```sh
+sprocket update [--check]
+```
+
+Updates a global npm, bun, pnpm, or yarn install on its current [release channel](/install#release-channels). `--check` reports whether an update is available without installing it. `sprocket upgrade` does the same thing.

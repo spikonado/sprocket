@@ -1,0 +1,50 @@
+---
+title: Troubleshooting
+description: Fixes for common Sprocket problems, including port conflicts, sign-in and keyring errors, the CLI opening the browser, and desktop updates.
+---
+
+## The port is already in use
+
+Sprocket's server uses port `17731`. If another program uses it, or Windows reserves it, set `SPROCKET_PORT` to a free port before you start Sprocket:
+
+```sh
+SPROCKET_PORT=17800 sprocket
+```
+
+## A server with a different data directory is running
+
+Another Sprocket server already uses the port with a different data directory. Stop that server, or set `SPROCKET_DATA_DIR` to its data directory.
+
+## The CLI's local server didn't start
+
+Read `~/.sprocket/cli-server.log` for the error.
+
+## The CLI version doesn't match the running server
+
+The CLI and the running server must be the same version. Update both, then restart the desktop app or stop the old server and run the command again.
+
+## `sprocket` opens the browser instead of the desktop app
+
+The CLI can't find the desktop app. Set `SPROCKET_DESKTOP_EXECUTABLE` to the app's executable, or put it on your `PATH` as `sprocket-desktop`. On Linux, rename or link the AppImage to `sprocket-desktop`.
+
+## Keyring errors when signing in
+
+These usually mean you chose `--credential-store keyring` and the keyring is locked or unavailable. Unlock your OS keyring and run `sprocket login` again. To skip the keyring, run `sprocket login --credential-store file`. That stores your sign-in in an unencrypted file only your user can read.
+
+## The desktop app on Linux doesn't update
+
+Updates only work when you run the AppImage itself. If you extracted it or installed it another way, download new versions from [GitHub Releases](https://github.com/spikonado/sprocket/releases).
+
+## The npm package can't find its binary
+
+The binary for your platform ships as an optional dependency. Reinstall without omitting optional dependencies:
+
+```sh
+npm install -g usesprocket
+```
+
+If your platform isn't [supported](/install#cli-and-web-app), use the desktop app.
+
+## Still stuck
+
+Email [aarav@spikonado.com](mailto:aarav@spikonado.com) or open an issue on [GitHub](https://github.com/spikonado/sprocket/issues).

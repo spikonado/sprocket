@@ -1,0 +1,54 @@
+---
+title: Models and providers
+description: Pick a model, reasoning level, and fast mode, and connect your own API keys or ChatGPT, Claude, or Muse subscriptions.
+---
+
+## Choose a model
+
+Pick a model in the composer's model menu. Models with reasoning levels have a reasoning submenu:
+
+- None
+- Low
+- Medium
+- High
+- Extra High
+- Max
+
+Each model marks one level as its default. Models that support it also have a **Fast** switch, which uses the provider's faster service tier. Sprocket saves the model, reasoning level, and fast mode for each thread.
+
+Sprocket loads the model list from its servers, so new models show up without an update. To see the list from your terminal, run:
+
+```sh
+sprocket run --list-models
+```
+
+## Providers
+
+A provider is where Sprocket sends model requests. Spikonado, Sprocket's own provider, is on by default and uses your plan's [AI usage](/account/plans-and-usage). The other providers use your own keys or subscriptions and don't count against your Sprocket AI usage.
+
+| Provider               | How to connect                                                                                      |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| Spikonado              | On by default                                                                                       |
+| OpenAI API             | API key                                                                                             |
+| ChatGPT Subscription   | Sign in with ChatGPT. You can add more than one account. Usage counts against your Codex allowance. |
+| Claude Subscription    | Sign in with Claude through Claude Code. Sprocket can install Claude Code for you.                  |
+| Anthropic API          | API key                                                                                             |
+| Vercel AI Gateway      | API key                                                                                             |
+| OpenRouter             | API key                                                                                             |
+| OpenCode               | API key                                                                                             |
+| OpenCode Go            | API key                                                                                             |
+| Muse Code Subscription | Sign in with Muse through the Muse CLI. Sprocket can install the Muse CLI for you.                  |
+
+Add keys and subscriptions in **Settings → BYOK/BYOS**. Sprocket checks each API key with its provider before saving it.
+
+Claude and Muse sign-in run on the computer that runs Sprocket. Open Sprocket on that computer to install them or sign in.
+
+### Provider order and fallback
+
+In **Settings → Providers**, drag providers into the order you want and turn each on or off. At least one provider must stay on.
+
+For each request, Sprocket uses the first enabled provider that offers the model. Sprocket retries server errors. If the provider still fails or rate-limits the request, Sprocket moves the run to the next enabled provider. If no enabled provider offers the model, the run fails with an error that points to **Settings → Providers**.
+
+## Long threads
+
+When a thread's context gets close to the model's limit, the model writes a handoff note covering the task, its progress, and what's left. Sprocket continues the thread in a fresh context that starts from that note. It does the same when a thread switches to another provider or to a model from a different vendor.

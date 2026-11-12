@@ -1,0 +1,63 @@
+---
+title: What the agent can do
+description: The tools Sprocket's agent uses to edit files, run commands, search the web, ask questions, run subagents, and work with GitHub, plus the tools Sprocket installs for it.
+---
+
+The agent runs as your user in your real project folder. Commands aren't sandboxed.
+
+## Files
+
+The agent edits files with patches that apply fully or not at all. It can read PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and image files.
+
+## Commands
+
+The agent runs shell commands and keeps long ones going in the background while it works on something else. It can read their output, type into them, and stop them. Running commands show in the composer, where you can stop each one.
+
+Commands belong to the thread and keep running after the agent's turn ends. They stop when the Sprocket server stops. On macOS, processes that detach from their shell can outlive the server.
+
+## Web
+
+The agent searches the web and reads pages and documents, including PDFs up to 64 MiB. Searches go through Sprocket's servers. To read a page, Sprocket first fetches it from your machine and falls back to its servers.
+
+## Questions
+
+When the agent needs a decision, it asks a multiple-choice question in the composer. You can pick an option, type your own answer, or let the agent decide. A question can close by itself after a timeout the agent sets.
+
+Runs started with `sprocket run` can't ask questions.
+
+## Subagents
+
+The agent can start subagents, give each one a task, and choose its model and reasoning level. Each subagent:
+
+- Is its own thread under the parent in the sidebar.
+- Runs on the same machine, with your enabled providers.
+- Loads its own instructions and skills, without the parent's conversation.
+- Can ask the parent questions.
+- Can't start purchases.
+
+Stopping a subagent also stops its own subagents.
+
+## GitHub
+
+The agent links the pull requests it works on to the thread and waits for their checks, reviews, and comments. See [GitHub](/use/github).
+
+## Purchases
+
+The agent can pay at online checkouts with your saved card and your approval. See [Purchases](/use/purchases).
+
+## Tools Sprocket installs
+
+Sprocket downloads these tools into its [data directory](/reference/configuration#data-directory) when the server starts and adds them to the agent's `PATH`:
+
+| Tool                                                                       | Used for                                           |
+| -------------------------------------------------------------------------- | -------------------------------------------------- |
+| [agent-browser](https://github.com/vercel-labs/agent-browser) and Chromium | Browsing and testing websites                      |
+| [agent-desktop](https://github.com/vercel-labs/agent-desktop)              | Operating desktop apps through accessibility trees |
+| [GitHub CLI](https://cli.github.com)                                       | Pull requests and other GitHub work                |
+| [Bun](https://bun.sh)                                                      | Running JavaScript and TypeScript                  |
+| [uv](https://docs.astral.sh/uv/) and Python                                | Running Python                                     |
+| Git for Windows                                                            | Git and Git Bash, on Windows only                  |
+
+If you have your own Bun, uv, Python, or Git installed, the agent uses yours. Each thread gets its own browser session, so parallel agents don't share tabs.
+
+The [KiCad connector](/use/hardware) is the one tool you install yourself.
