@@ -60,4 +60,6 @@ Sprocket downloads these tools into its [data directory](/reference/configuratio
 
 If you have your own Bun, uv, Python, or Git installed, the agent uses yours. Each thread gets its own browser session, so parallel agents don't share tabs.
 
+Sites that need a sign-in or show a captcha use the signed-in browser instead. It's one visible Chrome window whose profile keeps sign-ins, cookies, and cleared captchas across threads and restarts. Agents don't solve captchas or bot checks. When one blocks a site, the agent asks you to clear it in that window or in the Browser view, and keeps working on the rest of the task meanwhile.
+
 The [KiCad connector](/use/hardware) is the one tool you install yourself.
