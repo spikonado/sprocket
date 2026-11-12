@@ -22,7 +22,7 @@ impl PackageUpdateManager {
         install_timeout: Duration,
     ) -> Arc<Self> {
         Arc::new(Self::new(
-            Some(UpdateCommand { node, script }),
+            Some(UpdateCommand::new(node, script)),
             success_ttl,
             failure_ttl,
             check_timeout,
@@ -36,7 +36,7 @@ impl PackageUpdateManager {
         restart_file: PathBuf,
     ) -> Arc<Self> {
         let mut manager = Self::new(
-            Some(UpdateCommand { node, script }),
+            Some(UpdateCommand::new(node, script)),
             SUCCESS_CHECK_TTL,
             FAILED_CHECK_TTL,
             CHECK_TIMEOUT,
