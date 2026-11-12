@@ -36,9 +36,6 @@ pub(crate) struct WebSearchArgs {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
-    /// Question about the page; returns the matching passages as `highlights`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) query: Option<String>,
 }
 
 #[derive(Deserialize)]

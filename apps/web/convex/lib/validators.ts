@@ -112,6 +112,7 @@ export const vExecCommandPayload = v.object({
 	maxOutputChars: v.optional(v.number())
 });
 
+/** Released agents may still send `query`; scrapes ignore it. */
 export const vScrapeUrlPayload = v.object({
 	url: v.string(),
 	query: v.optional(v.string())
@@ -516,13 +517,11 @@ export const vScrapeUrlResult = v.object({
 export const vScrapeUrlTransport = v.union(
 	v.object({
 		url: v.string(),
-		markdown: v.string(),
-		highlights: v.optional(v.array(v.string()))
+		markdown: v.string()
 	}),
 	v.object({
 		url: v.string(),
 		outline: vPageOutline,
-		highlights: v.optional(v.array(v.string())),
 		scrapeUrl: v.string()
 	})
 );

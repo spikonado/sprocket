@@ -166,7 +166,8 @@ Stored executor jobs, transcripts and local data files keep accepting these hist
 - Command tool results without `nextOffset`, which released agents still send. The next read of that session starts from the beginning of its output.
 - `apply_patch` results without `source` for renames and copies.
 - `createdAt` on stored `list_artifacts` results.
-- `summary` on `scrape_url` results, from before `outline` replaced it, and `images`, from before image references moved into the markdown.
+- `summary` on `scrape_url` results, from before `outline` replaced it, `images`, from before image references moved into the markdown, and `highlights`, from before the tool dropped `query`.
+- `query` on `scrape_url` payloads, which released agents still send. Scrapes ignore it.
 - `numResults` on `web_search` payloads, which released agents still send. Search ignores it.
 - The retired `list_subagent_models` tool kind, including `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on its results.
 - `lastError: null`, empty `pendingQuestions`, `settings.fast: false` and `settings.completionProvider` on subagent tool results, and `hasMore` on `list_subagents` results.

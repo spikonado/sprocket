@@ -38,8 +38,6 @@ const SDK_TIMEOUT_MARGIN_MS = 10_000;
 
 const REQUEST_PUBLISH_MARGIN_MS = 30_000;
 
-export const HIGHLIGHTS_MAX_CHARS = 10_000;
-
 const OUTLINE_MAX_CHARS = 8_000;
 
 const OUTLINE_HEADING_MAX_CHARS = 200;
@@ -68,13 +66,10 @@ type PageOutline = Infer<typeof vPageOutline>;
 
 type ScrapeParams = Omit<WebScrapeParams, 'maxAgeMs' | 'timeoutOpts'>;
 
-type ScrapeJobArgs = { url: string; query?: string };
-
-export type ScrapedPage = {
+type ScrapedPage = {
 	url: string;
 	markdown: string;
 	outline: PageOutline;
-	highlights?: string[];
 };
 
 export type RawDocument = {
@@ -261,41 +256,26 @@ function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
 	return outline;
 }
 
-async function fetchScrape(
-	urlValue: string,
-	query: string | undefined,
-	limits: ScrapeLimits
-): Promise<ScrapedPage> {
+async function fetchScrape(urlValue: string, limits: ScrapeLimits): Promise<ScrapedPage> {
 	const url = requireHttpUrl(urlValue);
-	const highlightsQuery = query?.trim();
 
-	const params: ScrapeParams = {
-		url: url.toString(),
-		formats: { markdown: true },
-		markdownParams: { includeImages: true },
-		sharedParams: { mainContentOnly: true }
-	};
-
-	if (highlightsQuery) {
-		params.formats = { ...params.formats, highlights: true };
-		params.highlightsParams = { query: highlightsQuery, maxCharacters: HIGHLIGHTS_MAX_CHARS };
-	}
-
-	const response = await requestContextDevScrape(params, limits);
+	const response = await requestContextDevScrape(
+		{
+			url: url.toString(),
+			formats: { markdown: true },
+			markdownParams: { includeImages: true },
+			sharedParams: { mainContentOnly: true }
+		},
+		limits
+	);
 
 	requireOutput(response.markdown);
 
-	const page: ScrapedPage = {
+	return {
 		url: response.url || url.toString(),
 		markdown: response.markdown.data ?? '',
 		outline: pageOutline(response.metadata)
 	};
-
-	if (highlightsQuery && response.highlights.success && response.highlights.data) {
-		page.highlights = response.highlights.data;
-	}
-
-	return page;
 }
 
 async function fetchRawDocument(
@@ -342,18 +322,13 @@ async function localScrapeTransport(
 	ctx: ActionCtx,
 	page: ScrapedPage
 ): Promise<Infer<typeof vScrapeUrlTransport>> {
-	const transport: Infer<typeof vScrapeUrlTransport> =
-		page.markdown.length <= SCRAPE_INLINE_MAX_CHARS
-			? { url: page.url, markdown: page.markdown }
-			: {
-					url: page.url,
-					outline: page.outline,
-					scrapeUrl: await storeTemporaryScrape(ctx, page.markdown)
-				};
-
-	if (page.highlights) transport.highlights = page.highlights;
-
-	return transport;
+	return page.markdown.length <= SCRAPE_INLINE_MAX_CHARS
+		? { url: page.url, markdown: page.markdown }
+		: {
+				url: page.url,
+				outline: page.outline,
+				scrapeUrl: await storeTemporaryScrape(ctx, page.markdown)
+			};
 }
 
 async function storeTemporaryScrape(ctx: ActionCtx, markdown: string): Promise<string> {
@@ -468,14 +443,6 @@ export const executeWebSearch = internalAction({
 	}
 });
 
-function scrapeFromPayload(payload: ExecutorJobPayload): ScrapeJobArgs {
-	if (!('url' in payload)) return { url: '' };
-
-	return 'query' in payload && payload.query !== undefined
-		? { url: payload.url, query: payload.query }
-		: { url: payload.url };
-}
-
 export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webRequests'>) {
 	const job = await ctx.runMutation(internal.webRequests.requestJob, {
 		jobId: request.jobId,
@@ -484,7 +451,7 @@ export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webR
 	});
 
 	if (job?.kind !== 'scrape_url') throw new Error(RUN_NO_LONGER_ACTIVE);
-	const scrape = scrapeFromPayload(job.payload);
+	const url = 'url' in job.payload ? job.payload.url : '';
 
 	const limits: ScrapeLimits = {
 		deadline: request.expiresAt - REQUEST_PUBLISH_MARGIN_MS,
@@ -492,7 +459,7 @@ export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webR
 			await ctx.runMutation(internal.webRequests.isRunning, { id: request._id })
 	};
 
-	if (request.rawDocument) return await fetchRawDocument(ctx, scrape.url, limits);
+	if (request.rawDocument) return await fetchRawDocument(ctx, url, limits);
 
-	return await localScrapeTransport(ctx, await fetchScrape(scrape.url, scrape.query, limits));
+	return await localScrapeTransport(ctx, await fetchScrape(url, limits));
 }

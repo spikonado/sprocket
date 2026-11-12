@@ -74,14 +74,14 @@ async fn cancelled_direct_saves_do_not_return_a_file() {
 }
 
 #[tokio::test]
-async fn downloaded_scrape_is_saved_while_outline_and_highlights_stay_in_the_output() {
+async fn downloaded_scrape_is_saved_while_outline_stays_in_the_output() {
     let cache = tempfile::tempdir().unwrap();
     let outline = json!({"title": "Guide", "headings": [{"level": 2, "text": "Install"}]});
     let markdown = "é\n".repeat(SCRAPE_INLINE_MAX_CHARS);
     let url = serve(&markdown, markdown.len()).await;
     let mut saved_file = None;
     let result = localize_scrape(
-        json!({"url": "https://example.com", "scrapeUrl": url.as_str(), "outline": outline, "highlights": ["Run the installer."]}),
+        json!({"url": "https://example.com", "scrapeUrl": url.as_str(), "outline": outline}),
         cache.path(),
         &WorkspaceCancellation::new(),
         &mut saved_file,
@@ -93,7 +93,7 @@ async fn downloaded_scrape_is_saved_while_outline_and_highlights_stay_in_the_out
     assert_eq!(path.extension().unwrap(), "md");
     assert_eq!(
         result,
-        json!({"url": "https://example.com", "savedTo": path.display().to_string(), "outline": outline, "highlights": ["Run the installer."]})
+        json!({"url": "https://example.com", "savedTo": path.display().to_string(), "outline": outline})
     );
 }
 
