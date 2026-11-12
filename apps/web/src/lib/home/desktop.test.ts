@@ -76,6 +76,8 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		disconnectChatGptAccount: unusedDesktopCall,
 		fetchGitHubStatus: unusedDesktopCall,
 		updateGitHubSettings: unusedDesktopCall,
+		cloneRepository: unusedDesktopCall,
+		createGitHubRepository: unusedDesktopCall,
 		fetchConnectors: unusedDesktopCall,
 		installOrUpdateConnector: unusedDesktopCall,
 		uninstallConnector: unusedDesktopCall,

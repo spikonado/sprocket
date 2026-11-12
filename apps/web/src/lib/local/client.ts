@@ -768,6 +768,16 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify({ userId, ...update })
 			}),
+		cloneRepository: (input) =>
+			request('/api/github/clone', workspacePathResolutionSchema, {
+				method: 'POST',
+				body: JSON.stringify(input)
+			}),
+		createGitHubRepository: (input) =>
+			request('/api/github/repositories', workspacePathResolutionSchema, {
+				method: 'POST',
+				body: JSON.stringify(input)
+			}),
 		fetchConnectors: async (userId) =>
 			await request(
 				`/api/connectors?${new URLSearchParams({ userId }).toString()}`,

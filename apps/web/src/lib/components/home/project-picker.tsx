@@ -23,9 +23,27 @@ type RecentProjectPath = {
 	displayName: string;
 };
 
-type ProjectPickerLocalApi = Pick<LocalApi, 'browseFilesystem' | 'resolveWorkspacePath'>;
+type ProjectPickerLocalApi = Pick<
+	LocalApi,
+	'browseFilesystem' | 'resolveWorkspacePath' | 'cloneRepository' | 'createGitHubRepository'
+>;
 
 type PickerError = { source: 'browse' | 'submit'; message: string };
+
+type ProjectSource = 'folder' | 'clone' | 'create';
+
+const projectSources: { id: ProjectSource; label: string }[] = [
+	{ id: 'folder', label: 'Open folder' },
+	{ id: 'clone', label: 'Clone repo' },
+	{ id: 'create', label: 'New GitHub repo' }
+];
+
+const segmentClass = (active: boolean) =>
+	`rounded-md px-2.5 py-1 text-sm transition ${
+		active
+			? 'text-foreground bg-hover-fill-strong'
+			: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
+	}`;
 
 export type ProjectSelection = {
 	workspacePath: string;
@@ -36,6 +54,7 @@ export type ProjectSelection = {
 export default function ProjectPicker({
 	open,
 	localApi,
+	userId,
 	mode = 'add',
 	expectedDisplayName,
 	recentProjectPaths = [],
@@ -45,6 +64,7 @@ export default function ProjectPicker({
 }: {
 	open: boolean;
 	localApi: ProjectPickerLocalApi;
+	userId: string | null;
 	mode?: 'add' | 'reconnect';
 	expectedDisplayName?: string;
 	recentProjectPaths?: RecentProjectPath[];
@@ -62,9 +82,13 @@ export default function ProjectPicker({
 	const [error, setError] = useState<PickerError | null>(null);
 	const [browseQuery, setBrowseQuery] = useState<string | null>(null);
 	const [opened, setOpened] = useState(false);
+	const [source, setSource] = useState<ProjectSource>('folder');
+	const [repository, setRepository] = useState('');
+	const [visibility, setVisibility] = useState<'public' | 'private'>('private');
 	const queryRef = useRef('~/');
 	const volumeListRef = useRef(false);
 	const pathInputRef = useRef<HTMLInputElement | null>(null);
+	const repositoryInputRef = useRef<HTMLInputElement | null>(null);
 	const directoryListRef = useRef<HTMLDivElement | null>(null);
 	const browseRequestIdRef = useRef(0);
 	const lastBrowseQueryRef = useRef<string | null>(null);
@@ -179,10 +203,19 @@ export default function ProjectPicker({
 		!volumeList &&
 		error?.source !== 'browse' &&
 		resolvedWorkspacePath.length > 0 &&
-		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0);
+		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0) &&
+		(source === 'folder' || (userId !== null && repository.trim().length > 0));
 
 	const submitLabel =
-		mode === 'reconnect' ? 'Reconnect' : willCreateDirectory ? 'Create & add' : 'Add';
+		mode === 'reconnect'
+			? 'Reconnect'
+			: source === 'clone'
+				? 'Clone'
+				: source === 'create'
+					? 'Create'
+					: willCreateDirectory
+						? 'Create & add'
+						: 'Add';
 
 	const parentEntry = currentBrowseEntries.find((entry) => entry.name === '..');
 
@@ -211,7 +244,9 @@ export default function ProjectPicker({
 			? 'Loading directories…'
 			: volumeList
 				? 'Select a drive.'
-				: resolvedWorkspacePath.length > 0 && !willCreateDirectory
+				: source !== 'folder'
+					? 'No subdirectories here.'
+					: resolvedWorkspacePath.length > 0 && !willCreateDirectory
 					? mode === 'reconnect'
 						? 'Press Ctrl+Enter to reconnect this directory.'
 						: 'Press Ctrl+Enter to add this directory.'
@@ -243,6 +278,9 @@ export default function ProjectPicker({
 		setQuery('~/');
 		setHighlightedPath(null);
 		setError(null);
+		setSource('folder');
+		setRepository('');
+		setVisibility('private');
 		setVolumeListState(false);
 		setBrowseQuery(null);
 		void loadBrowse('~/');
@@ -253,6 +291,10 @@ export default function ProjectPicker({
 			pathInputRef.current?.focus();
 		}
 	}, [opened]);
+
+	useEffect(() => {
+		repositoryInputRef.current?.focus();
+	}, [source]);
 
 	useEffect(() => {
 		if (!open || !opened) {
@@ -312,15 +354,34 @@ export default function ProjectPicker({
 		void loadBrowse(nextQuery);
 	}
 
+	function resolveSelection() {
+		if (source === 'folder' || userId === null) {
+			return localApi.resolveWorkspacePath({
+				workspacePath: resolvedWorkspacePath,
+				createIfMissing: willCreateDirectory
+			});
+		}
+
+		return source === 'clone'
+			? localApi.cloneRepository({
+					userId,
+					source: repository,
+					parentPath: resolvedWorkspacePath
+				})
+			: localApi.createGitHubRepository({
+					userId,
+					name: repository,
+					visibility,
+					parentPath: resolvedWorkspacePath
+				});
+	}
+
 	async function confirmSelection() {
 		setIsSubmitting(true);
 		setError(null);
 
 		try {
-			const resolution = await localApi.resolveWorkspacePath({
-				workspacePath: resolvedWorkspacePath,
-				createIfMissing: willCreateDirectory
-			});
+			const resolution = await resolveSelection();
 
 			await onSelect({
 				workspacePath: resolution.workspacePath,
@@ -393,6 +454,15 @@ export default function ProjectPicker({
 		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSubmit && !isSubmitting) {
 			event.preventDefault();
 			void confirmSelection();
+
+			return;
+		}
+
+		if (event.target === repositoryInputRef.current) {
+			if (event.key === 'Enter' && canSubmit && !isSubmitting) {
+				event.preventDefault();
+				void confirmSelection();
+			}
 
 			return;
 		}
@@ -501,6 +571,62 @@ export default function ProjectPicker({
 							local directory
 						</p>
 					)}
+					{mode === 'add' && (
+						<div className="flex flex-col gap-2 px-9 pb-1">
+							<div className="flex flex-wrap gap-1" role="group" aria-label="Project source">
+								{projectSources.map(({ id, label }) => (
+									<button
+										key={id}
+										type="button"
+										className={segmentClass(source === id)}
+										aria-pressed={source === id}
+										onClick={() => {
+											setSource(id);
+											setError(null);
+										}}
+									>
+										{label}
+									</button>
+								))}
+							</div>
+							{source !== 'folder' && (
+								<div className="flex flex-wrap items-center gap-2">
+									<input
+										ref={repositoryInputRef}
+										className="border-border text-foreground placeholder:text-muted-foreground min-w-0 flex-1 rounded-lg border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+										value={repository}
+										onChange={(event) => setRepository(event.currentTarget.value)}
+										placeholder={source === 'clone' ? 'owner/repo or git URL' : 'Repository name'}
+										aria-label={source === 'clone' ? 'Repository to clone' : 'Repository name'}
+										autoComplete="off"
+										spellCheck={false}
+									/>
+									{source === 'create' && (
+										<div className="flex gap-1" role="group" aria-label="Visibility">
+											{(['private', 'public'] as const).map((option) => (
+												<button
+													key={option}
+													type="button"
+													className={segmentClass(visibility === option)}
+													aria-pressed={visibility === option}
+													onClick={() => setVisibility(option)}
+												>
+													{option === 'private' ? 'Private' : 'Public'}
+												</button>
+											))}
+										</div>
+									)}
+								</div>
+							)}
+							{source !== 'folder' && (
+								<p className="text-muted-foreground text-xs">
+									{userId === null
+										? 'Sign in to use GitHub.'
+										: `Clones into a new directory in ${resolvedWorkspacePath || 'the chosen location'}`}
+								</p>
+							)}
+						</div>
+					)}
 				</header>
 
 				{recentProjectPaths.length > 0 && (
@@ -533,7 +659,9 @@ export default function ProjectPicker({
 					</div>
 				)}
 
-				<div className="text-muted-foreground flex-none px-6 pt-3 pb-1 text-sm">Directories</div>
+				<div className="text-muted-foreground flex-none px-6 pt-3 pb-1 text-sm">
+					{source === 'folder' ? 'Directories' : 'Location'}
+				</div>
 				<div
 					id="project-picker-directories"
 					className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"

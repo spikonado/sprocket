@@ -44,19 +44,37 @@ function createLocalApi() {
 		attachmentKey: 'directory:/home/me'
 	}));
 
+	const cloned = {
+		workspacePath: '/home/me/hello',
+		displayName: 'octo/hello',
+		repositoryKey: 'github.com/octo/hello',
+		attachmentKey: 'github.com/octo/hello'
+	};
+
+	const cloneRepository = vi.fn(async () => cloned);
+	const createGitHubRepository = vi.fn(async () => cloned);
+
 	return {
-		localApi: { browseFilesystem, resolveWorkspacePath },
+		localApi: { browseFilesystem, resolveWorkspacePath, cloneRepository, createGitHubRepository },
 		browseFilesystem,
-		resolveWorkspacePath
+		resolveWorkspacePath,
+		cloneRepository,
+		createGitHubRepository
 	};
 }
 
-function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> = {}) {
+type PickerProps = ComponentProps<typeof ProjectPicker>;
+
+function renderPicker({
+	localApi,
+	...overrides
+}: Omit<Partial<PickerProps>, 'localApi'> & { localApi?: Partial<PickerProps['localApi']> } = {}) {
 	const api = createLocalApi();
 
-	const props: ComponentProps<typeof ProjectPicker> = {
+	const props: PickerProps = {
 		open: true,
-		localApi: api.localApi,
+		localApi: { ...api.localApi, ...localApi },
+		userId: 'user-a',
 		onClose: vi.fn(),
 		onSelect: vi.fn(),
 		...overrides
@@ -436,5 +454,47 @@ describe('ProjectPicker', () => {
 				repositoryKey: 'projects'
 			});
 		});
+	});
+
+	it('clones a repository into the browsed directory', async () => {
+		const user = userEvent.setup();
+		const { cloneRepository, props } = renderPicker();
+		await waitForDirectories();
+
+		await user.click(document.querySelectorAll('[aria-label="Project source"] button')[1]!);
+		await user.keyboard('octo/hello{Enter}');
+
+		await waitFor(() => {
+			expect(cloneRepository).toHaveBeenCalledWith({
+				userId: 'user-a',
+				source: 'octo/hello',
+				parentPath: '/home/me'
+			});
+			expect(props.onSelect).toHaveBeenCalledWith({
+				workspacePath: '/home/me/hello',
+				displayName: 'octo/hello',
+				repositoryKey: 'github.com/octo/hello'
+			});
+		});
+	});
+
+	it('creates a public GitHub repository from its name', async () => {
+		const user = userEvent.setup();
+		const { createGitHubRepository } = renderPicker();
+		await waitForDirectories();
+
+		await user.click(document.querySelectorAll('[aria-label="Project source"] button')[2]!);
+		await user.keyboard('hello');
+		await user.click(document.querySelectorAll('[aria-label="Visibility"] button')[1]!);
+		await user.click(document.querySelector('[data-project-submit]')!);
+
+		await waitFor(() =>
+			expect(createGitHubRepository).toHaveBeenCalledWith({
+				userId: 'user-a',
+				name: 'hello',
+				visibility: 'public',
+				parentPath: '/home/me'
+			})
+		);
 	});
 });

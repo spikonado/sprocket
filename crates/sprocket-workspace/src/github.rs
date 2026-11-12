@@ -1,6 +1,7 @@
 mod agent_environment;
 mod credentials;
 pub mod pull_requests;
+pub mod repositories;
 pub mod saved_tokens;
 pub mod status;
 
