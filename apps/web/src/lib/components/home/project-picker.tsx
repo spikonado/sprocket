@@ -451,7 +451,10 @@ export default function ProjectPicker({
 
 		if (event.key === 'Escape') {
 			event.preventDefault();
-			onClose();
+
+			if (!isSubmitting) {
+				onClose();
+			}
 
 			return;
 		}
@@ -513,7 +516,7 @@ export default function ProjectPicker({
 			className="bg-overlay fixed inset-0 z-50 flex items-start justify-center px-4 pt-[7dvh] backdrop-blur-[2px]"
 			role="presentation"
 			onClick={(event) => {
-				if (event.target === event.currentTarget) {
+				if (event.target === event.currentTarget && !isSubmitting) {
 					onClose();
 				}
 			}}

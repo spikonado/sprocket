@@ -1,10 +1,14 @@
+use std::path::{Path, PathBuf};
+
 use axum::Json;
 use axum::extract::State;
 use axum::routing::{get, post};
 use serde::Deserialize;
 use sprocket_host::project_attachments::{WorkspacePathResolution, resolve_workspace_path};
 use sprocket_workspace::github::is_valid_host;
-use sprocket_workspace::github::repositories::{Visibility, clone_repository, create_repository};
+use sprocket_workspace::github::repositories::{
+    CloneTarget, Visibility, clone_repository, create_repository,
+};
 use sprocket_workspace::github::status::{GitHubStatus, status};
 use sprocket_workspace::resolve_or_create_workspace_root;
 
@@ -125,37 +129,50 @@ async fn update_handler(
 }
 
 async fn clone_handler(
+    State(state): State<AppState>,
     AuthorizedJson(request): AuthorizedJson<CloneRequest>,
 ) -> Result<Json<WorkspacePathResolution>, ApiError> {
-    clone_into(&request.user_id, &request.source, request.parent_path)
+    let parent = parent_directory(request.parent_path).await?;
+    let target = clone_target(&state, &request.user_id, &parent);
+    let destination = clone_repository(target, &request.source)
         .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    attachable(destination).await
 }
 
 async fn create_repository_handler(
+    State(state): State<AppState>,
     AuthorizedJson(request): AuthorizedJson<CreateRepositoryRequest>,
 ) -> Result<Json<WorkspacePathResolution>, ApiError> {
-    let url = create_repository(&request.user_id, &request.name, request.visibility)
+    let parent = parent_directory(request.parent_path).await?;
+    let target = clone_target(&state, &request.user_id, &parent);
+    let destination = create_repository(target, &request.name, request.visibility)
         .await
-        .map_err(|error| ApiError::bad_request(error.into()))?;
-    clone_into(&request.user_id, &url, request.parent_path)
-        .await
-        .map(Json)
-        .map_err(|error| ApiError::bad_request(anyhow::anyhow!("Created {url}, but {error:#}")))
+        .map_err(ApiError::bad_request)?;
+    attachable(destination).await
 }
 
-async fn clone_into(
-    user_id: &str,
-    source: &str,
-    parent_path: String,
-) -> anyhow::Result<WorkspacePathResolution> {
-    let parent =
-        tokio::task::spawn_blocking(move || resolve_or_create_workspace_root(&parent_path))
-            .await??;
-    let destination = clone_repository(user_id, source, &parent).await?;
+fn clone_target<'a>(state: &AppState, user_id: &'a str, parent: &'a Path) -> CloneTarget<'a> {
+    CloneTarget {
+        user_id,
+        parent_directory: parent,
+        tool_environment: state.host.tool_environment(),
+    }
+}
+
+async fn parent_directory(parent_path: String) -> Result<PathBuf, ApiError> {
+    tokio::task::spawn_blocking(move || resolve_or_create_workspace_root(&parent_path))
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?
+        .map_err(ApiError::bad_request)
+}
+
+async fn attachable(destination: PathBuf) -> Result<Json<WorkspacePathResolution>, ApiError> {
     tokio::task::spawn_blocking(move || {
         resolve_workspace_path(&destination.to_string_lossy(), false)
     })
-    .await?
+    .await
+    .map_err(|error| ApiError::internal(error.into()))?
+    .map(Json)
+    .map_err(ApiError::bad_request)
 }
