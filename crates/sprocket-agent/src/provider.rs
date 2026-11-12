@@ -674,6 +674,7 @@ async fn run_with_completion_model(
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)
+        .tool(tools.lookup_parts)
         .tool(tools.poll_cmd)
         .tool(tools.bind_artifact)
         .tool(tools.list_artifacts)

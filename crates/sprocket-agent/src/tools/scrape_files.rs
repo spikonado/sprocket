@@ -22,7 +22,7 @@ pub(super) async fn localize_scrape(
             matches!(url.scheme(), "http" | "https"),
             "scrape download requires an http(s) URL"
         );
-        let temp = download_scrape(url, markdown_file(cache_dir).await?, cancellation).await?;
+        let temp = download_scrape(url, cache_file(cache_dir, ".md").await?, cancellation).await?;
         record_saved_scrape(fields, temp, saved_file);
     } else {
         let markdown = fields
@@ -30,7 +30,7 @@ pub(super) async fn localize_scrape(
             .and_then(Value::as_str)
             .context("scrape response is missing markdown")?;
         if exceeds_inline_limit(markdown) {
-            let temp = save_markdown(cache_dir, markdown, cancellation).await?;
+            let temp = save_text(cache_dir, markdown, ".md", cancellation).await?;
             record_saved_scrape(fields, temp, saved_file);
         }
     }
@@ -38,26 +38,27 @@ pub(super) async fn localize_scrape(
 }
 
 /// Counts UTF-16 units to match the backend's `markdown.length`.
-fn exceeds_inline_limit(markdown: &str) -> bool {
-    markdown.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
+pub(super) fn exceeds_inline_limit(text: &str) -> bool {
+    text.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
 }
 
-async fn markdown_file(cache_dir: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
+async fn cache_file(cache_dir: &Path, suffix: &str) -> anyhow::Result<tempfile::NamedTempFile> {
     tokio::fs::create_dir_all(cache_dir)
         .await
         .with_context(|| format!("failed to create {}", cache_dir.display()))?;
     Ok(tempfile::Builder::new()
         .prefix("")
-        .suffix(".md")
+        .suffix(suffix)
         .tempfile_in(cache_dir)?)
 }
 
-async fn save_markdown(
+pub(super) async fn save_text(
     cache_dir: &Path,
     contents: &str,
+    suffix: &str,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<tempfile::NamedTempFile> {
-    let temp = markdown_file(cache_dir).await?;
+    let temp = cache_file(cache_dir, suffix).await?;
     let mut file = tokio::fs::File::from_std(temp.reopen()?);
     tokio::select! {
         biased;

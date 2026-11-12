@@ -90,19 +90,22 @@ fn tracker_associates_parallel_calls_by_dispatch_identity() {
         "exec_cmd",
         "internal-1",
         Some("call-1"),
-        r#"{"cmd":"first"}"#,
+        r#"{"cmd":"same","yieldTimeMs":5}"#,
     );
     tracker.prepare_dispatch(
         "exec_cmd",
         "internal-2",
         Some("call-2"),
-        r#"{"cmd":"second"}"#,
+        r#"{"cmd":"same"}"#,
     );
     let second_dispatch = tracker
-        .claim_dispatch("exec_cmd", &serde_json::json!({"cmd":"second"}))
+        .claim_dispatch("exec_cmd", &serde_json::json!({"cmd":"same"}))
         .unwrap();
     let first_dispatch = tracker
-        .claim_dispatch("exec_cmd", &serde_json::json!({"cmd":"first"}))
+        .claim_dispatch(
+            "exec_cmd",
+            &serde_json::json!({"cmd":"same","yieldTimeMs":5}),
+        )
         .unwrap();
     assert_eq!(second_dispatch.call_id, "call-2");
     assert_eq!(first_dispatch.call_id, "call-1");
