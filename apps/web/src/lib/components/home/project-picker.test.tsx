@@ -478,6 +478,36 @@ describe('ProjectPicker', () => {
 		});
 	});
 
+	it('drops a clone that finishes after the picker closed', async () => {
+		const user = userEvent.setup();
+		let finishClone = () => {};
+
+		const cloneRepository = vi.fn(
+			() =>
+				new Promise<Awaited<ReturnType<PickerProps['localApi']['cloneRepository']>>>((resolve) => {
+					finishClone = () =>
+						resolve({
+							workspacePath: '/home/me/hello',
+							displayName: 'hello',
+							repositoryKey: 'github.com/octo/hello',
+							attachmentKey: 'github.com/octo/hello'
+						});
+				})
+		);
+
+		const { props } = renderPicker({ localApi: { cloneRepository } });
+		await waitForDirectories();
+
+		await user.click(document.querySelectorAll('[aria-label="Project source"] button')[1]!);
+		await user.keyboard('octo/hello{Enter}');
+		await waitFor(() => expect(cloneRepository).toHaveBeenCalled());
+		await user.keyboard('{Escape}');
+		await act(async () => finishClone());
+
+		expect(props.onClose).toHaveBeenCalledTimes(1);
+		expect(props.onSelect).not.toHaveBeenCalled();
+	});
+
 	it('creates a public GitHub repository from its name', async () => {
 		const user = userEvent.setup();
 		const { createGitHubRepository } = renderPicker();

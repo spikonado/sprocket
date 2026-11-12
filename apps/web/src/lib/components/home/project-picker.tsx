@@ -96,6 +96,7 @@ export default function ProjectPicker({
 	const repositoryInputRef = useRef<HTMLInputElement | null>(null);
 	const directoryListRef = useRef<HTMLDivElement | null>(null);
 	const browseRequestIdRef = useRef(0);
+	const submissionRef = useRef(0);
 	const lastBrowseQueryRef = useRef<string | null>(null);
 	const scrollHighlightRef = useRef(false);
 
@@ -283,6 +284,7 @@ export default function ProjectPicker({
 		setQuery('~/');
 		setHighlightedPath(null);
 		setError(null);
+		setIsSubmitting(false);
 		setSource('folder');
 		setRepository('');
 		setVisibility('private');
@@ -300,6 +302,18 @@ export default function ProjectPicker({
 	useEffect(() => {
 		repositoryInputRef.current?.focus();
 	}, [source]);
+
+	useEffect(
+		() => () => {
+			submissionRef.current += 1;
+		},
+		[]
+	);
+
+	function close() {
+		submissionRef.current += 1;
+		onClose();
+	}
 
 	useEffect(() => {
 		if (!open || !opened) {
@@ -386,11 +400,16 @@ export default function ProjectPicker({
 	}
 
 	async function confirmSelection() {
+		const submission = ++submissionRef.current;
 		setIsSubmitting(true);
 		setError(null);
 
 		try {
 			const resolution = await resolveSelection();
+
+			if (submission !== submissionRef.current) {
+				return;
+			}
 
 			await onSelect({
 				workspacePath: resolution.workspacePath,
@@ -399,6 +418,10 @@ export default function ProjectPicker({
 			});
 			onClose();
 		} catch (submitError) {
+			if (submission !== submissionRef.current) {
+				return;
+			}
+
 			setError((current) =>
 				current?.source === 'browse'
 					? current
@@ -411,7 +434,9 @@ export default function ProjectPicker({
 						}
 			);
 		} finally {
-			setIsSubmitting(false);
+			if (submission === submissionRef.current) {
+				setIsSubmitting(false);
+			}
 		}
 	}
 
@@ -451,10 +476,7 @@ export default function ProjectPicker({
 
 		if (event.key === 'Escape') {
 			event.preventDefault();
-
-			if (!isSubmitting) {
-				onClose();
-			}
+			close();
 
 			return;
 		}
@@ -516,8 +538,8 @@ export default function ProjectPicker({
 			className="bg-overlay fixed inset-0 z-50 flex items-start justify-center px-4 pt-[7dvh] backdrop-blur-[2px]"
 			role="presentation"
 			onClick={(event) => {
-				if (event.target === event.currentTarget && !isSubmitting) {
-					onClose();
+				if (event.target === event.currentTarget) {
+					close();
 				}
 			}}
 		>
