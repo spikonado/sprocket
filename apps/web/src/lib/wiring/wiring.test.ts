@@ -7,7 +7,9 @@ function analyze(source: string) {
 	if ('error' in parsed) throw new Error(parsed.error);
 
 	const geometry = new Map(
-		parsed.spec.parts.flatMap((part) => (part.pins ? [[part.id, boxGeometry(part.pins)]] : []))
+		parsed.spec.parts.flatMap((part) =>
+			part.pins ? [[part.id, boxGeometry(part.name, part.pins)]] : []
+		)
 	);
 
 	return analyzeWiring(parsed.spec, geometry);

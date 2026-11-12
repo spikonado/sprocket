@@ -111,7 +111,13 @@ export type PinRole = 'ground' | 'power' | 'signal';
 
 export type PartPin = { name: string; x: number; y: number; role: PinRole; volts?: number };
 
-export type PartGeometry = { width: number; height: number; pins: PartPin[] };
+/** `pinNamesInside` is set when the drawing already names its pins, as a box part does. */
+export type PartGeometry = {
+	width: number;
+	height: number;
+	pins: PartPin[];
+	pinNamesInside: boolean;
+};
 
 const GROUND_NAME = /^(GND|VSS|V-|-|0V)$/i;
 const POWER_NAME = /^(VCC|VDD|VIN|VM|VS|VBAT|V\+|\+|\d+(\.\d+)?V|\dV\d)$/i;
@@ -140,12 +146,13 @@ export function pinRole(name: string): Pick<PartPin, 'role' | 'volts'> {
 	return { role: 'signal' };
 }
 
-export const BOX_WIDTH = 180;
-export const BOX_HEADER = 44;
-export const BOX_PITCH = 26;
+const BOX_HEADER = 40;
+const BOX_PITCH = 20;
 
-export function boxGeometry(pins: { left: string[]; right: string[] }): PartGeometry {
+/** Box sizes are multiples of the 10 px wiring grid, so their pins sit on it. */
+export function boxGeometry(name: string, pins: { left: string[]; right: string[] }): PartGeometry {
 	const rows = Math.max(pins.left.length, pins.right.length, 1);
+	const width = Math.ceil(Math.min(Math.max(name.length * 7.5 + 32, 140), 280) / 10) * 10;
 
 	const side = (names: string[], x: number) =>
 		names.map((name, index) => ({
@@ -156,9 +163,10 @@ export function boxGeometry(pins: { left: string[]; right: string[] }): PartGeom
 		}));
 
 	return {
-		width: BOX_WIDTH,
-		height: BOX_HEADER + rows * BOX_PITCH + 12,
-		pins: [...side(pins.left, 0), ...side(pins.right, BOX_WIDTH)]
+		width,
+		height: BOX_HEADER + rows * BOX_PITCH + 10,
+		pins: [...side(pins.left, 0), ...side(pins.right, width)],
+		pinNamesInside: true
 	};
 }
 
@@ -410,89 +418,4 @@ function checkNets(wires: ResolvedWire[]): WiringIssue[] {
 	}
 
 	return issues;
-}
-
-export type Point = { x: number; y: number };
-
-export function pinDirection(pin: PartPin, geometry: PartGeometry): Point {
-	const edges: [number, Point][] = [
-		[pin.x, { x: -1, y: 0 }],
-		[geometry.width - pin.x, { x: 1, y: 0 }],
-		[pin.y, { x: 0, y: -1 }],
-		[geometry.height - pin.y, { x: 0, y: 1 }]
-	];
-
-	return edges.reduce((best, edge) => (edge[0] < best[0] ? edge : best))[1];
-}
-
-const MARGIN = 60;
-const GAP_X = 160;
-const ROW_GAP = 130;
-const RAIL_CLEARANCE = 70;
-const RAIL_PITCH = 22;
-
-export type WiringLayout = {
-	width: number;
-	height: number;
-	positions: Map<string, Point>;
-	rowOf: Map<string, number>;
-	railBands: number[];
-};
-
-export function railY(layout: WiringLayout, railIndex: number, row: number) {
-	return (layout.railBands[row] ?? 0) + railIndex * RAIL_PITCH;
-}
-
-/** Each row of parts gets its own copy of every rail below it, like the rails along a breadboard, so rail wires stay short. */
-export function layoutWiring(
-	spec: WiringSpec,
-	geometry: ReadonlyMap<string, PartGeometry>,
-	maxRowWidth: number
-): WiringLayout {
-	const rows: { ids: string[]; width: number; height: number }[] = [];
-
-	for (const part of spec.parts) {
-		const size = geometry.get(part.id);
-
-		if (!size) continue;
-
-		const row = rows.at(-1);
-
-		if (row && row.width + GAP_X + size.width <= maxRowWidth) {
-			row.ids.push(part.id);
-			row.width += GAP_X + size.width;
-			row.height = Math.max(row.height, size.height);
-		} else {
-			rows.push({ ids: [part.id], width: size.width, height: size.height });
-		}
-	}
-
-	const width = Math.max(0, ...rows.map((row) => row.width)) + MARGIN * 2;
-	const positions = new Map<string, Point>();
-	const rowOf = new Map<string, number>();
-	const railBands: number[] = [];
-
-	const railSpan =
-		spec.rails.length > 0 ? RAIL_CLEARANCE + (spec.rails.length - 1) * RAIL_PITCH : 0;
-
-	const rowGap = Math.max(ROW_GAP, railSpan + RAIL_CLEARANCE);
-	let y = MARGIN;
-	let bottom = MARGIN;
-
-	rows.forEach((row, index) => {
-		let x = (width - row.width) / 2;
-
-		for (const partId of row.ids) {
-			const size = geometry.get(partId)!;
-			positions.set(partId, { x, y: y + (row.height - size.height) / 2 });
-			rowOf.set(partId, index);
-			x += size.width + GAP_X;
-		}
-
-		bottom = y + row.height;
-		railBands.push(bottom + RAIL_CLEARANCE);
-		y = bottom + rowGap;
-	});
-
-	return { width, height: bottom + railSpan + MARGIN, positions, rowOf, railBands };
 }
