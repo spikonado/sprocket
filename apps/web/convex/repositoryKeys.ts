@@ -3,8 +3,13 @@ import { internal } from '@convex/_generated/api';
 import { internalMutation, mutation, type MutationCtx } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
 import { bumpRegistry } from '@convex/lib/artifactRegistry';
+import { MAX_ARTIFACT_CONTENT_BYTES } from '@convex/artifacts';
 
-const MOVE_BATCH_SIZE = 200;
+const THREAD_MOVE_BATCH_SIZE = 100;
+
+// Each patch reads and rewrites the whole artifact, so stay far below the
+// per-mutation read and write limits even when every artifact is full.
+const ARTIFACT_MOVE_BATCH_SIZE = Math.floor(4_000_000 / MAX_ARTIFACT_CONTENT_BYTES);
 
 const vMoveBatchArgs = v.object({ userId: v.string(), from: v.string(), to: v.string() });
 
@@ -45,14 +50,14 @@ async function moveBatch(ctx: MutationCtx, args: Infer<typeof vMoveBatchArgs>) {
 		.withIndex('by_userId_and_repositoryKey', (q) =>
 			q.eq('userId', userId).eq('repositoryKey', from)
 		)
-		.take(MOVE_BATCH_SIZE);
+		.take(THREAD_MOVE_BATCH_SIZE);
 
 	const artifacts = await ctx.db
 		.query('artifacts')
 		.withIndex('by_userId_and_repositoryKey_and_scope', (q) =>
 			q.eq('userId', userId).eq('repositoryKey', from)
 		)
-		.take(MOVE_BATCH_SIZE);
+		.take(ARTIFACT_MOVE_BATCH_SIZE);
 
 	for (const thread of threads) {
 		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
@@ -67,7 +72,7 @@ async function moveBatch(ctx: MutationCtx, args: Infer<typeof vMoveBatchArgs>) {
 		await bumpRegistry(ctx, userId, to);
 	}
 
-	if (threads.length === MOVE_BATCH_SIZE || artifacts.length === MOVE_BATCH_SIZE) {
+	if (threads.length === THREAD_MOVE_BATCH_SIZE || artifacts.length === ARTIFACT_MOVE_BATCH_SIZE) {
 		await ctx.scheduler.runAfter(0, internal.repositoryKeys.continueMove, args);
 	}
 }

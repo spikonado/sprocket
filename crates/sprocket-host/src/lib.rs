@@ -270,13 +270,13 @@ impl Host {
         let host = self.clone();
         tokio::spawn(async move {
             let _guard = guard;
-            if let Err(error) = host.move_repository_keys(moves).await {
+            if let Err(error) = host.move_pending_repository_keys(moves).await {
                 tracing::warn!("moving threads to a new repository key failed: {error:#}");
             }
         });
     }
 
-    async fn move_repository_keys(
+    async fn move_pending_repository_keys(
         &self,
         moves: Vec<ProjectAttachmentRecord>,
     ) -> anyhow::Result<()> {
@@ -285,23 +285,31 @@ impl Host {
         };
         let client = self.convex_client_for(&session.user.id).await?;
         for project in moves {
-            let Some(from) = project.previous_repository_key else {
-                continue;
-            };
-            client
-                .mutate::<serde_json::Value>(
-                    "repositoryKeys:move",
-                    std::collections::BTreeMap::from([
-                        ("from".into(), from.clone().into()),
-                        ("to".into(), project.repository_key.into()),
-                    ]),
-                )
-                .await?;
-            self.project_attachments
-                .finish_repository_key_move(&project.workspace_path, &from)
-                .await?;
+            self.move_repository_key(&client, &project).await?;
         }
         Ok(())
+    }
+
+    pub async fn move_repository_key(
+        &self,
+        client: &UserConvexClient,
+        project: &ProjectAttachmentRecord,
+    ) -> anyhow::Result<()> {
+        let Some(from) = &project.previous_repository_key else {
+            return Ok(());
+        };
+        client
+            .mutate::<serde_json::Value>(
+                "repositoryKeys:move",
+                std::collections::BTreeMap::from([
+                    ("from".into(), from.clone().into()),
+                    ("to".into(), project.repository_key.clone().into()),
+                ]),
+            )
+            .await?;
+        self.project_attachments
+            .finish_repository_key_move(&project.workspace_path, from)
+            .await
     }
 
     /// Ends machine presence first because ending it needs the native token.

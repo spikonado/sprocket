@@ -142,6 +142,11 @@ impl ProjectAttachmentStore {
                 .unwrap_or_default();
             validated.previous_repository_key = sessions
                 .get(&validated.workspace_path)
+                .or_else(|| {
+                    replace_workspace_path
+                        .as_deref()
+                        .and_then(|path| sessions.get(path))
+                })
                 .and_then(|previous| previous_repository_key(previous, &validated));
             sessions.insert(validated.workspace_path.clone(), validated.clone());
             if let Some(previous_path) = replace_workspace_path.as_deref() {
@@ -444,9 +449,28 @@ fn deduplicate_repository_attachments(
     }
 
     let previous_len = attachments.len();
+    let carried_moves: Vec<(String, String)> = attachments
+        .iter()
+        .filter(|(workspace_path, attachment)| {
+            winners.get(&attachment.attachment_key) != Some(*workspace_path)
+        })
+        .filter_map(|(_, attachment)| {
+            Some((
+                winners[&attachment.attachment_key].clone(),
+                attachment.previous_repository_key.clone()?,
+            ))
+        })
+        .collect();
     attachments.retain(|workspace_path, attachment| {
         winners.get(&attachment.attachment_key) == Some(workspace_path)
     });
+    for (winner_path, previous_repository_key) in carried_moves {
+        if let Some(winner) = attachments.get_mut(&winner_path) {
+            winner
+                .previous_repository_key
+                .get_or_insert(previous_repository_key);
+        }
+    }
     attachments.len() != previous_len
 }
 

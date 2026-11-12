@@ -157,6 +157,17 @@ async fn prepare_run(
         .bind_session_user(&client.session_token, &user.id)
         .await?;
     let rpc = convex_client(&state.host, &user.id).await?;
+    let attachment = state
+        .host
+        .project_attachments
+        .resolve_run_workspace(request.directory.clone())
+        .await?;
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        state.host.move_repository_key(&rpc, &attachment),
+    )
+    .await
+    .context("timed out moving the project's threads to its new repository key")??;
     let thread = match &request.thread_id {
         Some(thread_id) => Some(
             tokio::time::timeout(Duration::from_secs(20), thread_settings(&rpc, thread_id))
@@ -165,11 +176,6 @@ async fn prepare_run(
         ),
         None => None,
     };
-    let attachment = state
-        .host
-        .project_attachments
-        .resolve_run_workspace(request.directory.clone())
-        .await?;
     if let Some(thread) = &thread {
         anyhow::ensure!(
             repository_key_matches(&attachment, &thread.repository_key),
