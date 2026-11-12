@@ -327,7 +327,6 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
         None => (url, String::new()),
     };
     match media_type.as_str() {
-        "text/markdown" | "text/x-markdown" => Probe::Markdown(url),
         "text/html" | "application/xhtml+xml" => Probe::Page,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp" => Probe::Image(url),
         "" | "application/octet-stream" if has_image_extension(&url) => Probe::Image(url),
@@ -338,7 +337,7 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
         {
             Probe::Document(url)
         }
-        "text/plain" => Probe::Markdown(url),
+        other if super::markdown_url::is_markdown_media_type(other) => Probe::Markdown(url),
         _ if has_html_extension(&url) => Probe::Page,
         _ => Probe::Unknown(url),
     }
@@ -423,7 +422,7 @@ fn is_text(prefix: &[u8]) -> bool {
         && std::str::from_utf8(prefix).map_or_else(|error| error.error_len().is_none(), |_| true)
 }
 
-fn media_type(headers: &reqwest::header::HeaderMap) -> String {
+pub(super) fn media_type(headers: &reqwest::header::HeaderMap) -> String {
     normalize_media_type(
         headers
             .get(reqwest::header::CONTENT_TYPE)

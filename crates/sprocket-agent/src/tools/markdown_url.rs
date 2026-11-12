@@ -67,21 +67,8 @@ pub(super) async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<V
         response.status() == reqwest::StatusCode::OK,
         "no markdown endpoint"
     );
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
     anyhow::ensure!(
-        matches!(
-            content_type.as_str(),
-            "text/markdown" | "text/x-markdown" | "text/plain"
-        ),
+        is_markdown_media_type(&super::web::media_type(response.headers())),
         "not a markdown response"
     );
     anyhow::ensure!(
@@ -109,6 +96,13 @@ pub(super) async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<V
         "url": response.url().as_str(),
         "markdown": markdown,
     }))
+}
+
+pub(super) fn is_markdown_media_type(media_type: &str) -> bool {
+    matches!(
+        media_type,
+        "text/markdown" | "text/x-markdown" | "text/plain"
+    )
 }
 
 fn looks_like_html(mut text: &str) -> bool {

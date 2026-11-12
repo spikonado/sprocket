@@ -225,15 +225,15 @@ async fn negotiated_markdown_is_read_locally() {
         let markdown = b"# PCB Editor\n";
         let response = headers(content_type, markdown.len());
         let server = tokio::spawn(async move {
-            for method in ["HEAD ", "GET "] {
+            for method in ["head ", "get "] {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
                 let count = stream.read(&mut request).await.unwrap();
                 let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
-                assert!(request.starts_with(&method.to_ascii_lowercase()));
+                assert!(request.starts_with(method));
                 assert!(request.contains("accept: text/markdown"));
                 stream.write_all(response.as_bytes()).await.unwrap();
-                if method == "GET " {
+                if method == "get " {
                     stream.write_all(markdown).await.unwrap();
                 }
             }
