@@ -8,33 +8,21 @@ use rig::agent::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
-    "apply_patch",
-    "ask_question",
-    "bind_artifact",
-    "card_checkout",
-    "control_cmd",
-    "control_subagent",
-    "delete_artifact",
-    "exec_cmd",
-    "link_prs",
-    "list_artifacts",
-    "list_subagents",
-    "lookup_parts",
-    "parse_file",
-    "poll_checkout",
-    "poll_cmd",
-    "poll_pr",
-    "poll_question",
-    "poll_subagent",
-    "read_skill",
-    "report_order",
-    "save_artifact",
-    "scrape_url",
-    "set_cwd",
-    "spawn_subagent",
-    "web_search",
-];
+use crate::tools::{AGENT_TOOLS, NormalizeToolArgs};
+
+fn agent_tool_normalizer(tool_name: &str) -> Option<NormalizeToolArgs> {
+    AGENT_TOOLS
+        .iter()
+        .find_map(|(name, normalize)| (*name == tool_name).then_some(*normalize))
+}
+
+/// The model's raw arguments and a tool's serialized `Args` differ in omitted defaults and `null`s,
+/// so both sides of a dispatch match go through the tool's `Args` type.
+fn normalized_tool_args(tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
+    agent_tool_normalizer(tool_name)
+        .and_then(|normalize| normalize(args))
+        .unwrap_or_else(|| args.clone())
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,6 +185,7 @@ impl ToolCallTracker {
         let Ok(args) = serde_json::from_str(args) else {
             return;
         };
+        let args = normalized_tool_args(tool_name, &args);
         if let Ok(mut state) = self.0.lock() {
             state
                 .dispatches_by_tool
@@ -211,17 +200,10 @@ impl ToolCallTracker {
         tool_name: &str,
         args: &serde_json::Value,
     ) -> Option<ToolInvocationAssignment> {
+        let args = normalized_tool_args(tool_name, args);
         let mut state = self.0.lock().ok()?;
         let pending = state.dispatches_by_tool.get_mut(tool_name)?;
-        // Omitted defaults make a payload compatible with calls that set them, so exact matches go first.
-        let index = pending
-            .iter()
-            .position(|dispatch| dispatch.args == *args)
-            .or_else(|| {
-                pending
-                    .iter()
-                    .position(|dispatch| tool_payload_compatible(&dispatch.args, args))
-            })?;
+        let index = pending.iter().position(|dispatch| dispatch.args == args)?;
         pending.remove(index).map(|dispatch| dispatch.assignment)
     }
 
@@ -357,7 +339,7 @@ impl AgentHook for AgentPromptHook {
         event: DispatchEvent<'_>,
     ) -> DispatchAction {
         if let Some(tool_name) = event.tool_name()
-            && AGENT_TOOL_NAMES.contains(&tool_name)
+            && agent_tool_normalizer(tool_name).is_some()
         {
             let call_id = event.call_id.map(|id| id.wire());
             self.tracker.prepare_dispatch(
@@ -386,25 +368,6 @@ impl AgentHook for AgentPromptHook {
     }
 }
 
-fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Value) -> bool {
-    match (raw, normalized) {
-        (serde_json::Value::Object(raw), serde_json::Value::Object(normalized)) => {
-            normalized.iter().all(|(key, value)| {
-                raw.get(key)
-                    .is_some_and(|raw| tool_payload_compatible(raw, value))
-            })
-        }
-        (serde_json::Value::Array(raw), serde_json::Value::Array(normalized)) => {
-            raw.len() == normalized.len()
-                && raw
-                    .iter()
-                    .zip(normalized)
-                    .all(|(raw, normalized)| tool_payload_compatible(raw, normalized))
-        }
-        _ => raw == normalized,
-    }
-}
-
 fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> InvalidToolCallAction {
     if let InvalidToolCallReason::MalformedArguments { error } = &context.reason {
         return InvalidToolCallAction::retry(format!(
@@ -417,9 +380,9 @@ fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> InvalidToolCal
 
 fn resolve_invalid_tool_name(tool_name: &str, available_tools: &[String]) -> InvalidToolCallAction {
     let candidates = if available_tools.is_empty() {
-        AGENT_TOOL_NAMES
+        AGENT_TOOLS
             .iter()
-            .map(|name| (*name).to_string())
+            .map(|(name, _)| (*name).to_string())
             .collect()
     } else {
         available_tools.to_vec()

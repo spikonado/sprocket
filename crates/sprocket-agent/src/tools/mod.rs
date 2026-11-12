@@ -46,6 +46,53 @@ use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 use crate::provider::AgentProviderRequest;
 
+pub(crate) type NormalizeToolArgs = fn(&serde_json::Value) -> Option<serde_json::Value>;
+
+pub(crate) const AGENT_TOOLS: &[(&str, NormalizeToolArgs)] = &[
+    agent_tool::<ApplyPatchTool>(),
+    agent_tool::<AskQuestionTool>(),
+    agent_tool::<BindArtifactTool>(),
+    agent_tool::<CardCheckoutTool>(),
+    agent_tool::<ControlCmdTool>(),
+    agent_tool::<ControlSubagentTool>(),
+    agent_tool::<DeleteArtifactTool>(),
+    agent_tool::<ExecCmdTool>(),
+    agent_tool::<LinkPrsTool>(),
+    agent_tool::<ListArtifactsTool>(),
+    agent_tool::<ListSubagentsTool>(),
+    agent_tool::<LookupPartsTool>(),
+    agent_tool::<ParseFileTool>(),
+    agent_tool::<PollCheckoutTool>(),
+    agent_tool::<PollCmdTool>(),
+    agent_tool::<PollPrTool>(),
+    agent_tool::<PollQuestionTool>(),
+    agent_tool::<PollSubagentTool>(),
+    agent_tool::<ReadSkillTool>(),
+    agent_tool::<ReportOrderTool>(),
+    agent_tool::<SaveArtifactTool>(),
+    agent_tool::<ScrapeUrlTool>(),
+    agent_tool::<SetCwdTool>(),
+    agent_tool::<SpawnSubagentTool>(),
+    agent_tool::<WebSearchTool>(),
+];
+
+const fn agent_tool<T>() -> (&'static str, NormalizeToolArgs)
+where
+    T: rig::tool::Tool,
+    T::Args: serde::Serialize,
+{
+    (T::NAME, normalize_tool_args::<T> as NormalizeToolArgs)
+}
+
+fn normalize_tool_args<T>(args: &serde_json::Value) -> Option<serde_json::Value>
+where
+    T: rig::tool::Tool,
+    T::Args: serde::Serialize,
+{
+    let args = <T::Args as serde::Deserialize>::deserialize(args).ok()?;
+    serde_json::to_value(args).ok()
+}
+
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) ask_question: AskQuestionTool,
