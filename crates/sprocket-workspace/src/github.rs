@@ -20,6 +20,14 @@ pub use credentials::use_pinned_gh;
 const PUBLIC_HOST: &str = "github.com";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+fn hide_console_window(_command: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        _command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::default);
 
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

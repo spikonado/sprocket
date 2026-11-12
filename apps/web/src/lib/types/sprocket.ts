@@ -274,6 +274,8 @@ export type GitHubStatus = {
 	hosts: GitHubHostStatus[];
 };
 
+export type RepositoryVisibility = 'public' | 'private';
+
 export type GitHubSettingsUpdate = {
 	enabled?: boolean;
 	host?: { host: string; enabled: boolean };
@@ -482,7 +484,7 @@ export type LocalApi = {
 	createGitHubRepository: (input: {
 		userId: string;
 		name: string;
-		visibility: 'public' | 'private';
+		visibility: RepositoryVisibility;
 		parentPath: string;
 	}) => Promise<WorkspacePathResolution>;
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;

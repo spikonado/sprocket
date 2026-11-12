@@ -4,9 +4,7 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use sprocket_host::project_attachments::{WorkspacePathResolution, resolve_workspace_path};
 use sprocket_workspace::github::is_valid_host;
-use sprocket_workspace::github::repositories::{
-    Visibility, clone_repository, create_repository,
-};
+use sprocket_workspace::github::repositories::{Visibility, clone_repository, create_repository};
 use sprocket_workspace::github::status::{GitHubStatus, status};
 use sprocket_workspace::resolve_or_create_workspace_root;
 
@@ -144,9 +142,7 @@ async fn create_repository_handler(
     clone_into(&request.user_id, &url, request.parent_path)
         .await
         .map(Json)
-        .map_err(|error| {
-            ApiError::bad_request(anyhow::anyhow!("Created {url}, but {error:#}"))
-        })
+        .map_err(|error| ApiError::bad_request(anyhow::anyhow!("Created {url}, but {error:#}")))
 }
 
 async fn clone_into(

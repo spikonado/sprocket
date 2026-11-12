@@ -7,7 +7,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent
 } from 'react';
 import { ArrowLeft, Folder, LoaderCircle, X } from 'lucide-react';
-import type { LocalApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
+import type { LocalApi, FilesystemBrowseEntry, RepositoryVisibility } from '$lib/types/sprocket';
 import {
 	getBrowseLeafPathSegment,
 	isFilesystemBrowseQuery,
@@ -36,6 +36,11 @@ const projectSources: { id: ProjectSource; label: string }[] = [
 	{ id: 'folder', label: 'Open folder' },
 	{ id: 'clone', label: 'Clone repo' },
 	{ id: 'create', label: 'New GitHub repo' }
+];
+
+const visibilityOptions: { id: RepositoryVisibility; label: string }[] = [
+	{ id: 'private', label: 'Private' },
+	{ id: 'public', label: 'Public' }
 ];
 
 const segmentClass = (active: boolean) =>
@@ -84,7 +89,7 @@ export default function ProjectPicker({
 	const [opened, setOpened] = useState(false);
 	const [source, setSource] = useState<ProjectSource>('folder');
 	const [repository, setRepository] = useState('');
-	const [visibility, setVisibility] = useState<'public' | 'private'>('private');
+	const [visibility, setVisibility] = useState<RepositoryVisibility>('private');
 	const queryRef = useRef('~/');
 	const volumeListRef = useRef(false);
 	const pathInputRef = useRef<HTMLInputElement | null>(null);
@@ -247,14 +252,14 @@ export default function ProjectPicker({
 				: source !== 'folder'
 					? 'No subdirectories here.'
 					: resolvedWorkspacePath.length > 0 && !willCreateDirectory
-					? mode === 'reconnect'
-						? 'Press Ctrl+Enter to reconnect this directory.'
-						: 'Press Ctrl+Enter to add this directory.'
-					: willCreateDirectory
 						? mode === 'reconnect'
-							? 'Press Ctrl+Enter to create and reconnect this directory.'
-							: 'Press Ctrl+Enter to create and add this directory.'
-						: 'No matching directories in this path.';
+							? 'Press Ctrl+Enter to reconnect this directory.'
+							: 'Press Ctrl+Enter to add this directory.'
+						: willCreateDirectory
+							? mode === 'reconnect'
+								? 'Press Ctrl+Enter to create and reconnect this directory.'
+								: 'Press Ctrl+Enter to create and add this directory.'
+							: 'No matching directories in this path.';
 
 	const highlightedEntryIndex = displayedEntries.findIndex(
 		(entry) => entry.fullPath === highlightedPath
@@ -355,11 +360,15 @@ export default function ProjectPicker({
 	}
 
 	function resolveSelection() {
-		if (source === 'folder' || userId === null) {
+		if (source === 'folder') {
 			return localApi.resolveWorkspacePath({
 				workspacePath: resolvedWorkspacePath,
 				createIfMissing: willCreateDirectory
 			});
+		}
+
+		if (userId === null) {
+			throw new Error('Sign in to use GitHub.');
 		}
 
 		return source === 'clone'
@@ -603,27 +612,25 @@ export default function ProjectPicker({
 									/>
 									{source === 'create' && (
 										<div className="flex gap-1" role="group" aria-label="Visibility">
-											{(['private', 'public'] as const).map((option) => (
+											{visibilityOptions.map(({ id, label }) => (
 												<button
-													key={option}
+													key={id}
 													type="button"
-													className={segmentClass(visibility === option)}
-													aria-pressed={visibility === option}
-													onClick={() => setVisibility(option)}
+													className={segmentClass(visibility === id)}
+													aria-pressed={visibility === id}
+													onClick={() => setVisibility(id)}
 												>
-													{option === 'private' ? 'Private' : 'Public'}
+													{label}
 												</button>
 											))}
 										</div>
 									)}
+									<p className="text-muted-foreground w-full text-xs">
+										{userId === null
+											? 'Sign in to use GitHub.'
+											: `Clones into a new directory in ${resolvedWorkspacePath || 'the chosen location'}`}
+									</p>
 								</div>
-							)}
-							{source !== 'folder' && (
-								<p className="text-muted-foreground text-xs">
-									{userId === null
-										? 'Sign in to use GitHub.'
-										: `Clones into a new directory in ${resolvedWorkspacePath || 'the chosen location'}`}
-								</p>
 							)}
 						</div>
 					)}

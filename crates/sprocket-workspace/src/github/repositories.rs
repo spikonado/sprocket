@@ -5,7 +5,7 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 use tokio::process::Command;
 
-use super::{GitHubApi, GitHubError, PUBLIC_HOST, agent_environment};
+use super::{GitHubApi, GitHubError, PUBLIC_HOST, agent_environment, hide_console_window};
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,7 +14,6 @@ pub enum Visibility {
     Private,
 }
 
-/// Creates `name` under the signed-in GitHub account and returns its URL.
 pub async fn create_repository(
     user_id: &str,
     name: &str,
@@ -59,7 +58,6 @@ pub async fn create_repository(
     }
 }
 
-/// Clones `source` into a new directory under `parent_directory`, named after the repository.
 pub async fn clone_repository(
     user_id: &str,
     source: &str,
@@ -78,11 +76,7 @@ pub async fn clone_repository(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        git.creation_flags(CREATE_NO_WINDOW);
-    }
+    hide_console_window(&mut git);
     let output = git.output().await.context("couldn't run git")?;
     if !output.status.success() {
         bail!(
