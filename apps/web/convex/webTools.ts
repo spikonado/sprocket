@@ -10,7 +10,6 @@ import { components, internal } from '@convex/_generated/api';
 import {
 	vWebSearchResult,
 	type ExecutorJobPayload,
-	type vPageOutline,
 	type vScrapeUrlTransport
 } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
@@ -38,12 +37,6 @@ const SDK_TIMEOUT_MARGIN_MS = 10_000;
 
 const REQUEST_PUBLISH_MARGIN_MS = 30_000;
 
-const OUTLINE_MAX_CHARS = 8_000;
-
-const OUTLINE_HEADING_MAX_CHARS = 200;
-
-const OUTLINE_DESCRIPTION_MAX_CHARS = 1_000;
-
 export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.';
 
 const RAW_DOCUMENT_TOO_LARGE = 'Document exceeds the 50 MB raw fetch limit.';
@@ -62,14 +55,11 @@ const contextDevErrorBodySchema = z.object({
 	message: z.string().optional()
 });
 
-type PageOutline = Infer<typeof vPageOutline>;
-
 type ScrapeParams = Omit<WebScrapeParams, 'maxAgeMs' | 'timeoutOpts'>;
 
 type ScrapedPage = {
 	url: string;
 	markdown: string;
-	outline: PageOutline;
 };
 
 export type RawDocument = {
@@ -221,41 +211,6 @@ function requireOutput(output: ScrapeOutput): void {
 	throw new Error(`This webpage returned an error: ${message} (${output.error_code ?? 'UNKNOWN'})`);
 }
 
-const TRAILING_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
-
-/** Never splits a surrogate pair; the agent's JSON parser rejects lone surrogates. */
-function clip(text: string, maxChars: number): string {
-	const clipped = text.slice(0, maxChars);
-
-	return TRAILING_HIGH_SURROGATE.test(clipped) ? clipped.slice(0, -1) : clipped;
-}
-
-function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
-	const outline: PageOutline = { headings: [] };
-
-	const title = clip(metadata.title?.trim() ?? '', OUTLINE_HEADING_MAX_CHARS);
-	const description = clip(metadata.description?.trim() ?? '', OUTLINE_DESCRIPTION_MAX_CHARS);
-
-	if (title) outline.title = title;
-
-	if (description) outline.description = description;
-
-	let size = JSON.stringify(outline).length;
-
-	for (const heading of metadata.headings ?? []) {
-		const text = clip(heading.text.trim(), OUTLINE_HEADING_MAX_CHARS);
-
-		if (!text) continue;
-		const entry = { level: heading.level, text };
-		size += JSON.stringify(entry).length + 1;
-
-		if (size > OUTLINE_MAX_CHARS) break;
-		outline.headings.push(entry);
-	}
-
-	return outline;
-}
-
 async function fetchScrape(urlValue: string, limits: ScrapeLimits): Promise<ScrapedPage> {
 	const url = requireHttpUrl(urlValue);
 
@@ -273,8 +228,7 @@ async function fetchScrape(urlValue: string, limits: ScrapeLimits): Promise<Scra
 
 	return {
 		url: response.url || url.toString(),
-		markdown: response.markdown.data ?? '',
-		outline: pageOutline(response.metadata)
+		markdown: response.markdown.data ?? ''
 	};
 }
 
@@ -326,7 +280,6 @@ async function localScrapeTransport(
 		? { url: page.url, markdown: page.markdown }
 		: {
 				url: page.url,
-				outline: page.outline,
 				scrapeUrl: await storeTemporaryScrape(ctx, page.markdown)
 			};
 }
