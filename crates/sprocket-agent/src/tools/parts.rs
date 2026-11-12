@@ -46,16 +46,8 @@ struct PartQuery {
     /// MPN or JLCPCB/LCSC code like `C2864583`.
     #[schemars(length(min = 1))]
     part: String,
-    #[serde(default = "one", skip_serializing_if = "is_one")]
-    quantity: NonZeroU32,
-}
-
-fn one() -> NonZeroU32 {
-    NonZeroU32::MIN
-}
-
-fn is_one(quantity: &NonZeroU32) -> bool {
-    *quantity == NonZeroU32::MIN
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quantity: Option<NonZeroU32>,
 }
 
 impl rig::tool::Tool for LookupPartsTool {
@@ -114,7 +106,9 @@ impl rig::tool::Tool for LookupPartsTool {
 /// schemars omits defaults that `skip_serializing_if` would skip.
 fn parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(LookupPartsArgs));
-    schema["$defs"]["PartQuery"]["properties"]["quantity"]["default"] = json!(1);
+    let quantity = &mut schema["$defs"]["PartQuery"]["properties"]["quantity"];
+    quantity["type"] = json!("integer");
+    quantity["default"] = json!(1);
     schema
 }
 
@@ -138,7 +132,8 @@ async fn lookup(args: &LookupPartsArgs) -> anyhow::Result<BTreeMap<String, PartR
         .build()?;
     let mut quantities = BTreeMap::<&str, u64>::new();
     for PartQuery { part, quantity } in &args.parts {
-        *quantities.entry(part.as_str()).or_default() += u64::from(quantity.get());
+        *quantities.entry(part.as_str()).or_default() +=
+            u64::from(quantity.map_or(1, NonZeroU32::get));
     }
     let client = &client;
     let lookups = quantities.into_iter().map(|(part, quantity)| async move {
