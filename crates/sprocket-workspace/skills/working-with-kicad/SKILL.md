@@ -74,7 +74,7 @@ Follow a recommendation when you can explain why it works on this board.
 
 - Write values with units, like `10 kΩ` or `1 µF`.
 - Give every placed part hidden `Manufacturer` and `MPN` fields and set `Datasheet` to the manufacturer's datasheet URL.
-  Add hidden `Digikey Part #`, `Mouser Part #`, `LCSC Part #`, and `JLCPCB Part #` fields if that distributor sells the part.
+  For each distributor the part may be ordered from, add a hidden `<Distributor> Part #` field with its SKU.
 - Move fields and symbols until no text overlaps another symbol, field, or label in the rendered schematic.
 
 ERC passes on designs that would damage parts. Before calling the schematic done, review each block from the exported netlist, with one read-only subagent per block, and check:
