@@ -48,3 +48,22 @@ fn parses_launch_server_and_update_modes() {
         Some(Commands::Update(UpdateArgs { check: true }))
     ));
 }
+
+#[test]
+fn reads_the_desktop_executable_recorded_in_the_data_dir() {
+    let data_dir = std::env::temp_dir().join(format!("sprocket-cli-test-{}", Uuid::new_v4()));
+    std::fs::create_dir(&data_dir).unwrap();
+    assert_eq!(recorded_desktop_executable(&data_dir), None);
+
+    let executable = std::env::temp_dir()
+        .join("Sprocket Apps")
+        .join("sprocket-desktop");
+    std::fs::write(
+        data_dir.join(DESKTOP_EXECUTABLE_FILE),
+        format!("{}\n", executable.display()),
+    )
+    .unwrap();
+    let recorded = recorded_desktop_executable(&data_dir);
+    std::fs::remove_dir_all(&data_dir).unwrap();
+    assert_eq!(recorded, Some(executable));
+}

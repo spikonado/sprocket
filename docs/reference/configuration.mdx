@@ -5,13 +5,13 @@ description: Environment variables, the ~/.sprocket data directory, ports, and c
 
 ## Environment variables
 
-| Variable                      | Effect                                                                                           | Default                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------- |
-| `SPROCKET_PORT`               | Port for the local server. The desktop app reads it too.                                         | `17731`                      |
-| `SPROCKET_HOST`               | Address the server listens on.                                                                   | `127.0.0.1`                  |
-| `SPROCKET_DATA_DIR`           | Data directory. The desktop app reads it too.                                                    | `~/.sprocket`                |
-| `SPROCKET_DESKTOP_EXECUTABLE` | Path to the desktop app that `sprocket` opens.                                                   | `sprocket-desktop` on `PATH` |
-| `RUST_LOG`                    | Log filter, such as `info` or `sprocket_host=debug`. `sprocket_server` logs stay at errors only. | Errors only                  |
+| Variable                      | Effect                                                                                           | Default                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------- |
+| `SPROCKET_PORT`               | Port for the local server. The desktop app reads it too.                                         | `17731`                          |
+| `SPROCKET_HOST`               | Address the server listens on.                                                                   | `127.0.0.1`                      |
+| `SPROCKET_DATA_DIR`           | Data directory. The desktop app reads it too.                                                    | `~/.sprocket`                    |
+| `SPROCKET_DESKTOP_EXECUTABLE` | Path to the desktop app that `sprocket` opens.                                                   | The path in `desktop-executable` |
+| `RUST_LOG`                    | Log filter, such as `info` or `sprocket_host=debug`. `sprocket_server` logs stay at errors only. | Errors only                      |
 
 ## Data directory
 
@@ -19,13 +19,14 @@ Sprocket keeps its local state in `~/.sprocket` on every OS. On Windows without 
 
 Each data directory is a separate profile with its own sign-in. Set `SPROCKET_DATA_DIR` to run a second profile.
 
-| Path             | Contents                                                 |
-| ---------------- | -------------------------------------------------------- |
-| `credentials/`   | Your sign-in, when stored in a file                      |
-| `transcripts/`   | Cached thread transcripts, attachments, and command logs |
-| `tools/`         | Tools Sprocket installs for the agent                    |
-| `connectors/`    | Installed connectors, such as KiCad                      |
-| `cli-server.log` | Log of the temporary server the CLI starts               |
+| Path                 | Contents                                                 |
+| -------------------- | -------------------------------------------------------- |
+| `credentials/`       | Your sign-in, when stored in a file                      |
+| `transcripts/`       | Cached thread transcripts, attachments, and command logs |
+| `tools/`             | Tools Sprocket installs for the agent                    |
+| `connectors/`        | Installed connectors, such as KiCad                      |
+| `desktop-executable` | Where the desktop app is, saved each time it starts      |
+| `cli-server.log`     | Log of the temporary server the CLI starts               |
 
 ## Credentials
 
