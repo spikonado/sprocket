@@ -51,7 +51,7 @@ Use `kicad-cli` for checks and exports.
 - DRC reports hundreds of `connection_width` violations after a zone fill, because a new `Zone()` has 0 clearance and 0 mm thermal spokes.
   Set its clearance and a full pad connection, as in [Copper pours](#copper-pours).
 - KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
-- The Gerber job file lists placeholder dielectrics, because kipy reads the stackup with `board.get_stackup()` but can't write it.
+- The Gerber job file lists placeholder dielectrics because kipy reads the stackup with `board.get_stackup()` but can't write it.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
 - DRC on a renamed copy of a board ignores the project's rules, because `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
   Make copies with `copy_board.py`. For DRC without parity errors or `lib_footprint_issues`, also copy the `.kicad_sch` under the new basename and `fp-lib-table` next to it.
@@ -117,22 +117,20 @@ Keep net class widths and clearances above them.
 
 ## Placing parts
 
-Place parts the way an experienced layout engineer would by hand:
-
 - Copy the datasheet's layout for placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives.
 - Put each decoupling capacitor at the supply pin it serves, with its pad facing the pin about 1 mm away.
   Treat a reference design's looser spacing as a maximum.
 - Put every other passive at the pin it serves, turned so the connection is a short straight track.
 - Group related parts and align them on shared center lines at an even pitch, like a row with a capacitor on each side of an IC. Put test pads on a grid.
 - Give each GND pad its own via.
-- Before showing a placement to the user, render it with `kicad-view` and fix every part that looks scattered or misaligned. DRC doesn't catch these.
+- Render the placement with `kicad-view` and fix every part that looks scattered or misaligned.
 
 ## Copper pours
 
 Before routing, give every copper layer a GND zone over the whole board at priority 0.
 Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
 Keep one layer as a solid ground plane with no other pours or traces.
-On boards with 4 or more layers it is the inner layer next to `F.Cu`. On 2-layer boards it is `B.Cu`, and only short jumpers may cross it.
+On boards with 4 or more layers, it is the inner layer next to `F.Cu`. On 2-layer boards, it is `B.Cu`, and only short jumpers may cross it.
 Keep switch node copper as small as its current allows, because its area radiates.
 
 ```python
@@ -154,7 +152,7 @@ Route the board with `kicad-route`.
 It connects the pads of zone nets, like `GND`, to their pours.
 On every run:
 
-- Pass `--escalation off --strict-sizes`. Otherwise the router retries failing nets below their net class sizes and lowers the project's rules to match.
+- Pass `--escalation off --strict-sizes`. Otherwise, the router retries failing nets below their net class sizes and lowers the project's rules to match.
 - On boards with 4 or more layers, keep tracks off the ground plane: pass every copper layer to `--layers` and `-1` for the plane in `--layer-costs`.
 
 Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes and other areas that traces must avoid. Allow copper pours in them, so GND still fills under the switch node.
@@ -175,16 +173,15 @@ Then route in this order, one block at a time with `--component REF` or `--group
 
 Keep earlier blocks' copper with `--keep-input-copper`, and set `KICAD_RIP_PREEXISTING=0 KICAD_FINALIZE_RIP=0` so the router can't rip it up.
 
-Route the way an experienced layout engineer would by hand.
 The router leaves right angles and stray jogs, so look at each block in `kicad-view` and fix the copper that breaks these rules:
 
 - Make every bend 135° or wider, and join branches at 45°, preferably at a pad or via.
 - Leave each pad and via from its center in a straight line until the track clears its copper, and keep each track heading toward its destination.
-- Run tracks that go the same way within about 0.5 mm of each other side by side at the clearance rule.
+- Run tracks that go the same way within about 0.5 mm of each other, side by side at the clearance rule.
 - Stagger vias so bundled tracks stay together up to their ends.
 - Make every gap either the clearance rule or wide enough for another track plus clearance, so pours leave no slivers or islands.
 
-The exit code doesn't say whether every net routed, so run [DRC](#checks) on each output.
+The exit code doesn't say whether every net is routed, so run [DRC](#checks) on each output.
 For each round of fixes:
 
 - Route only what is still open: the nets DRC lists as unconnected with `--nets`, or one block with `--component` or `--group`.
@@ -208,7 +205,7 @@ Once DRC shows 0 unconnected items, finish the copper in this order and run DRC 
    With nothing left to route, it removes dead ends and redundant or duplicate segments. With nets still open, it routes them again, which can take 15 to 30 minutes.
    Then run `check_weird.py` on the result and fix what it reports.
 2. Stitch the GND pours together with `route_planes.py`, using vias on a grid and a fence along the board edge.
-   Pass `--skip-existing-zones`, or it replaces your GND zones with its own.
+   Pass `--skip-existing-zones`, or it will replace your GND zones with its own.
 3. Enable teardrops on every pad and via, then refill the zones.
    Edit pads through `footprint.definition.pads` and send the footprints to `update_items`. Sending pads from `get_pads()` changes nothing.
    Teardrops go stale when copper moves, so add them as the last copper change.
