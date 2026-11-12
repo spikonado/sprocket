@@ -1,9 +1,9 @@
 use super::*;
 
 fn tools() -> Vec<String> {
-    AGENT_TOOL_NAMES
+    AGENT_TOOLS
         .iter()
-        .map(|name| (*name).to_string())
+        .map(|(name, _)| (*name).to_string())
         .collect()
 }
 
@@ -88,23 +88,23 @@ fn tracker_associates_parallel_calls_by_dispatch_identity() {
 
     tracker.prepare_dispatch(
         "exec_cmd",
-        "internal-1",
-        Some("call-1"),
-        r#"{"cmd":"same","yieldTimeMs":5}"#,
+        "internal-2",
+        Some("call-2"),
+        r#"{"cmd":"same","shell":"bash"}"#,
     );
     tracker.prepare_dispatch(
         "exec_cmd",
-        "internal-2",
-        Some("call-2"),
-        r#"{"cmd":"same"}"#,
+        "internal-1",
+        Some("call-1"),
+        r#"{"cmd":"same","shell":null}"#,
     );
-    let second_dispatch = tracker
+    let first_dispatch = tracker
         .claim_dispatch("exec_cmd", &serde_json::json!({"cmd":"same"}))
         .unwrap();
-    let first_dispatch = tracker
+    let second_dispatch = tracker
         .claim_dispatch(
             "exec_cmd",
-            &serde_json::json!({"cmd":"same","yieldTimeMs":5}),
+            &serde_json::json!({"cmd":"same","shell":"bash"}),
         )
         .unwrap();
     assert_eq!(second_dispatch.call_id, "call-2");
