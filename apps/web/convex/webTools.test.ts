@@ -9,14 +9,12 @@ import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { REQUEST_TTL_MS } from '@convex/webRequests';
 import {
 	CONTEXT_DEV_CREDITS_EXHAUSTED,
-	HIGHLIGHTS_MAX_CHARS,
 	SCRAPE_CACHE_MAX_AGE_MS,
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
 	SCRAPE_TIMEOUT_MS,
 	classifyExaSearchFailure,
-	executeQueuedWebRequest,
-	type ScrapedPage
+	executeQueuedWebRequest
 } from '@convex/webTools';
 import {
 	contextDevScrapeResponse,
@@ -243,13 +241,13 @@ describe('queued request job checks', () => {
 });
 
 describe('context.dev scrape', () => {
-	it.each([{ url: PAGE_URL }, { url: PAGE_URL, query: '   ' }])(
-		'requests fresh main-content markdown with images and no highlights for %j',
+	it.each([{ url: PAGE_URL }, { url: PAGE_URL, query: 'pricing' }])(
+		'requests fresh main-content markdown with images for %j',
 		async (payload) => {
 			const t = initConvexTest();
 			scrape.mockResolvedValue(scrapeResponse());
 
-			const result = await scrapePage(t, payload);
+			await scrapePage(t, payload);
 
 			const { body, options } = lastScrapeCall();
 			expect(body).toEqual({
@@ -261,47 +259,8 @@ describe('context.dev scrape', () => {
 				timeoutOpts: { milliseconds: SCRAPE_TIMEOUT_MS, behavior: 'fail' }
 			});
 			expect(options?.timeout).toBeGreaterThan(SCRAPE_TIMEOUT_MS);
-			expect(result).not.toHaveProperty('highlights');
 		}
 	);
-
-	it('requests and returns highlights for a query', async () => {
-		const t = initConvexTest();
-
-		scrape.mockResolvedValue(
-			scrapeResponse({
-				highlights: { data: ['Pricing starts at $5.'], requested: true, success: true }
-			})
-		);
-
-		const result = await scrapePage(t, { url: PAGE_URL, query: '  pricing  ' });
-
-		expect(lastScrapeCall().body).toMatchObject({
-			formats: { markdown: true, highlights: true },
-			highlightsParams: { query: 'pricing', maxCharacters: HIGHLIGHTS_MAX_CHARS }
-		});
-		expect(result).toMatchObject({ highlights: ['Pricing starts at $5.'] });
-	});
-
-	it('returns the page without highlights when only the highlights output failed', async () => {
-		const t = initConvexTest();
-
-		scrape.mockResolvedValue(
-			scrapeResponse({
-				highlights: {
-					data: null,
-					requested: true,
-					success: false,
-					error_code: 'HIGHLIGHTS_FAILED'
-				}
-			})
-		);
-
-		const result = await scrapePage(t, { url: PAGE_URL, query: 'pricing' });
-
-		expect(result).toMatchObject({ url: PAGE_URL, markdown: '# Page' });
-		expect(result).not.toHaveProperty('highlights');
-	});
 
 	it('maps metadata to an outline', async () => {
 		const t = initConvexTest();
@@ -430,17 +389,13 @@ describe('context.dev scrape', () => {
 });
 
 describe('scrape transport size', () => {
-	function mockPage(page: Pick<ScrapedPage, 'markdown' | 'highlights'>) {
-		const response = scrapeResponse({
-			markdown: { data: page.markdown, requested: true, success: true },
-			metadata: {}
-		});
-
-		if (page.highlights) {
-			response.highlights = { data: page.highlights, requested: true, success: true };
-		}
-
-		scrape.mockResolvedValue(response);
+	function mockPage(markdown: string) {
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				markdown: { data: markdown, requested: true, success: true },
+				metadata: {}
+			})
+		);
 	}
 
 	it('returns the final URL and markdown at the inline budget without storage', async () => {
@@ -460,18 +415,16 @@ describe('scrape transport size', () => {
 		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('stores oversized markdown and returns the outline, highlights, and scrapeUrl', async () => {
+	it('stores oversized markdown and returns the outline and scrapeUrl', async () => {
 		const t = initConvexTest();
 		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
-		const highlights = ['x marks the spot'];
-		mockPage({ markdown, highlights });
+		mockPage(markdown);
 
-		const result = await scrapePage(t, { url: PAGE_URL, query: 'x' });
+		const result = await scrapePage(t, { url: PAGE_URL });
 
 		expect(result).toEqual({
 			url: PAGE_URL,
 			outline: { headings: [] },
-			highlights,
 			scrapeUrl: expect.any(String)
 		});
 
@@ -484,7 +437,7 @@ describe('scrape transport size', () => {
 
 	it('deletes stored markdown after its TTL', async () => {
 		const t = initConvexTest();
-		mockPage({ markdown: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1) });
+		mockPage('x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1));
 
 		await scrapePage(t, { url: PAGE_URL });
 		expect(await storageBlobs(t)).toHaveLength(1);
@@ -497,7 +450,7 @@ describe('scrape transport size', () => {
 
 	it('rejects pages over the download limit without storing a blob', async () => {
 		const t = initConvexTest();
-		mockPage({ markdown: 'x'.repeat(64 * 1024 * 1024 + 1) });
+		mockPage('x'.repeat(64 * 1024 * 1024 + 1));
 
 		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(
 			'Scrape exceeds the 64 MiB download limit.'
@@ -507,7 +460,7 @@ describe('scrape transport size', () => {
 
 	it('accepts a page exactly at the download limit', async () => {
 		const t = initConvexTest();
-		mockPage({ markdown: 'x'.repeat(64 * 1024 * 1024) });
+		mockPage('x'.repeat(64 * 1024 * 1024));
 
 		expect(await scrapePage(t, { url: PAGE_URL })).toHaveProperty('scrapeUrl');
 		const blobs = await storageBlobs(t);
