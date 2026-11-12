@@ -207,6 +207,7 @@ export default defineSchema({
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		// oxlint-disable-next-line @convex-dev/no-duplicate-indexes -- Tree cancellation needs stable cursors while lastMessageAt changes.
 		.index('by_userId_parentThreadId', ['userId', 'parentThreadId'])
+		.index('by_userId_and_repositoryKey', ['userId', 'repositoryKey'])
 		.index('by_userId_and_parentThreadId_and_lastMessageAt', [
 			'userId',
 			'parentThreadId',

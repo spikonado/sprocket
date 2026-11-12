@@ -4,6 +4,8 @@ use gix::bstr::{BStr, ByteSlice};
 
 use crate::project_root::discover_repository;
 
+pub const REMOTE_ATTACHMENT_KEY_PREFIX: &str = "remote:";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitRepositoryIdentity {
     pub repository_key: String,
@@ -35,7 +37,7 @@ pub fn resolve_git_repository_identity(workspace_root: &Path) -> GitRepositoryId
         display_name_from_repository_key(&repository_key).unwrap_or_else(|| directory_name.clone());
 
     GitRepositoryIdentity {
-        attachment_key: format!("remote:{repository_key}"),
+        attachment_key: format!("{REMOTE_ATTACHMENT_KEY_PREFIX}{repository_key}"),
         repository_key,
         display_name,
     }

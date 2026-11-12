@@ -52,7 +52,7 @@ use crate::machines::MachineManager;
 use crate::muse_cli::MuseCli;
 use crate::native_auth::{BrowserSessions, NativeAuthManager};
 use crate::package_update::PackageUpdateManager;
-use crate::project_attachments::ProjectAttachmentStore;
+use crate::project_attachments::{ProjectAttachmentRecord, ProjectAttachmentStore};
 use crate::python_install::PythonTools;
 use crate::run_recovery::RunRecovery;
 use crate::tool_install::{PinnedTool, append_path, prepend_path};
@@ -111,6 +111,7 @@ pub struct Host {
     gh: Arc<PinnedTool>,
     git: Option<Arc<PinnedTool>>,
     python: Arc<PythonTools>,
+    repository_key_moves: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Host {
@@ -194,6 +195,7 @@ impl Host {
                 .transpose()?
                 .map(Arc::new),
             python,
+            repository_key_moves: Arc::default(),
         })
     }
 
@@ -251,6 +253,55 @@ impl Host {
                 .auth_token_fetcher_for_user(user_id.to_string()),
         )
         .await
+    }
+
+    pub fn spawn_repository_key_moves(&self, projects: &[ProjectAttachmentRecord]) {
+        let moves: Vec<_> = projects
+            .iter()
+            .filter(|project| project.previous_repository_key.is_some())
+            .cloned()
+            .collect();
+        if moves.is_empty() {
+            return;
+        }
+        let Ok(guard) = Arc::clone(&self.repository_key_moves).try_lock_owned() else {
+            return;
+        };
+        let host = self.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            if let Err(error) = host.move_repository_keys(moves).await {
+                tracing::warn!("moving threads to a new repository key failed: {error:#}");
+            }
+        });
+    }
+
+    async fn move_repository_keys(
+        &self,
+        moves: Vec<ProjectAttachmentRecord>,
+    ) -> anyhow::Result<()> {
+        let Some(session) = self.native_auth.browser_session(false).await? else {
+            return Ok(());
+        };
+        let client = self.convex_client_for(&session.user.id).await?;
+        for project in moves {
+            let Some(from) = project.previous_repository_key else {
+                continue;
+            };
+            client
+                .mutate::<serde_json::Value>(
+                    "repositoryKeys:move",
+                    std::collections::BTreeMap::from([
+                        ("from".into(), from.clone().into()),
+                        ("to".into(), project.repository_key.into()),
+                    ]),
+                )
+                .await?;
+            self.project_attachments
+                .finish_repository_key_move(&project.workspace_path, &from)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Ends machine presence first because ending it needs the native token.

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sprocket_workspace::{
-    resolve_git_repository_identity, resolve_or_create_workspace_root, resolve_workspace_root,
+    REMOTE_ATTACHMENT_KEY_PREFIX, resolve_git_repository_identity,
+    resolve_or_create_workspace_root, resolve_workspace_root,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -28,6 +29,10 @@ pub struct ProjectAttachmentRecord {
     pub last_message_sent_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+    /// Key from before the project gained an `origin` remote, kept until Convex
+    /// moves the project's threads off it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_repository_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,6 +140,9 @@ impl ProjectAttachmentStore {
                 .map(|attachment| attachment.last_message_sent_at)
                 .max()
                 .unwrap_or_default();
+            validated.previous_repository_key = sessions
+                .get(&validated.workspace_path)
+                .and_then(|previous| previous_repository_key(previous, &validated));
             sessions.insert(validated.workspace_path.clone(), validated.clone());
             if let Some(previous_path) = replace_workspace_path.as_deref() {
                 sessions.remove(previous_path);
@@ -162,6 +170,9 @@ impl ProjectAttachmentStore {
                 .get(&resolved.workspace_path)
                 .map(|attachment| attachment.last_message_sent_at)
                 .unwrap_or_default();
+            resolved.previous_repository_key = attachments
+                .get(&resolved.workspace_path)
+                .and_then(|previous| previous_repository_key(previous, &resolved));
             let existing = attachments
                 .values()
                 .find(|attachment| same_attachment_identity(attachment, &resolved))
@@ -204,6 +215,24 @@ impl ProjectAttachmentStore {
             return Ok(());
         }
         attachment.last_message_sent_at = sent_at;
+        drop(attachments);
+        self.save_to_disk().await
+    }
+
+    pub async fn finish_repository_key_move(
+        &self,
+        workspace_path: &str,
+        previous_repository_key: &str,
+    ) -> Result<()> {
+        self.ensure_loaded().await?;
+        let _update_guard = self.update_lock.lock().await;
+        let mut attachments = self.attachments.write().await;
+        let Some(attachment) = attachments.get_mut(workspace_path).filter(|attachment| {
+            attachment.previous_repository_key.as_deref() == Some(previous_repository_key)
+        }) else {
+            return Ok(());
+        };
+        attachment.previous_repository_key = None;
         drop(attachments);
         self.save_to_disk().await
     }
@@ -467,7 +496,7 @@ fn mark_available(
     session: ProjectAttachmentRecord,
     resolution: WorkspacePathResolution,
 ) -> ProjectAttachmentRecord {
-    ProjectAttachmentRecord {
+    let mut record = ProjectAttachmentRecord {
         workspace_path: resolution.workspace_path,
         attachment_key: resolution.attachment_key,
         repository_key: resolution.repository_key,
@@ -477,7 +506,32 @@ fn mark_available(
         unavailable_reason: None,
         last_used_at: session.last_used_at,
         last_message_sent_at: session.last_message_sent_at,
-    }
+        previous_repository_key: None,
+    };
+    record.previous_repository_key = previous_repository_key(&session, &record);
+    record
+}
+
+/// A remote-less project is keyed by its folder name. Once it gains an `origin`
+/// remote, its threads still carry that name until they're moved to the new key.
+fn previous_repository_key(
+    previous: &ProjectAttachmentRecord,
+    current: &ProjectAttachmentRecord,
+) -> Option<String> {
+    let gained_remote = !previous.repository_key.is_empty()
+        && !previous
+            .attachment_key
+            .starts_with(REMOTE_ATTACHMENT_KEY_PREFIX);
+    previous
+        .previous_repository_key
+        .clone()
+        .or_else(|| gained_remote.then(|| previous.repository_key.clone()))
+        .filter(|key| {
+            current
+                .attachment_key
+                .starts_with(REMOTE_ATTACHMENT_KEY_PREFIX)
+                && *key != current.repository_key
+        })
 }
 
 pub fn repository_key_matches(record: &ProjectAttachmentRecord, requested: &str) -> bool {
@@ -531,6 +585,7 @@ fn session_record_changed(
         || previous.display_name != current.display_name
         || previous.availability != current.availability
         || previous.unavailable_reason != current.unavailable_reason
+        || previous.previous_repository_key != current.previous_repository_key
 }
 
 async fn validate_session_async(
@@ -553,6 +608,7 @@ async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentR
         last_used_at: now,
         last_message_sent_at: 0,
         unavailable_reason: None,
+        previous_repository_key: None,
     })
     .await?;
 

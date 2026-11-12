@@ -44,7 +44,9 @@ pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
     RunningCommand,
 };
-pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};
+pub use git_repository::{
+    GitRepositoryIdentity, REMOTE_ATTACHMENT_KEY_PREFIX, resolve_git_repository_identity,
+};
 pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};
 pub use paths::{home_dir, resolve_directory, simplified_path};
 pub use skills::{
