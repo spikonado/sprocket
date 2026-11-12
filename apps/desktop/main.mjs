@@ -127,6 +127,17 @@ function getLocalDataDir() {
 	return isDevelopment ? path.resolve(__dirname, '../../.sprocket-dev') : getDefaultDataDir();
 }
 
+// The `sprocket` CLI launches the app from this path. AppImages run from a temporary mount.
+function recordDesktopExecutable() {
+	const executable = process.env.APPIMAGE || process.execPath;
+
+	try {
+		fs.writeFileSync(path.join(getLocalDataDir(), 'desktop-executable'), executable);
+	} catch (error) {
+		console.error('Failed to record the desktop executable for the CLI', error);
+	}
+}
+
 async function attachToRunningServer(baseUrl, dataDir) {
 	const challenge = randomUUID();
 	let response;
@@ -661,6 +672,9 @@ if (hasSingleInstanceLock) {
 		.then(async () => {
 			Menu.setApplicationMenu(null);
 			await startServer();
+
+			if (!isDevelopment) recordDesktopExecutable();
+
 			showDesktopApp();
 			void updates.check();
 			updateTimer = setInterval(() => void updates.check(), 60 * 60 * 1000);

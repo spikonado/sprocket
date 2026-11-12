@@ -17,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
+const DESKTOP_EXECUTABLE_FILE: &str = "desktop-executable";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
 const RESTART_EXIT_CODE: u8 = 75;
 const RESTARTED_ENV: &str = "SPROCKET_RESTARTED";
@@ -146,17 +147,18 @@ fn entry() -> anyhow::Result<u8> {
             serve_local(server, false, !restarted, workspace_path, false)
         }
         None => {
+            let server = ServerConfig::try_parse_from(["sprocket"])?;
             if !restarted {
-                if launch_desktop(workspace_path.as_deref())? {
+                if launch_desktop(&server.resolve_data_dir(), workspace_path.as_deref())? {
                     return Ok(0);
                 }
 
                 eprintln!(
-                    "The desktop app is not installed on this system, running Sprocket in the browser instead.\n\
+                    "The desktop app was not found, running Sprocket in the browser instead.\n\
+                     If it's installed, open it once so `sprocket` can find it.\n\
                      Note: This has no impact on Sprocket's capabilities or performance."
                 );
             }
-            let server = ServerConfig::try_parse_from(["sprocket"])?;
             serve_local(server, false, !restarted, workspace_path, false)
         }
     }
@@ -328,7 +330,7 @@ async fn open_running_web_app(
     Ok(true)
 }
 
-fn launch_desktop(workspace_path: Option<&str>) -> anyhow::Result<bool> {
+fn launch_desktop(data_dir: &Path, workspace_path: Option<&str>) -> anyhow::Result<bool> {
     if let Some(target) = std::env::var_os(DESKTOP_EXECUTABLE_ENV).filter(|value| !value.is_empty())
     {
         spawn_desktop(Command::new(&target), workspace_path).with_context(|| {
@@ -340,10 +342,17 @@ fn launch_desktop(workspace_path: Option<&str>) -> anyhow::Result<bool> {
         return Ok(true);
     }
 
-    match spawn_desktop(Command::new(DESKTOP_EXECUTABLE_NAME), workspace_path) {
-        Ok(()) => return Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error).context("failed to launch Sprocket desktop app"),
+    if let Some(target) = recorded_desktop_executable(data_dir) {
+        match spawn_desktop(Command::new(&target), workspace_path) {
+            Ok(()) => return Ok(true),
+            // The app was uninstalled or moved since it last ran.
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to launch desktop app from {}", target.display())
+                });
+            }
+        }
     }
 
     if let Some(launcher) = find_dev_desktop_launcher() {
@@ -361,6 +370,12 @@ fn launch_desktop(workspace_path: Option<&str>) -> anyhow::Result<bool> {
     Ok(false)
 }
 
+fn recorded_desktop_executable(data_dir: &Path) -> Option<PathBuf> {
+    let recorded = std::fs::read_to_string(data_dir.join(DESKTOP_EXECUTABLE_FILE)).ok()?;
+    let path = PathBuf::from(recorded.trim());
+    path.is_absolute().then_some(path)
+}
+
 fn spawn_desktop(mut command: Command, workspace_path: Option<&str>) -> std::io::Result<()> {
     // Electron treats this development override as a request to run its binary as Node.js.
     command.env_remove("ELECTRON_RUN_AS_NODE");
@@ -375,12 +390,6 @@ fn spawn_desktop(mut command: Command, workspace_path: Option<&str>) -> std::io:
         .spawn()?;
     Ok(())
 }
-
-const DESKTOP_EXECUTABLE_NAME: &str = if cfg!(windows) {
-    "sprocket-desktop.exe"
-} else {
-    "sprocket-desktop"
-};
 
 #[cfg(debug_assertions)]
 fn find_dev_desktop_launcher() -> Option<PathBuf> {
