@@ -11,9 +11,9 @@ Use `kicad-cli` for checks and exports.
 - Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
 - The connector puts `kicad-python`, `kicad-cli`, `kicad`, `kipy-api`, `kicad-route`, and `kicad-view` on PATH. Call them by name.
 - Run every script with `kicad-python`. Its venv has kipy, numpy, scipy, shapely, and pillow. System `python3` and PyPI's `kicad-python` lack them or are too old.
-- `kipy-api` lists the installed kipy's classes, signatures, and enums, as in `kipy-api board_types Zone`. Check it before writing kipy code.
-- `kicad-view` renders one area of a board as a PNG with net names and DRC markers. Use it to look at placement, routing, and DRC findings.
-- KiCad's libraries are in `$SPROCKET_KICAD_LIBRARIES`: one file per symbol in `symbols/<Lib>.kicad_symdir/<Symbol>.kicad_sym`, footprints in `footprints/<Lib>.pretty/`, and `3dmodels/`. Search for parts there.
+- `kipy-api` lists the installed kipy's classes, signatures, and enums. Check it before writing kipy code.
+- `kicad-view` renders one area of a board as a PNG. Use it to look at placement, routing, and DRC findings.
+- KiCad's libraries are in `$SPROCKET_KICAD_LIBRARIES`. Search for parts there.
 - kipy uses nm, and DRC JSON and `kicad-view` use mm. All three use absolute board coordinates, not coordinates relative to the board origin.
 - KiCadRoutingTools is in `$SPROCKET_KICAD_ROUTING_TOOLS`. `kicad-route` runs its `py_router/route.py`.
   Run its other scripts with `kicad-python "$SPROCKET_KICAD_ROUTING_TOOLS/<script>"` and read their `--help`.
@@ -39,23 +39,23 @@ Use `kicad-cli` for checks and exports.
 ## Before editing
 
 - Before the first save of an existing project, compare the file header's `(generator_version "…")` with the KiCad version from the connector.
-  If the file is older, ask the user once: saving upgrades the format irreversibly, and only git can undo it.
+  If the file is older, ask the user once, because saving upgrades the format and only git can undo it.
 - Open existing files with `open_document`. `create_document` replaces an existing file on save.
 
 ## Known traps
 
-- ERC reports a missing library `''`, or the file gains `lib_name`s like `R_1`: `update_items` on a symbol sent with its `definition` forks its library link.
+- ERC reports a missing library `''`, or the file gains `lib_name`s like `R_1`, because `update_items` on a symbol sent with its `definition` forks its library link.
   Call `sym.proto.ClearField("definition")` before updating schematic symbols.
   Clearing it on a board footprint wipes its pads.
 - Copies of a placed symbol made with `create_items` fork its library link into `R_1`..`R_4`. Place one with `place_symbol_from_library`, then create copies from its proto.
-- DRC reports hundreds of `connection_width` violations after a zone fill: a new `Zone()` has 0 clearance and 0 mm thermal spokes.
+- DRC reports hundreds of `connection_width` violations after a zone fill, because a new `Zone()` has 0 clearance and 0 mm thermal spokes.
   Set its clearance and a full pad connection, as in [Copper pours](#copper-pours).
 - KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
-- The Gerber job file lists placeholder dielectrics: kipy reads the stackup with `board.get_stackup()` but can't write it.
+- The Gerber job file lists placeholder dielectrics because kipy reads the stackup with `board.get_stackup()` but can't write it.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
-- DRC on a renamed copy of a board ignores the project's rules: `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
+- DRC on a renamed copy of a board ignores the project's rules, because `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
   Make copies with `copy_board.py`. For DRC without parity errors or `lib_footprint_issues`, also copy the `.kicad_sch` under the new basename and `fp-lib-table` next to it.
-- A keepout inside a footprint ends up far from its part: setting `footprint.position` moves the footprint's zones twice. Restore their outlines after a move and check keepouts in DRC.
+- A keepout inside a footprint ends up far from its part, because setting `footprint.position` moves the footprint's zones twice. Restore their outlines after a move and check keepouts in DRC.
 - A Zone created with several outline polygons keeps only the first. Create one Zone per polygon.
 - Setters on a new `NetClass()` raise. Copy the `Default` netclass's proto and edit the copy.
 - `board.get_project()` fails after `open_document`. Pass the DocumentSpecifier that `open_document` returns to `KiCad.get_project()`.
@@ -115,11 +115,22 @@ Keep net class widths and clearances above them.
 - Split ground only for galvanic isolation, like mains or patient connections, and cross the gap only with isolators, optocouplers, or transformers.
 - Give every high-speed trace a continuous reference plane along its whole length. Power planes may be split when no trace on an adjacent layer crosses the split.
 
+## Placing parts
+
+- Copy the datasheet's layout for placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives.
+- Put each decoupling capacitor at the supply pin it serves, with its pad facing the pin about 1 mm away.
+  Treat a reference design's looser spacing as a maximum.
+- Put every other passive at the pin it serves, turned so the connection is a short straight track.
+- Group related parts and align them on shared center lines at an even pitch, like a row with a capacitor on each side of an IC. Put test pads on a grid.
+- Give each GND pad its own via.
+- Render the placement with `kicad-view` and fix every part that looks scattered or misaligned.
+
 ## Copper pours
 
 Before routing, give every copper layer a GND zone over the whole board at priority 0.
 Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
-Keep one layer as the solid ground plane, with no other pours or traces: the inner layer next to `F.Cu` on boards with 4 or more layers, and `B.Cu` on 2-layer boards, where only short jumpers may cross it.
+Keep one layer as a solid ground plane with no other pours or traces.
+On boards with 4 or more layers, it is the inner layer next to `F.Cu`. On 2-layer boards, it is `B.Cu`, and only short jumpers may cross it.
 Keep switch node copper as small as its current allows, because its area radiates.
 
 ```python
@@ -138,10 +149,13 @@ board.create_items([zone])
 ## Routing
 
 Route the board with `kicad-route`.
-It reads clearances and widths from the `.kicad_pro`, and connects the pads of zone nets, like `GND`, to their pours.
-It routes on every copper layer by default, so on boards with 4 or more layers pass `--layers` with all of them and `--layer-costs` with `-1` for the ground plane layer on every run.
-Pass `--escalation off --strict-sizes` on every run too. The default escalation retries failing nets below the board's clearance floor.
-Put rule-area keepouts that block tracks on every layer over switch nodes and other areas that traces must avoid before the first route. Leave copper pours allowed in them, so GND still fills under the switch node.
+It connects the pads of zone nets, like `GND`, to their pours.
+On every run:
+
+- Pass `--escalation off --strict-sizes`. Otherwise, the router retries failing nets below their net class sizes and lowers the project's rules to match.
+- On boards with 4 or more layers, keep tracks off the ground plane: pass every copper layer to `--layers` and `-1` for the plane in `--layer-costs`.
+
+Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes and other areas that traces must avoid. Allow copper pours in them, so GND still fills under the switch node.
 
 Right after placement, the pours, and the keepouts, and before the schematic is final, judge the placement with a trial route:
 
@@ -151,10 +165,23 @@ Right after placement, the pours, and the keepouts, and before the schematic is 
    Once they agree, `--swappable-nets 'GPIO*' --schematic-dir proj/` swaps the pins and writes the swaps to the schematic.
    Finish this step before the first full route.
 
-Then route block by block: differential pairs first with `route_diff.py`, then one block at a time with `--component REF` or `--group BLOCK`.
+Then route in this order, one block at a time with `--component REF` or `--group BLOCK`:
+
+1. Differential pairs, with `route_diff.py`.
+2. Short local nets around crystals and switching regulators.
+3. Bundles of low-speed signals. Plan buses and nets that share a destination as bundles, and route them with `--bus`.
+
 Keep earlier blocks' copper with `--keep-input-copper`, and set `KICAD_RIP_PREEXISTING=0 KICAD_FINALIZE_RIP=0` so the router can't rip it up.
 
-The exit code doesn't say whether every net routed, so run [DRC](#checks) on each output.
+The router leaves right angles and stray jogs, so look at each block in `kicad-view` and fix the copper that breaks these rules:
+
+- Make every bend 135° or wider, and join branches at 45°, preferably at a pad or via.
+- Leave each pad and via from its center in a straight line until the track clears its copper, and keep each track heading toward its destination.
+- Run tracks that go the same way within about 0.5 mm of each other, side by side at the clearance rule.
+- Stagger vias so bundled tracks stay together up to their ends.
+- Make every gap either the clearance rule or wide enough for another track plus clearance, so pours leave no slivers or islands.
+
+The exit code doesn't say whether every net is routed, so run [DRC](#checks) on each output.
 For each round of fixes:
 
 - Route only what is still open: the nets DRC lists as unconnected with `--nets`, or one block with `--component` or `--group`.
@@ -178,7 +205,7 @@ Once DRC shows 0 unconnected items, finish the copper in this order and run DRC 
    With nothing left to route, it removes dead ends and redundant or duplicate segments. With nets still open, it routes them again, which can take 15 to 30 minutes.
    Then run `check_weird.py` on the result and fix what it reports.
 2. Stitch the GND pours together with `route_planes.py`, using vias on a grid and a fence along the board edge.
-   Pass `--skip-existing-zones`, or it replaces your GND zones with its own.
+   Pass `--skip-existing-zones`, or it will replace your GND zones with its own.
 3. Enable teardrops on every pad and via, then refill the zones.
    Edit pads through `footprint.definition.pads` and send the footprints to `update_items`. Sending pads from `get_pads()` changes nothing.
    Teardrops go stale when copper moves, so add them as the last copper change.
@@ -215,11 +242,10 @@ DRC passes on boards whose copper overheats. Before calling the layout done, che
 
 - The narrowest copper on every layer it uses, against its current.
 - Planes cut or slit by other tracks.
-- Hot-loop and input capacitors as close to their pins as the datasheet and evaluation board place them.
-- One via per GND pad, added at placement.
+- Hot-loop and input capacitors at their pins, as in [Placing parts](#placing-parts).
 
 ## Show the result to the user
 
 - Send images of each schematic sheet and 3D renders of the PCB.
-  `kicad-cli pcb render` at the default `--quality basic` and about 1200 px wide is enough for checks. `high` at 2400 px takes minutes.
+  For checks, render with `kicad-cli pcb render` at basic quality and about 1200 px wide. High quality at 2400 px takes minutes.
 - Embed the KiCad project by writing `kicad:proj/board.kicad_pro` in its own paragraph.
