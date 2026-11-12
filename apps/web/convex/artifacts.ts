@@ -11,7 +11,7 @@ import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 const MAX_TITLE_LENGTH = MAX_FILE_NAME_LENGTH;
 
-const MAX_ARTIFACT_CONTENT_BYTES = 500_000;
+export const MAX_ARTIFACT_CONTENT_BYTES = 500_000;
 
 const vArtifactMutationResult = v.object({ artifactId: v.id('artifacts') });
 

@@ -373,6 +373,7 @@ async fn list_projects(
         .list()
         .await
         .map_err(ApiError::internal)?;
+    state.host.spawn_repository_key_moves(&projects);
     Ok(Json(projects))
 }
 

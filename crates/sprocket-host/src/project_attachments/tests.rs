@@ -25,6 +25,7 @@ fn attachment_record(
         last_used_at,
         last_message_sent_at: 0,
         unavailable_reason: None,
+        previous_repository_key: None,
     }
 }
 
@@ -755,4 +756,54 @@ async fn list_replaces_the_repository_key_when_git_identity_changes() {
     );
 
     let _ = fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn gaining_an_origin_keeps_the_folder_key_until_its_threads_move() {
+    for resolve_run in [false, true] {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let workspace = temp_root.path().join("checkout");
+        fs::create_dir_all(&workspace).expect("workspace dir");
+        gix::init(&workspace).expect("gix init");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach project");
+        assert_eq!(attached.repository_key, "checkout");
+        let config_path = workspace.join(".git/config");
+        let config = fs::read_to_string(&config_path).expect("read config");
+        fs::write(
+            &config_path,
+            config + "\n[remote \"origin\"]\n\turl = https://github.com/example/checkout.git\n",
+        )
+        .expect("add origin");
+
+        if resolve_run {
+            store
+                .resolve_run_workspace(attached.workspace_path.clone())
+                .await
+                .expect("resolve run");
+        }
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+        assert_eq!(listed[0].repository_key, "github.com/example/checkout");
+        assert_eq!(
+            listed[0].previous_repository_key.as_deref(),
+            Some("checkout")
+        );
+
+        let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        reloaded
+            .finish_repository_key_move(&attached.workspace_path, "checkout")
+            .await
+            .expect("finish move");
+        let listed = reloaded.list().await.expect("list after move");
+        assert_eq!(listed[0].previous_repository_key, None);
+    }
 }

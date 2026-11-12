@@ -9,6 +9,10 @@ A project is a folder on your computer. Open one with **Add project**, which has
 
 Sprocket identifies a project by its git `origin` remote. Every clone and worktree of the same repository shares one project and one thread list, even on different machines. A repository without an `origin` remote, or a folder outside git, is identified by its folder name, so two such folders with the same name share a project.
 
+<Snippet file="unreleased.mdx" />
+
+When you or the agent add an `origin` remote to a project that didn't have one, Sprocket moves the project's threads and artifacts to the remote's project. Threads from other folders with the same name move too, since they shared the project.
+
 Switch projects from the project menu. **Remove** takes a project off the list without touching its files.
 
 ## Threads
