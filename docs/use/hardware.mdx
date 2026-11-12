@@ -27,6 +27,26 @@ When a connector update is ready, **Settings → Connectors** shows an **Update*
 
 When the agent works on a KiCad project, it can add a project card to its reply. The card opens the schematics and board in a viewer with 2D and 3D board views.
 
+## Wiring diagrams
+
+<Snippet file="unreleased.mdx" />
+
+For projects built from modules and dev boards, the agent can save a wiring diagram as a `.wiring.json` artifact. The agent lists the parts and the wires, and Sprocket draws the diagram:
+
+- The build is split into steps of up to 6 wires. Pick a step to see its wires, with earlier wires faded, or pick **Show all**.
+- Boards such as the ESP32, Arduino, and HC-SR04 look like the real thing. Other parts are boxes with their pin names.
+- Power and ground run along rails under each row of parts, like on a breadboard.
+- Wires run at right angles, and no two wires share a stretch, so you can follow each one from end to end. Wires only cross straight over each other. Each wired board pin gets a tag with its name.
+- Click a part to see only its wires. Click it again to go back to the steps.
+- Tick off wires in the checklist as you connect them. Hover over a row to highlight its wire.
+- The parts list shows each part with a photo and, when the agent found one, a link to buy it.
+
+Sprocket checks the wiring as it draws it. It shows errors for unknown pins, power shorted to ground, two voltages joined together, and a supply above what a pin can take. It warns about steps over 6 wires and about signals between 5 V and 3.3 V parts.
+
+If a wire can't find a free path, it shows as a dashed straight line with a warning. Use the checklist for that wire.
+
+In a narrow side panel the diagram shrinks to fit. Open it fullscreen to read the pin names.
+
 ## Hardware skills
 
 Sprocket's [built-in skills](/use/instructions-and-skills#built-in-skills) cover these hardware tasks:

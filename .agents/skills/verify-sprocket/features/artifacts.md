@@ -1,6 +1,6 @@
 # Artifacts
 
-An artifact is a markdown, HTML, React or json-render document an agent saves for the project. A reply line `artifact:<id>` renders as a card, and the side panel's Artifacts view lists the project's artifacts, previews one, shows its source, opens it fullscreen and deletes it.
+An artifact is a markdown, HTML, React, json-render or wiring document an agent saves for the project. A reply line `artifact:<id>` renders as a card, and the side panel's Artifacts view lists the project's artifacts, previews one, shows its source, opens it fullscreen and deletes it.
 
 ## Sub-features
 
@@ -24,6 +24,7 @@ Precondition: the dev `tiers` table has rows, as in [threads.md](./threads.md).
 - **Fullscreen.** Click `button "Open fullscreen"`. Plain `snapshot` shows `dialog "Verify note.md fullscreen. Press Escape to exit."`. Escape closes it.
 - **List.** Click `button "Back to artifacts"`. The tab becomes `tabpanel "Artifacts"` with one `button "<title> <type> <local path or Stored in cloud>"` per artifact, each followed by `button "Open <title> fullscreen"`. An empty project shows `No artifacts yet.`
 - **Source.** Open an `html`, `react` or `json-render` row. It has `button "Show source"`, which shows the raw text and becomes `button "Show preview"`. An HTML or React preview is `Iframe "<title> preview"`.
+- **Wiring.** Ask the agent for a wiring diagram of an ESP32 driving one motor through a TB6612 driver, saved as `robot.wiring.json`. Its row has type `wiring`. The preview shows one button per step plus `button "Show all"`, the ESP32 drawn as a real board, coloured right-angle wires with a pin-name tag at each board pin, a `N of M wires done` checklist and a `Parts` list. No two wires share a stretch or a corner. A dashed wire with an amber "had no free path" warning means routing failed. Hovering a checklist row thickens its wire, and clicking a part shows only its wires.
 - **Delete.** Right-click the `Verify note.md` row as in Drive in `SKILL.md`, or click `button "Verify note.md actions"` in the open view. `menu "Verify note.md actions"` has `menuitem "Delete artifact"`. Click it. The row leaves the list, the card leaves the transcript, and `/tmp/verify-sprocket-scratch/Verify note.md` is deleted.
 
 ## Gotchas

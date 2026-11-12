@@ -7,7 +7,7 @@ description: Use before making or changing an artifact or an `html-visual`, `jsx
 
 ## Artifacts
 
-An artifact's title is its filename, and the UI picks the renderer from the title's extension: `.md` for Markdown, `.html` or `.htm` for HTML, `.jsx` for React, and `.render.json` for json-render. Any other file renders as Markdown.
+An artifact's title is its filename, and the UI picks the renderer from the title's extension: `.md` for Markdown, `.html` or `.htm` for HTML, `.jsx` for React, `.render.json` for json-render, and `.wiring.json` for wiring diagrams (`$designing-wiring-diagram`). Any other file renders as Markdown.
 
 1. Write the file.
 2. Bind it to a new artifact with `bind_artifact`.

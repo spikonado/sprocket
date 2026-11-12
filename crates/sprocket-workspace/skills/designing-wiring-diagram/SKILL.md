@@ -3,342 +3,93 @@ name: designing-wiring-diagram
 description: 'Use when designing the wiring diagram for a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `working-with-kicad`.'
 ---
 
-Write the wiring diagram as a React artifact (`$making-artifacts-and-visuals`): a component `App` that returns one `<svg>`. Start from the sample below and adapt the circuit to the project's parts.
+A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`). Sprocket draws it: real-looking boards, one coloured line per jumper wire, the build split into steps, a checklist the user ticks off while wiring, and a parts list with photos. It also flags short circuits, two voltages on one wire, and 5 V reaching a 3.3 V pin. You write only the parts and the connections.
 
-```jsx
-function App() {
-	const W = 1500,
-		H = 800;
-	const C = {
-		wire: '#46525f',
-		sig: '#2e86e0',
-		pwr: '#e5484d',
-		gnd: '#30a46c',
-		box: '#1c1e21',
-		stby: '#8e5cd0',
-		pin: '#edf1f5',
-		pinOn: '#5f6b78'
-	};
-	const Txt = ({ x, y, size = 12, color = C.box, bold = false, anchor, mono = true, children }) => (
-		<text
-			x={x}
-			y={y}
-			fontSize={size}
-			fill={color}
-			textAnchor={anchor}
-			fontWeight={bold ? 'bold' : 'normal'}
-			fontFamily={mono ? 'Consolas, Menlo, monospace' : 'Inter, Arial, sans-serif'}
-		>
-			{children}
-		</text>
-	);
-	const Box = ({ x, y, w, h, fill, edge }) => (
-		<rect x={x} y={y} width={w} height={h} fill={fill} stroke={edge} strokeWidth={1.8} rx={7} />
-	);
-	const Zone = ({ x, y, dark, title, sub, subOffset = 16 }) => (
-		<g>
-			<Txt x={x} y={y} size={14} color={dark ? '#eef1f4' : C.box} bold anchor="middle" mono={false}>
-				{title}
-			</Txt>
-			{sub && (
-				<Txt
-					x={x}
-					y={y + subOffset}
-					size={11}
-					color={dark ? '#cdd7e0' : '#5b6570'}
-					anchor="middle"
-					mono={false}
-				>
-					{sub}
-				</Txt>
-			)}
-		</g>
-	);
-	const Pin = ({ x, y, side, pinName, net, color = C.sig }) => {
-		const sx = side === 'R' ? x + 20 : x - 20;
-		const tx = side === 'R' ? sx + 5 : sx - 5;
-		return (
-			<g>
-				{pinName && (
-					<Txt
-						x={side === 'R' ? x - 6 : x + 6}
-						y={y + 4}
-						size={10}
-						color={C.pin}
-						anchor={side === 'R' ? 'end' : 'start'}
-					>
-						{pinName}
-					</Txt>
-				)}
-				<line x1={x} y1={y} x2={sx} y2={y} stroke={C.wire} strokeWidth={1.6} />
-				<Txt x={tx} y={y + 4} color={color} bold anchor={side === 'R' ? 'start' : 'end'}>
-					{net}
-				</Txt>
-			</g>
-		);
-	};
-	const Gnd = ({ x, y, dir }) =>
-		dir === 'D' ? (
-			<g stroke={C.gnd} strokeWidth={2}>
-				<line x1={x} y1={y} x2={x} y2={y + 8} strokeWidth={1.6} />
-				<line x1={x - 8} y1={y + 8} x2={x + 8} y2={y + 8} />
-				<line x1={x - 5} y1={y + 12} x2={x + 5} y2={y + 12} />
-				<line x1={x - 2} y1={y + 16} x2={x + 2} y2={y + 16} />
-			</g>
-		) : (
-			<g stroke={C.gnd} strokeWidth={2}>
-				<line x1={x} y1={y} x2={x - 6} y2={y} strokeWidth={1.6} />
-				<line x1={x - 6} y1={y - 8} x2={x - 6} y2={y + 8} />
-				<line x1={x - 10} y1={y - 5} x2={x - 10} y2={y + 5} />
-				<line x1={x - 14} y1={y - 2} x2={x - 14} y2={y + 2} />
-			</g>
-		);
-	const Wire = (x1, y1, x2, y2, color = C.wire, w = 1.6) => (
-		<line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={w} strokeLinecap="round" />
-	);
-	const F = {
-		batt: '#e0483f',
-		battEdge: '#a83228',
-		buck: '#2a6db0',
-		buckEdge: '#1a4d80',
-		mcu: '#23272c',
-		mcuEdge: '#4a5058',
-		cam: '#3d4650',
-		camEdge: '#5a6470',
-		drv: '#4d7f4a',
-		drvEdge: '#35592f',
-		motor: '#d3d8dc',
-		motorEdge: '#8f979e',
-		legend: '#ffffff'
-	};
-	const mcuRight = [
-		['GPIO12', 'L_IN1'],
-		['GPIO13', 'L_IN2'],
-		['GPIO14', 'L_PWM'],
-		['GPIO15', 'R_IN1'],
-		['GPIO2', 'R_IN2'],
-		['GPIO16', 'R_PWM']
-	];
-	const drvIn = [
-		['VCC', '3V3', C.pwr],
-		['STBY', '3V3', C.stby],
-		['AIN1', 'L_IN1'],
-		['AIN2', 'L_IN2'],
-		['PWMA', 'L_PWM'],
-		['BIN1', 'R_IN1'],
-		['BIN2', 'R_IN2'],
-		['PWMB', 'R_PWM']
-	];
-	const motorPairs = [
-		{ channel: 'A', side: 'LEFT', cy: 220, names: ['MFL · front left', 'MRL · rear left'] },
-		{ channel: 'B', side: 'RIGHT', cy: 400, names: ['MFR · front right', 'MRR · rear right'] }
-	];
-	const Motor = ({ cx, cy, name }) => (
-		<g>
-			<Txt x={cx} y={cy - 62} size={11} bold anchor="middle" mono={false}>
-				{name}
-			</Txt>
-			<circle cx={cx} cy={cy} r={24} fill={F.motor} stroke={F.motorEdge} strokeWidth={2} />
-			<Txt x={cx} y={cy + 6} size={18} bold anchor="middle">
-				M
-			</Txt>
-			<circle cx={cx} cy={cy - 24} r={2.5} fill={C.wire} />
-			<circle cx={cx} cy={cy + 24} r={2.5} fill={C.wire} />
-			<Txt x={cx - 8} y={cy - 30} size={9} color={C.pinOn} anchor="end">
-				M+
-			</Txt>
-			<Txt x={cx - 8} y={cy + 38} size={9} color={C.pinOn} anchor="end">
-				M−
-			</Txt>
-		</g>
-	);
-	const MotorPair = ({ channel, side, cy, names }) => {
-		const top = cy - 50,
-			bottom = cy + 50,
-			pin2 = cy - 10;
-		return (
-			<g>
-				<Txt x={1380} y={cy - 90} size={12} bold anchor="middle" mono={false}>
-					{side} · CHANNEL {channel}
-				</Txt>
-				<Txt x={1194} y={top + 4} size={10} color={C.pin} anchor="end">
-					{channel}O1
-				</Txt>
-				<Txt x={1194} y={pin2 + 4} size={10} color={C.pin} anchor="end">
-					{channel}O2
-				</Txt>
-				{Wire(1200, top, 1440, top)}
-				{Wire(1200, pin2, 1240, pin2)}
-				{Wire(1240, pin2, 1240, bottom)}
-				{Wire(1240, bottom, 1440, bottom)}
-				{[1320, 1440].map((cx, i) => (
-					<g key={names[i]}>
-						{Wire(cx, top, cx, cy - 24)}
-						{Wire(cx, bottom, cx, cy + 24)}
-						<Motor cx={cx} cy={cy} name={names[i]} />
-					</g>
-				))}
-				<circle cx={1320} cy={top} r={3} fill={C.wire} />
-				<circle cx={1320} cy={bottom} r={3} fill={C.wire} />
-				<Txt x={1380} y={cy + 70} size={11} color={C.pinOn} anchor="middle" mono={false}>
-					BO gearmotors · parallel
-				</Txt>
-			</g>
-		);
-	};
-
-	return (
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			viewBox={`0 0 ${W} ${H}`}
-			width="100%"
-			style={{ display: 'block', background: '#fff' }}
-		>
-			<style>{`html, body { margin: 0; background: #fff; }`}</style>
-			<Box x={60} y={150} w={160} h={90} fill={F.batt} edge={F.battEdge} />
-			<Zone x={140} y={172} dark title="BT1 · 2× 18650" sub="7.4 V · built-in switch S1" />
-			<Txt x={66} y={182} size={10} color={C.pin} anchor="start">
-				B−
-			</Txt>
-			{Wire(60, 178, 40, 178)}
-			<Gnd x={40} y={178} dir="L" />
-			<Txt x={66} y={224} size={10} color={C.pin} anchor="start">
-				B+ (switched)
-			</Txt>
-			{Wire(220, 220, 265, 220, C.pwr)}
-			<circle cx={268} cy={220} r={2.5} fill={C.wire} />
-			<circle cx={302} cy={220} r={2.5} fill={C.wire} />
-			{Wire(268, 220, 296, 208)}
-			{Wire(302, 220, 345, 220, C.pwr)}
-			<Txt x={285} y={202} size={11} color="#39424c" anchor="middle">
-				S1
-			</Txt>
-			{Wire(345, 220, 370, 220, C.pwr)}
-			<Txt x={375} y={224} size={12} color={C.pwr} bold anchor="start">
-				VBAT
-			</Txt>
-
-			<Box x={60} y={330} w={210} h={110} fill={F.buck} edge={F.buckEdge} />
-			<Zone
-				x={165}
-				y={352}
-				dark
-				title="U3 · LM2596 BUCK"
-				sub="7.4 V → 5.05 V · SET BEFORE USE"
-				subOffset={28}
-			/>
-			<Pin x={60} y={355} side="L" pinName="VIN" net="VBAT" color={C.pwr} />
-			<Txt x={66} y={416} size={10} color={C.pin} anchor="start">
-				GND
-			</Txt>
-			<Gnd x={60} y={412} dir="L" />
-			<Pin x={270} y={355} side="R" pinName="VOUT" net="+5V" color={C.pwr} />
-			<Txt x={264} y={416} size={10} color={C.pin} anchor="end">
-				GND
-			</Txt>
-			<g transform="rotate(180 270 412)">
-				<Gnd x={270} y={412} dir="R" />
-			</g>
-
-			<Box x={470} y={100} w={300} h={470} fill={F.mcu} edge={F.mcuEdge} />
-			<Zone x={620} y={122} dark title="U1 · ESP32-CAM-MB" sub="3.3 V logic · Wi-Fi + OV2640" />
-			<Pin x={470} y={150} side="L" pinName="5V" net="+5V" color={C.pwr} />
-			<Txt x={476} y={200} size={10} color={C.pin} anchor="start">
-				GND
-			</Txt>
-			<Gnd x={470} y={196} dir="L" />
-			<Pin x={470} y={234} side="L" pinName="3V3" net="3V3" color={C.pwr} />
-			<Txt x={476} y={276} size={10} color={C.pin} anchor="start">
-				GPIO4
-			</Txt>
-			{Wire(470, 272, 432, 272)}
-			<Txt x={427} y={276} size={12} color={C.sig} bold anchor="end">
-				HEADLIGHT*
-			</Txt>
-			<rect
-				x={560}
-				y={370}
-				width={180}
-				height={150}
-				fill={F.cam}
-				stroke={F.camEdge}
-				strokeWidth={1.4}
-				strokeDasharray="6 4"
-				rx={7}
-			/>
-			<Zone x={650} y={392} dark title="OV2640 CAMERA" sub="internal FPC" />
-			<circle cx={650} cy={452} r={26} fill="#11151a" stroke={F.camEdge} strokeWidth={2} />
-			<circle cx={650} cy={452} r={11} fill="#1d2836" stroke="#2e4a66" strokeWidth={1.5} />
-			<Txt x={650} y={502} size={10} color="#aeb6c0" anchor="middle" mono={false}>
-				on-board — no wiring
-			</Txt>
-			<Txt x={620} y={345} size={10} color="#aeb6c0" anchor="middle" mono={false}>
-				MOTOR OUTPUTS · LEDC 20 kHz
-			</Txt>
-			{mcuRight.map((p, i) => (
-				<Pin key={p[1]} x={770} y={150 + i * 34} side="R" pinName={p[0]} net={p[1]} />
-			))}
-
-			<Box x={950} y={100} w={250} h={360} fill={F.drv} edge={F.drvEdge} />
-			<Zone x={1075} y={122} dark title="U2 · TB6612FNG" sub="dual H-bridge · STBY tied high" />
-			{drvIn.map((p, i) => (
-				<Pin
-					key={p[0]}
-					x={950}
-					y={150 + i * 27}
-					side="L"
-					pinName={p[0]}
-					net={p[1]}
-					color={p[2] || C.sig}
-				/>
-			))}
-			<Pin x={950} y={366} side="L" pinName="VM" net="VBAT" color={C.pwr} />
-			<Txt x={956} y={427} size={10} color={C.pin} anchor="start">
-				GND
-			</Txt>
-			<Gnd x={950} y={423} dir="L" />
-			{motorPairs.map((pair) => (
-				<MotorPair key={pair.channel} {...pair} />
-			))}
-
-			<Box x={60} y={560} w={330} h={120} fill={F.legend} edge="#dde3ea" />
-			<Zone x={225} y={582} title="LEGEND" />
-			{Wire(80, 600, 120, 600, C.pwr, 2.5)}
-			<Txt x={130} y={604} size={11} mono={false}>
-				power rail (label taps: VBAT, +5V)
-			</Txt>
-			{Wire(80, 625, 120, 625, C.sig, 2.5)}
-			<Txt x={130} y={629} size={11} mono={false}>
-				signal net (label taps)
-			</Txt>
-			<Gnd x={95} y={650} dir="D" />
-			<Txt x={130} y={657} size={11} mono={false}>
-				common ground — battery, buck, both boards
-			</Txt>
-			<Txt x={60} y={700} size={11} color="#5b6570" mono={false}>
-				* HEADLIGHT = GPIO4 flash LED on the ESP32-CAM, toggled from the web UI.
-			</Txt>
-			<Txt x={60} y={718} size={11} color="#5b6570" mono={false}>
-				R_PWM (GPIO16) is PSRAM-CS on this board — firmware streams from DRAM. See pin map.
-			</Txt>
-		</svg>
-	);
+```json
+{
+	"title": "Two-motor robot",
+	"parts": [
+		{
+			"id": "bat",
+			"name": "2× 18650 battery pack",
+			"pins": { "right": ["+", "-"] },
+			"photo": "https://example.com/battery.jpg",
+			"link": "https://example.com/battery"
+		},
+		{ "id": "esp", "name": "ESP32 DevKit V1", "wokwi": "esp32-devkit-v1" },
+		{
+			"id": "drv",
+			"name": "TB6612FNG motor driver",
+			"logic": 3.3,
+			"pins": {
+				"left": ["VCC", "GND", "AIN1", "AIN2", "PWMA", "STBY"],
+				"right": ["VM", "AO1", "AO2"]
+			}
+		},
+		{ "id": "motor", "name": "Left motor", "pins": { "left": ["M+", "M-"] } }
+	],
+	"rails": [
+		{ "id": "VBAT", "volts": 7.4 },
+		{ "id": "GND", "volts": 0 }
+	],
+	"steps": [
+		{
+			"title": "Power",
+			"note": "Keep the battery switched off while wiring.",
+			"wires": [
+				{ "from": "bat.+", "to": "VBAT", "why": "Battery feeds the motor rail" },
+				{ "from": "bat.-", "to": "GND" },
+				{ "from": "drv.VM", "to": "VBAT", "why": "Motor power" },
+				{ "from": "drv.GND", "to": "GND" },
+				{ "from": "esp.GND", "to": "GND", "why": "Shared ground" },
+				{ "from": "esp.3V3", "to": "drv.VCC", "why": "Driver logic power" }
+			]
+		},
+		{
+			"title": "Control wires",
+			"wires": [
+				{ "from": "esp.D12", "to": "drv.AIN1", "why": "Direction" },
+				{ "from": "esp.D13", "to": "drv.AIN2", "why": "Direction" },
+				{ "from": "esp.D14", "to": "drv.PWMA", "why": "Speed" },
+				{ "from": "esp.D27", "to": "drv.STBY", "why": "Turns the driver on" }
+			]
+		},
+		{
+			"title": "Motor",
+			"note": "Swap the two motor wires if it spins backwards.",
+			"wires": [
+				{ "from": "drv.AO1", "to": "motor.M+" },
+				{ "from": "drv.AO2", "to": "motor.M-" }
+			]
+		}
+	]
 }
 ```
 
-## Diagram conventions
+## Parts
 
-These make the diagram read like a CAD drawing instead of a block diagram.
+- Draw a part with `wokwi` when [Wokwi Elements](https://elements.wokwi.com) has it: `arduino-uno`, `arduino-nano`, `arduino-mega`, `esp32-devkit-v1`, `nano-rp2040-connect`, `franzininho`, `led`, `rgb-led`, `resistor`, `pushbutton`, `slide-switch`, `potentiometer`, `servo`, `stepper-motor`, `buzzer`, `hc-sr04`, `dht22`, `mpu6050`, `pir-motion-sensor`, `ssd1306`, `lcd1602`, `lcd2004`, `ili9341`, `neopixel`, `led-ring`, `microsd-card`, `hx711`, `ds1307`, `ir-receiver`, `ky-040`, `membrane-keypad`, `analog-joystick`, `photoresistor-sensor`, `ntc-temperature-sensor`, `7segment`, and more in the catalog. `wokwiAttrs` sets the element's attributes, such as `{ "color": "red" }` on an LED.
+- Use Wokwi's pin names exactly. Read them from the `pinInfo` list in `https://unpkg.com/@wokwi/elements@1.9.2/dist/esm/<wokwi>-element.js`. A name like `GND` matches the board's first `GND.N` pin.
+- Draw every other part as a box: list its pins under `pins.left` and `pins.right` in the order printed on the board, with the side facing the parts it connects to.
+- Set `logic` to the part's I/O voltage when it isn't one of Wokwi's dev boards, so the voltage checks cover it.
+- Order `parts` in signal order, such as power, controller, drivers, then motors and sensors. The viewer lays them out in that order, so parts that share wires end up side by side.
+- Give each part from the BOM its supplier `link`, and its product image URL as `photo` when the supplier page has a direct image link.
 
-- **Pin names inside, net names outside.** Inside each component box, small text at the pin edge carries the component's own pin name (`GPIO12`, `PWMA`, `VIN`). The wire stub outside carries only the net name (`L_PWM`, `VBAT`).
-- **Label-based wiring.** Connect blocks with matched net labels on short stubs. Route long wires only for tight physical runs, such as driver to motor terminals. Draw power rails as labeled taps (`VBAT`, `+5V`, `3V3`). Give each ground pin its own ground symbol, all on one common ground.
-- **Real-hardware fills.** Components take the colour of the physical part.
-- **Two label colours.** Use near-white (`#edf1f5`) for pin names on dark boxes and dark slate (`#5f6b78`) for labels on the light sheet background. A single colour is unreadable on one of the two.
-- **Zone the sheet** left to right in signal order, for example power entry, regulation, MCU, drivers, then actuators. Leave generous gutters, add a small legend, and keep the plain white, grid-free background. Skip title blocks and keep pin-group text horizontal. If a pin group is cramped on its edge, grow the box and give the group an internal section caption.
-- **Size the `viewBox` to the content.** After a layout change, re-check that the last pin sits inside its box and that labels clear neighbouring boxes.
+## Wires
 
-## Verifying geometry
+- Each wire is one physical jumper. `from` and `to` are `part.pin` or a rail id, and at least one of them is a pin.
+- Put every connection that many parts share, such as ground, 5 V, 3.3 V or battery power, on a rail with its `volts`. Each part then gets one short wire to the rail.
+- Split the build into steps in wiring order, starting with power, with at most 6 wires per step.
+- Give `why` only when the reason isn't obvious, in a few words. Put advice for the whole step in its `note`.
+- Leave `color` unset unless the user's kit forces one. Ground wires come out black, power red, and signals in distinct colours.
 
-- Model every wire segment and component box in a quick script and check for wire-enters-box collisions, label overlap, and pins outside their box.
-- If a browser is available, render a screenshot and inspect it. Fix and re-check until zero collisions.
-- Completion criterion: the collision script reports zero, not "looks right".
+## Checks
+
+The viewer shows red errors for unknown parts or pins, short circuits, two voltages on one wire, and a supply above a pin's `logic` voltage. It shows amber warnings for steps over 6 wires and for signal wires between parts with different `logic` voltages. You can't see the viewer, so run the same checks yourself before you finish:
+
+- Every `part.pin` names a pin in that part's `pins` list or Wokwi `pinInfo`.
+- No wire joins ground to a supply, or two supplies of different voltage.
+- No signal pin connects to a rail or supply above its part's `logic` voltage.
+- A signal from a higher-voltage part to a lower-voltage part goes through a level shifter or divider. When the lower-voltage part only drives the wire, say so in the step's `note`, since the viewer still shows its amber warning.
+
+The diagram is done when every check above holds and every wire the firmware relies on appears in a step.
