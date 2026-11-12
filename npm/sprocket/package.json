@@ -15,7 +15,7 @@
 		"web/"
 	],
 	"engines": {
-		"node": ">=20"
+		"node": ">=20.11"
 	},
 	"repository": {
 		"type": "git",
