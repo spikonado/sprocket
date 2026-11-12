@@ -215,7 +215,7 @@ async fn image_extension_handles_generic_content_types() {
 #[tokio::test]
 async fn negotiated_markdown_is_read_locally() {
     let cache = tempfile::tempdir().unwrap();
-    for content_type in ["text/markdown; charset=utf-8", "text/plain"] {
+    for content_type in ["text/markdown; charset=utf-8", "text/x-markdown"] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = reqwest::Url::parse(&format!(
             "http://{}/pcbnew.html",

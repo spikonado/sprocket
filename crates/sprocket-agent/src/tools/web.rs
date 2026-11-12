@@ -337,7 +337,7 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
         {
             Probe::Document(url)
         }
-        other if super::markdown_url::is_markdown_media_type(other) => Probe::Markdown(url),
+        "text/markdown" | "text/x-markdown" => Probe::Markdown(url),
         _ if has_html_extension(&url) => Probe::Page,
         _ => Probe::Unknown(url),
     }
