@@ -125,6 +125,10 @@ export const vWebSearchPayload = v.object({
 	numResults: v.optional(v.number())
 });
 
+export const vLookupPartsPayload = v.object({
+	parts: v.array(v.object({ part: v.string(), quantity: v.optional(v.number()) }))
+});
+
 export const vWriteStdinPayload = v.object({
 	sessionId: v.string(),
 	chars: v.optional(v.string()),
@@ -424,6 +428,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
+	vLookupPartsPayload,
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
@@ -548,6 +553,42 @@ export const vWebSearchResult = v.object({
 		})
 	)
 });
+
+const vPartOffer = {
+	stock: v.number(),
+	price: v.optional(v.number()),
+	priceBreaks: v.array(v.object({ quantity: v.number(), price: v.number() })),
+	moq: v.optional(v.number())
+};
+
+/** Keyed by the requested part; oversized results are saved to a local file instead. */
+const vLookupPartsResult = v.union(
+	v.object({ savedTo: v.string() }),
+	v.record(
+		v.string(),
+		v.object({
+			matches: v.array(
+				v.object({
+					code: v.string(),
+					mpn: v.string(),
+					manufacturer: v.optional(v.string()),
+					package: v.optional(v.string()),
+					description: v.optional(v.string()),
+					datasheet: v.optional(v.string()),
+					jlcpcb: v.optional(
+						v.object({
+							...vPartOffer,
+							library: v.union(v.literal('basic'), v.literal('extended'), v.literal('preferred')),
+							assemblyMin: v.optional(v.number())
+						})
+					),
+					lcsc: v.optional(v.object({ ...vPartOffer, multiple: v.optional(v.number()) }))
+				})
+			),
+			errors: v.optional(v.object({ jlcpcb: v.optional(v.string()), lcsc: v.optional(v.string()) }))
+		})
+	)
+);
 
 const vMandateSetupResult = v.object({
 	mandateId: v.string(),
@@ -904,6 +945,7 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebImageResult,
 	vWebSearchResult,
+	vLookupPartsResult,
 	vArtifactResult,
 	vListArtifactsResult,
 	vListConnectorsResult,
@@ -955,6 +997,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
+	v.literal('lookup_parts'),
 	v.literal('control_cmd'),
 	v.literal('poll_cmd'),
 	v.literal('bind_artifact'),

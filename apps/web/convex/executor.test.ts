@@ -227,6 +227,71 @@ describe('executor', () => {
 		expect(stored?.result).toEqual(result);
 	});
 
+	it('persists lookup_parts jobs and results', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'lookup-parts';
+		const claimId = 'claim-lookup-parts';
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'submission-lookup-parts',
+			executionSecret,
+			'Price the BOM'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			...toolTranscriptAssignment(runId, claimId),
+			executionSecret,
+			kind: 'lookup_parts',
+			callId: 'call-lookup-parts',
+			payload: { parts: [{ part: 'C28323', quantity: 100 }, { part: 'ZZNOTAPART' }] }
+		});
+
+		const result = {
+			C28323: {
+				matches: [
+					{
+						code: 'C28323',
+						mpn: 'CL21B105KBFNNNE',
+						manufacturer: 'Samsung Electro-Mechanics',
+						package: '0805',
+						jlcpcb: {
+							stock: 3992278,
+							price: 0.0059,
+							priceBreaks: [{ quantity: 20, price: 0.0059 }],
+							library: 'basic' as const,
+							assemblyMin: 20
+						},
+						lcsc: {
+							stock: 474110,
+							price: 0.023,
+							priceBreaks: [
+								{ quantity: 10, price: 0.0307 },
+								{ quantity: 100, price: 0.023 }
+							],
+							moq: 10,
+							multiple: 10
+						}
+					}
+				]
+			},
+			ZZNOTAPART: { matches: [], errors: { jlcpcb: 'rate limited' } }
+		};
+
+		await expect(
+			asUser.mutation(api.executor.complete, { runId, claimId, executionSecret, jobId, result })
+		).resolves.toBe(true);
+		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(stored?.result).toEqual(result);
+	});
+
 	it.each(['scrape_url', 'screenshot_url'] as const)(
 		'persists %s local image references without file bytes',
 		async (kind) => {

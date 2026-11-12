@@ -24,7 +24,7 @@ lopdf = "0.46.0"
 pdf-inspector = "1.25.2"
 percent-encoding = "2.3.2"
 posthog-rs.workspace = true
-reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
+reqwest = { workspace = true, features = ["gzip", "json", "rustls", "stream"] }
 rig = { version = "0.46.0", default-features = false, features = ["agent", "reqwest", "rustls"] }
 schemars = "1"
 serde.workspace = true
