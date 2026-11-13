@@ -496,6 +496,7 @@ const vCommandOutput = v.object({
 	timedOut: v.optional(v.boolean()),
 	completeLogPath: v.string(),
 	eventsPath: v.optional(v.string()),
+	logCutOff: v.optional(v.string()),
 	error: v.optional(v.string()),
 	nextOffset: v.optional(v.number())
 });

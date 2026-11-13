@@ -55,6 +55,7 @@ pub(super) fn completion_output(
         output: preview.output,
         complete_log_path: preview.complete_log_path,
         events_path: preview.events_path,
+        log_cut_off: preview.log_cut_off,
         error: completion.error.clone(),
     }
 }
