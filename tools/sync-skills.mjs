@@ -1,5 +1,3 @@
-// Copies each built-in skill from upstream at the version pinned in its releases.json.
-// Only the frontmatter is replaced.
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,17 +14,28 @@ const SKILLS = {
 		upstream: 'vercel-labs/agent-desktop/v{version}/skills/agent-desktop/SKILL.md',
 		description:
 			'Operate desktop applications on macOS, Windows and Linux through native accessibility trees, using the agent-desktop CLI. Use when an AI agent must see or act on a desktop GUI.'
+	},
+	'frontend-design': {
+		upstream: 'anthropics/skills/main/skills/frontend-design/SKILL.md',
+		description:
+			"Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults."
 	}
 };
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 for (const [name, { upstream, description }] of Object.entries(SKILLS)) {
-	const { version } = JSON.parse(
-		await readFile(join(root, 'tools', name, 'releases.json'), 'utf8')
-	);
+	let source = upstream;
 
-	const url = `https://raw.githubusercontent.com/${upstream.replace('{version}', version)}`;
+	if (upstream.includes('{version}')) {
+		const { version } = JSON.parse(
+			await readFile(join(root, 'tools', name, 'releases.json'), 'utf8')
+		);
+
+		source = upstream.replace('{version}', version);
+	}
+
+	const url = `https://raw.githubusercontent.com/${source}`;
 	const response = await fetch(url);
 
 	if (!response.ok) {
