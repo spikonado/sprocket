@@ -25,6 +25,10 @@ const SKILLS = {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 for (const [name, { upstream, description }] of Object.entries(SKILLS)) {
+	if (!upstream.includes('{version}') && !process.argv.includes('--include-unversioned')) {
+		continue;
+	}
+
 	let source = upstream;
 
 	if (upstream.includes('{version}')) {
