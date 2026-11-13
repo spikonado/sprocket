@@ -1,12 +1,12 @@
 # Sprocket site verification map
 
-This directory holds the maintained recipes for the marketing site's visitor-facing behavior, one file per feature. Update a file in the same change that alters the page it describes.
+One recipe per visitor-facing feature of the marketing site. Update a file in the same change that alters the page it describes.
 
 ## Baseline preconditions
 
 - Launched, `doctor.sh` exits 0, and the HAR is recording, all as in `SKILL.md`.
 - The browser is on `http://localhost:4335/` with the dev toolbar hidden.
-- Re-snapshot after every page change. Refs from before a navigation or a hot reload are stale.
+- Re-snapshot after every navigation or hot reload.
 
 ## Proof and skip reporting
 
