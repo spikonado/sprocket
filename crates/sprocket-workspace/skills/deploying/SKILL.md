@@ -5,42 +5,37 @@ description: 'Use when deploying a project, or checking, debugging, or configuri
 
 If the project already deploys somewhere else, with a `fly.toml`, a `wrangler.toml`, a deploy script, or a CI deploy workflow, deploy that way and skip the rest of this skill.
 
-Otherwise deploy through the Vercel connector, with the Vercel CLI, `vercel`, from the project's root.
+Otherwise deploy with the Vercel connector's CLI, `vercel`, from the project's root.
 
 ## Set up the connector
 
-- Check that Vercel is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
-- Run `vercel whoami`. If it says you aren't logged in, ask the user to sign in to Vercel in Settings → Connectors, then wait. Leave `vercel login` and tokens to the user.
-- Pass `--non-interactive` to every command, so a prompt fails fast with a message instead of waiting on input.
+- Check that Vercel is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it.
+- Run `vercel whoami`. If you aren't logged in, ask the user to sign in on the Vercel connector, then wait. Leave `vercel login` and tokens to the user.
+- Pass `--non-interactive` to every command, so a prompt fails with a message instead of waiting on input.
 - Read `vercel <command> --help` before using a flag you haven't used in this run. The CLI changes often.
 
 ## Link the project
 
-- `.vercel/project.json` means the directory is already linked. Deploy from there.
-- Otherwise run `vercel link --yes`. If the account belongs to more than one team, ask the user which team, then pass `--scope <team>`.
-- Keep `.vercel` out of git. `vercel link` adds it to `.gitignore`; check that it did.
-- In a monorepo, link and deploy from the app's directory, or check the project's Root Directory with `vercel project inspect`.
+- Run `vercel link` when `.vercel/project.json` is missing. If the account belongs to more than one team, ask the user which team.
+- Keep `.vercel` out of git. Check `.gitignore` after linking.
+- In a monorepo, link and deploy from the app's directory, or check that the Vercel project's Root Directory points at the app.
 
 ## Deploy
 
 1. Build locally first with the project's own build script. A build that fails on the machine fails on Vercel too, and local errors are faster to read.
-2. Run `vercel deploy --non-interactive` for a preview. Stdout is the deployment URL.
-3. Deploy to production with `--prod` only when the user asked for production. A project's first deployment is always production.
-4. If the deployment fails, read `vercel inspect <url> --logs`, fix the cause, and deploy again.
-5. Check the deployed URL: fetch it, or open it in the browser. Report the URL to the user.
+2. Deploy a preview with `vercel deploy`.
+3. Deploy to production only when the user asked for it. A project's first deployment is always production.
+4. If the deployment fails, read its build logs with `vercel inspect <url> --logs`, fix the cause, and deploy again.
+5. Check the deployed URL, then report it to the user. Vercel Authentication usually protects previews, so fetch them with `vercel curl` instead of turning protection off.
 
-Git pushes to a repo connected to Vercel deploy on their own. When the project is connected, prefer pushing and let Vercel build, and use `vercel ls` or `vercel inspect` to follow it.
+Git pushes to a repo connected to Vercel deploy on their own. When the project is connected, prefer pushing and following the deployment it starts.
 
 ## Environment variables
 
-- `vercel env ls` lists them per environment: production, preview and development.
-- `vercel env pull .env.local` writes the development values for local builds. Keep that file out of git.
-- Add values with `vercel env add <name> <environment>`, piping the value on stdin. Ask the user for secret values.
+- Keep files written by `vercel env pull` out of git.
+- Ask the user for secret values.
 - Env var changes apply to new deployments only. Redeploy after changing them.
 
-## Other tasks
+## Destructive actions
 
-- Runtime logs: `vercel logs <url>`.
-- Domains: `vercel domains ls`, and `vercel alias set <url> <domain>` to point a domain at a deployment.
-- Roll back production: `vercel rollback <url>`. Confirm with the user first.
-- Deleting projects, deployments or domains is permanent. Ask the user first.
+Ask the user before rolling back production or deleting projects, deployments, or domains. Deletions are permanent.
