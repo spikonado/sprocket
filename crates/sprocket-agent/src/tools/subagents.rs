@@ -103,13 +103,10 @@ impl SubagentPolls {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SpawnSubagentArgs {
     pub(crate) prompt: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) reasoning: Option<String>,
+    pub(crate) model: String,
+    pub(crate) reasoning: String,
     /// Use the fast service tier.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) fast: Option<bool>,
+    pub(crate) fast: bool,
     /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
@@ -121,6 +118,13 @@ pub(crate) struct SpawnSubagentArgs {
     /// Maximum execution runtime. Without a limit, the subagent runs until it completes or is stopped.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
+}
+
+struct SubagentRequest {
+    prompt: String,
+    overrides: SettingsOverrides,
+    yield_time_ms: u64,
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -348,15 +352,24 @@ impl rig::tool::Tool for SpawnSubagentTool {
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
-        mut args: Self::Args,
+        args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        args.prompt = prepare_subagent_prompt(&args.prompt)?.to_string();
+        let request = SubagentRequest {
+            prompt: prepare_subagent_prompt(&args.prompt)?.to_string(),
+            overrides: SettingsOverrides {
+                model: Some(args.model),
+                reasoning: Some(args.reasoning),
+                fast: Some(args.fast),
+            },
+            yield_time_ms: args.yield_time_ms,
+            timeout_ms: args.timeout_ms,
+        };
         execute_tool_job_with_id(
             &self.context,
             Self::NAME,
             payload,
-            |cancellation, job_id| run_subagent(&self.context, args, None, job_id, cancellation),
+            |cancellation, job_id| run_subagent(&self.context, request, None, job_id, cancellation),
         )
         .await
     }
@@ -443,7 +456,7 @@ async fn submit_child(
 
 async fn run_subagent(
     context: &AgentToolContext,
-    args: SpawnSubagentArgs,
+    request: SubagentRequest,
     thread_id: Option<String>,
     job_id: String,
     cancellation: WorkspaceCancellation,
@@ -459,13 +472,8 @@ async fn run_subagent(
     let created = if let Some(created) = recovered {
         created
     } else {
-        let overrides = SettingsOverrides {
-            model: args.model,
-            reasoning: args.reasoning,
-            fast: args.fast,
-        };
         let resolved = cancelled_read(&cancellation, async {
-            resolve_child_settings(context, thread_id.as_deref(), &overrides).await
+            resolve_child_settings(context, thread_id.as_deref(), &request.overrides).await
         })
         .await?;
 
@@ -473,7 +481,7 @@ async fn run_subagent(
         if let Some(thread_id) = &thread_id {
             fields.insert("threadId".to_string(), thread_id.clone().into());
         }
-        fields.insert("prompt".to_string(), args.prompt.into());
+        fields.insert("prompt".to_string(), request.prompt.into());
         fields.insert("model".to_string(), resolved.model.clone().into());
         fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
         fields.insert("fast".to_string(), resolved.fast.into());
@@ -481,7 +489,7 @@ async fn run_subagent(
             "completionProvider".to_string(),
             resolved.provider.as_str().into(),
         );
-        if let Some(timeout_ms) = args.timeout_ms {
+        if let Some(timeout_ms) = request.timeout_ms {
             fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
         }
         submit_child(
@@ -510,7 +518,7 @@ async fn run_subagent(
         context,
         &created.thread_id,
         Some(&created.run_id),
-        YieldMode::Action.normalize(args.yield_time_ms, context.max_yield_ms),
+        YieldMode::Action.normalize(request.yield_time_ms, context.max_yield_ms),
         &cancellation,
     )
     .await?;
@@ -668,12 +676,14 @@ impl ControlSubagentTool {
         if matches!(args.action, SubagentControlAction::Send) {
             return run_subagent(
                 &self.context,
-                SpawnSubagentArgs {
+                SubagentRequest {
                     prompt: prepare_subagent_prompt(args.prompt.as_deref().unwrap_or_default())?
                         .to_string(),
-                    model: args.model,
-                    reasoning: args.reasoning,
-                    fast: args.fast,
+                    overrides: SettingsOverrides {
+                        model: args.model,
+                        reasoning: args.reasoning,
+                        fast: args.fast,
+                    },
                     yield_time_ms: args.yield_time_ms,
                     timeout_ms: args.timeout_ms,
                 },
