@@ -1394,14 +1394,16 @@ export default function App({
 		}
 
 		if (provider === 'chatgpt' && localApi && signedInUserId) {
-			const userId = signedInUserId;
-			const status = await localApi.fetchChatGptStatus({ userId });
+			const status = await localApi.fetchChatGptStatus({ userId: signedInUserId });
 
 			for (const account of status.accounts) {
-				await localApi.disconnectChatGptAccount({ userId, connectionId: account.connectionId });
+				await localApi.disconnectChatGptAccount({
+					userId: signedInUserId,
+					connectionId: account.connectionId
+				});
 			}
 
-			setChatGptStatus(await localApi.fetchChatGptStatus({ userId }));
+			setChatGptStatus(await localApi.fetchChatGptStatus({ userId: signedInUserId }));
 		}
 
 		await removeProviderFromOrder({ provider });
