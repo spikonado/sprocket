@@ -14,5 +14,8 @@ crates/sprocket-workspace/skills/agent-desktop/SKILL.md
 # Vendored Oxlint plugin
 tools/oxlint/anti-slop/
 
+# Vendored from anthropics/skills, kept byte-for-byte
+crates/sprocket-workspace/skills/frontend-design/
+
 # Built by tools/kicanvas/build.sh
 apps/web/static/kicanvas/
