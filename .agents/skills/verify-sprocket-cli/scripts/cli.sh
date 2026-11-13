@@ -42,6 +42,7 @@ exec env \
 	PATH="$cli_scripts/stubs:$PATH" \
 	PUBLIC_CONVEX_URL="$dev_convex_url" \
 	SPROCKET_DATA_DIR="$data_dir" \
+	SPROCKET_DESKTOP_EXECUTABLE="$cli_scripts/stubs/sprocket-desktop" \
 	SPROCKET_PORT="$cli_port" \
 	VERIFY_CLI_OPENED="${VERIFY_CLI_OPENED:-$evidence_root/opened.log}" \
 	"${overrides[@]}" \

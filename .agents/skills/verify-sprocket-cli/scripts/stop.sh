@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Stops what this worktree's CLI binary runs: hung clients, `serve`, temporary servers. Nothing else.
 source "$(dirname "$0")/common.sh"
 
 for pid in $(own_cli_pids); do

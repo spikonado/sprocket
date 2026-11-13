@@ -4,7 +4,6 @@ load_dev_env
 
 evidence_root=/tmp/verify-sprocket-cli
 cli_port=7731
-# Every worktree's build relinks the shared $CARGO_TARGET_DIR/debug/sprocket, so each worktree keeps its own link.
 cli_bin="$worktree_bin"
 
 # This worktree's `serve`, or with VERIFY_CLI_USE_WEB=1 its verify-sprocket API.
