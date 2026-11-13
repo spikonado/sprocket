@@ -32,6 +32,7 @@ fn spawn_schema_only_advertises_child_creation() {
     let choices = SubagentModelChoices {
         model_ids: vec!["opus".into(), "gpt".into()],
         reasoning_efforts: vec!["low".into(), "high".into()],
+        model_options: String::new(),
     };
     let schema = spawn_subagent_parameters(270_000, &choices);
     assert!(schema["properties"].get("threadId").is_none());

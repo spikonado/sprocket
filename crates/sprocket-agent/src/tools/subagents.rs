@@ -211,7 +211,14 @@ pub(crate) struct ListSubagentsArgs {
 }
 
 fn set_model_choices(schema: &mut serde_json::Value, choices: &SubagentModelChoices) {
-    schema["properties"]["model"] = json!({ "type": "string", "enum": choices.model_ids });
+    schema["properties"]["model"] = json!({
+        "type": "string",
+        "enum": choices.model_ids,
+        "description": format!(
+            "Reasoning levels per model, and whether it supports fast:\n{}",
+            choices.model_options
+        ),
+    });
     schema["properties"]["reasoning"] =
         json!({ "type": "string", "enum": choices.reasoning_efforts });
 }

@@ -112,6 +112,7 @@ fn lists_fast_tier(service_tiers: &[String]) -> bool {
 pub(crate) struct SubagentModelChoices {
     pub(crate) model_ids: Vec<String>,
     pub(crate) reasoning_efforts: Vec<String>,
+    pub(crate) model_options: String,
 }
 
 impl SubagentModelChoices {
@@ -133,6 +134,19 @@ impl SubagentModelChoices {
                 .map(|model| model.id.clone())
                 .collect(),
             reasoning_efforts,
+            model_options: catalog
+                .models
+                .iter()
+                .map(|model| {
+                    let fast = if lists_fast_tier(&model.service_tiers) {
+                        "; fast"
+                    } else {
+                        ""
+                    };
+                    format!("{}: {}{fast}", model.id, model.reasoning_efforts.join(", "))
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
         }
     }
 }
