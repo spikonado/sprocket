@@ -18,7 +18,13 @@ function analyze(source: string) {
 const parts = [
 	{ id: 'esp', name: 'ESP32', logic: 3.3, pins: { right: ['3V3', 'GND.1', 'G12'] } },
 	{ id: 'uno', name: 'Uno', logic: 5, pins: { left: ['5V', 'GND', 'D3'] } },
-	{ id: 'bat', name: 'Battery', pins: { right: ['+', '-'] } }
+	{ id: 'bat', name: 'Battery', pins: { right: ['+', '-'] } },
+	{
+		id: 'lidar',
+		name: 'LiDAR',
+		logic: 3.3,
+		pins: { left: ['VCC_5V', '5V_MOTO', 'GND_MOTO'] }
+	}
 ];
 
 describe('analyzeWiring', () => {
@@ -26,13 +32,19 @@ describe('analyzeWiring', () => {
 		const { wires, issues } = analyze(
 			JSON.stringify({
 				parts,
-				rails: [{ id: 'GND', volts: 0 }],
+				rails: [
+					{ id: 'GND', volts: 0 },
+					{ id: '5V', volts: 5 }
+				],
 				steps: [
 					{
 						title: 'Ground',
 						wires: [
 							{ from: 'esp.gnd', to: 'GND' },
-							{ from: 'uno.GND', to: 'GND' }
+							{ from: 'uno.GND', to: 'GND' },
+							{ from: 'lidar.GND_MOTO', to: 'GND' },
+							{ from: 'lidar.VCC_5V', to: '5V' },
+							{ from: 'lidar.5V_MOTO', to: '5V' }
 						]
 					}
 				]
@@ -42,7 +54,10 @@ describe('analyzeWiring', () => {
 		expect(issues).toEqual([]);
 		expect(wires.map((wire) => [wire.from.label, wire.to.label, wire.color])).toEqual([
 			['ESP32 GND', 'GND rail', WIRE_COLORS.black],
-			['Uno GND', 'GND rail', WIRE_COLORS.black]
+			['Uno GND', 'GND rail', WIRE_COLORS.black],
+			['LiDAR GND_MOTO', 'GND rail', WIRE_COLORS.black],
+			['LiDAR VCC_5V', '5V rail', WIRE_COLORS.red],
+			['LiDAR 5V_MOTO', '5V rail', WIRE_COLORS.red]
 		]);
 	});
 
