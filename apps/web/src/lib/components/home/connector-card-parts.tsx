@@ -43,6 +43,7 @@ export function CliConnectorCard({
 	name,
 	cliName,
 	cli,
+	detail,
 	checking,
 	busy,
 	retrying,
@@ -56,6 +57,7 @@ export function CliConnectorCard({
 	name: string;
 	cliName: string;
 	cli: { install: ToolInstall; version: string | null } | null;
+	detail?: string | null;
 	checking: boolean;
 	busy: boolean;
 	retrying: boolean;
@@ -72,7 +74,12 @@ export function CliConnectorCard({
 				<div className="min-w-0 flex-1">
 					<p className="text-foreground text-[15px]">{name}</p>
 					{cli ? (
-						<CliInstallLine name={cliName} install={cli.install} version={cli.version} />
+						<CliInstallLine
+							name={cliName}
+							install={cli.install}
+							version={cli.version}
+							detail={detail ?? null}
+						/>
 					) : (
 						<p className="text-muted-foreground mt-0.5 text-[12px]">
 							{checking ? `Checking ${name}…` : 'Status unavailable'}
@@ -117,11 +124,13 @@ export function CliConnectorCard({
 function CliInstallLine({
 	name,
 	install,
-	version
+	version,
+	detail
 }: {
 	name: string;
 	install: ToolInstall;
 	version: string | null;
+	detail: string | null;
 }) {
 	if (install.state === 'installing') {
 		return (
@@ -141,8 +150,9 @@ function CliInstallLine({
 	}
 
 	return (
-		<p className="text-muted-foreground mt-0.5 text-[12px]">
+		<p className="text-muted-foreground mt-0.5 truncate text-[12px]" title={detail ?? undefined}>
 			{name} {version && <span className="font-mono">{version}</span>}
+			{detail && ` · ${detail}`}
 		</p>
 	);
 }

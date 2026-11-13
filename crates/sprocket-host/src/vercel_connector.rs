@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
 use serde::{Deserialize, Serialize};
+use sprocket_workspace::github::hide_console_window;
 use tokio::process::Command;
 
 use crate::device_sign_in::{DeviceSignIns, SignInStatus};
@@ -49,50 +50,33 @@ pub enum AccountSource {
 }
 
 pub struct VercelConnector {
-    tool: PinnedTool,
+    tool: Arc<PinnedTool>,
     sign_ins: Arc<DeviceSignIns>,
 }
 
 impl VercelConnector {
     pub(crate) fn new(data_dir: &Path) -> anyhow::Result<Self> {
         Ok(Self {
-            tool: PinnedTool::new(
+            tool: Arc::new(PinnedTool::new(
                 data_dir,
                 "vercel",
                 include_str!("../../../tools/vercel/releases.json"),
                 unpack,
-            )?,
+            )?),
             sign_ins: Arc::default(),
         })
     }
 
-    /// Installs the CLI, then the `vercel-cli` skill that ships with it.
-    pub fn prepare(self: &Arc<Self>) {
-        self.tool.forget_failure();
-        let connector = Arc::clone(self);
-        tokio::spawn(async move {
-            if connector.tool.install_recording_failure().await
-                && let Err(error) = connector.write_skill().await
-            {
-                connector
-                    .tool
-                    .record_failure(format!("Couldn't set up the Vercel skill: {error:#}"));
-            }
-        });
+    pub(crate) fn prepare(&self) {
+        self.tool.prepare();
     }
 
-    pub async fn retry_install(self: &Arc<Self>) -> ToolInstall {
-        self.prepare();
-        self.tool.install_state().await
+    pub async fn retry_install(&self) -> ToolInstall {
+        self.tool.retry_install().await
     }
 
     pub(crate) fn bin_dir(&self) -> PathBuf {
         self.tool.bin_dir()
-    }
-
-    /// Holds the `vercel-cli` skill once it's written, so agents read the one for this version.
-    pub fn skills_dir(&self) -> PathBuf {
-        self.tool.version_dir().join("skills")
     }
 
     pub(crate) fn installed(&self) -> Option<String> {
@@ -187,22 +171,6 @@ impl VercelConnector {
                     .unwrap_or_else(|| "Vercel didn't say who is signed in.".to_string()),
             },
         }
-    }
-
-    async fn write_skill(&self) -> anyhow::Result<()> {
-        let destination = self.skills_dir().join("vercel-cli");
-        let output = run(self
-            .command(&["setup", "skills", "--output"])
-            .arg(&destination))
-        .await?;
-        if !output.status.success() {
-            bail!(
-                "vercel setup skills exited with {}: {}",
-                output.status,
-                last_line(&output.stderr).unwrap_or_default()
-            );
-        }
-        Ok(())
     }
 
     fn executable(&self) -> PathBuf {

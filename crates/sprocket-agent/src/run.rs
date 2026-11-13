@@ -4,8 +4,8 @@ use rig::completion::Message;
 use rig::message::UserContent;
 use sprocket_convex::{ConvexErrorCode, RunStatus, convex_error_code};
 use sprocket_workspace::{
-    BUILTIN_SKILLS, WorkspaceSkill, load_workspace_instructions, load_workspace_skills,
-    resolve_directory, resolve_workspace_root, simplified_path,
+    BUILTIN_SKILLS, WorkspaceSkill, default_user_skills_dirs, load_workspace_instructions,
+    load_workspace_skills, resolve_directory, resolve_workspace_root, simplified_path,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -845,7 +845,7 @@ pub async fn run_agent(
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
         let workspace_skills =
-            load_workspace_skills(&workspace_root, &request.skills_dirs, BUILTIN_SKILLS);
+            load_workspace_skills(&workspace_root, &default_user_skills_dirs(), BUILTIN_SKILLS);
         for warning in &workspace_skills.warnings {
             eprintln!("sprocket-agent: {warning}");
         }

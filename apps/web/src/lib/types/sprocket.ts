@@ -269,6 +269,7 @@ export type GitHubStatus = {
 };
 
 export type RepositoryVisibility = 'public' | 'private';
+
 export type VercelStatus = {
 	install: ToolInstall;
 	version: string;

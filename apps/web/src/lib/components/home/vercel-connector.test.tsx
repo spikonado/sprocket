@@ -50,9 +50,9 @@ it('shows the sign-in failure once the device flow fails', async () => {
 it('signs out of a Vercel CLI login', async () => {
 	const api = mount(vercel({ state: 'signedIn', login: 'ada', source: 'cli' }));
 
-	expect(await screen.findByText('Signed in as ada · Vercel CLI login')).toBeTruthy();
+	expect(await screen.findByText(/Signed in as ada$/)).toBeTruthy();
 	fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
 
 	expect(api.signOutVercel).toHaveBeenCalledWith('user-a');
-	await waitFor(() => expect(screen.getByText('Not signed in')).toBeTruthy());
+	await waitFor(() => expect(screen.getByText(/Not signed in$/)).toBeTruthy());
 });

@@ -246,13 +246,6 @@ impl Host {
         .collect()
     }
 
-    /// The user's skill directories, then those of skills that ship with connector tools.
-    pub fn skills_dirs(&self) -> Vec<PathBuf> {
-        let mut dirs = sprocket_workspace::default_user_skills_dirs();
-        dirs.push(self.vercel.skills_dir());
-        dirs
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(
         native_auth: Arc<NativeAuthManager>,

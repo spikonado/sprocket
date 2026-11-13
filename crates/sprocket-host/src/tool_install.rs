@@ -59,10 +59,14 @@ impl PinnedTool {
     }
 
     pub fn prepare(self: &Arc<Self>) {
-        self.forget_failure();
+        self.set_failure(None);
         let tool = Arc::clone(self);
         tokio::spawn(async move {
-            tool.install_recording_failure().await;
+            let failure = tool.ensure_installed().await.err().map(|error| {
+                tracing::warn!("{} setup failed: {error:#}", tool.name);
+                format!("{error:#}")
+            });
+            tool.set_failure(failure);
         });
     }
 
@@ -71,23 +75,9 @@ impl PinnedTool {
         self.install_state().await
     }
 
-    /// Installs, remembering a failure for `install_state` until the next attempt.
-    pub(crate) async fn install_recording_failure(&self) -> bool {
-        let result = self.ensure_installed().await;
-        match &result {
-            Ok(()) => self.forget_failure(),
-            Err(error) => self.record_failure(format!("{error:#}")),
-        }
-        result.is_ok()
-    }
-
-    pub(crate) fn record_failure(&self, error: String) {
-        tracing::warn!("{} setup failed: {error}", self.name);
-        *self.lock_failure() = Some(error);
-    }
-
-    pub(crate) fn forget_failure(&self) {
-        *self.lock_failure() = None;
+    /// Kept for `install_state` until the next attempt.
+    fn set_failure(&self, failure: Option<String>) {
+        *self.lock_failure() = failure;
     }
 
     pub(crate) async fn install_state(&self) -> ToolInstall {

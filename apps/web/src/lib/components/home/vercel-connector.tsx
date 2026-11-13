@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import type { LocalApi, VercelStatus } from '$lib/types/sprocket';
 import {
 	CliConnectorCard,
-	StatusLine,
 	rowPrimaryButtonClass,
 	rowSecondaryButtonClass,
 	useConnectorAction
@@ -31,7 +30,36 @@ export default function VercelConnector({
 	const signIn = useDeviceSignIn(localApi, userId, { connector: 'vercel' }, () => void reload());
 	const { pending, error, act } = useConnectorAction<'install' | 'signOut'>('Vercel');
 	const installed = status?.install.state === 'installed';
-	const account = status?.account;
+	const account = installed ? status.account : null;
+	const busy = pending !== null;
+
+	let action = null;
+
+	if (account?.state === 'signedIn' && account.source === 'cli') {
+		action = (
+			<button
+				type="button"
+				className={rowSecondaryButtonClass}
+				disabled={busy}
+				onClick={() =>
+					void act('signOut', async () => setStatus(await localApi.signOutVercel(userId)))
+				}
+			>
+				Sign out
+			</button>
+		);
+	} else if (account && account.state !== 'signedIn' && !signIn.running) {
+		action = (
+			<button
+				type="button"
+				className={rowPrimaryButtonClass}
+				disabled={busy}
+				onClick={() => void signIn.start()}
+			>
+				Sign in
+			</button>
+		);
+	}
 
 	return (
 		<CliConnectorCard
@@ -39,8 +67,9 @@ export default function VercelConnector({
 			name="Vercel"
 			cliName="Vercel CLI"
 			cli={status}
+			detail={account && accountDetail(account)}
 			checking={checking}
-			busy={pending !== null}
+			busy={busy}
 			retrying={pending === 'install'}
 			onRetry={() =>
 				void act('install', async () => {
@@ -49,38 +78,11 @@ export default function VercelConnector({
 				})
 			}
 			onRefresh={() => void reload()}
+			action={action}
 			error={error ?? loadError}
 		>
-			{account && (
-				<div className="border-border border-t px-5 py-4">
-					<div className="flex items-center gap-3">
-						<div className="min-w-0 flex-1">
-							<p className="text-foreground text-[13px]">Account</p>
-							<AccountState account={account} />
-						</div>
-						{account.state !== 'signedIn' && !signIn.running && (
-							<button
-								type="button"
-								className={rowPrimaryButtonClass}
-								disabled={!installed || pending !== null}
-								onClick={() => void signIn.start()}
-							>
-								Sign in
-							</button>
-						)}
-						{account.state === 'signedIn' && account.source === 'cli' && (
-							<button
-								type="button"
-								className={rowSecondaryButtonClass}
-								disabled={!installed || pending !== null}
-								onClick={() =>
-									void act('signOut', async () => setStatus(await localApi.signOutVercel(userId)))
-								}
-							>
-								Sign out
-							</button>
-						)}
-					</div>
+			{signIn.status.state !== 'idle' && (
+				<div className="-mt-5 px-5 pb-5">
 					<DeviceSignInPanel status={signIn.status} onCancel={() => void signIn.cancel()} />
 				</div>
 			)}
@@ -88,16 +90,14 @@ export default function VercelConnector({
 	);
 }
 
-function AccountState({ account }: { account: VercelStatus['account'] }) {
-	if (account.state === 'problem') return <StatusLine tone="problem">{account.error}</StatusLine>;
+function accountDetail(account: VercelStatus['account']) {
+	if (account.state === 'problem') return account.error;
 
-	if (account.state === 'signedOut') return <StatusLine tone="off">Not signed in</StatusLine>;
+	if (account.state === 'signedOut') return 'Not signed in';
 
-	return (
-		<StatusLine tone="ok">
-			{`Signed in as ${account.login} · ${account.source === 'cli' ? 'Vercel CLI login' : 'environment token'}`}
-		</StatusLine>
-	);
+	return account.source === 'cli'
+		? `Signed in as ${account.login}`
+		: `Signed in as ${account.login} with VERCEL_TOKEN`;
 }
 
 function VercelMark({ className }: { className?: string }) {
