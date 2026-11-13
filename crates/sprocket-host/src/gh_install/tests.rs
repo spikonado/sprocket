@@ -50,3 +50,24 @@ fn extracts_gh_from_the_zip() {
 
     assert_only_gh(&bin);
 }
+
+#[test]
+fn skips_gh_zip_entries_that_escape_the_archive() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("gh.zip");
+    let mut writer = zip::ZipWriter::new(File::create(&archive).unwrap());
+    writer
+        .start_file(
+            format!("../bin/{GH}"),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    writer.write_all(b"gh").unwrap();
+    writer.finish().unwrap();
+    let bin = directory.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+
+    unpack_zip(&archive, &bin).unwrap();
+
+    assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 0);
+}

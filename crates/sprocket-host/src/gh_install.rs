@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::ensure;
 
-use crate::tool_install::{PinnedTool, set_executable};
+use crate::tool_install::{PinnedTool, open_zip, set_executable};
 
 const GH: &str = if cfg!(windows) { "gh.exe" } else { "gh" };
 
@@ -50,10 +50,16 @@ fn unpack_tar_gz(archive: &Path, bin: &Path) -> anyhow::Result<()> {
 }
 
 fn unpack_zip(archive: &Path, bin: &Path) -> anyhow::Result<()> {
-    let mut archive = zip::ZipArchive::new(File::open(archive)?)?;
+    let mut archive = open_zip(archive)?;
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
-        if file.is_file() && is_gh(Path::new(&*file.name()?)) {
+        if !file.is_file() {
+            continue;
+        }
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+        if is_gh(&path) {
             std::io::copy(&mut file, &mut File::create(bin.join(GH))?)?;
             break;
         }
