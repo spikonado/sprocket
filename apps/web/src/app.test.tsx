@@ -34,7 +34,7 @@ const modelCatalog: ModelCatalog = {
 			autoHandoffTokenLimit: 80_000,
 			reasoningEfforts: ['low', 'medium'],
 			defaultReasoningEffort: 'medium',
-			supportsFastMode: true
+			serviceTiers: ['standard', 'fast']
 		}
 	]
 };
@@ -977,29 +977,14 @@ it.each(['loading', 'failed'] as const)(
 	}
 );
 
-it('submits Ultrafast and restores the prompt, speed, and error when an agent launch fails', async () => {
+it('offers Ultrafast before provider settings load and shows the run error when BYOK is missing', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const listProjectAttachments = vi.fn(async () => [alpha]);
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
+	const error = 'Ultrafast needs your own OpenAI API key. Add one in Settings → Providers.';
 	const client = createConvexFixtures();
-	client.registerQuery(api.uiPreferences.getMine, {
-		_id: fixtureId<'uiPreferences'>('preferences-a'),
-		_creationTime: 1,
-		userId: 'user-a',
-		providerOrder: [{ provider: 'openai', enabled: true }, ...defaultProviderOrder],
-		theme: 'light'
-	});
-	client.registerAction(api.providerCredentials.getMyConfiguration, {
-		openai: true,
-		claude: false,
-		anthropic: false,
-		vercel: false,
-		openrouter: false,
-		opencode: false,
-		opencodeGo: false,
-		morph: false
-	});
+	client.handleAction(api.providerCredentials.getMyConfiguration, () => new Promise(() => {}));
 
 	const runtime = createRuntime(
 		createLocalApi({
@@ -1015,8 +1000,7 @@ it('submits Ultrafast and restores the prompt, speed, and error when an agent la
 			...modelCatalog,
 			models: modelCatalog.models.map((model) => ({
 				...model,
-				provider: 'openai',
-				byokServiceTiers: ['ultrafast']
+				serviceTiers: ['standard', 'fast', 'ultrafast']
 			}))
 		})
 	});
@@ -1034,12 +1018,12 @@ it('submits Ultrafast and restores the prompt, speed, and error when an agent la
 	expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ serviceTier: 'ultrafast' }));
 	expect(composer).toHaveProperty('value', '');
 	await act(async () => {
-		launch.reject(new Error('Local agent unavailable.'));
+		launch.reject(new Error(error));
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
 	expect(screen.getByRole('button', { name: 'Select model' }).title).toContain('Ultrafast');
 	const group = screen.getByRole('group', { name: 'Message composer' });
-	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+	expect(within(group).getByRole('alert').textContent).toContain(error);
 });
 
 it('restores the prompt and shows the usage limit when the run ends before sending it', async () => {

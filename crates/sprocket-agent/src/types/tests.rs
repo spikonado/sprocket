@@ -30,26 +30,13 @@ fn providers_address_catalog_models_by_their_own_ids() {
     let meta: ModelRoute = serde_json::from_value(serde_json::json!({
         "provider": "meta",
         "modelsDevId": "meta/muse-wonder-full",
-        "usageWeights": null,
     }))
     .unwrap();
     assert_eq!(
         CompletionProvider::Muse.model_id("muse-wonder-full-1.0", &meta),
         Some("muse-wonder-full-1.0")
     );
-    assert!(!CompletionProvider::Spikonado.serves(&meta));
-}
-
-#[test]
-fn the_gateway_skips_models_it_publishes_without_usage_weights() {
-    let mut route: ModelRoute = serde_json::from_value(serde_json::json!({
-        "provider": "moonshotai",
-        "usageWeights": null,
-    }))
-    .unwrap();
-    route.provider_model_ids = [("vercel", "moonshotai/kimi-k3.1-pro".to_string())].into();
-    assert!(!CompletionProvider::Spikonado.serves(&route));
-    assert!(CompletionProvider::Vercel.serves(&route));
+    assert!(CompletionProvider::Spikonado.serves(&meta));
 }
 
 #[test]

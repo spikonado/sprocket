@@ -104,19 +104,23 @@ pub struct CatalogModel {
 }
 
 impl CatalogModel {
-    pub fn supports_tier(&self, provider: CompletionProvider, tier: ServiceTier) -> bool {
-        match tier {
-            ServiceTier::Standard => true,
-            ServiceTier::Fast => lists_tier(&self.service_tiers, tier),
-            ServiceTier::Ultrafast => {
-                provider.service_tier(tier).is_some() && lists_tier(&self.byok_service_tiers, tier)
-            }
-        }
+    pub fn offers_tier(&self, tier: ServiceTier) -> bool {
+        offered_tiers(&self.service_tiers, &self.byok_service_tiers).contains(&tier)
     }
 }
 
-fn lists_tier(service_tiers: &[String], tier: ServiceTier) -> bool {
-    service_tiers.iter().any(|value| value == tier.as_str())
+/// BYOK tiers are offered like any other; the gateway rejects them for Spikonado-billed requests.
+fn offered_tiers(service_tiers: &[String], byok_service_tiers: &[String]) -> Vec<ServiceTier> {
+    ServiceTier::ALL
+        .into_iter()
+        .filter(|tier| {
+            *tier == ServiceTier::Standard
+                || service_tiers
+                    .iter()
+                    .chain(byok_service_tiers)
+                    .any(|value| value == tier.as_str())
+        })
+        .collect()
 }
 
 pub(crate) struct SubagentModelChoice {
@@ -132,18 +136,7 @@ fn subagent_model_choices(catalog: &GatewaySprocketCatalog) -> Vec<SubagentModel
         .map(|model| SubagentModelChoice {
             id: model.id.clone(),
             reasoning_efforts: model.reasoning_efforts.clone(),
-            service_tiers: [
-                ServiceTier::Standard,
-                ServiceTier::Fast,
-                ServiceTier::Ultrafast,
-            ]
-            .into_iter()
-            .filter(|tier| {
-                *tier == ServiceTier::Standard
-                    || lists_tier(&model.service_tiers, *tier)
-                    || lists_tier(&model.byok_service_tiers, *tier)
-            })
-            .collect(),
+            service_tiers: offered_tiers(&model.service_tiers, &model.byok_service_tiers),
         })
         .collect()
 }
@@ -217,8 +210,7 @@ fn select_catalog_model(
             auto_handoff_token_limit: model.auto_handoff_token_limit,
         },
         supports_images: model.supports_images,
-        supports_fast: lists_tier(&model.service_tiers, ServiceTier::Fast),
-        supports_ultrafast: lists_tier(&model.byok_service_tiers, ServiceTier::Ultrafast),
+        service_tiers: offered_tiers(&model.service_tiers, &model.byok_service_tiers),
         usage_pricing: UsagePricing {
             long_context_threshold_tokens: model
                 .direct_api_pricing
@@ -281,11 +273,7 @@ fn select_handoff_model(
         }
     }
     let capabilities = select_catalog_model(catalog, &handoff.selected_model)?;
-    if !handoff.completion_provider.supports_tier(
-        handoff.service_tier,
-        capabilities.supports_fast,
-        capabilities.supports_ultrafast,
-    ) {
+    if !capabilities.service_tiers.contains(&handoff.service_tier) {
         handoff.service_tier = ServiceTier::Standard;
     }
     Ok((replaced_by_fallback

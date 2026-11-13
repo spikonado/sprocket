@@ -186,37 +186,25 @@ fn unsupported_explicit_choices_fail() {
 }
 
 #[test]
-fn ultrafast_requires_both_catalog_support_and_direct_openai() {
-    use crate::CompletionProvider::Openai;
+fn ultrafast_follows_the_catalog_on_any_provider() {
     let mut catalog = catalog();
     let overrides = SettingsOverrides {
         model: Some("gpt".into()),
         service_tier: Some(ServiceTier::Ultrafast),
         ..Default::default()
     };
-    assert!(resolve_settings(&catalog, &[Openai], None, &overrides).is_err());
+    assert!(resolve_settings(&catalog, &[Spikonado], None, &overrides).is_err());
     catalog.models[2].byok_service_tiers = vec!["ultrafast".into()];
-    let resolved = resolve_settings(&catalog, &[Openai], None, &overrides).unwrap();
-    assert_eq!(resolved.service_tier, ServiceTier::Ultrafast);
-    for provider in [Chatgpt, Spikonado] {
-        assert!(resolve_settings(&catalog, &[provider, Openai], None, &overrides).is_err());
-    }
+    let resolved = resolve_settings(&catalog, &[Spikonado], None, &overrides).unwrap();
+    assert_eq!(
+        (resolved.provider, resolved.service_tier),
+        (Spikonado, ServiceTier::Ultrafast)
+    );
     let saved = ModelSettings {
         model: "gpt".into(),
         reasoning: "low".into(),
         service_tier: ServiceTier::Ultrafast,
     };
-    assert_eq!(
-        resolve_settings(
-            &catalog,
-            &[Openai],
-            Some(&saved),
-            &SettingsOverrides::default()
-        )
-        .unwrap()
-        .service_tier,
-        ServiceTier::Ultrafast
-    );
     assert_eq!(
         resolve_settings(
             &catalog,
@@ -226,6 +214,6 @@ fn ultrafast_requires_both_catalog_support_and_direct_openai() {
         )
         .unwrap()
         .service_tier,
-        ServiceTier::Standard
+        ServiceTier::Ultrafast
     );
 }

@@ -7,9 +7,9 @@ import {
 } from '$lib/chat/model-catalog';
 import ModelReasoningOptions from './model-reasoning-options';
 import {
-	availableServiceTiers,
 	normalizeServiceTier,
 	serviceTierLabel,
+	speedTiers,
 	type ServiceTier
 } from '$lib/chat/service-tier';
 import ServiceTierOptions from './service-tier-options';
@@ -24,7 +24,6 @@ export default function ModelSelector({
 	modelId,
 	reasoningEffort,
 	serviceTier,
-	isDirectOpenAIByok,
 	disabled,
 	onSelect,
 	onServiceTierChange
@@ -33,7 +32,6 @@ export default function ModelSelector({
 	modelId: string;
 	reasoningEffort: string;
 	serviceTier: ServiceTier;
-	isDirectOpenAIByok: (model: CatalogModel) => boolean;
 	disabled: boolean;
 	onSelect: (modelId: string, effort: string) => void;
 	onServiceTierChange?: (tier: ServiceTier) => void;
@@ -53,9 +51,7 @@ export default function ModelSelector({
 	const selectedModel = models.find((model) => model.id === modelId);
 	const previewModel = models.find((model) => model.id === previewId);
 
-	const previewTiers = previewModel
-		? availableServiceTiers(previewModel, isDirectOpenAIByok(previewModel))
-		: [];
+	const previewTiers = previewModel ? speedTiers(previewModel) : [];
 
 	const summary = [
 		selectedModel && showsReasoningControl(selectedModel)
@@ -78,10 +74,7 @@ export default function ModelSelector({
 	}
 
 	function hasSettings(model: CatalogModel) {
-		return (
-			showsReasoningControl(model) ||
-			availableServiceTiers(model, isDirectOpenAIByok(model)).length > 1
-		);
+		return showsReasoningControl(model) || speedTiers(model).length > 0;
 	}
 
 	function settingsAnchor() {
@@ -204,7 +197,6 @@ export default function ModelSelector({
 					modelId={modelId}
 					reasoningEffort={reasoningEffort}
 					serviceTier={serviceTier}
-					isDirectOpenAIByok={isDirectOpenAIByok}
 					onDismiss={closeMenu}
 					returnFocusRef={triggerRef}
 					onApply={(model, effort, tier) => {
@@ -312,14 +304,10 @@ export default function ModelSelector({
 									onSelect={(effort) => selectModel(previewModel, effort)}
 								/>
 							) : null}
-							{previewTiers.length > 1 ? (
+							{previewTiers.length > 0 ? (
 								<ServiceTierOptions
 									tiers={previewTiers}
-									value={normalizeServiceTier(
-										serviceTier,
-										previewModel,
-										isDirectOpenAIByok(previewModel)
-									)}
+									value={normalizeServiceTier(serviceTier, previewModel)}
 									onChange={(tier) => {
 										onSelect(
 											previewModel.id,

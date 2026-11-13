@@ -76,16 +76,15 @@ pub fn resolve_settings(
     let service_tier = match overrides.service_tier {
         Some(tier) => {
             anyhow::ensure!(
-                model.supports_tier(provider, tier),
-                "service tier {} is unavailable for {model_id} with {}",
-                tier.as_str(),
-                provider.as_str()
+                model.offers_tier(tier),
+                "service tier {} is unavailable for {model_id}",
+                tier.as_str()
             );
             tier
         }
         None => saved
             .map(|saved| saved.service_tier)
-            .filter(|tier| model.supports_tier(provider, *tier))
+            .filter(|tier| model.offers_tier(*tier))
             .unwrap_or_default(),
     };
     Ok(ResolvedSettings {

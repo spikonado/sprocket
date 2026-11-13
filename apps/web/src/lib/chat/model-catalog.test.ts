@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { availableServiceTiers, isDirectOpenAIByok, normalizeServiceTier } from './service-tier';
+import { normalizeServiceTier } from './service-tier';
 import {
 	fetchGatewayModelCatalog,
 	resolveCatalogModel,
@@ -45,8 +45,6 @@ describe('gateway model catalog', () => {
 			catalogPayload.sprocket.models.map((model) => model.autoCompactTokenLimit)
 		);
 		expect(catalog.models[0]).not.toHaveProperty('autoCompactTokenLimit');
-		expect(catalog.models[0].supportsFastMode).toBe(true);
-		expect(catalog.models[0].byokServiceTiers).toEqual(['ultrafast']);
 		expect(catalog).not.toHaveProperty('tierAllowsFastMode');
 	});
 
@@ -86,17 +84,24 @@ describe('gateway model catalog', () => {
 		]);
 	});
 
-	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
-		const payload = structuredClone(catalogPayload);
-		payload.sprocket.models[0].serviceTiers = ['standard'];
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }))
-		);
+	it.each([
+		[['standard'], [], ['standard']],
+		[['standard', 'fast'], ['ultrafast'], ['standard', 'fast', 'ultrafast']],
+		[['standard', 'ultrafast'], ['fast'], ['standard', 'fast', 'ultrafast']]
+	])(
+		'offers every listed tier whatever its source (gateway %j, BYOK %j)',
+		async (serviceTiers, byokServiceTiers, expected) => {
+			const payload = structuredClone(catalogPayload);
+			Object.assign(payload.sprocket.models[0], { serviceTiers, byokServiceTiers });
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => Response.json(payload))
+			);
 
-		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(catalog.models[0].supportsFastMode).toBe(false);
-	});
+			const [model] = (await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com')).models;
+			expect(model.serviceTiers).toEqual(expected);
+		}
+	);
 });
 
 describe('reasoning controls', () => {
@@ -110,7 +115,7 @@ describe('reasoning controls', () => {
 			autoHandoffTokenLimit: 80_000,
 			reasoningEfforts: ['none'],
 			defaultReasoningEffort: 'none',
-			supportsFastMode: false
+			serviceTiers: ['standard'] as const
 		};
 
 		expect(showsReasoningControl(model)).toBe(false);
@@ -127,47 +132,15 @@ describe('reasoning controls', () => {
 describe('service tiers', () => {
 	const model = {
 		...catalogPayload.sprocket.models[0],
-		provider: 'openai',
 		autoHandoffTokenLimit: 80_000,
-		supportsFastMode: true
+		serviceTiers: ['standard', 'fast', 'ultrafast'] as const
 	};
 
-	it('keeps provider order when deciding whether OpenAI BYOK is active', () => {
-		expect(
-			isDirectOpenAIByok(
-				model,
-				[
-					{ provider: 'claude', enabled: true },
-					{ provider: 'openai', enabled: true },
-					{ provider: 'spikonado', enabled: true }
-				],
-				true
-			)
-		).toBe(true);
-
-		for (const provider of ['spikonado', 'chatgpt', 'openrouter', 'vercel'] as const) {
-			expect(
-				isDirectOpenAIByok(
-					model,
-					[
-						{ provider, enabled: true },
-						{ provider: 'openai', enabled: true }
-					],
-					true
-				)
-			).toBe(false);
-		}
-
-		expect(isDirectOpenAIByok(model, [{ provider: 'openai', enabled: true }], false)).toBe(false);
-	});
-
-	it('offers Ultrafast only on the direct BYOK route and resets unavailable selections', () => {
-		expect(availableServiceTiers(model, true)).toEqual(['standard', 'fast', 'ultrafast']);
-		expect(availableServiceTiers(model, false)).toEqual(['standard', 'fast']);
-		expect(normalizeServiceTier('ultrafast', model, false)).toBe('standard');
-		expect(normalizeServiceTier('ultrafast', { ...model, byokServiceTiers: [] }, true)).toBe(
+	it('resets only tiers the catalog model lacks', () => {
+		expect(normalizeServiceTier('ultrafast', model)).toBe('ultrafast');
+		expect(normalizeServiceTier('ultrafast', { ...model, serviceTiers: ['standard'] })).toBe(
 			'standard'
 		);
-		expect(normalizeServiceTier('fast', model, false)).toBe('fast');
+		expect(normalizeServiceTier('ultrafast', undefined)).toBe('ultrafast');
 	});
 });

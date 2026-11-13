@@ -809,23 +809,9 @@ pub async fn run_agent(
     );
 
     let reasoning_effort = context.run.reasoning_effort.clone();
-    let service_tier = context.run.service_tier;
-    let service_tier = if context.run.completion_provider.supports_tier(
-        service_tier,
-        capabilities.supports_fast,
-        capabilities.supports_ultrafast,
-    ) {
-        service_tier
-    } else if service_tier == crate::ServiceTier::Ultrafast {
-        return abort_before_start(
-            &runtime,
-            &run_id,
-            anyhow::anyhow!("ultrafast is unavailable for this model and provider"),
-        )
-        .await;
-    } else {
-        crate::ServiceTier::Standard
-    };
+    let service_tier = Some(context.run.service_tier)
+        .filter(|tier| capabilities.service_tiers.contains(tier))
+        .unwrap_or_default();
     let prepare_history =
         load_prior_history(&runtime, &store, &context, &run_id, history_supports_images);
     let prior_history = {

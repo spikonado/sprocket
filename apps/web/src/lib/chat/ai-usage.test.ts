@@ -23,7 +23,7 @@ const catalog: ModelCatalog = {
 			autoHandoffTokenLimit: 252_000,
 			reasoningEfforts: ['medium'],
 			defaultReasoningEffort: 'medium',
-			supportsFastMode: true,
+			serviceTiers: ['standard', 'fast'],
 			directApiPricing: {
 				input: 2,
 				cacheRead: 0.1,

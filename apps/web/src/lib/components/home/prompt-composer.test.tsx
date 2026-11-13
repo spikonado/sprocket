@@ -20,7 +20,7 @@ const modelCatalog: ModelCatalog = {
 			autoHandoffTokenLimit: 80_000,
 			reasoningEfforts: ['low', 'medium'],
 			defaultReasoningEffort: 'medium',
-			supportsFastMode: true
+			serviceTiers: ['standard', 'fast']
 		},
 		{
 			id: 'model-two',
@@ -31,7 +31,7 @@ const modelCatalog: ModelCatalog = {
 			autoHandoffTokenLimit: 80_000,
 			reasoningEfforts: ['high'],
 			defaultReasoningEffort: 'high',
-			supportsFastMode: false
+			serviceTiers: ['standard']
 		}
 	]
 };
@@ -44,7 +44,7 @@ const skills = [
 const ultrafastCatalog: ModelCatalog = {
 	...modelCatalog,
 	models: modelCatalog.models.map((model, index) =>
-		index === 0 ? { ...model, provider: 'openai', byokServiceTiers: ['ultrafast'] } : model
+		index === 0 ? { ...model, serviceTiers: ['standard', 'fast', 'ultrafast'] } : model
 	)
 };
 
@@ -724,7 +724,6 @@ describe('PromptComposer mobile selectors', () => {
 			modelCatalog: ultrafastCatalog,
 			selectedModel: 'model-one',
 			selectedReasoningEffort: 'medium',
-			isDirectOpenAIByok: () => true,
 			onServiceTierChange: vi.fn()
 		});
 
@@ -917,7 +916,7 @@ describe('PromptComposer model selection', () => {
 							...modelCatalog.models[0],
 							reasoningEfforts: ['none'],
 							defaultReasoningEffort: 'none',
-							supportsFastMode
+							serviceTiers: supportsFastMode ? ['standard', 'fast'] : ['standard']
 						}
 					]
 				},
@@ -978,12 +977,11 @@ describe('PromptComposer model selection', () => {
 });
 
 describe('PromptComposer Fast mode', () => {
-	it('offers exclusive speed toggles below reasoning and resets when the provider changes', async () => {
-		const { props, rerender } = renderComposer({
+	it('offers exclusive speed toggles below reasoning', async () => {
+		const { props } = renderComposer({
 			modelCatalog: ultrafastCatalog,
 			selectedModel: 'model-one',
 			selectedReasoningEffort: 'medium',
-			isDirectOpenAIByok: () => true,
 			onServiceTierChange: vi.fn()
 		});
 
@@ -1003,10 +1001,6 @@ describe('PromptComposer Fast mode', () => {
 		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('ultrafast');
 		await click(ultrafast);
 		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('standard');
-		await click(ultrafast);
-		rerender({ ...props, isDirectOpenAIByok: () => false });
-		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('standard');
-		expect(screen.getByRole('switch', { name: 'Fast mode' })).toBeTruthy();
 	});
 
 	it('offers and toggles Fast for a supported model', async () => {
@@ -1036,7 +1030,7 @@ describe('PromptComposer Fast mode', () => {
 				...modelCatalog,
 				models: modelCatalog.models.map((model) => ({
 					...model,
-					supportsFastMode: true,
+					serviceTiers: ['standard', 'fast'],
 					reasoningEfforts: ['none'],
 					defaultReasoningEffort: 'none'
 				}))

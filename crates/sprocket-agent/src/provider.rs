@@ -97,6 +97,7 @@ fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
             crate::claude_code::ERROR_CODE,
             crate::muse::USAGE_LIMIT_CODE,
             crate::muse::ERROR_CODE,
+            "own_provider_required",
         ],
     );
     crate::chatgpt::user_facing_error(error)
@@ -230,17 +231,13 @@ impl AgentProvider {
         cwd: PathBuf,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
-        let service_tier = context.run.service_tier;
         let fallback_providers = context
             .provider_preferences
             .enabled_providers
             .iter()
             .copied()
             .filter(|provider| {
-                *provider != completion_provider
-                    && provider.serves(&capabilities.route)
-                    && (service_tier != ServiceTier::Ultrafast
-                        || provider.service_tier(service_tier).is_some())
+                *provider != completion_provider && provider.serves(&capabilities.route)
             })
             .collect();
         Self {

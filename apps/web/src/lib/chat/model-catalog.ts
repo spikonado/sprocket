@@ -4,6 +4,7 @@ import {
 	GATEWAY_API_PREFIX,
 	GATEWAY_PROTOCOL_VERSION
 } from '@convex/lib/gatewayProtocol';
+import { vServiceTier } from '@convex/lib/validators';
 import { z } from 'zod';
 
 export type { CatalogModel, ModelCatalog };
@@ -11,6 +12,8 @@ export type { CatalogModel, ModelCatalog };
 export type CatalogModelId = CatalogModel['id'];
 
 export { CATALOG_UNAVAILABLE_MESSAGE };
+
+const SERVICE_TIERS = vServiceTier.members.map((member) => member.value);
 
 export function getCatalogModel(
 	catalog: ModelCatalog,
@@ -117,8 +120,9 @@ function catalogFromGatewayPayload(
 				autoHandoffTokenLimit: model.autoCompactTokenLimit,
 				reasoningEfforts: model.reasoningEfforts,
 				defaultReasoningEffort: model.defaultReasoningEffort,
-				supportsFastMode: model.serviceTiers.includes('fast'),
-				byokServiceTiers: model.byokServiceTiers,
+				serviceTiers: SERVICE_TIERS.filter(
+					(tier) => model.serviceTiers.includes(tier) || model.byokServiceTiers?.includes(tier)
+				),
 				usagePolicy: model.usagePolicy,
 				directApiPricing: model.directApiPricing
 			}))

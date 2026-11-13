@@ -24,6 +24,8 @@ pub enum ServiceTier {
 }
 
 impl ServiceTier {
+    pub const ALL: [Self; 3] = [Self::Standard, Self::Fast, Self::Ultrafast];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Standard => "standard",
@@ -90,7 +92,7 @@ impl CompletionProvider {
 
     pub(crate) fn model_id<'a>(self, model: &'a str, route: &'a ModelRoute) -> Option<&'a str> {
         let models_dev_provider = match self {
-            Self::Spikonado => return route.served_by_gateway.then_some(model),
+            Self::Spikonado => return Some(model),
             Self::Openai | Self::Chatgpt => return (route.vendor == "openai").then_some(model),
             Self::Muse => return (route.vendor == "meta").then_some(model),
             Self::Claude | Self::Anthropic => "anthropic",
@@ -110,16 +112,18 @@ impl CompletionProvider {
         match (self, tier) {
             (Self::Spikonado, ServiceTier::Fast) => Some("fast"),
             (Self::Openai | Self::Chatgpt, ServiceTier::Fast) => Some("priority"),
-            (Self::Openai, ServiceTier::Ultrafast) => Some("ultrafast"),
+            (
+                Self::Spikonado
+                | Self::Openai
+                | Self::Chatgpt
+                | Self::Vercel
+                | Self::Openrouter
+                | Self::Opencode
+                | Self::OpencodeGo
+                | Self::Morph,
+                ServiceTier::Ultrafast,
+            ) => Some("ultrafast"),
             _ => None,
-        }
-    }
-
-    pub(crate) fn supports_tier(self, tier: ServiceTier, fast: bool, ultrafast: bool) -> bool {
-        match tier {
-            ServiceTier::Standard => true,
-            ServiceTier::Fast => fast && self.service_tier(tier).is_some(),
-            ServiceTier::Ultrafast => ultrafast && self.service_tier(tier).is_some(),
         }
     }
 
@@ -148,23 +152,6 @@ pub struct ModelRoute {
     pub models_dev_id: Option<String>,
     #[serde(skip)]
     pub provider_model_ids: HashMap<&'static str, String>,
-    /// The gateway publishes null `usageWeights` for models only BYOK providers serve.
-    #[serde(
-        default = "served_by_gateway_default",
-        rename = "usageWeights",
-        deserialize_with = "deserialize_non_null"
-    )]
-    pub served_by_gateway: bool,
-}
-
-const fn served_by_gateway_default() -> bool {
-    true
-}
-
-fn deserialize_non_null<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<bool, D::Error> {
-    Ok(Option::<serde::de::IgnoredAny>::deserialize(deserializer)?.is_some())
 }
 
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
@@ -333,8 +320,7 @@ pub struct CatalogModelCapabilities {
     pub route: ModelRoute,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
-    pub supports_fast: bool,
-    pub supports_ultrafast: bool,
+    pub service_tiers: Vec<ServiceTier>,
     pub usage_pricing: UsagePricing,
 }
 

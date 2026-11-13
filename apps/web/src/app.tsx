@@ -100,14 +100,11 @@ import {
 	type ComposerRecovery
 } from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
-import { resolveProviderOrder } from '@convex/lib/providerOrder';
-import { isDirectOpenAIByok, normalizeServiceTier, type ServiceTier } from '$lib/chat/service-tier';
+import type { ServiceTier } from '$lib/chat/service-tier';
 import { modelServiceTier } from '@convex/lib/models';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
-	getCatalogModel,
-	type CatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
@@ -565,33 +562,6 @@ export default function App({
 
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
 
-	const directOpenAIByok = useCallback(
-		(model: CatalogModel) =>
-			isDirectOpenAIByok(
-				model,
-				resolveProviderOrder(uiPreferencesQuery.data?.providerOrder),
-				apiKeysSaved.openai
-			),
-		[uiPreferencesQuery.data?.providerOrder, apiKeysSaved.openai]
-	);
-
-	const serviceTiersReady =
-		(providerConfiguration.status === 'loaded' || providerConfiguration.status === 'failed') &&
-		(uiPreferencesQuery.data !== undefined || uiPreferencesQuery.error !== null);
-
-	const selectedServiceTierReady = serviceTier !== 'ultrafast' || serviceTiersReady;
-
-	const selectedCatalogModel =
-		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
-
-	const resolvedServiceTier = selectedCatalogModel
-		? normalizeServiceTier(
-				serviceTier,
-				selectedCatalogModel,
-				directOpenAIByok(selectedCatalogModel)
-			)
-		: serviceTier;
-
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
 
@@ -962,8 +932,7 @@ export default function App({
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.failureKind);
 
-	const canContinueWorking =
-		latestRunResumeKind != null && !currentLifecycle?.run?.promptUnsent && selectedServiceTierReady;
+	const canContinueWorking = latestRunResumeKind != null && !currentLifecycle?.run?.promptUnsent;
 
 	const isLatestRunReady = isLatestRunReadyForThread({
 		threadId: currentThreadId,
@@ -989,7 +958,6 @@ export default function App({
 	const canSend = Boolean(
 		currentProjectPath &&
 		(pendingAgentQuestion || (selectedModel && selectedReasoningEffort)) &&
-		(pendingAgentQuestion || selectedServiceTierReady) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
@@ -1580,7 +1548,7 @@ export default function App({
 
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedServiceTier = resolvedServiceTier;
+		const submittedServiceTier = serviceTier;
 		let continuationPrompt: string | null = null;
 		let continuationOfRunId: Id<'runs'> | undefined;
 		setPrompt('');
@@ -1745,7 +1713,7 @@ export default function App({
 
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedServiceTier = resolvedServiceTier;
+		const submittedServiceTier = serviceTier;
 
 		const submittedContinuationOfRunId =
 			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
@@ -2096,7 +2064,7 @@ export default function App({
 			storageIds: [],
 			selectedModel,
 			reasoningEffort: selectedReasoningEffort,
-			serviceTier: resolvedServiceTier,
+			serviceTier,
 			submissionId: crypto.randomUUID(),
 			workspacePath: currentProjectPath,
 			continuationOfRunId: previousRunId
@@ -2804,8 +2772,6 @@ export default function App({
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										serviceTier={serviceTier}
 										onServiceTierChange={setServiceTier}
-										isDirectOpenAIByok={directOpenAIByok}
-										serviceTiersReady={serviceTiersReady}
 										pendingQuestion={pendingAgentQuestion}
 										runEnded={runEnded}
 										showContinueWorking={canContinueWorking}

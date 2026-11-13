@@ -55,8 +55,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     let vision =
         select_catalog_model(&catalog_payload().sprocket, "vision-model").expect("vision model");
     assert!(vision.supports_images);
-    assert!(vision.supports_fast);
-    assert!(vision.supports_ultrafast);
+    assert_eq!(vision.service_tiers, ServiceTier::ALL);
     assert_eq!(vision.label, "Vision Model");
     assert_eq!(vision.route.vendor, "openai");
     assert_eq!(vision.context_budget.context_window_tokens, 100_000);
@@ -72,8 +71,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     let long_context = select_catalog_model(&catalog_payload().sprocket, "long-context-model")
         .expect("long-context model");
     assert!(!long_context.supports_images);
-    assert!(!long_context.supports_fast);
-    assert!(!long_context.supports_ultrafast);
+    assert_eq!(long_context.service_tiers, [ServiceTier::Standard]);
     assert_eq!(long_context.route.vendor, "other");
     assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     assert_eq!(long_context.usage_pricing, UsagePricing::default());
@@ -190,37 +188,6 @@ fn same_vendor_keeps_history_only_on_the_same_provider() {
         assert_eq!(
             handoff.is_some(),
             target_provider != CompletionProvider::Spikonado
-        );
-    }
-}
-
-#[test]
-fn handoff_retains_ultrafast_only_for_direct_openai() {
-    for provider in [
-        CompletionProvider::Openai,
-        CompletionProvider::Chatgpt,
-        CompletionProvider::Spikonado,
-    ] {
-        let (handoff, _) = select_handoff_model(
-            &catalog_payload().sprocket,
-            ProviderHandoff {
-                completion_provider: provider,
-                selected_model: "vision-model".into(),
-                reasoning_effort: "high".into(),
-                service_tier: ServiceTier::Ultrafast,
-            },
-            CompletionProvider::Anthropic,
-            "anthropic",
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(
-            handoff.service_tier,
-            if provider == CompletionProvider::Openai {
-                ServiceTier::Ultrafast
-            } else {
-                ServiceTier::Standard
-            }
         );
     }
 }

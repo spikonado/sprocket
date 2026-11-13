@@ -6,11 +6,7 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ProviderLogo from './provider-logo';
-import {
-	availableServiceTiers,
-	normalizeServiceTier,
-	type ServiceTier
-} from '$lib/chat/service-tier';
+import { normalizeServiceTier, speedTiers, type ServiceTier } from '$lib/chat/service-tier';
 import ServiceTierOptions from './service-tier-options';
 import MobileSelectorSheet from './ui/mobile-selector-sheet';
 import { cn } from '$lib/utils';
@@ -20,7 +16,6 @@ export default function MobileModelSelector({
 	modelId,
 	reasoningEffort,
 	serviceTier,
-	isDirectOpenAIByok,
 	onApply,
 	onDismiss,
 	returnFocusRef
@@ -29,7 +24,6 @@ export default function MobileModelSelector({
 	modelId: string;
 	reasoningEffort: string;
 	serviceTier: ServiceTier;
-	isDirectOpenAIByok: (model: CatalogModel) => boolean;
 	onApply: (model: CatalogModel, effort: string, tier: ServiceTier) => void;
 	onDismiss: () => void;
 	returnFocusRef: RefObject<HTMLButtonElement | null>;
@@ -38,9 +32,8 @@ export default function MobileModelSelector({
 	const [draftEffort, setDraftEffort] = useState(reasoningEffort);
 	const [draftTier, setDraftTier] = useState(serviceTier);
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
-	const directOpenAIByok = Boolean(model && isDirectOpenAIByok(model));
-	const tiers = model ? availableServiceTiers(model, directOpenAIByok) : [];
-	const resolvedTier = normalizeServiceTier(draftTier, model, directOpenAIByok);
+	const tiers = model ? speedTiers(model) : [];
+	const resolvedTier = normalizeServiceTier(draftTier, model);
 
 	return (
 		<MobileSelectorSheet
@@ -78,9 +71,7 @@ export default function MobileModelSelector({
 							setDraftId(candidate.id);
 							setDraftEffort(candidate.defaultReasoningEffort);
 
-							setDraftTier(
-								normalizeServiceTier(draftTier, candidate, isDirectOpenAIByok(candidate))
-							);
+							setDraftTier(normalizeServiceTier(draftTier, candidate));
 						}}
 					>
 						<ProviderLogo provider={candidate.provider} className="size-5 shrink-0" />
@@ -124,7 +115,7 @@ export default function MobileModelSelector({
 					</div>
 				</div>
 			) : null}
-			{tiers.length > 1 ? (
+			{tiers.length > 0 ? (
 				<ServiceTierOptions tiers={tiers} value={resolvedTier} onChange={setDraftTier} />
 			) : null}
 		</MobileSelectorSheet>

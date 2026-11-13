@@ -9,7 +9,6 @@ import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/c
 import {
 	getCatalogModel,
 	resolveCatalogModel,
-	type CatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
@@ -55,8 +54,6 @@ export type PromptComposerProps = {
 	onSelectedReasoningEffortChange?: (effort: string) => void;
 	serviceTier?: ServiceTier;
 	onServiceTierChange?: (tier: ServiceTier) => void;
-	isDirectOpenAIByok?: (model: CatalogModel) => boolean;
-	serviceTiersReady?: boolean;
 	pendingQuestion?: PendingAgentQuestion | null;
 	runEnded?: boolean;
 	showContinueWorking?: boolean;
@@ -87,8 +84,6 @@ const SUPPORTS_FIELD_SIZING = Boolean(globalThis.CSS?.supports('field-sizing', '
 
 const ATTACH_TOOLTIP_LABEL = 'Attach files';
 
-const noDirectOpenAIByok = () => false;
-
 const COMPOSER_SHELL_CLASS =
 	'composer-shell mx-auto w-full max-w-[48rem] rounded-[28px] p-px transition-colors duration-200';
 
@@ -109,8 +104,6 @@ export default function PromptComposer({
 	onSelectedReasoningEffortChange,
 	serviceTier = 'standard',
 	onServiceTierChange,
-	isDirectOpenAIByok = noDirectOpenAIByok,
-	serviceTiersReady = true,
 	pendingQuestion = null,
 	runEnded = false,
 	showContinueWorking = false,
@@ -493,13 +486,7 @@ export default function PromptComposer({
 			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
 		}
 
-		if (!serviceTiersReady) return;
-
-		const normalizedTier = normalizeServiceTier(
-			serviceTier,
-			selectedCatalogModel,
-			isDirectOpenAIByok(selectedCatalogModel)
-		);
+		const normalizedTier = normalizeServiceTier(serviceTier, selectedCatalogModel);
 
 		if (normalizedTier !== serviceTier) {
 			onServiceTierChange?.(normalizedTier);
@@ -509,9 +496,7 @@ export default function PromptComposer({
 		selectedReasoningEffort,
 		onSelectedReasoningEffortChange,
 		serviceTier,
-		onServiceTierChange,
-		isDirectOpenAIByok,
-		serviceTiersReady
+		onServiceTierChange
 	]);
 
 	useEffect(() => {
@@ -753,7 +738,6 @@ export default function PromptComposer({
 													models={modelCatalog.models}
 													reasoningEffort={selectedReasoningEffort}
 													serviceTier={serviceTier}
-													isDirectOpenAIByok={isDirectOpenAIByok}
 													disabled={composerLocked || answeringQuestion}
 													onSelect={handleModelChange}
 													onServiceTierChange={onServiceTierChange}

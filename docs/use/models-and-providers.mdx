@@ -14,15 +14,17 @@ Pick a model in the composer's model menu. Models with reasoning levels have a r
 - Extra High
 - Max
 
-Each model marks one level as its default. Models that support it also have a **Fast** switch, which uses the provider's faster service tier. Sprocket saves the model, reasoning level, and fast mode for each thread.
+Each model marks one level as its default. Service-tier switches appear below the reasoning choices. Turn the active switch off to use Standard speed. Sprocket saves the model, reasoning level, and service tier for each thread.
+
+The model menu shows the gateway catalog's models and options, whether or not you have connected a provider for them. Requests follow your provider order. If an option requires your own provider, the failed request explains what to connect in Settings.
 
 ### Ultrafast
 
 <Snippet file="unreleased.mdx" />
 
-GPT-6.1 Sol offers **Ultrafast** through **OpenAI API**. Connect your own OpenAI API key and move OpenAI API to the top of **Settings → Providers**, then turn on Ultrafast below the model's reasoning choices. Turning on Fast or Ultrafast turns the other off. Turn both off to use Standard speed.
+GPT-6.1 Sol offers an **Ultrafast** switch below its reasoning choices. Connect your own OpenAI API key and place **OpenAI API** before Spikonado in **Settings → Providers** to use it. Turning on Fast or Ultrafast turns the other off.
 
-Ultrafast uses your OpenAI account, not your Sprocket plan. OpenAI charges six times Sol's Standard API prices. It is not available through Spikonado or ChatGPT Subscription in Sprocket. Ultrafast runs don't fall back to another provider if OpenAI fails. Switching to a model or provider that doesn't support Ultrafast resets the selection to Standard.
+Ultrafast uses your provider account, not your Sprocket plan. OpenAI charges six times Sol's Standard API prices. Spikonado rejects Ultrafast requests with a message asking you to connect your own provider. Changing provider settings does not hide the switch or reset your selection.
 
 From the CLI:
 

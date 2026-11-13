@@ -38,20 +38,40 @@ fn fast_mode_sends_each_providers_service_tier() {
         super::service_tier_params(CompletionProvider::Claude, ServiceTier::Fast),
         serde_json::json!({})
     );
-    assert_eq!(
-        super::service_tier_params(CompletionProvider::Openai, ServiceTier::Ultrafast),
-        serde_json::json!({"service_tier": "ultrafast"})
-    );
     for provider in [
-        CompletionProvider::Chatgpt,
         CompletionProvider::Spikonado,
+        CompletionProvider::Openai,
+        CompletionProvider::Chatgpt,
+        CompletionProvider::Vercel,
         CompletionProvider::Openrouter,
+        CompletionProvider::Opencode,
+        CompletionProvider::OpencodeGo,
+        CompletionProvider::Morph,
     ] {
         assert_eq!(
             super::service_tier_params(provider, ServiceTier::Ultrafast),
-            serde_json::json!({})
+            serde_json::json!({"service_tier": "ultrafast"})
         );
     }
+    assert_eq!(
+        super::service_tier_params(CompletionProvider::Anthropic, ServiceTier::Ultrafast),
+        serde_json::json!({})
+    );
+}
+
+#[test]
+fn gateway_own_provider_rejections_show_the_gateway_message() {
+    let message = "Bring your own provider to use GPT-6.1 Sol with the ultrafast service tier. Connect one in Sprocket's provider settings.";
+    let body = serde_json::json!({
+        "error": { "code": "own_provider_required", "param": "service_tier", "message": message }
+    });
+    let error = rig::completion::PromptError::from(rig::ProviderError::from_provider_body(
+        body.to_string(),
+    ));
+    assert_eq!(
+        super::user_facing_error(anyhow::Error::new(error)).to_string(),
+        message
+    );
 }
 
 #[test]

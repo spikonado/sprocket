@@ -1,43 +1,19 @@
-import type { ProviderOrderEntry } from '@convex/lib/providerOrder';
 import type { ServiceTier } from '@convex/lib/validators';
 import type { CatalogModel } from './model-catalog';
 
 export type { ServiceTier };
 
-export function isDirectOpenAIByok(
-	model: CatalogModel,
-	order: readonly ProviderOrderEntry[],
-	openaiConfigured: boolean
-): boolean {
-	if (model.provider !== 'openai' || !openaiConfigured) return false;
-
-	// The UI catalog cannot rule out earlier alternative API routes for this model.
-	const first = order.find(
-		(entry) => entry.enabled && !['anthropic', 'claude', 'muse'].includes(entry.provider)
-	);
-
-	return first?.provider === 'openai';
+/** Tiers shown as speed switches; turning every switch off selects `standard`. */
+export function speedTiers(model: CatalogModel): ServiceTier[] {
+	return model.serviceTiers.filter((tier) => tier !== 'standard');
 }
 
-export function availableServiceTiers(
-	model: CatalogModel,
-	directOpenAIByok: boolean
-): ServiceTier[] {
-	const tiers: ServiceTier[] = ['standard'];
-
-	if (model.supportsFastMode) tiers.push('fast');
-
-	if (directOpenAIByok && model.byokServiceTiers?.includes('ultrafast')) tiers.push('ultrafast');
-
-	return tiers;
-}
-
+/** Without a catalog model the saved tier is kept, so an unavailable catalog does not reset it. */
 export function normalizeServiceTier(
 	tier: ServiceTier,
-	model: CatalogModel | undefined,
-	directOpenAIByok: boolean
+	model: CatalogModel | undefined
 ): ServiceTier {
-	return model && availableServiceTiers(model, directOpenAIByok).includes(tier) ? tier : 'standard';
+	return !model || model.serviceTiers.includes(tier) ? tier : 'standard';
 }
 
 export function serviceTierLabel(tier: ServiceTier): string {

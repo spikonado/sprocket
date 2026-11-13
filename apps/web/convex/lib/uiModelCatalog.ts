@@ -1,4 +1,5 @@
 import type { UsagePolicy } from '@convex/lib/models';
+import type { ServiceTier } from '@convex/lib/validators';
 
 /** The provider's own API list prices in USD per million tokens. */
 export type DirectApiPricing = {
@@ -21,8 +22,7 @@ export type CatalogModel = {
 	autoHandoffTokenLimit: number;
 	reasoningEfforts: readonly string[];
 	defaultReasoningEffort: string;
-	supportsFastMode: boolean;
-	byokServiceTiers?: readonly string[];
+	serviceTiers: readonly ServiceTier[];
 	usagePolicy?: UsagePolicy;
 	directApiPricing?: DirectApiPricing | null;
 };
