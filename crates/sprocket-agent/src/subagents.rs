@@ -7,15 +7,14 @@ use serde::{Deserialize, Serialize};
 use sprocket_convex::RunStatus;
 use sprocket_transcript::RemoteTranscriptState;
 
-use crate::types::CompletionProvider;
+use crate::types::{CompletionProvider, ServiceTier};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentSettings {
     pub model: String,
     pub reasoning: String,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub fast: bool,
+    pub service_tier: ServiceTier,
     #[serde(skip_serializing)]
     pub completion_provider: CompletionProvider,
 }
@@ -129,7 +128,7 @@ pub struct SubagentLaunchRequest {
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
     pub continuation_of_run_id: Option<String>,
 }
 

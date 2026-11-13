@@ -43,12 +43,12 @@ export function resolveSubmissionId(args: {
 	prompt: string;
 	storageIds: Id<'_storage'>[];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
-	fastMode: AgentRunRequest['fastMode'];
+	serviceTier: AgentRunRequest['serviceTier'];
 	recoveredSubmission?: {
 		prompt: string;
 		storageIds?: Id<'_storage'>[];
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
-		fastMode: AgentRunRequest['fastMode'];
+		serviceTier: AgentRunRequest['serviceTier'];
 		selectedModel: AgentRunRequest['selectedModel'];
 		submissionId: string;
 		continuationOfRunId?: Id<'runs'>;
@@ -75,7 +75,7 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
-		recoveredSubmission.fastMode === args.fastMode &&
+		recoveredSubmission.serviceTier === args.serviceTier &&
 		recoveredSubmission.continuationOfRunId === args.continuationOfRunId &&
 		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
 		? recoveredSubmission.submissionId
@@ -108,7 +108,7 @@ export function launchAgentRun(args: {
 	storageIds: Id<'_storage'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
-	fastMode: AgentRunRequest['fastMode'];
+	serviceTier: AgentRunRequest['serviceTier'];
 	submissionId: string;
 	workspacePath: string;
 	continuationOfRunId?: Id<'runs'>;
@@ -119,7 +119,7 @@ export function launchAgentRun(args: {
 		storageIds: args.storageIds,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		fastMode: args.fastMode,
+		serviceTier: args.serviceTier,
 		submissionId: args.submissionId,
 		workspacePath: args.workspacePath
 	};

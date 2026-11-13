@@ -28,17 +28,22 @@ Runs an agent task and waits for the result.
 sprocket run [OPTIONS] [PROMPT]
 ```
 
-| Option                    | Effect                                                                                       |
-| ------------------------- | -------------------------------------------------------------------------------------------- |
-| `PROMPT`                  | The task to send.                                                                            |
-| `--prompt-file <PATH>`    | Reads the task from a UTF-8 file, or from stdin with `-`. Up to 1 MiB.                       |
-| `-C`, `--directory <DIR>` | Working directory. Defaults to the current directory.                                        |
-| `--thread <ID>`           | Sends a follow-up to an existing thread instead of starting a new one.                       |
-| `--model <ID>`            | Model to use.                                                                                |
-| `--reasoning <LEVEL>`     | Reasoning level, such as `low` or `high`.                                                    |
-| `--fast`, `--no-fast`     | Turns fast mode on or off.                                                                   |
-| `--timeout <DURATION>`    | Cancels the run after a duration such as `30s`, `10m`, or `2h`. A bare number means seconds. |
-| `--list-models`           | Lists the models your account can use with their reasoning levels, then exits.               |
+| Option                    | Effect                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `PROMPT`                  | The task to send.                                                                                      |
+| `--prompt-file <PATH>`    | Reads the task from a UTF-8 file, or from stdin with `-`. Up to 1 MiB.                                 |
+| `-C`, `--directory <DIR>` | Working directory. Defaults to the current directory.                                                  |
+| `--thread <ID>`           | Sends a follow-up to an existing thread instead of starting a new one.                                 |
+| `--model <ID>`            | Model to use.                                                                                          |
+| `--reasoning <LEVEL>`     | Reasoning level, such as `low` or `high`.                                                              |
+| `--fast`, `--no-fast`     | Turns fast mode on or off.                                                                             |
+| `--service-tier <TIER>`   | Chooses `standard`, `fast`, or BYOK-only `ultrafast`. Cannot be combined with `--fast` or `--no-fast`. |
+| `--timeout <DURATION>`    | Cancels the run after a duration such as `30s`, `10m`, or `2h`. A bare number means seconds.           |
+| `--list-models`           | Lists the models your account can use with their reasoning levels, then exits.                         |
+
+<Snippet file="unreleased.mdx" />
+
+See [Ultrafast](/use/models-and-providers#ultrafast) for the model and provider requirements of `--service-tier ultrafast`.
 
 `sprocket run` needs you to be signed in. It writes the thread ID, run ID, model, and each tool call to stderr. It writes only the final answer to stdout, so you can pipe it:
 

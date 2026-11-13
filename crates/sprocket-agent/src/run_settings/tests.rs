@@ -23,7 +23,7 @@ fn saved(model: &str, reasoning: &str, fast: bool) -> ModelSettings {
     ModelSettings {
         model: model.into(),
         reasoning: reasoning.into(),
-        fast,
+        service_tier: ServiceTier::from_legacy(None, fast),
     }
 }
 
@@ -50,7 +50,7 @@ fn new_threads_use_the_catalog_default_on_the_first_serving_provider() {
         ResolvedSettings {
             model: "default".into(),
             reasoning: "high".into(),
-            fast: false,
+            service_tier: ServiceTier::Standard,
             provider: Spikonado,
         }
     );
@@ -92,7 +92,7 @@ fn follow_ups_keep_saved_settings() {
         ResolvedSettings {
             model: "default".into(),
             reasoning: "medium".into(),
-            fast: true,
+            service_tier: ServiceTier::Fast,
             provider: Spikonado,
         }
     );
@@ -107,7 +107,7 @@ fn a_model_change_resets_reasoning_and_keeps_supported_fast() {
     );
     let resolved = resolved.unwrap();
     assert_eq!(resolved.reasoning, "xhigh");
-    assert!(resolved.fast);
+    assert_eq!(resolved.service_tier, ServiceTier::Fast);
 }
 
 #[test]
@@ -122,14 +122,14 @@ fn unsupported_saved_settings_fall_back_quietly() {
         (removed.model.as_str(), removed.reasoning.as_str()),
         ("default", "high")
     );
-    assert!(!removed.fast);
+    assert_eq!(removed.service_tier, ServiceTier::Standard);
 
     let no_fast_model = resolve(
         &[Spikonado],
         Some(saved("pro", "max", true)),
         Default::default(),
     );
-    assert!(!no_fast_model.unwrap().fast);
+    assert_eq!(no_fast_model.unwrap().service_tier, ServiceTier::Standard);
 
     let stale_reasoning = resolve(
         &[Spikonado],
@@ -167,9 +167,53 @@ fn unsupported_explicit_choices_fail() {
 
     let fast = |model: &str| SettingsOverrides {
         model: Some(model.into()),
-        fast: Some(true),
+        service_tier: Some(ServiceTier::Fast),
         ..Default::default()
     };
     assert!(resolve(&[Spikonado], None, fast("pro")).is_err());
-    assert!(resolve(&[Spikonado], None, fast("gpt")).unwrap().fast);
+    assert_eq!(
+        resolve(&[Anthropic], None, fast("default"))
+            .unwrap()
+            .service_tier,
+        ServiceTier::Fast
+    );
+    assert_eq!(
+        resolve(&[Spikonado], None, fast("gpt"))
+            .unwrap()
+            .service_tier,
+        ServiceTier::Fast
+    );
+}
+
+#[test]
+fn ultrafast_follows_the_catalog_on_any_provider() {
+    let mut catalog = catalog();
+    let overrides = SettingsOverrides {
+        model: Some("gpt".into()),
+        service_tier: Some(ServiceTier::Ultrafast),
+        ..Default::default()
+    };
+    assert!(resolve_settings(&catalog, &[Spikonado], None, &overrides).is_err());
+    catalog.models[2].byok_service_tiers = vec!["ultrafast".into()];
+    let resolved = resolve_settings(&catalog, &[Spikonado], None, &overrides).unwrap();
+    assert_eq!(
+        (resolved.provider, resolved.service_tier),
+        (Spikonado, ServiceTier::Ultrafast)
+    );
+    let saved = ModelSettings {
+        model: "gpt".into(),
+        reasoning: "low".into(),
+        service_tier: ServiceTier::Ultrafast,
+    };
+    assert_eq!(
+        resolve_settings(
+            &catalog,
+            &[Chatgpt],
+            Some(&saved),
+            &SettingsOverrides::default()
+        )
+        .unwrap()
+        .service_tier,
+        ServiceTier::Ultrafast
+    );
 }

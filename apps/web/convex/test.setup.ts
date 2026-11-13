@@ -13,7 +13,7 @@ import { parse } from 'convex-helpers/validators';
 import { convexTest, type TestConvex } from 'convex-test';
 import { vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { FunctionArgs } from 'convex/server';
 import type { CompletionProvider } from '@convex/lib/validators';
@@ -318,6 +318,7 @@ export async function insertQueuedRun(
 		completionProvider?: CompletionProvider;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		fastMode?: boolean;
+		serviceTier?: Doc<'runs'>['serviceTier'];
 		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
 		automaticRecovery?: boolean;
@@ -335,7 +336,8 @@ export async function insertQueuedRun(
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
 		completionProvider: args.completionProvider ?? 'spikonado',
 		reasoningEffort: args.reasoningEffort ?? 'medium',
-		fastMode: args.fastMode ?? false,
+		fastMode: args.fastMode,
+		serviceTier: args.serviceTier,
 		executionSecret: args.executionSecret,
 		machineId: args.machineId
 	};

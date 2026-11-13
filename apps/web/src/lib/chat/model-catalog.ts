@@ -4,6 +4,7 @@ import {
 	GATEWAY_API_PREFIX,
 	GATEWAY_PROTOCOL_VERSION
 } from '@convex/lib/gatewayProtocol';
+import { vServiceTier } from '@convex/lib/validators';
 import { z } from 'zod';
 
 export type { CatalogModel, ModelCatalog };
@@ -11,6 +12,8 @@ export type { CatalogModel, ModelCatalog };
 export type CatalogModelId = CatalogModel['id'];
 
 export { CATALOG_UNAVAILABLE_MESSAGE };
+
+const SERVICE_TIERS = vServiceTier.members.map((member) => member.value);
 
 export function getCatalogModel(
 	catalog: ModelCatalog,
@@ -61,6 +64,7 @@ const directApiPricingSchema = z.object({
 	cacheWrite: z.record(z.string(), price),
 	output: price,
 	fastMultiplier: multiplier,
+	ultrafastMultiplier: multiplier.optional(),
 	longContext: z.object({ inputMultiplier: multiplier, outputMultiplier: multiplier }).nullable()
 });
 
@@ -74,6 +78,7 @@ const gatewayModelSchema = z.looseObject({
 	reasoningEfforts: z.array(z.string()).min(1),
 	defaultReasoningEffort: z.string().min(1),
 	serviceTiers: z.array(z.string()).min(1),
+	byokServiceTiers: z.array(z.string()).optional(),
 	usagePolicy: z.literal('unlimited').optional(),
 	directApiPricing: directApiPricingSchema.nullable().catch(null)
 });
@@ -115,7 +120,9 @@ function catalogFromGatewayPayload(
 				autoHandoffTokenLimit: model.autoCompactTokenLimit,
 				reasoningEfforts: model.reasoningEfforts,
 				defaultReasoningEffort: model.defaultReasoningEffort,
-				supportsFastMode: model.serviceTiers.includes('fast'),
+				serviceTiers: SERVICE_TIERS.filter(
+					(tier) => model.serviceTiers.includes(tier) || model.byokServiceTiers?.includes(tier)
+				),
 				usagePolicy: model.usagePolicy,
 				directApiPricing: model.directApiPricing
 			}))

@@ -46,7 +46,10 @@ pub struct AgentLaunchRequest {
     #[serde(default)]
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
+    #[serde(default)]
     pub fast_mode: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<sprocket_agent::ServiceTier>,
     pub workspace_path: String,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
@@ -213,7 +216,10 @@ async fn launch_agent_inner(
         selected_model: payload.selected_model,
         completion_provider: payload.completion_provider,
         reasoning_effort: payload.reasoning_effort,
-        fast_mode: payload.fast_mode,
+        service_tier: sprocket_agent::ServiceTier::from_legacy(
+            payload.service_tier,
+            payload.fast_mode,
+        ),
         workspace_path,
         installation_id: host.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,

@@ -29,6 +29,8 @@ struct ThreadSettings {
     selected_model: String,
     reasoning_effort: String,
     fast_mode: bool,
+    #[serde(default)]
+    service_tier: Option<sprocket_agent::ServiceTier>,
 }
 
 pub(super) async fn list_models(
@@ -185,12 +187,15 @@ async fn prepare_run(
     let saved = thread.map(|thread| ModelSettings {
         model: thread.selected_model,
         reasoning: thread.reasoning_effort,
-        fast: thread.fast_mode,
+        service_tier: sprocket_agent::ServiceTier::from_legacy(
+            thread.service_tier,
+            thread.fast_mode,
+        ),
     });
     let overrides = SettingsOverrides {
         model: request.model.clone(),
         reasoning: request.reasoning.clone(),
-        fast: request.fast,
+        service_tier: request.service_tier,
     };
     let settings = run_settings::resolve(&rpc, saved.as_ref(), &overrides).await?;
     Ok(AgentLaunchRequest {
@@ -206,7 +211,8 @@ async fn prepare_run(
         selected_model: settings.model,
         completion_provider: settings.provider,
         reasoning_effort: settings.reasoning,
-        fast_mode: settings.fast,
+        fast_mode: settings.service_tier.is_fast(),
+        service_tier: Some(settings.service_tier),
         workspace_path: attachment.workspace_path,
         continuation_of_run_id: None,
         execution_secret: None,

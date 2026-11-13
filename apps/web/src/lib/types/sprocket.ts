@@ -1,4 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel';
+import type { ServiceTier } from '$lib/chat/service-tier';
 import type { AssistantPart } from '@convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
 import type { displayRowValidator } from '@convex/lib/transcriptDisplayTypes';
@@ -95,7 +96,7 @@ export type AgentRunRequest = {
 	storageIds: Id<'_storage'>[];
 	selectedModel: string;
 	reasoningEffort: string;
-	fastMode: boolean;
+	serviceTier: ServiceTier;
 	workspacePath: string;
 	continuationOfRunId?: Id<'runs'>;
 };

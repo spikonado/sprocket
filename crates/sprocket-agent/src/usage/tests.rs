@@ -8,7 +8,7 @@ fn source(fast: bool, long_context_threshold_tokens: Option<u64>) -> UsageSource
     UsageSource {
         provider: CompletionProvider::Spikonado,
         model: "gpt-6.1-sol".to_string(),
-        fast,
+        service_tier: crate::ServiceTier::from_legacy(None, fast),
         pricing: UsagePricing {
             long_context_threshold_tokens,
             cache_write_ttl: Some("30m".to_string()),

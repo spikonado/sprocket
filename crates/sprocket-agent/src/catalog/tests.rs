@@ -14,6 +14,7 @@ fn catalog_payload() -> GatewayModelsResponse {
                     "reasoningEfforts": ["medium", "high"],
                     "defaultReasoningEffort": "high",
                     "serviceTiers": ["standard", "fast"],
+                    "byokServiceTiers": ["ultrafast"],
                     "supportsImages": true,
                     "contextWindowTokens": 100000,
                     "autoCompactTokenLimit": 80000,
@@ -24,6 +25,7 @@ fn catalog_payload() -> GatewayModelsResponse {
                         "cacheWrite": { "30m": 2.5, "12h": 5 },
                         "output": 10,
                         "fastMultiplier": 2,
+                        "ultrafastMultiplier": 6,
                         "longContext": {
                             "thresholdInputTokens": 272000,
                             "inputMultiplier": 2,
@@ -53,7 +55,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     let vision =
         select_catalog_model(&catalog_payload().sprocket, "vision-model").expect("vision model");
     assert!(vision.supports_images);
-    assert!(vision.supports_fast);
+    assert_eq!(vision.service_tiers, ServiceTier::ALL);
     assert_eq!(vision.label, "Vision Model");
     assert_eq!(vision.route.vendor, "openai");
     assert_eq!(vision.context_budget.context_window_tokens, 100_000);
@@ -69,7 +71,7 @@ fn reports_selected_model_metadata_from_one_payload() {
     let long_context = select_catalog_model(&catalog_payload().sprocket, "long-context-model")
         .expect("long-context model");
     assert!(!long_context.supports_images);
-    assert!(!long_context.supports_fast);
+    assert_eq!(long_context.service_tiers, [ServiceTier::Standard]);
     assert_eq!(long_context.route.vendor, "other");
     assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     assert_eq!(long_context.usage_pricing, UsagePricing::default());
@@ -96,7 +98,7 @@ fn removed_handoff_model_uses_an_available_model_on_the_previous_provider() {
                 completion_provider: provider,
                 selected_model: "retired-model".to_string(),
                 reasoning_effort: "max".to_string(),
-                fast_mode: true,
+                service_tier: ServiceTier::Fast,
             },
             provider,
             "openai",
@@ -125,7 +127,7 @@ fn removed_handoff_model_filters_the_default_for_the_previous_provider() {
                 completion_provider: provider,
                 selected_model: "retired-model".to_string(),
                 reasoning_effort: "high".to_string(),
-                fast_mode: true,
+                service_tier: ServiceTier::Fast,
             },
             provider,
             "other",
@@ -136,12 +138,12 @@ fn removed_handoff_model_filters_the_default_for_the_previous_provider() {
         if provider == CompletionProvider::Spikonado {
             assert_eq!(handoff.selected_model, "long-context-model");
             assert_eq!(handoff.reasoning_effort, "none");
-            assert!(!handoff.fast_mode);
+            assert_eq!(handoff.service_tier, ServiceTier::Standard);
             assert_eq!(capabilities.route.vendor, "other");
         } else {
             assert_eq!(handoff.selected_model, "vision-model");
             assert_eq!(handoff.reasoning_effort, "high");
-            assert!(handoff.fast_mode);
+            assert_eq!(handoff.service_tier, ServiceTier::Fast);
             assert_eq!(capabilities.route.vendor, "openai");
         }
     }
@@ -155,7 +157,7 @@ fn listed_handoff_model_keeps_its_settings_except_unlisted_fast_mode() {
             completion_provider: CompletionProvider::Spikonado,
             selected_model: "long-context-model".to_string(),
             reasoning_effort: "none".to_string(),
-            fast_mode: true,
+            service_tier: ServiceTier::Fast,
         },
         CompletionProvider::Spikonado,
         "openai",
@@ -164,7 +166,7 @@ fn listed_handoff_model_keeps_its_settings_except_unlisted_fast_mode() {
     .expect("vendor change requires a handoff");
     assert_eq!(handoff.selected_model, "long-context-model");
     assert_eq!(handoff.reasoning_effort, "none");
-    assert!(!handoff.fast_mode);
+    assert_eq!(handoff.service_tier, ServiceTier::Standard);
     assert_eq!(capabilities.route.vendor, "other");
 }
 
@@ -177,7 +179,7 @@ fn same_vendor_keeps_history_only_on_the_same_provider() {
                 completion_provider: CompletionProvider::Spikonado,
                 selected_model: "vision-model".to_string(),
                 reasoning_effort: "medium".to_string(),
-                fast_mode: true,
+                service_tier: ServiceTier::Fast,
             },
             target_provider,
             "openai",

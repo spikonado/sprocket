@@ -16,7 +16,6 @@ import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@conve
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayOrigin, modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
-import { gatewayQuotaStatus } from '@convex/lib/quota';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
@@ -58,6 +57,7 @@ import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, hydratePromptUrls } from '@convex/lib/transcriptParts';
 import { runHasBegun, runStartedAt } from '@convex/lib/runs';
+import { modelServiceTier } from '@convex/lib/models';
 import {
 	assertRunAcceptsWork,
 	canRegisterCompletionAttempt,
@@ -81,6 +81,7 @@ import {
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
+	vServiceTier,
 	vTranscriptCompletionItem,
 	type HiddenPrompt,
 	type TranscriptCompletionItem,
@@ -154,7 +155,8 @@ export const insertGatewayRun = internalMutation({
 		selectedModel: v.string(),
 		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.boolean(),
+		fastMode: v.optional(v.boolean()),
+		serviceTier: v.optional(vServiceTier),
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
@@ -178,7 +180,8 @@ export const createGatewayRun = action({
 		selectedModel: v.string(),
 		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.boolean(),
+		fastMode: v.optional(v.boolean()),
+		serviceTier: v.optional(vServiceTier),
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
@@ -208,6 +211,7 @@ export const createGatewayRun = action({
 			completionProvider: args.completionProvider,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
+			serviceTier: args.serviceTier,
 			executionSecret: args.executionSecret,
 			agentVersion: args.agentVersion,
 			machineId: args.machineId
@@ -251,12 +255,6 @@ export const issueGatewayCredential = mutation({
 				?.completionProvider !== 'spikonado'
 		) {
 			throw new ConvexError('Run is not configured to use the Spikonado gateway.');
-		}
-
-		const quota = await gatewayQuotaStatus(ctx, run.userId);
-
-		if (quota.exhausted) {
-			throw new ConvexError({ code: 'USAGE_LIMIT_REACHED', message: quota.message });
 		}
 
 		const expiresAt = gatewayTokenExpiresAt();
@@ -356,6 +354,7 @@ function getContextResult(args: {
 			completionProvider: args.run.completionProvider,
 			reasoningEffort: args.run.reasoningEffort,
 			fastMode: args.run.fastMode,
+			serviceTier: modelServiceTier(args.run),
 			startedAt: runStartedAt(args.run),
 			continuationOfRunId: args.run.continuationOfRunId,
 			parentThreadId: args.parentThreadId
@@ -1008,7 +1007,8 @@ export const finalizeFailedStart = mutation({
 		selectedModel: v.string(),
 		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.boolean(),
+		fastMode: v.optional(v.boolean()),
+		serviceTier: v.optional(vServiceTier),
 		text: v.optional(v.string()),
 		lastError: v.string(),
 		executionSecret: v.string()

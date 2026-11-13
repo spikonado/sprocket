@@ -809,7 +809,9 @@ pub async fn run_agent(
     );
 
     let reasoning_effort = context.run.reasoning_effort.clone();
-    let fast_mode = context.run.fast_mode && capabilities.supports_fast;
+    let service_tier = Some(context.run.service_tier)
+        .filter(|tier| capabilities.service_tiers.contains(tier))
+        .unwrap_or_default();
     let prepare_history =
         load_prior_history(&runtime, &store, &context, &run_id, history_supports_images);
     let prior_history = {
@@ -985,7 +987,7 @@ pub async fn run_agent(
                     cwd,
                     skills,
                     reasoning_effort,
-                    fast_mode,
+                    service_tier,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
                     usage_pricing: capabilities.usage_pricing.clone(),

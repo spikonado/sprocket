@@ -23,13 +23,14 @@ const catalog: ModelCatalog = {
 			autoHandoffTokenLimit: 252_000,
 			reasoningEfforts: ['medium'],
 			defaultReasoningEffort: 'medium',
-			supportsFastMode: true,
+			serviceTiers: ['standard', 'fast'],
 			directApiPricing: {
 				input: 2,
 				cacheRead: 0.1,
 				cacheWrite: { '30m': 2.5, '12h': 5 },
 				output: 10,
 				fastMultiplier: 2,
+				ultrafastMultiplier: 5,
 				longContext: { inputMultiplier: 2, outputMultiplier: 1.5 }
 			}
 		}
@@ -37,6 +38,31 @@ const catalog: ModelCatalog = {
 };
 
 describe('apiCost', () => {
+	it('prices Ultrafast usage with its own multiplier', () => {
+		const none = {
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+			reasoningTokens: 0
+		};
+
+		expect(
+			apiCost(
+				{
+					provider: 'openai',
+					model: 'sol',
+					serviceTier: 'ultrafast',
+					cacheWriteTtl: null,
+					calls: 1,
+					standard: { ...none, inputTokens: 1_000_000 },
+					longContext: none
+				},
+				catalog
+			)
+		).toBe(10);
+	});
+
 	it.each([
 		['30m', 15.2],
 		['12h', 15.7],

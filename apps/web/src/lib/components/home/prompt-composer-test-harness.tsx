@@ -13,7 +13,7 @@ export default function PromptComposerTestHarness({
 		composerProps.selectedReasoningEffort
 	);
 
-	const [fastMode, setFastMode] = useState(composerProps.fastMode);
+	const [serviceTier, setServiceTier] = useState(composerProps.serviceTier);
 
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState(
 		composerProps.selectedQuestionOptionId
@@ -37,10 +37,10 @@ export default function PromptComposerTestHarness({
 				setSelectedReasoningEffort(next);
 				composerProps.onSelectedReasoningEffortChange?.(next);
 			}}
-			fastMode={fastMode}
-			onFastModeChange={(next) => {
-				setFastMode(next);
-				composerProps.onFastModeChange?.(next);
+			serviceTier={serviceTier}
+			onServiceTierChange={(next) => {
+				setServiceTier(next);
+				composerProps.onServiceTierChange?.(next);
 			}}
 			selectedQuestionOptionId={selectedQuestionOptionId}
 			onSelectedQuestionOptionIdChange={(next) => {

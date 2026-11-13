@@ -13,6 +13,7 @@ import {
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
 import AgentQuestion from '$lib/components/home/agent-question';
+import { normalizeServiceTier, type ServiceTier } from '$lib/chat/service-tier';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
@@ -51,8 +52,8 @@ export type PromptComposerProps = {
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
-	fastMode?: boolean;
-	onFastModeChange?: (fastMode: boolean) => void;
+	serviceTier?: ServiceTier;
+	onServiceTierChange?: (tier: ServiceTier) => void;
 	pendingQuestion?: PendingAgentQuestion | null;
 	runEnded?: boolean;
 	showContinueWorking?: boolean;
@@ -101,8 +102,8 @@ export default function PromptComposer({
 	onSelectedModelChange,
 	selectedReasoningEffort,
 	onSelectedReasoningEffortChange,
-	fastMode = false,
-	onFastModeChange,
+	serviceTier = 'standard',
+	onServiceTierChange,
 	pendingQuestion = null,
 	runEnded = false,
 	showContinueWorking = false,
@@ -465,14 +466,14 @@ export default function PromptComposer({
 			onSelectedReasoningEffortChange?.(
 				model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort
 			);
-			onFastModeChange?.(false);
+			onServiceTierChange?.('standard');
 		}
 	}, [
 		modelCatalog,
 		selectedModel,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
-		onFastModeChange
+		onServiceTierChange
 	]);
 
 	useEffect(() => {
@@ -485,15 +486,17 @@ export default function PromptComposer({
 			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
 		}
 
-		if (fastMode && !selectedCatalogModel.supportsFastMode) {
-			onFastModeChange?.(false);
+		const normalizedTier = normalizeServiceTier(serviceTier, selectedCatalogModel);
+
+		if (normalizedTier !== serviceTier) {
+			onServiceTierChange?.(normalizedTier);
 		}
 	}, [
 		selectedCatalogModel,
 		selectedReasoningEffort,
 		onSelectedReasoningEffortChange,
-		fastMode,
-		onFastModeChange
+		serviceTier,
+		onServiceTierChange
 	]);
 
 	useEffect(() => {
@@ -734,10 +737,10 @@ export default function PromptComposer({
 													modelId={selectedModel}
 													models={modelCatalog.models}
 													reasoningEffort={selectedReasoningEffort}
-													fastMode={fastMode}
+													serviceTier={serviceTier}
 													disabled={composerLocked || answeringQuestion}
 													onSelect={handleModelChange}
-													onFastModeChange={onFastModeChange}
+													onServiceTierChange={onServiceTierChange}
 												/>
 											</>
 										) : null}

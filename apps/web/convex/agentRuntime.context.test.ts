@@ -155,7 +155,8 @@ describe('agentRuntime context accounting', () => {
 		vi.useRealTimers();
 	});
 
-	it('records each model call once', async () => {
+	it('records each ultrafast model call once', async () => {
+		const serviceTier = 'ultrafast';
 		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(new Date('2026-08-01T23:59:30.000Z'));
 
@@ -181,11 +182,12 @@ describe('agentRuntime context accounting', () => {
 				executionSecret
 			});
 
-		await recordCall(1, modelCall());
-		await recordCall(1, modelCall());
+		const call = modelCall({ provider: 'openai', serviceTier });
+		await recordCall(1, call);
+		await recordCall(1, call);
 
 		vi.setSystemTime(new Date('2026-08-02T00:00:30.000Z'));
-		await recordCall(2, modelCall({ longContext: true }));
+		await recordCall(2, { ...call, longContext: true });
 
 		const firstCall = { calls: 1, standard: callTokens, longContext: emptyTokens };
 		const secondCall = { calls: 1, standard: emptyTokens, longContext: callTokens };
@@ -198,6 +200,7 @@ describe('agentRuntime context accounting', () => {
 		expect(usage.totals).toEqual([
 			expect.objectContaining({
 				model: 'gpt-5.6-sol',
+				serviceTier,
 				calls: 2,
 				standard: callTokens,
 				longContext: callTokens
@@ -230,7 +233,12 @@ describe('agentRuntime context accounting', () => {
 		);
 
 		expect(await asUser.query(api.aiUsage.getRunUsage, { runId })).toEqual([
-			expect.objectContaining({ calls: 2, standard: callTokens, longContext: callTokens })
+			expect.objectContaining({
+				serviceTier,
+				calls: 2,
+				standard: callTokens,
+				longContext: callTokens
+			})
 		]);
 
 		const days = await asUser.query(api.aiUsage.getMyUsageBuckets, {
@@ -242,6 +250,7 @@ describe('agentRuntime context accounting', () => {
 		expect(days).toEqual([
 			expect.objectContaining({
 				bucketStart: Date.parse('2026-08-02T00:00:00.000Z'),
+				serviceTier,
 				...secondCall
 			})
 		]);

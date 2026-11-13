@@ -1,4 +1,4 @@
-import { Check, Zap } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useState, type RefObject } from 'react';
 import {
 	type CatalogModel,
@@ -6,6 +6,8 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ProviderLogo from './provider-logo';
+import { normalizeServiceTier, speedTiers, type ServiceTier } from '$lib/chat/service-tier';
+import ServiceTierOptions from './service-tier-options';
 import MobileSelectorSheet from './ui/mobile-selector-sheet';
 import { cn } from '$lib/utils';
 
@@ -13,7 +15,7 @@ export default function MobileModelSelector({
 	models,
 	modelId,
 	reasoningEffort,
-	fastMode,
+	serviceTier,
 	onApply,
 	onDismiss,
 	returnFocusRef
@@ -21,16 +23,17 @@ export default function MobileModelSelector({
 	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
-	fastMode: boolean;
-	onApply: (model: CatalogModel, effort: string, fast: boolean) => void;
+	serviceTier: ServiceTier;
+	onApply: (model: CatalogModel, effort: string, tier: ServiceTier) => void;
 	onDismiss: () => void;
 	returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
 	const [draftId, setDraftId] = useState(modelId);
 	const [draftEffort, setDraftEffort] = useState(reasoningEffort);
-	const [draftFast, setDraftFast] = useState(fastMode);
+	const [draftTier, setDraftTier] = useState(serviceTier);
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
-	const fastAvailable = model?.supportsFastMode;
+	const tiers = model ? speedTiers(model) : [];
+	const resolvedTier = normalizeServiceTier(draftTier, model);
 
 	return (
 		<MobileSelectorSheet
@@ -46,7 +49,7 @@ export default function MobileModelSelector({
 					data-ph-capture-attribute-reasoning_effort={draftEffort}
 					disabled={!model}
 					onClick={() => {
-						if (model) onApply(model, draftEffort, Boolean(fastAvailable && draftFast));
+						if (model) onApply(model, draftEffort, resolvedTier);
 					}}
 				>
 					Done
@@ -68,7 +71,7 @@ export default function MobileModelSelector({
 							setDraftId(candidate.id);
 							setDraftEffort(candidate.defaultReasoningEffort);
 
-							if (!candidate.supportsFastMode) setDraftFast(false);
+							setDraftTier(normalizeServiceTier(draftTier, candidate));
 						}}
 					>
 						<ProviderLogo provider={candidate.provider} className="size-5 shrink-0" />
@@ -112,33 +115,8 @@ export default function MobileModelSelector({
 					</div>
 				</div>
 			) : null}
-			{fastAvailable ? (
-				<button
-					type="button"
-					role="switch"
-					aria-checked={draftFast}
-					aria-label="Fast mode"
-					data-ph-capture-attribute-action="toggle_fast_mode"
-					className="focus-visible:ring-ring flex min-h-14 w-full items-center gap-3 border-t border-[var(--hairline)] px-1 py-4 text-left outline-none focus-visible:ring-2"
-					onClick={() => setDraftFast(!draftFast)}
-				>
-					<Zap className="size-5 shrink-0 text-amber-500" />
-					<span className="flex-1 text-sm font-semibold">Fast mode</span>
-					<span
-						className={cn(
-							'inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5',
-							draftFast ? 'bg-accent-strong' : 'bg-hover-fill-strong'
-						)}
-						aria-hidden="true"
-					>
-						<span
-							className={cn(
-								'bg-background size-5 rounded-full transition-transform',
-								draftFast && 'translate-x-5'
-							)}
-						/>
-					</span>
-				</button>
+			{tiers.length > 0 ? (
+				<ServiceTierOptions tiers={tiers} value={resolvedTier} onChange={setDraftTier} />
 			) : null}
 		</MobileSelectorSheet>
 	);

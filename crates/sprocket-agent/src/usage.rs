@@ -1,13 +1,13 @@
 use rig::completion::Usage;
 use serde::Serialize;
 
-use crate::types::{CompletionProvider, UsagePricing};
+use crate::types::{CompletionProvider, ServiceTier, UsagePricing};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UsageSource {
     pub(crate) provider: CompletionProvider,
     pub(crate) model: String,
-    pub(crate) fast: bool,
+    pub(crate) service_tier: ServiceTier,
     pub(crate) pricing: UsagePricing,
 }
 
@@ -16,7 +16,7 @@ pub(crate) struct UsageSource {
 pub(crate) struct ModelCallUsage {
     provider: CompletionProvider,
     model: String,
-    service_tier: &'static str,
+    service_tier: ServiceTier,
     long_context: bool,
     cache_write_ttl: Option<String>,
     input_tokens: u64,
@@ -42,7 +42,7 @@ impl UsageSource {
         Some(ModelCallUsage {
             provider: self.provider,
             model: self.model.clone(),
-            service_tier: if self.fast { "fast" } else { "standard" },
+            service_tier: self.service_tier,
             long_context: self
                 .pricing
                 .long_context_threshold_tokens

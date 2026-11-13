@@ -22,20 +22,6 @@ export default function ModelReasoningOptions({
 			data-default-reasoning={effort === model.defaultReasoningEffort ? '' : undefined}
 			title={effort === model.defaultReasoningEffort ? 'Default reasoning' : undefined}
 			onClick={() => onSelect(effort)}
-			onKeyDown={(event) => {
-				if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-					event.preventDefault();
-
-					const buttons = Array.from(
-						event.currentTarget.parentElement?.querySelectorAll('button') ?? []
-					);
-
-					const index = buttons.indexOf(event.currentTarget);
-					buttons[
-						(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
-					]?.focus();
-				}
-			}}
 		>
 			<span className="min-w-0 flex-1">{reasoningEffortLabel(effort)}</span>
 			{effort === model.defaultReasoningEffort ? (

@@ -12,6 +12,37 @@ use rig::message::{
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
 
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceTier {
+    #[default]
+    Standard,
+    Fast,
+    Ultrafast,
+}
+
+impl ServiceTier {
+    pub const ALL: [Self; 3] = [Self::Standard, Self::Fast, Self::Ultrafast];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Fast => "fast",
+            Self::Ultrafast => "ultrafast",
+        }
+    }
+
+    pub fn from_legacy(explicit: Option<Self>, fast: bool) -> Self {
+        explicit.unwrap_or(if fast { Self::Fast } else { Self::Standard })
+    }
+
+    pub fn is_fast(self) -> bool {
+        self == Self::Fast
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CompletionProvider {
@@ -61,7 +92,7 @@ impl CompletionProvider {
 
     pub(crate) fn model_id<'a>(self, model: &'a str, route: &'a ModelRoute) -> Option<&'a str> {
         let models_dev_provider = match self {
-            Self::Spikonado => return route.served_by_gateway.then_some(model),
+            Self::Spikonado => return Some(model),
             Self::Openai | Self::Chatgpt => return (route.vendor == "openai").then_some(model),
             Self::Muse => return (route.vendor == "meta").then_some(model),
             Self::Claude | Self::Anthropic => "anthropic",
@@ -77,18 +108,22 @@ impl CompletionProvider {
             .map(String::as_str)
     }
 
-    pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
-        match self {
-            Self::Spikonado => Some("fast"),
-            Self::Openai | Self::Chatgpt => Some("priority"),
-            Self::Claude
-            | Self::OpencodeGo
-            | Self::Anthropic
-            | Self::Vercel
-            | Self::Openrouter
-            | Self::Opencode
-            | Self::Muse
-            | Self::Morph => None,
+    pub(crate) fn service_tier(self, tier: ServiceTier) -> Option<&'static str> {
+        match (self, tier) {
+            (Self::Spikonado, ServiceTier::Fast) => Some("fast"),
+            (Self::Openai | Self::Chatgpt, ServiceTier::Fast) => Some("priority"),
+            (
+                Self::Spikonado
+                | Self::Openai
+                | Self::Chatgpt
+                | Self::Vercel
+                | Self::Openrouter
+                | Self::Opencode
+                | Self::OpencodeGo
+                | Self::Morph,
+                ServiceTier::Ultrafast,
+            ) => Some("ultrafast"),
+            _ => None,
         }
     }
 
@@ -117,23 +152,6 @@ pub struct ModelRoute {
     pub models_dev_id: Option<String>,
     #[serde(skip)]
     pub provider_model_ids: HashMap<&'static str, String>,
-    /// The gateway publishes null `usageWeights` for models only BYOK providers serve.
-    #[serde(
-        default = "served_by_gateway_default",
-        rename = "usageWeights",
-        deserialize_with = "deserialize_non_null"
-    )]
-    pub served_by_gateway: bool,
-}
-
-const fn served_by_gateway_default() -> bool {
-    true
-}
-
-fn deserialize_non_null<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<bool, D::Error> {
-    Ok(Option::<serde::de::IgnoredAny>::deserialize(deserializer)?.is_some())
 }
 
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
@@ -179,7 +197,7 @@ pub struct RunAgentRequest {
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
@@ -281,7 +299,7 @@ pub struct ProviderHandoff {
     pub completion_provider: CompletionProvider,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -302,7 +320,7 @@ pub struct CatalogModelCapabilities {
     pub route: ModelRoute,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
-    pub supports_fast: bool,
+    pub service_tiers: Vec<ServiceTier>,
     pub usage_pricing: UsagePricing,
 }
 
@@ -395,7 +413,7 @@ pub struct RunSnapshot {
     #[serde(default)]
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub started_at: u64,
     #[serde(default)]

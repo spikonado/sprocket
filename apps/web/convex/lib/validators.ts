@@ -27,7 +27,13 @@ export type CompletionProvider = (typeof completionProviderIds)[number];
 
 export const vCompletionProvider = v.union(...literals(completionProviderIds));
 
-export const vServiceTier = v.union(v.literal('standard'), v.literal('fast'));
+export const vServiceTier = v.union(
+	v.literal('standard'),
+	v.literal('fast'),
+	v.literal('ultrafast')
+);
+
+export type ServiceTier = Infer<typeof vServiceTier>;
 
 /** Provider-reported tokens. Cache counts are part of `inputTokens`; reasoning is part of `outputTokens`. */
 export const vTokenCounts = v.object({
@@ -389,6 +395,7 @@ export const vSubagentPayload = v.object({
 	model: v.optional(v.string()),
 	reasoning: v.optional(v.string()),
 	fast: v.optional(v.boolean()),
+	serviceTier: v.optional(vServiceTier),
 	yieldTimeMs: v.optional(v.number()),
 	timeoutMs: v.optional(v.number())
 });
@@ -779,6 +786,7 @@ export const vSubagentSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,
 	fast: v.boolean(),
+	serviceTier: vServiceTier,
 	completionProvider: vCompletionProvider
 });
 
@@ -817,6 +825,7 @@ const vSubagentResultSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,
 	fast: v.optional(v.boolean()),
+	serviceTier: v.optional(vServiceTier),
 	completionProvider: v.optional(vCompletionProvider)
 });
 
@@ -867,6 +876,7 @@ export const vListModelsResult = v.object({
 			reasoningEfforts: v.array(v.string()),
 			defaultReasoningEffort: v.string(),
 			serviceTiers: v.array(v.string()),
+			byokServiceTiers: v.optional(v.array(v.string())),
 			supportsImages: v.optional(v.boolean())
 		})
 	)

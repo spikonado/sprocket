@@ -1,5 +1,5 @@
 use super::*;
-use sprocket_server::cli_protocol::CliRunSettings;
+use sprocket_server::cli_protocol::{CliRunSettings, ServiceTier};
 
 fn snapshot(parts: serde_json::Value) -> CliRunSnapshot {
     serde_json::from_value(serde_json::json!({
@@ -20,13 +20,13 @@ fn start_keeps_the_resolved_settings_for_the_run_header() {
             settings: CliRunSettings {
                 model: "model".into(),
                 reasoning: "high".into(),
-                fast: true,
+                service_tier: ServiceTier::Fast,
             },
         })
         .unwrap();
     assert_eq!(
         run_header(output.started().unwrap()),
-        "Thread thread | Run run\nModel model | Reasoning high | Fast on"
+        "Thread thread | Run run\nModel model | Reasoning high | Service tier fast"
     );
 }
 
@@ -39,7 +39,7 @@ fn final_answer_comes_from_the_confirmed_result_not_transcript_commentary() {
         settings: CliRunSettings {
             model: "model".into(),
             reasoning: "high".into(),
-            fast: false,
+            service_tier: ServiceTier::Standard,
         },
     });
     let commentary = snapshot(serde_json::json!([{
@@ -74,7 +74,7 @@ fn rejects_another_runs_transcript_without_advancing_cursor() {
         settings: CliRunSettings {
             model: "model".into(),
             reasoning: "high".into(),
-            fast: false,
+            service_tier: ServiceTier::Standard,
         },
     });
     let page = snapshot(serde_json::json!([{

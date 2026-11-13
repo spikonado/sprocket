@@ -60,7 +60,7 @@ describe('gateway quota', () => {
 		);
 	}, 15_000);
 
-	it('refuses a credential once usage is exhausted', async () => {
+	it('mints credentials when usage is exhausted so the gateway can validate the request first', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 		await t.run(async (ctx) => {
@@ -90,15 +90,14 @@ describe('gateway quota', () => {
 			executionSecret
 		});
 
-		await expect(
-			t.mutation(api.agentRuntime.issueGatewayCredential, {
-				runId: created.runId,
-				claimId,
-				executionSecret
-			})
-		).rejects.toMatchObject({
-			data: { code: 'USAGE_LIMIT_REACHED', message: expect.stringMatching(/^Usage limit reached/) }
+		const credential = await t.mutation(api.agentRuntime.issueGatewayCredential, {
+			runId: created.runId,
+			claimId,
+			executionSecret
 		});
+
+		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
+		expect(quota).toMatchObject({ exhausted: true });
 	}, 15_000);
 
 	it('rejects invalid quota charges without touching usage', async () => {

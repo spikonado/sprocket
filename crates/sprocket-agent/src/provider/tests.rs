@@ -19,24 +19,58 @@ fn generation_options_map_reasoning_effort() {
 
 #[test]
 fn fast_mode_sends_each_providers_service_tier() {
-    use crate::types::CompletionProvider;
+    use crate::types::{CompletionProvider, ServiceTier};
     for (provider, tier) in [
         (CompletionProvider::Spikonado, "fast"),
         (CompletionProvider::Openai, "priority"),
         (CompletionProvider::Chatgpt, "priority"),
     ] {
         assert_eq!(
-            super::service_tier_params(provider, true),
+            super::service_tier_params(provider, ServiceTier::Fast),
             serde_json::json!({ "service_tier": tier })
         );
         assert_eq!(
-            super::service_tier_params(provider, false),
+            super::service_tier_params(provider, ServiceTier::Standard),
             serde_json::json!({})
         );
     }
     assert_eq!(
-        super::service_tier_params(CompletionProvider::Claude, true),
+        super::service_tier_params(CompletionProvider::Claude, ServiceTier::Fast),
         serde_json::json!({})
+    );
+    for provider in [
+        CompletionProvider::Spikonado,
+        CompletionProvider::Openai,
+        CompletionProvider::Chatgpt,
+        CompletionProvider::Vercel,
+        CompletionProvider::Openrouter,
+        CompletionProvider::Opencode,
+        CompletionProvider::OpencodeGo,
+        CompletionProvider::Morph,
+    ] {
+        assert_eq!(
+            super::service_tier_params(provider, ServiceTier::Ultrafast),
+            serde_json::json!({"service_tier": "ultrafast"})
+        );
+    }
+    assert_eq!(
+        super::service_tier_params(CompletionProvider::Anthropic, ServiceTier::Ultrafast),
+        serde_json::json!({})
+    );
+}
+
+#[test]
+fn gateway_own_provider_rejections_show_the_gateway_message() {
+    let message = "Bring your own provider to use GPT-6.1 Sol with the ultrafast service tier. Connect one in Sprocket's provider settings.";
+    let body = serde_json::json!({
+        "error": { "code": "own_provider_required", "param": "service_tier", "message": message }
+    });
+    let error = rig::completion::PromptError::from(rig::ProviderError::from_provider_body(
+        body.to_string(),
+    ));
+    assert_eq!(
+        super::user_facing_error(anyhow::Error::new(error)).to_string(),
+        message
     );
 }
 

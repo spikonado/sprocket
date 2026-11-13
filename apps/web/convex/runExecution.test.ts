@@ -296,6 +296,7 @@ describe('run execution state', () => {
 				'parentThreadId',
 				'reasoningEffort',
 				'selectedModel',
+				'serviceTier',
 				'startedAt',
 				'threadId',
 				'userId'

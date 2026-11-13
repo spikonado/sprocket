@@ -100,6 +100,8 @@ import {
 	type ComposerRecovery
 } from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
+import type { ServiceTier } from '$lib/chat/service-tier';
+import { modelServiceTier } from '@convex/lib/models';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
@@ -439,7 +441,7 @@ export default function App({
 
 	const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string>();
 
-	const [fastMode, setFastMode] = useState(false);
+	const [serviceTier, setServiceTier] = useState<ServiceTier>('standard');
 	const [prompt, setPrompt] = useState('');
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
 	const [answeringAgentQuestion, setAnsweringAgentQuestion] = useState(false);
@@ -1546,7 +1548,7 @@ export default function App({
 
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedFastMode = fastMode;
+		const submittedServiceTier = serviceTier;
 		let continuationPrompt: string | null = null;
 		let continuationOfRunId: Id<'runs'> | undefined;
 		setPrompt('');
@@ -1590,7 +1592,7 @@ export default function App({
 				attachments: submittedAttachments,
 				storageIds: submittedStorageIds,
 				reasoningEffort: submittedReasoningEffort,
-				fastMode: submittedFastMode,
+				serviceTier: submittedServiceTier,
 				selectedModel: submittedModel,
 				continuationOfRunId,
 				autoSubmit: true
@@ -1711,7 +1713,7 @@ export default function App({
 
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedFastMode = fastMode;
+		const submittedServiceTier = serviceTier;
 
 		const submittedContinuationOfRunId =
 			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
@@ -1746,7 +1748,7 @@ export default function App({
 			prompt: submittedPrompt,
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
-			fastMode: submittedFastMode,
+			serviceTier: submittedServiceTier,
 			continuationOfRunId: submittedContinuationOfRunId,
 			recoveredSubmission: recoveredSubmission
 				? { ...recoveredSubmission, selectedModel: recoveredSubmission.selectedModel }
@@ -1780,7 +1782,7 @@ export default function App({
 			attachments: submittedAttachments,
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
-			fastMode: submittedFastMode,
+			serviceTier: submittedServiceTier,
 			selectedModel: submittedModel,
 			continuationOfRunId: submittedContinuationOfRunId,
 			autoSubmit: false,
@@ -1946,7 +1948,7 @@ export default function App({
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
-				fastMode: submittedFastMode,
+				serviceTier: submittedServiceTier,
 				workspacePath,
 				continuationOfRunId: submittedContinuationOfRunId
 			});
@@ -2062,7 +2064,7 @@ export default function App({
 			storageIds: [],
 			selectedModel,
 			reasoningEffort: selectedReasoningEffort,
-			fastMode,
+			serviceTier,
 			submissionId: crypto.randomUUID(),
 			workspacePath: currentProjectPath,
 			continuationOfRunId: previousRunId
@@ -2096,7 +2098,7 @@ export default function App({
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId);
 		setSelectedReasoningEffort(undefined);
-		setFastMode(false);
+		setServiceTier('standard');
 		setProjectPickerOpen(false);
 		setProjectPickerReconnectWorkspacePath(null);
 		setProjectPickerExpectedDisplayName(undefined);
@@ -2180,7 +2182,7 @@ export default function App({
 		if (!thread) return;
 		setSelectedModel(thread.selectedModel);
 		setSelectedReasoningEffort(thread.reasoningEffort);
-		setFastMode(thread.fastMode ?? false);
+		setServiceTier(modelServiceTier(thread));
 	}, [currentActiveThread]);
 
 	useEffect(() => {
@@ -2211,6 +2213,12 @@ export default function App({
 		if (composerAttachments.items.length === 0 && recovery.attachments?.length) {
 			composerAttachments.replace(recovery.attachments);
 		}
+
+		if (recovery.selectedModel) setSelectedModel(recovery.selectedModel);
+
+		if (recovery.reasoningEffort) setSelectedReasoningEffort(recovery.reasoningEffort);
+
+		if (recovery.serviceTier) setServiceTier(recovery.serviceTier);
 
 		setComposerContinuationOfRunId(recovery.continuationOfRunId ?? null);
 		setAutoSubmitComposerContinuation(
@@ -2762,8 +2770,8 @@ export default function App({
 										onSelectedModelChange={setSelectedModel}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
-										fastMode={fastMode}
-										onFastModeChange={setFastMode}
+										serviceTier={serviceTier}
+										onServiceTierChange={setServiceTier}
 										pendingQuestion={pendingAgentQuestion}
 										runEnded={runEnded}
 										showContinueWorking={canContinueWorking}

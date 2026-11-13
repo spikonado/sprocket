@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Zap } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
 	type CatalogModel,
@@ -6,6 +6,13 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ModelReasoningOptions from './model-reasoning-options';
+import {
+	normalizeServiceTier,
+	serviceTierLabel,
+	speedTiers,
+	type ServiceTier
+} from '$lib/chat/service-tier';
+import ServiceTierOptions from './service-tier-options';
 import MobileModelSelector from './mobile-model-selector';
 import { useMobileSelector } from './ui/use-mobile-selector';
 import ProviderLogo from './provider-logo';
@@ -16,40 +23,41 @@ export default function ModelSelector({
 	models,
 	modelId,
 	reasoningEffort,
-	fastMode,
+	serviceTier,
 	disabled,
 	onSelect,
-	onFastModeChange
+	onServiceTierChange
 }: {
 	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
-	fastMode: boolean;
+	serviceTier: ServiceTier;
 	disabled: boolean;
 	onSelect: (modelId: string, effort: string) => void;
-	onFastModeChange?: (fastMode: boolean) => void;
+	onServiceTierChange?: (tier: ServiceTier) => void;
 }) {
 	const [isOpen, setIsOpen] = useState(false);
 	const mobile = useMobileSelector();
 	const [previewId, setPreviewId] = useState<string | null>(null);
 	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
-	const [reasoningTop, setReasoningTop] = useState(0);
+	const [settingsTop, setSettingsTop] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const modelButtons = useRef(new Map<string, HTMLButtonElement>());
-	const reasoningRef = useRef<HTMLDivElement>(null);
+	const settingsRef = useRef<HTMLDivElement>(null);
 	const touchPreviewRef = useRef(false);
+	const focusOnOpenRef = useRef(false);
 	const selectedModel = models.find((model) => model.id === modelId);
-	const fastModeAvailable = selectedModel?.supportsFastMode;
-
 	const previewModel = models.find((model) => model.id === previewId);
+
+	const previewTiers = previewModel ? speedTiers(previewModel) : [];
 
 	const summary = [
 		selectedModel && showsReasoningControl(selectedModel)
 			? reasoningEffortLabel(reasoningEffort)
 			: null,
-		fastModeAvailable && fastMode ? 'Fast' : null
+		serviceTier !== 'standard' ? serviceTierLabel(serviceTier) : null
 	]
 		.filter(Boolean)
 		.join(' · ');
@@ -63,6 +71,19 @@ export default function ModelSelector({
 		onSelect(model.id, effort);
 		closeMenu();
 		triggerRef.current?.focus();
+	}
+
+	function hasSettings(model: CatalogModel) {
+		return showsReasoningControl(model) || speedTiers(model).length > 0;
+	}
+
+	function settingsAnchor() {
+		const settings = settingsRef.current;
+
+		return (
+			settings?.querySelector<HTMLButtonElement>('[data-default-reasoning]') ??
+			settings?.querySelector<HTMLButtonElement>('button')
+		);
 	}
 
 	function focusModel(index: number) {
@@ -85,20 +106,16 @@ export default function ModelSelector({
 				maxHeight: Math.max(0, trigger.top - 20)
 			});
 			const row = previewId ? modelButtons.current.get(previewId)?.getBoundingClientRect() : null;
-			const options = reasoningRef.current;
-			const defaultOption = options?.querySelector<HTMLButtonElement>('[data-default-reasoning]');
+			const options = settingsRef.current;
+			const anchor = settingsAnchor();
 
-			if (!row || !options || !defaultOption) return;
+			if (!row || !options || !anchor) return;
 			const menuTop = trigger.top - 12 - menu.height;
 
 			const alignedTop =
-				row.top -
-				menu.top +
-				row.height / 2 -
-				defaultOption.offsetTop -
-				defaultOption.offsetHeight / 2;
+				row.top - menu.top + row.height / 2 - anchor.offsetTop - anchor.offsetHeight / 2;
 
-			setReasoningTop(
+			setSettingsTop(
 				Math.max(
 					8 - menuTop,
 					Math.min(alignedTop, window.innerHeight - menuTop - options.offsetHeight - 8)
@@ -114,11 +131,16 @@ export default function ModelSelector({
 			window.removeEventListener('resize', updatePosition);
 			window.removeEventListener('scroll', updatePosition, true);
 		};
-	}, [isOpen, mobile, previewId, fastModeAvailable, position.maxHeight]);
+	}, [isOpen, mobile, previewId, previewTiers.length, position.maxHeight]);
+
+	useEffect(() => {
+		if (!isOpen || mobile || !focusOnOpenRef.current) return;
+		focusOnOpenRef.current = false;
+		(modelButtons.current.get(modelId) ?? modelButtons.current.values().next().value)?.focus();
+	}, [isOpen, mobile, modelId]);
 
 	useEffect(() => {
 		if (!isOpen || mobile) return;
-		(modelButtons.current.get(modelId) ?? modelButtons.current.values().next().value)?.focus();
 
 		return listenOpenMenuDismiss({
 			getRoot: () => rootRef.current,
@@ -128,7 +150,7 @@ export default function ModelSelector({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen, mobile, modelId]);
+	}, [isOpen, mobile]);
 
 	useEffect(() => {
 		if (disabled) closeMenu();
@@ -149,7 +171,14 @@ export default function ModelSelector({
 				aria-haspopup="dialog"
 				aria-expanded={isOpen}
 				disabled={disabled}
-				onClick={() => (isOpen ? closeMenu() : setIsOpen(true))}
+				onClick={() => {
+					if (isOpen) {
+						closeMenu();
+					} else {
+						focusOnOpenRef.current = true;
+						setIsOpen(true);
+					}
+				}}
 			>
 				{selectedModel ? (
 					<ProviderLogo provider={selectedModel.provider} className="size-4 shrink-0" />
@@ -167,12 +196,12 @@ export default function ModelSelector({
 					models={models}
 					modelId={modelId}
 					reasoningEffort={reasoningEffort}
-					fastMode={fastMode}
+					serviceTier={serviceTier}
 					onDismiss={closeMenu}
 					returnFocusRef={triggerRef}
-					onApply={(model, effort, fast) => {
+					onApply={(model, effort, tier) => {
 						selectModel(model, effort);
-						onFastModeChange?.(fast);
+						onServiceTierChange?.(tier);
 					}}
 				/>
 			) : isOpen ? (
@@ -200,7 +229,7 @@ export default function ModelSelector({
 									data-ph-capture-attribute-action="select_model"
 									data-ph-capture-attribute-model={model.id}
 									aria-pressed={model.id === modelId}
-									aria-haspopup={showsReasoningControl(model) ? 'true' : undefined}
+									aria-haspopup={hasSettings(model) ? 'true' : undefined}
 									className={cn(
 										'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2',
 										model.id === previewId && 'bg-hover-fill'
@@ -209,9 +238,7 @@ export default function ModelSelector({
 									onFocus={() => setPreviewId(model.id)}
 									onPointerDown={(event) => {
 										touchPreviewRef.current =
-											event.pointerType === 'touch' &&
-											showsReasoningControl(model) &&
-											previewId !== model.id;
+											event.pointerType === 'touch' && hasSettings(model) && previewId !== model.id;
 									}}
 									onClick={() => {
 										if (touchPreviewRef.current) {
@@ -227,11 +254,9 @@ export default function ModelSelector({
 										if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 											event.preventDefault();
 											focusModel(index + (event.key === 'ArrowDown' ? 1 : -1));
-										} else if (event.key === 'ArrowRight' && showsReasoningControl(model)) {
+										} else if (event.key === 'ArrowRight' && hasSettings(model)) {
 											event.preventDefault();
-											reasoningRef.current
-												?.querySelector<HTMLButtonElement>('[data-default-reasoning]')
-												?.focus();
+											settingsAnchor()?.focus();
 										}
 									}}
 								>
@@ -240,65 +265,60 @@ export default function ModelSelector({
 									{model.id === modelId ? (
 										<Check className="text-accent-strong size-3.5 shrink-0" />
 									) : null}
-									{showsReasoningControl(model) ? (
+									{hasSettings(model) ? (
 										<ChevronRight className="text-muted-foreground size-3 shrink-0" />
 									) : null}
 								</button>
 							))}
 						</div>
-						{fastModeAvailable ? (
-							<div
-								role="group"
-								aria-label="Speed"
-								className="shrink-0 border-t border-[var(--hairline)] pt-1"
-							>
-								<button
-									type="button"
-									role="switch"
-									className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2"
-									aria-checked={fastMode}
-									data-ph-capture-attribute-action="toggle_fast_mode"
-									onClick={() => onFastModeChange?.(!fastMode)}
-								>
-									<Zap className="size-3.5 shrink-0 text-amber-400" />
-									<span>Fast</span>
-									<span
-										className={cn(
-											'relative ml-auto inline-flex h-5 w-9 shrink-0 items-center rounded-full transition',
-											fastMode ? 'bg-foreground' : 'bg-hover-fill-strong'
-										)}
-										aria-hidden="true"
-									>
-										<span
-											className={cn(
-												'bg-background inline-block size-3.5 rounded-full transition',
-												fastMode ? 'translate-x-[18px]' : 'translate-x-[3px]'
-											)}
-										/>
-									</span>
-								</button>
-							</div>
-						) : null}
 					</div>
-					{previewModel && showsReasoningControl(previewModel) ? (
+					{previewModel && hasSettings(previewModel) ? (
 						<div
-							ref={reasoningRef}
+							ref={settingsRef}
 							role="group"
-							aria-label={`Reasoning for ${previewModel.label}`}
+							aria-label={`${showsReasoningControl(previewModel) ? 'Reasoning' : 'Speed'} for ${previewModel.label}`}
 							className="bg-popover/96 max-h-[50dvh] shrink-0 overflow-y-auto rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:absolute sm:right-0 sm:w-46"
-							style={{ top: reasoningTop }}
+							style={{ top: settingsTop }}
 							onKeyDown={(event) => {
 								if (event.key === 'ArrowLeft') {
 									event.preventDefault();
 									modelButtons.current.get(previewModel.id)?.focus();
+								} else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+									event.preventDefault();
+
+									const buttons = Array.from(
+										event.currentTarget.querySelectorAll<HTMLButtonElement>('button')
+									);
+
+									const index = buttons.findIndex((button) => button === event.target);
+									buttons[
+										(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+									]?.focus();
 								}
 							}}
 						>
-							<ModelReasoningOptions
-								model={previewModel}
-								reasoningEffort={previewModel.id === modelId ? reasoningEffort : ''}
-								onSelect={(effort) => selectModel(previewModel, effort)}
-							/>
+							{showsReasoningControl(previewModel) ? (
+								<ModelReasoningOptions
+									model={previewModel}
+									reasoningEffort={previewModel.id === modelId ? reasoningEffort : ''}
+									onSelect={(effort) => selectModel(previewModel, effort)}
+								/>
+							) : null}
+							{previewTiers.length > 0 ? (
+								<ServiceTierOptions
+									tiers={previewTiers}
+									value={normalizeServiceTier(serviceTier, previewModel)}
+									onChange={(tier) => {
+										onSelect(
+											previewModel.id,
+											previewModel.id === modelId
+												? reasoningEffort
+												: previewModel.defaultReasoningEffort
+										);
+										onServiceTierChange?.(tier);
+									}}
+								/>
+							) : null}
 						</div>
 					) : null}
 				</div>

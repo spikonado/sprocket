@@ -53,9 +53,9 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'high',
 			fastMode: true,
+			serviceTier: 'fast',
 			submissionId: 'sub-continue'
 		});
-		expect(continuation).not.toHaveProperty('serviceTier');
 		expect(
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.lastMessageAt
 		).toBeGreaterThan(0);

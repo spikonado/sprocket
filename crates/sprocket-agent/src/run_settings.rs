@@ -1,27 +1,27 @@
 use anyhow::Context;
 
 use crate::catalog::ModelCatalog;
-use crate::types::CompletionProvider;
+use crate::types::{CompletionProvider, ServiceTier};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSettings {
     pub model: String,
     pub reasoning: String,
-    pub fast: bool,
+    pub service_tier: ServiceTier,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct SettingsOverrides {
     pub model: Option<String>,
     pub reasoning: Option<String>,
-    pub fast: Option<bool>,
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedSettings {
     pub model: String,
     pub reasoning: String,
-    pub fast: bool,
+    pub service_tier: ServiceTier,
     pub provider: CompletionProvider,
 }
 
@@ -73,21 +73,24 @@ pub fn resolve_settings(
             .filter(|reasoning| model.reasoning_efforts.contains(reasoning))
             .unwrap_or(&model.default_reasoning_effort),
     };
-    let fast = match overrides.fast {
-        Some(true) => {
+    let service_tier = match overrides.service_tier {
+        Some(tier) => {
             anyhow::ensure!(
-                model.supports_fast(),
-                "fast mode is unavailable for {model_id}"
+                model.offers_tier(tier),
+                "service tier {} is unavailable for {model_id}",
+                tier.as_str()
             );
-            true
+            tier
         }
-        Some(false) => false,
-        None => saved.is_some_and(|saved| saved.fast) && model.supports_fast(),
+        None => saved
+            .map(|saved| saved.service_tier)
+            .filter(|tier| model.offers_tier(*tier))
+            .unwrap_or_default(),
     };
     Ok(ResolvedSettings {
         model: model.id.clone(),
         reasoning: reasoning.clone(),
-        fast,
+        service_tier,
         provider,
     })
 }

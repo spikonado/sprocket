@@ -145,6 +145,32 @@ afterEach(() => {
 });
 
 describe('subagents.createOrSend', () => {
+	it('preserves ultrafast in child snapshots and recovery', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const args = createArgs(caller, { completionProvider: 'spikonado', serviceTier: 'ultrafast' });
+		const child = await t.mutation(api.subagents.createOrSend, args);
+		const settings = { completionProvider: 'spikonado', serviceTier: 'ultrafast', fast: false };
+		expect(child.settings).toMatchObject(settings);
+		expect(
+			await t.mutation(api.subagents.snapshot, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId
+			})
+		).toMatchObject({ settings });
+		expect(
+			await t.mutation(api.subagents.recoverSubmission, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				submissionId: args.submissionId,
+				childExecutionSecret: args.childExecutionSecret
+			})
+		).toMatchObject({ settings });
+	});
+
 	it('rejects delegated child follow-ups until prior results are committed', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();

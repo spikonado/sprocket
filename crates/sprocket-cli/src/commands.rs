@@ -36,6 +36,8 @@ pub(crate) struct RunArgs {
     fast: bool,
     #[arg(long)]
     no_fast: bool,
+    #[arg(long, value_parser = ["standard", "fast", "ultrafast"], conflicts_with_all = ["fast", "no_fast"])]
+    service_tier: Option<String>,
     /// Cancel after a duration such as 30s, 10m, or 2h
     #[arg(long, value_parser = parse_duration)]
     timeout: Option<Duration>,
@@ -51,6 +53,7 @@ pub(crate) struct RunArgs {
             "reasoning",
             "fast",
             "no_fast",
+            "service_tier",
             "timeout"
         ]
     )]
@@ -208,12 +211,14 @@ async fn run_connected(
         thread_id: args.thread.clone(),
         model: args.model.clone(),
         reasoning: args.reasoning.clone(),
-        fast: if args.fast {
-            Some(true)
-        } else if args.no_fast {
-            Some(false)
-        } else {
-            None
+        service_tier: match args.service_tier.as_deref() {
+            Some("standard") => Some(ServiceTier::Standard),
+            Some("fast") => Some(ServiceTier::Fast),
+            Some("ultrafast") => Some(ServiceTier::Ultrafast),
+            Some(_) => unreachable!("clap validates service tiers"),
+            None if args.fast => Some(ServiceTier::Fast),
+            None if args.no_fast => Some(ServiceTier::Standard),
+            None => None,
         },
     };
     let interrupted = {

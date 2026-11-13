@@ -34,7 +34,7 @@ const modelCatalog: ModelCatalog = {
 			autoHandoffTokenLimit: 80_000,
 			reasoningEfforts: ['low', 'medium'],
 			defaultReasoningEffort: 'medium',
-			supportsFastMode: true
+			serviceTiers: ['standard', 'fast']
 		}
 	]
 };
@@ -939,36 +939,91 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 	}
 });
 
-it('restores the submitted prompt and error when an agent launch fails', async () => {
+it.each(['loading', 'failed'] as const)(
+	'keeps the saved speed while the catalog is %s',
+	async (status) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		const thread = { ...threadRecord('thread-1', 'repo-alpha', 'Robot work'), fastMode: true };
+		const client = createConvexFixtures();
+		const catalog = Promise.withResolvers<ModelCatalog>();
+		const runAgent = vi.fn<LocalApi['runAgent']>(() => new Promise(() => {}));
+
+		client.registerPaginatedQuery(api.inbox.list, [thread]);
+		client.registerQuery(api.threads.getByThreadId, thread);
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'idle',
+			run: null
+		});
+		await renderApp(client, {
+			...createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], runAgent })),
+			fetchGatewayModelCatalog: () => catalog.promise
+		});
+
+		if (status === 'failed') {
+			await act(async () => catalog.reject(new Error('Catalog unavailable.')));
+		}
+
+		fireEvent.click(await screen.findByText('Robot work'));
+		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Keep working' } });
+
+		const send = screen.getByRole('button', { name: 'Send message' });
+
+		await waitFor(() => expect(send).toHaveProperty('disabled', false));
+		fireEvent.click(send);
+		await waitFor(() =>
+			expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ serviceTier: 'fast' }))
+		);
+	}
+);
+
+it('offers Ultrafast before provider settings load and shows the run error when BYOK is missing', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const listProjectAttachments = vi.fn(async () => [alpha]);
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
-	await renderApp(
-		createConvexFixtures(),
-		createRuntime(
-			createLocalApi({
-				listProjectAttachments,
-				resolveWorkspacePath: async () => alpha,
-				runAgent
-			})
-		)
+	const error = 'Ultrafast needs your own OpenAI API key. Add one in Settings → Providers.';
+	const client = createConvexFixtures();
+	client.handleAction(api.providerCredentials.getMyConfiguration, () => new Promise(() => {}));
+
+	const runtime = createRuntime(
+		createLocalApi({
+			listProjectAttachments,
+			resolveWorkspacePath: async () => alpha,
+			runAgent
+		})
 	);
+
+	await renderApp(client, {
+		...runtime,
+		fetchGatewayModelCatalog: async () => ({
+			...modelCatalog,
+			models: modelCatalog.models.map((model) => ({
+				...model,
+				serviceTiers: ['standard', 'fast', 'ultrafast']
+			}))
+		})
+	});
 	await projectTrigger('Alpha');
 	await waitFor(() => expect(listProjectAttachments).toHaveBeenCalledTimes(3));
+	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
+	fireEvent.click(await screen.findByRole('switch', { name: 'Ultrafast mode' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
 	const composer = screen.getByRole('combobox');
 	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
 	await waitFor(() => expect(send).toHaveProperty('disabled', false));
 	fireEvent.click(send);
 	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ serviceTier: 'ultrafast' }));
 	expect(composer).toHaveProperty('value', '');
 	await act(async () => {
-		launch.reject(new Error('Local agent unavailable.'));
+		launch.reject(new Error(error));
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
+	expect(screen.getByRole('button', { name: 'Select model' }).title).toContain('Ultrafast');
 	const group = screen.getByRole('group', { name: 'Message composer' });
-	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+	expect(within(group).getByRole('alert').textContent).toContain(error);
 });
 
 it('restores the prompt and shows the usage limit when the run ends before sending it', async () => {
