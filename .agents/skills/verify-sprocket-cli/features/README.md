@@ -1,6 +1,6 @@
 # Sprocket CLI verification map
 
-This directory holds the maintained recipes for the `sprocket` CLI, one file per feature. Update a file in the same change that alters the command it describes.
+One recipe per CLI feature. Update a file in the same change that alters the command it describes.
 
 ## Baseline preconditions
 
@@ -11,6 +11,8 @@ This directory holds the maintained recipes for the `sprocket` CLI, one file per
 ## Proof and skip reporting
 
 Proof follows Evidence in `SKILL.md`. Report an unreachable path as a failure with the command run and the unmet precondition, and record it in that feature's Gotchas. A journey passes only through the entry point it names.
+
+Recipes give the exit code and the kind of message. Take the exact wording from the source the change touches: `crates/sprocket-cli`, the server crates, or `npm/sprocket` for `update`.
 
 ## Features
 

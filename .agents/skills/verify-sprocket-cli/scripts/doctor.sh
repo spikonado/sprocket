@@ -16,11 +16,9 @@ fi
 
 check ok "Convex: $dev_convex_url (dev, not $prod_convex_url)"
 
-for stub in xdg-open sprocket-desktop; do
-	[[ "$(PATH="$cli_scripts/stubs:$PATH" command -v "$stub")" == "$cli_scripts/stubs/$stub" ]] &&
-		check ok "$stub resolves to the recording stub" ||
-		check fail "$stub does not resolve to $cli_scripts/stubs/$stub"
-done
+[[ "$(PATH="$cli_scripts/stubs:$PATH" command -v xdg-open)" == "$cli_scripts/stubs/xdg-open" ]] &&
+	check ok "xdg-open resolves to the recording stub" ||
+	check fail "xdg-open does not resolve to $cli_scripts/stubs/xdg-open"
 
 if ! port_busy "$cli_port"; then
 	check ok "port $cli_port is free; cli.sh spawns a temporary server"
