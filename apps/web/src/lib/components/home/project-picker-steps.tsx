@@ -188,7 +188,7 @@ export function RepositoryForm({
 			<div className="flex items-center justify-between gap-3">
 				<p className="text-muted-foreground text-sm">
 					{signedIn
-						? 'Uses your GitHub login from Settings → Version Control.'
+						? 'Uses your GitHub login from Settings → Connectors.'
 						: 'Sign in to use GitHub.'}
 				</p>
 				<button

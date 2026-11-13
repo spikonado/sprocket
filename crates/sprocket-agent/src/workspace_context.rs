@@ -97,11 +97,14 @@ fn connectors_section(connectors: &[String]) -> String {
         return "No connectors are installed. The user installs connectors in Settings → Connectors."
             .to_string();
     }
-    connectors
+    let connectors = connectors
         .iter()
         .map(|connector| format!("- {connector}"))
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    format!(
+        "{connectors}\n\nThe user installs connectors and signs in to their accounts in Settings → Connectors."
+    )
 }
 
 fn instructions_section(workspace_instructions: &[WorkspaceInstruction]) -> String {

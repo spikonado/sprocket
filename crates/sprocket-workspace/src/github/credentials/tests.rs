@@ -50,15 +50,3 @@ fn gh_runs_without_prompts_or_inherited_tokens() {
         assert_eq!(envs.get(OsStr::new(name)), Some(&None), "{name}");
     }
 }
-
-#[test]
-fn unloaded_saved_tokens_fail_instead_of_falling_back() {
-    let unloaded = saved_tokens::Loaded {
-        last_known: None,
-        error: Some("Convex is unreachable".to_string()),
-    };
-    assert!(matches!(
-        saved_token(unloaded, PUBLIC_HOST),
-        Err(GitHubError::Failed(_))
-    ));
-}

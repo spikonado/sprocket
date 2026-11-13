@@ -32,6 +32,7 @@ async fn keeps_an_older_install_usable_and_updatable_until_uninstalled() {
     let status = connector.status().await;
     assert_eq!(status.state, ConnectorState::Installed);
     assert!(status.update_available);
+    assert_eq!(status.kicad_version.as_deref(), Some("11.0.1"));
     assert_eq!(
         connector.installed().unwrap(),
         "KiCad connector v0.0.1 (KiCad 11.0.1)"

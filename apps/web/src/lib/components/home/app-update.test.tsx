@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -97,7 +97,8 @@ const outdatedKiCad: ConnectorStatus = {
 	name: 'KiCad',
 	state: 'installed',
 	error: null,
-	updateAvailable: true
+	updateAvailable: true,
+	kicadVersion: '10.0.1'
 };
 
 function connectorApi() {
@@ -131,7 +132,7 @@ it('updates Sprocket and connectors together and restarts only after both finish
 	const publish = mount(true, false, localApi);
 	publish(available);
 	const button = await screen.findByRole('button', { name: 'Update available' });
-	expect(button.title).toBe('Sprocket 1.1.0, KiCad connector');
+	await waitFor(() => expect(button.title).toBe('Sprocket 1.1.0, KiCad connector'));
 
 	await act(async () => fireEvent.click(button));
 	expect(fetcher).toHaveBeenCalledWith(

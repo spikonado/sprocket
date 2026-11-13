@@ -1,20 +1,26 @@
 import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
+import {
+	ConnectorDescription,
+	primaryButtonClass,
+	secondaryButtonClass,
+	VersionLine
+} from './connector-card-parts';
+import GitHubConnector, { type GitHubApi } from './github-connector';
 import { caughtMessage, useConnectors } from './use-connectors';
+import VercelConnector, { type VercelApi } from './vercel-connector';
 
-type ConnectorsApi = Pick<
-	LocalApi,
-	'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'
->;
+type ConnectorsApi = GitHubApi &
+	VercelApi &
+	Pick<LocalApi, 'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'>;
 
-const logos: Record<ConnectorStatus['id'], string> = { kicad: '/kicad.svg' };
-
-const primaryButtonClass =
-	'bg-primary text-primary-foreground inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] transition hover:opacity-90 disabled:opacity-50';
-
-const secondaryButtonClass =
-	'border-border text-foreground hover:bg-hover-fill inline-flex h-8 items-center rounded-lg border px-3 text-[13px] transition disabled:opacity-50';
+const details: Record<ConnectorStatus['id'], { logo: string; description: string }> = {
+	kicad: {
+		logo: '/kicad.svg',
+		description: 'Lets the agent design PCBs'
+	}
+};
 
 export default function SettingsConnectors({
 	userId,
@@ -39,15 +45,19 @@ export default function SettingsConnectors({
 							change them.
 						</p>
 					) : (
-						connectors?.map((connector) => (
-							<ConnectorCard
-								key={connector.id}
-								connector={connector}
-								onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
-								onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
-								onStatus={replace}
-							/>
-						))
+						<>
+							<GitHubConnector userId={userId} localApi={localApi} />
+							<VercelConnector userId={userId} localApi={localApi} />
+							{connectors?.map((connector) => (
+								<ConnectorCard
+									key={connector.id}
+									connector={connector}
+									onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
+									onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
+									onStatus={replace}
+								/>
+							))}
+						</>
 					)}
 
 					{loadError && (
@@ -93,7 +103,7 @@ function ConnectorCard({
 
 	return (
 		<div className="border-border flex items-center gap-3 rounded-xl border p-5">
-			<img src={logos[connector.id]} alt="" className="size-8 shrink-0" />
+			<img src={details[connector.id].logo} alt="" className="size-8 shrink-0" />
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground flex items-center gap-2 text-[15px]">
 					{connector.name}
@@ -101,6 +111,10 @@ function ConnectorCard({
 						Experimental
 					</span>
 				</p>
+				<ConnectorDescription>{details[connector.id].description}</ConnectorDescription>
+				{connector.kicadVersion && (
+					<VersionLine name={connector.name} version={connector.kicadVersion} />
+				)}
 				{error && (
 					<p className="text-destructive mt-0.5 truncate text-[12px]" title={error}>
 						{error}

@@ -9,9 +9,10 @@ mod cli_install;
 pub mod command_sessions;
 pub mod command_sync;
 mod desktop_install;
+pub mod device_sign_in;
 mod gh_install;
 mod git_install;
-pub mod github_settings;
+pub mod github_connector;
 pub mod kicad_connector;
 pub mod lifetime;
 pub mod machine_identity;
@@ -27,6 +28,7 @@ mod subagent_launcher;
 mod tool_install;
 pub mod transcript_client;
 pub mod transcript_watch;
+pub mod vercel_connector;
 mod watch_registry;
 mod work_sync;
 pub mod workspace_search;
@@ -44,7 +46,7 @@ use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::claude_code_cli::ClaudeCodeCli;
 use crate::command_sessions::ThreadCommandSessions;
-use crate::github_settings::GitHubSettingsStore;
+use crate::github_connector::GitHubConnector;
 use crate::kicad_connector::KiCadConnector;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
@@ -55,9 +57,11 @@ use crate::package_update::PackageUpdateManager;
 use crate::project_attachments::{ProjectAttachmentRecord, ProjectAttachmentStore};
 use crate::python_install::PythonTools;
 use crate::run_recovery::RunRecovery;
+pub use crate::tool_install::ToolInstall;
 use crate::tool_install::{PinnedTool, append_path, prepend_path};
 use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchers;
+use crate::vercel_connector::VercelConnector;
 use crate::workspace_search::WorkspaceSearchIndex;
 
 pub fn now_ms() -> u64 {
@@ -87,7 +91,8 @@ pub struct Host {
     pub lifetime: Arc<HostLifetime>,
     pub native_auth: Arc<NativeAuthManager>,
     pub chatgpt_credentials: Arc<ChatGptService>,
-    pub github_settings: Arc<GitHubSettingsStore>,
+    pub github: Arc<GitHubConnector>,
+    pub vercel: Arc<VercelConnector>,
     pub project_attachments: Arc<ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
@@ -139,10 +144,6 @@ impl Host {
         package_updates: Arc<PackageUpdateManager>,
     ) -> anyhow::Result<Self> {
         let machine_identity = Arc::new(MachineIdentity::load(data_dir)?);
-        github_settings::install_saved_tokens_loader(
-            convex_deployment_url.clone(),
-            Arc::clone(&native_auth),
-        );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         let python = Arc::new(PythonTools::new(data_dir)?);
         let claude_code_cli = Arc::new(ClaudeCodeCli::new());
@@ -152,7 +153,8 @@ impl Host {
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
-            github_settings: GitHubSettingsStore::load(data_dir),
+            github: GitHubConnector::load(data_dir, Arc::clone(&gh)),
+            vercel: Arc::new(VercelConnector::new(data_dir)?),
             project_attachments: ProjectAttachmentStore::new(data_dir.to_path_buf()),
             transcript_watchers: TranscriptWatchers::new(
                 convex_deployment_url.clone(),
@@ -204,6 +206,7 @@ impl Host {
         self.bun.prepare();
         self.desktop.prepare();
         self.gh.prepare();
+        self.vercel.prepare();
         if let Some(git) = &self.git {
             git.prepare();
         }
@@ -219,6 +222,7 @@ impl Host {
                     self.kicad.bin_dir(),
                     self.desktop.bin_dir(),
                     self.gh.bin_dir(),
+                    self.vercel.bin_dir(),
                 ],
             ),
             [self.bun.bin_dir()]
@@ -228,6 +232,18 @@ impl Host {
         );
         environment.extend(python_install::certificate_environment());
         environment
+    }
+
+    /// One line per installed connector, for the agent's workspace instructions.
+    pub fn installed_connectors(&self) -> Vec<String> {
+        [
+            self.github.installed(),
+            self.vercel.installed(),
+            self.kicad.installed(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]

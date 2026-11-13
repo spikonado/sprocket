@@ -68,6 +68,10 @@ Agents from v0.4.3 and earlier ignore `leaseDurationMs`. They assume a 120 s lea
 
 Released agents call `payments:reportOrder` without `outcome`, which means `ordered`. Make `outcome` required once those agents age out. Stored `report_order` jobs without it stay readable, see the permanent list.
 
+### Saved GitHub tokens
+
+Released UIs call `githubCredentials:saveToken` and `removeToken`, and released hosts call `issueTokens` to read the tokens saved in WorkOS Vault. Current clients sign in through the GitHub CLI or read environment tokens and never call the module. Once those clients age out, delete `githubCredentials.ts` and the saved `sprocket-github-*` WorkOS Vault objects.
+
 ## Convex data shims
 
 ### Completion provider defaults

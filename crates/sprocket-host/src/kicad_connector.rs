@@ -66,6 +66,7 @@ pub struct ConnectorStatus {
     pub state: ConnectorState,
     pub error: Option<String>,
     pub update_available: bool,
+    pub kicad_version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +146,9 @@ impl KiCadConnector {
     pub async fn status(&self) -> ConnectorStatus {
         let latest = self.latest(false).await.ok();
         let installed = installed_version(&self.root);
+        let kicad_version = installed
+            .as_deref()
+            .and_then(|dir| installed_kicad_version(&self.root, dir));
         let idle_state = if installed.is_some() {
             ConnectorState::Installed
         } else {
@@ -164,6 +168,7 @@ impl KiCadConnector {
                 .is_some_and(|(installed, latest)| installed != latest.version),
             state,
             error,
+            kicad_version,
         }
     }
 
@@ -273,8 +278,8 @@ impl KiCadConnector {
 
     pub fn installed(&self) -> Option<String> {
         let dir = installed_version(&self.root)?;
-        let kicad = fs::read_to_string(self.root.join(&dir).join(KICAD_VERSION_FILE)).ok()?;
-        Some(format!("{NAME} connector {dir} ({NAME} {})", kicad.trim()))
+        let kicad = installed_kicad_version(&self.root, &dir)?;
+        Some(format!("{NAME} connector {dir} ({NAME} {kicad})"))
     }
 
     pub(crate) fn bin_dir(&self) -> PathBuf {
@@ -553,6 +558,11 @@ fn installed_version(root: &Path) -> Option<String> {
             .map(|part| part.parse::<u64>().unwrap_or(0))
             .collect::<Vec<_>>()
     })
+}
+
+fn installed_kicad_version(root: &Path, dir: &str) -> Option<String> {
+    let version = fs::read_to_string(root.join(dir).join(KICAD_VERSION_FILE)).ok()?;
+    Some(version.trim().to_owned())
 }
 
 fn installed_versions(root: &Path) -> Vec<String> {

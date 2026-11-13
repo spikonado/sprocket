@@ -19,4 +19,5 @@ pub(crate) mod session;
 pub mod threads;
 pub mod transcript;
 pub mod update;
+pub(crate) mod vercel;
 pub mod workspace;

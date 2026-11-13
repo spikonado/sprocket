@@ -2621,8 +2621,8 @@ export default function App({
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments onOpenThread={openPurchaseThread} />
-						) : settingsPage === 'versionControl' && signedInUserId ? (
-							<SettingsVersionControl userId={signedInUserId} localApi={localApi} />
+						) : settingsPage === 'versionControl' ? (
+							<SettingsVersionControl />
 						) : settingsPage === 'connectors' && signedInUserId ? (
 							<SettingsConnectors userId={signedInUserId} localApi={localApi} />
 						) : (

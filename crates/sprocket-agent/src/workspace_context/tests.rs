@@ -62,11 +62,9 @@ fn renders_installed_connectors() {
     let kicad = "KiCad connector v0.1.0 (KiCad 10.0.1)".to_string();
     let [instructions, _] =
         context_with_connectors(&[], &[], &[kicad]).prompts(Path::new("/tmp/project"));
-    assert!(
-        instructions
-            .text
-            .contains("## Installed connectors\n\n- KiCad connector v0.1.0 (KiCad 10.0.1)\n\n")
-    );
+    assert!(instructions.text.contains(
+        "## Installed connectors\n\n- KiCad connector v0.1.0 (KiCad 10.0.1)\n\nThe user installs connectors and signs in to their accounts in Settings → Connectors.\n\n"
+    ));
 
     assert!(instructions_text(&[], &[]).contains(
         "## Installed connectors\n\nNo connectors are installed. The user installs connectors in Settings → Connectors.\n\n"

@@ -1,28 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink } from 'lucide-react';
 import Button from '$lib/components/ui/button/button';
 import ProviderLogo from '$lib/components/provider-logo';
 import { z } from 'zod';
 import type { LocalApi, MuseLoginStart, MuseStatus } from '$lib/types/sprocket';
 import CliInstallPrompt from './cli-install-prompt';
+import { DeviceCodePrompt, ExternalTextLink } from './device-sign-in';
 
 const loginPollMs = 2_000;
 
 const caughtError = z.instanceof(Error).catch(new Error());
-
-function ExternalTextLink({ href, children }: { href: string; children: string }) {
-	return (
-		<a
-			href={href}
-			target="_blank"
-			rel="noreferrer"
-			className="text-primary inline-flex items-center gap-1 text-[13px] hover:underline"
-		>
-			{children}
-			<ExternalLink className="size-3" aria-hidden="true" />
-		</a>
-	);
-}
 
 type Props = {
 	userId: string;
@@ -231,22 +217,12 @@ function UserMuseSubscriptionCard({
 					To sign out, run <code className="font-mono">muse logout</code> on this computer.
 				</p>
 			) : login ? (
-				<div className="mt-5 space-y-3">
-					<p className="text-muted-foreground text-[12px]">
-						Enter this code on the Muse sign-in page
-					</p>
-					<p className="text-foreground font-mono text-[20px] tracking-[0.2em]">{login.userCode}</p>
-					<div className="flex flex-wrap items-center gap-3">
-						<ExternalTextLink href={login.verificationUrl}>Open sign-in page</ExternalTextLink>
-						<span className="text-muted-foreground text-[12px]">Waiting for sign-in…</span>
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground text-[13px]"
-							onClick={cancelLogin}
-						>
-							Cancel
-						</button>
-					</div>
+				<div className="mt-5">
+					<DeviceCodePrompt
+						url={login.verificationUrl}
+						code={login.userCode}
+						onCancel={cancelLogin}
+					/>
 				</div>
 			) : (
 				<div className="mt-5">

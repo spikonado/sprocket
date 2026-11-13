@@ -220,7 +220,7 @@ async fn launch_agent_inner(
         automatic_recovery,
         subagent_launcher: Some(crate::subagent_launcher::launcher(&host)),
         transcript_store: Some(Arc::clone(&host.transcript)),
-        installed_connectors: host.kicad.installed().into_iter().collect(),
+        installed_connectors: host.installed_connectors(),
     };
 
     let cleanup_request = request.clone();
@@ -303,13 +303,9 @@ async fn launch_agent_inner(
                             .chain(thread_tool_sessions(&thread_id)),
                     )
                     .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
-                    .with_command_environment({
-                        let user_id = user_id.clone();
-                        move || {
-                            let kicad = Arc::clone(&kicad);
-                            let user_id = user_id.clone();
-                            async move { command_environment(&kicad, &user_id).await }
-                        }
+                    .with_command_environment(move || {
+                        let kicad = Arc::clone(&kicad);
+                        async move { command_environment(&kicad).await }
                     })
                     .with_history_resolver({
                         let user_id = user_id.clone();
@@ -384,11 +380,10 @@ fn thread_tool_sessions(thread_id: &str) -> [(std::ffi::OsString, std::ffi::OsSt
 /// Read for every command, since connector installs and GitHub sign-ins change during a run.
 async fn command_environment(
     kicad: &KiCadConnector,
-    user_id: &str,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut environment = kicad.environment();
     environment.extend(
-        sprocket_workspace::github::agent_environment(user_id)
+        sprocket_workspace::github::agent_environment()
             .await
             .into_iter()
             .map(|(key, value)| (key.into(), value.into())),

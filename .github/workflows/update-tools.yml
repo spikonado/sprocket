@@ -30,6 +30,8 @@ jobs:
             label: PortableGit
           - tool: uv
             label: uv
+          - tool: vercel
+            label: Vercel CLI
     concurrency:
       group: update-${{ matrix.tool }}
       cancel-in-progress: false

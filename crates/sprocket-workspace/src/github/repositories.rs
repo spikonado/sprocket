@@ -17,7 +17,6 @@ pub enum Visibility {
 
 /// Where a clone lands. `tool_environment` carries the `PATH` with Sprocket's bundled git.
 pub struct CloneTarget<'a> {
-    pub user_id: &'a str,
     pub parent_directory: &'a Path,
     pub tool_environment: Vec<(OsString, OsString)>,
 }
@@ -37,18 +36,14 @@ pub async fn create_repository(
 ) -> anyhow::Result<PathBuf> {
     let name = name.trim();
     let destination = free_destination(target.parent_directory, name)?;
-    let url = create_remote(target.user_id, name, visibility).await?;
+    let url = create_remote(name, visibility).await?;
     git_clone(target, &url, &destination)
         .await
         .map_err(|error| anyhow::anyhow!("Created {url}, but {error:#}"))?;
     Ok(destination)
 }
 
-async fn create_remote(
-    user_id: &str,
-    name: &str,
-    visibility: Visibility,
-) -> Result<String, GitHubError> {
+async fn create_remote(name: &str, visibility: Visibility) -> Result<String, GitHubError> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Data {
@@ -65,7 +60,7 @@ async fn create_remote(
         url: String,
     }
 
-    let api = GitHubApi::connect(user_id, PUBLIC_HOST).await?;
+    let api = GitHubApi::connect(PUBLIC_HOST).await?;
     let visibility = match visibility {
         Visibility::Public => "PUBLIC",
         Visibility::Private => "PRIVATE",
@@ -101,7 +96,7 @@ async fn git_clone(target: CloneTarget<'_>, url: &str, destination: &Path) -> an
     git.args(["clone", "--", url])
         .arg(destination)
         .envs(target.tool_environment)
-        .envs(agent_environment(target.user_id).await)
+        .envs(agent_environment().await)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

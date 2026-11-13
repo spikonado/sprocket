@@ -1,6 +1,6 @@
 import type { AssistantPart } from '@convex/lib/assistantParts';
 import { convexId } from '$lib/convex-id';
-import type { LocalApi, ProjectAttachment } from '$lib/types/sprocket';
+import type { LocalApi, ProjectAttachment, SignInTarget } from '$lib/types/sprocket';
 import { z } from 'zod';
 import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
@@ -257,28 +257,59 @@ const chatGptStatusSchema = z.object({
 
 const chatGptBrowserLoginStartSchema = z.object({ state: z.string(), authorizeUrl: z.string() });
 
+const toolInstallSchema = z.discriminatedUnion('state', [
+	z.object({ state: z.literal('installing') }),
+	z.object({ state: z.literal('installed') }),
+	z.object({ state: z.literal('failed'), error: z.string() })
+]);
+
+const signInStatusSchema = z.discriminatedUnion('state', [
+	z.object({ state: z.literal('idle') }),
+	z.object({ state: z.literal('starting') }),
+	z.object({ state: z.literal('waiting'), url: z.string(), code: z.string().nullable() }),
+	z.object({ state: z.literal('failed'), error: z.string() })
+]);
+
 const gitHubStatusSchema = z.object({
+	install: toolInstallSchema,
 	enabled: z.boolean(),
 	cliVersion: z.string().nullable(),
-	savedTokensProblem: z.string().nullable(),
 	hosts: z.array(
 		z.object({
 			host: z.string(),
 			enabled: z.boolean(),
-			hasSavedToken: z.boolean(),
-			source: z.enum(['settings', 'environment', 'gitHubCli']).nullable(),
+			source: z.enum(['environment', 'gitHubCli']).nullable(),
 			login: z.string().nullable(),
 			problem: z.string().nullable()
 		})
 	)
 });
 
+const vercelStatusSchema = z.object({
+	install: toolInstallSchema,
+	version: z.string(),
+	account: z.discriminatedUnion('state', [
+		z.object({ state: z.literal('signedOut') }),
+		z.object({
+			state: z.literal('signedIn'),
+			login: z.string(),
+			source: z.enum(['cli', 'environment'])
+		}),
+		z.object({ state: z.literal('problem'), error: z.string() })
+	])
+});
+
+function signInRequest(userId: string, { connector, ...target }: SignInTarget) {
+	return { path: `/api/connectors/${connector}/sign-in`, params: { userId, ...target } };
+}
+
 const connectorStatusSchema = z.object({
 	id: z.literal('kicad'),
 	name: z.string(),
 	state: z.enum(['notInstalled', 'installing', 'failed', 'installed']),
 	error: z.string().nullable(),
-	updateAvailable: z.boolean()
+	updateAvailable: z.boolean(),
+	kicadVersion: z.string().nullable()
 });
 
 const chatGptBrowserLoginResultSchema = z.object({
@@ -727,11 +758,11 @@ export function createLocalClient(baseUrl: string): LocalApi {
 		},
 		fetchGitHubStatus: async (userId) =>
 			await request(
-				`/api/github/status?${new URLSearchParams({ userId }).toString()}`,
+				`/api/connectors/github?${new URLSearchParams({ userId }).toString()}`,
 				gitHubStatusSchema
 			),
 		updateGitHubSettings: async (userId, update) =>
-			await request('/api/github/settings', gitHubStatusSchema, {
+			await request('/api/connectors/github/settings', gitHubStatusSchema, {
 				method: 'POST',
 				body: JSON.stringify({ userId, ...update })
 			}),
@@ -745,6 +776,47 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify(input)
 			}),
+		signOutGitHub: async (userId, host) =>
+			await request('/api/connectors/github/sign-out', gitHubStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId, host })
+			}),
+		fetchVercelStatus: async (userId) =>
+			await request(
+				`/api/connectors/vercel?${new URLSearchParams({ userId }).toString()}`,
+				vercelStatusSchema
+			),
+		signOutVercel: async (userId) =>
+			await request('/api/connectors/vercel/sign-out', vercelStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		installConnectorCli: async (userId, connector) =>
+			await request(`/api/connectors/${connector}/install`, toolInstallSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			}),
+		fetchConnectorSignIn: async (userId, target) => {
+			const { path, params } = signInRequest(userId, target);
+
+			return await request(`${path}?${new URLSearchParams(params).toString()}`, signInStatusSchema);
+		},
+		startConnectorSignIn: async (userId, target) => {
+			const { path, params } = signInRequest(userId, target);
+
+			return await request(path, signInStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify(params)
+			});
+		},
+		cancelConnectorSignIn: async (userId, target) => {
+			const { path, params } = signInRequest(userId, target);
+
+			return await request(`${path}/cancel`, signInStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify(params)
+			});
+		},
 		fetchConnectors: async (userId) =>
 			await request(
 				`/api/connectors?${new URLSearchParams({ userId }).toString()}`,

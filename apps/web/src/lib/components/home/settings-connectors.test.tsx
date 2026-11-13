@@ -15,6 +15,7 @@ function kicad(overrides: Partial<ConnectorStatus>): ConnectorStatus {
 		state: 'notInstalled',
 		error: null,
 		updateAvailable: false,
+		kicadVersion: null,
 		...overrides
 	};
 }
@@ -25,11 +26,35 @@ function mount(fetchConnectors: LocalApi['fetchConnectors']) {
 	);
 
 	const uninstallConnector = vi.fn<LocalApi['uninstallConnector']>(async () => kicad({}));
+	const installed = { state: 'installed' } as const;
+	const unused = async () => Promise.reject(new Error('Not used in this test.'));
 
 	render(
 		<SettingsConnectors
 			userId="user-a"
-			localApi={{ fetchConnectors, installOrUpdateConnector, uninstallConnector }}
+			localApi={{
+				fetchConnectors,
+				installOrUpdateConnector,
+				uninstallConnector,
+				fetchGitHubStatus: async () => ({
+					install: installed,
+					enabled: true,
+					cliVersion: '2.81.0',
+					hosts: []
+				}),
+				fetchVercelStatus: async () => ({
+					install: installed,
+					version: '50.1.0',
+					account: { state: 'signedOut' }
+				}),
+				updateGitHubSettings: unused,
+				signOutGitHub: unused,
+				signOutVercel: unused,
+				installConnectorCli: unused,
+				fetchConnectorSignIn: unused,
+				startConnectorSignIn: unused,
+				cancelConnectorSignIn: unused
+			}}
 		/>
 	);
 
@@ -42,7 +67,9 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 	const fetchConnectors = vi
 		.fn<LocalApi['fetchConnectors']>()
 		.mockResolvedValueOnce([kicad({})])
-		.mockResolvedValue([kicad({ state: 'installed', updateAvailable: true })]);
+		.mockResolvedValue([
+			kicad({ state: 'installed', updateAvailable: true, kicadVersion: '10.0.1' })
+		]);
 
 	const { installOrUpdateConnector } = mount(fetchConnectors);
 
@@ -55,6 +82,7 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 	await act(() => vi.advanceTimersByTimeAsync(2000));
 	expect(await screen.findByRole('button', { name: 'Uninstall' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy();
+	expect(screen.getByText('10.0.1')).toBeTruthy();
 });
 
 it('offers a retry with the install error', async () => {

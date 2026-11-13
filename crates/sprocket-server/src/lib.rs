@@ -103,6 +103,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::claude_code::routes())
         .merge(routes::muse::routes())
         .merge(routes::github::routes())
+        .merge(routes::vercel::routes())
         .merge(routes::connectors::routes())
         .merge(routes::cli::routes())
         .merge(routes::workspace::routes())

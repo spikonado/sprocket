@@ -112,17 +112,16 @@ impl HostPauses {
     }
 }
 
-pub async fn fetch_states(user_id: &str, pull_requests: &[PullRequestRef]) -> FetchedStates {
-    fetch_by_host(user_id, pull_requests, None).await
+pub async fn fetch_states(pull_requests: &[PullRequestRef]) -> FetchedStates {
+    fetch_by_host(pull_requests, None).await
 }
 
 /// Like `fetch_states`, but skips hosts that are backing off after failing.
-pub async fn refresh_states(user_id: &str, pull_requests: &[PullRequestRef]) -> FetchedStates {
-    fetch_by_host(user_id, pull_requests, Some(&REFRESH_PAUSES)).await
+pub async fn refresh_states(pull_requests: &[PullRequestRef]) -> FetchedStates {
+    fetch_by_host(pull_requests, Some(&REFRESH_PAUSES)).await
 }
 
 async fn fetch_by_host(
-    user_id: &str,
     pull_requests: &[PullRequestRef],
     pauses: Option<&HostPauses>,
 ) -> FetchedStates {
@@ -141,9 +140,7 @@ async fn fetch_by_host(
         if pauses.is_some_and(|pauses| pauses.is_paused(host, Instant::now())) {
             continue;
         }
-        let error = fetch_host(user_id, host, &lookups, &mut fetched.states)
-            .await
-            .err();
+        let error = fetch_host(host, &lookups, &mut fetched.states).await.err();
         if let Some(pauses) = pauses {
             pauses.record(host, error.as_ref(), Instant::now());
         }
@@ -155,12 +152,11 @@ async fn fetch_by_host(
 }
 
 async fn fetch_host(
-    user_id: &str,
     host: &str,
     lookups: &[(&PullRequestRef, Repository<'_>)],
     states: &mut Vec<PullRequestStatus>,
 ) -> Result<(), GitHubError> {
-    let api = GitHubApi::connect(user_id, host).await?;
+    let api = GitHubApi::connect(host).await?;
     for batch in lookups.chunks(PULL_REQUESTS_PER_REQUEST) {
         states.extend(fetch_batch(&api, batch).await?);
     }

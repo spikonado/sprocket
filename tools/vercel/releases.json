@@ -1,0 +1,35 @@
+{
+	"version": "65.14.0",
+	"platforms": {
+		"darwin-arm64": {
+			"url": "https://registry.npmjs.org/@vercel/vc-native-darwin-arm64/-/vc-native-darwin-arm64-65.14.0.tgz",
+			"bytes": 54902687,
+			"sha256": "7e1caedbc5f0094dfc40bfa281d03cb65820ab369eae5b99bf4bb0101dd2534e"
+		},
+		"darwin-x64": {
+			"url": "https://registry.npmjs.org/@vercel/vc-native-darwin-x64/-/vc-native-darwin-x64-65.14.0.tgz",
+			"bytes": 56440051,
+			"sha256": "41ae3e65e1615a78c3d9c686763a00557edfc9618a604bd5a2715a76e7df6a7d"
+		},
+		"linux-arm64": {
+			"url": "https://registry.npmjs.org/@vercel/vc-native-linux-arm64/-/vc-native-linux-arm64-65.14.0.tgz",
+			"bytes": 59647597,
+			"sha256": "06ab067e1e98aae0407ff7ebf52a13795a3ca0e5b461384f8803e55fbd4a7b2c"
+		},
+		"linux-x64": {
+			"url": "https://registry.npmjs.org/@vercel/vc-native-linux-x64/-/vc-native-linux-x64-65.14.0.tgz",
+			"bytes": 60157420,
+			"sha256": "00cca33dde9894e7874b880a4474972ab095eb8bcc5df450b63fa418045f41c5"
+		},
+		"win32-arm64": {
+			"url": "https://registry.npmjs.org/@vercel/vc-native-win32-arm64/-/vc-native-win32-arm64-65.14.0.tgz",
+			"bytes": 45792869,
+			"sha256": "c17f8204a60c9fe3bf2e43d935fdf05f0b2b98890a2d23c58c570ad9c7e3dc8a"
+		},
+		"win32-x64": {
+			"url": "https://registry.npmjs.org/@vercel/vc-native-win32-x64/-/vc-native-win32-x64-65.14.0.tgz",
+			"bytes": 50313060,
+			"sha256": "677cd81ffd6019ef7cd113b2f2a94f1fe8aebe05217d65dc88c6e85fdc626594"
+		}
+	}
+}

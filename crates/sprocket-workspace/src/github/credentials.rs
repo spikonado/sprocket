@@ -7,9 +7,7 @@ use std::time::{Duration, Instant};
 
 use tokio::process::Command;
 
-use super::{
-    CredentialSource, GitHubError, PUBLIC_HOST, hide_console_window, read_settings, saved_tokens,
-};
+use super::{CredentialSource, GitHubError, PUBLIC_HOST, hide_console_window, read_settings};
 
 const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 const TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
@@ -37,18 +35,12 @@ pub(super) struct ResolvedCredential {
     pub source: CredentialSource,
 }
 
-pub(super) async fn resolve(user_id: &str, host: &str) -> Result<ResolvedCredential, GitHubError> {
+pub(super) async fn resolve(host: &str) -> Result<ResolvedCredential, GitHubError> {
     {
         let settings = read_settings();
         if settings.disabled || settings.disabled_hosts.contains(host) {
             return Err(GitHubError::Disabled(host.to_string()));
         }
-    }
-    if let Some(token) = saved_token(saved_tokens::load(user_id).await, host)? {
-        return Ok(ResolvedCredential {
-            token,
-            source: CredentialSource::Settings,
-        });
     }
     if let Some(token) = env_token(host, |name| std::env::var(name).ok()) {
         return Ok(ResolvedCredential {
@@ -63,16 +55,6 @@ pub(super) async fn resolve(user_id: &str, host: &str) -> Result<ResolvedCredent
             source: CredentialSource::GitHubCli,
         })
         .ok_or_else(|| GitHubError::NoCredential(host.to_string()))
-}
-
-fn saved_token(saved: saved_tokens::Loaded, host: &str) -> Result<Option<String>, GitHubError> {
-    let Some(mut tokens) = saved.last_known else {
-        return Err(GitHubError::Failed(anyhow::anyhow!(
-            "Couldn't load your saved GitHub tokens: {}",
-            saved.error.unwrap_or_default()
-        )));
-    };
-    Ok(tokens.remove(host))
 }
 
 pub(super) fn forget_cached(host: &str) {
@@ -138,7 +120,9 @@ async fn gh_auth_token(host: &str) -> Option<String> {
     (!token.is_empty()).then_some(token)
 }
 
-fn gh_command(args: &[&str]) -> Command {
+/// Runs the pinned `gh` without prompts or the environment's tokens; callers that read
+/// stderr pipe it themselves.
+pub fn gh_command(args: &[&str]) -> Command {
     let program = PINNED_GH
         .get()
         .filter(|executable| executable.is_file())

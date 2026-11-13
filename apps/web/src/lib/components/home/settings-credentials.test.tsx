@@ -120,6 +120,13 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		updateGitHubSettings: unused,
 		cloneRepository: unused,
 		createGitHubRepository: unused,
+		signOutGitHub: unused,
+		fetchVercelStatus: unused,
+		signOutVercel: unused,
+		installConnectorCli: unused,
+		fetchConnectorSignIn: unused,
+		startConnectorSignIn: unused,
+		cancelConnectorSignIn: unused,
 		fetchConnectors: unused,
 		installOrUpdateConnector: unused,
 		uninstallConnector: unused,
@@ -277,7 +284,7 @@ it('signs in to Muse with a device code and waits until Muse is ready', async ()
 		fireEvent.click(screen.getByRole('button', { name: 'Sign in with Muse' }));
 	});
 	expect(screen.getByText('ABCD-EFGH')).toBeTruthy();
-	expect(screen.getByRole('link', { name: 'Open sign-in page' })).toHaveProperty(
+	expect(screen.getByRole('link', { name: 'Open muse.test' })).toHaveProperty(
 		'href',
 		'https://muse.test/device'
 	);

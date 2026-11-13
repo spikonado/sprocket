@@ -1,0 +1,14 @@
+---
+title: Vercel
+description: Connect Vercel so Sprocket's agent can deploy and manage your Vercel projects with the Vercel CLI.
+---
+
+<Snippet file="unreleased.mdx" />
+
+The agent uses the [Vercel CLI](https://vercel.com/docs/cli) to deploy and manage your Vercel projects. Sprocket installs it for you. The built-in `deploying` skill tells the agent how to link a project, deploy previews and production, and read build logs.
+
+## Sign in
+
+In **Settings → Connectors**, click **Sign in** on the Vercel card. Sprocket shows a link to Vercel, with a code when Vercel asks for one. Open the link on any device and approve the sign-in. The card then shows **Signed in as** and your Vercel username. **Sign out** removes the login from the computer running Sprocket.
+
+If `VERCEL_TOKEN` is set where Sprocket runs, Sprocket uses that token instead.

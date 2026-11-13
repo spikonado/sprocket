@@ -4,12 +4,14 @@ use axum::Json;
 use axum::extract::State;
 use axum::routing::{get, post};
 use serde::Deserialize;
+use sprocket_host::ToolInstall;
+use sprocket_host::device_sign_in::SignInStatus;
+use sprocket_host::github_connector::GitHubConnectorStatus;
 use sprocket_host::project_attachments::{WorkspacePathResolution, resolve_workspace_path};
 use sprocket_workspace::github::is_valid_host;
 use sprocket_workspace::github::repositories::{
     CloneTarget, Visibility, clone_repository, create_repository,
 };
-use sprocket_workspace::github::status::{GitHubStatus, status};
 use sprocket_workspace::resolve_or_create_workspace_root;
 
 use crate::AppState;
@@ -18,13 +20,32 @@ use crate::routes::session::{AuthorizedJson, AuthorizedQuery, UserScoped};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct StatusQuery {
+struct UserRequest {
     user_id: String,
 }
 
-impl UserScoped for StatusQuery {
+impl UserScoped for UserRequest {
     fn user_id(&self) -> &str {
         &self.user_id
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostRequest {
+    user_id: String,
+    host: String,
+}
+
+impl UserScoped for HostRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl HostRequest {
+    fn host(&self) -> Result<String, ApiError> {
+        valid_host(&self.host)
     }
 }
 
@@ -80,52 +101,109 @@ impl UserScoped for CreateRepositoryRequest {
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/github/status", get(status_handler))
-        .route("/github/settings", post(update_handler))
+        .route("/connectors/github", get(status_handler))
+        .route("/connectors/github/settings", post(update_handler))
+        .route("/connectors/github/install", post(install_handler))
+        .route(
+            "/connectors/github/sign-in",
+            get(sign_in_status_handler).post(sign_in_handler),
+        )
+        .route(
+            "/connectors/github/sign-in/cancel",
+            post(cancel_sign_in_handler),
+        )
+        .route("/connectors/github/sign-out", post(sign_out_handler))
         .route("/github/clone", post(clone_handler))
         .route("/github/repositories", post(create_repository_handler))
 }
 
+fn valid_host(host: &str) -> Result<String, ApiError> {
+    let host = host.trim().to_ascii_lowercase();
+    if is_valid_host(&host) {
+        Ok(host)
+    } else {
+        Err(ApiError::bad_request(anyhow::anyhow!(
+            "{host:?} is not a GitHub host name."
+        )))
+    }
+}
+
 async fn status_handler(
-    AuthorizedQuery(query): AuthorizedQuery<StatusQuery>,
-) -> Json<GitHubStatus> {
-    Json(status(&query.user_id).await)
+    State(state): State<AppState>,
+    AuthorizedQuery(_): AuthorizedQuery<UserRequest>,
+) -> Json<GitHubConnectorStatus> {
+    Json(state.host.github.status().await)
 }
 
 async fn update_handler(
     State(state): State<AppState>,
     AuthorizedJson(update): AuthorizedJson<SettingsUpdate>,
-) -> Result<Json<GitHubStatus>, ApiError> {
-    let host = update.host.map(|host| HostUpdate {
-        host: host.host.trim().to_ascii_lowercase(),
-        ..host
-    });
-    if let Some(host) = &host
-        && !is_valid_host(&host.host)
-    {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "{:?} is not a GitHub host name.",
-            host.host
-        )));
-    }
+) -> Result<Json<GitHubConnectorStatus>, ApiError> {
+    let host = update
+        .host
+        .map(|host| valid_host(&host.host).map(|name| (name, host.enabled)))
+        .transpose()?;
     state
         .host
-        .github_settings
+        .github
         .update(|settings| {
             if let Some(enabled) = update.enabled {
                 settings.disabled = !enabled;
             }
-            if let Some(host) = host {
-                if host.enabled {
-                    settings.disabled_hosts.remove(&host.host);
+            if let Some((host, enabled)) = host {
+                if enabled {
+                    settings.disabled_hosts.remove(&host);
                 } else {
-                    settings.disabled_hosts.insert(host.host);
+                    settings.disabled_hosts.insert(host);
                 }
             }
         })
         .await
         .map_err(|error| ApiError::internal_with("failed to save GitHub settings", error))?;
-    Ok(Json(status(&update.user_id).await))
+    Ok(Json(state.host.github.status().await))
+}
+
+async fn install_handler(
+    State(state): State<AppState>,
+    AuthorizedJson(_): AuthorizedJson<UserRequest>,
+) -> Json<ToolInstall> {
+    Json(state.host.github.retry_install().await)
+}
+
+async fn sign_in_status_handler(
+    State(state): State<AppState>,
+    AuthorizedQuery(query): AuthorizedQuery<HostRequest>,
+) -> Result<Json<SignInStatus>, ApiError> {
+    Ok(Json(state.host.github.sign_in_status(&query.host()?)))
+}
+
+async fn sign_in_handler(
+    State(state): State<AppState>,
+    AuthorizedJson(request): AuthorizedJson<HostRequest>,
+) -> Result<Json<SignInStatus>, ApiError> {
+    Ok(Json(
+        state.host.github.start_sign_in(&request.host()?).await,
+    ))
+}
+
+async fn cancel_sign_in_handler(
+    State(state): State<AppState>,
+    AuthorizedJson(request): AuthorizedJson<HostRequest>,
+) -> Result<Json<SignInStatus>, ApiError> {
+    Ok(Json(state.host.github.cancel_sign_in(&request.host()?)))
+}
+
+async fn sign_out_handler(
+    State(state): State<AppState>,
+    AuthorizedJson(request): AuthorizedJson<HostRequest>,
+) -> Result<Json<GitHubConnectorStatus>, ApiError> {
+    state
+        .host
+        .github
+        .sign_out(&request.host()?)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to sign out of GitHub", error))?;
+    Ok(Json(state.host.github.status().await))
 }
 
 async fn clone_handler(
@@ -133,7 +211,7 @@ async fn clone_handler(
     AuthorizedJson(request): AuthorizedJson<CloneRequest>,
 ) -> Result<Json<WorkspacePathResolution>, ApiError> {
     let parent = parent_directory(request.parent_path).await?;
-    let target = clone_target(&state, &request.user_id, &parent);
+    let target = clone_target(&state, &parent);
     let destination = clone_repository(target, &request.source)
         .await
         .map_err(ApiError::bad_request)?;
@@ -145,16 +223,15 @@ async fn create_repository_handler(
     AuthorizedJson(request): AuthorizedJson<CreateRepositoryRequest>,
 ) -> Result<Json<WorkspacePathResolution>, ApiError> {
     let parent = parent_directory(request.parent_path).await?;
-    let target = clone_target(&state, &request.user_id, &parent);
+    let target = clone_target(&state, &parent);
     let destination = create_repository(target, &request.name, request.visibility)
         .await
         .map_err(ApiError::bad_request)?;
     attachable(destination).await
 }
 
-fn clone_target<'a>(state: &AppState, user_id: &'a str, parent: &'a Path) -> CloneTarget<'a> {
+fn clone_target<'a>(state: &AppState, parent: &'a Path) -> CloneTarget<'a> {
     CloneTarget {
-        user_id,
         parent_directory: parent,
         tool_environment: state.host.tool_environment(),
     }
