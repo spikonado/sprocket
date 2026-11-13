@@ -1,9 +1,9 @@
 ---
-name: deploying-to-vercel
-description: 'Use when deploying a project to Vercel, or checking, debugging, or configuring a Vercel deployment (logs, env vars, domains).'
+name: deploying
+description: 'Use when deploying a project, or checking, debugging, or configuring a deployment (logs, env vars, domains).'
 ---
 
-Deploy with the Vercel CLI, `vercel`, from the project's root.
+Deploy through the Vercel connector, with the Vercel CLI, `vercel`, from the project's root.
 
 ## Set up the connector
 
