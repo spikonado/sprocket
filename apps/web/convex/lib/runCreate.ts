@@ -110,10 +110,6 @@ export async function createQueuedRunRecord(
 ): Promise<CreatedGatewayRun> {
 	const serviceTier = modelServiceTier(args);
 
-	if (serviceTier === 'ultrafast' && args.completionProvider !== 'openai') {
-		throw new ConvexError('Ultrafast is only available with a direct OpenAI API key.');
-	}
-
 	const fastMode = serviceTier === 'fast';
 
 	if ((args.threadId === undefined) === (args.repositoryKey === undefined)) {

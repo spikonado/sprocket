@@ -21,7 +21,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				prompt: 'Build it',
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
-				completionProvider: 'openai' as const,
+				completionProvider: 'spikonado' as const,
 				reasoningEffort: 'medium' as const,
 				serviceTier,
 				executionSecret: 'explicit-tier-secret'
