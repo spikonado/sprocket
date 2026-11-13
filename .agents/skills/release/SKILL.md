@@ -11,7 +11,8 @@ The user names the new version. The previous version is the latest stable releas
 ## 1. Version bump PR
 
 1. Replace the previous version everywhere it names Sprocket's own version. In `Cargo.lock`, change only the `sprocket-*` packages. Other crates can share the version number.
-2. Open the PR with the title format and body of the last bump PR.
+2. Remove every `<Snippet file="unreleased.mdx" />` mark from `docs/` for features that ship in this release. Keep the snippet file for later features.
+3. Open the PR with the title format and body of the last bump PR.
 
 ## 2. Release notes
 
