@@ -21,7 +21,7 @@ use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure
 use super::job::execute_tool_job_with_id;
 use crate::catalog::{SubagentModelChoice, model_catalog};
 use crate::convex::{MutationFailure, RuntimeClient};
-use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
+use crate::run_settings::{ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
     CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
     SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo, SubagentThreadSnapshot,
@@ -1017,20 +1017,27 @@ async fn resolve_child_settings(
     let catalog = model_catalog(&context.gateway_url)
         .await
         .map_err(tool_error)?;
-    let saved = match thread_id {
+    // Saved settings pass as explicit overrides so a stale model, reasoning level, or fast
+    // mode fails instead of falling back to catalog defaults the agent never chose.
+    let (overrides, hint) = match thread_id {
         Some(thread_id) => {
-            let existing: SubagentThreadSnapshot =
-                fetch_thread(context, SNAPSHOT, thread_id).await?;
-            Some(ModelSettings {
-                model: existing.settings.model,
-                reasoning: existing.settings.reasoning,
-                fast: existing.settings.fast,
-            })
+            let saved = fetch_thread::<SubagentThreadSnapshot>(context, SNAPSHOT, thread_id)
+                .await?
+                .settings;
+            let overrides = SettingsOverrides {
+                model: overrides.model.clone().or(Some(saved.model)),
+                reasoning: overrides.reasoning.clone().or(Some(saved.reasoning)),
+                fast: overrides.fast.or(Some(saved.fast)),
+            };
+            (
+                overrides,
+                "; use control_subagent send with model, reasoning, and fast to choose new settings",
+            )
         }
-        None => None,
+        None => (overrides.clone(), ""),
     };
-    resolve_settings(&catalog, &providers, saved.as_ref(), overrides)
-        .map_err(|error| tool_failure(format!("{error:#}")))
+    resolve_settings(&catalog, &providers, None, &overrides)
+        .map_err(|error| tool_failure(format!("{error:#}{hint}")))
 }
 
 fn subagent_args(
