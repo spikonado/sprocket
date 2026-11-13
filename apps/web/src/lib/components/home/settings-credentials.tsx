@@ -314,6 +314,11 @@ export default function SettingsCredentials({
 				connectionId
 			});
 
+			const remainingAccounts =
+				chatGptStatus?.accounts.filter((account) => account.connectionId !== connectionId) ?? [];
+
+			if (!remainingAccounts.some((account) => account.connected)) onProviderRemoved('chatgpt');
+
 			if (generation !== generationRef.current || api !== localApi) return;
 			setSignOutWarning(warning);
 
@@ -324,9 +329,7 @@ export default function SettingsCredentials({
 						: chatGptStatus.activeConnectionId;
 
 				onChatGptStatusChange({
-					accounts: chatGptStatus.accounts.filter(
-						(account) => account.connectionId !== connectionId
-					),
+					accounts: remainingAccounts,
 					activeConnectionId,
 					loginAvailable: chatGptStatus.loginAvailable
 				});
@@ -336,8 +339,6 @@ export default function SettingsCredentials({
 
 			if (generation !== generationRef.current || api !== localApi) return;
 			onChatGptStatusChange(status);
-
-			if (!status.accounts.some((account) => account.connected)) onProviderRemoved('chatgpt');
 		} catch (error) {
 			if (generation !== generationRef.current) return;
 			setChatGptError(

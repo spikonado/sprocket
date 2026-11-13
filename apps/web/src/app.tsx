@@ -1376,37 +1376,45 @@ export default function App({
 		}
 	}
 
-	async function removeProvider(provider: CompletionProvider) {
+	async function removeProvider(provider: CompletionProvider): Promise<string | null> {
 		const apiKeyProvider = apiKeyProviders.find((candidate) => candidate === provider);
 
 		if (apiKeyProvider) {
 			await removeApiKey({ provider: apiKeyProvider });
 			handleProviderConfigurationChange({ provider: apiKeyProvider, configured: false });
 
-			return;
+			return null;
 		}
 
 		if (provider === 'claude') {
 			await removeClaudeToken({});
 			handleProviderConfigurationChange({ provider, configured: false });
 
-			return;
+			return null;
 		}
 
-		if (provider === 'chatgpt' && localApi && signedInUserId) {
-			const status = await localApi.fetchChatGptStatus({ userId: signedInUserId });
+		if (provider !== 'chatgpt' || !localApi || !signedInUserId) {
+			await removeProviderFromOrder({ provider });
 
-			for (const account of status.accounts) {
-				await localApi.disconnectChatGptAccount({
-					userId: signedInUserId,
-					connectionId: account.connectionId
-				});
-			}
+			return null;
+		}
 
-			setChatGptStatus(await localApi.fetchChatGptStatus({ userId: signedInUserId }));
+		const warnings: string[] = [];
+		const status = await localApi.fetchChatGptStatus({ userId: signedInUserId });
+
+		for (const account of status.accounts) {
+			const warning = await localApi.disconnectChatGptAccount({
+				userId: signedInUserId,
+				connectionId: account.connectionId
+			});
+
+			if (warning) warnings.push(warning);
 		}
 
 		await removeProviderFromOrder({ provider });
+		setChatGptStatus(await localApi.fetchChatGptStatus({ userId: signedInUserId }));
+
+		return warnings.length > 0 ? warnings.join(' ') : null;
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {

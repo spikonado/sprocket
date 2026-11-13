@@ -18,6 +18,9 @@ import ProviderLogo from '$lib/components/provider-logo';
 
 type RemovalState = 'idle' | 'confirming' | 'removing';
 
+// Sprocket holds no credential for these, so removing them would only hide a provider that's still signed in.
+const unremovableProviders: readonly CompletionProvider[] = [builtInProvider, 'muse'];
+
 function ProviderRow({
 	entry,
 	index,
@@ -72,7 +75,7 @@ function ProviderRow({
 					>
 						<SwitchTrack enabled={entry.enabled} />
 					</button>
-					{entry.provider === builtInProvider ? (
+					{unremovableProviders.includes(entry.provider) ? (
 						<span className="size-6" aria-hidden="true" />
 					) : (
 						<button
@@ -114,7 +117,7 @@ export default function SettingsProviders({
 	onRemove,
 	onOpenCredentials
 }: {
-	onRemove: (provider: CompletionProvider) => Promise<void>;
+	onRemove: (provider: CompletionProvider) => Promise<string | null>;
 	onOpenCredentials: () => void;
 }) {
 	const convexAuth = useConvexAuth();
@@ -130,16 +133,17 @@ export default function SettingsProviders({
 		}
 	);
 
-	const [removals, setRemovals] = useState<Partial<Record<CompletionProvider, RemovalState>>>({});
+	const [removal, setRemoval] = useState<{
+		provider: CompletionProvider;
+		state: Exclude<RemovalState, 'idle'>;
+	} | null>(null);
+
+	const [removalWarning, setRemovalWarning] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const listRef = useRef<HTMLOListElement>(null);
-	const disabled = orderQuery.status !== 'success';
+	const disabled = orderQuery.status !== 'success' || removal?.state === 'removing';
 	const order = orderQuery.status === 'success' ? orderQuery.data : [];
 	const enabledCount = order.filter((entry) => entry.enabled).length;
-
-	function setRemoval(provider: CompletionProvider, removal: RemovalState) {
-		setRemovals((current) => ({ ...current, [provider]: removal }));
-	}
 
 	async function save(next: ProviderOrderEntry[]) {
 		setSaveError(null);
@@ -152,15 +156,16 @@ export default function SettingsProviders({
 	}
 
 	async function remove(provider: CompletionProvider) {
-		setRemoval(provider, 'removing');
+		setRemoval({ provider, state: 'removing' });
+		setRemovalWarning(null);
 		setSaveError(null);
 
 		try {
-			await onRemove(provider);
+			setRemovalWarning(await onRemove(provider));
 		} catch {
 			setSaveError(`Couldn't remove ${completionProviderLabels[provider]}. Try again.`);
 		} finally {
-			setRemoval(provider, 'idle');
+			setRemoval(null);
 		}
 	}
 
@@ -208,9 +213,11 @@ export default function SettingsProviders({
 									index={index}
 									disabled={disabled}
 									lastEnabled={entry.enabled && enabledCount === 1}
-									removal={removals[entry.provider] ?? 'idle'}
+									removal={removal?.provider === entry.provider ? removal.state : 'idle'}
 									onToggle={() => toggle(entry.provider)}
-									onRemovalChange={(removal) => setRemoval(entry.provider, removal)}
+									onRemovalChange={(state) =>
+										setRemoval(state === 'idle' ? null : { provider: entry.provider, state })
+									}
 									onRemove={() => void remove(entry.provider)}
 								/>
 							))}
@@ -225,6 +232,11 @@ export default function SettingsProviders({
 							Set up more providers in BYOK/BYOS
 						</button>
 					</p>
+					{removalWarning && (
+						<p role="status" className="text-muted-foreground px-3 text-sm">
+							{removalWarning}
+						</p>
+					)}
 					{saveError && (
 						<p role="alert" className="text-destructive px-3 text-sm">
 							{saveError}

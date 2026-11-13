@@ -5,7 +5,10 @@ import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { ProviderOrderEntry } from '@convex/lib/providerOrder';
 import SettingsProviders from './settings-providers';
 
-async function mount(providerOrder: ProviderOrderEntry[], onRemove = vi.fn(async () => {})) {
+async function mount(
+	providerOrder: ProviderOrderEntry[],
+	onRemove = vi.fn(async (): Promise<string | null> => null)
+) {
 	const client = new ConvexTestClient();
 	client.registerQuery(api.uiPreferences.getMyProviderOrder, providerOrder);
 	client.registerMutation(api.uiPreferences.setProviderOrder, new Promise<null>(() => {}));
@@ -56,21 +59,24 @@ it('lists the saved provider order and saves toggles', async () => {
 	expect(screen.getByRole('switch', { name: 'Spikonado' })).toHaveProperty('disabled', true);
 });
 
-it('removes a provider after confirmation and keeps Spikonado', async () => {
-	const onRemove = vi.fn(async () => {});
+it('removes a provider after confirmation, shows its warning, and keeps Spikonado and Muse', async () => {
+	const onRemove = vi.fn(async (): Promise<string | null> => 'Revoke access at chatgpt.com.');
 	await mount(
 		[
 			{ provider: 'spikonado', enabled: true },
-			{ provider: 'chatgpt', enabled: true }
+			{ provider: 'chatgpt', enabled: true },
+			{ provider: 'muse', enabled: true }
 		],
 		onRemove
 	);
 
 	expect(screen.queryByRole('button', { name: 'Remove Spikonado' })).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Remove Muse Code Subscription' })).toBeNull();
 	fireEvent.click(screen.getByRole('button', { name: 'Remove ChatGPT Subscription' }));
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 	});
 
 	expect(onRemove).toHaveBeenCalledWith('chatgpt');
+	expect(screen.getByText('Revoke access at chatgpt.com.')).toBeTruthy();
 });

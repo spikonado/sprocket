@@ -56,7 +56,7 @@ In **Settings → Providers**, drag providers into the order you want and turn e
 
 <Snippet file="unreleased.mdx" />
 
-Connecting a provider in **Settings → BYOK/BYOS** adds it to the end of the list. Removing a provider from either page takes it off the list and deletes what Sprocket saved for it: an API key, the Claude token, or every ChatGPT sign-in. Removing Muse leaves the Muse CLI signed in. Spikonado always stays on the list. If you remove the last provider that's on, Sprocket turns Spikonado back on.
+Connecting a provider in **Settings → BYOK/BYOS** adds it to the end of the list. Removing a provider from either page takes it off the list and deletes what Sprocket saved for it: an API key, the Claude token, or every ChatGPT sign-in. Spikonado and Muse can't be removed, since Sprocket holds no credential for them. Turn them off instead. If you remove the last provider that's on, Sprocket turns Spikonado back on.
 
 For each request, Sprocket uses the first enabled provider that offers the model. Sprocket retries server errors. If the provider still fails or rate-limits the request, Sprocket moves the run to the next enabled provider. If no enabled provider offers the model, the run fails with an error that points to **Settings → Providers**.
 
