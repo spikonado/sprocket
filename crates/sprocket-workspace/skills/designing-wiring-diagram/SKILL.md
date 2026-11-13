@@ -1,6 +1,6 @@
 ---
 name: designing-wiring-diagram
-description: 'Use when designing the wiring diagram for a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `working-with-kicad`.'
+description: 'Use when designing the wiring diagram for a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `designing-pcbs`.'
 ---
 
 A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`). Sprocket draws every part as a box with named pins, one coloured line per jumper wire, build steps, a wiring checklist, and a parts list with photos. You write only the parts and the connections.

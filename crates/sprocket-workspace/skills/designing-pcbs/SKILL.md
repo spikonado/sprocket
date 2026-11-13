@@ -1,5 +1,5 @@
 ---
-name: working-with-kicad
+name: designing-pcbs
 description: 'Use when creating or editing KiCad schematics or PCBs, or exporting from KiCad (Gerbers, renders, BOMs, ERC/DRC).'
 ---
 
