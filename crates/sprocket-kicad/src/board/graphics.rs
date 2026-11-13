@@ -207,12 +207,7 @@ impl Board {
             && !text.flag("unlocked")
             && !at.is_some_and(|at| at.has_flag("unlocked"));
         if keep_upright {
-            while degrees > 90.0 {
-                degrees -= 180.0;
-            }
-            while degrees <= -90.0 {
-                degrees += 180.0;
-            }
+            degrees = 90.0 - (90.0 - degrees).rem_euclid(180.0);
         } else {
             degrees = degrees.rem_euclid(360.0);
         }
@@ -270,10 +265,10 @@ impl Board {
         let mut out = String::with_capacity(text.len());
         let mut rest = text;
         while let Some(open) = rest.find("${") {
-            out.push_str(&rest[..open]);
             let Some(close) = rest[open..].find('}') else {
                 break;
             };
+            out.push_str(&rest[..open]);
             let name = &rest[open + 2..open + close];
             let value = fields
                 .and_then(|fields| fields.get(name))

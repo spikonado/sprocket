@@ -57,3 +57,9 @@ fn overbar_adds_one_stroke_above_the_glyphs() {
             .any(|stroke| stroke.len() == 2 && stroke[0].y < top)
     );
 }
+
+#[test]
+fn deeply_nested_markup_still_lays_out() {
+    let text = format!("{}A", "~{".repeat(100_000));
+    assert!(!stroke_text(&text, Point::default(), &style(HAlign::Left)).is_empty());
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Board3dViewer from '$lib/components/home/board-3d-viewer';
 import KicanvasViewer, { type KicanvasViewerApi } from '$lib/components/home/kicanvas-viewer';
 import PcbViewer from '$lib/components/home/pcb-viewer';
+import ViewerStatusNotice from '$lib/components/home/viewer-status';
 import { kicadBoardPath } from '$lib/kicad';
 import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
@@ -9,6 +10,9 @@ import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 type KicadViewerApi = KicanvasViewerApi & Pick<LocalApi, 'exportBoard3d' | 'kicadScene'>;
 
 type View = 'Schematic' | 'PCB' | '2D' | '3D';
+
+type BoardFile =
+	{ kind: 'unknown' } | { kind: 'found'; version: string } | { kind: 'missing'; message: string };
 
 const RECONNECT_MS = 1_000;
 
@@ -28,7 +32,8 @@ export default function KicadViewer({
 }) {
 	const boardPath = kicadBoardPath(file.path);
 	const isBoard = boardPath === file.path;
-	const boardVersion = useFileVersion(api, file.workspacePath, boardPath, active);
+	const board = useBoardFile(api, file.workspacePath, boardPath, active);
+	const boardVersion = board.kind === 'found' ? board.version : null;
 	const first: View = isBoard ? '2D' : 'Schematic';
 	const pcbView: View = isBoard ? '2D' : 'PCB';
 
@@ -50,13 +55,20 @@ export default function KicadViewer({
 	return (
 		<div className="relative min-h-0 flex-1">
 			{!isBoard && <KicanvasViewer api={api} file={file} active={active} />}
-			{api && boardPath && opened.has(pcbView) && (
+			{api && boardPath && opened.has(pcbView) && board.kind !== 'missing' && (
 				<PcbViewer
 					api={api}
 					workspacePath={file.workspacePath}
 					path={boardPath}
 					version={boardVersion}
 					shown={view === pcbView}
+				/>
+			)}
+			{isBoard && board.kind === 'missing' && (
+				<ViewerStatusNotice
+					status={{ kind: 'error', message: board.message }}
+					drawn={false}
+					opening=""
 				/>
 			)}
 			{api && boardPath && boardVersion && opened.has('3D') && (
@@ -95,15 +107,15 @@ export default function KicadViewer({
 	);
 }
 
-/** The file's last version from the workspace watch, or null until the file is seen. */
-function useFileVersion(
+/** The board's state from the workspace watch. */
+function useBoardFile(
 	api: Pick<LocalApi, 'watchWorkspaceFile'> | null,
 	workspacePath: string,
 	path: string | null,
 	active: boolean
 ) {
 	const visible = usePageVisible();
-	const [version, setVersion] = useState<string | null>(null);
+	const [board, setBoard] = useState<BoardFile>({ kind: 'unknown' });
 
 	useEffect(() => {
 		if (!api || !path || !active || !visible) return;
@@ -119,7 +131,11 @@ function useFileVersion(
 					{
 						signal,
 						onEvent: (event) => {
-							if (event.kind === 'snapshot') setVersion(event.version);
+							setBoard(
+								event.kind === 'snapshot'
+									? { kind: 'found', version: event.version }
+									: { kind: 'missing', message: event.message }
+							);
 						}
 					}
 				);
@@ -136,5 +152,5 @@ function useFileVersion(
 		};
 	}, [api, workspacePath, path, active, visible]);
 
-	return version;
+	return board;
 }

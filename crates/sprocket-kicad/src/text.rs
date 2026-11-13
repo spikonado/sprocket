@@ -155,17 +155,23 @@ enum Markup {
 
 /// Parses KiCad's `~{overbar}`, `_{subscript}` and `^{superscript}` markup.
 fn parse_markup(text: &str) -> Vec<Markup> {
-    fn parse(chars: &[char], pos: &mut usize, nested: bool) -> Vec<Markup> {
+    /// Deeper markers stay literal text, so crafted text can't exhaust the stack.
+    const MAX_DEPTH: usize = 16;
+
+    fn parse(chars: &[char], pos: &mut usize, depth: usize) -> Vec<Markup> {
         let mut nodes = Vec::new();
         let mut run = String::new();
         while *pos < chars.len() {
             let c = chars[*pos];
-            if matches!(c, '~' | '_' | '^') && chars.get(*pos + 1) == Some(&'{') {
+            if depth < MAX_DEPTH
+                && matches!(c, '~' | '_' | '^')
+                && chars.get(*pos + 1) == Some(&'{')
+            {
                 if !run.is_empty() {
                     nodes.push(Markup::Text(std::mem::take(&mut run)));
                 }
                 *pos += 2;
-                let children = parse(chars, pos, true);
+                let children = parse(chars, pos, depth + 1);
                 nodes.push(match c {
                     '~' => Markup::Overbar(children),
                     '_' => Markup::Subscript(children),
@@ -174,7 +180,7 @@ fn parse_markup(text: &str) -> Vec<Markup> {
                 continue;
             }
             *pos += 1;
-            if c == '}' && nested {
+            if c == '}' && depth > 0 {
                 break;
             }
             run.push(c);
@@ -185,7 +191,7 @@ fn parse_markup(text: &str) -> Vec<Markup> {
         nodes
     }
     let chars: Vec<char> = text.chars().collect();
-    parse(&chars, &mut 0, false)
+    parse(&chars, &mut 0, 0)
 }
 
 /// One walk over a line's markup. Without `strokes` it only measures.
