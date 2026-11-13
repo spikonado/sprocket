@@ -314,10 +314,15 @@ export default function SettingsCredentials({
 				connectionId
 			});
 
-			const remainingAccounts =
-				chatGptStatus?.accounts.filter((account) => account.connectionId !== connectionId) ?? [];
+			const statusAfterSignOut = api.fetchChatGptStatus({ userId: userIdAtStart });
 
-			if (!remainingAccounts.some((account) => account.connected)) onProviderRemoved('chatgpt');
+			// Runs even if the page moves on, so a finished sign-out always leaves the provider order.
+			void statusAfterSignOut.then(
+				(status) => {
+					if (!status.accounts.some((account) => account.connected)) onProviderRemoved('chatgpt');
+				},
+				() => {}
+			);
 
 			if (generation !== generationRef.current || api !== localApi) return;
 			setSignOutWarning(warning);
@@ -329,13 +334,15 @@ export default function SettingsCredentials({
 						: chatGptStatus.activeConnectionId;
 
 				onChatGptStatusChange({
-					accounts: remainingAccounts,
+					accounts: chatGptStatus.accounts.filter(
+						(account) => account.connectionId !== connectionId
+					),
 					activeConnectionId,
 					loginAvailable: chatGptStatus.loginAvailable
 				});
 			}
 
-			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
+			const status = await statusAfterSignOut;
 
 			if (generation !== generationRef.current || api !== localApi) return;
 			onChatGptStatusChange(status);
