@@ -1,11 +1,7 @@
-import {
-	useConvexAuth,
-	useMutation,
-	useQuery_experimental as useConvexQueryResult
-} from 'convex/react';
+import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { ExternalLink } from 'lucide-react';
-import PreferenceToggle from '$lib/components/home/preference-toggle';
+import PreferenceToggle, { useMyPreferences } from '$lib/components/home/preference-toggle';
 
 function DescriptionLink({ href, children }: { href: string; children: string }) {
 	return (
@@ -22,12 +18,7 @@ function DescriptionLink({ href, children }: { href: string; children: string })
 }
 
 export default function SettingsGeneral() {
-	const convexAuth = useConvexAuth();
-
-	const preferencesQuery = useConvexQueryResult({
-		query: api.uiPreferences.getMine,
-		args: convexAuth.isAuthenticated ? {} : 'skip'
-	});
+	const { preferences, disabled, loadState } = useMyPreferences();
 
 	const setAutomaticThreadTitles = useMutation(api.uiPreferences.setAutomaticThreadTitles);
 
@@ -38,11 +29,6 @@ export default function SettingsGeneral() {
 	const setSettleMergedThreads = useMutation(api.uiPreferences.setSettleMergedThreads);
 
 	const setShareConversationContent = useMutation(api.uiPreferences.setShareConversationContent);
-
-	const setCoAuthorCommits = useMutation(api.uiPreferences.setCoAuthorCommits);
-
-	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
-	const disabled = preferencesQuery.status !== 'success';
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -71,12 +57,6 @@ export default function SettingsGeneral() {
 						save={setSettleMergedThreads}
 					/>
 					<PreferenceToggle
-						title="Add Sprocket as a co-author on agent commits"
-						savedEnabled={preferences?.coAuthorCommits ?? true}
-						disabled={disabled}
-						save={setCoAuthorCommits}
-					/>
-					<PreferenceToggle
 						title="Share anonymous conversation data to help improve Sprocket for everyone"
 						description={
 							<>
@@ -94,16 +74,7 @@ export default function SettingsGeneral() {
 						disabled={disabled}
 						save={setShareConversationContent}
 					/>
-					{preferencesQuery.status === 'pending' && (
-						<p role="status" className="text-muted-foreground px-3 text-sm">
-							Loading preferences...
-						</p>
-					)}
-					{preferencesQuery.status === 'error' && (
-						<p role="alert" className="text-destructive px-3 text-sm">
-							Couldn't load your preferences right now.
-						</p>
-					)}
+					{loadState}
 				</div>
 			</div>
 		</section>

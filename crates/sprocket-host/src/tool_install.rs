@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -20,6 +20,14 @@ const TOMBSTONE_SUFFIX: &str = ".removing";
 
 pub(crate) type Unpack = fn(verified_download: &Path, empty_dir: &Path) -> anyhow::Result<()>;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum ToolInstall {
+    Installing,
+    Installed,
+    Failed { error: String },
+}
+
 pub(crate) struct PinnedTool {
     name: &'static str,
     unpack: Unpack,
@@ -28,6 +36,7 @@ pub(crate) struct PinnedTool {
     client: reqwest::Client,
     ready: Mutex<bool>,
     lease: Mutex<Option<File>>,
+    failure: std::sync::Mutex<Option<String>>,
 }
 
 impl PinnedTool {
@@ -45,16 +54,62 @@ impl PinnedTool {
             client: download_client()?,
             ready: Mutex::new(false),
             lease: Mutex::new(None),
+            failure: std::sync::Mutex::new(None),
         })
     }
 
     pub fn prepare(self: &Arc<Self>) {
+        self.forget_failure();
         let tool = Arc::clone(self);
         tokio::spawn(async move {
-            if let Err(error) = tool.ensure_installed().await {
-                tracing::warn!("{} setup failed: {error:#}", tool.name);
-            }
+            tool.install_recording_failure().await;
         });
+    }
+
+    pub(crate) async fn retry_install(self: &Arc<Self>) -> ToolInstall {
+        self.prepare();
+        self.install_state().await
+    }
+
+    /// Installs, remembering a failure for `install_state` until the next attempt.
+    pub(crate) async fn install_recording_failure(&self) -> bool {
+        let result = self.ensure_installed().await;
+        match &result {
+            Ok(()) => self.forget_failure(),
+            Err(error) => self.record_failure(format!("{error:#}")),
+        }
+        result.is_ok()
+    }
+
+    pub(crate) fn record_failure(&self, error: String) {
+        tracing::warn!("{} setup failed: {error}", self.name);
+        *self.lock_failure() = Some(error);
+    }
+
+    pub(crate) fn forget_failure(&self) {
+        *self.lock_failure() = None;
+    }
+
+    pub(crate) async fn install_state(&self) -> ToolInstall {
+        let failure = self.lock_failure().clone();
+        if let Some(error) = failure {
+            return ToolInstall::Failed { error };
+        }
+        if is_dir(&self.bin_dir()).await {
+            ToolInstall::Installed
+        } else {
+            ToolInstall::Installing
+        }
+    }
+
+    fn lock_failure(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn version(&self) -> &str {
+        &self.release.version
     }
 
     pub(crate) fn version_dir(&self) -> PathBuf {

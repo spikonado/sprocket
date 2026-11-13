@@ -188,6 +188,8 @@ pub struct RunAgentRequest {
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     /// One line per installed connector, such as `KiCad connector v0.1.0 (KiCad 10.0.1)`.
     pub installed_connectors: Vec<String>,
+    /// The user's skill directories, then those of skills that ship with connector tools.
+    pub skills_dirs: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

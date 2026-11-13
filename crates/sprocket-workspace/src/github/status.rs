@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
 use super::{
-    CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, credentials, is_valid_host,
-    saved_tokens, settings,
+    CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, credentials, is_valid_host, settings,
 };
 
 const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -17,7 +16,6 @@ const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 pub struct GitHubStatus {
     pub enabled: bool,
     pub cli_version: Option<String>,
-    pub saved_tokens_problem: Option<String>,
     pub hosts: Vec<HostStatus>,
 }
 
@@ -26,23 +24,20 @@ pub struct GitHubStatus {
 pub struct HostStatus {
     pub host: String,
     pub enabled: bool,
-    pub has_saved_token: bool,
     pub source: Option<CredentialSource>,
     pub login: Option<String>,
     pub problem: Option<String>,
 }
 
-pub async fn status(user_id: &str) -> GitHubStatus {
-    let (cli_version, cli_hosts, saved) = tokio::join!(
+pub async fn status() -> GitHubStatus {
+    let (cli_version, cli_hosts) = tokio::join!(
         credentials::gh_output(&["--version"]),
         credentials::gh_output(&["auth", "status", "--json", "hosts"]),
-        saved_tokens::reload(user_id)
     );
     let settings = settings();
-    let saved_hosts = saved.last_known.unwrap_or_default();
     let mut hosts = settings.disabled_hosts.clone();
     hosts.insert(PUBLIC_HOST.to_string());
-    hosts.extend(saved_hosts.keys().cloned());
+    hosts.extend(settings.signed_in_hosts.iter().cloned());
     hosts.extend(
         cli_hosts
             .as_deref()
@@ -59,7 +54,6 @@ pub async fn status(user_id: &str) -> GitHubStatus {
     for host in hosts {
         let status = HostStatus {
             enabled: !settings.disabled_hosts.contains(&host),
-            has_saved_token: saved_hosts.contains_key(&host),
             host,
             source: None,
             login: None,
@@ -68,7 +62,7 @@ pub async fn status(user_id: &str) -> GitHubStatus {
         if settings.disabled || !status.enabled {
             statuses.push(status);
         } else {
-            checks.spawn(checked(user_id.to_string(), status));
+            checks.spawn(checked(status));
         }
     }
     while let Some(status) = checks.join_next().await {
@@ -79,13 +73,12 @@ pub async fn status(user_id: &str) -> GitHubStatus {
     GitHubStatus {
         enabled: !settings.disabled,
         cli_version: cli_version.as_deref().and_then(parse_cli_version),
-        saved_tokens_problem: saved.error,
         hosts: statuses,
     }
 }
 
-async fn checked(user_id: String, mut status: HostStatus) -> HostStatus {
-    if tokio::time::timeout(HOST_CHECK_TIMEOUT, check_credential(&user_id, &mut status))
+async fn checked(mut status: HostStatus) -> HostStatus {
+    if tokio::time::timeout(HOST_CHECK_TIMEOUT, check_credential(&mut status))
         .await
         .is_err()
     {
@@ -98,8 +91,8 @@ async fn checked(user_id: String, mut status: HostStatus) -> HostStatus {
     status
 }
 
-async fn check_credential(user_id: &str, status: &mut HostStatus) {
-    let api = match GitHubApi::connect(user_id, &status.host).await {
+async fn check_credential(status: &mut HostStatus) {
+    let api = match GitHubApi::connect(&status.host).await {
         Ok(api) => api,
         Err(GitHubError::NoCredential(_)) => return,
         Err(error) => {

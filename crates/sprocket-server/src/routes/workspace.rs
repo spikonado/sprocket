@@ -23,9 +23,8 @@ use sprocket_host::workspace_search::{PathListing, SearchOutcome};
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceEntryKind,
     WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
-    default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_file,
-    read_workspace_text, rename_workspace_entry, workspace_entry_kind, workspace_file_path,
-    write_workspace_file,
+    delete_workspace_entry, load_workspace_skills, read_workspace_file, read_workspace_text,
+    rename_workspace_entry, workspace_entry_kind, workspace_file_path, write_workspace_file,
 };
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
@@ -424,6 +423,7 @@ async fn browse_path(
 }
 
 async fn list_skills(
+    State(state): State<AppState>,
     MachineSession: MachineSession,
     Json(payload): Json<WorkspaceSkillsRequest>,
 ) -> Result<Json<WorkspaceSkillsResponse>, ApiError> {
@@ -431,7 +431,7 @@ async fn list_skills(
         resolve_workspace_path(&payload.workspace_path, false).map_err(ApiError::bad_request)?;
     let loaded = load_workspace_skills(
         std::path::Path::new(&resolution.workspace_path),
-        &default_user_skills_dirs(),
+        &state.host.skills_dirs(),
         BUILTIN_SKILLS,
     );
     let skills = loaded

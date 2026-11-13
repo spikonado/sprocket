@@ -1,32 +1,19 @@
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 use tokio::time::{Instant, timeout_at};
 
 use super::credentials::{self, ResolvedCredential};
-use super::{CredentialSource, PUBLIC_HOST, is_valid_host, saved_tokens};
+use super::{PUBLIC_HOST, is_valid_host, read_settings};
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub async fn agent_environment(user_id: &str) -> Vec<(String, String)> {
-    let credentials = host_credentials(user_id, Instant::now() + RESOLVE_TIMEOUT).await;
+pub async fn agent_environment() -> Vec<(String, String)> {
+    let credentials = host_credentials(Instant::now() + RESOLVE_TIMEOUT).await;
     environment(&credentials, |name| std::env::var(name).ok())
 }
 
-async fn host_credentials(user_id: &str, deadline: Instant) -> Vec<(String, ResolvedCredential)> {
-    let loading = tokio::spawn({
-        let user_id = user_id.to_string();
-        async move {
-            saved_tokens::load(&user_id)
-                .await
-                .last_known
-                .unwrap_or_default()
-        }
-    });
-    let mut hosts: BTreeSet<String> = match timeout_at(deadline, loading).await {
-        Ok(Ok(tokens)) => tokens.into_keys().collect(),
-        _ => BTreeSet::new(),
-    };
+async fn host_credentials(deadline: Instant) -> Vec<(String, ResolvedCredential)> {
+    let mut hosts = read_settings().signed_in_hosts.clone();
     hosts.insert(PUBLIC_HOST.to_string());
     if let Ok(configured) = std::env::var("GH_HOST") {
         hosts.insert(configured.trim().to_ascii_lowercase());
@@ -35,10 +22,9 @@ async fn host_credentials(user_id: &str, deadline: Instant) -> Vec<(String, Reso
         .into_iter()
         .filter(|host| is_valid_host(host))
         .map(|host| {
-            let user_id = user_id.to_string();
             let lookup = tokio::spawn({
                 let host = host.clone();
-                async move { credentials::resolve(&user_id, &host).await }
+                async move { credentials::resolve(&host).await }
             });
             (host, lookup)
         })
@@ -76,14 +62,6 @@ fn environment(
     }
     if count > inherited {
         environment.push(("GIT_CONFIG_COUNT".into(), count.to_string()));
-    }
-    // `gh` already reads its own login and the environment's tokens. Saved
-    // Enterprise tokens stay git-only: `gh` would send `GH_ENTERPRISE_TOKEN` to
-    // every Enterprise host, and `GH_HOST` would move its default off github.com.
-    if let Some((_, credential)) = credentials.iter().find(|(host, credential)| {
-        host == PUBLIC_HOST && credential.source == CredentialSource::Settings
-    }) {
-        environment.push(("GH_TOKEN".into(), credential.token.clone()));
     }
     environment
 }

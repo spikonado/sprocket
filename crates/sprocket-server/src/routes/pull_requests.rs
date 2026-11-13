@@ -28,7 +28,7 @@ pub fn routes() -> axum::Router<AppState> {
 async fn states_handler(
     AuthorizedJson(payload): AuthorizedJson<StatesRequest>,
 ) -> Json<Vec<PullRequestStatus>> {
-    let fetched = refresh_states(&payload.user_id, &payload.pull_requests).await;
+    let fetched = refresh_states(&payload.pull_requests).await;
     for (host, error) in &fetched.failures {
         tracing::debug!("skipping linked PRs on {host}: {error}");
     }

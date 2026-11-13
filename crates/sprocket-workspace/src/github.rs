@@ -2,7 +2,6 @@ mod agent_environment;
 mod credentials;
 pub mod pull_requests;
 pub mod repositories;
-pub mod saved_tokens;
 pub mod status;
 
 pub use agent_environment::agent_environment;
@@ -15,12 +14,12 @@ use reqwest::{StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub use credentials::use_pinned_gh;
+pub use credentials::{gh_command, use_pinned_gh};
 
-const PUBLIC_HOST: &str = "github.com";
+pub const PUBLIC_HOST: &str = "github.com";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn hide_console_window(_command: &mut tokio::process::Command) {
+pub fn hide_console_window(_command: &mut tokio::process::Command) {
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -35,6 +34,9 @@ static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::defau
 pub struct GitHubSettings {
     pub disabled: bool,
     pub disabled_hosts: BTreeSet<String>,
+    /// Enterprise hosts signed in to from Settings, since listing `gh`'s own hosts takes
+    /// a network check per host.
+    pub signed_in_hosts: BTreeSet<String>,
 }
 
 pub fn settings() -> GitHubSettings {
@@ -45,6 +47,10 @@ pub fn apply_settings(settings: GitHubSettings) {
     *SETTINGS
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
+    forget_cached_credentials();
+}
+
+pub fn forget_cached_credentials() {
     credentials::clear_cache();
 }
 
@@ -57,18 +63,15 @@ fn read_settings() -> std::sync::RwLockReadGuard<'static, GitHubSettings> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CredentialSource {
-    Settings,
     Environment,
     GitHubCli,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitHubError {
-    #[error(
-        "No GitHub credential for {0}: save a token in Settings → Version Control, set GH_TOKEN, or install the GitHub CLI and run `gh auth login`."
-    )]
+    #[error("No GitHub credential for {0}: sign in under Settings → Connectors, or set GH_TOKEN.")]
     NoCredential(String),
-    #[error("GitHub access to {0} is turned off in Settings → Version Control.")]
+    #[error("GitHub access to {0} is turned off in Settings → Connectors.")]
     Disabled(String),
     #[error("GitHub rate limit reached")]
     RateLimited { retry_after: Option<Duration> },
@@ -111,9 +114,9 @@ pub struct GitHubApi {
 }
 
 impl GitHubApi {
-    pub async fn connect(user_id: &str, host: &str) -> Result<Self, GitHubError> {
+    pub async fn connect(host: &str) -> Result<Self, GitHubError> {
         let host = host.trim().to_ascii_lowercase();
-        let credential = credentials::resolve(user_id, &host).await?;
+        let credential = credentials::resolve(&host).await?;
         let graphql_url = graphql_url(&host)?;
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)

@@ -32,17 +32,14 @@ struct Status {
 }
 
 impl ActivityReader {
-    pub async fn connect(
-        user_id: &str,
-        pull_request: &PullRequestRef,
-    ) -> Result<Self, GitHubError> {
+    pub async fn connect(pull_request: &PullRequestRef) -> Result<Self, GitHubError> {
         let repository = parse_repository(&pull_request.repository).ok_or_else(|| {
             anyhow::anyhow!(
                 "{:?} is not a repository. Repositories look like `github.com/owner/name`.",
                 pull_request.repository
             )
         })?;
-        let api = GitHubApi::connect(user_id, repository.host).await?;
+        let api = GitHubApi::connect(repository.host).await?;
         Ok(Self {
             variables: json!({
                 "owner": repository.owner,

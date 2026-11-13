@@ -16,7 +16,7 @@ A project is a folder on your computer. Open one with **Add project**, which has
 - **Clone a repo** takes `owner/repo` or any git URL and clones it into a new folder, named after the repository, inside the folder you pick.
 - **New GitHub repo** takes a name and Private or Public. It creates the repository on your github.com account, then clones it the same way.
 
-Both use the GitHub credential from Settings → Version Control. Creating a repository needs a token that can create repositories.
+Both use your GitHub sign-in from Settings → Connectors. Creating a repository needs a token that can create repositories.
 
 Sprocket identifies a project by its git `origin` remote. Every clone and worktree of the same repository shares one project and one thread list, even on different machines. A repository without an `origin` remote, or a folder outside git, is identified by its folder name, so two such folders with the same name share a project.
 

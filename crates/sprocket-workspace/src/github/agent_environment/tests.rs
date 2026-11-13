@@ -3,6 +3,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use super::*;
+use crate::github::CredentialSource;
 
 fn credential(host: &str, token: &str, source: CredentialSource) -> (String, ResolvedCredential) {
     (
@@ -44,7 +45,7 @@ fn git_gets_each_hosts_token_after_inherited_config() {
         credential(
             "ghe.example.com",
             "enterprise-token",
-            CredentialSource::Settings,
+            CredentialSource::GitHubCli,
         ),
     ];
     let mut environment: HashMap<_, _> = environment(&credentials, |name| {
@@ -61,18 +62,4 @@ fn git_gets_each_hosts_token_after_inherited_config() {
         git_password(&environment, "ghe.example.com"),
         "enterprise-token"
     );
-}
-
-#[test]
-fn gh_gets_only_a_saved_github_dot_com_token() {
-    let environment: HashMap<_, _> = environment(
-        &[
-            credential("github.com", "saved", CredentialSource::Settings),
-            credential("ghe.example.com", "enterprise", CredentialSource::Settings),
-        ],
-        |_| None,
-    )
-    .into_iter()
-    .collect();
-    assert_eq!(environment["GH_TOKEN"], "saved");
 }

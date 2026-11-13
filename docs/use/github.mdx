@@ -5,17 +5,17 @@ description: Connect GitHub so Sprocket's agent can link pull requests to thread
 
 The agent uses the [GitHub CLI](https://cli.github.com) for pull requests and other GitHub work. Sprocket installs it for you.
 
+<Snippet file="unreleased.mdx" />
+
 ## Sign in
 
-Sprocket's copy of the GitHub CLI is only on the agent's `PATH`. Install the [GitHub CLI](https://cli.github.com) yourself, then run this on the computer that runs Sprocket:
+In **Settings → Connectors**, click **Sign in** next to `github.com`. Sprocket shows a code and a link to GitHub. Open the link on any device, enter the code, and approve the sign-in. The GitHub card then shows **Signed in as** and your GitHub username. **Sign out** removes the login from the computer running Sprocket.
 
-```sh
-gh auth login
-```
+For GitHub Enterprise, click **Add a GitHub Enterprise host**, enter its hostname, and sign in the same way.
 
-**Settings → Version Control** then shows **Signed in as** and your GitHub username. You can add a token there instead. It needs read access to pull requests.
+If `GH_TOKEN` or `GITHUB_TOKEN` is set where Sprocket runs, Sprocket uses that token instead. For an Enterprise host, set `GH_HOST` to its hostname and `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN` to its token.
 
-For GitHub Enterprise, add each host with its own token on the same page.
+Sprocket no longer saves GitHub tokens. If you saved one in **Settings → Version Control**, sign in again from **Settings → Connectors**.
 
 ## Pull requests in threads
 
@@ -25,8 +25,8 @@ To settle a thread when its pull requests merge, turn on **Settle threads when t
 
 ## Commits
 
-Sprocket tells the agent to add Sprocket as a co-author on its commits. Turn this off in [Settings → General](/reference/settings#general).
+Sprocket tells the agent to add Sprocket as a co-author on its commits. Turn this off in [Settings → Version Control](/reference/settings#version-control).
 
 ## Turn off GitHub
 
-Turn off GitHub in **Settings → Version Control**. The agent then can't link pull requests, and their status stops refreshing.
+Turn off GitHub, or one of its hosts, in **Settings → Connectors**. The agent then can't link pull requests, and their status stops refreshing.

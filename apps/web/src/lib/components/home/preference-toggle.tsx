@@ -1,5 +1,31 @@
 import { useId, useState, type ReactNode } from 'react';
+import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
+import { api } from '@convex/_generated/api';
 import { cn } from '$lib/utils';
+
+export function useMyPreferences() {
+	const convexAuth = useConvexAuth();
+
+	const query = useConvexQueryResult({
+		query: api.uiPreferences.getMine,
+		args: convexAuth.isAuthenticated ? {} : 'skip'
+	});
+
+	return {
+		preferences: query.status === 'success' ? query.data : null,
+		disabled: query.status !== 'success',
+		loadState:
+			query.status === 'pending' ? (
+				<p role="status" className="text-muted-foreground px-3 text-sm">
+					Loading preferences...
+				</p>
+			) : query.status === 'error' ? (
+				<p role="alert" className="text-destructive px-3 text-sm">
+					Couldn't load your preferences right now.
+				</p>
+			) : null
+	};
+}
 
 export function SwitchTrack({ enabled }: { enabled: boolean }) {
 	return (

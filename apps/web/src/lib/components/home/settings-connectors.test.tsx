@@ -25,11 +25,35 @@ function mount(fetchConnectors: LocalApi['fetchConnectors']) {
 	);
 
 	const uninstallConnector = vi.fn<LocalApi['uninstallConnector']>(async () => kicad({}));
+	const installed = { state: 'installed' } as const;
+	const unused = async () => Promise.reject(new Error('Not used in this test.'));
 
 	render(
 		<SettingsConnectors
 			userId="user-a"
-			localApi={{ fetchConnectors, installOrUpdateConnector, uninstallConnector }}
+			localApi={{
+				fetchConnectors,
+				installOrUpdateConnector,
+				uninstallConnector,
+				fetchGitHubStatus: async () => ({
+					install: installed,
+					enabled: true,
+					cliVersion: '2.81.0',
+					hosts: []
+				}),
+				fetchVercelStatus: async () => ({
+					install: installed,
+					version: '50.1.0',
+					account: { state: 'signedOut' }
+				}),
+				updateGitHubSettings: unused,
+				signOutGitHub: unused,
+				signOutVercel: unused,
+				installConnectorCli: unused,
+				fetchConnectorSignIn: unused,
+				startConnectorSignIn: unused,
+				cancelConnectorSignIn: unused
+			}}
 		/>
 	);
 

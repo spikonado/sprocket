@@ -1,20 +1,16 @@
 import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
+import { primaryButtonClass, secondaryButtonClass } from './connector-card-parts';
+import GitHubConnector, { type GitHubApi } from './github-connector';
 import { caughtMessage, useConnectors } from './use-connectors';
+import VercelConnector, { type VercelApi } from './vercel-connector';
 
-type ConnectorsApi = Pick<
-	LocalApi,
-	'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'
->;
+type ConnectorsApi = GitHubApi &
+	VercelApi &
+	Pick<LocalApi, 'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'>;
 
 const logos: Record<ConnectorStatus['id'], string> = { kicad: '/kicad.svg' };
-
-const primaryButtonClass =
-	'bg-primary text-primary-foreground inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] transition hover:opacity-90 disabled:opacity-50';
-
-const secondaryButtonClass =
-	'border-border text-foreground hover:bg-hover-fill inline-flex h-8 items-center rounded-lg border px-3 text-[13px] transition disabled:opacity-50';
 
 export default function SettingsConnectors({
 	userId,
@@ -39,15 +35,19 @@ export default function SettingsConnectors({
 							change them.
 						</p>
 					) : (
-						connectors?.map((connector) => (
-							<ConnectorCard
-								key={connector.id}
-								connector={connector}
-								onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
-								onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
-								onStatus={replace}
-							/>
-						))
+						<>
+							<GitHubConnector userId={userId} localApi={localApi} />
+							<VercelConnector userId={userId} localApi={localApi} />
+							{connectors?.map((connector) => (
+								<ConnectorCard
+									key={connector.id}
+									connector={connector}
+									onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
+									onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
+									onStatus={replace}
+								/>
+							))}
+						</>
 					)}
 
 					{loadError && (

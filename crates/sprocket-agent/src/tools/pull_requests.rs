@@ -84,7 +84,7 @@ async fn link(
         .into_iter()
         .map(|pr| pull_request_ref(&pr.repository, pr.number))
         .collect();
-    let fetched = fetch_states(&context.user_id, &refs).await;
+    let fetched = fetch_states(&refs).await;
     if let Some((host, error)) = fetched.failures.into_iter().next() {
         anyhow::bail!("Reading pull requests from {host} failed: {error}");
     }
@@ -177,26 +177,22 @@ impl rig::tool::Tool for PollPrTool {
         let wait = Duration::from_millis(
             YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
         );
-        let (user_id, poll_args) = (&self.0.user_id, &args);
+        let poll_args = &args;
         execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async move {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(cancelled_error()),
-                result = poll_pr(user_id, poll_args, wait) => result.map_err(tool_error),
+                result = poll_pr(poll_args, wait) => result.map_err(tool_error),
             }
         })
         .await
     }
 }
 
-async fn poll_pr(
-    user_id: &str,
-    args: &PollPrArgs,
-    wait: Duration,
-) -> anyhow::Result<serde_json::Value> {
+async fn poll_pr(args: &PollPrArgs, wait: Duration) -> anyhow::Result<serde_json::Value> {
     let pull_request = pull_request_ref(&args.repository, args.number);
     let mut seen = args.cursor.as_deref().map(decode_cursor).transpose()?;
-    let mut reader = ActivityReader::connect(user_id, &pull_request).await?;
+    let mut reader = ActivityReader::connect(&pull_request).await?;
     let deadline = Instant::now() + wait;
     loop {
         let activity = reader.read().await?;

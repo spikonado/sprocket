@@ -240,23 +240,43 @@ export type ChatGptBrowserLoginStart = {
 	authorizeUrl: string;
 };
 
+export type ToolInstall =
+	{ state: 'installing' } | { state: 'installed' } | { state: 'failed'; error: string };
+
+export type SignInStatus =
+	| { state: 'idle' }
+	| { state: 'starting' }
+	| { state: 'waiting'; url: string; code: string | null }
+	| { state: 'failed'; error: string };
+
+export type SignInTarget = { connector: 'github'; host: string } | { connector: 'vercel' };
+
+export type CliConnector = SignInTarget['connector'];
+
 export type GitHubHostStatus = {
 	host: string;
 	enabled: boolean;
-	hasSavedToken: boolean;
-	source: 'settings' | 'environment' | 'gitHubCli' | null;
+	source: 'environment' | 'gitHubCli' | null;
 	login: string | null;
 	problem: string | null;
 };
 
 export type GitHubStatus = {
+	install: ToolInstall;
 	enabled: boolean;
 	cliVersion: string | null;
-	savedTokensProblem: string | null;
 	hosts: GitHubHostStatus[];
 };
 
 export type RepositoryVisibility = 'public' | 'private';
+export type VercelStatus = {
+	install: ToolInstall;
+	version: string;
+	account:
+		| { state: 'signedOut' }
+		| { state: 'signedIn'; login: string; source: 'cli' | 'environment' }
+		| { state: 'problem'; error: string };
+};
 
 export type GitHubSettingsUpdate = {
 	enabled?: boolean;
@@ -469,6 +489,13 @@ export type LocalApi = {
 		visibility: RepositoryVisibility;
 		parentPath: string;
 	}) => Promise<WorkspacePathResolution>;
+	signOutGitHub: (userId: string, host: string) => Promise<GitHubStatus>;
+	fetchVercelStatus: (userId: string) => Promise<VercelStatus>;
+	signOutVercel: (userId: string) => Promise<VercelStatus>;
+	installConnectorCli: (userId: string, connector: CliConnector) => Promise<ToolInstall>;
+	fetchConnectorSignIn: (userId: string, target: SignInTarget) => Promise<SignInStatus>;
+	startConnectorSignIn: (userId: string, target: SignInTarget) => Promise<SignInStatus>;
+	cancelConnectorSignIn: (userId: string, target: SignInTarget) => Promise<SignInStatus>;
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
 	installOrUpdateConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
