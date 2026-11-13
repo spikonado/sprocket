@@ -274,6 +274,8 @@ export type GitHubStatus = {
 	hosts: GitHubHostStatus[];
 };
 
+export type RepositoryVisibility = 'public' | 'private';
+
 export type GitHubSettingsUpdate = {
 	enabled?: boolean;
 	host?: { host: string; enabled: boolean };
@@ -474,6 +476,17 @@ export type LocalApi = {
 	) => Promise<string | null>;
 	fetchGitHubStatus: (userId: string) => Promise<GitHubStatus>;
 	updateGitHubSettings: (userId: string, update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
+	cloneRepository: (input: {
+		userId: string;
+		source: string;
+		parentPath: string;
+	}) => Promise<WorkspacePathResolution>;
+	createGitHubRepository: (input: {
+		userId: string;
+		name: string;
+		visibility: RepositoryVisibility;
+		parentPath: string;
+	}) => Promise<WorkspacePathResolution>;
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
 	installOrUpdateConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;

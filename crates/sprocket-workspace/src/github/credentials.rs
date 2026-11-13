@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use tokio::process::Command;
 
-use super::{CredentialSource, GitHubError, PUBLIC_HOST, read_settings, saved_tokens};
+use super::{
+    CredentialSource, GitHubError, PUBLIC_HOST, hide_console_window, read_settings, saved_tokens,
+};
 
 const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 const TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
@@ -154,11 +156,7 @@ fn gh_command(args: &[&str]) -> Command {
     for name in TOKEN_VARIABLES {
         command.env_remove(name);
     }
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    hide_console_window(&mut command);
     command
 }
 

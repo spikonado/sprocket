@@ -1,5 +1,5 @@
 import { act, type ComponentProps } from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import ProjectPicker from './project-picker';
@@ -44,25 +44,51 @@ function createLocalApi() {
 		attachmentKey: 'directory:/home/me'
 	}));
 
+	const cloned = {
+		workspacePath: '/home/me/hello',
+		displayName: 'octo/hello',
+		repositoryKey: 'github.com/octo/hello',
+		attachmentKey: 'github.com/octo/hello'
+	};
+
+	const cloneRepository = vi.fn(async () => cloned);
+	const createGitHubRepository = vi.fn(async () => cloned);
+
 	return {
-		localApi: { browseFilesystem, resolveWorkspacePath },
+		localApi: { browseFilesystem, resolveWorkspacePath, cloneRepository, createGitHubRepository },
 		browseFilesystem,
-		resolveWorkspacePath
+		resolveWorkspacePath,
+		cloneRepository,
+		createGitHubRepository
 	};
 }
 
-function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> = {}) {
+type PickerProps = ComponentProps<typeof ProjectPicker>;
+
+function renderPicker({
+	localApi,
+	source = 'Local folder',
+	...overrides
+}: Omit<Partial<PickerProps>, 'localApi'> & {
+	localApi?: Partial<PickerProps['localApi']>;
+	source?: 'Local folder' | 'Clone a repo' | 'New GitHub repo';
+} = {}) {
 	const api = createLocalApi();
 
-	const props: ComponentProps<typeof ProjectPicker> = {
+	const props: PickerProps = {
 		open: true,
-		localApi: api.localApi,
+		localApi: { ...api.localApi, ...localApi },
+		userId: 'user-a',
 		onClose: vi.fn(),
 		onSelect: vi.fn(),
 		...overrides
 	};
 
 	render(<ProjectPicker {...props} />);
+
+	if (props.mode !== 'reconnect') {
+		fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${source}`) }));
+	}
 
 	return { ...api, props };
 }
@@ -436,5 +462,77 @@ describe('ProjectPicker', () => {
 				repositoryKey: 'projects'
 			});
 		});
+	});
+
+	it('clones a repository into the browsed directory', async () => {
+		const user = userEvent.setup();
+		const { cloneRepository, props } = renderPicker({ source: 'Clone a repo' });
+
+		await user.keyboard('octo/hello{Enter}');
+		await waitForDirectories();
+		await user.keyboard('{Control>}{Enter}{/Control}');
+
+		await waitFor(() => {
+			expect(cloneRepository).toHaveBeenCalledWith({
+				userId: 'user-a',
+				source: 'octo/hello',
+				parentPath: '/home/me'
+			});
+			expect(props.onSelect).toHaveBeenCalledWith({
+				workspacePath: '/home/me/hello',
+				displayName: 'octo/hello',
+				repositoryKey: 'github.com/octo/hello'
+			});
+		});
+	});
+
+	it('drops a clone that finishes after the picker closed', async () => {
+		const user = userEvent.setup();
+		let finishClone = () => {};
+
+		const cloneRepository = vi.fn(
+			() =>
+				new Promise<Awaited<ReturnType<PickerProps['localApi']['cloneRepository']>>>((resolve) => {
+					finishClone = () =>
+						resolve({
+							workspacePath: '/home/me/hello',
+							displayName: 'hello',
+							repositoryKey: 'github.com/octo/hello',
+							attachmentKey: 'github.com/octo/hello'
+						});
+				})
+		);
+
+		const { props } = renderPicker({ localApi: { cloneRepository }, source: 'Clone a repo' });
+
+		await user.keyboard('octo/hello{Enter}');
+		await waitForDirectories();
+		await user.keyboard('{Control>}{Enter}{/Control}');
+		await waitFor(() => expect(cloneRepository).toHaveBeenCalled());
+		await user.keyboard('{Escape}');
+		await act(async () => finishClone());
+
+		expect(props.onClose).toHaveBeenCalledTimes(1);
+		expect(props.onSelect).not.toHaveBeenCalled();
+	});
+
+	it('creates a public GitHub repository from its name', async () => {
+		const user = userEvent.setup();
+		const { createGitHubRepository } = renderPicker({ source: 'New GitHub repo' });
+
+		await user.keyboard('hello');
+		await user.click(screen.getByRole('radio', { name: /^Public/ }));
+		await user.click(screen.getByRole('button', { name: 'Choose folder' }));
+		await waitForDirectories();
+		await user.click(document.querySelector('[data-project-submit]')!);
+
+		await waitFor(() =>
+			expect(createGitHubRepository).toHaveBeenCalledWith({
+				userId: 'user-a',
+				name: 'hello',
+				visibility: 'public',
+				parentPath: '/home/me'
+			})
+		);
 	});
 });

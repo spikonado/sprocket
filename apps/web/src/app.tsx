@@ -2853,6 +2853,7 @@ export default function App({
 				<ProjectPicker
 					open={projectPickerOpen}
 					localApi={localApi}
+					userId={signedInUserId ?? null}
 					mode={projectPickerMode}
 					expectedDisplayName={projectPickerExpectedDisplayName}
 					recentProjectPaths={recentProjectDirectories}

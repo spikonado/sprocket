@@ -7,6 +7,17 @@ description: Open project folders, start and manage threads, attach files, menti
 
 A project is a folder on your computer. Open one with **Add project**, which has a path field, a folder browser, and a list of recent folders. You can also open a folder from your terminal with `sprocket path/to/folder`.
 
+### Clone or create a GitHub repository
+
+<Snippet file="unreleased.mdx" />
+
+**Add project** first asks where the project comes from: **Local folder**, **Clone a repo**, or **New GitHub repo**. Local folder goes straight to the folder browser. The GitHub options ask for the repository first, then where to put it:
+
+- **Clone a repo** takes `owner/repo` or any git URL and clones it into a new folder, named after the repository, inside the folder you pick.
+- **New GitHub repo** takes a name and Private or Public. It creates the repository on your github.com account, then clones it the same way.
+
+Both use the GitHub credential from Settings → Version Control. Creating a repository needs a token that can create repositories.
+
 Sprocket identifies a project by its git `origin` remote. Every clone and worktree of the same repository shares one project and one thread list, even on different machines. A repository without an `origin` remote, or a folder outside git, is identified by its folder name, so two such folders with the same name share a project.
 
 <Snippet file="unreleased.mdx" />
