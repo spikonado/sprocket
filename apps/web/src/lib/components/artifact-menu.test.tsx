@@ -33,6 +33,7 @@ function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {
 		onCloseTab: vi.fn(),
 		onUpdateTab: vi.fn(),
 		onDraftChange: vi.fn(),
+		onFileSaved: vi.fn(),
 		onFocusPane: vi.fn(),
 		onSplitPane: vi.fn(),
 		onResizeSplit: vi.fn(),

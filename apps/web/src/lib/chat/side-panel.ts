@@ -7,6 +7,8 @@ export type SidePanelContentView = Exclude<SidePanelView, 'transcript'>;
 
 export type FileDraft = { doc: Text; base: Text; version: string };
 
+export type FileSave = Pick<FileDraft, 'doc' | 'version'>;
+
 export type SidePanelTab = {
 	id: string;
 	view: SidePanelView | null;
@@ -14,6 +16,7 @@ export type SidePanelTab = {
 	file?: WorkspaceFileTarget;
 	directory?: WorkspaceFileTarget;
 	draft?: FileDraft;
+	saved?: FileSave;
 };
 
 export function trimSlash(path: string) {

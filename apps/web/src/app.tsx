@@ -2657,6 +2657,7 @@ export default function App({
 								onCloseTab={(id) => artifactPanel.closeTab(id)}
 								onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
 								onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
+								onFileSaved={(id, doc, version) => artifactPanel.fileSaved(id, doc, version)}
 								onFocusPane={(id) => artifactPanel.focusPane(id)}
 								onSplitPane={(id, direction) => artifactPanel.splitPane(id, direction)}
 								onResizeSplit={(id, ratio) => artifactPanel.resizeSplit(id, ratio)}

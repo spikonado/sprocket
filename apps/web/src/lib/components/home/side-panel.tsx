@@ -23,6 +23,7 @@ import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
 import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
 import type { SidePanelTabPatch } from '$lib/home/artifact-panel';
+import type { Text } from '@codemirror/state';
 import {
 	layoutRects,
 	leafName,
@@ -55,6 +56,7 @@ type Props = {
 	onCloseTab: (id: string) => void;
 	onUpdateTab: (id: string, patch: SidePanelTabPatch) => void;
 	onDraftChange: (id: string, draft: FileDraft | undefined) => void;
+	onFileSaved: (id: string, doc: Text, version: string) => void;
 	onFocusPane: (id: string) => void;
 	onSplitPane: (id: string, direction: SplitDirection) => void;
 	onResizeSplit: (id: string, ratio: number) => void;
@@ -238,6 +240,7 @@ function Pane({
 	onActivateTab,
 	onUpdateTab,
 	onDraftChange,
+	onFileSaved,
 	onFocusPane,
 	onOpenFile,
 	onFileRenamed,
@@ -446,8 +449,10 @@ function Pane({
 							api={filesApi}
 							file={tab.file}
 							initialDraft={tab.draft}
+							saved={tab.saved}
 							active={tab.id === activeTabId}
 							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
+							onSaved={(doc, version) => onFileSaved(tab.id, doc, version)}
 						/>
 					) : (
 						<ArtifactsView

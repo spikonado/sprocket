@@ -26,6 +26,7 @@ function Harness() {
 			onCloseTab={(id) => panel.closeTab(id)}
 			onUpdateTab={(id, patch) => panel.updateTab(id, patch)}
 			onDraftChange={(id, draft) => panel.setFileDraft(id, draft)}
+			onFileSaved={(id, doc, version) => panel.fileSaved(id, doc, version)}
 			onFocusPane={(id) => panel.focusPane(id)}
 			onSplitPane={(id, direction) => panel.splitPane(id, direction)}
 			onResizeSplit={(id, ratio) => panel.resizeSplit(id, ratio)}

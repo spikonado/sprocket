@@ -226,6 +226,26 @@ it('keeps file renames and deletions consistent across thread layouts', () => {
 	expect(panel.hasFileDrafts).toBe(false);
 });
 
+it('applies a late save to the latest draft without replacing newer edits', () => {
+	const panel = new ArtifactPanel();
+	const doc = Text.of(['saving']);
+	const newer = Text.of(['saving and editing']);
+	panel.selectScope(scope('robot'), 'thread-a');
+	panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
+	const id = panel.activeTab.id;
+	panel.setFileDraft(id, { doc, base: Text.of(['saved']), version: 'v1' });
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.selectScope(scope('robot'), 'thread-a');
+	panel.setFileDraft(id, { doc: newer, base: Text.of(['saved']), version: 'v1' });
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.fileSaved(id, doc, 'v2');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.draft).toEqual({ doc: newer, base: doc, version: 'v2' });
+	expect(panel.activeTab.saved).toEqual({ doc, version: 'v2' });
+	panel.fileSaved(id, newer, 'v3');
+	expect(panel.hasFileDrafts).toBe(false);
+});
+
 it('tells the desktop app when unsaved file edits appear and go away', () => {
 	const setUnsavedChanges = vi.fn<(value: boolean) => Promise<void>>(async () => {});
 

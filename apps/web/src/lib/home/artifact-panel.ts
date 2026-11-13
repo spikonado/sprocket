@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { Text } from '@codemirror/state';
 import { artifactWatchScopeKey } from '$lib/chat/artifacts';
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
@@ -246,6 +247,20 @@ export class ArtifactPanel implements Store<number> {
 		);
 
 		if (changed) this.#emit();
+	}
+
+	fileSaved(id: string, doc: Text, version: string) {
+		this.#mapLayouts((snapshot) =>
+			mapTabs(snapshot, (tab) => {
+				if (tab.id !== id) return tab;
+
+				const draft =
+					!tab.draft || tab.draft.doc.eq(doc) ? undefined : { ...tab.draft, base: doc, version };
+
+				return { ...tab, draft, saved: { doc, version } };
+			})
+		);
+		this.#emit();
 	}
 
 	closeTab(id: string) {
