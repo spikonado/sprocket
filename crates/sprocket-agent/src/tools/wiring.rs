@@ -16,7 +16,7 @@ pub(super) async fn add_wiring_issues(
     path: &str,
     output: &mut Value,
 ) {
-    if !path.ends_with(".wiring.json") {
+    if !path.to_ascii_lowercase().ends_with(".wiring.json") {
         return;
     }
     let check = async {

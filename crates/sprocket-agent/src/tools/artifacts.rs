@@ -336,10 +336,11 @@ impl rig::tool::Tool for SaveArtifactTool {
             binding.local_path = save_new_file(&self.0.workspace_root, &path, &artifact.content)
                 .await
                 .map_err(tool_error)?;
-            let output = bound_artifact(&self.0, &artifact.id, &binding.local_path);
+            let saved_path = absolute_path(&self.0.workspace_root, &binding.local_path);
             bindings.bind(binding).map_err(tool_error)?;
             bindings.persist().await.map_err(tool_error)?;
-            Ok(output)
+            drop(bindings);
+            register_file(&self.0, cancellation, &saved_path, Some(artifact.id)).await
         })
         .await
     }
