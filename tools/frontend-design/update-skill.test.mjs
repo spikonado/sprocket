@@ -45,7 +45,11 @@ test('updates both vendored files and their attribution from one upstream commit
 	assert.equal(await readFile(join(directory, 'LICENSE.txt'), 'utf8'), '\n   New license\n');
 	const notices = await readFile(join(root, 'THIRD_PARTY_NOTICES.md'), 'utf8');
 	assert.match(notices, /at commit `new-commit`/);
-	assert.match(notices, /```text\n {3}New license\n```/);
+	assert.ok(
+		notices.includes(
+			'[Apache-2.0](https://github.com/anthropics/skills/blob/new-commit/skills/frontend-design/LICENSE.txt).'
+		)
+	);
 	assert.ok(notices.endsWith('## Other tool\n\nKeep me.\n'));
 	await updateSkill(root, upstream('new skill\n', '\n   New license\n'));
 	assert.equal(await readFile(join(root, 'THIRD_PARTY_NOTICES.md'), 'utf8'), notices);

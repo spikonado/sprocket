@@ -33,7 +33,6 @@ export async function updateSkill(root, request = fetch) {
 
 	const files = await Promise.all(
 		['SKILL.md', 'LICENSE.txt'].map(async (name) => ({
-			name,
 			path: join(directory, name),
 			contents: await (await fetchOk(`${raw}/${name}`)).text(),
 			previous: await readFile(join(directory, name), 'utf8')
@@ -54,19 +53,12 @@ export async function updateSkill(root, request = fetch) {
 		throw new Error('Frontend design skill section is missing from THIRD_PARTY_NOTICES.md');
 	}
 
-	const license = files.find(({ name }) => name === 'LICENSE.txt').contents;
-
 	const replacement = `## Frontend design skill
 
 Sprocket bundles the unmodified \`frontend-design\` skill from
 [${repository}](${source}/tree/${sha}/${skillPath}),
 at commit \`${sha}\`, under
 [Apache-2.0](${source}/blob/${sha}/${skillPath}/LICENSE.txt).
-Its license:
-
-\`\`\`text
-${license.replace(/^\n/, '').trimEnd()}
-\`\`\`
 
 `;
 
