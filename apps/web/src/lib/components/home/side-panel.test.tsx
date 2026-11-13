@@ -40,9 +40,7 @@ function Harness() {
 
 it('keeps each tab open with its own view and switches between them', () => {
 	render(<Harness />);
-	expect(screen.getByRole('tabpanel', { name: 'Transcript' }).textContent).toBe(
-		'Thread transcript'
-	);
+	expect(screen.getByRole('tabpanel', { name: 'Thread' }).textContent).toBe('Thread transcript');
 
 	fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Artifacts' }));
@@ -53,7 +51,7 @@ it('keeps each tab open with its own view and switches between them', () => {
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
 	expect(document.activeElement).toBe(screen.getByRole('tabpanel', { name: 'Browser' }));
 	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-		'Transcript',
+		'Thread',
 		'Notes',
 		'Browser'
 	]);
@@ -66,18 +64,15 @@ it('keeps each tab open with its own view and switches between them', () => {
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Notes' }), { key: 'ArrowRight' });
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), { key: 'ArrowRight' });
-	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Transcript' }));
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Thread' }));
 
 	fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Close Notes tab' }));
 	fireEvent(
-		screen.getByRole('tab', { name: 'Transcript' }),
+		screen.getByRole('tab', { name: 'Thread' }),
 		new MouseEvent('auxclick', { bubbles: true, button: 1 })
 	);
-	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-		'Transcript',
-		'Browser'
-	]);
+	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Thread', 'Browser']);
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
 });
 
@@ -101,6 +96,6 @@ it('splits panes right and down, each with its own tabs, and closes empty panes'
 	fireEvent.click(screen.getByRole('button', { name: 'Close Browser tab' }));
 	expect(screen.getAllByRole('tablist')).toHaveLength(1);
 	expect(screen.queryByRole('separator')).toBeNull();
-	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Transcript']);
-	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Transcript' }));
+	expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Thread']);
+	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Thread' }));
 });

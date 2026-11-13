@@ -91,7 +91,7 @@ function tabIndexForKey(key: string, index: number, count: number) {
 }
 
 function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
-	if (tab.view === 'transcript') return { label: 'Transcript', icon: MessageSquare };
+	if (tab.view === 'transcript') return { label: 'Thread', icon: MessageSquare };
 
 	const artifact =
 		tab.view === 'artifacts' ? artifacts.find((item) => item.key === tab.selectedKey) : undefined;

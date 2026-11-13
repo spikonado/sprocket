@@ -265,6 +265,17 @@ function loadErrorMessage(error: Error, fallback: string) {
 	return convexClientErrorMessage(error) || fallback;
 }
 
+function ThreadWorkspace({
+	threadId,
+	...props
+}: ComponentProps<typeof SidePanel> & { threadId: Id<'threadRecords'> | null }) {
+	return threadId ? (
+		<SidePanel {...props} />
+	) : (
+		<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{props.transcript}</div>
+	);
+}
+
 export default function App({
 	config,
 	runtime = productionAppRuntime
@@ -2639,8 +2650,9 @@ export default function App({
 						)
 					) : (
 						<MarkdownFileLinksContext value={markdownFileLinks}>
-							<SidePanel
+							<ThreadWorkspace
 								key={artifactPanel.layoutKey}
+								threadId={currentThreadId}
 								workspacePath={localApi ? currentProject?.workspacePath : undefined}
 								threadCwd={threadCwd}
 								artifacts={artifactList.artifacts}

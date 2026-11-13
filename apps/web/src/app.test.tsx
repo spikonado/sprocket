@@ -477,6 +477,9 @@ it('keeps an unavailable project listed when removal fails and allows retry', as
 
 it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
 	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		threadRecord('thread-1', 'repo-alpha', 'Alpha thread')
+	]);
 
 	client.registerPaginatedQuery(api.artifacts.listArtifactMetadata, [
 		{ _id: fixtureId<'artifacts'>('artifact-a'), title: 'Artifact notes' }
@@ -499,6 +502,7 @@ it('deletes an attached project artifact through the local server and keeps fail
 		)
 	);
 	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Alpha thread'));
 	fireEvent.click(await screen.findByRole('button', { name: 'New tab' }));
 	fireEvent.click(await screen.findByRole('button', { name: 'Artifacts' }));
 	fireEvent.contextMenu(await screen.findByText('Artifact notes'));
@@ -517,6 +521,9 @@ it('deletes an attached project artifact through the local server and keeps fail
 
 it('shows live artifact content in a workspace tab and returns to the list once it is deleted', async () => {
 	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		threadRecord('thread-1', 'repo-alpha', 'Alpha thread')
+	]);
 
 	const metadata = { _id: fixtureId<'artifacts'>('artifact-a'), title: 'Artifact notes' };
 
@@ -547,6 +554,7 @@ it('shows live artifact content in a workspace tab and returns to the list once 
 		)
 	);
 	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Alpha thread'));
 	fireEvent.click(await screen.findByRole('button', { name: 'New tab' }));
 	fireEvent.click(await screen.findByRole('button', { name: 'Artifacts' }));
 	fireEvent.click(await screen.findByText('Artifact notes'));
@@ -561,7 +569,12 @@ it('shows live artifact content in a workspace tab and returns to the list once 
 	await screen.findByText('No artifacts yet.');
 });
 
-it('opens the managed browser dashboard without a thread and keeps it mounted when splitting', async () => {
+it('opens the managed browser dashboard in a thread and keeps it mounted when splitting', async () => {
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		threadRecord('thread-1', 'repo-alpha', 'Alpha thread')
+	]);
+
 	const ensureBrowser = vi.fn<LocalApi['ensureBrowser']>(async () => ({
 		state: 'ready',
 		error: null
@@ -572,8 +585,9 @@ it('opens the managed browser dashboard without a thread and keeps it mounted wh
 		ensureBrowser
 	});
 
-	await renderApp(createConvexFixtures(), createRuntime(localApi));
+	await renderApp(client, createRuntime(localApi));
 	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Alpha thread'));
 	fireEvent.click(await screen.findByRole('button', { name: 'New tab' }));
 	expect(ensureBrowser).not.toHaveBeenCalled();
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
@@ -602,6 +616,9 @@ it('restores each thread workspace when switching between threads in one project
 		)
 	);
 	await projectTrigger('Alpha');
+	expect(screen.getByRole('textbox')).toBeTruthy();
+	expect(screen.queryByRole('tablist')).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Split right' })).toBeNull();
 	fireEvent.click(await screen.findByText('First workspace'));
 	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Artifacts' }));
@@ -609,9 +626,7 @@ it('restores each thread workspace when switching between threads in one project
 
 	fireEvent.click(screen.getByText('Second workspace'));
 	expect(screen.getAllByRole('tab')).toHaveLength(1);
-	expect(screen.getByRole('tab', { name: 'Transcript' }).getAttribute('aria-selected')).toBe(
-		'true'
-	);
+	expect(screen.getByRole('tab', { name: 'Thread' }).getAttribute('aria-selected')).toBe('true');
 	fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Files' }));
 
@@ -621,6 +636,13 @@ it('restores each thread workspace when switching between threads in one project
 	fireEvent.click(screen.getByText('Second workspace'));
 	expect(screen.getAllByRole('tablist')).toHaveLength(1);
 	expect(screen.getByRole('tab', { name: 'Files' }).getAttribute('aria-selected')).toBe('true');
+
+	fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+	expect(screen.getByRole('textbox')).toBeTruthy();
+	expect(screen.queryByRole('tablist')).toBeNull();
+	fireEvent.click(screen.getByText('First workspace'));
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
+	expect(screen.getByRole('tab', { name: 'Artifacts' }).getAttribute('aria-selected')).toBe('true');
 });
 
 it('shares local message recency across the project menus and recent directories', async () => {
