@@ -38,6 +38,15 @@ function stubVaultFetch(entries: Map<string, VaultEntry>) {
 			return Response.json(entry);
 		}
 
+		if (init?.method === 'DELETE') {
+			const id = decodeURIComponent(url.pathname.slice('/vault/v1/kv/'.length));
+			const entry = [...entries.values()].find((candidate) => candidate.id === id);
+
+			if (entry) entries.delete(entry.name);
+
+			return new Response(null, { status: entry ? 200 : 404 });
+		}
+
 		return new Response(null, { status: 405 });
 	});
 }
@@ -285,7 +294,7 @@ describe('provider credentials', () => {
 		);
 	}, 30_000);
 
-	it('reports saved API keys', async () => {
+	it('reports saved API keys and keeps the provider order in sync', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
 		vi.stubGlobal('fetch', async () => new Response(null, { status: 404 }));
@@ -316,5 +325,16 @@ describe('provider credentials', () => {
 			opencodeGo: false,
 			morph: false
 		});
+		expect(await asUser.query(api.uiPreferences.getMyProviderOrder, {})).toEqual([
+			{ provider: 'spikonado', enabled: true },
+			{ provider: 'openai', enabled: true },
+			{ provider: 'openrouter', enabled: true }
+		]);
+
+		await asUser.action(api.providerCredentials.removeApiKey, { provider: 'openai' });
+		expect(await asUser.query(api.uiPreferences.getMyProviderOrder, {})).toEqual([
+			{ provider: 'spikonado', enabled: true },
+			{ provider: 'openrouter', enabled: true }
+		]);
 	});
 });

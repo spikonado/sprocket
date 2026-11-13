@@ -1,9 +1,5 @@
 import { v, type Infer } from 'convex/values';
-import {
-	completionProviderIds,
-	vCompletionProvider,
-	type CompletionProvider
-} from '@convex/lib/validators';
+import { vCompletionProvider, type CompletionProvider } from '@convex/lib/validators';
 
 export const vProviderOrderEntry = v.object({
 	provider: vCompletionProvider,
@@ -19,20 +15,38 @@ export const releasedClientProviders: readonly CompletionProvider[] = [
 	'chatgpt'
 ];
 
-export const defaultProviderOrder: readonly ProviderOrderEntry[] = completionProviderIds.map(
-	(provider) => ({ provider, enabled: provider === 'spikonado' })
-);
+export const builtInProvider: CompletionProvider = 'spikonado';
+
+export const defaultProviderOrder: readonly ProviderOrderEntry[] = [
+	{ provider: builtInProvider, enabled: true }
+];
 
 export function resolveProviderOrder(
 	saved: readonly ProviderOrderEntry[] | undefined
 ): ProviderOrderEntry[] {
-	const order = [...(saved ?? [])];
+	return [...(saved ?? defaultProviderOrder)];
+}
 
-	for (const entry of defaultProviderOrder) {
-		if (!order.some((other) => other.provider === entry.provider)) order.push({ ...entry });
+export function withProviderEnabled(
+	order: readonly ProviderOrderEntry[],
+	provider: CompletionProvider
+): ProviderOrderEntry[] {
+	if (!order.some((entry) => entry.provider === provider)) {
+		return [...order, { provider, enabled: true }];
 	}
 
-	return order;
+	return order.map((entry) => (entry.provider === provider ? { ...entry, enabled: true } : entry));
+}
+
+export function withoutProvider(
+	order: readonly ProviderOrderEntry[],
+	provider: CompletionProvider
+): ProviderOrderEntry[] {
+	const remaining = order.filter((entry) => entry.provider !== provider);
+
+	return remaining.some((entry) => entry.enabled)
+		? remaining
+		: withProviderEnabled(remaining, builtInProvider);
 }
 
 export function enabledProviders(
@@ -47,7 +61,13 @@ export function enabledProviders(
 export function assertValidProviderOrder(order: readonly ProviderOrderEntry[]) {
 	const providers = new Set(order.map((entry) => entry.provider));
 
-	if (providers.size !== order.length || !order.some((entry) => entry.enabled)) {
-		throw new Error('Provider order must list each provider once with at least one enabled.');
+	if (
+		providers.size !== order.length ||
+		!providers.has(builtInProvider) ||
+		!order.some((entry) => entry.enabled)
+	) {
+		throw new Error(
+			'Provider order must list each provider once, include Spikonado, and have at least one enabled.'
+		);
 	}
 }

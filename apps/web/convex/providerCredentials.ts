@@ -1,5 +1,5 @@
 import { action, internalQuery, type ActionCtx } from '@convex/_generated/server';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { ConvexError, v, type ObjectType } from 'convex/values';
 import { getExecutionRun } from '@convex/lib/auth';
 import { runAcceptsNewWork } from '@convex/lib/runLease';
@@ -145,12 +145,14 @@ async function saveApiKeyHandler(ctx: ActionCtx, provider: ApiKeyProvider, rawAp
 	}
 
 	await storeVaultObject(name, apiKey);
+	await ctx.runMutation(api.uiPreferences.enableProvider, { provider });
 
 	return null;
 }
 
-async function removeApiKeyHandler(ctx: ActionCtx, provider: ApiKeyProvider) {
+async function removeCredential(ctx: ActionCtx, provider: CredentialProvider) {
 	await deleteVaultObject(await userCredentialName(ctx, provider));
+	await ctx.runMutation(api.uiPreferences.removeProvider, { provider });
 
 	return null;
 }
@@ -164,7 +166,7 @@ export const saveApiKey = action({
 export const removeApiKey = action({
 	args: { provider: vApiKeyProvider },
 	returns: v.null(),
-	handler: (ctx, args) => removeApiKeyHandler(ctx, args.provider)
+	handler: (ctx, args) => removeCredential(ctx, args.provider)
 });
 
 export const saveOpenAiKey = action({
@@ -176,7 +178,7 @@ export const saveOpenAiKey = action({
 export const removeOpenAiKey = action({
 	args: {},
 	returns: v.null(),
-	handler: (ctx) => removeApiKeyHandler(ctx, 'openai')
+	handler: (ctx) => removeCredential(ctx, 'openai')
 });
 
 export const saveClaudeToken = action({
@@ -191,6 +193,7 @@ export const saveClaudeToken = action({
 		}
 
 		await storeVaultObject(name, token);
+		await ctx.runMutation(api.uiPreferences.enableProvider, { provider: 'claude' });
 
 		return null;
 	}
@@ -199,11 +202,7 @@ export const saveClaudeToken = action({
 export const removeClaudeToken = action({
 	args: {},
 	returns: v.null(),
-	handler: async (ctx) => {
-		await deleteVaultObject(await userCredentialName(ctx, 'claude'));
-
-		return null;
-	}
+	handler: (ctx) => removeCredential(ctx, 'claude')
 });
 
 const runCredentialArgs = {

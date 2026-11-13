@@ -83,6 +83,24 @@ describe('theme preferences', () => {
 		).toEqual(['chatgpt', 'openai', 'anthropic']);
 	});
 
+	it('removes providers and falls back to Spikonado when none stay enabled', async () => {
+		const alice = initConvexTest().withIdentity({ subject: 'alice' });
+		await alice.mutation(api.uiPreferences.setProviderOrder, {
+			providerOrder: [
+				{ provider: 'chatgpt', enabled: true },
+				{ provider: 'spikonado', enabled: false }
+			]
+		});
+
+		await alice.mutation(api.uiPreferences.removeProvider, { provider: 'chatgpt' });
+		expect(await alice.query(api.uiPreferences.getMyProviderOrder, {})).toEqual([
+			{ provider: 'spikonado', enabled: true }
+		]);
+		await expect(
+			alice.mutation(api.uiPreferences.removeProvider, { provider: 'spikonado' })
+		).rejects.toThrow('Spikonado cannot be removed');
+	});
+
 	it('rejects a provider order that disables every provider', async () => {
 		const alice = initConvexTest().withIdentity({ subject: 'alice' });
 
