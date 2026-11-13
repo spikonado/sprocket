@@ -1,4 +1,4 @@
-import { Check, Zap } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useState, type RefObject } from 'react';
 import {
 	type CatalogModel,
@@ -38,7 +38,6 @@ export default function MobileModelSelector({
 	const [draftEffort, setDraftEffort] = useState(reasoningEffort);
 	const [draftTier, setDraftTier] = useState(serviceTier);
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
-	const fastAvailable = model?.supportsFastMode;
 	const directOpenAIByok = Boolean(model && isDirectOpenAIByok(model));
 	const tiers = model ? availableServiceTiers(model, directOpenAIByok) : [];
 	const resolvedTier = normalizeServiceTier(draftTier, model, directOpenAIByok);
@@ -125,35 +124,8 @@ export default function MobileModelSelector({
 					</div>
 				</div>
 			) : null}
-			{tiers.includes('ultrafast') ? (
+			{tiers.length > 1 ? (
 				<ServiceTierOptions tiers={tiers} value={resolvedTier} onChange={setDraftTier} />
-			) : fastAvailable ? (
-				<button
-					type="button"
-					role="switch"
-					aria-checked={resolvedTier === 'fast'}
-					aria-label="Fast mode"
-					data-ph-capture-attribute-action="toggle_fast_mode"
-					className="focus-visible:ring-ring flex min-h-14 w-full items-center gap-3 border-t border-[var(--hairline)] px-1 py-4 text-left outline-none focus-visible:ring-2"
-					onClick={() => setDraftTier(resolvedTier === 'fast' ? 'standard' : 'fast')}
-				>
-					<Zap className="size-5 shrink-0 text-amber-500" />
-					<span className="flex-1 text-sm font-semibold">Fast mode</span>
-					<span
-						className={cn(
-							'inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5',
-							resolvedTier === 'fast' ? 'bg-accent-strong' : 'bg-hover-fill-strong'
-						)}
-						aria-hidden="true"
-					>
-						<span
-							className={cn(
-								'bg-background size-5 rounded-full transition-transform',
-								resolvedTier === 'fast' && 'translate-x-5'
-							)}
-						/>
-					</span>
-				</button>
 			) : null}
 		</MobileSelectorSheet>
 	);

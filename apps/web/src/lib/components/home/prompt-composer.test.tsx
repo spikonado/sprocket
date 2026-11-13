@@ -730,7 +730,7 @@ describe('PromptComposer mobile selectors', () => {
 
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		const sheet = screen.getByRole('dialog', { name: 'Model settings' });
-		await click(within(sheet).getByRole('button', { name: 'Ultrafast' }));
+		await click(within(sheet).getByRole('switch', { name: 'Ultrafast mode' }));
 		expect(props.onServiceTierChange).not.toHaveBeenCalled();
 		await click(within(sheet).getByRole('button', { name: 'Done' }));
 		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('ultrafast');
@@ -868,6 +868,8 @@ describe('PromptComposer model selection', () => {
 		await pressKey(document.activeElement!, { key: 'ArrowRight' });
 		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Medium (default)' }));
 		await pressKey(document.activeElement!, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(screen.getByRole('switch', { name: 'Fast mode' }));
+		await pressKey(document.activeElement!, { key: 'ArrowDown' });
 		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Low' }));
 	});
 
@@ -930,7 +932,7 @@ describe('PromptComposer model selection', () => {
 
 			if (supportsFastMode) {
 				fireEvent.mouseEnter(within(menu).getByRole('button', { name: 'Model One' }));
-				await click(within(menu).getByRole('switch', { name: 'Fast' }));
+				await click(within(menu).getByRole('switch', { name: 'Fast mode' }));
 				expect(trigger.textContent).toBe('Model One · Fast');
 			} else {
 				expect(within(menu).getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
@@ -976,7 +978,7 @@ describe('PromptComposer model selection', () => {
 });
 
 describe('PromptComposer Fast mode', () => {
-	it('offers explicit speed choices for OpenAI BYOK and resets when the provider changes', async () => {
+	it('offers exclusive speed toggles below reasoning and resets when the provider changes', async () => {
 		const { props, rerender } = renderComposer({
 			modelCatalog: ultrafastCatalog,
 			selectedModel: 'model-one',
@@ -987,18 +989,24 @@ describe('PromptComposer Fast mode', () => {
 
 		const trigger = screen.getByRole('button', { name: 'Select model' });
 		await click(trigger);
+		const settings = screen.getByRole('group', { name: 'Reasoning for Model One' });
 		const speeds = screen.getByRole('group', { name: 'Speed' });
-		expect(
-			within(speeds)
-				.getAllByRole('button')
-				.map((button) => button.textContent)
-		).toEqual(['Standard', 'Fast', 'Ultrafast']);
-		await click(within(speeds).getByRole('button', { name: 'Ultrafast' }));
+		expect(settings.lastElementChild).toBe(speeds);
+		const fast = within(speeds).getByRole('switch', { name: 'Fast mode' });
+		const ultrafast = within(speeds).getByRole('switch', { name: 'Ultrafast mode' });
+		await click(fast);
+		expect(fast.getAttribute('aria-checked')).toBe('true');
+		await click(ultrafast);
+		expect(fast.getAttribute('aria-checked')).toBe('false');
+		expect(ultrafast.getAttribute('aria-checked')).toBe('true');
 		expect(trigger.title).toBe('Model One · Medium · Ultrafast');
 		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('ultrafast');
+		await click(ultrafast);
+		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('standard');
+		await click(ultrafast);
 		rerender({ ...props, isDirectOpenAIByok: () => false });
 		expect(props.onServiceTierChange).toHaveBeenLastCalledWith('standard');
-		expect(screen.getByRole('switch', { name: 'Fast' })).toBeTruthy();
+		expect(screen.getByRole('switch', { name: 'Fast mode' })).toBeTruthy();
 	});
 
 	it('offers and toggles Fast for a supported model', async () => {
@@ -1013,9 +1021,7 @@ describe('PromptComposer Fast mode', () => {
 		const trigger = screen.getByRole('button', { name: 'Select model' });
 		await click(trigger);
 		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model One' }));
-		const toggle = screen.getByRole('switch', { name: 'Fast' });
-		const models = screen.getByRole('group', { name: 'Models' });
-		expect(models.nextElementSibling).toBe(toggle.parentElement);
+		const toggle = screen.getByRole('switch', { name: 'Fast mode' });
 		expect(toggle.getAttribute('aria-checked')).toBe('false');
 		await click(toggle);
 		expect(onServiceTierChange).toHaveBeenCalledWith('fast');
@@ -1023,21 +1029,29 @@ describe('PromptComposer Fast mode', () => {
 		expect(trigger.textContent).toBe('Model One · Medium · Fast');
 	});
 
-	it('toggles speed without selecting the hovered model', async () => {
+	it('applies speed to the previewed model even without reasoning options', async () => {
 		const onSelectedModelChange = vi.fn();
 		renderComposer({
-			modelCatalog,
+			modelCatalog: {
+				...modelCatalog,
+				models: modelCatalog.models.map((model) => ({
+					...model,
+					supportsFastMode: true,
+					reasoningEfforts: ['none'],
+					defaultReasoningEffort: 'none'
+				}))
+			},
 			selectedModel: 'model-one',
 			selectedReasoningEffort: 'medium',
 			onSelectedModelChange
 		});
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model Two' }));
-		await click(screen.getByRole('switch', { name: 'Fast' }));
+		await click(screen.getByRole('switch', { name: 'Fast mode' }));
 		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
-			'Model One · Medium · Fast'
+			'Model Two · Fast'
 		);
-		expect(onSelectedModelChange).not.toHaveBeenCalled();
+		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
 	});
 
 	it('turns Fast off only when the model does not support it', async () => {

@@ -1023,7 +1023,7 @@ it('submits Ultrafast and restores the prompt, speed, and error when an agent la
 	await projectTrigger('Alpha');
 	await waitFor(() => expect(listProjectAttachments).toHaveBeenCalledTimes(3));
 	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
-	fireEvent.click(await screen.findByRole('button', { name: 'Ultrafast' }));
+	fireEvent.click(await screen.findByRole('switch', { name: 'Ultrafast mode' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
 	const composer = screen.getByRole('combobox');
 	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
