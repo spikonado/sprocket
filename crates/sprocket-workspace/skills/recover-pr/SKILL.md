@@ -1,7 +1,7 @@
 ---
 name: recover-pr
-description: Bring old/outdated pull requests up to date
+description: Bring an outdated pull request up to date
 disable-model-invocation: true
 ---
 
-Rebase the PR the user names on the latest default branch and resolve any conflicts. Then explain its implementation to the user and run /cleanup on it.
+Rebase the PR the user names onto the latest default branch and resolve its conflicts. Then explain its implementation to the user and run `/cleanup` on it.
