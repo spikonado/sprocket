@@ -19,7 +19,7 @@ An agent can stop and ask the user something. A question from `ask_question` tak
 
 Precondition: an open thread, and the dev `tiers` table has rows, as in [threads.md](./threads.md). Run every step in that one thread.
 
-- **Ask.** Send `Use ask_question to ask me "Pick one" with options A and B, then reply with my answer.` Poll plain `snapshot` until `group "Agent question"` appears, within about 30 s. It holds the text `Pick one`, `button "Collapse question" [expanded=true]` and `list "Answer options"` with `button "A"`, `button "B"` and `button "Let me (the agent) decide"`. The combobox is renamed `combobox "Add detail, or type a custom answer"`, `button "Skip question"` replaces `Send message`, and `button "Attach files"` and `button "Select model"` are `[disabled]`.
+- **Ask.** Send `Use ask_question to ask me "Pick one" with options A and B, then reply with my answer.` Poll plain `snapshot` until `group "Agent question"` appears, within about 30 s. It holds the text `Pick one`, `button "Collapse question" [expanded=true]` and one button per option plus `button "Let me (the agent) decide"`. `button "Skip question"` replaces `Send message`, and `button "Attach files"` and `button "Select model"` are `[disabled]`.
 - **Inbox.** The thread's `group` in `region "Unsettled"` shows `Needs input` next to the project name.
 - **Answer.** Click `button "A"`. Its `aria-pressed` is `true` and `button "Send answer"` replaces `Skip question`. Click `Send answer`. The question leaves the composer, the row drops `Needs input`, `Conversation history` shows `button "Asked 1 question" [expanded=false]`, and the reply names A.
 - **Skip.** Send `Ask the same question again with ask_question, then reply skipped if I skip it.` and click `button "Skip question"`. The question leaves the composer and the reply is `skipped`.
@@ -29,4 +29,4 @@ Precondition: an open thread, and the dev `tiers` table has rows, as in [threads
 
 - Each ask costs model quota and a full run. Keep the three asks short.
 - A question that is still pending when its run ends starts collapsed.
-- `purchase-approve` is unreachable on dev. It needs a pending Agentcard purchase from `card_checkout`, and billing and checkout fail on dev (Known limits in `SKILL.md`). `purchase-approvals.tsx` renders it as a `status` in the composer's `region "Conversation notices"`.
+- `purchase-approve` is unreachable on dev. It needs a pending Agentcard purchase from `card_checkout`, and billing and checkout fail on dev (Known limits in `SKILL.md`).

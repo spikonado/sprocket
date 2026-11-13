@@ -40,5 +40,4 @@ Precondition: the side panel shows `tab "Files" [selected]`, as in [side-panel.m
 
 - An edited tab's accessible name gains ` Unsaved changes`. Match on `tab "README.md` without the closing quote while it is dirty.
 - Clicking the row of a file that already has a tab selects that tab instead of the Files tab. Click `tab "Files"` before the next tree action.
-- `agent-browser get box` prints float `x`/`y`/`width`/`height`. Round the center to integers before `mouse move`; floats fail with "Missing arguments".
 - On the new-thread screen, and on a thread whose cwd is the project, there is no `group "Files root"`. `button "Thread"` / `button "Project"` show only when `threadCwd` and the project path both exist and differ.
