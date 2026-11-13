@@ -6,6 +6,8 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ModelReasoningOptions from './model-reasoning-options';
+import { availableServiceTiers, serviceTierLabel, type ServiceTier } from '$lib/chat/service-tier';
+import ServiceTierOptions from './service-tier-options';
 import MobileModelSelector from './mobile-model-selector';
 import { useMobileSelector } from './ui/use-mobile-selector';
 import ProviderLogo from './provider-logo';
@@ -16,18 +18,20 @@ export default function ModelSelector({
 	models,
 	modelId,
 	reasoningEffort,
-	fastMode,
+	serviceTier,
+	isDirectOpenAIByok,
 	disabled,
 	onSelect,
-	onFastModeChange
+	onServiceTierChange
 }: {
 	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
-	fastMode: boolean;
+	serviceTier: ServiceTier;
+	isDirectOpenAIByok: (model: CatalogModel) => boolean;
 	disabled: boolean;
 	onSelect: (modelId: string, effort: string) => void;
-	onFastModeChange?: (fastMode: boolean) => void;
+	onServiceTierChange?: (tier: ServiceTier) => void;
 }) {
 	const [isOpen, setIsOpen] = useState(false);
 	const mobile = useMobileSelector();
@@ -43,13 +47,19 @@ export default function ModelSelector({
 	const selectedModel = models.find((model) => model.id === modelId);
 	const fastModeAvailable = selectedModel?.supportsFastMode;
 
+	const tiers: readonly ServiceTier[] = selectedModel
+		? availableServiceTiers(selectedModel, isDirectOpenAIByok(selectedModel))
+		: ['standard'];
+
+	const ultrafastAvailable = tiers.includes('ultrafast');
+
 	const previewModel = models.find((model) => model.id === previewId);
 
 	const summary = [
 		selectedModel && showsReasoningControl(selectedModel)
 			? reasoningEffortLabel(reasoningEffort)
 			: null,
-		fastModeAvailable && fastMode ? 'Fast' : null
+		serviceTier !== 'standard' ? serviceTierLabel(serviceTier) : null
 	]
 		.filter(Boolean)
 		.join(' · ');
@@ -114,7 +124,7 @@ export default function ModelSelector({
 			window.removeEventListener('resize', updatePosition);
 			window.removeEventListener('scroll', updatePosition, true);
 		};
-	}, [isOpen, mobile, previewId, fastModeAvailable, position.maxHeight]);
+	}, [isOpen, mobile, previewId, fastModeAvailable, ultrafastAvailable, position.maxHeight]);
 
 	useEffect(() => {
 		if (!isOpen || mobile) return;
@@ -167,12 +177,13 @@ export default function ModelSelector({
 					models={models}
 					modelId={modelId}
 					reasoningEffort={reasoningEffort}
-					fastMode={fastMode}
+					serviceTier={serviceTier}
+					isDirectOpenAIByok={isDirectOpenAIByok}
 					onDismiss={closeMenu}
 					returnFocusRef={triggerRef}
-					onApply={(model, effort, fast) => {
+					onApply={(model, effort, tier) => {
 						selectModel(model, effort);
-						onFastModeChange?.(fast);
+						onServiceTierChange?.(tier);
 					}}
 				/>
 			) : isOpen ? (
@@ -246,7 +257,13 @@ export default function ModelSelector({
 								</button>
 							))}
 						</div>
-						{fastModeAvailable ? (
+						{ultrafastAvailable ? (
+							<ServiceTierOptions
+								tiers={tiers}
+								value={serviceTier}
+								onChange={(tier) => onServiceTierChange?.(tier)}
+							/>
+						) : fastModeAvailable ? (
 							<div
 								role="group"
 								aria-label="Speed"
@@ -256,23 +273,25 @@ export default function ModelSelector({
 									type="button"
 									role="switch"
 									className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2"
-									aria-checked={fastMode}
+									aria-checked={serviceTier === 'fast'}
 									data-ph-capture-attribute-action="toggle_fast_mode"
-									onClick={() => onFastModeChange?.(!fastMode)}
+									onClick={() =>
+										onServiceTierChange?.(serviceTier === 'fast' ? 'standard' : 'fast')
+									}
 								>
 									<Zap className="size-3.5 shrink-0 text-amber-400" />
 									<span>Fast</span>
 									<span
 										className={cn(
 											'relative ml-auto inline-flex h-5 w-9 shrink-0 items-center rounded-full transition',
-											fastMode ? 'bg-foreground' : 'bg-hover-fill-strong'
+											serviceTier === 'fast' ? 'bg-foreground' : 'bg-hover-fill-strong'
 										)}
 										aria-hidden="true"
 									>
 										<span
 											className={cn(
 												'bg-background inline-block size-3.5 rounded-full transition',
-												fastMode ? 'translate-x-[18px]' : 'translate-x-[3px]'
+												serviceTier === 'fast' ? 'translate-x-[18px]' : 'translate-x-[3px]'
 											)}
 										/>
 									</span>

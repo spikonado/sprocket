@@ -145,6 +145,46 @@ afterEach(() => {
 });
 
 describe('subagents.createOrSend', () => {
+	it('preserves ultrafast in child snapshots and recovery', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const args = createArgs(caller, { completionProvider: 'openai', serviceTier: 'ultrafast' });
+		const child = await t.mutation(api.subagents.createOrSend, args);
+		const settings = { completionProvider: 'openai', serviceTier: 'ultrafast', fast: false };
+		expect(child.settings).toMatchObject(settings);
+		expect(
+			await t.mutation(api.subagents.snapshot, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId
+			})
+		).toMatchObject({ settings });
+		expect(
+			await t.mutation(api.subagents.recoverSubmission, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				submissionId: args.submissionId,
+				childExecutionSecret: args.childExecutionSecret
+			})
+		).toMatchObject({ settings });
+	});
+
+	it.each(['spikonado', 'chatgpt', 'openrouter', 'anthropic'] as const)(
+		'rejects ultrafast subagents on %s',
+		async (completionProvider) => {
+			const t = initConvexTest();
+			const caller = await startCallerRun(t);
+			await expect(
+				t.mutation(
+					api.subagents.createOrSend,
+					createArgs(caller, { completionProvider, serviceTier: 'ultrafast' })
+				)
+			).rejects.toThrow(/direct OpenAI API key/);
+		}
+	);
+
 	it('rejects delegated child follow-ups until prior results are committed', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();

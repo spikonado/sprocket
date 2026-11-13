@@ -2,6 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vProviderHandoff } from '@convex/lib/docs';
+import { modelServiceTier } from '@convex/lib/models';
 import { getPromptPart, getTranscriptState } from '@convex/lib/transcriptParts';
 
 export const EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER = -1;
@@ -109,7 +110,8 @@ export async function getProviderHandoff(
 			completionProvider,
 			selectedModel: source.selectedModel,
 			reasoningEffort: source.reasoningEffort,
-			fastMode: source.fastMode
+			fastMode: source.fastMode,
+			serviceTier: modelServiceTier(source)
 		};
 	}
 

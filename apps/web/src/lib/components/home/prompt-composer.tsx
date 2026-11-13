@@ -9,10 +9,12 @@ import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/c
 import {
 	getCatalogModel,
 	resolveCatalogModel,
+	type CatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
 import AgentQuestion from '$lib/components/home/agent-question';
+import { normalizeServiceTier, type ServiceTier } from '$lib/chat/service-tier';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
@@ -51,8 +53,10 @@ export type PromptComposerProps = {
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
-	fastMode?: boolean;
-	onFastModeChange?: (fastMode: boolean) => void;
+	serviceTier?: ServiceTier;
+	onServiceTierChange?: (tier: ServiceTier) => void;
+	isDirectOpenAIByok?: (model: CatalogModel) => boolean;
+	serviceTiersReady?: boolean;
 	pendingQuestion?: PendingAgentQuestion | null;
 	runEnded?: boolean;
 	showContinueWorking?: boolean;
@@ -83,6 +87,8 @@ const SUPPORTS_FIELD_SIZING = Boolean(globalThis.CSS?.supports('field-sizing', '
 
 const ATTACH_TOOLTIP_LABEL = 'Attach files';
 
+const noDirectOpenAIByok = () => false;
+
 const COMPOSER_SHELL_CLASS =
 	'composer-shell mx-auto w-full max-w-[48rem] rounded-[28px] p-px transition-colors duration-200';
 
@@ -101,8 +107,10 @@ export default function PromptComposer({
 	onSelectedModelChange,
 	selectedReasoningEffort,
 	onSelectedReasoningEffortChange,
-	fastMode = false,
-	onFastModeChange,
+	serviceTier = 'standard',
+	onServiceTierChange,
+	isDirectOpenAIByok = noDirectOpenAIByok,
+	serviceTiersReady = true,
 	pendingQuestion = null,
 	runEnded = false,
 	showContinueWorking = false,
@@ -465,14 +473,14 @@ export default function PromptComposer({
 			onSelectedReasoningEffortChange?.(
 				model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort
 			);
-			onFastModeChange?.(false);
+			onServiceTierChange?.('standard');
 		}
 	}, [
 		modelCatalog,
 		selectedModel,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
-		onFastModeChange
+		onServiceTierChange
 	]);
 
 	useEffect(() => {
@@ -485,15 +493,25 @@ export default function PromptComposer({
 			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
 		}
 
-		if (fastMode && !selectedCatalogModel.supportsFastMode) {
-			onFastModeChange?.(false);
+		if (!serviceTiersReady) return;
+
+		const normalizedTier = normalizeServiceTier(
+			serviceTier,
+			selectedCatalogModel,
+			isDirectOpenAIByok(selectedCatalogModel)
+		);
+
+		if (normalizedTier !== serviceTier) {
+			onServiceTierChange?.(normalizedTier);
 		}
 	}, [
 		selectedCatalogModel,
 		selectedReasoningEffort,
 		onSelectedReasoningEffortChange,
-		fastMode,
-		onFastModeChange
+		serviceTier,
+		onServiceTierChange,
+		isDirectOpenAIByok,
+		serviceTiersReady
 	]);
 
 	useEffect(() => {
@@ -734,10 +752,11 @@ export default function PromptComposer({
 													modelId={selectedModel}
 													models={modelCatalog.models}
 													reasoningEffort={selectedReasoningEffort}
-													fastMode={fastMode}
+													serviceTier={serviceTier}
+													isDirectOpenAIByok={isDirectOpenAIByok}
 													disabled={composerLocked || answeringQuestion}
 													onSelect={handleModelChange}
-													onFastModeChange={onFastModeChange}
+													onServiceTierChange={onServiceTierChange}
 												/>
 											</>
 										) : null}

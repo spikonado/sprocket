@@ -17,7 +17,7 @@ fn started_submission(request: &CliRunRequest) -> Option<Submission> {
                 settings: crate::cli_protocol::CliRunSettings {
                     model: "model".into(),
                     reasoning: "high".into(),
-                    fast: false,
+                    service_tier: sprocket_agent::ServiceTier::Standard,
                 },
             },
         }),
@@ -266,7 +266,7 @@ async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
         thread_id: None,
         model: None,
         reasoning: None,
-        fast: None,
+        service_tier: None,
     };
     state
         .cli_sessions

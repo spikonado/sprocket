@@ -12,6 +12,35 @@ use rig::message::{
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
 
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceTier {
+    #[default]
+    Standard,
+    Fast,
+    Ultrafast,
+}
+
+impl ServiceTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Fast => "fast",
+            Self::Ultrafast => "ultrafast",
+        }
+    }
+
+    pub fn from_legacy(explicit: Option<Self>, fast: bool) -> Self {
+        explicit.unwrap_or(if fast { Self::Fast } else { Self::Standard })
+    }
+
+    pub fn is_fast(self) -> bool {
+        self == Self::Fast
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CompletionProvider {
@@ -77,18 +106,20 @@ impl CompletionProvider {
             .map(String::as_str)
     }
 
-    pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
-        match self {
-            Self::Spikonado => Some("fast"),
-            Self::Openai | Self::Chatgpt => Some("priority"),
-            Self::Claude
-            | Self::OpencodeGo
-            | Self::Anthropic
-            | Self::Vercel
-            | Self::Openrouter
-            | Self::Opencode
-            | Self::Muse
-            | Self::Morph => None,
+    pub(crate) fn service_tier(self, tier: ServiceTier) -> Option<&'static str> {
+        match (self, tier) {
+            (Self::Spikonado, ServiceTier::Fast) => Some("fast"),
+            (Self::Openai | Self::Chatgpt, ServiceTier::Fast) => Some("priority"),
+            (Self::Openai, ServiceTier::Ultrafast) => Some("ultrafast"),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn supports_tier(self, tier: ServiceTier, fast: bool, ultrafast: bool) -> bool {
+        match tier {
+            ServiceTier::Standard => true,
+            ServiceTier::Fast => fast && self.service_tier(tier).is_some(),
+            ServiceTier::Ultrafast => ultrafast && self.service_tier(tier).is_some(),
         }
     }
 
@@ -179,7 +210,7 @@ pub struct RunAgentRequest {
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
@@ -281,7 +312,7 @@ pub struct ProviderHandoff {
     pub completion_provider: CompletionProvider,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -303,6 +334,7 @@ pub struct CatalogModelCapabilities {
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_fast: bool,
+    pub supports_ultrafast: bool,
     pub usage_pricing: UsagePricing,
 }
 
@@ -395,7 +427,7 @@ pub struct RunSnapshot {
     #[serde(default)]
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
-    pub fast_mode: bool,
+    pub service_tier: ServiceTier,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub started_at: u64,
     #[serde(default)]

@@ -546,7 +546,7 @@ describe('agent launch', () => {
 				storageIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				fastMode: false,
+				serviceTier: 'standard',
 				submissionId: 'submission-1',
 				workspacePath: '/work'
 			})

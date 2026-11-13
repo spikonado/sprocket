@@ -16,6 +16,20 @@ Pick a model in the composer's model menu. Models with reasoning levels have a r
 
 Each model marks one level as its default. Models that support it also have a **Fast** switch, which uses the provider's faster service tier. Sprocket saves the model, reasoning level, and fast mode for each thread.
 
+### Ultrafast
+
+<Snippet file="unreleased.mdx" />
+
+GPT-6.1 Sol offers **Ultrafast** through **OpenAI API**. Connect your own OpenAI API key and move OpenAI API to the top of **Settings → Providers**, then choose Ultrafast in the model menu.
+
+Ultrafast uses your OpenAI account, not your Sprocket plan. OpenAI charges six times Sol's Standard API prices. It is not available through Spikonado or ChatGPT Subscription in Sprocket. Ultrafast runs don't fall back to another provider if OpenAI fails. Switching to a model or provider that doesn't support Ultrafast resets the selection to Standard.
+
+From the CLI:
+
+```sh
+sprocket run --model gpt-6.1-sol --service-tier ultrafast "Investigate the failing tests"
+```
+
 Sprocket loads the model list from its servers, so new models show up without an update. To see the list from your terminal, run:
 
 ```sh

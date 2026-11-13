@@ -939,34 +939,67 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 	}
 });
 
-it('restores the submitted prompt and error when an agent launch fails', async () => {
+it('submits Ultrafast and restores the prompt, speed, and error when an agent launch fails', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const listProjectAttachments = vi.fn(async () => [alpha]);
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
-	await renderApp(
-		createConvexFixtures(),
-		createRuntime(
-			createLocalApi({
-				listProjectAttachments,
-				resolveWorkspacePath: async () => alpha,
-				runAgent
-			})
-		)
+	const client = createConvexFixtures();
+	client.registerQuery(api.uiPreferences.getMine, {
+		_id: fixtureId<'uiPreferences'>('preferences-a'),
+		_creationTime: 1,
+		userId: 'user-a',
+		providerOrder: [{ provider: 'openai', enabled: true }, ...defaultProviderOrder],
+		theme: 'light'
+	});
+	client.registerAction(api.providerCredentials.getMyConfiguration, {
+		openai: true,
+		claude: false,
+		anthropic: false,
+		vercel: false,
+		openrouter: false,
+		opencode: false,
+		opencodeGo: false,
+		morph: false
+	});
+
+	const runtime = createRuntime(
+		createLocalApi({
+			listProjectAttachments,
+			resolveWorkspacePath: async () => alpha,
+			runAgent
+		})
 	);
+
+	await renderApp(client, {
+		...runtime,
+		fetchGatewayModelCatalog: async () => ({
+			...modelCatalog,
+			models: modelCatalog.models.map((model) => ({
+				...model,
+				provider: 'openai',
+				byokServiceTiers: ['ultrafast']
+			}))
+		})
+	});
 	await projectTrigger('Alpha');
 	await waitFor(() => expect(listProjectAttachments).toHaveBeenCalledTimes(3));
+	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Ultrafast' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
 	const composer = screen.getByRole('combobox');
 	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
 	await waitFor(() => expect(send).toHaveProperty('disabled', false));
 	fireEvent.click(send);
 	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ serviceTier: 'ultrafast' }));
 	expect(composer).toHaveProperty('value', '');
 	await act(async () => {
 		launch.reject(new Error('Local agent unavailable.'));
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
+	expect(screen.getByRole('button', { name: 'Select model' }).title).toContain('Ultrafast');
 	const group = screen.getByRole('group', { name: 'Message composer' });
 	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
 });

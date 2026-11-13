@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import type { CatalogModelId } from '$lib/chat/model-catalog';
+import type { ServiceTier } from '$lib/chat/service-tier';
 
 export type ComposerRecovery = {
 	message: string | null;
@@ -9,7 +10,7 @@ export type ComposerRecovery = {
 	attachments?: ComposerAttachment[];
 	storageIds?: Id<'_storage'>[];
 	reasoningEffort?: string;
-	fastMode?: boolean;
+	serviceTier?: ServiceTier;
 	selectedModel?: CatalogModelId;
 	submissionId?: string;
 	continuationOfRunId?: Id<'runs'>;
@@ -20,7 +21,7 @@ type RecoveredSubmission = {
 	prompt: string;
 	storageIds: Id<'_storage'>[];
 	reasoningEffort: string;
-	fastMode: boolean;
+	serviceTier: ServiceTier;
 	selectedModel: CatalogModelId;
 	submissionId: string;
 	continuationOfRunId?: Id<'runs'>;
@@ -36,9 +37,9 @@ export function getComposerRecoveryKey(userId: string, scope: string) {
 }
 
 function resubmittable(recovery: ComposerRecovery): RecoveredSubmission | null {
-	const { submissionId, reasoningEffort, selectedModel } = recovery;
+	const { submissionId, reasoningEffort, serviceTier, selectedModel } = recovery;
 
-	if (!submissionId || !reasoningEffort || !selectedModel) return null;
+	if (!submissionId || !reasoningEffort || !serviceTier || !selectedModel) return null;
 
 	if (!recovery.prompt && !recovery.storageIds?.length) return null;
 
@@ -46,7 +47,7 @@ function resubmittable(recovery: ComposerRecovery): RecoveredSubmission | null {
 		prompt: recovery.prompt,
 		storageIds: recovery.storageIds ?? [],
 		reasoningEffort,
-		fastMode: recovery.fastMode ?? false,
+		serviceTier,
 		selectedModel,
 		submissionId,
 		continuationOfRunId: recovery.continuationOfRunId

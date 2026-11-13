@@ -24,7 +24,7 @@ import {
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
-import { normalizeTaskTimeoutMs } from '@convex/lib/models';
+import { modelServiceTier, normalizeTaskTimeoutMs } from '@convex/lib/models';
 import { executionSecretHash, getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import {
 	vAgentQuestionSnapshot,
@@ -44,6 +44,7 @@ import {
 	vCompletionProvider,
 	vReasoningEffort,
 	vRunStatus,
+	vServiceTier,
 	vAskQuestionAnswer,
 	vSubagentSettings
 } from '@convex/lib/validators';
@@ -71,6 +72,7 @@ function subagentSettings(
 		model: source.selectedModel,
 		reasoning: source.reasoningEffort,
 		fast: source.fastMode,
+		serviceTier: modelServiceTier(source),
 		completionProvider: source.completionProvider ?? 'spikonado'
 	};
 }
@@ -169,7 +171,8 @@ export const createOrSend = mutation({
 		prompt: v.string(),
 		model: v.string(),
 		reasoning: vReasoningEffort,
-		fast: v.boolean(),
+		fast: v.optional(v.boolean()),
+		serviceTier: v.optional(vServiceTier),
 		completionProvider: vCompletionProvider,
 		timeoutMs: v.optional(v.number()),
 		deferPrompt: v.optional(v.boolean())
@@ -238,6 +241,7 @@ export const createOrSend = mutation({
 				completionProvider: args.completionProvider,
 				reasoningEffort: args.reasoning,
 				fastMode: args.fast,
+				serviceTier: args.serviceTier,
 				machineId: callerRun.machineId,
 				continuationOfRunId,
 				executionSecret: args.childExecutionSecret,

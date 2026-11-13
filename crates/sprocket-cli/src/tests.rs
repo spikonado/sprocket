@@ -22,6 +22,22 @@ fn run_requires_one_explicit_prompt_source() {
 }
 
 #[test]
+fn service_tier_choices_conflict_with_legacy_fast_flags() {
+    for tier in ["standard", "fast", "ultrafast"] {
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--service-tier", tier]).is_ok());
+        for flag in ["--fast", "--no-fast"] {
+            assert!(
+                Cli::try_parse_from(["sprocket", "run", "task", "--service-tier", tier, flag])
+                    .is_err()
+            );
+        }
+    }
+    assert!(
+        Cli::try_parse_from(["sprocket", "run", "task", "--service-tier", "priority"]).is_err()
+    );
+}
+
+#[test]
 fn parses_launch_server_and_update_modes() {
     let desktop = Cli::try_parse_from(["sprocket"]).unwrap();
     assert!(!desktop.web);

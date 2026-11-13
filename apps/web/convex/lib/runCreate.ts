@@ -36,9 +36,11 @@ import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
 import {
 	isRunFinalStatus,
 	type CompletionProvider,
+	type ServiceTier,
 	type vReasoningEffort
 } from '@convex/lib/validators';
 import { withRunExecution, getRunExecutionState } from '@convex/lib/runExecution';
+import { modelServiceTier } from '@convex/lib/models';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -51,7 +53,8 @@ export type QueuedRunRequest = {
 	selectedModel: string;
 	completionProvider: CompletionProvider;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
-	fastMode: boolean;
+	fastMode?: boolean;
+	serviceTier?: ServiceTier;
 	executionSecret: string;
 	agentVersion?: string;
 	machineId?: string;
@@ -105,6 +108,14 @@ export async function createQueuedRunRecord(
 	ctx: MutationCtx,
 	args: QueuedRunRequest
 ): Promise<CreatedGatewayRun> {
+	const serviceTier = modelServiceTier(args);
+
+	if (serviceTier === 'ultrafast' && args.completionProvider !== 'openai') {
+		throw new ConvexError('Ultrafast is only available with a direct OpenAI API key.');
+	}
+
+	const fastMode = serviceTier === 'fast';
+
 	if ((args.threadId === undefined) === (args.repositoryKey === undefined)) {
 		throw new Error('Exactly one of thread ID or repository key is required.');
 	}
@@ -179,7 +190,8 @@ export async function createQueuedRunRecord(
 			selectedModel: args.selectedModel,
 			completionProvider: args.completionProvider,
 			reasoningEffort: args.reasoningEffort,
-			fastMode: args.fastMode,
+			fastMode,
+			serviceTier,
 			cwd: parentThread?.cwd,
 			lastMessageAt: now
 		});
@@ -276,7 +288,8 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		completionProvider: args.completionProvider,
 		reasoningEffort: args.reasoningEffort,
-		fastMode: args.fastMode
+		fastMode,
+		serviceTier
 	};
 
 	if (args.agentVersion) runRecord.agentVersion = args.agentVersion;
@@ -326,7 +339,8 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		completionProvider: args.completionProvider,
 		reasoningEffort: args.reasoningEffort,
-		fastMode: args.fastMode,
+		fastMode,
+		serviceTier,
 		lastMessageAt: Date.now()
 	};
 
@@ -390,7 +404,7 @@ async function reconcileExistingQueuedRun(
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
-		existingRun.fastMode !== args.fastMode ||
+		modelServiceTier(existingRun) !== modelServiceTier(args) ||
 		!continuationMatches
 	) {
 		throw agentError('SUBMISSION_OWNED_BY_ANOTHER_RUN');
@@ -448,7 +462,8 @@ export async function finalizeFailedQueuedStart(
 		selectedModel: string;
 		completionProvider: CompletionProvider;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
-		fastMode: boolean;
+		fastMode?: boolean;
+		serviceTier?: ServiceTier;
 		lastError: string;
 		executionSecret: string;
 	}
@@ -463,7 +478,7 @@ export async function finalizeFailedQueuedStart(
 		run.selectedModel !== args.selectedModel ||
 		(run.completionProvider ?? 'spikonado') !== args.completionProvider ||
 		run.reasoningEffort !== args.reasoningEffort ||
-		run.fastMode !== args.fastMode
+		modelServiceTier(run) !== modelServiceTier(args)
 	) {
 		return 'standDown';
 	}

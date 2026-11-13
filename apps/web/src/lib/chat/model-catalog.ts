@@ -61,6 +61,7 @@ const directApiPricingSchema = z.object({
 	cacheWrite: z.record(z.string(), price),
 	output: price,
 	fastMultiplier: multiplier,
+	ultrafastMultiplier: multiplier.optional(),
 	longContext: z.object({ inputMultiplier: multiplier, outputMultiplier: multiplier }).nullable()
 });
 
@@ -74,6 +75,7 @@ const gatewayModelSchema = z.looseObject({
 	reasoningEfforts: z.array(z.string()).min(1),
 	defaultReasoningEffort: z.string().min(1),
 	serviceTiers: z.array(z.string()).min(1),
+	byokServiceTiers: z.array(z.string()).optional(),
 	usagePolicy: z.literal('unlimited').optional(),
 	directApiPricing: directApiPricingSchema.nullable().catch(null)
 });
@@ -116,6 +118,7 @@ function catalogFromGatewayPayload(
 				reasoningEfforts: model.reasoningEfforts,
 				defaultReasoningEffort: model.defaultReasoningEffort,
 				supportsFastMode: model.serviceTiers.includes('fast'),
+				byokServiceTiers: model.byokServiceTiers,
 				usagePolicy: model.usagePolicy,
 				directApiPricing: model.directApiPricing
 			}))

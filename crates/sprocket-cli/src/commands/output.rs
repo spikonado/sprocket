@@ -5,12 +5,12 @@ use sprocket_server::cli_protocol::{CliRunSnapshot, RunStarted, RunStatus};
 
 fn run_header(started: &RunStarted) -> String {
     format!(
-        "Thread {} | Run {}\nModel {} | Reasoning {} | Fast {}",
+        "Thread {} | Run {}\nModel {} | Reasoning {} | Service tier {}",
         started.thread_id,
         started.run_id,
         started.settings.model,
         started.settings.reasoning,
-        if started.settings.fast { "on" } else { "off" }
+        started.settings.service_tier.as_str()
     )
 }
 

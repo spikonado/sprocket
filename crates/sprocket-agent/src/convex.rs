@@ -294,7 +294,10 @@ impl RuntimeClient {
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
-        args.insert("fastMode".to_string(), request.fast_mode.into());
+        args.insert(
+            "serviceTier".to_string(),
+            request.service_tier.as_str().into(),
+        );
         args.insert(
             "agentVersion".to_string(),
             sprocket_workspace::SPROCKET_VERSION.to_string().into(),
@@ -500,7 +503,10 @@ impl RuntimeClient {
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
-        args.insert("fastMode".to_string(), request.fast_mode.into());
+        args.insert(
+            "serviceTier".to_string(),
+            request.service_tier.as_str().into(),
+        );
         args.insert("lastError".to_string(), last_error.to_string().into());
         self.mutation_json("agentRuntime:finalizeFailedStart", args)
             .await

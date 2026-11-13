@@ -24,7 +24,7 @@ const recoveredSubmission = {
 	prompt: 'Inspect the robot',
 	storageIds: [storageId('storage-1')],
 	reasoningEffort: 'medium' as const,
-	fastMode: false,
+	serviceTier: 'standard' as const,
 	selectedModel: 'gpt-5.6-sol' as const,
 	submissionId: 'recovered-id',
 	continuationOfRunId: runId('parent-run')
@@ -131,7 +131,7 @@ function launchArgs(
 		storageIds: [storageId('storage-1')],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
-		fastMode: false,
+		serviceTier: 'standard',
 		submissionId: 'submission-1',
 		workspacePath: '/workspaces/workspace-1',
 		...overrides
@@ -163,7 +163,7 @@ function resolveRecoveredSubmission(
 		prompt: recoveredSubmission.prompt,
 		storageIds: recoveredSubmission.storageIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
-		fastMode: recoveredSubmission.fastMode,
+		serviceTier: recoveredSubmission.serviceTier,
 		continuationOfRunId: recoveredSubmission.continuationOfRunId,
 		recoveredSubmission,
 		selectedModel: recoveredSubmission.selectedModel,
@@ -187,7 +187,7 @@ describe('launchAgentRun', () => {
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
-			fastMode: false,
+			serviceTier: 'standard',
 			workspacePath: '/workspaces/workspace-1'
 		});
 		expect(onStarted).toHaveBeenCalledWith('run-1', 'thread-1');
@@ -214,7 +214,7 @@ describe('launchAgentRun', () => {
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
-			fastMode: false,
+			serviceTier: 'standard',
 			workspacePath: '/workspaces/workspace-1',
 			continuationOfRunId: 'run-1'
 		});
@@ -236,7 +236,7 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission()).toBe('recovered-id');
 		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ fastMode: true })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ serviceTier: 'ultrafast' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ continuationOfRunId: undefined })).toBe('new-id');
 	});
 

@@ -97,7 +97,14 @@ export function apiCostByType(
 
 	if (cacheWritePrice === undefined && writes > 0) return null;
 
-	const tier = row.serviceTier === 'fast' ? pricing.fastMultiplier : 1;
+	const tier =
+		row.serviceTier === 'ultrafast'
+			? pricing.ultrafastMultiplier
+			: row.serviceTier === 'fast'
+				? pricing.fastMultiplier
+				: 1;
+
+	if (tier === undefined) return null;
 	const longContext = pricing.longContext ?? { inputMultiplier: 1, outputMultiplier: 1 };
 
 	const standard = countsCost(row.standard, pricing, cacheWritePrice ?? 0, 1, 1);

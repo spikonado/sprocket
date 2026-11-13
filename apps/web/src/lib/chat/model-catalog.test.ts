@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { availableServiceTiers, isDirectOpenAIByok, normalizeServiceTier } from './service-tier';
 import {
 	fetchGatewayModelCatalog,
 	resolveCatalogModel,
@@ -22,7 +23,8 @@ const catalogPayload = {
 				autoCompactTokenLimit: 80_000,
 				reasoningEfforts: ['low', 'medium'],
 				defaultReasoningEffort: 'medium',
-				serviceTiers: ['standard', 'fast']
+				serviceTiers: ['standard', 'fast'],
+				byokServiceTiers: ['ultrafast']
 			}
 		]
 	}
@@ -44,6 +46,7 @@ describe('gateway model catalog', () => {
 		);
 		expect(catalog.models[0]).not.toHaveProperty('autoCompactTokenLimit');
 		expect(catalog.models[0].supportsFastMode).toBe(true);
+		expect(catalog.models[0].byokServiceTiers).toEqual(['ultrafast']);
 		expect(catalog).not.toHaveProperty('tierAllowsFastMode');
 	});
 
@@ -118,5 +121,53 @@ describe('reasoning controls', () => {
 				defaultReasoningEffort: 'max'
 			})
 		).toBe(true);
+	});
+});
+
+describe('service tiers', () => {
+	const model = {
+		...catalogPayload.sprocket.models[0],
+		provider: 'openai',
+		autoHandoffTokenLimit: 80_000,
+		supportsFastMode: true
+	};
+
+	it('keeps provider order when deciding whether OpenAI BYOK is active', () => {
+		expect(
+			isDirectOpenAIByok(
+				model,
+				[
+					{ provider: 'claude', enabled: true },
+					{ provider: 'openai', enabled: true },
+					{ provider: 'spikonado', enabled: true }
+				],
+				true
+			)
+		).toBe(true);
+
+		for (const provider of ['spikonado', 'chatgpt', 'openrouter', 'vercel'] as const) {
+			expect(
+				isDirectOpenAIByok(
+					model,
+					[
+						{ provider, enabled: true },
+						{ provider: 'openai', enabled: true }
+					],
+					true
+				)
+			).toBe(false);
+		}
+
+		expect(isDirectOpenAIByok(model, [{ provider: 'openai', enabled: true }], false)).toBe(false);
+	});
+
+	it('offers Ultrafast only on the direct BYOK route and resets unavailable selections', () => {
+		expect(availableServiceTiers(model, true)).toEqual(['standard', 'fast', 'ultrafast']);
+		expect(availableServiceTiers(model, false)).toEqual(['standard', 'fast']);
+		expect(normalizeServiceTier('ultrafast', model, false)).toBe('standard');
+		expect(normalizeServiceTier('ultrafast', { ...model, byokServiceTiers: [] }, true)).toBe(
+			'standard'
+		);
+		expect(normalizeServiceTier('fast', model, false)).toBe('fast');
 	});
 });

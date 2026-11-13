@@ -6,6 +6,12 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ProviderLogo from './provider-logo';
+import {
+	availableServiceTiers,
+	normalizeServiceTier,
+	type ServiceTier
+} from '$lib/chat/service-tier';
+import ServiceTierOptions from './service-tier-options';
 import MobileSelectorSheet from './ui/mobile-selector-sheet';
 import { cn } from '$lib/utils';
 
@@ -13,7 +19,8 @@ export default function MobileModelSelector({
 	models,
 	modelId,
 	reasoningEffort,
-	fastMode,
+	serviceTier,
+	isDirectOpenAIByok,
 	onApply,
 	onDismiss,
 	returnFocusRef
@@ -21,16 +28,20 @@ export default function MobileModelSelector({
 	models: readonly CatalogModel[];
 	modelId: string;
 	reasoningEffort: string;
-	fastMode: boolean;
-	onApply: (model: CatalogModel, effort: string, fast: boolean) => void;
+	serviceTier: ServiceTier;
+	isDirectOpenAIByok: (model: CatalogModel) => boolean;
+	onApply: (model: CatalogModel, effort: string, tier: ServiceTier) => void;
 	onDismiss: () => void;
 	returnFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
 	const [draftId, setDraftId] = useState(modelId);
 	const [draftEffort, setDraftEffort] = useState(reasoningEffort);
-	const [draftFast, setDraftFast] = useState(fastMode);
+	const [draftTier, setDraftTier] = useState(serviceTier);
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
 	const fastAvailable = model?.supportsFastMode;
+	const directOpenAIByok = Boolean(model && isDirectOpenAIByok(model));
+	const tiers = model ? availableServiceTiers(model, directOpenAIByok) : [];
+	const resolvedTier = normalizeServiceTier(draftTier, model, directOpenAIByok);
 
 	return (
 		<MobileSelectorSheet
@@ -46,7 +57,7 @@ export default function MobileModelSelector({
 					data-ph-capture-attribute-reasoning_effort={draftEffort}
 					disabled={!model}
 					onClick={() => {
-						if (model) onApply(model, draftEffort, Boolean(fastAvailable && draftFast));
+						if (model) onApply(model, draftEffort, resolvedTier);
 					}}
 				>
 					Done
@@ -68,7 +79,9 @@ export default function MobileModelSelector({
 							setDraftId(candidate.id);
 							setDraftEffort(candidate.defaultReasoningEffort);
 
-							if (!candidate.supportsFastMode) setDraftFast(false);
+							setDraftTier(
+								normalizeServiceTier(draftTier, candidate, isDirectOpenAIByok(candidate))
+							);
 						}}
 					>
 						<ProviderLogo provider={candidate.provider} className="size-5 shrink-0" />
@@ -112,29 +125,31 @@ export default function MobileModelSelector({
 					</div>
 				</div>
 			) : null}
-			{fastAvailable ? (
+			{tiers.includes('ultrafast') ? (
+				<ServiceTierOptions tiers={tiers} value={resolvedTier} onChange={setDraftTier} />
+			) : fastAvailable ? (
 				<button
 					type="button"
 					role="switch"
-					aria-checked={draftFast}
+					aria-checked={resolvedTier === 'fast'}
 					aria-label="Fast mode"
 					data-ph-capture-attribute-action="toggle_fast_mode"
 					className="focus-visible:ring-ring flex min-h-14 w-full items-center gap-3 border-t border-[var(--hairline)] px-1 py-4 text-left outline-none focus-visible:ring-2"
-					onClick={() => setDraftFast(!draftFast)}
+					onClick={() => setDraftTier(resolvedTier === 'fast' ? 'standard' : 'fast')}
 				>
 					<Zap className="size-5 shrink-0 text-amber-500" />
 					<span className="flex-1 text-sm font-semibold">Fast mode</span>
 					<span
 						className={cn(
 							'inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5',
-							draftFast ? 'bg-accent-strong' : 'bg-hover-fill-strong'
+							resolvedTier === 'fast' ? 'bg-accent-strong' : 'bg-hover-fill-strong'
 						)}
 						aria-hidden="true"
 					>
 						<span
 							className={cn(
 								'bg-background size-5 rounded-full transition-transform',
-								draftFast && 'translate-x-5'
+								resolvedTier === 'fast' && 'translate-x-5'
 							)}
 						/>
 					</span>

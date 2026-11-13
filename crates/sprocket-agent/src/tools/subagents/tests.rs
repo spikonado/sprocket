@@ -7,7 +7,7 @@ fn spawn_accepts_only_creation_payloads() {
         "prompt": "  implement the task  ",
         "model": "gpt",
         "reasoning": "high",
-        "fast": false,
+        "serviceTier": "standard",
         "yieldTimeMs": 0
     }))
     .unwrap();
@@ -21,7 +21,7 @@ fn spawn_accepts_only_creation_payloads() {
         "prompt": "implement the next task",
         "model": "gpt",
         "reasoning": "high",
-        "fast": false
+        "serviceTier": "standard"
     }))
     .unwrap_err();
     assert!(error.to_string().contains("unknown field `threadId`"));
@@ -33,12 +33,16 @@ fn spawn_schema_only_advertises_child_creation() {
         SubagentModelChoice {
             id: "opus".into(),
             reasoning_efforts: vec!["low".into(), "high".into()],
-            fast: true,
+            service_tiers: vec![
+                crate::ServiceTier::Standard,
+                crate::ServiceTier::Fast,
+                crate::ServiceTier::Ultrafast,
+            ],
         },
         SubagentModelChoice {
             id: "gpt".into(),
             reasoning_efforts: vec!["high".into()],
-            fast: false,
+            service_tiers: vec![crate::ServiceTier::Standard],
         },
     ];
     let schema = spawn_subagent_parameters(270_000, &choices);
@@ -57,7 +61,7 @@ fn spawn_schema_only_advertises_child_creation() {
         json!({
             "model": { "const": "gpt" },
             "reasoning": { "enum": ["high"] },
-            "fast": { "const": false }
+            "serviceTier": { "enum": ["standard"] }
         })
     );
     let mut required: Vec<&str> = schema["required"]
@@ -67,7 +71,7 @@ fn spawn_schema_only_advertises_child_creation() {
         .map(|field| field.as_str().unwrap())
         .collect();
     required.sort_unstable();
-    assert_eq!(required, ["fast", "model", "prompt", "reasoning"]);
+    assert_eq!(required, ["model", "prompt", "reasoning", "serviceTier"]);
 }
 
 #[test]
@@ -78,7 +82,7 @@ fn control_sends_followups_with_execution_overrides() {
         "prompt": "  implement the next task  ",
         "model": "gpt-6.1-sol",
         "reasoning": "high",
-        "fast": true,
+        "serviceTier": "ultrafast",
         "timeoutMs": 60_000,
         "yieldTimeMs": 0
     }))
@@ -90,6 +94,7 @@ fn control_sends_followups_with_execution_overrides() {
     );
     assert_eq!(args.thread_id, "child-thread");
     assert_eq!(args.timeout_ms, Some(60_000));
+    assert_eq!(args.service_tier, Some(crate::ServiceTier::Ultrafast));
     assert_eq!(args.yield_time_ms, 0);
 }
 
@@ -97,7 +102,7 @@ fn control_sends_followups_with_execution_overrides() {
 fn creation_requires_an_explicit_task() {
     for payload in [
         json!({}),
-        json!({"prompt": "  ", "model": "gpt", "reasoning": "high", "fast": false}),
+        json!({"prompt": "  ", "model": "gpt", "reasoning": "high", "serviceTier": "standard"}),
     ] {
         let result = serde_json::from_value::<SpawnSubagentArgs>(payload)
             .map_err(|error| tool_failure(error.to_string()))
@@ -117,10 +122,11 @@ fn control_fields_and_execution_options_are_action_specific() {
         json!({"action": "stop", "threadId": " "}),
         json!({"action": "stop", "threadId": "child", "prompt": "task"}),
         json!({"action": "stop", "threadId": "child", "timeoutMs": 10}),
+        json!({"action": "stop", "threadId": "child", "serviceTier": "ultrafast"}),
         json!({"action": "stop", "threadId": "child", "questionId": "question"}),
         json!({"action": "answer_question", "threadId": "child", "text": "answer"}),
         json!({"action": "answer_question", "threadId": "child", "questionId": "q"}),
-        json!({"action": "answer_question", "threadId": "child", "questionId": "q", "text": "answer", "fast": false}),
+        json!({"action": "answer_question", "threadId": "child", "questionId": "q", "text": "answer", "serviceTier": "fast"}),
     ] {
         let result = serde_json::from_value::<ControlSubagentArgs>(payload.clone())
             .map_err(|error| tool_failure(error.to_string()))

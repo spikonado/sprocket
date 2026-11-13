@@ -115,12 +115,14 @@ async fn run_agent_handler(
     let overrides = sprocket_agent::SettingsOverrides {
         model: Some(payload.selected_model.clone()),
         reasoning: Some(payload.reasoning_effort.clone()),
-        fast: Some(payload.fast_mode),
+        service_tier: payload.service_tier,
     };
     let settings = run_settings::resolve(&rpc, None, &overrides)
         .await
         .map_err(ApiError::bad_request)?;
     payload.completion_provider = settings.provider;
+    payload.service_tier = Some(settings.service_tier);
+    payload.fast_mode = settings.service_tier.is_fast();
     let started = launch_run(
         state.host,
         payload,
@@ -144,7 +146,10 @@ pub(crate) async fn launch_run(
     let settings = CliRunSettings {
         model: payload.selected_model.clone(),
         reasoning: payload.reasoning_effort.clone(),
-        fast: payload.fast_mode,
+        service_tier: sprocket_agent::ServiceTier::from_legacy(
+            payload.service_tier,
+            payload.fast_mode,
+        ),
     };
     let launched = launch_agent(
         host,

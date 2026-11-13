@@ -28,9 +28,10 @@ fn record() -> RecoveryRecord {
 async fn reload_preserves_capability_and_budget_but_releases_live_reservations() {
     let directory = tempfile::tempdir().unwrap();
     let store = RunRecovery::load(directory.path()).unwrap();
-    let next = record()
-        .continuation("failed".into(), "thread".into())
-        .unwrap();
+    let mut next = record();
+    next.request.service_tier = Some(sprocket_agent::ServiceTier::Ultrafast);
+    next.request.fast_mode = false;
+    let next = next.continuation("failed".into(), "thread".into()).unwrap();
     let (_guard, _) = store.begin(next.clone(), RunOwner::Host).await.unwrap();
     assert!(store.reserve_exclusive(next.key()).is_none());
     let reloaded = RunRecovery::load(directory.path()).unwrap();
@@ -51,7 +52,11 @@ async fn reload_preserves_capability_and_budget_but_releases_live_reservations()
     assert!(saved.request.storage_ids.is_empty());
     assert_eq!(saved.request.workspace_path, "/work");
     assert_eq!(saved.request.reasoning_effort, "high");
-    assert!(saved.request.fast_mode);
+    assert_eq!(
+        saved.request.service_tier,
+        Some(sprocket_agent::ServiceTier::Ultrafast)
+    );
+    assert!(!saved.request.fast_mode);
     assert!(reloaded.reserve_exclusive(next.key()).is_some());
 }
 

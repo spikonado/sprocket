@@ -9,6 +9,75 @@ import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.insertGatewayRun', () => {
+	it.each(['standard', 'fast', 'ultrafast'] as const)(
+		'persists explicit %s settings and compares the tier on retries',
+		async (serviceTier) => {
+			const t = initConvexTest();
+
+			const args = {
+				userId: 'user_alice',
+				submissionId: 'explicit-tier',
+				repositoryKey: 'alpha',
+				prompt: 'Build it',
+				imageUploadIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				completionProvider: 'openai' as const,
+				reasoningEffort: 'medium' as const,
+				serviceTier,
+				executionSecret: 'explicit-tier-secret'
+			};
+
+			const created = await t.mutation(internal.agentRuntime.insertGatewayRun, args);
+			const settings = { serviceTier, fastMode: serviceTier === 'fast' };
+
+			const context = await t.query(api.agentRuntime.getContext, {
+				runId: created.runId,
+				executionSecret: args.executionSecret
+			});
+
+			expect(context.run).toMatchObject(settings);
+			expect(await t.run((ctx) => ctx.db.get('threadRecords', created.threadId))).toMatchObject(
+				settings
+			);
+			expect(await t.mutation(internal.agentRuntime.insertGatewayRun, args)).toMatchObject({
+				created: false,
+				runId: created.runId
+			});
+			await expect(
+				t.mutation(internal.agentRuntime.insertGatewayRun, {
+					...args,
+					serviceTier: serviceTier === 'standard' ? 'ultrafast' : 'standard'
+				})
+			).rejects.toMatchObject({ data: agentErrorMessages.SUBMISSION_OWNED_BY_ANOTHER_RUN });
+		}
+	);
+
+	it.each([
+		[false, 'standard'],
+		[true, 'fast']
+	] as const)(
+		'replaces an explicit tier with legacy fastMode=%s',
+		async (fastMode, serviceTier) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			await t.run((ctx) =>
+				ctx.db.patch('threadRecords', threadId, {
+					serviceTier: 'ultrafast',
+					completionProvider: 'openai'
+				})
+			);
+			await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'legacy-update',
+				executionSecret: 'legacy-secret',
+				prompt: 'Use legacy settings',
+				fastMode
+			});
+			const thread = await asUser.query(api.threads.getByThreadId, { threadId });
+			expect(thread).toMatchObject({ fastMode, serviceTier });
+		}
+	);
+
 	it('atomically creates a new thread with its first queued run', async () => {
 		const t = initConvexTest();
 		const userId = 'user_alice';
@@ -38,16 +107,16 @@ describe('agentRuntime.insertGatewayRun', () => {
 			repositoryKey: 'alpha',
 			status: 'queued',
 			completionProvider: 'spikonado',
-			fastMode: false
+			fastMode: false,
+			serviceTier: 'standard'
 		});
 		expect(run).toMatchObject({
 			threadId: created.threadId,
 			status: 'queued',
 			completionProvider: 'spikonado',
-			fastMode: false
+			fastMode: false,
+			serviceTier: 'standard'
 		});
-		expect(thread).not.toHaveProperty('serviceTier');
-		expect(run).not.toHaveProperty('serviceTier');
 	});
 
 	it('updates the thread model and provider when the next run is submitted', async () => {
@@ -273,15 +342,24 @@ describe('agentRuntime.insertGatewayRun', () => {
 			threadId,
 			prompt: 'Reconcile me',
 			selectedModel: 'gpt-5.6-sol' as const,
-			completionProvider: 'spikonado' as const,
+			completionProvider: 'openai' as const,
 			reasoningEffort: 'medium' as const,
-			fastMode: false
+			serviceTier: 'ultrafast' as const
 		};
 
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret
 		});
+
+		await expect(
+			t.mutation(api.agentRuntime.finalizeFailedStart, {
+				...args,
+				serviceTier: 'standard',
+				executionSecret,
+				lastError: 'startup timed out'
+			})
+		).resolves.toBe('standDown');
 
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {

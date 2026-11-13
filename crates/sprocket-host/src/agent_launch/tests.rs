@@ -51,11 +51,3 @@ fn accepts_chatgpt_subscription_requests() {
         CompletionProvider::Chatgpt
     );
 }
-
-#[test]
-fn requires_fast_mode() {
-    let mut json = base_request();
-    json.as_object_mut().unwrap().remove("fastMode");
-    json["serviceTier"] = "fast".into();
-    assert!(serde_json::from_value::<AgentLaunchRequest>(json).is_err());
-}

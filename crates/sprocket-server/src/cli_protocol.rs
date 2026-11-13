@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use sprocket_agent::ServiceTier;
 pub use sprocket_convex::RunStatus;
 pub use sprocket_host::native_auth::{
     CredentialStore, DeviceLoginResponse, NativeLoginStatus as LoginStatus, NativeUser,
@@ -90,7 +91,7 @@ pub struct CliRunRequest {
     pub thread_id: Option<String>,
     pub model: Option<String>,
     pub reasoning: Option<String>,
-    pub fast: Option<bool>,
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -122,7 +123,7 @@ pub struct RunStarted {
 pub struct CliRunSettings {
     pub model: String,
     pub reasoning: String,
-    pub fast: bool,
+    pub service_tier: ServiceTier,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

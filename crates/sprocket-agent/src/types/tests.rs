@@ -242,7 +242,7 @@ fn deserializes_a_pending_prompt_from_convex_numbers() {
             "userId": "user_1",
             "selectedModel": "gpt-5.6-sol",
             "reasoningEffort": "medium",
-            "fastMode": false,
+            "serviceTier": "standard",
             "startedAt": 1.0
         },
         "prompt": "hello",

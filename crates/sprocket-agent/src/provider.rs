@@ -41,7 +41,7 @@ use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, max_yield_ms};
 use crate::types::{
     CatalogModelCapabilities, ChatGptCredentials, CompletionProvider, ContextBudget, ModelRoute,
-    ProviderHandoff, RunContextResponse, UsagePricing, gateway_api_v1_url,
+    ProviderHandoff, RunContextResponse, ServiceTier, UsagePricing, gateway_api_v1_url,
 };
 use crate::usage::UsageSource;
 use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
@@ -104,28 +104,32 @@ fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
 
 fn usage_source(
     target: &AgentProvider,
-    fast_mode: bool,
+    service_tier: ServiceTier,
     pricing: &UsagePricing,
     switch: Option<&ProviderSwitchHandoff>,
 ) -> UsageSource {
-    let (provider, model, fast, pricing) = match switch {
+    let (provider, model, service_tier, pricing) = match switch {
         Some(switch) => (
             switch.handoff.completion_provider,
             &switch.handoff.selected_model,
-            switch.handoff.fast_mode,
+            switch.handoff.service_tier,
             &switch.usage_pricing,
         ),
         None => (
             target.completion_provider,
             &target.model,
-            fast_mode,
+            service_tier,
             pricing,
         ),
     };
     UsageSource {
         provider,
         model: model.clone(),
-        fast: fast && provider.fast_service_tier().is_some(),
+        service_tier: if provider.service_tier(service_tier).is_some() {
+            service_tier
+        } else {
+            ServiceTier::Standard
+        },
         pricing: pricing.clone(),
     }
 }
@@ -192,7 +196,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) cwd: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
-    pub(crate) fast_mode: bool,
+    pub(crate) service_tier: ServiceTier,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
     pub(crate) usage_pricing: UsagePricing,
@@ -226,13 +230,17 @@ impl AgentProvider {
         cwd: PathBuf,
     ) -> Self {
         let completion_provider = context.run.completion_provider;
+        let service_tier = context.run.service_tier;
         let fallback_providers = context
             .provider_preferences
             .enabled_providers
             .iter()
             .copied()
             .filter(|provider| {
-                *provider != completion_provider && provider.serves(&capabilities.route)
+                *provider != completion_provider
+                    && provider.serves(&capabilities.route)
+                    && (service_tier != ServiceTier::Ultrafast
+                        || provider.service_tier(service_tier).is_some())
             })
             .collect();
         Self {
@@ -549,9 +557,12 @@ fn generation_options(reasoning_effort: &str) -> anyhow::Result<GenerationOption
 }
 
 // Tier names differ per provider, so they bypass Rig's portable tiers.
-fn service_tier_params(provider: CompletionProvider, fast_mode: bool) -> serde_json::Value {
-    match provider.fast_service_tier() {
-        Some(tier) if fast_mode => serde_json::json!({ "service_tier": tier }),
+fn service_tier_params(
+    provider: CompletionProvider,
+    service_tier: ServiceTier,
+) -> serde_json::Value {
+    match provider.service_tier(service_tier) {
+        Some(tier) => serde_json::json!({ "service_tier": tier }),
         _ => serde_json::json!({}),
     }
 }
@@ -636,18 +647,18 @@ async fn run_with_completion_model(
         Ok(options) => options,
         Err(error) => return AgentProviderResult::Failed { error },
     };
-    let fast_mode = request.fast_mode;
+    let service_tier = request.service_tier;
     let target_params = |target: &AgentProvider| {
         (
             options.clone(),
-            service_tier_params(target.completion_provider, fast_mode),
+            service_tier_params(target.completion_provider, service_tier),
         )
     };
     let mut additional_params = if let Some(ProviderSwitchHandoff { handoff, .. }) = &switch {
         match generation_options(&handoff.reasoning_effort) {
             Ok(options) => (
                 options,
-                service_tier_params(handoff.completion_provider, handoff.fast_mode),
+                service_tier_params(handoff.completion_provider, handoff.service_tier),
             ),
             Err(error) => return AgentProviderResult::Failed { error },
         }
@@ -782,7 +793,7 @@ async fn run_with_completion_model(
         () => {
             usage_source(
                 &target,
-                request.fast_mode,
+                request.service_tier,
                 &request.usage_pricing,
                 provider_switch
                     .as_ref()

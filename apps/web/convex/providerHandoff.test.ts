@@ -94,6 +94,21 @@ const switches = providers.flatMap((source) =>
 );
 
 describe('provider handoff provenance', () => {
+	it('preserves the explicit source tier when handing off providers', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		const sourceRunId = await historicalRun(t, threadId, 'openai');
+		await t.run((ctx) =>
+			ctx.db.patch('runs', sourceRunId, { serviceTier: 'ultrafast', fastMode: false })
+		);
+		const run = await currentRun(t, threadId, 'chatgpt');
+		expect((await t.query(api.agentRuntime.getContext, run)).providerHandoff).toMatchObject({
+			completionProvider: 'openai',
+			serviceTier: 'ultrafast',
+			fastMode: false
+		});
+	});
+
 	it.each(switches)(
 		'uses the completion run settings for $source to $target',
 		async ({ source, target }) => {
@@ -109,6 +124,7 @@ describe('provider handoff provenance', () => {
 				completionProvider: source,
 				selectedModel: 'old-model',
 				reasoningEffort: 'high',
+				serviceTier: 'fast',
 				fastMode: true
 			});
 			expect(context.run).toMatchObject({
@@ -152,6 +168,7 @@ describe('provider handoff provenance', () => {
 				completionProvider: provider,
 				selectedModel: 'old-model',
 				reasoningEffort: 'high',
+				serviceTier: 'fast',
 				fastMode: true
 			});
 			await t.run(async (ctx) => {

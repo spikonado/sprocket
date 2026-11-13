@@ -19,25 +19,39 @@ fn generation_options_map_reasoning_effort() {
 
 #[test]
 fn fast_mode_sends_each_providers_service_tier() {
-    use crate::types::CompletionProvider;
+    use crate::types::{CompletionProvider, ServiceTier};
     for (provider, tier) in [
         (CompletionProvider::Spikonado, "fast"),
         (CompletionProvider::Openai, "priority"),
         (CompletionProvider::Chatgpt, "priority"),
     ] {
         assert_eq!(
-            super::service_tier_params(provider, true),
+            super::service_tier_params(provider, ServiceTier::Fast),
             serde_json::json!({ "service_tier": tier })
         );
         assert_eq!(
-            super::service_tier_params(provider, false),
+            super::service_tier_params(provider, ServiceTier::Standard),
             serde_json::json!({})
         );
     }
     assert_eq!(
-        super::service_tier_params(CompletionProvider::Claude, true),
+        super::service_tier_params(CompletionProvider::Claude, ServiceTier::Fast),
         serde_json::json!({})
     );
+    assert_eq!(
+        super::service_tier_params(CompletionProvider::Openai, ServiceTier::Ultrafast),
+        serde_json::json!({"service_tier": "ultrafast"})
+    );
+    for provider in [
+        CompletionProvider::Chatgpt,
+        CompletionProvider::Spikonado,
+        CompletionProvider::Openrouter,
+    ] {
+        assert_eq!(
+            super::service_tier_params(provider, ServiceTier::Ultrafast),
+            serde_json::json!({})
+        );
+    }
 }
 
 #[test]

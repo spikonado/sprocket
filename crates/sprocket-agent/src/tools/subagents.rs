@@ -105,8 +105,8 @@ pub(crate) struct SpawnSubagentArgs {
     pub(crate) prompt: String,
     pub(crate) model: String,
     pub(crate) reasoning: String,
-    /// Use the fast service tier.
-    pub(crate) fast: bool,
+    #[serde(rename = "serviceTier")]
+    pub(crate) service_tier: crate::ServiceTier,
     /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
@@ -168,9 +168,12 @@ pub(crate) struct ControlSubagentArgs {
     pub(crate) model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<String>,
-    /// Use the fast service tier.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) fast: Option<bool>,
+    #[serde(
+        rename = "serviceTier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) service_tier: Option<crate::ServiceTier>,
     /// Maximum execution runtime for send. Without a limit, the subagent runs until it completes or is stopped.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
@@ -210,7 +213,7 @@ pub(crate) struct ListSubagentsArgs {
     pub(crate) cursor: Option<String>,
 }
 
-const SETTINGS_FIELDS: [&str; 3] = ["model", "reasoning", "fast"];
+const SETTINGS_FIELDS: [&str; 3] = ["model", "reasoning", "serviceTier"];
 
 fn set_model_choices(schema: &mut serde_json::Value, choices: &[SubagentModelChoice]) {
     let mut reasoning_efforts: Vec<&str> = Vec::new();
@@ -224,21 +227,16 @@ fn set_model_choices(schema: &mut serde_json::Value, choices: &[SubagentModelCho
     schema["properties"]["reasoning"] = json!({ "type": "string", "enum": reasoning_efforts });
 }
 
-/// One branch per model, so a reasoning level or fast mode the model lacks fails validation.
+/// One branch per model, so a reasoning level or service tier the model lacks fails validation.
 fn model_settings_branches(choices: &[SubagentModelChoice]) -> Vec<serde_json::Value> {
     choices
         .iter()
         .map(|choice| {
-            let fast = if choice.fast {
-                json!({ "type": "boolean" })
-            } else {
-                json!({ "const": false })
-            };
             json!({
                 "properties": {
                     "model": { "const": choice.id },
                     "reasoning": { "enum": choice.reasoning_efforts },
-                    "fast": fast,
+                    "serviceTier": { "enum": choice.service_tiers },
                 },
                 "required": SETTINGS_FIELDS,
             })
@@ -328,11 +326,11 @@ fn validate_control(args: &ControlSubagentArgs) -> Result<(), ToolExecutionError
         && (args.prompt.is_some()
             || args.model.is_some()
             || args.reasoning.is_some()
-            || args.fast.is_some()
+            || args.service_tier.is_some()
             || args.timeout_ms.is_some())
     {
         return Err(tool_failure(
-            "prompt, model, reasoning, fast, and timeoutMs require send",
+            "prompt, model, reasoning, serviceTier, and timeoutMs require send",
         ));
     }
     if !matches!(args.action, SubagentControlAction::AnswerQuestion)
@@ -400,7 +398,7 @@ impl rig::tool::Tool for SpawnSubagentTool {
             overrides: SettingsOverrides {
                 model: Some(args.model),
                 reasoning: Some(args.reasoning),
-                fast: Some(args.fast),
+                service_tier: Some(args.service_tier),
             },
             yield_time_ms: args.yield_time_ms,
             timeout_ms: args.timeout_ms,
@@ -524,7 +522,10 @@ async fn run_subagent(
         fields.insert("prompt".to_string(), request.prompt.into());
         fields.insert("model".to_string(), resolved.model.clone().into());
         fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
-        fields.insert("fast".to_string(), resolved.fast.into());
+        fields.insert(
+            "serviceTier".to_string(),
+            resolved.service_tier.as_str().into(),
+        );
         fields.insert(
             "completionProvider".to_string(),
             resolved.provider.as_str().into(),
@@ -585,7 +586,7 @@ async fn launch_queued_child(
             selected_model: created.settings.model.clone(),
             completion_provider: created.settings.completion_provider,
             reasoning_effort: created.settings.reasoning.clone(),
-            fast_mode: created.settings.fast,
+            service_tier: created.settings.service_tier,
             continuation_of_run_id: created.continuation_of_run_id.clone(),
         })
         .await;
@@ -722,7 +723,7 @@ impl ControlSubagentTool {
                     overrides: SettingsOverrides {
                         model: args.model,
                         reasoning: args.reasoning,
-                        fast: args.fast,
+                        service_tier: args.service_tier,
                     },
                     yield_time_ms: args.yield_time_ms,
                     timeout_ms: args.timeout_ms,
@@ -808,7 +809,10 @@ impl ControlSubagentTool {
                         ("prompt".to_string(), continuation.prompt.clone().into()),
                         ("model".to_string(), settings.model.into()),
                         ("reasoning".to_string(), settings.reasoning.into()),
-                        ("fast".to_string(), settings.fast.into()),
+                        (
+                            "serviceTier".to_string(),
+                            settings.service_tier.as_str().into(),
+                        ),
                         (
                             "completionProvider".to_string(),
                             settings.provider.as_str().into(),
@@ -1017,8 +1021,7 @@ async fn resolve_child_settings(
     let catalog = model_catalog(&context.gateway_url)
         .await
         .map_err(tool_error)?;
-    // Saved settings pass as explicit overrides so a stale model, reasoning level, or fast
-    // mode fails instead of falling back to catalog defaults the agent never chose.
+    // Treat saved choices as explicit so stale settings fail instead of changing silently.
     let (overrides, hint) = match thread_id {
         Some(thread_id) => {
             let saved = fetch_thread::<SubagentThreadSnapshot>(context, SNAPSHOT, thread_id)
@@ -1027,11 +1030,11 @@ async fn resolve_child_settings(
             let overrides = SettingsOverrides {
                 model: overrides.model.clone().or(Some(saved.model)),
                 reasoning: overrides.reasoning.clone().or(Some(saved.reasoning)),
-                fast: overrides.fast.or(Some(saved.fast)),
+                service_tier: overrides.service_tier.or(Some(saved.service_tier)),
             };
             (
                 overrides,
-                "; use control_subagent send with model, reasoning, and fast to choose new settings",
+                "; use control_subagent send with model, reasoning, and serviceTier to choose new settings",
             )
         }
         None => (overrides.clone(), ""),

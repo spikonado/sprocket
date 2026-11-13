@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::types::{
     CatalogModelCapabilities, CompletionProvider, ContextBudget, ModelRoute, ProviderHandoff,
-    RunSnapshot, UsagePricing, gateway_api_v1_url,
+    RunSnapshot, ServiceTier, UsagePricing, gateway_api_v1_url,
 };
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
@@ -59,6 +59,8 @@ struct GatewayCatalogModel {
     reasoning_efforts: Vec<String>,
     default_reasoning_effort: String,
     service_tiers: Vec<String>,
+    #[serde(default)]
+    byok_service_tiers: Vec<String>,
     context_window_tokens: u64,
     #[serde(rename = "autoCompactTokenLimit")]
     auto_handoff_token_limit: u64,
@@ -97,22 +99,28 @@ pub struct CatalogModel {
     pub reasoning_efforts: Vec<String>,
     pub default_reasoning_effort: String,
     pub service_tiers: Vec<String>,
+    #[serde(default)]
+    pub byok_service_tiers: Vec<String>,
 }
 
 impl CatalogModel {
-    pub fn supports_fast(&self) -> bool {
-        lists_fast_tier(&self.service_tiers)
+    pub fn supports_tier(&self, provider: CompletionProvider, tier: ServiceTier) -> bool {
+        provider.supports_tier(
+            tier,
+            lists_tier(&self.service_tiers, ServiceTier::Fast),
+            lists_tier(&self.byok_service_tiers, ServiceTier::Ultrafast),
+        )
     }
 }
 
-fn lists_fast_tier(service_tiers: &[String]) -> bool {
-    service_tiers.iter().any(|tier| tier == "fast")
+fn lists_tier(service_tiers: &[String], tier: ServiceTier) -> bool {
+    service_tiers.iter().any(|value| value == tier.as_str())
 }
 
 pub(crate) struct SubagentModelChoice {
     pub(crate) id: String,
     pub(crate) reasoning_efforts: Vec<String>,
-    pub(crate) fast: bool,
+    pub(crate) service_tiers: Vec<ServiceTier>,
 }
 
 fn subagent_model_choices(catalog: &GatewaySprocketCatalog) -> Vec<SubagentModelChoice> {
@@ -122,7 +130,18 @@ fn subagent_model_choices(catalog: &GatewaySprocketCatalog) -> Vec<SubagentModel
         .map(|model| SubagentModelChoice {
             id: model.id.clone(),
             reasoning_efforts: model.reasoning_efforts.clone(),
-            fast: lists_fast_tier(&model.service_tiers),
+            service_tiers: [
+                ServiceTier::Standard,
+                ServiceTier::Fast,
+                ServiceTier::Ultrafast,
+            ]
+            .into_iter()
+            .filter(|tier| {
+                *tier == ServiceTier::Standard
+                    || lists_tier(&model.service_tiers, *tier)
+                    || lists_tier(&model.byok_service_tiers, *tier)
+            })
+            .collect(),
         })
         .collect()
 }
@@ -173,6 +192,7 @@ pub async fn model_catalog(gateway_url: &str) -> anyhow::Result<ModelCatalog> {
                 reasoning_efforts: model.reasoning_efforts,
                 default_reasoning_effort: model.default_reasoning_effort,
                 service_tiers: model.service_tiers,
+                byok_service_tiers: model.byok_service_tiers,
             })
             .collect(),
     })
@@ -195,7 +215,8 @@ fn select_catalog_model(
             auto_handoff_token_limit: model.auto_handoff_token_limit,
         },
         supports_images: model.supports_images,
-        supports_fast: lists_fast_tier(&model.service_tiers),
+        supports_fast: lists_tier(&model.service_tiers, ServiceTier::Fast),
+        supports_ultrafast: lists_tier(&model.byok_service_tiers, ServiceTier::Ultrafast),
         usage_pricing: UsagePricing {
             long_context_threshold_tokens: model
                 .direct_api_pricing
@@ -258,7 +279,13 @@ fn select_handoff_model(
         }
     }
     let capabilities = select_catalog_model(catalog, &handoff.selected_model)?;
-    handoff.fast_mode &= capabilities.supports_fast;
+    if !handoff.completion_provider.supports_tier(
+        handoff.service_tier,
+        capabilities.supports_fast,
+        capabilities.supports_ultrafast,
+    ) {
+        handoff.service_tier = ServiceTier::Standard;
+    }
     Ok((replaced_by_fallback
         || handoff.completion_provider != target_provider
         || capabilities.route.vendor != target_vendor)

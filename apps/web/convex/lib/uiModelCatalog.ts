@@ -8,6 +8,7 @@ export type DirectApiPricing = {
 	cacheWrite: Readonly<Record<string, number>>;
 	output: number;
 	fastMultiplier: number;
+	ultrafastMultiplier?: number;
 	longContext: { inputMultiplier: number; outputMultiplier: number } | null;
 };
 
@@ -21,6 +22,7 @@ export type CatalogModel = {
 	reasoningEfforts: readonly string[];
 	defaultReasoningEffort: string;
 	supportsFastMode: boolean;
+	byokServiceTiers?: readonly string[];
 	usagePolicy?: UsagePolicy;
 	directApiPricing?: DirectApiPricing | null;
 };

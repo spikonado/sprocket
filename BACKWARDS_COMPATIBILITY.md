@@ -4,6 +4,10 @@ Clients older than v0.4.2 are unsupported. Each shim below is temporary code wit
 
 ## Convex API shims
 
+### Fast mode booleans
+
+Released agents send `fastMode` to `agentRuntime.createGatewayRun` and `finalizeFailedStart`, and `fast` to `subagents:createOrSend`, without `serviceTier`. Convex derives the tier from them with `modelServiceTier` in `lib/models.ts`. Released agents and UIs also read `fastMode` from threads, runs, `getContext` and provider handoffs, and `fast` from subagent settings, so every write still stores `fastMode` next to `serviceTier`. Released agents also store their `spawn_subagent` and `control_subagent` tool arguments, including `fast`, as `beginToolJob` payloads, so `vSubagentPayload` keeps it. Nothing reads those payload fields back. Once those clients age out, remove the boolean arguments and results, backfill `serviceTier` on threads and runs, make it required, and drop `fastMode` from the schema. Move payload `fast` from `vCurrentExecutorJobPayload` to the stored `vExecutorJobPayload` variants until a production scan finds no `executorJobs` row that still has it.
+
 ### Retired subagent provider restriction
 
 Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
@@ -74,6 +78,10 @@ Released UIs call `githubCredentials:saveToken` and `removeToken`, and released 
 
 ## Convex data shims
 
+### Threads and runs without a service tier
+
+Threads and runs written before explicit service tiers have only `fastMode`. `modelServiceTier` in `lib/models.ts` reads them as `fast` or `standard` for `getContext`, provider handoffs, subagent settings, and the UI composer. `sprocket run` reads threads directly and does the same with `ServiceTier::from_legacy` in `crates/sprocket-server/src/routes/cli/run.rs`. Remove both fallbacks with the backfill in the entry above.
+
 ### Completion provider defaults
 
 Older `threadRecords` and `runs` rows lack `completionProvider`, so the schema keeps it optional. Convex readers, including provider handoffs and subagent settings, and the Rust agent's `RunSnapshot` treat a missing value as `spikonado`. `migrations:backfillThreadCompletionProviders` and `migrations:backfillRunCompletionProviders` set it, and the Convex Production workflow runs them after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports both done on production, make the field required, drop the `?? 'spikonado'` reads and the Rust default, and remove the migrations.
@@ -132,6 +140,10 @@ Each of these Convex variants goes once a full production scan confirms no retai
 - The `pending` executor job status, from before jobs were inserted as `claimed`.
 
 ## Local data directory shims
+
+### Run recovery records without a service tier
+
+Run recovery records saved by released versions have only `fastMode`. `AgentLaunchRequest` in `crates/sprocket-host/src/agent_launch.rs` defaults `fast_mode`, and the recovery path there and `launch_run` in `crates/sprocket-server/src/routes/agent.rs` resolve the tier with `ServiceTier::from_legacy`. A record leaves `run-recovery.json` only when a recovery round settles or expires it, so a data dir that sits unused keeps legacy records indefinitely. `RunRecovery::load` also fails on the whole file if one record doesn't parse. Aging out old writers is therefore not enough. Remove the shim only after a released version's `RunRecovery::load` rewrites every legacy record with an explicit `serviceTier`, or drops it, and versions before that migration are outside the direct-upgrade window.
 
 ### Windows private files from elevated runs
 
