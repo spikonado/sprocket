@@ -31,6 +31,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: frontend-design-updater
+        name: frontend-design-updater
+        language: system
+        entry: node --test tools/frontend-design/update-skill.test.mjs
+        pass_filenames: false
+        files: ^tools/frontend-design/
+
       - id: sync-skills
         name: sync-skills
         language: system
