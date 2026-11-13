@@ -1575,39 +1575,22 @@ it('shows a retained-account sign-out failure in Account settings', async () => 
 	);
 });
 
-it.each([
-	['installed', 'ready', true],
-	['outdated', 'planRequired', false]
-] as const)(
-	'shows saved credentials as providers, Claude and Muse only when ready (%s, %s)',
-	async (claudeState, museState, shown) => {
-		const client = createConvexFixtures();
-		client.registerAction(api.providerCredentials.getMyConfiguration, {
-			openai: false,
-			claude: true,
-			anthropic: false,
-			vercel: false,
-			openrouter: true,
-			opencode: false,
-			opencodeGo: false,
-			morph: false
-		});
-		const fetchClaudeCodeStatus = vi.fn(async () => claudeCodeStatus(claudeState));
-		const fetchMuseStatus = vi.fn(async () => museStatus(museState));
-		await renderApp(
-			client,
-			createRuntime(createLocalApi({ fetchClaudeCodeStatus, fetchMuseStatus }))
-		);
-		fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
-		fireEvent.click(screen.getByRole('button', { name: 'Providers' }));
-		await flushPendingWork();
-		expect(fetchClaudeCodeStatus).toHaveBeenCalledWith('user-a');
-		expect(fetchMuseStatus).toHaveBeenCalledWith('user-a');
-		expect(screen.queryByRole('switch', { name: 'Claude Subscription' }) !== null).toBe(shown);
-		expect(screen.queryByRole('switch', { name: 'Muse Code Subscription' }) !== null).toBe(shown);
-		expect(screen.getByRole('switch', { name: 'OpenRouter' })).toBeTruthy();
-	}
-);
+it('deletes the API key of a provider removed from the providers page', async () => {
+	const client = createConvexFixtures();
+	client.registerQuery(api.uiPreferences.getMyProviderOrder, [
+		{ provider: 'spikonado', enabled: true },
+		{ provider: 'openrouter', enabled: true }
+	]);
+	const removeApiKey = vi.fn(async () => null);
+	client.handleAction(api.providerCredentials.removeApiKey, removeApiKey);
+	await renderApp(client, createRuntime(createLocalApi()));
+	fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
+	fireEvent.click(screen.getByRole('button', { name: 'Providers' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Remove OpenRouter' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+	await flushPendingWork();
+	expect(removeApiKey).toHaveBeenCalledWith({ provider: 'openrouter' });
+});
 
 it('checks Claude Code again when BYOK/BYOS opens', async () => {
 	const client = createConvexFixtures();

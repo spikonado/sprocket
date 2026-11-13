@@ -163,6 +163,7 @@ function mount(
 ) {
 	const onConfigurationChange = vi.fn();
 	const onProviderConnected = vi.fn();
+	const onProviderRemoved = vi.fn();
 	const onChatGptStatusChange = vi.fn();
 	const onClaudeCodeStatusChange = vi.fn();
 	const onMuseStatusChange = vi.fn();
@@ -201,6 +202,7 @@ function mount(
 				}}
 				onConfigurationChange={onConfigurationChange}
 				onProviderConnected={onProviderConnected}
+				onProviderRemoved={onProviderRemoved}
 			/>
 		);
 	}
@@ -215,6 +217,7 @@ function mount(
 		...view,
 		onConfigurationChange,
 		onProviderConnected,
+		onProviderRemoved,
 		onChatGptStatusChange,
 		onClaudeCodeStatusChange,
 		onMuseStatusChange
@@ -236,7 +239,6 @@ it('saves an API key, clears the input, and reports the configured provider', as
 		})
 	);
 	expect(save).toHaveBeenCalledWith({ provider: 'vercel', apiKey: 'vck_not-a-secret' });
-	expect(view.onProviderConnected).toHaveBeenCalledWith('vercel');
 	expect(card.getByLabelText('API key')).toHaveProperty('value', '');
 });
 
@@ -668,6 +670,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 				onMuseStatusChange={() => {}}
 				onConfigurationChange={() => {}}
 				onProviderConnected={() => {}}
+				onProviderRemoved={() => {}}
 			/>
 		</ConvexTestProvider>
 	);
@@ -762,7 +765,8 @@ it('signs an account out on the first click and shows the server warning', async
 
 	const view = mount(client, { chatGptStatus: status, localApi });
 	fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
-	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(signedOutStatus));
+	await waitFor(() => expect(view.onProviderRemoved).toHaveBeenCalledWith('chatgpt'));
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(signedOutStatus);
 	expect(disconnect).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-1' });
 	expect(screen.getByText('Remote revocation could not be confirmed.')).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();

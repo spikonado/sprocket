@@ -6,10 +6,13 @@ import { getUserId } from '@convex/lib/auth';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import {
 	assertValidProviderOrder,
+	builtInProvider,
 	enabledProviders,
 	releasedClientProviders,
 	resolveProviderOrder,
-	vProviderOrderEntry
+	vProviderOrderEntry,
+	withoutProvider,
+	withProviderEnabled
 } from '@convex/lib/providerOrder';
 import { vCompletionProvider } from '@convex/lib/validators';
 import schema from '@convex/schema';
@@ -79,11 +82,30 @@ export const enableProvider = mutation({
 	handler: async (ctx, args) => {
 		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
 
-		const providerOrder = resolveProviderOrder(preferences?.providerOrder).map((entry) =>
-			entry.provider === args.provider ? { ...entry, enabled: true } : entry
-		);
+		await savePreferences(ctx, {
+			providerOrder: withProviderEnabled(
+				resolveProviderOrder(preferences?.providerOrder),
+				args.provider
+			)
+		});
 
-		await savePreferences(ctx, { providerOrder });
+		return null;
+	}
+});
+
+export const removeProvider = mutation({
+	args: { provider: vCompletionProvider },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (args.provider === builtInProvider) throw new Error('Spikonado cannot be removed.');
+		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
+
+		await savePreferences(ctx, {
+			providerOrder: withoutProvider(
+				resolveProviderOrder(preferences?.providerOrder),
+				args.provider
+			)
+		});
 
 		return null;
 	}

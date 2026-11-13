@@ -11,7 +11,7 @@ import type {
 	MuseStatus
 } from '$lib/types/sprocket';
 import type { CompletionProvider } from '@convex/lib/validators';
-import ApiKeyCard, { type ApiKeyProvider } from './api-key-card';
+import ApiKeyCard, { apiKeyProviders, type ApiKeyProvider } from './api-key-card';
 import ClaudeSubscriptionCard from './claude-subscription-card';
 import MuseSubscriptionCard from './muse-subscription-card';
 
@@ -19,16 +19,6 @@ type ProviderConfigurationChange = {
 	provider: ApiKeyProvider | 'claude';
 	configured: boolean;
 };
-
-const apiKeyProviders: readonly ApiKeyProvider[] = [
-	'opencode-go',
-	'morph',
-	'anthropic',
-	'openai',
-	'opencode',
-	'openrouter',
-	'vercel'
-];
 
 type PendingBrowserLogin = {
 	userId: string;
@@ -53,7 +43,8 @@ export default function SettingsCredentials({
 	onClaudeCodeStatusChange,
 	onMuseStatusChange,
 	onConfigurationChange,
-	onProviderConnected
+	onProviderConnected,
+	onProviderRemoved
 }: {
 	userId: string;
 	localApi: LocalApi | null;
@@ -73,6 +64,7 @@ export default function SettingsCredentials({
 	onMuseStatusChange: (status: MuseStatus) => void;
 	onConfigurationChange: (change: ProviderConfigurationChange) => void;
 	onProviderConnected: (provider: CompletionProvider) => void;
+	onProviderRemoved: (provider: CompletionProvider) => void;
 }) {
 	const [chatGptPending, setChatGptPending] = useState(false);
 	const [browserLoginActive, setBrowserLoginActive] = useState(false);
@@ -93,12 +85,6 @@ export default function SettingsCredentials({
 
 	function errorMessage(error: Error, fallback: string): string {
 		return convexClientErrorMessage(error) ?? fallback;
-	}
-
-	function configurationChanged(change: ProviderConfigurationChange) {
-		onConfigurationChange(change);
-
-		if (change.configured) onProviderConnected(change.provider);
 	}
 
 	function cancelLoginOnServer(pending: PendingBrowserLogin) {
@@ -350,6 +336,8 @@ export default function SettingsCredentials({
 
 			if (generation !== generationRef.current || api !== localApi) return;
 			onChatGptStatusChange(status);
+
+			if (!status.accounts.some((account) => account.connected)) onProviderRemoved('chatgpt');
 		} catch (error) {
 			if (generation !== generationRef.current) return;
 			setChatGptError(
@@ -508,7 +496,7 @@ export default function SettingsCredentials({
 						statusError={claudeCodeStatusError}
 						onStatusChange={onClaudeCodeStatusChange}
 						onTokenSavedChange={(configured) =>
-							configurationChanged({ provider: 'claude', configured })
+							onConfigurationChange({ provider: 'claude', configured })
 						}
 					/>
 
@@ -527,7 +515,7 @@ export default function SettingsCredentials({
 							provider={provider}
 							configured={apiKeysSaved[provider]}
 							loading={loading}
-							onConfiguredChange={(configured) => configurationChanged({ provider, configured })}
+							onConfiguredChange={(configured) => onConfigurationChange({ provider, configured })}
 						/>
 					))}
 

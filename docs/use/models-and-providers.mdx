@@ -54,6 +54,10 @@ Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and 
 
 In **Settings → Providers**, drag providers into the order you want and turn each on or off. At least one provider must stay on.
 
+<Snippet file="unreleased.mdx" />
+
+Connecting a provider in **Settings → BYOK/BYOS** adds it to the end of the list. Removing a provider from either page takes it off the list and deletes what Sprocket saved for it: an API key, the Claude token, or every ChatGPT sign-in. Removing Muse leaves the Muse CLI signed in. Spikonado always stays on the list. If you remove the last provider that's on, Sprocket turns Spikonado back on.
+
 For each request, Sprocket uses the first enabled provider that offers the model. Sprocket retries server errors. If the provider still fails or rate-limits the request, Sprocket moves the run to the next enabled provider. If no enabled provider offers the model, the run fails with an error that points to **Settings → Providers**.
 
 ## Long threads

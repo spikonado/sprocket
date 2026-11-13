@@ -11,6 +11,16 @@ import { convexClientErrorMessage } from '$lib/convex-error';
 
 export type ApiKeyProvider = FunctionArgs<typeof api.providerCredentials.saveApiKey>['provider'];
 
+export const apiKeyProviders: readonly ApiKeyProvider[] = [
+	'opencode-go',
+	'morph',
+	'anthropic',
+	'openai',
+	'opencode',
+	'openrouter',
+	'vercel'
+];
+
 type ProviderConfiguration = FunctionReturnType<typeof api.providerCredentials.getMyConfiguration>;
 
 export function providerConfigKey(

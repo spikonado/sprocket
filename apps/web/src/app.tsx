@@ -52,7 +52,11 @@ import RunUsageFooter from '$lib/components/home/run-usage-footer';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsCredentials from '$lib/components/home/settings-credentials';
-import { providerConfigKey, type ApiKeyProvider } from '$lib/components/home/api-key-card';
+import {
+	apiKeyProviders,
+	providerConfigKey,
+	type ApiKeyProvider
+} from '$lib/components/home/api-key-card';
 import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsVersionControl from '$lib/components/home/settings-version-control';
 import SettingsConnectors from '$lib/components/home/settings-connectors';
@@ -95,7 +99,7 @@ import {
 	useSubmissionTracker,
 	type ComposerRecovery
 } from '$lib/home/submission-tracker';
-import { completionProviderIds, type CompletionProvider } from '@convex/lib/validators';
+import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
@@ -333,6 +337,9 @@ export default function App({
 	const skipAgentQuestion = useMutation(api.agentQuestions.skip);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const enableProvider = useMutation(api.uiPreferences.enableProvider);
+	const removeProviderFromOrder = useMutation(api.uiPreferences.removeProvider);
+	const removeApiKey = useAction(api.providerCredentials.removeApiKey);
+	const removeClaudeToken = useAction(api.providerCredentials.removeClaudeToken);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 	const updatePullRequestStates = useMutation(api.pullRequests.updateStates);
 
@@ -398,11 +405,6 @@ export default function App({
 		chatGptStatusResource.status === 'failed'
 			? loadErrorMessage(chatGptStatusResource.error, 'Couldn’t load ChatGPT connection status.')
 			: (chatGptStatus?.error ?? null);
-
-	const chatGptConfigured =
-		chatGptStatus?.accounts.find(
-			(account) => account.connectionId === chatGptStatus.activeConnectionId
-		)?.connected === true;
 
 	async function loadModelCatalog() {
 		setCatalogLoading(true);
@@ -507,23 +509,6 @@ export default function App({
 		fetchStatus: (api, userId) => api.fetchMuseStatus(userId),
 		failureMessage: 'Couldn’t check Muse on this computer.'
 	});
-
-	const claudeConfigured =
-		claudeTokenSaved && (!localApi || claudeCode.status?.state === 'installed');
-
-	const museConfigured = muse.status?.state === 'ready';
-
-	const configuredProviders = useMemo(() => {
-		const configured: Record<CompletionProvider, boolean> = {
-			...apiKeysSaved,
-			spikonado: true,
-			chatgpt: chatGptConfigured,
-			claude: claudeConfigured,
-			muse: museConfigured
-		};
-
-		return completionProviderIds.filter((provider) => configured[provider]);
-	}, [apiKeysSaved, chatGptConfigured, claudeConfigured, museConfigured]);
 
 	const [createThreadComposerElement, setCreateThreadComposerElement] =
 		useState<HTMLElement | null>(null);
@@ -1389,6 +1374,37 @@ export default function App({
 				[providerConfigKey(change.provider)]: change.configured
 			});
 		}
+	}
+
+	async function removeProvider(provider: CompletionProvider) {
+		const apiKeyProvider = apiKeyProviders.find((candidate) => candidate === provider);
+
+		if (apiKeyProvider) {
+			await removeApiKey({ provider: apiKeyProvider });
+			handleProviderConfigurationChange({ provider: apiKeyProvider, configured: false });
+
+			return;
+		}
+
+		if (provider === 'claude') {
+			await removeClaudeToken({});
+			handleProviderConfigurationChange({ provider, configured: false });
+
+			return;
+		}
+
+		if (provider === 'chatgpt' && localApi && signedInUserId) {
+			const userId = signedInUserId;
+			const status = await localApi.fetchChatGptStatus({ userId });
+
+			for (const account of status.accounts) {
+				await localApi.disconnectChatGptAccount({ userId, connectionId: account.connectionId });
+			}
+
+			setChatGptStatus(await localApi.fetchChatGptStatus({ userId }));
+		}
+
+		await removeProviderFromOrder({ provider });
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {
@@ -2593,7 +2609,7 @@ export default function App({
 							<SettingsAiUsage modelCatalog={modelCatalog} />
 						) : settingsPage === 'providers' ? (
 							<SettingsProviders
-								configuredProviders={configuredProviders}
+								onRemove={removeProvider}
 								onOpenCredentials={() => setSettingsPage('credentials')}
 							/>
 						) : settingsPage === 'credentials' && signedInUserId ? (
@@ -2617,6 +2633,9 @@ export default function App({
 								onConfigurationChange={handleProviderConfigurationChange}
 								onProviderConnected={(provider) =>
 									void enableProvider({ provider }).catch(() => {})
+								}
+								onProviderRemoved={(provider) =>
+									void removeProviderFromOrder({ provider }).catch(() => {})
 								}
 							/>
 						) : settingsPage === 'payments' ? (

@@ -9,7 +9,7 @@ import {
 	type Watch,
 	type WatchQueryOptions
 } from 'convex/react';
-import type { PaginationStatus } from 'convex/browser';
+import type { OptimisticLocalStore, PaginationStatus } from 'convex/browser';
 import {
 	getFunctionName,
 	type ArgsAndOptions,
@@ -176,14 +176,28 @@ export class ConvexTestClient extends ConvexReactClient {
 		mutation: Mutation,
 		...argsAndOptions: ArgsAndOptions<Mutation, MutationOptions<FunctionArgs<Mutation>>>
 	): Promise<FunctionReturnType<Mutation>> {
-		void argsAndOptions;
+		const [args, options] = argsAndOptions;
 		const name = getFunctionName(mutation);
 		const reader = this.#mutationFixtures.get(name);
 
 		if (!reader) throw new Error(`No mutation fixture registered for ${name}`);
 
+		options?.optimisticUpdate?.(this.#localStore, args ?? {});
+
 		return Promise.resolve(reader.read<FunctionReturnType<Mutation>>());
 	}
+
+	#localStore: OptimisticLocalStore = {
+		getQuery: (query, ...args) => {
+			void args;
+
+			return this.#queryFixtures.get(getFunctionName(query))?.read();
+		},
+		getAllQueries: () => [],
+		setQuery: (query, _args, value) => {
+			if (value !== undefined) this.registerQuery(query, value);
+		}
+	};
 
 	override action<Action extends ActionReference>(
 		action: Action,
