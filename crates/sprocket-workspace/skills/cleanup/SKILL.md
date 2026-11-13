@@ -4,14 +4,16 @@ description: Use to clean up designs and code.
 disable-model-invocation: true
 ---
 
-### If you are Opus 5.5
+## Who runs it
 
-If you are working in a fresh context, do the task given below. If not, spawn an Opus 5.5 subagent to do it. Only give it references to the designs/code and this skill.
+Run the task in a fresh context, on Opus 5.5 when possible:
 
-### If you are some other model
+- If you are Opus 5.5 working in a fresh context, do the task yourself.
+- Otherwise, spawn an Opus 5.5 subagent to do it.
+- If you can't spawn Opus 5.5, do the task yourself when your context is fresh. When it isn't, spawn a subagent on another model.
 
-If available, spawn an Opus 5.5 subagent. If not available and you are working in a fresh context, do the task below. If neither condition applies, spawn a subagent using a different model.
+Give the subagent only the paths or PR to clean up and the name of this skill, so it judges the work without your reasoning.
 
-### Task
+## Task
 
-Go through the requested designs/code and fix every place that breaks your system instructions' "Code and design quality" and "Writing style" sections. When cleaning up a PR, inspect the full PR diff, not individual commits. Remove compatibility added only for earlier revisions of the PR when no supported consumer or existing data needs it.
+Go through the requested designs and code and fix every place that breaks your system instructions' "Code and design quality" and "Writing style" sections. When cleaning up a PR, work from its full diff against the base branch. Remove compatibility added only for earlier revisions of the PR when no supported consumer or existing data needs it.
