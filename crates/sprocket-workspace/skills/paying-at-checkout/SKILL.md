@@ -6,7 +6,7 @@ description: Use when the user asks to buy, order, or pay for something online.
 # Paying at checkout
 
 - You shop on the store's real website in the signed-in browser from `$using-the-signed-in-browser`, so store sign-ins and cleared captchas carry over.
-- The user's card never reaches you: you type a placeholder card, and Sprocket swaps in the real payment after the user approves it with their passkey.
+- The user's card never reaches you. You type a placeholder card, and Sprocket swaps in the real payment after the user approves it with their passkey.
 
 ## 1. Agree on the order
 
@@ -22,20 +22,20 @@ Fill the store's checkout form in the browser. In the card fields, type the plac
 - Any future expiry, such as `12/34`
 - Any CVC, such as `123`
 
-Use the store's guest checkout when it has one. Hand off to the user for account logins and 3-D Secure screens.
+Use the store's guest checkout when it has one.
 
 Done when: the page shows the final total and a Pay / Place order button, and nothing else is left to fill.
 
 ## 3. Pay with `card_checkout`
 
-Call `card_checkout` with the page's final total, its currency, and the Pay button's ref from `snapshot -i`. The tool clicks the button, and the user approves the purchase with their passkey.
+Call `card_checkout` with the page's final total, its currency, and the Pay button's ref. The tool clicks the button.
 
 | status                             | your move                                                                                                                  |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `awaiting_approval`                | Call `poll_checkout` until it changes. Don't end your turn or touch the checkout tab; ending the run cancels the purchase. |
 | `approved`                         | Go to step 4                                                                                                               |
 | `submitted_on_device`              | Tell the user to finish payment on the Agentcard page, then go to step 4                                                   |
-| `card_required`                    | Ask the user to save a card (Save a card button or Settings → Payments), then call again                                   |
+| `card_required`                    | Ask the user to save a card, then call again                                                                               |
 | `declined`, `expired`, `cancelled` | Tell the user, with the `reason` if there is one; call again only if they ask                                              |
 | `no_payment_request`               | Check the page for errors or missing fields, fix them, then call again                                                     |
 | `outcome_unknown`                  | Stop. Tell the user to check their card and the store before anything else                                                 |
@@ -44,9 +44,9 @@ A second `card_checkout` after `approved`, `submitted_on_device`, or `outcome_un
 
 ## 4. Confirm and report
 
-`approved` only means the real card reached the processor. The store can still reject the payment, for example with a captcha or bank check that fails.
+`approved` only means the real card reached the processor. The store can still reject the payment, for example when a captcha or bank check fails. Hand 3-D Secure screens to the user.
 
-- When the store shows its confirmation page, call `report_order` with `outcome: "ordered"` and the order number. Give the user the order number and any tracking link.
-- When the store shows the payment failed, call `report_order` with `outcome: "failed"` and tell the user what the store said.
+- When the store shows its confirmation page, call `report_order`. Give the user the order number and any tracking link.
+- When the store shows the payment failed, call `report_order` and tell the user what the store said.
 
 Done when: `report_order` succeeded, or you told the user the store showed neither a confirmation nor a failure.
