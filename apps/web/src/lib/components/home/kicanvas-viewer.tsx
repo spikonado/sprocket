@@ -157,9 +157,13 @@ export default function KicanvasViewer({
 				if (ready.type !== 'ready') throw new Error('Could not load KiCanvas.');
 				postTheme(frame);
 
-				// KiCanvas skips blank sources without ever finishing its load.
-				if (sources.every(({ content }) => !content.trim())) {
-					throw new Error('This KiCad file is empty.');
+				// KiCanvas never finishes a load without a non-blank schematic.
+				if (!sources.some(({ name, content }) => name.endsWith('.kicad_sch') && content.trim())) {
+					throw new Error(
+						file.path.endsWith('.kicad_pro')
+							? 'This project has no schematic.'
+							: 'This KiCad file is empty.'
+					);
 				}
 
 				const parsed = nextFrameMessage(frame, signal);
