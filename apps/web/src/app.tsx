@@ -3,11 +3,12 @@ import {
 	type ComponentProps,
 	useEffect,
 	useEffectEvent,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState
 } from 'react';
-import { PanelRight, Settings } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import {
 	useAction,
 	useConvex,
@@ -63,9 +64,6 @@ import SettingsConnectors from '$lib/components/home/settings-connectors';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
-import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
-import { minLayoutSize } from '$lib/chat/side-panel';
-import { useSidePanelWidth } from '$lib/home/side-panel-width';
 import { useExistingThreadCwd } from '$lib/home/thread-cwd';
 import ArtifactScreenFullscreen, {
 	requestArtifactFullscreen
@@ -485,7 +483,6 @@ export default function App({
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [viewportWidth, setViewportWidth] = useState(0);
 	const sidebarVisible = sidebarOpen || (settingsOpen && viewportWidth >= 768);
-	const sidePanelWidth = useSidePanelWidth(viewportWidth, sidebarVisible);
 	const [projectFilter, setProjectFilter] = useState<string[]>([]);
 	const [settledInboxOpen, setSettledInboxOpen] = useState(false);
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
@@ -552,9 +549,6 @@ export default function App({
 
 	const [artifactFullscreenRequest, setArtifactFullscreenRequest] =
 		useState<Promise<boolean> | null>(null);
-
-	const phoneViewport = viewportWidth > 0 && viewportWidth < 768;
-	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
 
 	const authenticatedQueryArgs = signedInUserId && convexAuth.isAuthenticated ? {} : 'skip';
 
@@ -853,7 +847,7 @@ export default function App({
 
 	const visibleActions = useMemo<ExecutorJob[]>(() => [], []);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const scope =
 			signedInUserId && currentRepositoryKey
 				? {
@@ -863,8 +857,8 @@ export default function App({
 					}
 				: null;
 
-		artifactPanel.selectScope(scope);
-	}, [artifactPanel, signedInUserId, currentRepositoryKey, currentWorkspacePath]);
+		artifactPanel.selectScope(scope, currentThreadId);
+	}, [artifactPanel, signedInUserId, currentRepositoryKey, currentWorkspacePath, currentThreadId]);
 
 	useEffect(() => {
 		const scope =
@@ -2500,17 +2494,7 @@ export default function App({
 					!sidebarVisible && 'sidebar-hidden',
 					settingsOpen && 'settings-open'
 				)}
-				style={{
-					paddingRight:
-						!settingsOpen && artifactPanel.panel.open && !sidePanelFullscreen
-							? sidePanelWidth.width
-							: undefined
-				}}
-				inert={
-					fullscreenArtifact || (!settingsOpen && artifactPanel.panel.open && sidePanelFullscreen)
-						? true
-						: undefined
-				}
+				inert={fullscreenArtifact ? true : undefined}
 			>
 				{sidebarOpen && (
 					<button
@@ -2598,20 +2582,12 @@ export default function App({
 				)}
 
 				<main
-					className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+					className={cn(
+						'relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden',
+						!sidebarVisible && 'pl-14'
+					)}
 					inert={sidebarOpen && viewportWidth < 768}
 				>
-					{!settingsOpen && !artifactPanel.panel.open && (
-						<button
-							type="button"
-							className="touch-target text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring absolute top-1.5 right-2 z-100 rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none"
-							onClick={() => artifactPanel.update({ open: true })}
-							aria-label="Open side panel"
-							data-ph-capture-attribute-action="open_side_panel"
-						>
-							<PanelRight className="size-4" aria-hidden="true" />
-						</button>
-					)}
 					{settingsOpen ? (
 						settingsPage === 'general' ? (
 							<SettingsGeneral />
@@ -2663,211 +2639,183 @@ export default function App({
 						)
 					) : (
 						<MarkdownFileLinksContext value={markdownFileLinks}>
-							{currentThreadId && (
-								<ThreadTranscript
-									key={`${currentThreadId}:${transcript.windowVersion}`}
-									messages={visibleMessages}
-									actions={visibleActions}
-									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
-									project={currentProject}
-									cwd={threadCwd}
-									artifacts={artifactList.artifacts}
-									onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
-									loadingOlder={transcript.loadingOlder}
-									nextBefore={transcript.nextBefore ?? undefined}
-									emptyStateMessage={
-										currentThreadId &&
-										(transcript.loading || transcript.threadId !== currentThreadId)
-											? 'Loading conversation history...'
-											: currentProject
-												? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-												: 'Add a project to begin.'
-									}
-									onLoadOlder={() => void loadOlderTranscript()}
-									loadAttachment={loadTranscriptAttachment}
-									loadSectionDetails={loadTranscriptSectionDetails}
-									renderRunFooter={(runId) => (
-										<RunUsageFooter runId={runId} modelCatalog={modelCatalog} />
-									)}
-								/>
-							)}
-
-							<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
-								{!currentThreadId && (
+							<SidePanel
+								key={artifactPanel.layoutKey}
+								workspacePath={localApi ? currentProject?.workspacePath : undefined}
+								threadCwd={threadCwd}
+								artifacts={artifactList.artifacts}
+								artifactContents={artifactContents}
+								onDeleteArtifact={deleteArtifact}
+								layout={artifactPanel.panel.layout}
+								activePaneId={artifactPanel.activePane.id}
+								browserApi={localApi}
+								filesApi={localApi}
+								loading={artifactList.loading}
+								error={artifactList.error}
+								onNewTab={(paneId) => artifactPanel.newTab(paneId)}
+								onActivateTab={(id) => artifactPanel.activateTab(id)}
+								onCloseTab={(id) => artifactPanel.closeTab(id)}
+								onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
+								onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
+								onFocusPane={(id) => artifactPanel.focusPane(id)}
+								onSplitPane={(id, direction) => artifactPanel.splitPane(id, direction)}
+								onResizeSplit={(id, ratio) => artifactPanel.resizeSplit(id, ratio)}
+								onOpenFile={(file) => artifactPanel.openFile(file)}
+								onFileRenamed={(workspacePath, from, to) =>
+									artifactPanel.renameFile(workspacePath, from, to)
+								}
+								onFileDeleted={(workspacePath, path) =>
+									artifactPanel.closeFile(workspacePath, path)
+								}
+								onOpenFullscreen={(key) => {
+									setArtifactFullscreenRequest(requestArtifactFullscreen());
+									artifactPanel.setFullscreenKey(key);
+								}}
+								transcript={
 									<>
-										<CreateThreadHeading
-											projects={projects}
-											workspacePath={currentWorkspacePath}
-											onProject={startThreadDraftForProject}
-											onAddProject={() => openProjectPicker('add')}
-											onRemoveProject={localApi ? removeProject : undefined}
-										/>
-										{currentProject?.localAttachmentAvailability === 'unavailable' && (
-											<p className="create-thread-message">
-												Project not connected here.{' '}
-												<button
-													type="button"
-													onClick={() => {
-														if (currentWorkspacePath) reconnectProject(currentWorkspacePath);
-													}}
-												>
-													Connect a local folder
-												</button>{' '}
-												to start local work.
-											</p>
+										{currentThreadId && (
+											<ThreadTranscript
+												key={`${currentThreadId}:${transcript.windowVersion}`}
+												messages={visibleMessages}
+												actions={visibleActions}
+												activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
+												project={currentProject}
+												cwd={threadCwd}
+												artifacts={artifactList.artifacts}
+												onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
+												loadingOlder={transcript.loadingOlder}
+												nextBefore={transcript.nextBefore ?? undefined}
+												emptyStateMessage={
+													currentThreadId &&
+													(transcript.loading || transcript.threadId !== currentThreadId)
+														? 'Loading conversation history...'
+														: currentProject
+															? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+															: 'Add a project to begin.'
+												}
+												onLoadOlder={() => void loadOlderTranscript()}
+												loadAttachment={loadTranscriptAttachment}
+												loadSectionDetails={loadTranscriptSectionDetails}
+												renderRunFooter={(runId) => (
+													<RunUsageFooter runId={runId} modelCatalog={modelCatalog} />
+												)}
+											/>
 										)}
-									</>
-								)}
 
-								{!catalogError && catalogLoading && !modelCatalog ? (
-									<div className="text-muted-foreground mb-3 text-sm">Loading models…</div>
-								) : null}
+										<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
+											{!currentThreadId && (
+												<>
+													<CreateThreadHeading
+														projects={projects}
+														workspacePath={currentWorkspacePath}
+														onProject={startThreadDraftForProject}
+														onAddProject={() => openProjectPicker('add')}
+														onRemoveProject={localApi ? removeProject : undefined}
+													/>
+													{currentProject?.localAttachmentAvailability === 'unavailable' && (
+														<p className="create-thread-message">
+															Project not connected here.{' '}
+															<button
+																type="button"
+																onClick={() => {
+																	if (currentWorkspacePath) reconnectProject(currentWorkspacePath);
+																}}
+															>
+																Connect a local folder
+															</button>{' '}
+															to start local work.
+														</p>
+													)}
+												</>
+											)}
 
-								<div
-									ref={setCreateThreadComposerElement}
-									className={!currentThreadId ? 'create-thread-composer' : ''}
-								>
-									<PromptComposer
-										notices={
-											<>
-												<PurchaseApprovals purchases={pendingApprovals} />
-												<ConversationNotices
-													key={currentThreadId}
-													error={conversationError}
-													runError={runError}
-													outOfUsage={runState?.failureKind === 'usage_limit'}
-													reconnecting={Boolean(
-														currentThreadId &&
-														transcript.threadId === currentThreadId &&
-														transcript.stale
-													)}
-													syncing={Boolean(
-														currentThreadId &&
-														transcript.threadId === currentThreadId &&
-														transcript.syncing
-													)}
-													catalogError={catalogError !== null}
-													catalogLoading={catalogLoading}
-													onRetryCatalog={() => void loadModelCatalog()}
-												/>
-											</>
-										}
-										prompt={prompt}
-										onPromptChange={setPrompt}
-										attachments={composerAttachments.items}
-										onAttachFiles={(files) => composerAttachments.add(files)}
-										onRemoveAttachment={(localId) => composerAttachments.remove(localId)}
-										modelCatalog={modelCatalog}
-										selectedModel={selectedModel}
-										onSelectedModelChange={setSelectedModel}
-										selectedReasoningEffort={selectedReasoningEffort}
-										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
-										fastMode={fastMode}
-										onFastModeChange={setFastMode}
-										pendingQuestion={pendingAgentQuestion}
-										runEnded={runEnded}
-										showContinueWorking={canContinueWorking}
-										onContinueWorking={() => void continueWorking()}
-										runningCommands={
-											currentThreadId && signedInUserId && localApi && authReady
-												? {
-														api: localApi,
-														scope: { userId: signedInUserId, threadId: currentThreadId }
+											{!catalogError && catalogLoading && !modelCatalog ? (
+												<div className="text-muted-foreground mb-3 text-sm">Loading models…</div>
+											) : null}
+
+											<div
+												ref={setCreateThreadComposerElement}
+												className={!currentThreadId ? 'create-thread-composer' : ''}
+											>
+												<PromptComposer
+													notices={
+														<>
+															<PurchaseApprovals purchases={pendingApprovals} />
+															<ConversationNotices
+																key={currentThreadId}
+																error={conversationError}
+																runError={runError}
+																outOfUsage={runState?.failureKind === 'usage_limit'}
+																reconnecting={Boolean(
+																	currentThreadId &&
+																	transcript.threadId === currentThreadId &&
+																	transcript.stale
+																)}
+																syncing={Boolean(
+																	currentThreadId &&
+																	transcript.threadId === currentThreadId &&
+																	transcript.syncing
+																)}
+																catalogError={catalogError !== null}
+																catalogLoading={catalogLoading}
+																onRetryCatalog={() => void loadModelCatalog()}
+															/>
+														</>
 													}
-												: null
-										}
-										usageThreadId={currentThreadId}
-										selectedQuestionOptionId={selectedQuestionOptionId}
-										onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
-										canSend={canSend}
-										submitting={
-											hasPendingAgentLaunch
-												? 'agentLaunch'
-												: isSubmittingPrompt || answeringAgentQuestion
-													? 'request'
-													: null
-										}
-										isRunning={!hasPendingAgentLaunch && isStopAvailable}
-										isWorking={!hasPendingAgentLaunch && isRunInProgress && !runEnded}
-										projectSkills={composerProjectSkills}
-										projectPaths={composerProjectPaths}
-										onSubmit={() => void submitPrompt()}
-										onCancel={() => void cancelRun()}
-										onSkipQuestion={() => void settleAgentQuestion('skip')}
-									/>
-								</div>
-							</div>
+													prompt={prompt}
+													onPromptChange={setPrompt}
+													attachments={composerAttachments.items}
+													onAttachFiles={(files) => composerAttachments.add(files)}
+													onRemoveAttachment={(localId) => composerAttachments.remove(localId)}
+													modelCatalog={modelCatalog}
+													selectedModel={selectedModel}
+													onSelectedModelChange={setSelectedModel}
+													selectedReasoningEffort={selectedReasoningEffort}
+													onSelectedReasoningEffortChange={setSelectedReasoningEffort}
+													fastMode={fastMode}
+													onFastModeChange={setFastMode}
+													pendingQuestion={pendingAgentQuestion}
+													runEnded={runEnded}
+													showContinueWorking={canContinueWorking}
+													onContinueWorking={() => void continueWorking()}
+													runningCommands={
+														currentThreadId && signedInUserId && localApi && authReady
+															? {
+																	api: localApi,
+																	scope: { userId: signedInUserId, threadId: currentThreadId }
+																}
+															: null
+													}
+													usageThreadId={currentThreadId}
+													selectedQuestionOptionId={selectedQuestionOptionId}
+													onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
+													canSend={canSend}
+													submitting={
+														hasPendingAgentLaunch
+															? 'agentLaunch'
+															: isSubmittingPrompt || answeringAgentQuestion
+																? 'request'
+																: null
+													}
+													isRunning={!hasPendingAgentLaunch && isStopAvailable}
+													isWorking={!hasPendingAgentLaunch && isRunInProgress && !runEnded}
+													projectSkills={composerProjectSkills}
+													projectPaths={composerProjectPaths}
+													onSubmit={() => void submitPrompt()}
+													onCancel={() => void cancelRun()}
+													onSkipQuestion={() => void settleAgentQuestion('skip')}
+												/>
+											</div>
+										</div>
+									</>
+								}
+							/>
 						</MarkdownFileLinksContext>
 					)}
 				</main>
 			</div>
 
 			<MarkdownFileLinksContext value={markdownFileLinks}>
-				{!settingsOpen && artifactPanel.panel.open && (
-					<div
-						className={cn(
-							sidePanelFullscreen
-								? 'bg-background fixed inset-0 z-50'
-								: 'absolute inset-y-0 right-0 z-40',
-							phoneViewport && 'motion-safe:animate-side-panel-in'
-						)}
-						style={{ width: sidePanelFullscreen ? undefined : sidePanelWidth.width }}
-						inert={fullscreenArtifact ? true : undefined}
-					>
-						{!sidePanelFullscreen && (
-							<SidePanelResizeHandle
-								width={sidePanelWidth.width}
-								minWidth={Math.min(
-									sidePanelWidth.maxWidth,
-									Math.max(
-										sidePanelWidth.minWidth,
-										minLayoutSize(artifactPanel.panel.layout, 'row')
-									)
-								)}
-								maxWidth={sidePanelWidth.maxWidth}
-								onWidthChange={sidePanelWidth.setWidth}
-							/>
-						)}
-						<SidePanel
-							workspacePath={localApi ? currentProject?.workspacePath : undefined}
-							threadCwd={threadCwd}
-							artifacts={artifactList.artifacts}
-							artifactContents={artifactContents}
-							onDeleteArtifact={deleteArtifact}
-							layout={artifactPanel.panel.layout}
-							activePaneId={artifactPanel.activePane.id}
-							browserApi={localApi}
-							filesApi={localApi}
-							expanded={sidePanelFullscreen}
-							loading={artifactList.loading}
-							error={artifactList.error}
-							onNewTab={(paneId) => artifactPanel.newTab(paneId)}
-							onActivateTab={(id) => artifactPanel.activateTab(id)}
-							onCloseTab={(id) => artifactPanel.closeTab(id)}
-							onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
-							onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
-							onFocusPane={(id) => artifactPanel.focusPane(id)}
-							onSplitPane={(id, direction) => artifactPanel.splitPane(id, direction)}
-							onResizeSplit={(id, ratio) => artifactPanel.resizeSplit(id, ratio)}
-							onOpenFile={(file) => artifactPanel.openFile(file)}
-							onFileRenamed={(workspacePath, from, to) =>
-								artifactPanel.renameFile(workspacePath, from, to)
-							}
-							onFileDeleted={(workspacePath, path) => artifactPanel.closeFile(workspacePath, path)}
-							onOpenFullscreen={(key) => {
-								setArtifactFullscreenRequest(requestArtifactFullscreen());
-								artifactPanel.setFullscreenKey(key);
-							}}
-							onToggleExpanded={
-								phoneViewport
-									? undefined
-									: () => artifactPanel.update({ expanded: !artifactPanel.panel.expanded })
-							}
-							onClose={() => artifactPanel.update({ open: false, expanded: false })}
-						/>
-					</div>
-				)}
-
 				{fullscreenArtifact && artifactFullscreenRequest && (
 					<ArtifactScreenFullscreen
 						workspacePath={localApi ? currentProject?.workspacePath : undefined}

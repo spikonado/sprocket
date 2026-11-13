@@ -1,6 +1,6 @@
 ---
 title: Projects and threads
-description: Open project folders, start and manage threads, attach files, mention paths and skills, and use the side panel's artifacts, files, and browser views.
+description: Open project folders, manage threads, attach files, mention paths and skills, and arrange transcript, artifacts, files, and browser tabs.
 ---
 
 ## Projects
@@ -55,9 +55,15 @@ If a run fails or the server restarts, **Continue working** resumes the thread. 
 
 The agent can start subagents to work on parts of a task in parallel. Each subagent is its own thread and appears under its parent in the sidebar. See [Subagents](/use/agent-tools#subagents).
 
-## Side panel
+## Workspace tabs and panels
 
-The side panel has tabs that you can split right or down. It has three views:
+<Snippet file="unreleased.mdx" />
+
+The main workspace has tabs and panels. Each thread starts with a **Transcript** tab that holds the conversation and message composer. You can switch away from it, but you can't close it.
+
+Use **New tab** to open a view, or **Split right** and **Split down** to add panels. Drag a divider to resize panels. Each thread keeps its own tabs and panel sizes until you reload the app.
+
+New tabs offer three views:
 
 - **Artifacts** shows files the agent linked to the project, rendered. See [Artifacts](#artifacts).
 - **Files** is a file tree where you can search, create, rename, delete, and edit files. The editor asks before it discards unsaved changes.

@@ -47,14 +47,7 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 6px);
-	--animate-side-panel-in: side-panel-in 180ms ease-out;
 	--animate-tornado-wobble: tornado-wobble 0.6s ease-in-out infinite alternate;
-
-	@keyframes side-panel-in {
-		from {
-			transform: translateX(100%);
-		}
-	}
 
 	@keyframes tornado-wobble {
 		from {

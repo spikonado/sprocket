@@ -1,7 +1,9 @@
 import type { Text } from '@codemirror/state';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
+export type SidePanelView = 'transcript' | 'artifacts' | 'files' | 'browser' | 'file';
+
+export type SidePanelContentView = Exclude<SidePanelView, 'transcript'>;
 
 export type FileDraft = { doc: Text; base: Text; version: string };
 
@@ -33,19 +35,15 @@ export function renamedPath(path: string, from: string, to: string) {
 }
 
 export type SidePanelSnapshot = {
-	open: boolean;
-	expanded: boolean;
 	layout: SidePanelLayout;
 	activePaneId: string;
 };
 
 export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
-	open: false,
-	expanded: false,
 	layout: {
 		type: 'pane',
 		id: 'pane-0',
-		tabs: [{ id: 'tab-0', view: null, selectedKey: null }],
+		tabs: [{ id: 'tab-0', view: 'transcript', selectedKey: null }],
 		activeTabId: 'tab-0'
 	},
 	activePaneId: 'pane-0'
@@ -150,10 +148,4 @@ export function layoutRects(
 		panes: [...first.panes, ...second.panes],
 		splits: [{ split: node, rect }, ...first.splits, ...second.splits]
 	};
-}
-
-export function topRightPane(node: SidePanelLayout): SidePanelPane {
-	if (node.type === 'pane') return node;
-
-	return topRightPane(node.direction === 'row' ? node.second : node.first);
 }

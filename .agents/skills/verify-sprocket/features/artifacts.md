@@ -1,10 +1,10 @@
 # Artifacts
 
-An artifact is a markdown, HTML, React, json-render or wiring document an agent saves for the project. A reply line `artifact:<id>` renders as a card, and the side panel's Artifacts view lists the project's artifacts, previews one, shows its source, opens it fullscreen and deletes it.
+An artifact is a markdown, HTML, React, json-render or wiring document an agent saves for the project. A reply line `artifact:<id>` renders as a card, and the workspace's Artifacts view lists the project's artifacts, previews one, shows its source, opens it fullscreen and deletes it.
 
 ## Sub-features
 
-- `artifact-card` shows a reference card in the reply whose `View` opens the artifact in the side panel.
+- `artifact-card` shows a reference card in the reply whose `View` opens the artifact in a workspace tab.
 - `artifact-list` lists the project's artifacts in the Artifacts view.
 - `artifact-view` previews an artifact, toggles its source and copies it.
 - `artifact-fullscreen` shows it over the whole window and leaves with Escape.
@@ -13,14 +13,14 @@ An artifact is a markdown, HTML, React, json-render or wiring document an agent 
 ## How to get to it (user POV)
 
 - Ask an agent for an artifact, then choose `View` on its card.
-- Open the side panel and choose `Artifacts` in a new tab.
+- Click `New tab` in the workspace and choose `Artifacts`.
 
 ## Driving it with agent-browser
 
 Precondition: the dev `tiers` table has rows, as in [threads.md](./threads.md).
 
 - **Create.** Send the one prompt in [transcript.md](./transcript.md), or ask the agent to save a markdown artifact titled `Verify note` with content `# Hello`, then reply with `artifact:<its id>` on its own line. The agent writes `/tmp/verify-sprocket-scratch/Verify note.md` and binds it, so the title becomes the file name `Verify note.md`. The reply shows a card with `Verify note.md`, `Artifact` and `button "View Verify note.md"`.
-- **Open from card.** Click `button "View Verify note.md"`. The side panel opens `tab "Verify note.md" [selected]` with the type `markdown` and `heading "Hello"`. Markdown has no source toggle.
+- **Open from card.** Click `button "View Verify note.md"`. The workspace opens `tab "Verify note.md" [selected]` with the type `markdown` and `heading "Hello"`. Markdown has no source toggle.
 - **Fullscreen.** Click `button "Open fullscreen"`. Plain `snapshot` shows `dialog "Verify note.md fullscreen. Press Escape to exit."`. Escape closes it.
 - **List.** Click `button "Back to artifacts"`. The tab becomes `tabpanel "Artifacts"` with one `button "<title> <type>"` per artifact. An empty project shows `No artifacts yet.`
 - **Source.** Open an `html`, `react` or `json-render` row. It has `button "Show source"`, which shows the raw text and becomes `button "Show preview"`. An HTML or React preview is `Iframe "<title> preview"`.
