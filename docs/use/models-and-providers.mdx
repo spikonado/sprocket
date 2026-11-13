@@ -46,15 +46,11 @@ Claude and Muse sign-in run on the computer that runs Sprocket. Open Sprocket on
 
 ### Morph
 
-<Snippet file="unreleased.mdx" />
-
 Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and [Ultra plan](https://docs.morphllm.com/ultra-plan) keys connect the same way. On Ultra, neither model has a token meter, but each has a per-minute limit on uncached input and output tokens. Kimi K3.1 Pro's output limit is lower than one nonstop stream, so threads with several agents hit it quickly. Keep another provider enabled after Morph so those requests [fall back](#provider-order-and-fallback) instead of failing.
 
 ### Provider order and fallback
 
 In **Settings → Providers**, drag providers into the order you want and turn each on or off. At least one provider must stay on.
-
-<Snippet file="unreleased.mdx" />
 
 Connecting a provider in **Settings → BYOK/BYOS** adds it to the end of the list. Removing a provider from either page takes it off the list and deletes what Sprocket saved for it: an API key, the Claude token, or every ChatGPT sign-in. Spikonado and Muse can't be removed, since Sprocket holds no credential for them. Turn them off instead. If you remove the last provider that's on, Sprocket turns Spikonado back on.
 
