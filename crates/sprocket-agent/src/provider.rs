@@ -202,7 +202,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) defer_prompt_for_context_handoff: bool,
     pub(crate) provider_switch: ProviderSwitch,
     pub(crate) gateway_url: String,
-    pub(crate) subagent_models: Arc<crate::catalog::SubagentModelChoices>,
+    pub(crate) subagent_models: Arc<Vec<crate::catalog::SubagentModelChoice>>,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub(crate) share_conversation_content: bool,

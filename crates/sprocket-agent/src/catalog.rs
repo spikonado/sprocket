@@ -109,32 +109,22 @@ fn lists_fast_tier(service_tiers: &[String]) -> bool {
     service_tiers.iter().any(|tier| tier == "fast")
 }
 
-pub(crate) struct SubagentModelChoices {
-    pub(crate) model_ids: Vec<String>,
+pub(crate) struct SubagentModelChoice {
+    pub(crate) id: String,
     pub(crate) reasoning_efforts: Vec<String>,
+    pub(crate) fast: bool,
 }
 
-impl SubagentModelChoices {
-    fn from_catalog(catalog: &GatewaySprocketCatalog) -> Self {
-        let mut reasoning_efforts: Vec<String> = Vec::new();
-        for effort in catalog
-            .models
-            .iter()
-            .flat_map(|model| &model.reasoning_efforts)
-        {
-            if !reasoning_efforts.contains(effort) {
-                reasoning_efforts.push(effort.clone());
-            }
-        }
-        Self {
-            model_ids: catalog
-                .models
-                .iter()
-                .map(|model| model.id.clone())
-                .collect(),
-            reasoning_efforts,
-        }
-    }
+fn subagent_model_choices(catalog: &GatewaySprocketCatalog) -> Vec<SubagentModelChoice> {
+    catalog
+        .models
+        .iter()
+        .map(|model| SubagentModelChoice {
+            id: model.id.clone(),
+            reasoning_efforts: model.reasoning_efforts.clone(),
+            fast: lists_fast_tier(&model.service_tiers),
+        })
+        .collect()
 }
 
 async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatalog> {
@@ -224,7 +214,7 @@ pub(crate) async fn catalog_models_for_run(
 ) -> anyhow::Result<(
     CatalogModelCapabilities,
     anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>>,
-    SubagentModelChoices,
+    Vec<SubagentModelChoice>,
 )> {
     let catalog = fetch_catalog(gateway_url).await?;
     let selected = select_catalog_model(&catalog, &run.selected_model)?;
@@ -237,11 +227,7 @@ pub(crate) async fn catalog_models_for_run(
         ),
         None => Ok(None),
     };
-    Ok((
-        selected,
-        handoff,
-        SubagentModelChoices::from_catalog(&catalog),
-    ))
+    Ok((selected, handoff, subagent_model_choices(&catalog)))
 }
 
 fn select_handoff_model(

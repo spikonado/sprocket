@@ -3,9 +3,14 @@ use sprocket_transcript::RemoteTranscriptState;
 
 #[test]
 fn spawn_accepts_only_creation_payloads() {
-    let args: SpawnSubagentArgs =
-        serde_json::from_value(json!({"prompt": "  implement the task  ", "yieldTimeMs": 0}))
-            .unwrap();
+    let args: SpawnSubagentArgs = serde_json::from_value(json!({
+        "prompt": "  implement the task  ",
+        "model": "gpt",
+        "reasoning": "high",
+        "fast": false,
+        "yieldTimeMs": 0
+    }))
+    .unwrap();
     assert_eq!(
         prepare_subagent_prompt(&args.prompt).unwrap(),
         "implement the task"
@@ -13,7 +18,10 @@ fn spawn_accepts_only_creation_payloads() {
     assert_eq!(args.yield_time_ms, 0);
     let error = serde_json::from_value::<SpawnSubagentArgs>(json!({
         "threadId": "child-thread",
-        "prompt": "implement the next task"
+        "prompt": "implement the next task",
+        "model": "gpt",
+        "reasoning": "high",
+        "fast": false
     }))
     .unwrap_err();
     assert!(error.to_string().contains("unknown field `threadId`"));
@@ -21,10 +29,18 @@ fn spawn_accepts_only_creation_payloads() {
 
 #[test]
 fn spawn_schema_only_advertises_child_creation() {
-    let choices = SubagentModelChoices {
-        model_ids: vec!["opus".into(), "gpt".into()],
-        reasoning_efforts: vec!["low".into(), "high".into()],
-    };
+    let choices = [
+        SubagentModelChoice {
+            id: "opus".into(),
+            reasoning_efforts: vec!["low".into(), "high".into()],
+            fast: true,
+        },
+        SubagentModelChoice {
+            id: "gpt".into(),
+            reasoning_efforts: vec!["high".into()],
+            fast: false,
+        },
+    ];
     let schema = spawn_subagent_parameters(270_000, &choices);
     assert!(schema["properties"].get("threadId").is_none());
     assert_eq!(schema["additionalProperties"], false);
@@ -36,6 +52,22 @@ fn spawn_schema_only_advertises_child_creation() {
         schema["properties"]["reasoning"]["enum"],
         json!(["low", "high"])
     );
+    assert_eq!(
+        schema["anyOf"][1]["properties"],
+        json!({
+            "model": { "const": "gpt" },
+            "reasoning": { "enum": ["high"] },
+            "fast": { "const": false }
+        })
+    );
+    let mut required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field.as_str().unwrap())
+        .collect();
+    required.sort_unstable();
+    assert_eq!(required, ["fast", "model", "prompt", "reasoning"]);
 }
 
 #[test]
@@ -63,7 +95,10 @@ fn control_sends_followups_with_execution_overrides() {
 
 #[test]
 fn creation_requires_an_explicit_task() {
-    for payload in [json!({}), json!({"prompt": "  "})] {
+    for payload in [
+        json!({}),
+        json!({"prompt": "  ", "model": "gpt", "reasoning": "high", "fast": false}),
+    ] {
         let result = serde_json::from_value::<SpawnSubagentArgs>(payload)
             .map_err(|error| tool_failure(error.to_string()))
             .and_then(|args| prepare_subagent_prompt(&args.prompt).map(|_| ()));
