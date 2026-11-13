@@ -38,5 +38,4 @@ SPROCKET_VERIFY_ELECTRON_PROFILE=/tmp/verify-sprocket-desktop/second-profile SPR
 
 - Attach, mismatch and server exit are drafted from `main.mjs` and have not been run yet. Fix this recipe on first use. The renderer timeout box has been seen once.
 - A second Electron that shares `~/.sprocket-dev-verify-desktop` hands its arguments to the first window and quits. That is the workspace-launch path, not attach.
-- `main.mjs` only runs the attach check against `127.0.0.1:7731`. Another server on 7731 that is not Sprocket fails with "Port 7731 is already used by another service."
 - The error boxes block Electron's quit until dismissed. Terminating the second app's command session is the cleanup. `$D/stop.sh` also stops any Electron left running from `apps/desktop`.

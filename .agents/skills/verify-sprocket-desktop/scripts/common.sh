@@ -19,7 +19,6 @@ display_pid() {
 	[[ "$(pid_cmdline "$pid")" == *"$1"* ]] && echo "$pid"
 }
 
-# Run a command against the instance's Xvfb display.
 on_display() {
 	DISPLAY=":$(cat "$state_dir/display")" "$@"
 }
