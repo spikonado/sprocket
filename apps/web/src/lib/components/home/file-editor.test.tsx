@@ -134,6 +134,20 @@ it('keeps a failed save error after the file is read again', async () => {
 	expect(document.querySelector('[role="alert"]')?.textContent).toBe('Disk full');
 });
 
+it('reports a completed save after the editor unmounts', async () => {
+	const { api } = editorApi(saved);
+	const pending = Promise.withResolvers<Awaited<ReturnType<FileEditorApi['writeWorkspaceFile']>>>();
+	vi.mocked(api.writeWorkspaceFile).mockReturnValue(pending.promise);
+	const onDraftChange = vi.fn();
+	const editor = render(<FileEditor api={api} file={file} active onDraftChange={onDraftChange} />);
+	await waitFor(() => expect(editorView().state.doc.toString()).toBe('saved'));
+	editorView().dispatch({ changes: { from: 5, insert: '!' } });
+	await pressSave();
+	editor.unmount();
+	await act(async () => pending.resolve({ status: 'saved', version: 'v2' }));
+	expect(onDraftChange).toHaveBeenLastCalledWith(undefined);
+});
+
 it('offers a reload only once the conflicting disk state is read', async () => {
 	const { api, push } = editorApi(saved);
 	vi.mocked(api.writeWorkspaceFile)

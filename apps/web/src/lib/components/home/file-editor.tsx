@@ -208,7 +208,7 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 	}
 
 	async function save(overwrite: boolean) {
-		const { api, file } = latest.current;
+		const { api, file, onDraftChange } = latest.current;
 		const view = viewRef.current;
 
 		if (!api || !view || version.current === null) return;
@@ -229,7 +229,11 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 			version.current = result.version;
 			setDiskChange(null);
 			setSaveError(null);
-			reportDraft();
+			onDraftChange(
+				view.state.doc.eq(doc)
+					? undefined
+					: { doc: view.state.doc, base: doc, version: result.version }
+			);
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : 'Could not save the file.');
 		} finally {

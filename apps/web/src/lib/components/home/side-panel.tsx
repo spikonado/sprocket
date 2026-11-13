@@ -401,7 +401,7 @@ function Pane({
 					aria-labelledby={`side-panel-tab-${tab.id}`}
 					hidden={tab.id !== activeTabId}
 					tabIndex={-1}
-					className="flex min-h-0 flex-1 flex-col focus:outline-none"
+					className={`flex min-h-0 flex-1 flex-col focus:outline-none ${tab.view === 'transcript' ? 'overflow-y-auto' : ''}`}
 				>
 					{tab.view === null ? (
 						<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">

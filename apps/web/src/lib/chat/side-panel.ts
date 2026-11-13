@@ -105,16 +105,6 @@ export function mapPanes(
 	return { ...node, first: mapPanes(node.first, map), second: mapPanes(node.second, map) };
 }
 
-export function removePane(node: SidePanelLayout, id: string): SidePanelLayout {
-	if (node.type === 'pane') return node;
-
-	if (node.first.type === 'pane' && node.first.id === id) return node.second;
-
-	if (node.second.type === 'pane' && node.second.id === id) return node.first;
-
-	return { ...node, first: removePane(node.first, id), second: removePane(node.second, id) };
-}
-
 export function mapSplit(
 	node: SidePanelLayout,
 	id: string,

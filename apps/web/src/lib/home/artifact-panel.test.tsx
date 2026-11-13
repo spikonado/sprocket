@@ -188,12 +188,41 @@ it('keeps unsaved file edits per thread and reports them until they are saved', 
 	panel.selectScope(scope('robot'), 'thread-a');
 	panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
 	panel.setFileDraft(panel.activeTab.id, { doc, base: Text.of(['saved']), version: 'v1' });
+	const tabId = panel.activeTab.id;
 	panel.selectScope(scope('robot'), 'thread-b');
 	expect(panel.hasFileDrafts).toBe(true);
 
 	panel.selectScope(scope('robot'), 'thread-a');
 	expect(panel.activeTab.draft?.doc).toBe(doc);
-	panel.setFileDraft(panel.activeTab.id, undefined);
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.setFileDraft(tabId, undefined);
+	expect(panel.hasFileDrafts).toBe(false);
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.draft).toBeUndefined();
+});
+
+it('keeps file renames and deletions consistent across thread layouts', () => {
+	const panel = new ArtifactPanel();
+	panel.selectScope(scope('robot'), 'thread-a');
+	panel.splitPane(panel.activePane.id, 'row');
+	panel.openFile({ workspacePath: '/repo', path: 'src/notes.txt' });
+	panel.setFileDraft(panel.activeTab.id, {
+		doc: Text.of(['edited']),
+		base: Text.of(['saved']),
+		version: 'v1'
+	});
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.openFile({ workspacePath: '/repo', path: 'src/notes.txt' });
+	panel.renameFile('/repo', 'src', 'lib');
+	expect(panel.activeTab.file?.path).toBe('lib/notes.txt');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.file?.path).toBe('lib/notes.txt');
+	expect(panel.activeTab.draft?.doc.toString()).toBe('edited');
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.closeFile('/repo', 'lib');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.panes).toHaveLength(1);
+	expect(panel.activeTab.view).toBe('transcript');
 	expect(panel.hasFileDrafts).toBe(false);
 });
 
