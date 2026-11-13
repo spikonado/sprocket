@@ -1,6 +1,6 @@
 ---
 name: designing-pcbs
-description: 'Use when creating or editing KiCad schematics or PCBs, or exporting from KiCad (Gerbers, renders, BOMs, ERC/DRC).'
+description: 'Use when creating or editing KiCad schematics or PCBs, checking them with ERC or DRC, or exporting Gerbers, renders, or BOMs from KiCad.'
 ---
 
 Edit KiCad files with `kipy` against a headless `kicad-cli api-server`, so files keep the installed version's format.
@@ -10,8 +10,8 @@ Use `kicad-cli` for checks and exports.
 
 - Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
 - The connector puts `kicad-python`, `kicad-cli`, `kicad`, `kipy-api`, `kicad-route`, and `kicad-view` on PATH. Call them by name.
-- Run every script with `kicad-python`. Its venv has kipy, numpy, scipy, shapely, and pillow. System `python3` and PyPI's `kicad-python` lack them or are too old.
-- `kipy-api` lists the installed kipy's classes, signatures, and enums. Check it before writing kipy code.
+- Run every script with `kicad-python`, whose venv has kipy and the routing tools' packages. System `python3` and PyPI's `kicad-python` lack them or are too old.
+- `kipy-api <module>`, like `kipy-api board`, lists the installed kipy's classes, method signatures, and enums. Check it before writing kipy code.
 - `kicad-view` renders one area of a board as a PNG. Use it to look at placement, routing, and DRC findings.
 - KiCad's libraries are in `$SPROCKET_KICAD_LIBRARIES`. Search for parts there.
 - kipy uses nm, and DRC JSON and `kicad-view` use mm. All three use absolute board coordinates, not coordinates relative to the board origin.
@@ -38,8 +38,8 @@ Use `kicad-cli` for checks and exports.
 
 ## Before editing
 
-- Before the first save of an existing project, compare the file header's `(generator_version "…")` with the KiCad version from the connector.
-  If the file is older, ask the user once, because saving upgrades the format and only git can undo it.
+- Before the first save of an existing project, compare the file header's `generator_version` with `kicad-cli version`.
+  If the file is older, ask the user once, because saving upgrades the format. An older KiCad then opens only copies exported with `kicad-cli pcb downgrade` or `sch downgrade`.
 - Open existing files with `open_document`. `create_document` replaces an existing file on save.
 
 ## Known traps
@@ -55,14 +55,12 @@ Use `kicad-cli` for checks and exports.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
 - DRC on a renamed copy of a board ignores the project's rules, because `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
   Make copies with `copy_board.py`. For DRC without parity errors or `lib_footprint_issues`, also copy the `.kicad_sch` under the new basename and `fp-lib-table` next to it.
-- A keepout inside a footprint ends up far from its part, because setting `footprint.position` moves the footprint's zones twice. Restore their outlines after a move and check keepouts in DRC.
-- A Zone created with several outline polygons keeps only the first. Create one Zone per polygon.
-- Setters on a new `NetClass()` raise. Copy the `Default` netclass's proto and edit the copy.
-- `board.get_project()` fails after `open_document`. Pass the DocumentSpecifier that `open_document` returns to `KiCad.get_project()`.
+- A Zone created with several outline polygons keeps only the first when saved. Create one Zone per polygon.
+- Project calls like `get_net_classes()` fail with `the requested project … is not open`, whichever way you get the `Project`.
+  With the board closed, copy the `Default` entry in the `.kicad_pro`'s `net_settings.classes`, edit the copy, and reopen the board.
 - `get_pads()` returns paste-only pads with no net. Skip SMD pads without a net when matching pads to nets.
 - `save()` fails with `failed to save schematic` for a sheet with a relative filename. Create the sheet with an absolute path, then rename it to the basename.
 - Schematic items have no bounding box handler. Measure text with `get_text_extents`.
-- `kipy-api` doesn't list proto enums. Text alignments like `HA_CENTER` are in `kipy.proto.common.types.enums_pb2`, and `ElectricalPinType` is in `kipy.proto.common.types.base_types_pb2`.
 - Hierarchical net names start with the sheet path, like `/charger/CHG_PMID`. Match both forms when filtering nets.
 - Teardrop counts change between refills. Refill twice before comparing DRC runs.
 - Deleting every item that DRC flags as dangling opens T-junctions. Delete an item only when the net's connectivity stays the same without it.
@@ -82,7 +80,7 @@ ERC passes on designs that would damage parts. Before calling the schematic done
 - Every pin against its absolute maximum ratings while unpowered, partly powered, and powered, including back-powering through connectors, sense pins, and I/O.
 - Every adjustable or fixed-output regulator's feedback and ADJ wiring against the datasheet's output equation.
 - Strap and boot pins, at the supply present when the IC samples them, including the pins the bootloader drives or pulls.
-- Voltage tolerance of every I/O that sees another rail, like FT (5 V-tolerant) and TT (3.6 V-tolerant) pins.
+- Voltage tolerance of every I/O that sees another rail, like FT and TT pins.
 - Each order in which the user can plug in cables, batteries, and supplies.
 - Current limits and fuses at the minimum of their tolerance.
 
@@ -92,7 +90,7 @@ Look for a part in the stock libraries before drawing it.
 kipy can't edit libraries, so write custom symbols and footprints as text:
 
 - Copy the header and structure of a stock file, and keep its format version.
-  `kicad-cli fp upgrade` converts a `.pretty` to the connector's newer format, which KiCad 10.0 can't read.
+  `kicad-cli fp upgrade` converts a `.pretty` to the connector's nightly format, which released KiCad versions can't read.
 - Put them in the project and register them in `sym-lib-table` and `fp-lib-table` as `${KIPRJMOD}/lib/…`.
 - Take pads from the land-pattern drawing in the datasheet, and compare every pad's position and size with your footprint.
 - Confirm pin 1 of polarized connectors against the manufacturer's drawing or photos, and note the source in the footprint's description.
@@ -202,7 +200,7 @@ Routes and DRC on a full board take minutes to hours:
 Once DRC shows 0 unconnected items, finish the copper in this order and run DRC after each step:
 
 1. Run `kicad-route board.kicad_pcb clean.kicad_pcb --nets '*' '!GND'`, excluding every zone net with `'!NET'`.
-   With nothing left to route, it removes dead ends and redundant or duplicate segments. With nets still open, it routes them again, which can take 15 to 30 minutes.
+   With nothing left to route, it removes dead ends and redundant or duplicate segments. With nets still open, it routes them again.
    Then run `check_weird.py` on the result and fix what it reports.
 2. Stitch the GND pours together with `route_planes.py`, using vias on a grid and a fence along the board edge.
    Pass `--skip-existing-zones`, or it will replace your GND zones with its own.
@@ -247,5 +245,5 @@ DRC passes on boards whose copper overheats. Before calling the layout done, che
 ## Show the result to the user
 
 - Send images of each schematic sheet and 3D renders of the PCB.
-  For checks, render with `kicad-cli pcb render` at basic quality and about 1200 px wide. High quality at 2400 px takes minutes.
+  Keep `kicad-cli pcb render` at basic quality for checks, because high quality takes minutes.
 - Embed the KiCad project by writing `kicad:proj/board.kicad_pro` in its own paragraph.
