@@ -43,6 +43,9 @@ export function useDeviceSignIn(
 		let stopped = false;
 
 		const timer = setTimeout(() => {
+			// The machine reports `idle` until the start request reaches it; start's response restarts polling.
+			if (pendingStart.current) return;
+
 			fetchStatus().then(
 				(next) => {
 					if (stopped) return;
