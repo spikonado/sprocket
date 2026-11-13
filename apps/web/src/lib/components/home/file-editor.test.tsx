@@ -178,6 +178,33 @@ it('rebases a replacement editor on a late save while keeping its newer edits', 
 	expect(onDraftChange.mock.lastCall?.[0]).toMatchObject({ base: doc, version: 'v2' });
 });
 
+it('restores a newer draft without replaying an earlier save', async () => {
+	const { api } = editorApi(null);
+	const doc = Text.of(['external update and edits']);
+	const base = Text.of(['external update']);
+	const onDraftChange = vi.fn();
+
+	render(
+		<FileEditor
+			api={api}
+			file={file}
+			active
+			initialDraft={{ doc, base, version: 'v3' }}
+			saved={{ doc: Text.of(['earlier save']), version: 'v2' }}
+			onDraftChange={onDraftChange}
+			onSaved={vi.fn()}
+		/>
+	);
+
+	expect(onDraftChange.mock.lastCall?.[0]).toEqual({ doc, base, version: 'v3' });
+	await pressSave();
+	expect(api.writeWorkspaceFile).toHaveBeenCalledWith({
+		...file,
+		content: doc.toString(),
+		expectedVersion: 'v3'
+	});
+});
+
 it('offers a reload only once the conflicting disk state is read', async () => {
 	const { api, push } = editorApi(saved);
 	vi.mocked(api.writeWorkspaceFile)

@@ -253,6 +253,8 @@ function TextFileEditor({ api, file, initialDraft, saved, active, onDraftChange,
 		initialDraft ?? (saved ? { ...saved, base: saved.doc } : undefined)
 	);
 
+	const appliedSave = useRef(saved);
+
 	useEffect(() => {
 		if (!containerRef.current) return;
 
@@ -274,6 +276,9 @@ function TextFileEditor({ api, file, initialDraft, saved, active, onDraftChange,
 	}, []);
 
 	useEffect(() => {
+		if (saved === appliedSave.current) return;
+		appliedSave.current = saved;
+
 		if (!saved || version.current === saved.version) return;
 		savedDoc.current = saved.doc;
 		version.current = saved.version;
