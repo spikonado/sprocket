@@ -290,6 +290,7 @@ export type ConnectorStatus = {
 	state: 'notInstalled' | 'installing' | 'failed' | 'installed';
 	error: string | null;
 	updateAvailable: boolean;
+	kicadVersion: string | null;
 };
 
 export type ChatGptBrowserLoginResult = {

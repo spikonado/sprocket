@@ -56,7 +56,7 @@ export function CliConnectorCard({
 }: {
 	logo: ReactNode;
 	name: string;
-	description: string;
+	description?: string;
 	cliName: string;
 	cli: { install: ToolInstall; version: string | null } | null;
 	detail?: string | null;
@@ -75,7 +75,7 @@ export function CliConnectorCard({
 				{logo}
 				<div className="min-w-0 flex-1">
 					<p className="text-foreground text-[15px]">{name}</p>
-					<ConnectorDescription>{description}</ConnectorDescription>
+					{description && <ConnectorDescription>{description}</ConnectorDescription>}
 					{cli ? (
 						<CliInstallLine
 							name={cliName}
@@ -152,6 +152,18 @@ function CliInstallLine({
 		);
 	}
 
+	return <VersionLine name={name} version={version} detail={detail} />;
+}
+
+export function VersionLine({
+	name,
+	version,
+	detail = null
+}: {
+	name: string;
+	version: string | null;
+	detail?: string | null;
+}) {
 	return (
 		<p className="text-muted-foreground mt-0.5 truncate text-[12px]" title={detail ?? undefined}>
 			{name} {version && <span className="font-mono">{version}</span>}

@@ -308,7 +308,8 @@ const connectorStatusSchema = z.object({
 	name: z.string(),
 	state: z.enum(['notInstalled', 'installing', 'failed', 'installed']),
 	error: z.string().nullable(),
-	updateAvailable: z.boolean()
+	updateAvailable: z.boolean(),
+	kicadVersion: z.string().nullable()
 });
 
 const chatGptBrowserLoginResultSchema = z.object({

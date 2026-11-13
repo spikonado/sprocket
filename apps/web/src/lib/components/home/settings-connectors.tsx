@@ -4,7 +4,8 @@ import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
 import {
 	ConnectorDescription,
 	primaryButtonClass,
-	secondaryButtonClass
+	secondaryButtonClass,
+	VersionLine
 } from './connector-card-parts';
 import GitHubConnector, { type GitHubApi } from './github-connector';
 import { caughtMessage, useConnectors } from './use-connectors';
@@ -17,7 +18,7 @@ type ConnectorsApi = GitHubApi &
 const details: Record<ConnectorStatus['id'], { logo: string; description: string }> = {
 	kicad: {
 		logo: '/kicad.svg',
-		description: 'Lets the agent design schematics and PCBs, and export Gerbers.'
+		description: 'Lets the agent design PCBs'
 	}
 };
 
@@ -111,6 +112,9 @@ function ConnectorCard({
 					</span>
 				</p>
 				<ConnectorDescription>{details[connector.id].description}</ConnectorDescription>
+				{connector.kicadVersion && (
+					<VersionLine name={connector.name} version={connector.kicadVersion} />
+				)}
 				{error && (
 					<p className="text-destructive mt-0.5 truncate text-[12px]" title={error}>
 						{error}

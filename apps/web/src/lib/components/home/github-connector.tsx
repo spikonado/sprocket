@@ -52,7 +52,6 @@ export default function GitHubConnector({
 		<CliConnectorCard
 			logo={<GitHubMark className="text-foreground size-8 shrink-0 p-1" />}
 			name="GitHub"
-			description="Lets the agent clone repos, push branches, and open pull requests."
 			cliName="GitHub CLI"
 			cli={status && { install: status.install, version: status.cliVersion }}
 			checking={checking}

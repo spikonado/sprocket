@@ -97,7 +97,8 @@ const outdatedKiCad: ConnectorStatus = {
 	name: 'KiCad',
 	state: 'installed',
 	error: null,
-	updateAvailable: true
+	updateAvailable: true,
+	kicadVersion: '10.0.1'
 };
 
 function connectorApi() {

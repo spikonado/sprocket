@@ -15,6 +15,7 @@ function kicad(overrides: Partial<ConnectorStatus>): ConnectorStatus {
 		state: 'notInstalled',
 		error: null,
 		updateAvailable: false,
+		kicadVersion: null,
 		...overrides
 	};
 }
@@ -66,7 +67,9 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 	const fetchConnectors = vi
 		.fn<LocalApi['fetchConnectors']>()
 		.mockResolvedValueOnce([kicad({})])
-		.mockResolvedValue([kicad({ state: 'installed', updateAvailable: true })]);
+		.mockResolvedValue([
+			kicad({ state: 'installed', updateAvailable: true, kicadVersion: '10.0.1' })
+		]);
 
 	const { installOrUpdateConnector } = mount(fetchConnectors);
 
@@ -79,6 +82,7 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 	await act(() => vi.advanceTimersByTimeAsync(2000));
 	expect(await screen.findByRole('button', { name: 'Uninstall' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy();
+	expect(screen.getByText('10.0.1')).toBeTruthy();
 });
 
 it('offers a retry with the install error', async () => {
