@@ -41,6 +41,7 @@ export function useConnectorAction<Key extends string>(name: string) {
 export function CliConnectorCard({
 	logo,
 	name,
+	description,
 	cliName,
 	cli,
 	detail,
@@ -55,6 +56,7 @@ export function CliConnectorCard({
 }: {
 	logo: ReactNode;
 	name: string;
+	description: string;
 	cliName: string;
 	cli: { install: ToolInstall; version: string | null } | null;
 	detail?: string | null;
@@ -73,6 +75,7 @@ export function CliConnectorCard({
 				{logo}
 				<div className="min-w-0 flex-1">
 					<p className="text-foreground text-[15px]">{name}</p>
+					<ConnectorDescription>{description}</ConnectorDescription>
 					{cli ? (
 						<CliInstallLine
 							name={cliName}
@@ -155,6 +158,10 @@ function CliInstallLine({
 			{detail && ` · ${detail}`}
 		</p>
 	);
+}
+
+export function ConnectorDescription({ children }: { children: string }) {
+	return <p className="text-muted-foreground mt-0.5 text-[12px] leading-5">{children}</p>;
 }
 
 export function StatusLine({

@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
-import { primaryButtonClass, secondaryButtonClass } from './connector-card-parts';
+import {
+	ConnectorDescription,
+	primaryButtonClass,
+	secondaryButtonClass
+} from './connector-card-parts';
 import GitHubConnector, { type GitHubApi } from './github-connector';
 import { caughtMessage, useConnectors } from './use-connectors';
 import VercelConnector, { type VercelApi } from './vercel-connector';
@@ -10,7 +14,12 @@ type ConnectorsApi = GitHubApi &
 	VercelApi &
 	Pick<LocalApi, 'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'>;
 
-const logos: Record<ConnectorStatus['id'], string> = { kicad: '/kicad.svg' };
+const details: Record<ConnectorStatus['id'], { logo: string; description: string }> = {
+	kicad: {
+		logo: '/kicad.svg',
+		description: 'Lets the agent design schematics and PCBs, and export Gerbers.'
+	}
+};
 
 export default function SettingsConnectors({
 	userId,
@@ -93,7 +102,7 @@ function ConnectorCard({
 
 	return (
 		<div className="border-border flex items-center gap-3 rounded-xl border p-5">
-			<img src={logos[connector.id]} alt="" className="size-8 shrink-0" />
+			<img src={details[connector.id].logo} alt="" className="size-8 shrink-0" />
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground flex items-center gap-2 text-[15px]">
 					{connector.name}
@@ -101,6 +110,7 @@ function ConnectorCard({
 						Experimental
 					</span>
 				</p>
+				<ConnectorDescription>{details[connector.id].description}</ConnectorDescription>
 				{error && (
 					<p className="text-destructive mt-0.5 truncate text-[12px]" title={error}>
 						{error}

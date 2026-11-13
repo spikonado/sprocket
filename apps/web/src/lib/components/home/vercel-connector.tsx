@@ -65,6 +65,7 @@ export default function VercelConnector({
 		<CliConnectorCard
 			logo={<VercelMark className="text-foreground size-8 shrink-0 p-1.5" />}
 			name="Vercel"
+			description="Lets the agent deploy your projects and read their build logs."
 			cliName="Vercel CLI"
 			cli={status}
 			detail={account && accountDetail(account)}

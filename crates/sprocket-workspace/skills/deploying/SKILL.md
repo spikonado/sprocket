@@ -3,7 +3,9 @@ name: deploying
 description: 'Use when deploying a project, or checking, debugging, or configuring a deployment (logs, env vars, domains).'
 ---
 
-Deploy through the Vercel connector, with the Vercel CLI, `vercel`, from the project's root.
+If the project already deploys somewhere else, with a `fly.toml`, a `wrangler.toml`, a deploy script, or a CI deploy workflow, deploy that way and skip the rest of this skill.
+
+Otherwise deploy through the Vercel connector, with the Vercel CLI, `vercel`, from the project's root.
 
 ## Set up the connector
 
