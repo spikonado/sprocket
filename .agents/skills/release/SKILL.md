@@ -10,16 +10,14 @@ The user names the new version. The previous version is the latest stable releas
 
 ## 1. Version bump PR
 
-1. Branch from the latest `origin/main` in a new worktree.
-2. Replace the previous version everywhere it names Sprocket's own version. `git log -i --grep='bump version'` finds past bump commits, and `git grep` for the previous version finds the current spots. In `Cargo.lock`, change only the `sprocket-*` packages. Other crates can share the version number. Bump the `-dev.` version in the npm release workflow too.
-3. Run `bun install --frozen-lockfile` if the worktree has no `node_modules`, then `prek run -a`.
-4. Open the PR titled `chore(release): Bump version to v<version>`. Use the body of the last bump PR as the template.
+1. Replace the previous version everywhere it names Sprocket's own version. In `Cargo.lock`, change only the `sprocket-*` packages. Other crates can share the version number.
+2. Open the PR with the title format and body of the last bump PR.
 
 ## 2. Release notes
 
 Collect every commit in `v<previous>..origin/main`. Read PR bodies when a title doesn't say what users see, or when a PR might break older clients.
 
-Write for users. Merge related PRs into one bullet that describes the change, followed by its PR links. Leave out refactors, dependency updates, CI, docs, tests, and internal chores unless users notice them. Match the layout of the last large release (v0.4.0 is the model):
+Write for users. Merge related PRs into one bullet that describes the change, followed by its PR links. Leave out refactors, dependency updates, CI, docs, tests, and internal chores unless users notice them. Use this layout, and follow the previous release's notes for bullet style and the rest of `Use it now`:
 
 ```markdown
 ## Use it now
