@@ -4,18 +4,20 @@ import type { ComponentProps } from 'react';
 import ArtifactMenu from './artifact-menu';
 import ArtifactDisplay from './home/artifact-display';
 import SidePanel from './home/side-panel';
-import type { ArtifactEntry } from '$lib/chat/artifacts';
+import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
 
 const artifact: ArtifactEntry = {
 	key: 'artifact-id',
 	title: 'Notes',
-	artifactType: 'markdown',
-	content: '# Notes'
+	artifactType: 'markdown'
 };
 
 function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {}) {
 	return {
 		artifacts: [artifact],
+		artifactContents: new Map<string, ArtifactContent>([
+			[artifact.key, { status: 'ready', content: '# Notes' }]
+		]),
 		layout: {
 			type: 'pane' as const,
 			id: 'pane',
@@ -155,7 +157,7 @@ it('dismisses the top-bar menu when the preview receives focus without taking fo
 		<ArtifactDisplay
 			title="Interactive"
 			artifactType="html"
-			content="<button>App</button>"
+			content={{ status: 'ready', content: '<button>App</button>' }}
 			onDelete={onDelete}
 		/>
 	);
@@ -181,7 +183,7 @@ it('keeps a failed pending deletion visible after the preview dismisses its menu
 		<ArtifactDisplay
 			title="Interactive"
 			artifactType="html"
-			content="<button>App</button>"
+			content={{ status: 'ready', content: '<button>App</button>' }}
 			onDelete={onDelete}
 		/>
 	);

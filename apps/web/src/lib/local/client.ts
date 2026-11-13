@@ -1,6 +1,6 @@
 import type { AssistantPart } from '@convex/lib/assistantParts';
 import { convexId } from '$lib/convex-id';
-import type { ArtifactsWatchEvent, LocalApi, ProjectAttachment } from '$lib/types/sprocket';
+import type { LocalApi, ProjectAttachment } from '$lib/types/sprocket';
 import { z } from 'zod';
 import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
@@ -246,24 +246,6 @@ const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('cleared') })
 ]);
 
-const localArtifactSchema = z.object({
-	_id: z.string(),
-	userId: z.string(),
-	repositoryKey: z.string(),
-	localPath: z.string().optional(),
-	content: z.string(),
-	title: z.string(),
-	revision: z.number(),
-	updatedAt: z.number(),
-	localError: z.string().optional()
-});
-
-const artifactsWatchEventSchema = z.object({
-	artifacts: z.array(localArtifactSchema),
-	stale: z.boolean(),
-	error: z.string().optional()
-});
-
 const chatGptStatusSchema = z.object({
 	accounts: z.array(
 		z.object({ connectionId: z.string(), label: z.string(), connected: z.boolean() })
@@ -337,16 +319,6 @@ function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
 	return attachment;
-}
-
-function parseArtifactsWatchEvent(
-	event: z.infer<typeof artifactsWatchEventSchema>
-): ArtifactsWatchEvent {
-	return {
-		artifacts: event.artifacts,
-		stale: event.stale,
-		error: event.error
-	};
 }
 
 export function resolveLocalApiBaseUrl(): string | null {
@@ -693,13 +665,8 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				body: JSON.stringify(requestBody)
 			});
 		},
-		watchArtifacts: (requestBody, handlers) =>
-			socket.subscribe({ kind: 'artifacts', params: requestBody }, artifactsWatchEventSchema, {
-				...handlers,
-				onEvent: (event) => {
-					handlers.onEvent(parseArtifactsWatchEvent(event));
-				}
-			}),
+		watchArtifactSync: (requestBody, handlers) =>
+			socket.subscribe({ kind: 'artifactSync', params: requestBody }, z.null(), handlers),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',

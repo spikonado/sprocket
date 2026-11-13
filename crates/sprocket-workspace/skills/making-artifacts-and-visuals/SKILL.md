@@ -9,9 +9,9 @@ description: Use before making or changing an artifact or an `html-visual`, `jsx
 
 An artifact's title is its filename, and the UI picks the renderer from the title's extension: `.md` for Markdown, `.html` or `.htm` for HTML, `.jsx` for React, `.render.json` for json-render, and `.wiring.json` for wiring diagrams (`$designing-wiring-diagram`). Any other file renders as Markdown.
 
-1. Write the file.
+1. Write the file with `apply_patch`.
 2. Bind it to a new artifact with `bind_artifact`.
-3. Revise it by editing the file.
+3. Revise it with `apply_patch`. The user's view updates live.
 4. After moving or renaming the file, call `bind_artifact` with the new path and the artifact's `artifactId` so the artifact follows the file.
 
 When the bound file goes missing, the artifact keeps its last content, and `save_artifact` writes it back. When both the file and the cloud copy changed, sync pauses. Compare the two versions, then keep the file's version by calling `bind_artifact` with its path and the `artifactId`, or save the cloud copy to a new path with `save_artifact`.

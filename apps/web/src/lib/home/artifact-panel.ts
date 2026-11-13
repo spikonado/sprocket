@@ -1,16 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Watch } from 'convex/react';
-import type { FunctionArgs, FunctionReturnType } from 'convex/server';
-import { api } from '@convex/_generated/api';
-import {
-	EMPTY_ARTIFACT_WATCH_STATE,
-	applyArtifactsWatchEvent,
-	artifactEntryFromLocal,
-	artifactWatchScopeKey,
-	mergeArtifactSources,
-	type ArtifactWatchState
-} from '$lib/chat/artifacts';
-import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
+import { artifactWatchScopeKey } from '$lib/chat/artifacts';
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
 	isSameOrInside,
@@ -29,35 +18,12 @@ import {
 import { useStore, type Store } from '$lib/store';
 import type { ArtifactsWatchRequest, LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
-
-type ArtifactLocalApi = Pick<LocalApi, 'watchArtifacts'>;
-
-const STALE_CLOUD_ARTIFACTS: ArtifactWatchState = { artifacts: [], stale: true, error: null };
-
-type ArtifactRegistryQuery = typeof api.artifacts.listArtifacts;
-
-type ArtifactStateQuery = typeof api.artifacts.getArtifactState;
-
-export type ConvexArtifactClient = {
-	query: (
-		query: ArtifactRegistryQuery,
-		args: FunctionArgs<ArtifactRegistryQuery>
-	) => Promise<FunctionReturnType<ArtifactRegistryQuery>>;
-	watchQuery: (
-		query: ArtifactStateQuery,
-		args: Pick<FunctionArgs<ArtifactStateQuery>, 'repositoryKey'>
-	) => Pick<Watch<FunctionReturnType<ArtifactStateQuery>>, 'localQueryResult' | 'onUpdate'>;
-};
+type ArtifactLocalApi = Pick<LocalApi, 'watchArtifactSync'>;
 
 export class ArtifactPanel implements Store<number> {
-	watchState: ArtifactWatchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
 	panel: SidePanelSnapshot = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
 	fullscreenKey: string | null = null;
 
-	#watchScope: string | null = null;
-	#cloud: ArtifactWatchState = STALE_CLOUD_ARTIFACTS;
-	#local: ArtifactWatchState | null = null;
 	#snapshots = new Map<string, SidePanelSnapshot>();
 	#panelScopeKey: string | null = null;
 	#nextId = 1;
@@ -74,12 +40,21 @@ export class ArtifactPanel implements Store<number> {
 		};
 	};
 
-	get artifacts() {
-		return this.watchState.artifacts.map(artifactEntryFromLocal);
-	}
+	/** Artifacts whose content a visible tab or the fullscreen view shows. */
+	get shownArtifactKeys() {
+		const keys = new Set<string>();
 
-	get fullscreenArtifact() {
-		return this.artifacts.find((artifact) => artifact.key === this.fullscreenKey) ?? null;
+		if (this.panel.open) {
+			for (const pane of this.panes) {
+				const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
+
+				if (tab?.view === 'artifacts' && tab.selectedKey) keys.add(tab.selectedKey);
+			}
+		}
+
+		if (this.fullscreenKey) keys.add(this.fullscreenKey);
+
+		return [...keys].sort();
 	}
 
 	get panes() {
@@ -128,72 +103,23 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	watch(args: {
-		localApi: ArtifactLocalApi | null;
-		artifactClient: ArtifactClient;
-		cloudReady: boolean;
-		scope: ArtifactsWatchRequest | null;
-	}) {
-		const scopeKey = args.scope ? artifactWatchScopeKey(args.scope) : null;
-
-		if (scopeKey !== this.#watchScope) {
-			this.#watchScope = scopeKey;
-			this.#cloud = STALE_CLOUD_ARTIFACTS;
-			this.#local = null;
-			this.watchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
-			this.#emit();
-		} else if (!args.cloudReady) {
-			this.#cloud = { ...this.#cloud, stale: true };
-			this.watchState = mergeArtifactSources(this.#cloud, this.#local);
-			this.#emit();
-		}
-
-		if (!args.scope) return;
+	/** Keeps the local server syncing bound artifact files to Convex while the project is open. */
+	watchSync(localApi: ArtifactLocalApi | null, scope: ArtifactsWatchRequest | null) {
+		if (!localApi || !scope?.workspacePath) return;
 		const ac = new AbortController();
 
-		const publish = (
-			source: { cloud: ArtifactWatchState } | { local: ArtifactWatchState | null }
-		) => {
-			if (ac.signal.aborted || this.#watchScope !== scopeKey) return;
+		void localApi.watchArtifactSync(scope, {
+			signal: ac.signal,
+			onEvent: () => {},
+			onError: () => {}
+		});
 
-			if ('cloud' in source) this.#cloud = source.cloud;
-			else this.#local = source.local;
-			this.watchState = mergeArtifactSources(this.#cloud, this.#local);
-			this.#emit();
-		};
-
-		const cloudScope: CloudArtifactScope = {
-			userId: args.scope.userId,
-			repositoryKey: args.scope.repositoryKey
-		};
-
-		const stopCloud = args.cloudReady
-			? watchCloudArtifacts(
-					args.artifactClient,
-					cloudScope,
-					(cloud) => publish({ cloud }),
-					this.#cloud.artifacts
-				)
-			: () => {};
-
-		if (args.localApi && args.scope.workspacePath) {
-			void args.localApi.watchArtifacts(args.scope, {
-				signal: ac.signal,
-				onEvent: (event) => publish({ local: applyArtifactsWatchEvent(event) }),
-				onError: () => publish({ local: null })
-			});
-		}
-
-		return () => {
-			ac.abort();
-			stopCloud();
-		};
+		return () => ac.abort();
 	}
 
 	reset() {
 		this.#snapshots.clear();
 		this.#panelScopeKey = null;
-		this.#watchScope = null;
 		this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
 		this.fullscreenKey = null;
 		this.#emit();
@@ -441,27 +367,4 @@ export function useArtifactPanel() {
 	}, [panel]);
 
 	return panel;
-}
-
-export function createConvexArtifactClient(client: ConvexArtifactClient): ArtifactClient {
-	return {
-		query: (query, args) => client.query(query, args),
-		onUpdate: (query, args, onUpdate, onError) => {
-			const watch = client.watchQuery(query, args);
-
-			const report = () => {
-				try {
-					const revision = watch.localQueryResult();
-
-					if (revision !== undefined) onUpdate(revision);
-				} catch (error) {
-					onError(error instanceof Error ? error : new Error(String(error)));
-				}
-			};
-
-			report();
-
-			return watch.onUpdate(report);
-		}
-	};
 }

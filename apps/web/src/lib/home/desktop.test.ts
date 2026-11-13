@@ -63,7 +63,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		uploadTranscriptAttachment: unusedDesktopCall,
 		discardTranscriptAttachment: unusedDesktopCall,
 		deleteArtifact: unusedDesktopCall,
-		watchArtifacts: unusedDesktopCall,
+		watchArtifactSync: unusedDesktopCall,
 		requestRunCancellation: unusedDesktopCall,
 		fetchPullRequestStates: unusedDesktopCall,
 		startAccountSession: unusedDesktopCall,

@@ -1,31 +1,59 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeWiring, boxGeometry, parseWiring, WIRE_COLORS } from './wiring';
+import { analyzeWiring, checkWiring, parseWiring, pinRole, WIRE_COLORS } from './wiring';
 
 function analyze(source: string) {
 	const parsed = parseWiring(source);
 
 	if ('error' in parsed) throw new Error(parsed.error);
 
-	const geometry = new Map(
-		parsed.spec.parts.flatMap((part) =>
-			part.pins ? [[part.id, boxGeometry(part.name, part.pins)]] : []
-		)
-	);
-
-	return analyzeWiring(parsed.spec, geometry);
+	return analyzeWiring(parsed.spec);
 }
 
 const parts = [
 	{ id: 'esp', name: 'ESP32', logic: 3.3, pins: { right: ['3V3', 'GND.1', 'G12'] } },
 	{ id: 'uno', name: 'Uno', logic: 5, pins: { left: ['5V', 'GND', 'D3'] } },
 	{ id: 'bat', name: 'Battery', pins: { right: ['+', '-'] } },
-	{
-		id: 'lidar',
-		name: 'LiDAR',
-		logic: 3.3,
-		pins: { left: ['VCC_5V', '5V_MOTO', 'GND_MOTO'] }
-	}
+	{ id: 'lidar', name: 'LiDAR', logic: 3.3, pins: { left: ['VCC_5V', '5V_MOTO', 'GND_MOTO'] } }
 ];
+
+describe('pinRole', () => {
+	it.each([
+		['VCC_5V', 'power', 5],
+		['5V_MOTO', 'power', 5],
+		['GND_MOTO', 'ground', undefined],
+		['VCC 5V', 'power', 5],
+		['5V MOTO', 'power', 5],
+		['gnd\tmoto.1', 'ground', undefined],
+		['PWM_MOTO', 'signal', undefined]
+	])('classifies %s as %s', (name, role, volts) => {
+		expect(pinRole(name)).toMatchObject({ role });
+		expect(pinRole(name).volts).toBe(volts);
+	});
+});
+
+describe('checkWiring', () => {
+	const spec = {
+		parts,
+		rails: [{ id: '5V', volts: 5 }],
+		steps: [{ title: 'Power', wires: [{ from: '5V', to: 'esp.G12' }] }]
+	};
+
+	it('reports the issues the viewer shows', () => {
+		expect(checkWiring(JSON.stringify(spec))).toEqual([
+			{ level: 'error', message: 'ESP32 G12 is a 3.3 V pin, but 5V rail puts 5 V on it.' }
+		]);
+	});
+
+	it.each([
+		['invalid JSON', '{'],
+		['a missing pins list', JSON.stringify({ ...spec, parts: [{ id: 'esp', name: 'ESP32' }] })],
+		['an invalid +5V rail id', JSON.stringify({ ...spec, rails: [{ id: '+5V', volts: 5 }] })]
+	])('reports %s as an unreadable wiring file', (_, source) => {
+		expect(checkWiring(source)).toEqual([
+			{ level: 'error', message: expect.stringContaining("This wiring file can't be read.") }
+		]);
+	});
+});
 
 describe('analyzeWiring', () => {
 	it('resolves pins and rails and colours wires by role', () => {

@@ -40,7 +40,7 @@ enum ClientMessage {
 pub(crate) enum Topic {
     Transcript(transcript::TranscriptScope),
     LiveCompletion(agent::LiveCompletionWatchRequest),
-    Artifacts(artifacts::ArtifactWatchRequest),
+    ArtifactSync(artifacts::ArtifactWatchRequest),
     Commands(agent::CommandsRequest),
     AuthChanges,
     BrowserStatus,
@@ -54,7 +54,7 @@ impl Topic {
         match self {
             Self::Transcript(scope) => Some(scope.user_id()),
             Self::LiveCompletion(request) => Some(request.user_id()),
-            Self::Artifacts(request) => Some(request.user_id()),
+            Self::ArtifactSync(request) => Some(request.user_id()),
             Self::Commands(request) => Some(request.user_id()),
             Self::AuthChanges
             | Self::BrowserStatus
@@ -281,9 +281,10 @@ pub(crate) async fn open(
     Ok(match topic {
         Topic::Transcript(scope) => json(transcript::watch_events(state, Authorized(scope)).await),
         Topic::LiveCompletion(request) => json(agent::live_events(state, Authorized(request))),
-        Topic::Artifacts(request) => {
-            json(artifacts::watch_events(state, Authorized(request)).await?)
-        }
+        Topic::ArtifactSync(request) => artifacts::watch_events(state, Authorized(request))
+            .await?
+            .map(|_| serde_json::Value::Null)
+            .boxed(),
         Topic::Commands(request) => json(agent::command_events(state, Authorized(request))),
         Topic::AuthChanges => json(auth::session_change_events(state, Authorized(()))?),
         Topic::BrowserStatus => json(state.host.browsers.status_events()),

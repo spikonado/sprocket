@@ -1,67 +1,23 @@
-import '@wokwi/elements';
-import type { ElementPin } from '@wokwi/elements';
 import { CircleAlert, Cpu, ExternalLink, TriangleAlert } from 'lucide-react';
-import { createElement, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createStore, useStore } from '$lib/store';
-import {
-	layoutWiring,
-	partInsets,
-	wrapRows,
-	type PinLabel,
-	type WireRoute,
-	type WiringLayout
-} from '$lib/wiring/layout';
-import { LEFT, RIGHT, SIDE_VECTORS, type Point } from '$lib/wiring/route';
+import { layoutWiring, wrapRows, type WireRoute, type WiringLayout } from '$lib/wiring/layout';
+import type { Point } from '$lib/wiring/route';
 import {
 	analyzeWiring,
-	boxGeometry,
 	parseWiring,
+	wiringGeometry,
 	WIRE_COLORS,
 	type PartGeometry,
 	type ResolvedWire,
 	type WiringIssue,
 	type WiringPart,
 	type WiringSpec
-} from '$lib/wiring/wiring';
+} from '@convex/lib/wiring';
 
-const WOKWI_SCALE = 2;
 const NO_WIRES_DONE: ReadonlySet<string> = new Set();
 
 const doneWires = createStore<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
-
-type WokwiElement = HTMLElement & { pinInfo?: ElementPin[]; updateComplete?: Promise<unknown> };
-
-function wokwiTag(part: WiringPart) {
-	const tag = part.wokwi && `wokwi-${part.wokwi}`;
-
-	return tag && customElements.get(tag) ? tag : undefined;
-}
-
-function measureKey(part: WiringPart) {
-	return `${part.id}:${part.wokwi}:${JSON.stringify(part.wokwiAttrs ?? {})}`;
-}
-
-function wokwiGeometry(element: WokwiElement): PartGeometry {
-	return {
-		width: element.offsetWidth * WOKWI_SCALE,
-		height: element.offsetHeight * WOKWI_SCALE,
-		pins: (element.pinInfo ?? []).map((pin) => {
-			const power = pin.signals.find((signal) => signal.type === 'power');
-
-			return {
-				name: pin.name,
-				x: pin.x * WOKWI_SCALE,
-				y: pin.y * WOKWI_SCALE,
-				...(power?.signal === 'GND'
-					? { role: 'ground' as const }
-					: power
-						? { role: 'power' as const, volts: power.voltage }
-						: { role: 'signal' as const })
-			};
-		}),
-		pinNamesInside: false
-	};
-}
 
 export default function WiringView({ source }: { source: string }) {
 	const parsed = useMemo(() => parseWiring(source), [source]);
@@ -69,9 +25,7 @@ export default function WiringView({ source }: { source: string }) {
 	if ('error' in parsed) {
 		return (
 			<div className="my-3">
-				<Issues
-					issues={[{ level: 'error', message: `This wiring file can't be read. ${parsed.error}` }]}
-				/>
+				<Issues issues={[{ level: 'error', message: parsed.error }]} />
 			</div>
 		);
 	}
@@ -82,7 +36,6 @@ export default function WiringView({ source }: { source: string }) {
 type Step = number | 'all';
 
 function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
-	const [measured, setMeasured] = useState<ReadonlyMap<string, PartGeometry>>(new Map());
 	const [step, setStep] = useState<Step>(0);
 	const [focus, setFocus] = useState<string | null>(null);
 	const [hover, setHover] = useState<string | null>(null);
@@ -101,36 +54,17 @@ function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
 		return () => observer.disconnect();
 	}, []);
 
-	const geometry = useMemo(() => {
-		const map = new Map<string, PartGeometry>();
-
-		for (const part of spec.parts) {
-			const size = wokwiTag(part)
-				? measured.get(measureKey(part))
-				: part.pins && boxGeometry(part.name, part.pins);
-
-			if (size) map.set(part.id, size);
-		}
-
-		return map;
-	}, [spec, measured]);
-
-	const ready = spec.parts.every((part) => !wokwiTag(part) || measured.has(measureKey(part)));
+	const geometry = useMemo(() => wiringGeometry(spec), [spec]);
 	const { wires, issues } = useMemo(() => analyzeWiring(spec, geometry), [spec, geometry]);
 	const maxRowWidth = frameWidth > 0 ? Math.min(Math.max(frameWidth / 0.75, 480), 1600) : 1200;
 	const rowsKey = wrapRows(spec, geometry, maxRowWidth).join(',');
 
 	const layout = useMemo(
-		() =>
-			ready
-				? layoutWiring(spec, geometry, wires, rowsKey.split(',').filter(Boolean).map(Number))
-				: undefined,
-		[ready, spec, geometry, wires, rowsKey]
+		() => layoutWiring(spec, geometry, wires, rowsKey.split(',').map(Number)),
+		[spec, geometry, wires, rowsKey]
 	);
 
-	const overlapping = layout
-		? [...layout.routes.values()].filter((route) => route.overlaps).length
-		: 0;
+	const overlapping = [...layout.routes.values()].filter((route) => route.overlaps).length;
 
 	const allIssues: WiringIssue[] =
 		overlapping > 0
@@ -143,7 +77,7 @@ function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
 				]
 			: issues;
 
-	const scale = layout && frameWidth > 0 ? Math.min(frameWidth / layout.width, 1.25) : 1;
+	const scale = frameWidth > 0 ? Math.min(frameWidth / layout.width, 1.25) : 1;
 
 	const touchesFocus = (wire: ResolvedWire) =>
 		[wire.from, wire.to].some((end) => end.type === 'pin' && end.part.id === focus);
@@ -158,7 +92,7 @@ function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
 	);
 
 	for (const key of shownKeys) {
-		for (const joined of layout?.routes.get(key)?.joins ?? []) shownKeys.add(joined);
+		for (const joined of layout.routes.get(key)?.joins ?? []) shownKeys.add(joined);
 	}
 
 	const shown = wires.filter((wire) => shownKeys.has(wire.key));
@@ -204,47 +138,41 @@ function WiringDiagram({ source, spec }: { source: string; spec: WiringSpec }) {
 	return (
 		<div className="text-foreground my-3 flex flex-col gap-3 text-sm">
 			{spec.title ? <h3 className="text-base font-medium">{spec.title}</h3> : null}
-			{ready ? <Issues issues={allIssues} /> : null}
+			<Issues issues={allIssues} />
 			<div className="flex flex-wrap gap-1.5">
 				{spec.steps.map((item, index) => stepButton(index, `${index + 1}. ${item.title}`))}
 				{stepButton('all', 'Show all')}
 			</div>
 			<p className="text-muted-foreground min-h-5 text-[13px]">{caption}</p>
 			<div ref={frameRef} className="bg-muted/40 overflow-hidden rounded-lg border">
-				<div style={{ height: (layout?.height ?? 0) * scale }}>
+				<div style={{ height: layout.height * scale }}>
 					<div
 						className="relative origin-top-left"
 						style={{
-							width: layout?.width,
-							height: layout?.height,
-							transform: `scale(${scale})`,
-							visibility: layout ? 'visible' : 'hidden'
+							width: layout.width,
+							height: layout.height,
+							transform: `scale(${scale})`
 						}}
 					>
 						{spec.parts.map((part) => (
 							<PartView
-								key={measureKey(part)}
+								key={part.id}
 								part={part}
 								geometry={geometry.get(part.id)}
-								position={layout?.positions.get(part.id)}
+								position={layout.positions.get(part.id)}
 								focused={focus === part.id}
-								onMeasure={(size) =>
-									setMeasured((current) => new Map(current).set(measureKey(part), size))
-								}
 								onClick={() => setFocus((current) => (current === part.id ? null : part.id))}
 							/>
 						))}
-						{layout ? (
-							<WireLayer
-								spec={spec}
-								geometry={geometry}
-								layout={layout}
-								wires={shown}
-								isCurrent={isCurrent}
-								hover={hover}
-								onHover={setHover}
-							/>
-						) : null}
+						<WireLayer
+							spec={spec}
+							geometry={geometry}
+							layout={layout}
+							wires={shown}
+							isCurrent={isCurrent}
+							hover={hover}
+							onHover={setHover}
+						/>
 					</div>
 				</div>
 			</div>
@@ -316,59 +244,30 @@ function PartView({
 	geometry,
 	position,
 	focused,
-	onMeasure,
 	onClick
 }: {
 	part: WiringPart;
 	geometry?: PartGeometry;
 	position?: Point;
 	focused: boolean;
-	onMeasure: (geometry: PartGeometry) => void;
 	onClick: () => void;
 }) {
-	const tag = wokwiTag(part);
-	const elementRef = useRef<WokwiElement | null>(null);
-	const onMeasureRef = useRef(onMeasure);
-	onMeasureRef.current = onMeasure;
-
-	useLayoutEffect(() => {
-		const element = elementRef.current;
-
-		if (!tag || !element) return;
-
-		let active = true;
-
-		const observer = new ResizeObserver(() => {
-			void Promise.resolve(element.updateComplete).then(() => {
-				if (active && element.offsetWidth > 0) onMeasureRef.current(wokwiGeometry(element));
-			});
-		});
-
-		observer.observe(element);
-
-		return () => {
-			active = false;
-			observer.disconnect();
-		};
-	}, [tag]);
-
-	if (!tag && !geometry) return null;
-
-	const ring = focused ? 'outline-primary outline-2 outline-offset-4' : '';
-	const insets = geometry && partInsets(geometry);
+	if (!geometry || !position) return null;
 
 	return (
 		<div
-			className="absolute cursor-pointer"
+			className={`bg-card absolute cursor-pointer rounded-lg border shadow-xs ${
+				focused ? 'outline-primary outline-2 outline-offset-4' : ''
+			}`}
 			role="button"
 			tabIndex={0}
 			aria-label={`Show only the wires on ${part.name}`}
 			aria-pressed={focused}
 			style={{
-				left: position?.x ?? 0,
-				top: position?.y ?? 0,
-				width: geometry?.width,
-				height: geometry?.height
+				left: position.x,
+				top: position.y,
+				width: geometry.width,
+				height: geometry.height
 			}}
 			onClick={onClick}
 			onKeyDown={(event) => {
@@ -379,49 +278,6 @@ function PartView({
 			}}
 			title={`${part.name}: click to show only its wires`}
 		>
-			{tag ? (
-				<>
-					{insets ? (
-						<div
-							className="text-muted-foreground absolute truncate text-center text-xs leading-5 font-medium"
-							style={{
-								top: insets.nameY - 10,
-								left: -insets.sides[LEFT],
-								right: -insets.sides[RIGHT]
-							}}
-						>
-							{part.name}
-						</div>
-					) : null}
-					<div
-						className={`w-max origin-top-left rounded-sm ${ring}`}
-						style={{ transform: `scale(${WOKWI_SCALE})` }}
-					>
-						{createElement(tag, {
-							ref: elementRef,
-							style: { display: 'block' },
-							...part.wokwiAttrs
-						})}
-					</div>
-				</>
-			) : (
-				<BoxPart part={part} geometry={geometry!} className={ring} />
-			)}
-		</div>
-	);
-}
-
-function BoxPart({
-	part,
-	geometry,
-	className
-}: {
-	part: WiringPart;
-	geometry: PartGeometry;
-	className: string;
-}) {
-	return (
-		<div className={`bg-card relative h-full w-full rounded-lg border shadow-xs ${className}`}>
 			<div className="truncate px-3 pt-3 text-center text-[13px] font-medium">{part.name}</div>
 			{geometry.pins.map((pin) => (
 				<span
@@ -498,9 +354,7 @@ function WireLayer({
 	const boxPins = [...layout.positions].flatMap(([id, position]) => {
 		const size = geometry.get(id);
 
-		return size?.pinNamesInside
-			? size.pins.map((pin) => ({ x: position.x + pin.x, y: position.y + pin.y }))
-			: [];
+		return size?.pins.map((pin) => ({ x: position.x + pin.x, y: position.y + pin.y })) ?? [];
 	});
 
 	const ordered = wires
@@ -632,11 +486,6 @@ function Wire({
 					stroke="var(--muted-foreground)"
 				/>
 			))}
-			{current
-				? route.labels.map((label) => (
-						<PinTag key={`${label.at.x}:${label.at.y}`} label={label} color={wire.color} />
-					))
-				: null}
 			<path
 				d={d}
 				fill="none"
@@ -649,46 +498,6 @@ function Wire({
 			/>
 		</g>
 	);
-}
-
-const TAG_CHAR_WIDTH = 6.2;
-
-/** A pin name on a coloured tag that sits on the wire's straight lead out of the pin. */
-function PinTag({ label, color }: { label: PinLabel; color: string }) {
-	const vector = SIDE_VECTORS[label.side];
-	const length = label.text.length * TAG_CHAR_WIDTH + 10;
-	const x = label.at.x + vector.x * (4 + length / 2);
-	const y = label.at.y + vector.y * (4 + length / 2);
-
-	return (
-		<g transform={`translate(${x} ${y})${vector.x === 0 ? ' rotate(-90)' : ''}`}>
-			<rect
-				x={-length / 2}
-				y={-7}
-				width={length}
-				height={14}
-				rx={7}
-				fill={color}
-				stroke="var(--muted-foreground)"
-			/>
-			<text
-				textAnchor="middle"
-				dominantBaseline="central"
-				fontSize={10}
-				fontFamily="var(--font-mono)"
-				fontWeight={600}
-				fill={inkOn(color)}
-			>
-				{label.text}
-			</text>
-		</g>
-	);
-}
-
-function inkOn(hex: string) {
-	const [r, g, b] = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-
-	return r * 0.299 + g * 0.587 + b * 0.114 > 150 ? '#1f2328' : '#ffffff';
 }
 
 function PartsList({ parts }: { parts: WiringPart[] }) {

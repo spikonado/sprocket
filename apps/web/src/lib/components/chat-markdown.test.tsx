@@ -10,8 +10,7 @@ import ChatMarkdown from './chat-markdown';
 const artifact: ArtifactEntry = {
 	key: 'ks73zzsnfj2najtd871p43f45s8ec23d',
 	title: 'About Me.md',
-	artifactType: 'markdown',
-	content: '# About me'
+	artifactType: 'markdown'
 };
 
 function renderChatMarkdown(props: {

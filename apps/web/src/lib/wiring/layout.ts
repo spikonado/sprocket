@@ -1,3 +1,4 @@
+import type { Endpoint, PartGeometry, PartPin, ResolvedWire, WiringSpec } from '@convex/lib/wiring';
 import {
 	DOWN,
 	LEFT,
@@ -9,14 +10,6 @@ import {
 	type Point,
 	type Terminal
 } from './route';
-import {
-	baseName,
-	type Endpoint,
-	type PartGeometry,
-	type PartPin,
-	type ResolvedWire,
-	type WiringSpec
-} from './wiring';
 
 export const GRID = 10;
 const PART_GAP = 6 * GRID;
@@ -26,34 +19,22 @@ const MARGIN = 4 * GRID;
 const SLACK_LANES = 2;
 const RAIL_PITCH = 2 * GRID;
 const RAIL_LABEL_WIDTH = 9 * GRID;
-const LABEL_ROOM = 5 * GRID;
 const STUB_ROOM = 2 * GRID;
-const NAME_BAND = 2 * GRID;
 const SPREADS = [1, 1.5, 2.25];
 
 const snapUp = (value: number) => Math.ceil(value / GRID - 1e-6) * GRID;
 const snapDown = (value: number) => Math.floor(value / GRID + 1e-6) * GRID;
 
-export function pinSide(pin: PartPin, geometry: PartGeometry) {
-	const distances = [geometry.width - pin.x, geometry.height - pin.y, pin.x, pin.y];
+const pinSide = (pin: PartPin, geometry: PartGeometry) =>
+	pin.x < geometry.width / 2 ? LEFT : RIGHT;
 
-	return distances.indexOf(Math.min(...distances));
-}
-
-/** The clear space kept around a part, indexed by side. Only the part's own pin leads and labels use it. */
-export function partInsets(geometry: PartGeometry) {
-	const room = geometry.pinNamesInside ? STUB_ROOM : LABEL_ROOM;
-	const used = new Set(geometry.pins.map((pin) => pinSide(pin, geometry)));
-	const nameBand = geometry.pinNamesInside ? 0 : NAME_BAND;
-	const sides = SIDE_VECTORS.map((_, side) => (used.has(side) ? room : GRID));
-	const top = sides[UP];
-	sides[UP] = top + nameBand;
-
-	return { sides, nameY: -(top + nameBand / 2) };
-}
+const partSides = (geometry: PartGeometry) =>
+	SIDE_VECTORS.map((_, side) =>
+		geometry.pins.some((pin) => pinSide(pin, geometry) === side) ? STUB_ROOM : GRID
+	);
 
 const outerWidth = (geometry: PartGeometry) => {
-	const { sides } = partInsets(geometry);
+	const sides = partSides(geometry);
 
 	return sides[LEFT] + snapUp(geometry.width) + sides[RIGHT];
 };
@@ -86,10 +67,8 @@ export function wrapRows(
 
 export type RailLine = { rail: number; segments: [Point, Point][]; labels: Point[] };
 
-export type PinLabel = { text: string; at: Point; side: number };
-
 /** `joins` lists the wires this one meets at a T instead of reaching their shared pin itself. */
-export type WireRoute = { points: Point[]; labels: PinLabel[]; overlaps: boolean; joins: string[] };
+export type WireRoute = { points: Point[]; overlaps: boolean; joins: string[] };
 
 export type WiringLayout = {
 	width: number;
@@ -103,7 +82,7 @@ type Part = { id: string; geometry: PartGeometry; sides: number[] };
 
 type PlacedPart = Part & { position: Point };
 
-type PinEnd = { terminal: Terminal; point: Point; label?: PinLabel };
+type PinEnd = { terminal: Terminal; point: Point };
 
 /**
  * Parts sit in rows, with a copy of every rail under each row, joined on the left like breadboard
@@ -119,7 +98,7 @@ export function layoutWiring(
 	const parts = spec.parts.flatMap((part): Part[] => {
 		const size = geometry.get(part.id);
 
-		return size ? [{ id: part.id, geometry: size, sides: partInsets(size).sides }] : [];
+		return size ? [{ id: part.id, geometry: size, sides: partSides(size) }] : [];
 	});
 
 	let next = 0;
@@ -283,28 +262,18 @@ function routeLayout(spec: WiringSpec, wires: ResolvedWire[], layout: Placement)
 		if (!part) return;
 
 		const { pin } = end;
-		const { position, geometry: size } = part;
-		const side = pinSide(pin, size);
+		const side = pinSide(pin, part.geometry);
 		const box = keepOut(part);
-		const point = { x: position.x + pin.x, y: position.y + pin.y };
-		const across = Math.round((side % 2 === 0 ? point.y : point.x) / GRID);
-		const out = [box.iMax, box.jMax, box.iMin, box.jMin][side];
-
-		const edge = [
-			{ x: position.x + size.width, y: point.y },
-			{ x: point.x, y: position.y + size.height },
-			{ x: position.x, y: point.y },
-			{ x: point.x, y: position.y }
-		][side];
+		const point = { x: part.position.x + pin.x, y: part.position.y + pin.y };
 
 		return {
 			terminal: {
 				key: `${part.id}.${pin.name}`,
 				side,
-				...(side % 2 === 0 ? { i: out, j: across } : { i: across, j: out })
+				i: side === RIGHT ? box.iMax : box.iMin,
+				j: Math.round(point.y / GRID)
 			},
-			point,
-			label: size.pinNamesInside ? undefined : { text: baseName(pin.name), at: edge, side }
+			point
 		};
 	};
 
@@ -359,7 +328,6 @@ function routeLayout(spec: WiringSpec, wires: ResolvedWire[], layout: Placement)
 					...cells,
 					...(endPin ? [endPin.point] : [])
 				],
-				labels: [startPin?.label, endPin?.label].flatMap((label) => label ?? []),
 				overlaps: false,
 				joins: path.joins.map((host) => wires[host].key)
 			});
@@ -370,7 +338,7 @@ function routeLayout(spec: WiringSpec, wires: ResolvedWire[], layout: Placement)
 		const a = fallbackPoint(wire.from);
 		const b = fallbackPoint(wire.to);
 
-		if (a && b) routes.set(wire.key, { points: [a, b], labels: [], overlaps: true, joins: [] });
+		if (a && b) routes.set(wire.key, { points: [a, b], overlaps: true, joins: [] });
 	});
 
 	return routes;

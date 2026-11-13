@@ -216,28 +216,10 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
-export type LocalArtifact = {
-	_id: string;
-	userId: string;
-	repositoryKey: string;
-	localPath?: string;
-	content: string;
-	title: string;
-	revision: number;
-	updatedAt: number;
-	localError?: string;
-};
-
 export type ArtifactsWatchRequest = {
 	userId: string;
 	repositoryKey: string;
 	workspacePath: string;
-};
-
-export type ArtifactsWatchEvent = {
-	artifacts: LocalArtifact[];
-	stale: boolean;
-	error?: string;
 };
 
 export type ChatGptAccount = {
@@ -450,9 +432,9 @@ export type LocalApi = {
 	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
 	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
 	deleteArtifact: (request: ArtifactsWatchRequest & { artifactId: string }) => Promise<void>;
-	watchArtifacts: (
+	watchArtifactSync: (
 		request: ArtifactsWatchRequest,
-		handlers: SubscriptionHandlers<ArtifactsWatchEvent>
+		handlers: SubscriptionHandlers<null>
 	) => Promise<void>;
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	fetchPullRequestStates: (

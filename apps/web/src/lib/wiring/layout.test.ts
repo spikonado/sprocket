@@ -1,21 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { analyzeWiring, parseWiring, wiringGeometry } from '@convex/lib/wiring';
 import { GRID, layoutWiring, wrapRows } from './layout';
 import type { Point } from './route';
-import { analyzeWiring, boxGeometry, parseWiring, pinRole, type PartGeometry } from './wiring';
-
-const pitch = 19.2;
-
-const sensor: PartGeometry = {
-	width: 228,
-	height: 107,
-	pins: ['VCC', 'TRIG', 'ECHO', 'GND'].map((name, index) => ({
-		name,
-		x: 85 + index * pitch,
-		y: 107,
-		...pinRole(name)
-	})),
-	pinNamesInside: false
-};
 
 const spec = parseWiring(
 	JSON.stringify({
@@ -27,7 +13,7 @@ const spec = parseWiring(
 				logic: 5,
 				pins: { left: ['5V', 'GND'], right: ['D2', 'D3', 'D4'] }
 			},
-			{ id: 'sonar', name: 'Sonar', wokwi: 'hc-sr04' },
+			{ id: 'sonar', name: 'Sonar', pins: { left: ['VCC', 'TRIG', 'ECHO', 'GND'] } },
 			{ id: 'led', name: 'LED', pins: { left: ['A', 'K'] } }
 		],
 		rails: [
@@ -69,13 +55,7 @@ describe('layoutWiring', () => {
 	it('routes every wire on its own grid lanes, clear of every part, joining only wires drawn with it', () => {
 		if ('error' in spec) throw new Error(spec.error);
 
-		const geometry = new Map(
-			spec.spec.parts.map((part) => [
-				part.id,
-				part.pins ? boxGeometry(part.name, part.pins) : sensor
-			])
-		);
-
+		const geometry = wiringGeometry(spec.spec);
 		const { wires } = analyzeWiring(spec.spec, geometry);
 
 		for (const width of [600, 1600]) {
