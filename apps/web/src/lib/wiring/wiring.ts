@@ -137,11 +137,13 @@ function voltsFromName(name: string) {
 }
 
 export function pinRole(name: string): Pick<PartPin, 'role' | 'volts'> {
-	const base = baseName(name);
+	const words = baseName(name).split(/[_\s]+/);
 
-	if (GROUND_NAME.test(base)) return { role: 'ground' };
+	if (words.some((word) => GROUND_NAME.test(word))) return { role: 'ground' };
 
-	if (POWER_NAME.test(base)) return { role: 'power', volts: voltsFromName(base) };
+	if (words.some((word) => POWER_NAME.test(word))) {
+		return { role: 'power', volts: words.map(voltsFromName).find((volts) => volts !== undefined) };
+	}
 
 	return { role: 'signal' };
 }
