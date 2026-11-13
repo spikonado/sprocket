@@ -105,7 +105,7 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
 		deleteArtifact: unused,
-		watchArtifacts: unused,
+		watchArtifactSync: unused,
 		requestRunCancellation: unused,
 		fetchPullRequestStates: unused,
 		startAccountSession: unused,

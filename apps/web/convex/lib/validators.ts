@@ -1,6 +1,7 @@
 import { v, type Infer } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
 import { reasoningEffortIds } from '@convex/lib/models';
+import { vWiringIssue } from '@convex/lib/wiring';
 
 function literals<const TValue extends string>(values: readonly TValue[]) {
 	return values.map((value) => v.literal(value));
@@ -452,11 +453,17 @@ export const vExecutorJobPayload = v.union(
 	vBrowserInteractPayload
 );
 
+const wiringCheckFields = {
+	wiringIssues: v.optional(v.array(vWiringIssue)),
+	wiringCheckError: v.optional(v.string())
+};
+
 export const vApplyPatchResult = v.object({
 	changes: v.array(
 		v.object({
 			path: v.string(),
 			source: v.optional(v.string()),
+			...wiringCheckFields,
 			operation: v.union(
 				v.literal('created'),
 				v.literal('updated'),
@@ -866,6 +873,7 @@ export const vListModelsResult = v.object({
 });
 
 export const vArtifactResult = v.object({
+	...wiringCheckFields,
 	artifactId: v.string(),
 	path: v.optional(v.string()),
 	revision: v.optional(v.number()),

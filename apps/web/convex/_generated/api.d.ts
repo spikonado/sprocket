@@ -88,6 +88,7 @@ import type * as lib_uiPreferences from "../lib/uiPreferences.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_webPools from "../lib/webPools.js";
+import type * as lib_wiring from "../lib/wiring.js";
 import type * as lib_workSections from "../lib/workSections.js";
 import type * as lib_workosVault from "../lib/workosVault.js";
 import type * as machines from "../machines.js";
@@ -201,6 +202,7 @@ declare const fullApi: ApiFromModules<{
   "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
   "lib/webPools": typeof lib_webPools;
+  "lib/wiring": typeof lib_wiring;
   "lib/workSections": typeof lib_workSections;
   "lib/workosVault": typeof lib_workosVault;
   machines: typeof machines;

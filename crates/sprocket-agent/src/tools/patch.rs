@@ -2,10 +2,11 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::apply_workspace_patch;
+use sprocket_workspace::{PatchOperation, apply_workspace_patch};
 
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
+use super::wiring::add_wiring_issues;
 
 #[derive(Clone)]
 pub(crate) struct ApplyPatchTool(pub(super) AgentToolContext);
@@ -51,11 +52,25 @@ impl rig::tool::Tool for ApplyPatchTool {
             &self.0,
             Self::NAME,
             serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
-            |cancellation| async {
-                let output = apply_workspace_patch(self.0.cwd.get(), cancellation, &args.patch)
-                    .await
-                    .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
+            |cancellation| async move {
+                let output =
+                    apply_workspace_patch(self.0.cwd.get(), cancellation.clone(), &args.patch)
+                        .await
+                        .map_err(tool_error)?;
+                let mut value = serde_json::to_value(&output).map_err(|e| tool_error(e.into()))?;
+                for (index, change) in output.changes.iter().enumerate() {
+                    if matches!(change.operation, PatchOperation::Deleted) {
+                        continue;
+                    }
+                    add_wiring_issues(
+                        &self.0,
+                        &cancellation,
+                        &change.path,
+                        &mut value["changes"][index],
+                    )
+                    .await;
+                }
+                Ok(value)
             },
         )
         .await

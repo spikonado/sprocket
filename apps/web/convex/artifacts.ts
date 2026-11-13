@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
@@ -8,10 +9,13 @@ import schema from '@convex/schema';
 import { registryState, bumpRegistry } from '@convex/lib/artifactRegistry';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { checkWiring, vWiringIssue } from '@convex/lib/wiring';
 
 const MAX_TITLE_LENGTH = MAX_FILE_NAME_LENGTH;
 
 export const MAX_ARTIFACT_CONTENT_BYTES = 500_000;
+
+const MAX_PAGE_BYTES_READ = 1_000_000;
 
 const vArtifactMutationResult = v.object({ artifactId: v.id('artifacts') });
 
@@ -75,6 +79,20 @@ function validateArtifactContent(content: string) {
 	}
 }
 
+function validateArtifactSourcePath(sourcePath: string | null | undefined) {
+	if (
+		sourcePath != null &&
+		(sourcePath.includes('\\') ||
+			sourcePath.includes(':') ||
+			sourcePath.includes('\0') ||
+			sourcePath
+				.split('/')
+				.some((segment) => segment === '' || segment === '.' || segment === '..'))
+	) {
+		throw new Error('Artifact source path must be a normalized project-relative file path.');
+	}
+}
+
 async function requireActiveRun(
 	ctx: QueryCtx | MutationCtx,
 	runId: Id<'runs'>,
@@ -107,7 +125,7 @@ async function listVisibleArtifacts(
 		.withIndex('by_userId_and_repositoryKey_and_scope', (q) =>
 			q.eq('userId', userId).eq('repositoryKey', repositoryKey)
 		)
-		.paginate({ cursor, numItems: 8, maximumRowsRead: 8, maximumBytesRead: 1_000_000 });
+		.paginate({ cursor, numItems: 8, maximumRowsRead: 8, maximumBytesRead: MAX_PAGE_BYTES_READ });
 
 	return {
 		page: result.page,
@@ -177,13 +195,23 @@ async function writeArtifactFields(
 	fields: {
 		content: string;
 		title: string;
+		sourcePath?: string | null;
 	}
 ): Promise<void> {
-	if (artifact.content === fields.content && artifact.title === fields.title) return;
+	const sourcePath =
+		fields.sourcePath === undefined ? artifact.sourcePath : (fields.sourcePath ?? undefined);
+
+	if (
+		artifact.content === fields.content &&
+		artifact.title === fields.title &&
+		artifact.sourcePath === sourcePath
+	)
+		return;
 
 	await ctx.db.patch('artifacts', artifact._id, {
 		content: fields.content,
 		title: fields.title,
+		sourcePath,
 		revision: artifact.revision + 1,
 		updatedAt: Date.now()
 	});
@@ -198,6 +226,7 @@ export const addArtifact = mutation({
 		registrationId: v.string(),
 		content: v.string(),
 		title: v.string(),
+		sourcePath: v.optional(v.string()),
 		contentType: v.optional(vLegacyArtifactType)
 	},
 	returns: vArtifactMutationResult,
@@ -210,6 +239,7 @@ export const addArtifact = mutation({
 				throw new Error('Invalid registration ID.');
 			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
+			validateArtifactSourcePath(args.sourcePath);
 
 			const existing = await ctx.db
 				.query('artifacts')
@@ -232,6 +262,7 @@ export const addArtifact = mutation({
 				repositoryKey,
 				registrationId: args.registrationId,
 				content: args.content,
+				sourcePath: args.sourcePath,
 				title,
 				revision: 1,
 				updatedAt: Date.now()
@@ -256,6 +287,7 @@ export const editArtifact = mutation({
 		expectedRevision: v.number(),
 		content: v.string(),
 		title: v.string(),
+		sourcePath: v.optional(v.union(v.string(), v.null())),
 		contentType: v.optional(vLegacyArtifactType)
 	},
 	returns: vArtifactMutationResult,
@@ -265,6 +297,7 @@ export const editArtifact = mutation({
 			const repositoryKey = await loadThreadForRun(ctx, run);
 			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
+			validateArtifactSourcePath(args.sourcePath);
 
 			const artifact = await requireAccessibleArtifact(
 				ctx,
@@ -276,7 +309,11 @@ export const editArtifact = mutation({
 			if (artifact.revision !== args.expectedRevision)
 				throw new Error('Artifact changed; reload it before editing.');
 
-			await writeArtifactFields(ctx, artifact, { content: args.content, title });
+			await writeArtifactFields(ctx, artifact, {
+				content: args.content,
+				title,
+				sourcePath: args.sourcePath
+			});
 
 			return { artifactId: artifact._id };
 		} catch (error) {
@@ -367,6 +404,44 @@ export const listArtifacts = query({
 			...result,
 			page: result.page.map(withLegacyType)
 		};
+	}
+});
+
+export const listArtifactMetadata = query({
+	args: { repositoryKey: v.string(), paginationOpts: paginationOptsValidator },
+	returns: paginationResultValidator(schema.doc('artifacts').pick('_id', 'title')),
+	handler: async (ctx, args) => {
+		const repositoryKey = validateRepositoryKey(args.repositoryKey);
+		const userId = await getUserId(ctx);
+
+		const result = await ctx.db
+			.query('artifacts')
+			.withIndex('by_userId_and_repositoryKey_and_scope', (q) =>
+				q.eq('userId', userId).eq('repositoryKey', repositoryKey)
+			)
+			.paginate({ ...args.paginationOpts, maximumBytesRead: MAX_PAGE_BYTES_READ });
+
+		return { ...result, page: result.page.map(({ _id, title }) => ({ _id, title })) };
+	}
+});
+
+export const checkWiringForRun = query({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		content: v.string()
+	},
+	returns: v.array(vWiringIssue),
+	handler: async (ctx, args) => {
+		try {
+			await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+			validateArtifactContent(args.content);
+
+			return checkWiring(args.content);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });
 

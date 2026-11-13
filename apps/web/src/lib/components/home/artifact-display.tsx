@@ -6,14 +6,13 @@ import LazyJsonRender from '$lib/components/lazy-json-render';
 import LazyWiringView from '$lib/components/lazy-wiring-view';
 import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 import { buildArtifactPreviewDocument, type ArtifactPreviewType } from '$lib/chat/artifact-preview';
+import type { ArtifactContent } from '$lib/chat/artifacts';
 
 type Props = {
 	title: string;
 	artifactType: ArtifactPreviewType;
-	content: string;
-	localPath?: string;
+	content: ArtifactContent;
 	workspacePath?: string;
-	localError?: string;
 	variant?: 'card' | 'full';
 	onOpenFullscreen?: () => void;
 	onBack?: () => void;
@@ -24,38 +23,42 @@ export default function ArtifactDisplay({
 	title,
 	artifactType,
 	content,
-	localPath,
 	workspacePath,
-	localError,
 	variant = 'card',
 	onOpenFullscreen,
 	onBack,
 	onDelete
 }: Props) {
+	const text = content.status === 'ready' ? content.content : null;
+
 	const previewDocument = useMemo(
-		() => buildArtifactPreviewDocument(artifactType, content),
-		[artifactType, content]
+		() => (text === null ? null : buildArtifactPreviewDocument(artifactType, text)),
+		[artifactType, text]
 	);
 
 	const hasPreview =
-		previewDocument !== null || artifactType === 'json-render' || artifactType === 'wiring';
+		text !== null &&
+		(previewDocument !== null || artifactType === 'json-render' || artifactType === 'wiring');
 
 	const [showSource, setShowSource] = useState(false);
 	const { copied, markCopied, resetCopied } = useCopyFeedback();
 
-	async function copyContent() {
+	async function copyContent(value: string) {
 		try {
-			await navigator.clipboard.writeText(content);
+			await navigator.clipboard.writeText(value);
 			markCopied(true);
 		} catch {
 			resetCopied();
 		}
 	}
 
-	function renderBody(frameClass: string) {
+	function renderBody(
+		{ content: value, sourcePath }: Extract<ArtifactContent, { status: 'ready' }>,
+		frameClass: string
+	) {
 		const source = (
 			<pre className="h-full overflow-auto p-3 pr-10 text-[13px] leading-6">
-				<code>{content}</code>
+				<code>{value}</code>
 			</pre>
 		);
 
@@ -72,18 +75,21 @@ export default function ArtifactDisplay({
 					></iframe>
 				) : artifactType === 'wiring' ? (
 					<div className={`overflow-auto pr-10 pl-3 ${frameClass}`}>
-						<LazyWiringView source={content} fallback={source} />
+						<LazyWiringView source={value} fallback={source} />
 					</div>
 				) : hasPreview ? (
 					<div className={`overflow-auto pr-10 pl-3 ${frameClass}`}>
-						<LazyJsonRender source={content} fallback={source} />
+						<LazyJsonRender source={value} fallback={source} />
 					</div>
 				) : (
 					<div className="h-full overflow-auto p-3 pr-10">
 						<ChatMarkdown
-							content={content}
+							content={value}
 							className="text-foreground text-sm"
-							imageScope={{ workspacePath, documentPath: localPath }}
+							imageScope={{
+								workspacePath,
+								documentPath: sourcePath
+							}}
 						/>
 					</div>
 				)}
@@ -91,7 +97,7 @@ export default function ArtifactDisplay({
 					type="button"
 					className="bg-card text-muted-foreground hover:text-foreground absolute top-2 right-2 rounded-md border p-1 transition"
 					aria-label={copied ? 'Copied' : 'Copy'}
-					onClick={() => void copyContent()}
+					onClick={() => void copyContent(value)}
 				>
 					{copied ? (
 						<Check className="size-3.5" aria-hidden="true" />
@@ -127,9 +133,6 @@ export default function ArtifactDisplay({
 						<span className="text-foreground min-w-0 truncate text-sm">{title}</span>
 						<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
 					</div>
-					{localPath ? (
-						<span className="text-muted-foreground min-w-0 truncate text-[11px]">{localPath}</span>
-					) : null}
 				</div>
 				{hasPreview ? (
 					<button
@@ -164,12 +167,27 @@ export default function ArtifactDisplay({
 				) : null}
 				{onDelete ? <ArtifactMenu title={title} trigger="button" onDelete={onDelete} /> : null}
 			</div>
-			{localError ? (
-				<p role="alert" className="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">
-					{localError}
-				</p>
-			) : null}
-			{renderBody(variant === 'full' ? 'h-full' : 'h-64')}
+			{content.status === 'ready' ? (
+				renderBody(content, variant === 'full' ? 'h-full' : 'h-64')
+			) : (
+				<ArtifactContentStatus content={content} />
+			)}
 		</div>
+	);
+}
+
+export function ArtifactContentStatus({
+	content
+}: {
+	content: Exclude<ArtifactContent, { status: 'ready' }>;
+}) {
+	return content.status === 'loading' ? (
+		<p role="status" className="text-muted-foreground border-t p-3 text-sm">
+			Loading artifact…
+		</p>
+	) : (
+		<p role="alert" className="border-t p-3 text-sm text-amber-800 dark:text-amber-200">
+			{content.error}
+		</p>
 	);
 }

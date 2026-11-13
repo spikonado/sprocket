@@ -109,6 +109,39 @@ const commandResult = {
 };
 
 describe('executor', () => {
+	it('persists wiring feedback from a completed patch', async () => {
+		const t = initConvexTest();
+		const auth = await seedRunWithJob(t, { executionSecret: 'wiring-check' });
+
+		await t.run((ctx) =>
+			ctx.db.patch('executorJobs', auth.jobId, {
+				kind: 'apply_patch',
+				payload: { patch: 'patch' }
+			})
+		);
+
+		const result = {
+			changes: [
+				{
+					path: '/repo/robot.wiring.json',
+					operation: 'updated' as const,
+					wiringIssues: [{ level: 'error' as const, message: 'Unknown pin.' }]
+				}
+			]
+		};
+
+		expect(
+			await auth.asUser.mutation(api.executor.complete, {
+				runId: auth.runId,
+				claimId: auth.claimId,
+				executionSecret: auth.executionSecret,
+				jobId: auth.jobId,
+				result
+			})
+		).toBe(true);
+		expect((await t.run((ctx) => ctx.db.get('executorJobs', auth.jobId)))?.result).toEqual(result);
+	});
+
 	it.each(['text', 'image'] as const)(
 		'persists parse_file path jobs and %s results',
 		async (mode) => {

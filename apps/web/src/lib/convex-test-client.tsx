@@ -85,7 +85,9 @@ export class ConvexTestClient extends ConvexReactClient {
 		query: Query,
 		page: FunctionReturnType<Query>['page']
 	): void {
-		this.#paginatedFixtures.set(getFunctionName(query), fixtureReader(page));
+		const name = getFunctionName(query);
+		this.#paginatedFixtures.set(name, fixtureReader(page));
+		this.#queryListeners.get(name)?.forEach((listener) => listener());
 	}
 
 	registerAction<Action extends ActionReference>(
@@ -117,22 +119,24 @@ export class ConvexTestClient extends ConvexReactClient {
 		const name = getFunctionName(query);
 
 		return {
-			onUpdate: (callback) => {
-				let listeners = this.#queryListeners.get(name);
-
-				if (!listeners) {
-					listeners = new Set();
-					this.#queryListeners.set(name, listeners);
-				}
-
-				listeners.add(callback);
-
-				return () => {
-					listeners.delete(callback);
-				};
-			},
+			onUpdate: (callback) => this.#listen(name, callback),
 			localQueryResult: () => this.#queryFixtures.get(name)?.read<FunctionReturnType<Query>>(),
 			journal: () => undefined
+		};
+	}
+
+	#listen(name: string, callback: () => void) {
+		let listeners = this.#queryListeners.get(name);
+
+		if (!listeners) {
+			listeners = new Set();
+			this.#queryListeners.set(name, listeners);
+		}
+
+		listeners.add(callback);
+
+		return () => {
+			listeners.delete(callback);
 		};
 	}
 
@@ -143,13 +147,15 @@ export class ConvexTestClient extends ConvexReactClient {
 	): PaginatedWatch<FunctionReturnType<Query>['page'][number]> {
 		void args;
 		void options;
-		const reader = this.#paginatedFixtures.get(getFunctionName(query));
-		const page = reader?.read<FunctionReturnType<Query>['page']>();
+		const name = getFunctionName(query);
 
 		return {
-			onUpdate: () => () => {},
-			localQueryResult: () =>
-				page ? { results: page, status: 'Exhausted', loadMore: () => false } : undefined
+			onUpdate: (callback) => this.#listen(name, callback),
+			localQueryResult: () => {
+				const page = this.#paginatedFixtures.get(name)?.read<FunctionReturnType<Query>['page']>();
+
+				return page ? { results: page, status: 'Exhausted', loadMore: () => false } : undefined;
+			}
 		};
 	}
 

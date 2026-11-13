@@ -6,8 +6,7 @@ import { useArtifactPanel } from '$lib/home/artifact-panel';
 const artifact = {
 	key: 'notes',
 	title: 'Notes',
-	artifactType: 'markdown',
-	content: '# Notes'
+	artifactType: 'markdown'
 } as const;
 
 function Harness() {
@@ -16,6 +15,7 @@ function Harness() {
 	return (
 		<SidePanel
 			artifacts={[artifact]}
+			artifactContents={new Map([[artifact.key, { status: 'ready', content: '# Notes' }]])}
 			layout={panel.panel.layout}
 			activePaneId={panel.activePane.id}
 			browserApi={null}

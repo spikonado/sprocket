@@ -3,11 +3,11 @@ name: designing-wiring-diagram
 description: 'Use when designing the wiring diagram for a hardware project built from modules and dev boards. For PCB or KiCad schematics, use `working-with-kicad`.'
 ---
 
-A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`). Sprocket draws it: real-looking boards, one coloured line per jumper wire, the build split into steps, a checklist the user ticks off while wiring, and a parts list with photos. It also flags short circuits, two voltages on one wire, and 5 V reaching a 3.3 V pin. You write only the parts and the connections.
+A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`). Sprocket draws every part as a box with named pins, one coloured line per jumper wire, build steps, a wiring checklist, and a parts list with photos. You write only the parts and the connections.
 
 ```json
 {
-	"title": "Two-motor robot",
+	"title": "One-motor robot",
 	"parts": [
 		{
 			"id": "bat",
@@ -16,7 +16,12 @@ A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`).
 			"photo": "https://example.com/battery.jpg",
 			"link": "https://example.com/battery"
 		},
-		{ "id": "esp", "name": "ESP32 DevKit V1", "wokwi": "esp32-devkit-v1" },
+		{
+			"id": "esp",
+			"name": "ESP32 DevKit V1",
+			"logic": 3.3,
+			"pins": { "left": ["GND"], "right": ["3V3", "D12", "D13", "D14", "D27"] }
+		},
 		{
 			"id": "drv",
 			"name": "TB6612FNG motor driver",
@@ -26,7 +31,7 @@ A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`).
 				"right": ["VM", "AO1", "AO2"]
 			}
 		},
-		{ "id": "motor", "name": "Left motor", "pins": { "left": ["M+", "M-"] } }
+		{ "id": "motor", "name": "Motor", "pins": { "left": ["M+", "M-"] } }
 	],
 	"rails": [
 		{ "id": "VBAT", "volts": 7.4 },
@@ -68,10 +73,8 @@ A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`).
 
 ## Parts
 
-- Draw a part with `wokwi` when [Wokwi Elements](https://elements.wokwi.com) has it: `arduino-uno`, `arduino-nano`, `arduino-mega`, `esp32-devkit-v1`, `nano-rp2040-connect`, `franzininho`, `led`, `rgb-led`, `resistor`, `pushbutton`, `slide-switch`, `potentiometer`, `servo`, `stepper-motor`, `buzzer`, `hc-sr04`, `dht22`, `mpu6050`, `pir-motion-sensor`, `ssd1306`, `lcd1602`, `lcd2004`, `ili9341`, `neopixel`, `led-ring`, `microsd-card`, `hx711`, `ds1307`, `ir-receiver`, `ky-040`, `membrane-keypad`, `analog-joystick`, `photoresistor-sensor`, `ntc-temperature-sensor`, `7segment`, and more in the catalog. `wokwiAttrs` sets the element's attributes, such as `{ "color": "red" }` on an LED.
-- Use Wokwi's pin names exactly. Read them from the `pinInfo` list in `https://unpkg.com/@wokwi/elements@1.9.2/dist/esm/<wokwi>-element.js`. A name like `GND` matches the board's first `GND.N` pin.
-- Draw every other part as a box: list its pins under `pins.left` and `pins.right` in the order printed on the board, with the side facing the parts it connects to.
-- Set `logic` to the part's I/O voltage when it isn't one of Wokwi's dev boards, so the voltage checks cover it.
+- Every part needs `pins`. List the used pins under `pins.left` and `pins.right` by their board labels, in board order, with the side facing the parts they connect to.
+- Set `logic` to each part's I/O voltage, dev boards included, so the voltage checks cover its signals. Omit it for parts without logic I/O, such as batteries and motors.
 - Order `parts` in signal order, such as power, controller, drivers, then motors and sensors. The viewer lays them out in that order, so parts that share wires end up side by side.
 - Give each part from the BOM its supplier `link`, and its product image URL as `photo` when the supplier page has a direct image link.
 
@@ -85,11 +88,8 @@ A wiring diagram is a `.wiring.json` artifact (`$making-artifacts-and-visuals`).
 
 ## Checks
 
-The viewer shows red errors for unknown parts or pins, short circuits, two voltages on one wire, and a supply above a pin's `logic` voltage. It shows amber warnings for steps over 6 wires and for signal wires between parts with different `logic` voltages. You can't see the viewer, so run the same checks yourself before you finish:
+`apply_patch` and `bind_artifact` return `wiringIssues` for a `.wiring.json` file. They come from the checker the viewer runs, which covers the file format, pin and rail names, and voltages. Routing warnings depend on the viewer's width, so only the preview shows them.
 
-- Every `part.pin` names a pin in that part's `pins` list or Wokwi `pinInfo`.
-- No wire joins ground to a supply, or two supplies of different voltage.
-- No signal pin connects to a rail or supply above its part's `logic` voltage.
-- A signal from a higher-voltage part to a lower-voltage part goes through a level shifter or divider. When the lower-voltage part only drives the wire, say so in the step's `note`, since the viewer still shows its amber warning.
+Fix each error and patch the file again. A `wiringCheckError` means the check didn't run, so the file stays unchecked until a later call returns `wiringIssues`.
 
-The diagram is done when every check above holds and every wire the firmware relies on appears in a step.
+The diagram is done when every wire the firmware relies on appears in a step and `wiringIssues` has no errors. Explain each remaining warning in its step's `note`, such as a mixed-voltage signal that only the lower-voltage part drives.

@@ -66,7 +66,8 @@ import { useExistingThreadCwd } from '$lib/home/thread-cwd';
 import ArtifactScreenFullscreen, {
 	requestArtifactFullscreen
 } from '$lib/components/home/artifact-screen-fullscreen';
-import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
+import { useArtifactPanel } from '$lib/home/artifact-panel';
+import { useArtifactContents, useArtifactList } from '$lib/home/artifact-queries';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
 import {
 	attachLocalProject as attachLocalProjectForPath,
@@ -550,13 +551,25 @@ export default function App({
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
+	const artifactRepositoryKey = convexAuth.isAuthenticated ? currentRepositoryKey : null;
+
+	const artifactList = useArtifactList(artifactRepositoryKey);
+
+	const artifactContents = useArtifactContents(
+		artifactRepositoryKey,
+		artifactPanel.shownArtifactKeys.filter((key) =>
+			artifactList.artifacts.some((artifact) => artifact.key === key)
+		)
+	);
+
+	const fullscreenArtifact =
+		artifactList.artifacts.find((artifact) => artifact.key === artifactPanel.fullscreenKey) ?? null;
 
 	const [artifactFullscreenRequest, setArtifactFullscreenRequest] =
 		useState<Promise<boolean> | null>(null);
 
 	const phoneViewport = viewportWidth > 0 && viewportWidth < 768;
 	const sidePanelFullscreen = artifactPanel.panel.expanded || phoneViewport;
-	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
 
 	const authenticatedQueryArgs = signedInUserId && convexAuth.isAuthenticated ? {} : 'skip';
 
@@ -878,21 +891,8 @@ export default function App({
 					}
 				: null;
 
-		return artifactPanel.watch({
-			localApi,
-			artifactClient,
-			cloudReady: convexAuth.isAuthenticated,
-			scope
-		});
-	}, [
-		artifactPanel,
-		signedInUserId,
-		currentRepositoryKey,
-		currentWorkspacePath,
-		localApi,
-		artifactClient,
-		convexAuth.isAuthenticated
-	]);
+		return artifactPanel.watchSync(localApi, scope);
+	}, [artifactPanel, signedInUserId, currentRepositoryKey, currentWorkspacePath, localApi]);
 
 	const deleteArtifact =
 		currentRepositoryKey && convexAuth.isAuthenticated
@@ -2481,8 +2481,7 @@ export default function App({
 							: undefined
 				}}
 				inert={
-					artifactPanel.fullscreenArtifact ||
-					(!settingsOpen && artifactPanel.panel.open && sidePanelFullscreen)
+					fullscreenArtifact || (!settingsOpen && artifactPanel.panel.open && sidePanelFullscreen)
 						? true
 						: undefined
 				}
@@ -2643,7 +2642,7 @@ export default function App({
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 									project={currentProject}
 									cwd={threadCwd}
-									artifacts={artifactPanel.artifacts}
+									artifacts={artifactList.artifacts}
 									onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
 									loadingOlder={transcript.loadingOlder}
 									nextBefore={transcript.nextBefore ?? undefined}
@@ -2784,7 +2783,7 @@ export default function App({
 							phoneViewport && 'motion-safe:animate-side-panel-in'
 						)}
 						style={{ width: sidePanelFullscreen ? undefined : sidePanelWidth.width }}
-						inert={artifactPanel.fullscreenArtifact ? true : undefined}
+						inert={fullscreenArtifact ? true : undefined}
 					>
 						{!sidePanelFullscreen && (
 							<SidePanelResizeHandle
@@ -2803,15 +2802,16 @@ export default function App({
 						<SidePanel
 							workspacePath={localApi ? currentProject?.workspacePath : undefined}
 							threadCwd={threadCwd}
-							artifacts={artifactPanel.artifacts}
+							artifacts={artifactList.artifacts}
+							artifactContents={artifactContents}
 							onDeleteArtifact={deleteArtifact}
 							layout={artifactPanel.panel.layout}
 							activePaneId={artifactPanel.activePane.id}
 							browserApi={localApi}
 							filesApi={localApi}
 							expanded={sidePanelFullscreen}
-							stale={artifactPanel.watchState.stale}
-							error={artifactPanel.watchState.error}
+							loading={artifactList.loading}
+							error={artifactList.error}
 							onNewTab={(paneId) => artifactPanel.newTab(paneId)}
 							onActivateTab={(id) => artifactPanel.activateTab(id)}
 							onCloseTab={(id) => artifactPanel.closeTab(id)}
@@ -2839,10 +2839,11 @@ export default function App({
 					</div>
 				)}
 
-				{artifactPanel.fullscreenArtifact && artifactFullscreenRequest && (
+				{fullscreenArtifact && artifactFullscreenRequest && (
 					<ArtifactScreenFullscreen
 						workspacePath={localApi ? currentProject?.workspacePath : undefined}
-						artifact={artifactPanel.fullscreenArtifact}
+						artifact={fullscreenArtifact}
+						content={artifactContents.get(fullscreenArtifact.key) ?? { status: 'loading' }}
 						fullscreenRequest={artifactFullscreenRequest}
 						onClose={() => artifactPanel.setFullscreenKey(null)}
 					/>

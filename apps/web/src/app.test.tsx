@@ -132,7 +132,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
 		deleteArtifact: async () => {},
-		watchArtifacts: () => new Promise<void>(() => {}),
+		watchArtifactSync: () => new Promise<void>(() => {}),
 		requestRunCancellation: async () => {},
 		fetchPullRequestStates: async () => [],
 		startAccountSession: async () => {},
@@ -199,13 +199,7 @@ function createConvexFixtures(): ConvexTestClient {
 		resetsAt: null,
 		meters: []
 	});
-	client.registerQuery(api.artifacts.listArtifacts, {
-		page: [],
-		isDone: true,
-		continueCursor: '',
-		revision: 0
-	});
-	client.registerQuery(api.artifacts.getArtifactState, 0);
+	client.registerPaginatedQuery(api.artifacts.listArtifactMetadata, []);
 	client.registerAction(api.providerCredentials.getMyConfiguration, {
 		openai: false,
 		claude: false,
@@ -477,26 +471,9 @@ it('keeps an unavailable project listed when removal fails and allows retry', as
 it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
 	const client = createConvexFixtures();
 
-	const artifact: FunctionReturnType<typeof api.artifacts.listArtifacts>['page'][number] = {
-		_id: fixtureId<'artifacts'>('artifact-a'),
-		_creationTime: 1,
-		userId: 'user-a',
-		repositoryKey: 'repo-alpha',
-		scope: 'project',
-		registrationId: 'registration-a',
-		content: 'Notes',
-		type: 'markdown',
-		title: 'Artifact notes',
-		revision: 1,
-		updatedAt: 1
-	};
-
-	client.registerQuery(api.artifacts.listArtifacts, {
-		page: [artifact],
-		isDone: true,
-		continueCursor: '',
-		revision: 1
-	});
+	client.registerPaginatedQuery(api.artifacts.listArtifactMetadata, [
+		{ _id: fixtureId<'artifacts'>('artifact-a'), title: 'Artifact notes' }
+	]);
 
 	const deleteArtifact = vi
 		.fn<LocalApi['deleteArtifact']>()
@@ -529,6 +506,52 @@ it('deletes an attached project artifact through the local server and keeps fail
 		workspacePath: '/work/alpha',
 		artifactId: 'artifact-a'
 	});
+});
+
+it('shows live artifact content in the side panel and returns to the list once it is deleted', async () => {
+	const client = createConvexFixtures();
+
+	const metadata = { _id: fixtureId<'artifacts'>('artifact-a'), title: 'Artifact notes' };
+
+	const stored: FunctionReturnType<typeof api.artifacts.getArtifact> = {
+		...metadata,
+		_creationTime: 1,
+		userId: 'user-a',
+		repositoryKey: 'repo-alpha',
+		scope: 'project',
+		registrationId: 'registration-a',
+		content: 'First draft',
+		type: 'markdown',
+		revision: 1,
+		updatedAt: 1
+	};
+
+	client.registerPaginatedQuery(api.artifacts.listArtifactMetadata, [metadata]);
+	client.registerQuery(api.artifacts.getArtifact, stored);
+
+	await renderApp(
+		client,
+		createRuntime(
+			createLocalApi({
+				listProjectAttachments: async () => [
+					projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')
+				]
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Artifacts' }));
+	fireEvent.click(await screen.findByText('Artifact notes'));
+	await screen.findByText('First draft');
+
+	act(() =>
+		client.registerQuery(api.artifacts.getArtifact, { ...stored, content: 'Second draft' })
+	);
+	await screen.findByText('Second draft');
+
+	act(() => client.registerPaginatedQuery(api.artifacts.listArtifactMetadata, []));
+	await screen.findByText('No artifacts yet.');
 });
 
 it('opens the managed browser dashboard without a thread and keeps it mounted when expanded', async () => {

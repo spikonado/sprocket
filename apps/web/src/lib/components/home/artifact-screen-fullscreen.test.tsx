@@ -24,12 +24,8 @@ it('leaves the artifact open when opening an image exits native fullscreen', asy
 
 	const { getByRole, queryByRole } = render(
 		<ArtifactScreenFullscreen
-			artifact={{
-				key: 'notes',
-				title: 'Notes',
-				artifactType: 'markdown',
-				content: '![Board](https://example.com/board.png)'
-			}}
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown' }}
+			content={{ status: 'ready', content: '![Board](https://example.com/board.png)' }}
 			fullscreenRequest={Promise.resolve(true)}
 			onClose={onClose}
 		/>
@@ -47,18 +43,18 @@ it('leaves the artifact open when opening an image exits native fullscreen', asy
 	expect(onClose).toHaveBeenCalledOnce();
 });
 
-it('resolves images beside the artifact and closes the image before the fullscreen artifact', async () => {
+it('resolves images beside the cloud source path and closes the image before the fullscreen artifact', async () => {
 	const onClose = vi.fn();
 
 	const { getByRole, queryByRole } = render(
 		<ArtifactScreenFullscreen
-			artifact={{
-				key: 'notes',
-				title: 'Notes',
-				artifactType: 'markdown',
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown' }}
+			content={{
+				status: 'ready',
 				content: '![Board](./board.png)',
-				localPath: '/tmp/docs/notes.md'
+				sourcePath: 'hardware/assembly.md'
 			}}
+			workspacePath="/tmp/project"
 			fullscreenRequest={Promise.resolve(false)}
 			onClose={onClose}
 		/>
@@ -67,7 +63,8 @@ it('resolves images beside the artifact and closes the image before the fullscre
 	const trigger = getByRole('button', { name: 'View Board' });
 	const url = new URL(trigger.getAttribute('src') ?? '', 'http://localhost');
 
-	expect(url.searchParams.get('path')).toBe('/tmp/docs/./board.png');
+	expect(url.searchParams.get('workspacePath')).toBe('/tmp/project');
+	expect(url.searchParams.get('path')).toBe('hardware/./board.png');
 	await waitFor(() => expect(document.activeElement).toBe(getByRole('dialog')));
 	fireEvent.click(trigger);
 
@@ -85,7 +82,8 @@ it('offers a close button when browser fullscreen was refused', async () => {
 
 	const { findByRole } = render(
 		<ArtifactScreenFullscreen
-			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown', content: 'Hi' }}
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown' }}
+			content={{ status: 'ready', content: 'Hi' }}
 			fullscreenRequest={Promise.resolve(false)}
 			onClose={onClose}
 		/>
@@ -99,7 +97,8 @@ it('closes when the browser leaves fullscreen', () => {
 	const onClose = vi.fn();
 	render(
 		<ArtifactScreenFullscreen
-			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown', content: 'Hi' }}
+			artifact={{ key: 'notes', title: 'Notes', artifactType: 'markdown' }}
+			content={{ status: 'ready', content: 'Hi' }}
 			fullscreenRequest={Promise.resolve(true)}
 			onClose={onClose}
 		/>

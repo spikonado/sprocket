@@ -23,7 +23,7 @@ import ConfirmDialog from '$lib/components/home/confirm-dialog';
 import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor';
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
-import type { ArtifactEntry } from '$lib/chat/artifacts';
+import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
 import { useEscapeLayer } from '$lib/use-escape-layer';
 import {
 	layoutRects,
@@ -44,6 +44,7 @@ type TabPatch = Partial<Omit<SidePanelTab, 'id'>>;
 
 type Props = {
 	artifacts: ArtifactEntry[];
+	artifactContents: ReadonlyMap<string, ArtifactContent>;
 	workspacePath?: string;
 	threadCwd?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
@@ -52,7 +53,7 @@ type Props = {
 	browserApi: BrowserApi | null;
 	filesApi: (FilesApi & FileEditorApi) | null;
 	expanded: boolean;
-	stale?: boolean;
+	loading?: boolean;
 	error?: string | null;
 	onNewTab: (paneId: string) => void;
 	onActivateTab: (id: string) => void;
@@ -246,13 +247,14 @@ function Pane({
 	takeNewPaneFocus,
 	onRequestCloseTab,
 	artifacts,
+	artifactContents,
 	workspacePath,
 	threadCwd,
 	onDeleteArtifact,
 	browserApi,
 	filesApi,
 	expanded,
-	stale = false,
+	loading = false,
 	error = null,
 	onNewTab,
 	onActivateTab,
@@ -499,9 +501,10 @@ function Pane({
 					) : (
 						<ArtifactsView
 							artifacts={artifacts}
+							artifactContents={artifactContents}
 							selectedKey={tab.selectedKey}
 							workspacePath={workspacePath}
-							stale={stale}
+							loading={loading}
 							error={error}
 							onSelect={(key) => onUpdateTab(tab.id, { selectedKey: key })}
 							onBack={() => onUpdateTab(tab.id, { selectedKey: null })}
@@ -517,9 +520,10 @@ function Pane({
 
 function ArtifactsView({
 	artifacts,
+	artifactContents,
 	selectedKey,
 	workspacePath,
-	stale,
+	loading,
 	error,
 	onSelect,
 	onBack,
@@ -527,9 +531,10 @@ function ArtifactsView({
 	onDeleteArtifact
 }: {
 	artifacts: ArtifactEntry[];
+	artifactContents: ReadonlyMap<string, ArtifactContent>;
 	selectedKey: string | null;
 	workspacePath?: string;
-	stale: boolean;
+	loading: boolean;
 	error: string | null;
 	onSelect: (key: string) => void;
 	onBack: () => void;
@@ -540,29 +545,18 @@ function ArtifactsView({
 
 	return (
 		<>
-			{error || stale ? (
-				<div className="space-y-1 border-b px-3 py-2">
-					{error ? (
-						<p role="alert" className="text-xs text-amber-800 dark:text-amber-200">
-							{error}
-						</p>
-					) : null}
-					{stale ? (
-						<p role="status" className="text-muted-foreground text-xs">
-							Showing last known artifacts while Sprocket reconnects.
-						</p>
-					) : null}
-				</div>
+			{error ? (
+				<p role="alert" className="border-b px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+					{error}
+				</p>
 			) : null}
 			{selected ? (
 				<div className="flex min-h-0 flex-1 flex-col p-3">
 					<ArtifactDisplay
 						title={selected.title}
 						artifactType={selected.artifactType}
-						content={selected.content}
-						localPath={selected.localPath}
+						content={artifactContents.get(selected.key) ?? { status: 'loading' }}
 						workspacePath={workspacePath}
-						localError={selected.localError}
 						variant="full"
 						onOpenFullscreen={() => onOpenFullscreen(selected.key)}
 						onBack={onBack}
@@ -572,7 +566,9 @@ function ArtifactsView({
 			) : (
 				<div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
 					{artifacts.length === 0 ? (
-						<p className="text-muted-foreground p-3 text-sm">No artifacts yet.</p>
+						<p role={loading ? 'status' : undefined} className="text-muted-foreground p-3 text-sm">
+							{loading ? 'Loading artifacts…' : 'No artifacts yet.'}
+						</p>
 					) : (
 						artifacts.map((artifact) => {
 							const TypeIcon = ARTIFACT_TYPE_ICONS[artifact.artifactType];
@@ -605,14 +601,6 @@ function ArtifactsView({
 														{artifact.artifactType}
 													</span>
 												</span>
-												<span className="text-muted-foreground min-w-0 truncate text-[11px]">
-													{artifact.localPath ?? 'Stored in cloud'}
-												</span>
-												{artifact.localError ? (
-													<span className="text-[11px] text-amber-800 dark:text-amber-200">
-														{artifact.localError}
-													</span>
-												) : null}
 											</span>
 										</button>
 									</ArtifactMenu>

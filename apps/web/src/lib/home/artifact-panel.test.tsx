@@ -1,99 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { Text } from '@codemirror/state';
 import { expect, it, vi } from 'vitest';
-import { api } from '@convex/_generated/api';
-import {
-	ArtifactPanel,
-	createConvexArtifactClient,
-	useArtifactPanel,
-	type ConvexArtifactClient
-} from '$lib/home/artifact-panel';
-import type { LocalApi } from '$lib/types/sprocket';
-
-function createFakeClient(readRevision: () => number | undefined) {
-	const listeners = new Set<() => void>();
-	const disposed = vi.fn<() => void>();
-
-	const watch: ReturnType<ConvexArtifactClient['watchQuery']> = {
-		onUpdate: (callback) => {
-			listeners.add(callback);
-
-			return () => {
-				listeners.delete(callback);
-				disposed();
-			};
-		},
-		localQueryResult: readRevision
-	};
-
-	const watchQuery = vi.fn<ConvexArtifactClient['watchQuery']>(() => watch);
-
-	const client: ConvexArtifactClient = {
-		query: async () => ({ page: [], isDone: true, continueCursor: '', revision: 0 }),
-		watchQuery
-	};
-
-	return {
-		client,
-		disposed,
-		watchQuery,
-		notify: () => {
-			for (const listener of listeners) listener();
-		}
-	};
-}
+import { ArtifactPanel, useArtifactPanel } from '$lib/home/artifact-panel';
 
 const scope = (repositoryKey: string) => ({
 	userId: 'user-a',
 	repositoryKey,
 	workspacePath: `/worktrees/${repositoryKey}`
-});
-
-it('delivers the current registry revision immediately and on every change', () => {
-	let revision = 7;
-	const fake = createFakeClient(() => revision);
-	const onUpdate = vi.fn<(revision: number) => void>();
-	const onError = vi.fn<(error: Error) => void>();
-
-	const unsubscribe = createConvexArtifactClient(fake.client).onUpdate(
-		api.artifacts.getArtifactState,
-		{ repositoryKey: 'github.com/acme/robot' },
-		onUpdate,
-		onError
-	);
-
-	expect(fake.watchQuery).toHaveBeenCalledWith(api.artifacts.getArtifactState, {
-		repositoryKey: 'github.com/acme/robot'
-	});
-	expect(onUpdate).toHaveBeenCalledWith(7);
-
-	revision = 8;
-	fake.notify();
-	expect(onUpdate).toHaveBeenLastCalledWith(8);
-	expect(onError).not.toHaveBeenCalled();
-
-	unsubscribe();
-	expect(fake.disposed).toHaveBeenCalledTimes(1);
-});
-
-it('surfaces registry failures without throwing at the caller', () => {
-	const fake = createFakeClient(() => {
-		throw new Error('Artifact registry unavailable.');
-	});
-
-	const onUpdate = vi.fn<(revision: number) => void>();
-	const onError = vi.fn<(error: Error) => void>();
-
-	createConvexArtifactClient(fake.client).onUpdate(
-		api.artifacts.getArtifactState,
-		{ repositoryKey: 'github.com/acme/robot' },
-		onUpdate,
-		onError
-	);
-	fake.notify();
-
-	expect(onUpdate).not.toHaveBeenCalled();
-	expect(onError).toHaveBeenCalledWith(new Error('Artifact registry unavailable.'));
 });
 
 it('notifies subscribers on panel changes and keeps one instance per mount', () => {
@@ -140,46 +53,20 @@ it('keeps a side panel snapshot per scope and restores it on return', () => {
 	expect(panel.panel.open).toBe(false);
 });
 
-it('keeps artifacts while a watch restarts in the same scope and clears them on a scope switch', () => {
-	const fake = createFakeClient(() => undefined);
-	const watches: Parameters<LocalApi['watchArtifacts']>[1][] = [];
-
-	const localApi = {
-		watchArtifacts: vi.fn<LocalApi['watchArtifacts']>((_request, handlers) => {
-			watches.push(handlers);
-
-			return new Promise<void>(() => {});
-		})
-	};
-
-	const artifact = {
-		_id: 'artifact-1',
-		userId: 'user-a',
-		repositoryKey: 'robot',
-		content: '# Notes',
-		title: 'notes.md',
-		revision: 1,
-		updatedAt: 1
-	};
-
+it('shows the content of artifacts in visible tabs and fullscreen', () => {
 	const panel = new ArtifactPanel();
+	panel.openArtifact('artifact-2');
+	panel.newTab();
+	panel.openArtifact('artifact-1');
+	panel.setFullscreenKey('artifact-3');
+	expect(panel.shownArtifactKeys).toEqual(['artifact-1', 'artifact-3']);
 
-	const args = {
-		localApi,
-		artifactClient: createConvexArtifactClient(fake.client),
-		scope: scope('robot')
-	};
+	panel.setFullscreenKey(null);
+	panel.closeTab(panel.activeTab.id);
+	expect(panel.shownArtifactKeys).toEqual(['artifact-2']);
 
-	const stop = panel.watch({ ...args, cloudReady: true });
-	watches[0]!.onEvent({ artifacts: [artifact], stale: false });
-	expect(panel.artifacts.map((entry) => entry.key)).toEqual(['artifact-1']);
-
-	stop?.();
-	panel.watch({ ...args, cloudReady: false });
-	expect(panel.artifacts.map((entry) => entry.key)).toEqual(['artifact-1']);
-
-	panel.watch({ ...args, scope: scope('other'), cloudReady: false });
-	expect(panel.artifacts).toEqual([]);
+	panel.update({ open: false });
+	expect(panel.shownArtifactKeys).toEqual([]);
 });
 
 it('clears the fullscreen artifact when switching scope or resetting', () => {

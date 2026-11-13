@@ -3,13 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import LazyJsonRender from '$lib/components/lazy-json-render';
 import LazyWiringView from '$lib/components/lazy-wiring-view';
-import type { ArtifactEntry } from '$lib/chat/artifacts';
+import { ArtifactContentStatus } from '$lib/components/home/artifact-display';
+import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 import { useEscapeLayer } from '$lib/use-escape-layer';
 import { useLatest } from '$lib/use-latest';
 
 type Props = {
 	artifact: ArtifactEntry;
+	content: ArtifactContent;
 	workspacePath?: string;
 	fullscreenRequest: Promise<boolean>;
 	onClose: () => void;
@@ -29,13 +31,16 @@ export function requestArtifactFullscreen(): Promise<boolean> {
 
 export default function ArtifactScreenFullscreen({
 	artifact,
+	content,
 	workspacePath,
 	fullscreenRequest,
 	onClose
 }: Props) {
+	const text = content.status === 'ready' ? content.content : null;
+
 	const previewDocument = useMemo(
-		() => buildArtifactPreviewDocument(artifact.artifactType, artifact.content),
-		[artifact.artifactType, artifact.content]
+		() => (text === null ? null : buildArtifactPreviewDocument(artifact.artifactType, text)),
+		[artifact.artifactType, text]
 	);
 
 	const rootRef = useRef<HTMLDivElement | null>(null);
@@ -95,7 +100,9 @@ export default function ArtifactScreenFullscreen({
 			aria-label={`${artifact.title} fullscreen. Press Escape to exit.`}
 			tabIndex={-1}
 		>
-			{previewDocument ? (
+			{content.status !== 'ready' ? (
+				<ArtifactContentStatus content={content} />
+			) : previewDocument ? (
 				<iframe
 					title={`${artifact.title} preview`}
 					srcDoc={previewDocument}
@@ -105,23 +112,23 @@ export default function ArtifactScreenFullscreen({
 			) : artifact.artifactType === 'json-render' ? (
 				<div className="min-h-0 flex-1 overflow-auto px-6">
 					<LazyJsonRender
-						source={artifact.content}
-						fallback={<pre className="text-[13px] leading-6">{artifact.content}</pre>}
+						source={content.content}
+						fallback={<pre className="text-[13px] leading-6">{content.content}</pre>}
 					/>
 				</div>
 			) : artifact.artifactType === 'wiring' ? (
 				<div className="min-h-0 flex-1 overflow-auto px-6">
 					<LazyWiringView
-						source={artifact.content}
-						fallback={<pre className="text-[13px] leading-6">{artifact.content}</pre>}
+						source={content.content}
+						fallback={<pre className="text-[13px] leading-6">{content.content}</pre>}
 					/>
 				</div>
 			) : (
 				<div className="min-h-0 flex-1 overflow-auto p-6">
 					<ChatMarkdown
-						content={artifact.content}
+						content={content.content}
 						className="text-foreground text-sm"
-						imageScope={{ workspacePath, documentPath: artifact.localPath }}
+						imageScope={{ workspacePath, documentPath: content.sourcePath }}
 					/>
 				</div>
 			)}

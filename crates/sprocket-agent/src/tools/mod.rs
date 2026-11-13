@@ -22,6 +22,7 @@ mod subagents;
 mod url_fetch;
 mod web;
 mod web_request;
+mod wiring;
 
 use self::artifacts::{BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool};
 pub(crate) use self::async_tools::max_yield_ms;

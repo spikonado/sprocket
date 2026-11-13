@@ -1,70 +1,17 @@
-import { artifactPreviewType, type ArtifactPreviewType } from './artifact-preview';
-import type {
-	ArtifactsWatchEvent,
-	ArtifactsWatchRequest,
-	LocalArtifact
-} from '$lib/types/sprocket';
+import type { ArtifactPreviewType } from './artifact-preview';
+import type { ArtifactsWatchRequest } from '$lib/types/sprocket';
 
 export type ArtifactEntry = {
 	key: string;
 	title: string;
 	artifactType: ArtifactPreviewType;
-	content: string;
-	localPath?: string;
-	localError?: string;
 };
 
-export type ArtifactWatchState = {
-	artifacts: LocalArtifact[];
-	stale: boolean;
-	error: string | null;
-};
-
-export const EMPTY_ARTIFACT_WATCH_STATE: ArtifactWatchState = {
-	artifacts: [],
-	stale: false,
-	error: null
-};
+export type ArtifactContent =
+	| { status: 'loading' }
+	| { status: 'ready'; content: string; sourcePath?: string }
+	| { status: 'error'; error: string };
 
 export function artifactWatchScopeKey(scope: ArtifactsWatchRequest): string {
 	return [scope.userId, scope.repositoryKey, scope.workspacePath].join('\0');
-}
-
-export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
-	return {
-		key: artifact._id,
-		title: artifact.title,
-		artifactType: artifactPreviewType(artifact.title),
-		content: artifact.content,
-		localPath: artifact.localPath,
-		localError: artifact.localError
-	};
-}
-
-export function applyArtifactsWatchEvent(event: ArtifactsWatchEvent): ArtifactWatchState {
-	return {
-		artifacts: event.artifacts,
-		stale: event.stale,
-		error: event.error ?? null
-	};
-}
-
-export function mergeArtifactSources(
-	cloud: ArtifactWatchState,
-	local: ArtifactWatchState | null
-): ArtifactWatchState {
-	const artifacts = new Map(cloud.artifacts.map((artifact) => [artifact._id, artifact]));
-	const cloudOwnsMembership = !cloud.stale;
-
-	for (const artifact of local?.artifacts ?? []) {
-		if (cloudOwnsMembership && !artifacts.has(artifact._id)) continue;
-
-		if (artifact.localPath || !artifacts.has(artifact._id)) artifacts.set(artifact._id, artifact);
-	}
-
-	return {
-		artifacts: [...artifacts.values()],
-		stale: cloud.stale && (!local || local.stale),
-		error: local?.error ?? cloud.error
-	};
 }

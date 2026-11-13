@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
@@ -11,6 +11,7 @@ use sprocket_workspace::{MAX_ARTIFACT_BYTES, WorkspaceCancellation, read_artifac
 
 use super::context::{AgentToolContext, cancelled_error, tool_error};
 use super::job::{execute_tool_job, mutation_args_from_payload, run_convex_tool_mutation};
+use super::wiring::add_wiring_issues;
 
 #[derive(Clone)]
 pub(crate) struct BindArtifactTool(pub(super) AgentToolContext);
@@ -103,6 +104,32 @@ fn artifact_summary(
     summary
 }
 
+fn artifact_source_path(workspace_root: &Path, local_path: &str) -> Option<String> {
+    let mut normalized = PathBuf::new();
+    for component in workspace_root.join(local_path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    let relative = normalized.strip_prefix(workspace_root).ok()?;
+    let mut segments = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            return None;
+        };
+        let segment = segment.to_str()?;
+        if segment.contains(['\\', ':', '\0']) {
+            return None;
+        }
+        segments.push(segment);
+    }
+    (!segments.is_empty()).then(|| segments.join("/"))
+}
+
 async fn register_file(
     context: &AgentToolContext,
     cancellation: WorkspaceCancellation,
@@ -180,9 +207,19 @@ async fn register_file(
     }
     fields["content"] = json!(file.content);
     fields["title"] = json!(file.title);
+    if let Some(source_path) = artifact_source_path(&context.workspace_root, &file.local_path) {
+        fields["sourcePath"] = json!(source_path);
+    } else if existing.is_some() {
+        fields["sourcePath"] = serde_json::Value::Null;
+    }
     let mutation_args = mutation_args_from_payload(&context.run_id, &context.claim_id, &fields)?;
-    let result =
-        run_convex_tool_mutation(&context.runtime, cancellation, function, mutation_args).await?;
+    let result = run_convex_tool_mutation(
+        &context.runtime,
+        cancellation.clone(),
+        function,
+        mutation_args,
+    )
+    .await?;
     let artifact_id = result["artifactId"]
         .as_str()
         .ok_or_else(|| tool_error(anyhow::anyhow!("Artifact response has no ID")))?
@@ -190,7 +227,10 @@ async fn register_file(
     binding.artifact_id = Some(artifact_id.clone());
     bindings.bind(binding).map_err(tool_error)?;
     bindings.persist().await.map_err(tool_error)?;
-    Ok(bound_artifact(context, &artifact_id, &file.local_path))
+    drop(bindings);
+    let mut output = bound_artifact(context, &artifact_id, &file.local_path);
+    add_wiring_issues(context, &cancellation, &file.local_path, &mut output).await;
+    Ok(output)
 }
 
 #[derive(Deserialize)]

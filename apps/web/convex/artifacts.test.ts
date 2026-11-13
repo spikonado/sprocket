@@ -60,6 +60,97 @@ describe('cloud artifacts', () => {
 		expect(metadata.page[0]).not.toHaveProperty('content');
 		expect(metadata.page[0]).not.toHaveProperty('registrationId');
 		expect(metadata.page[0]).not.toHaveProperty('localPath');
+
+		const uiMetadata = await asUser.query(api.artifacts.listArtifactMetadata, {
+			repositoryKey,
+			paginationOpts: { numItems: 10, cursor: null }
+		});
+
+		expect(uiMetadata.page).toEqual([{ _id: created.artifactId, title: fields.title }]);
+	});
+
+	it('keeps the source path when edits omit it and clears it on null', async () => {
+		const { asUser, repositoryKey, auth } = await seedActiveRun();
+
+		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, {
+			...auth,
+			...fields,
+			sourcePath: 'docs/notes.md'
+		});
+
+		const load = () => asUser.query(api.artifacts.getArtifact, { artifactId, repositoryKey });
+
+		expect(await load()).toMatchObject({ sourcePath: 'docs/notes.md', revision: 1 });
+
+		await asUser.mutation(api.artifacts.syncArtifact, {
+			artifactId,
+			repositoryKey,
+			expectedRevision: 1,
+			content: 'synced'
+		});
+		const edit = { ...auth, artifactId, title: fields.title, content: 'edited' };
+		await asUser.mutation(api.artifacts.editArtifact, { ...edit, expectedRevision: 2 });
+		expect(await load()).toMatchObject({ sourcePath: 'docs/notes.md', revision: 3 });
+
+		await asUser.mutation(api.artifacts.editArtifact, {
+			...edit,
+			expectedRevision: 3,
+			sourcePath: 'hardware/notes.md'
+		});
+		expect(await load()).toMatchObject({ sourcePath: 'hardware/notes.md', revision: 4 });
+
+		await asUser.mutation(api.artifacts.editArtifact, {
+			...edit,
+			expectedRevision: 4,
+			sourcePath: null
+		});
+		const external = await load();
+		expect(external.revision).toBe(5);
+		expect(external).not.toHaveProperty('sourcePath');
+	});
+
+	it.each([
+		'',
+		'/tmp/notes.md',
+		'C:/notes.md',
+		'\\\\host\\notes.md',
+		'../notes.md',
+		'docs/../notes.md',
+		'./notes.md',
+		'docs//notes.md',
+		'notes\0.md'
+	])('rejects unsafe source path %j on add and edit', async (sourcePath) => {
+		const { asUser, auth } = await seedActiveRun();
+		await expect(
+			asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields, sourcePath })
+		).rejects.toThrow(/project-relative/i);
+
+		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, {
+			...auth,
+			...fields
+		});
+
+		await expect(
+			asUser.mutation(api.artifacts.editArtifact, {
+				...auth,
+				artifactId,
+				expectedRevision: 1,
+				title: fields.title,
+				content: fields.content,
+				sourcePath
+			})
+		).rejects.toThrow(/project-relative/i);
+	});
+
+	it('returns wiring issues to the active run', async () => {
+		const { asUser, auth } = await seedActiveRun();
+
+		const issues = await asUser.query(api.artifacts.checkWiringForRun, {
+			...auth,
+			content: JSON.stringify({ parts: [], steps: [] })
+		});
+
+		expect(issues).toEqual([expect.objectContaining({ level: 'error' })]);
 	});
 
 	it('uses revision CAS for explicit edits and automatic sync', async () => {
@@ -254,7 +345,7 @@ describe('cloud artifacts', () => {
 								(metadata) => ({ ...metadata, path: '/workspace/Notes' })
 							)
 						}
-					: { ...artifact, path: '/workspace/Notes' };
+					: { ...artifact, path: '/workspace/Notes', wiringIssues: [] };
 
 			expect(
 				await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })

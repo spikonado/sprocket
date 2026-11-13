@@ -10,7 +10,7 @@ import { LocalResponseError } from './transport';
 export type LocalTopic =
 	| { kind: 'transcript'; params: TranscriptScopeRequest }
 	| { kind: 'liveCompletion'; params: TranscriptScopeRequest }
-	| { kind: 'artifacts'; params: ArtifactsWatchRequest }
+	| { kind: 'artifactSync'; params: ArtifactsWatchRequest }
 	| { kind: 'commands'; params: TranscriptScopeRequest }
 	| { kind: 'authChanges' }
 	| { kind: 'browserStatus' }

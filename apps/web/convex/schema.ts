@@ -469,6 +469,7 @@ export default defineSchema({
 		repositoryKey: v.string(),
 		registrationId: v.string(),
 		content: v.string(),
+		sourcePath: v.optional(v.string()),
 		type: v.optional(vLegacyArtifactType),
 		title: v.string(),
 		revision: v.number(),

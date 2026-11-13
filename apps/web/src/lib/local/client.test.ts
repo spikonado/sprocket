@@ -389,33 +389,14 @@ describe('deleteArtifact', () => {
 	});
 });
 
-describe('watchArtifacts', () => {
-	const artifact = {
-		_id: 'artifact-1',
-		userId: 'user-1',
-		repositoryKey: 'repo-1',
-		localPath: 'docs/spec.md',
-		content: '# Spec',
-		title: 'Spec',
-		revision: 1,
-		updatedAt: 20
-	};
-
-	const request = { userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' };
-
-	it('subscribes with the watch scope and keeps stale snapshots and their local errors', async () => {
+describe('watchArtifactSync', () => {
+	it('subscribes with the artifact scope and delivers sync ticks', async () => {
 		const sockets = stubWebSocket();
-
-		const snapshot = {
-			artifacts: [{ ...artifact, localError: 'File missing' }],
-			stale: true,
-			error: 'cloud lag'
-		};
-
+		const request = { userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' };
 		const onEvent = vi.fn();
 		const controller = new AbortController();
 
-		const watching = createLocalClient('http://127.0.0.1:7102').watchArtifacts(request, {
+		const watching = createLocalClient('http://127.0.0.1:7102').watchArtifactSync(request, {
 			signal: controller.signal,
 			onEvent,
 			onError: vi.fn()
@@ -423,42 +404,12 @@ describe('watchArtifacts', () => {
 
 		sockets[0].open();
 		expect(sockets[0].sent).toEqual([
-			{ type: 'subscribe', id: 1, topic: { kind: 'artifacts', params: request } }
+			{ type: 'subscribe', id: 1, topic: { kind: 'artifactSync', params: request } }
 		]);
-		sockets[0].receive({ type: 'event', id: 1, data: snapshot });
+		sockets[0].receive({ type: 'event', id: 1, data: null });
 		controller.abort();
 		await watching;
-		expect(onEvent).toHaveBeenCalledWith(snapshot);
-	});
-
-	it('reports malformed snapshots and subscribes again', async () => {
-		vi.useFakeTimers();
-		const sockets = stubWebSocket();
-		const onEvent = vi.fn();
-		const onError = vi.fn();
-
-		void createLocalClient('http://127.0.0.1:7103').watchArtifacts(request, {
-			signal: new AbortController().signal,
-			onEvent,
-			onError
-		});
-
-		sockets[0].open();
-		sockets[0].receive({
-			type: 'event',
-			id: 1,
-			data: { artifacts: [{ ...artifact, revision: 'invalid' }], stale: false }
-		});
-		await vi.advanceTimersByTimeAsync(0);
-		expect(onError).toHaveBeenCalledOnce();
-		expect(onEvent).not.toHaveBeenCalled();
-		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });
-		await vi.advanceTimersByTimeAsync(1_000);
-		expect(sockets[0].sent.at(-1)).toEqual({
-			type: 'subscribe',
-			id: 2,
-			topic: { kind: 'artifacts', params: request }
-		});
+		expect(onEvent).toHaveBeenCalledWith(null);
 	});
 });
 

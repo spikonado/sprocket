@@ -1,3 +1,4 @@
+import { v, type Infer } from 'convex/values';
 import { z } from 'zod';
 
 const WIRE_COLOR_NAMES = [
@@ -38,7 +39,7 @@ const SIGNAL_COLORS: WireColor[] = [
 	'brown'
 ];
 
-export const MAX_WIRES_PER_STEP = 6;
+const MAX_WIRES_PER_STEP = 6;
 
 const id = z.string().regex(/^[A-Za-z0-9_-]+$/, 'Use only letters, digits, - and _');
 
@@ -48,11 +49,7 @@ const uniqueIds = <T extends { id: string }>(items: T[]) =>
 const partSchema = z.object({
 	id,
 	name: z.string(),
-	wokwi: z.string().optional(),
-	wokwiAttrs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
-	pins: z
-		.object({ left: z.array(z.string()).default([]), right: z.array(z.string()).default([]) })
-		.optional(),
+	pins: z.object({ left: z.array(z.string()).default([]), right: z.array(z.string()).default([]) }),
 	logic: z.number().positive().optional(),
 	photo: z.url().optional(),
 	link: z.url().optional()
@@ -89,7 +86,7 @@ export type WiringSpec = z.infer<typeof wiringSchema>;
 
 export type WiringPart = z.infer<typeof partSchema>;
 
-export type WiringRail = WiringSpec['rails'][number];
+type WiringRail = WiringSpec['rails'][number];
 
 export function parseWiring(source: string): { spec: WiringSpec } | { error: string } {
 	let json: unknown;
@@ -97,32 +94,30 @@ export function parseWiring(source: string): { spec: WiringSpec } | { error: str
 	try {
 		json = JSON.parse(source);
 	} catch (error) {
-		return { error: `Not valid JSON. ${String(error)}` };
+		return { error: `This wiring file can't be read. Not valid JSON. ${String(error)}` };
 	}
 
 	const result = wiringSchema.safeParse(json);
 
 	if (result.success) return { spec: result.data };
 
-	return { error: z.prettifyError(result.error) };
+	return { error: `This wiring file can't be read. ${z.prettifyError(result.error)}` };
 }
 
-export type PinRole = 'ground' | 'power' | 'signal';
+type PinRole = 'ground' | 'power' | 'signal';
 
 export type PartPin = { name: string; x: number; y: number; role: PinRole; volts?: number };
 
-/** `pinNamesInside` is set when the drawing already names its pins, as a box part does. */
 export type PartGeometry = {
 	width: number;
 	height: number;
 	pins: PartPin[];
-	pinNamesInside: boolean;
 };
 
 const GROUND_NAME = /^(GND|VSS|V-|-|0V)$/i;
 const POWER_NAME = /^(VCC|VDD|VIN|VM|VS|VBAT|V\+|\+|\d+(\.\d+)?V|\dV\d)$/i;
 
-export function baseName(pin: string) {
+function baseName(pin: string) {
 	return pin.replace(/\.\d+$/, '');
 }
 
@@ -152,7 +147,7 @@ const BOX_HEADER = 40;
 const BOX_PITCH = 20;
 
 /** Box sizes are multiples of the 10 px wiring grid, so their pins sit on it. */
-export function boxGeometry(name: string, pins: { left: string[]; right: string[] }): PartGeometry {
+function boxGeometry(name: string, pins: { left: string[]; right: string[] }): PartGeometry {
 	const rows = Math.max(pins.left.length, pins.right.length, 1);
 	const width = Math.ceil(Math.min(Math.max(name.length * 7.5 + 32, 140), 280) / 10) * 10;
 
@@ -167,22 +162,12 @@ export function boxGeometry(name: string, pins: { left: string[]; right: string[
 	return {
 		width,
 		height: BOX_HEADER + rows * BOX_PITCH + 10,
-		pins: [...side(pins.left, 0), ...side(pins.right, width)],
-		pinNamesInside: true
+		pins: [...side(pins.left, 0), ...side(pins.right, width)]
 	};
 }
 
-const WOKWI_LOGIC = new Map([
-	['arduino-uno', 5],
-	['arduino-nano', 5],
-	['arduino-mega', 5],
-	['franzininho', 5],
-	['esp32-devkit-v1', 3.3],
-	['nano-rp2040-connect', 3.3]
-]);
-
-function partLogic(part: WiringPart) {
-	return part.logic ?? (part.wokwi ? WOKWI_LOGIC.get(part.wokwi) : undefined);
+export function wiringGeometry(spec: WiringSpec): ReadonlyMap<string, PartGeometry> {
+	return new Map(spec.parts.map((part) => [part.id, boxGeometry(part.name, part.pins)]));
 }
 
 export type Endpoint =
@@ -198,7 +183,12 @@ export type ResolvedWire = {
 	why?: string;
 };
 
-export type WiringIssue = { level: 'error' | 'warning'; message: string };
+export const vWiringIssue = v.object({
+	level: v.union(v.literal('error'), v.literal('warning')),
+	message: v.string()
+});
+
+export type WiringIssue = Infer<typeof vWiringIssue>;
 
 function findPin(pins: PartPin[], name: string) {
 	const lower = name.toLowerCase();
@@ -226,21 +216,12 @@ function endpointVolts(endpoint: Endpoint) {
 	return endpoint.type === 'rail' ? endpoint.rail.volts : endpoint.pin.volts;
 }
 
-export function analyzeWiring(spec: WiringSpec, geometry: ReadonlyMap<string, PartGeometry>) {
+export function analyzeWiring(spec: WiringSpec, geometry = wiringGeometry(spec)) {
 	const issues: WiringIssue[] = [];
 	const wires: ResolvedWire[] = [];
 	const parts = new Map(spec.parts.map((part) => [part.id, part]));
 	const rails = new Map(spec.rails.map((rail) => [rail.id, rail]));
 	let signalIndex = 0;
-
-	for (const part of spec.parts) {
-		if (!geometry.has(part.id)) {
-			issues.push({
-				level: 'error',
-				message: `${part.name} has no pins to draw. Give it a known "wokwi" type or a "pins" list.`
-			});
-		}
-	}
 
 	const resolve = (reference: string, stepTitle: string): Endpoint | undefined => {
 		const dot = reference.indexOf('.');
@@ -333,6 +314,14 @@ export function analyzeWiring(spec: WiringSpec, geometry: ReadonlyMap<string, Pa
 	return { wires, issues };
 }
 
+export function checkWiring(source: string): WiringIssue[] {
+	const parsed = parseWiring(source);
+
+	return 'error' in parsed
+		? [{ level: 'error', message: parsed.error }]
+		: analyzeWiring(parsed.spec).issues;
+}
+
 function checkNets(wires: ResolvedWire[]): WiringIssue[] {
 	const parent = new Map<string, string>();
 
@@ -399,7 +388,7 @@ function checkNets(wires: ResolvedWire[]): WiringIssue[] {
 		const signals = net.flatMap((endpoint) => {
 			if (endpoint.type !== 'pin' || endpoint.pin.role !== 'signal') return [];
 
-			const logic = partLogic(endpoint.part);
+			const logic = endpoint.part.logic;
 
 			return logic === undefined ? [] : [{ endpoint, logic }];
 		});
