@@ -28,6 +28,8 @@ use sprocket_host::profile::ProfileLock;
 use sprocket_host::{Host, HostConfig};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
+use tower_http::CompressionLevel;
+use tower_http::compression::CompressionLayer;
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
@@ -118,10 +120,13 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .fallback(api_not_found)
         .with_state(state);
 
-    match static_dir {
+    let router = match static_dir {
         Some(dir) => static_files::static_router(dir, api),
         None => Router::new().nest("/api", api),
-    }
+    };
+    // Remote browsers reach the server through proxies that don't compress, and KiCad files
+    // are tens of megabytes of text. Fastest keeps the CPU cost low for local browsers.
+    router.layer(CompressionLayer::new().quality(CompressionLevel::Fastest))
 }
 
 pub enum ServerExit {
