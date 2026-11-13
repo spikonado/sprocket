@@ -1,5 +1,12 @@
 # Third-party notices
 
+## Frontend design skill
+
+Sprocket bundles the `frontend-design` skill from
+[anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/frontend-design).
+It is licensed under
+[Apache-2.0](https://github.com/anthropics/skills/blob/main/skills/frontend-design/LICENSE.txt).
+
 ## Managed browser tools
 
 Sprocket downloads unmodified native releases of
