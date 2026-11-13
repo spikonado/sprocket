@@ -135,6 +135,7 @@ async fn register_file(
     cancellation: WorkspaceCancellation,
     path: &str,
     artifact_id: Option<String>,
+    expected_revision: Option<u64>,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let path = &context.workspace_relative_path(path);
     let mut bindings = tokio::select! {
@@ -175,7 +176,7 @@ async fn register_file(
         };
         (
             "artifacts:editArtifact",
-            json!({"artifactId": id, "expectedRevision": artifact.revision}),
+            json!({"artifactId": id, "expectedRevision": expected_revision.unwrap_or(artifact.revision)}),
             Some(artifact),
         )
     } else {
@@ -283,7 +284,7 @@ impl rig::tool::Tool for BindArtifactTool {
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
-            register_file(&self.0, cancellation, &args.path, args.artifact_id).await
+            register_file(&self.0, cancellation, &args.path, args.artifact_id, None).await
         })
         .await
     }
@@ -340,7 +341,14 @@ impl rig::tool::Tool for SaveArtifactTool {
             bindings.bind(binding).map_err(tool_error)?;
             bindings.persist().await.map_err(tool_error)?;
             drop(bindings);
-            register_file(&self.0, cancellation, &saved_path, Some(artifact.id)).await
+            register_file(
+                &self.0,
+                cancellation,
+                &saved_path,
+                Some(artifact.id),
+                Some(artifact.revision),
+            )
+            .await
         })
         .await
     }
