@@ -29,11 +29,18 @@ fn spawn_accepts_only_creation_payloads() {
 
 #[test]
 fn spawn_schema_only_advertises_child_creation() {
-    let choices = SubagentModelChoices {
-        model_ids: vec!["opus".into(), "gpt".into()],
-        reasoning_efforts: vec!["low".into(), "high".into()],
-        model_options: String::new(),
-    };
+    let choices = [
+        SubagentModelChoice {
+            id: "opus".into(),
+            reasoning_efforts: vec!["low".into(), "high".into()],
+            fast: true,
+        },
+        SubagentModelChoice {
+            id: "gpt".into(),
+            reasoning_efforts: vec!["high".into()],
+            fast: false,
+        },
+    ];
     let schema = spawn_subagent_parameters(270_000, &choices);
     assert!(schema["properties"].get("threadId").is_none());
     assert_eq!(schema["additionalProperties"], false);
@@ -44,6 +51,14 @@ fn spawn_schema_only_advertises_child_creation() {
     assert_eq!(
         schema["properties"]["reasoning"]["enum"],
         json!(["low", "high"])
+    );
+    assert_eq!(
+        schema["anyOf"][1]["properties"],
+        json!({
+            "model": { "const": "gpt" },
+            "reasoning": { "enum": ["high"] },
+            "fast": { "const": false }
+        })
     );
     let mut required: Vec<&str> = schema["required"]
         .as_array()

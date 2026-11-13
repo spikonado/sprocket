@@ -19,7 +19,7 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
-use crate::catalog::{SubagentModelChoices, model_catalog};
+use crate::catalog::{SubagentModelChoice, model_catalog};
 use crate::convex::{MutationFailure, RuntimeClient};
 use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
@@ -210,25 +210,49 @@ pub(crate) struct ListSubagentsArgs {
     pub(crate) cursor: Option<String>,
 }
 
-fn set_model_choices(schema: &mut serde_json::Value, choices: &SubagentModelChoices) {
-    schema["properties"]["model"] = json!({
-        "type": "string",
-        "enum": choices.model_ids,
-        "description": format!(
-            "Reasoning levels per model, and whether it supports fast:\n{}",
-            choices.model_options
-        ),
-    });
-    schema["properties"]["reasoning"] =
-        json!({ "type": "string", "enum": choices.reasoning_efforts });
+const SETTINGS_FIELDS: [&str; 3] = ["model", "reasoning", "fast"];
+
+fn set_model_choices(schema: &mut serde_json::Value, choices: &[SubagentModelChoice]) {
+    let mut reasoning_efforts: Vec<&str> = Vec::new();
+    for effort in choices.iter().flat_map(|choice| &choice.reasoning_efforts) {
+        if !reasoning_efforts.contains(&effort.as_str()) {
+            reasoning_efforts.push(effort);
+        }
+    }
+    let model_ids: Vec<&str> = choices.iter().map(|choice| choice.id.as_str()).collect();
+    schema["properties"]["model"] = json!({ "type": "string", "enum": model_ids });
+    schema["properties"]["reasoning"] = json!({ "type": "string", "enum": reasoning_efforts });
+}
+
+/// One branch per model, so a reasoning level or fast mode the model lacks fails validation.
+fn model_settings_branches(choices: &[SubagentModelChoice]) -> Vec<serde_json::Value> {
+    choices
+        .iter()
+        .map(|choice| {
+            let fast = if choice.fast {
+                json!({ "type": "boolean" })
+            } else {
+                json!({ "const": false })
+            };
+            json!({
+                "properties": {
+                    "model": { "const": choice.id },
+                    "reasoning": { "enum": choice.reasoning_efforts },
+                    "fast": fast,
+                },
+                "required": SETTINGS_FIELDS,
+            })
+        })
+        .collect()
 }
 
 fn spawn_subagent_parameters(
     max_yield_ms: u64,
-    choices: &SubagentModelChoices,
+    choices: &[SubagentModelChoice],
 ) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
     set_model_choices(&mut schema, choices);
+    schema["anyOf"] = json!(model_settings_branches(choices));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
         max_yield_ms,
@@ -249,7 +273,7 @@ fn poll_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
 
 fn control_subagent_parameters(
     max_yield_ms: u64,
-    choices: &SubagentModelChoices,
+    choices: &[SubagentModelChoice],
 ) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ControlSubagentArgs));
     set_model_choices(&mut schema, choices);
@@ -265,14 +289,23 @@ fn control_subagent_parameters(
         max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
-    schema["anyOf"] = json!([
-        { "properties": { "action": { "enum": ["send"] } }, "required": ["prompt"] },
-        { "properties": { "action": { "enum": ["stop"] } } },
+    let mut settings = model_settings_branches(choices);
+    settings.push(json!({
+        "not": { "anyOf": SETTINGS_FIELDS.map(|field| json!({ "required": [field] })) }
+    }));
+    schema["allOf"] = json!([
         {
-            "properties": { "action": { "enum": ["answer_question"] } },
-            "required": ["questionId"],
-            "anyOf": [{ "required": ["optionId"] }, { "required": ["text"] }]
-        }
+            "anyOf": [
+                { "properties": { "action": { "enum": ["send"] } }, "required": ["prompt"] },
+                { "properties": { "action": { "enum": ["stop"] } } },
+                {
+                    "properties": { "action": { "enum": ["answer_question"] } },
+                    "required": ["questionId"],
+                    "anyOf": [{ "required": ["optionId"] }, { "required": ["text"] }]
+                }
+            ]
+        },
+        { "anyOf": settings }
     ]);
     schema
 }
