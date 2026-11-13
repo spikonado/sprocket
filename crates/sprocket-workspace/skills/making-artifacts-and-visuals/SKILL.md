@@ -9,12 +9,9 @@ description: Use before making or changing an artifact or an `html-visual`, `jsx
 
 An artifact's title is its filename, and the UI picks the renderer from the title's extension: `.md` for Markdown, `.html` or `.htm` for HTML, `.jsx` for React, `.render.json` for json-render, and `.wiring.json` for wiring diagrams (`$designing-wiring-diagram`). Any other file renders as Markdown.
 
-1. Write the file with `apply_patch`.
-2. Bind it to a new artifact with `bind_artifact`.
-3. Revise it with `apply_patch`. The user's view updates live.
-4. After moving or renaming the file, call `bind_artifact` with the new path and the artifact's `artifactId` so the artifact follows the file.
+Bind the file with `bind_artifact` once, then keep editing the file. After moving or renaming it, call `bind_artifact` with the new path and the artifact's `artifactId` so the artifact follows the file.
 
-When the bound file goes missing, the artifact keeps its last content, and `save_artifact` writes it back. When both the file and the cloud copy changed, sync pauses. Compare the two versions, then keep the file's version by calling `bind_artifact` with its path and the `artifactId`, or save the cloud copy to a new path with `save_artifact`.
+When the bound file goes missing, the artifact keeps its last content, and `save_artifact` writes it back. When both the file and the cloud copy changed, sync pauses. Compare the two versions, then keep the file's version by rebinding its path to the `artifactId`, or save the cloud copy to a new path with `save_artifact`.
 
 ## Visuals
 
@@ -33,31 +30,15 @@ When verifying a visual through `agent-browser`, add a temporary `:root` block w
 
 HTML and React pages, in artifacts and visuals alike, run in a sandboxed iframe that allows scripts only. They get no `localStorage`, `sessionStorage`, forms, or popups. Load libraries and assets from public CDN URLs.
 
-An HTML page is a complete document (`<!DOCTYPE html>…`) or a fragment.
+An HTML page is a complete document or a fragment.
 
-A React page is one JSX source compiled by Babel in the browser, with React 19 as the global `React`. It mounts the component named `App`, or the default export. Only `react` and `react-dom` imports resolve, so keep components and styles (inline `<style>` or `style={{ ... }}`) in that source.
+A React page is one JSX source compiled by Babel in the browser, with React 19 as the global `React`. It mounts the component named `App`, or the default export. Only `react` and `react-dom` imports resolve, so keep every component and style in that source, using a `<style>` element or `style` props.
 
 ## json-render
 
 A `json-render` fence or a `.render.json` artifact holds a [json-render](https://json-render.dev/docs) spec. The app renders it with its own components and theme, so the spec carries content and layout only. Reach for it first for structured output such as tables, metrics, status cards, alerts, tabs, and simple bar or line charts. Use an HTML or React page for anything the components below can't express.
 
-A spec is a flat map of elements. Each element has a `type`, its `props`, and `children` listing other element keys:
-
-```json
-{
-	"root": "ci",
-	"elements": {
-		"ci": { "type": "Card", "props": { "title": "CI" }, "children": ["jobs"] },
-		"jobs": {
-			"type": "Table",
-			"props": { "columns": ["Job", "Status"], "rows": [["lint", "pass"]] },
-			"children": []
-		}
-	}
-}
-```
-
-In a fence, write the spec as JSONL patches, one per line, so the UI fills in while the reply streams:
+A spec is a `root` element key and a flat `elements` map. Each element has a `type`, its `props`, and `children` listing other element keys. A `.render.json` file holds the spec as one JSON object. In a fence, write it as JSONL patches, one per line, so the UI fills in while the reply streams:
 
 ```text
 {"op":"add","path":"/root","value":"ci"}
@@ -65,7 +46,7 @@ In a fence, write the spec as JSONL patches, one per line, so the UI fills in wh
 {"op":"add","path":"/elements/jobs","value":{"type":"Table","props":{"columns":["Job","Status"],"rows":[["lint","pass"]]},"children":[]}}
 ```
 
-- Seed data under `state` and read it with `{ "$state": "/path" }`. Element-level `visible`, `repeat`, and `on` fields, with the built-in `setState`, `pushState`, and `removeState` actions, make a UI interactive. Look up their syntax in the [data binding](https://json-render.dev/docs/data-binding) and [visibility](https://json-render.dev/docs/visibility) docs.
+- For an interactive UI, seed data under `state` and look up state reads, `visible`, `repeat`, and `on` in the [data binding](https://json-render.dev/docs/data-binding), [visibility](https://json-render.dev/docs/visibility), and [actions](https://json-render.dev/docs/actions) docs. Only json-render's built-in state actions run, since the app defines no custom actions.
 - Leave `className` unset, since the app only ships the classes its own components use.
 
 Components:
