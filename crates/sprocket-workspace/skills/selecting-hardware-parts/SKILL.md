@@ -9,5 +9,5 @@ description: 'Use when choosing parts or suppliers for a hardware project, or wr
 - Prefer cheap parts, and weigh quality and ease of use against price.
 - Read the part's datasheet and supplier listing before choosing it.
 - Run `lookup_parts` on the few ICs that drive the design early, then on the whole BOM once it is final.
-- Prefer suppliers in the user's country or state.
+- Prefer suppliers in the user's country or state, except for parts a manufacturer assembles onto the PCB.
 - Read other buyers' reviews of a store before ordering from it. Some online stores are fraudulent.
