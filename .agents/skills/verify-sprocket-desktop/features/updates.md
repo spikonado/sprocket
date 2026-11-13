@@ -24,4 +24,4 @@ Preconditions:
 
 - `updates-flow` is unreachable here. It needs a packaged build (`app.isPackaged`), on Linux an AppImage with `APPIMAGE` set, and a newer published release. Report it as unreachable.
 - The bridge call is a read of the state the sidebar renders, not a user action. The sidebar check is the user-facing half.
-- The bridge call has been run and returned `{"method":"desktop","status":"unavailable","currentVersion":"0.0.0",...}`. The sidebar and network checks need a signed-in window and have not.
+- The bridge call has been run. The sidebar and network checks need a signed-in window and have not.

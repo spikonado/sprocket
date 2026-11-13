@@ -6,7 +6,6 @@ This directory holds the maintained recipes for what the Electron shell adds to 
 
 - Launched, `$D/doctor.sh` exits 0, and `$D/connect.sh` printed `http://localhost:5173/`, all as in `SKILL.md`.
 - Signed-in journeys also need `button "New thread"` in the window and `$V/scratch-repo.sh` attached as project `verify-sprocket-scratch`, as in `verify-sprocket`'s baseline.
-- Re-snapshot after every page change. Refs from before a reload or a relaunch are stale.
 
 ## Proof and skip reporting
 
