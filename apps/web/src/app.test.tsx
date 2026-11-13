@@ -114,6 +114,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		watchWorkspaceFile: unused,
 		readWorkspaceText: unused,
 		exportBoard3d: unused,
+		kicadScene: unused,
 		writeWorkspaceFile: unused,
 		createWorkspaceFile: unused,
 		renameWorkspaceFile: unused,

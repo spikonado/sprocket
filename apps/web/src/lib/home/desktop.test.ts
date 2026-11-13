@@ -45,6 +45,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		watchWorkspaceFile: unusedDesktopCall,
 		readWorkspaceText: unusedDesktopCall,
 		exportBoard3d: unusedDesktopCall,
+		kicadScene: unusedDesktopCall,
 		writeWorkspaceFile: unusedDesktopCall,
 		createWorkspaceFile: unusedDesktopCall,
 		renameWorkspaceFile: unusedDesktopCall,

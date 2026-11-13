@@ -104,3 +104,11 @@ in `apps/web/static/kicanvas/`, made by `tools/kicanvas/build.sh` from the
 commit it pins, with the patches next to that script. KiCanvas is copyright
 Alethea Katherine Flowers and licensed under MIT; its license is next to the
 build. When it opens a file, it loads its icon and text fonts from Google Fonts.
+
+## Newstroke
+
+`crates/sprocket-kicad/src/text/newstroke.txt` holds glyphs of KiCad's
+Newstroke stroke font, by Vladimir Uryvaev and released under
+[CC0](https://creativecommons.org/publicdomain/zero/1.0/). Only the glyphs
+below U+4E00 ship. That leaves out KiCad's CJK ideographs, which come from
+Source Han Sans (OFL-1.1) through Lingdong Huang's MIT-licensed code.

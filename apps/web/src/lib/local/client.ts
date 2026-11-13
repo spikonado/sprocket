@@ -536,6 +536,18 @@ export function createLocalClient(baseUrl: string): LocalApi {
 
 			return response.arrayBuffer();
 		},
+		kicadScene: async (input, signal) => {
+			const response = await transport.response('/api/workspace/file/kicad-scene', {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			if (!response.body) throw new Error('The board scene is empty.');
+
+			// A stream, since `arrayBuffer()` copies the whole scene in one main-thread task.
+			return { scene: response.body, version: response.headers.get('x-file-version') ?? '' };
+		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
 				method: 'POST',

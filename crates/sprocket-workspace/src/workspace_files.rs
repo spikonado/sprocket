@@ -76,6 +76,24 @@ pub struct WorkspaceText {
 }
 
 pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
+    let file = read_workspace_bytes(root, path)?;
+    let content = String::from_utf8(file.bytes).map_err(|_| anyhow!("{path} is not UTF-8 text"))?;
+    Ok(WorkspaceText {
+        content,
+        version: file.version,
+    })
+}
+
+pub struct WorkspaceBytes {
+    /// The resolved absolute path.
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+    /// Same as [`WorkspaceText::version`].
+    pub version: String,
+}
+
+/// Reads a file for a viewer, up to 128 MiB.
+pub fn read_workspace_bytes(root: &Path, path: &str) -> Result<WorkspaceBytes> {
     let file_path = resolve_entry(root, path, FinalLink::Follow)?;
     let file = File::open(&file_path).map_err(|error| entry_error(error, path, "open"))?;
     let metadata = file.metadata()?;
@@ -95,8 +113,11 @@ pub fn read_workspace_text(root: &Path, path: &str) -> Result<WorkspaceText> {
     } else {
         content_version(&bytes)
     };
-    let content = String::from_utf8(bytes).map_err(|_| anyhow!("{path} is not UTF-8 text"))?;
-    Ok(WorkspaceText { content, version })
+    Ok(WorkspaceBytes {
+        path: file_path,
+        bytes,
+        version,
+    })
 }
 
 pub fn workspace_entry_kind(root: &Path, path: &str) -> Result<WorkspaceEntryKind> {

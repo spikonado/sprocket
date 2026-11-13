@@ -3,6 +3,7 @@ import { readKicadSources } from './kicad';
 
 const files = new Map([
 	['boards/amp/amp.kicad_pro', '{}'],
+	['boards/amp/amp.kicad_pcb', '(kicad_pcb)'],
 	[
 		'boards/amp/amp.kicad_sch',
 		'(kicad_sch (sheet (property "Sheetname" "L") (property "Sheetfile" "sheets/ch.kicad_sch"))' +
@@ -26,7 +27,7 @@ async function read(path: string) {
 }
 
 describe('readKicadSources', () => {
-	it('loads a project with its root schematic and every sheet once', async () => {
+	it('loads a project with its root schematic and every sheet once, without its board', async () => {
 		const sources = await readKicadSources('boards/amp/amp.kicad_pro', read);
 
 		expect(sources.map((source) => source.name)).toEqual([
@@ -39,7 +40,7 @@ describe('readKicadSources', () => {
 	});
 
 	it('fails when the opened file is missing', async () => {
-		await expect(readKicadSources('boards/amp/gone.kicad_pcb', read)).rejects.toThrow(
+		await expect(readKicadSources('boards/amp/gone.kicad_sch', read)).rejects.toThrow(
 			'does not exist'
 		);
 	});

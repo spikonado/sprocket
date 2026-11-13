@@ -14,6 +14,7 @@ mod gh_install;
 mod git_install;
 pub mod github_connector;
 pub mod kicad_connector;
+pub mod kicad_scenes;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
@@ -48,6 +49,7 @@ use crate::claude_code_cli::ClaudeCodeCli;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::github_connector::GitHubConnector;
 use crate::kicad_connector::KiCadConnector;
+use crate::kicad_scenes::KiCadScenes;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
 use crate::machines::MachineManager;
@@ -107,6 +109,7 @@ pub struct Host {
     pub package_updates: Arc<PackageUpdateManager>,
     pub browsers: Arc<BrowserManager>,
     pub kicad: Arc<KiCadConnector>,
+    pub kicad_scenes: Arc<KiCadScenes>,
     pub claude_code_cli: Arc<ClaudeCodeCli>,
     pub claude_code: sprocket_agent::ClaudeCode,
     pub muse_cli: Arc<MuseCli>,
@@ -182,6 +185,7 @@ impl Host {
             package_updates,
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
             kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
+            kicad_scenes: Arc::default(),
             claude_code: sprocket_agent::ClaudeCode::new(
                 Arc::clone(&claude_code_cli) as _,
                 data_dir.join("claude-code"),

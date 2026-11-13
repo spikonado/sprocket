@@ -7,6 +7,7 @@ members = [
     "crates/sprocket-host",
     "crates/sprocket-server",
     "crates/sprocket-cli",
+    "crates/sprocket-kicad",
 ]
 resolver = "3"
 
@@ -24,6 +25,7 @@ axum = "0.8.8"
 base64 = "0.23.0"
 clap = { version = "4.5.60", features = ["derive"] }
 convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
+earcut = "0.4.12"
 fs4 = { version = "1.1.0", default-features = false }
 futures = "0.3.32"
 gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
@@ -41,6 +43,7 @@ sha2 = "0.11.0"
 sprocket-agent = { path = "crates/sprocket-agent" }
 sprocket-convex = { path = "crates/sprocket-convex" }
 sprocket-host = { path = "crates/sprocket-host" }
+sprocket-kicad = { path = "crates/sprocket-kicad" }
 sprocket-server = { path = "crates/sprocket-server" }
 sprocket-transcript = { path = "crates/sprocket-transcript" }
 sprocket-workspace = { path = "crates/sprocket-workspace" }
@@ -58,3 +61,7 @@ workos = "3.4.1"
 [profile.release]
 lto = true
 strip = "symbols"
+
+# The dev app runs a debug build, and unoptimized board parsing takes seconds.
+[profile.dev.package.sprocket-kicad]
+opt-level = 3

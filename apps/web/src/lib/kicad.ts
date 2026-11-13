@@ -1,5 +1,12 @@
 export const KICAD_FILE = /\.kicad_(?:pro|sch|pcb)$/;
 
+/** The board a `.kicad_pcb` or `.kicad_pro` path opens, or null for a schematic. */
+export function kicadBoardPath(path: string) {
+	if (path.endsWith('.kicad_pcb')) return path;
+
+	return path.endsWith('.kicad_pro') ? path.replace(/\.kicad_pro$/, '.kicad_pcb') : null;
+}
+
 const SHEET_FILE = /\(property\s+"Sheet ?file"\s+"([^"]+)"/g;
 
 function directoryOf(path: string) {
@@ -18,6 +25,7 @@ function normalize(path: string) {
 	return parts.join('/');
 }
 
+/** A schematic or a project's schematics. Boards draw in our own viewer instead of KiCanvas. */
 export async function readKicadSources(
 	path: string,
 	read: (path: string) => Promise<string>
@@ -49,7 +57,7 @@ export async function readKicadSources(
 	let loaded = await load([opened], true);
 
 	if (opened.endsWith('.kicad_pro')) {
-		loaded = await load([`${stem}.kicad_sch`, `${stem}.kicad_pcb`], false);
+		loaded = await load([`${stem}.kicad_sch`], false);
 	}
 
 	while (loaded.length > 0) {

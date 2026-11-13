@@ -25,7 +25,19 @@ When a connector update is ready, **Settings → Connectors** shows an **Update*
 
 ## View designs
 
-When the agent works on a KiCad project, it can add a project card to its reply. The card opens the schematics and board in a viewer with 2D and 3D board views.
+<Snippet file="unreleased.mdx" />
+
+When the agent works on a KiCad project, it can add a project card to its reply. The card opens the project's schematics. If the project has a board, pick **PCB** to see the board or **3D** to see it in 3D. A `.kicad_pcb` file opened from the file browser shows the board with **2D** and **3D** views.
+
+In the board view:
+
+- Drag to pan. Scroll or pinch to zoom at the pointer.
+- **Layers** lists the board's layers in KiCad's default colors. Click a layer to show or hide it. Paste layers and the Margin layer start hidden.
+- **Fit board** zooms to the whole board. **Flip board** shows the back side, mirrored, with the back layers on top.
+- Click an item to select it and see its reference, value, net, layer, and position. Selecting a pad also shows its footprint. Press Escape or click empty space to clear the selection.
+- When the board file changes, the view reloads and keeps your zoom and layers. The selection clears.
+
+Sprocket reads the board on your computer and draws it in the background, so large boards don't slow down the rest of the app.
 
 ## Wiring diagrams
 
