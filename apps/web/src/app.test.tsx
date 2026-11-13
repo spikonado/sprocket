@@ -939,6 +939,44 @@ it('keeps a local submission Starting beyond the old timeout until it starts', a
 	}
 });
 
+it.each(['loading', 'failed'] as const)(
+	'keeps the saved speed while the catalog is %s',
+	async (status) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		const thread = { ...threadRecord('thread-1', 'repo-alpha', 'Robot work'), fastMode: true };
+		const client = createConvexFixtures();
+		const catalog = Promise.withResolvers<ModelCatalog>();
+		const runAgent = vi.fn<LocalApi['runAgent']>(() => new Promise(() => {}));
+
+		client.registerPaginatedQuery(api.inbox.list, [thread]);
+		client.registerQuery(api.threads.getByThreadId, thread);
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'idle',
+			run: null
+		});
+		await renderApp(client, {
+			...createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], runAgent })),
+			fetchGatewayModelCatalog: () => catalog.promise
+		});
+
+		if (status === 'failed') {
+			await act(async () => catalog.reject(new Error('Catalog unavailable.')));
+		}
+
+		fireEvent.click(await screen.findByText('Robot work'));
+		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Keep working' } });
+
+		const send = screen.getByRole('button', { name: 'Send message' });
+
+		await waitFor(() => expect(send).toHaveProperty('disabled', false));
+		fireEvent.click(send);
+		await waitFor(() =>
+			expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ serviceTier: 'fast' }))
+		);
+	}
+);
+
 it('submits Ultrafast and restores the prompt, speed, and error when an agent launch fails', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const listProjectAttachments = vi.fn(async () => [alpha]);

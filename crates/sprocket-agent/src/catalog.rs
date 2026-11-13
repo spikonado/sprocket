@@ -105,11 +105,13 @@ pub struct CatalogModel {
 
 impl CatalogModel {
     pub fn supports_tier(&self, provider: CompletionProvider, tier: ServiceTier) -> bool {
-        provider.supports_tier(
-            tier,
-            lists_tier(&self.service_tiers, ServiceTier::Fast),
-            lists_tier(&self.byok_service_tiers, ServiceTier::Ultrafast),
-        )
+        match tier {
+            ServiceTier::Standard => true,
+            ServiceTier::Fast => lists_tier(&self.service_tiers, tier),
+            ServiceTier::Ultrafast => {
+                provider.service_tier(tier).is_some() && lists_tier(&self.byok_service_tiers, tier)
+            }
+        }
     }
 }
 

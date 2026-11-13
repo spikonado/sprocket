@@ -171,7 +171,12 @@ fn unsupported_explicit_choices_fail() {
         ..Default::default()
     };
     assert!(resolve(&[Spikonado], None, fast("pro")).is_err());
-    assert!(resolve(&[Anthropic], None, fast("default")).is_err());
+    assert_eq!(
+        resolve(&[Anthropic], None, fast("default"))
+            .unwrap()
+            .service_tier,
+        ServiceTier::Fast
+    );
     assert_eq!(
         resolve(&[Spikonado], None, fast("gpt"))
             .unwrap()

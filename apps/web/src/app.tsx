@@ -584,11 +584,13 @@ export default function App({
 	const selectedCatalogModel =
 		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
 
-	const resolvedServiceTier = normalizeServiceTier(
-		serviceTier,
-		selectedCatalogModel,
-		Boolean(selectedCatalogModel && directOpenAIByok(selectedCatalogModel))
-	);
+	const resolvedServiceTier = selectedCatalogModel
+		? normalizeServiceTier(
+				serviceTier,
+				selectedCatalogModel,
+				directOpenAIByok(selectedCatalogModel)
+			)
+		: serviceTier;
 
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
