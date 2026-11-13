@@ -21,7 +21,7 @@ The right side panel holds panes of tabs. A new tab offers a view picker for Art
 
 Precondition: the new-thread screen is open and the panel is closed.
 
-- **Open.** Click `button "Open side panel"`. `snapshot -i` shows `separator "Resize side panel"`, `tab "New tab" [selected]`, `button "Close New tab tab"`, `button "New tab"`, `button "Expand to full workspace"`, `button "Close panel"`, and the picker's `button "Artifacts"`, `button "Files"` and `button "Browser"`.
+- **Open.** Click `button "Open side panel"`. `snapshot -i` shows `tab "New tab" [selected]` and the picker's `button "Artifacts"`, `button "Files"` and `button "Browser"`.
 - **Pick a view.** Click `button "Artifacts"`. The tab becomes `tab "Artifacts" [selected]` with `button "Close Artifacts tab"`, and the picker buttons are gone.
 - **New tab.** Click `button "New tab"`. Another `tab "New tab" [selected]` with the picker appears.
 - **Split.** Click `button "Split right"`. A second `tablist` appears with its own `tab "New tab" [selected]` and picker, plus `separator "Resize panes side by side"`. `button "Split down"` in a pane adds `separator "Resize stacked panes"`. Only the top-right pane shows `button "Close panel"`. Drag a separator, or focus it and press arrow keys, to resize. Closing a pane's last tab removes the pane and its separator.
@@ -36,7 +36,7 @@ Precondition: the new-thread screen is open and the panel is closed.
 - A picker button and the tab it creates share a name, such as `button "Artifacts"` and `tab "Artifacts"`. Grep the role too.
 - `New tab` selects the existing empty tab instead of adding a second one. Pick a view first.
 - Each pane has its own `button "New tab"`, `button "Split right"` and `button "Split down"`, so take refs from the pane you mean.
-- Panes stay at least 240px wide and 160px tall, so `button "Split right"` is disabled at the default 320px width. Widen the panel first: focus `separator "Resize side panel"` and press `End`. That width is stored in `localStorage` key `sprocket.side-panel.width`, so a later run may already have Split right enabled; skip `End` when the button is not disabled.
+- Panes have a minimum size, so `button "Split right"` is disabled at the default panel width. Widen the panel first: focus `separator "Resize side panel"` and press `End`. The browser stores that width, so skip `End` when the button is already enabled.
 - Opening an artifact or file from a thread uses the pane last clicked or focused.
 - The panel isn't rendered while Settings is open.
-- Below 768px the same panel is forced full-screen: no resize separator, no `Expand to full workspace`, and Escape does not close it. `Close panel` still returns to the thread. The inbox sidebar overlays the thread on that viewport; click a header `button "Close sidebar"` (the first `Close sidebar` ref is often covered) so `Open side panel` is reachable. Restore `1440 900` afterwards; `wait --text "New thread"` fails while the sidebar stays closed.
+- On a phone-width viewport the panel is always full-screen, with no resize separator or `Expand to full workspace`, and Escape does not close it. `Close panel` still returns to the thread. The inbox sidebar covers the thread there, so click the header's `button "Close sidebar"` to reach `Open side panel`; the first `Close sidebar` ref is often covered. Restore `1440 900` afterwards, since `wait --text "New thread"` fails while the sidebar stays closed.
