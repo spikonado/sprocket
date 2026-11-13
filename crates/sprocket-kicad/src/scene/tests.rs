@@ -69,14 +69,18 @@ fn large_polygons_split_without_losing_area() {
 
     let area: f64 = scene.layers[0]
         .triangles
-        .chunks_exact(VERTEX_BYTES)
+        .as_chunks::<VERTEX_BYTES>()
+        .0
+        .iter()
         .map(|vertex| {
             let x = f32::from_le_bytes(vertex[0..4].try_into().unwrap());
             let y = f32::from_le_bytes(vertex[4..8].try_into().unwrap());
             point(f64::from(x), f64::from(y))
         })
         .collect::<Vec<_>>()
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| {
             ((t[1].x - t[0].x) * (t[2].y - t[0].y) - (t[2].x - t[0].x) * (t[1].y - t[0].y)).abs()
                 / 2.0

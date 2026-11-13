@@ -226,11 +226,10 @@ impl Board {
                     if let Some(shape) = head
                         .strip_prefix("fp_")
                         .filter(|shape| graphics::is_shape(shape))
+                        && let Some(layer) = child.value("layer")
                     {
-                        if let Some(layer) = child.value("layer") {
-                            let pen = self.pen(id, &layer);
-                            self.shape(pen, child, shape, &frame, false);
-                        }
+                        let pen = self.pen(id, &layer);
+                        self.shape(pen, child, shape, &frame, false);
                     }
                 }
                 None => {}

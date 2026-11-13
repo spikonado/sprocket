@@ -36,7 +36,7 @@ fn decode_glyph(data: &str) -> Glyph {
     };
     let mut start_x = 0.0;
     let mut pen_down = false;
-    for (index, pair) in data.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in data.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         if index == 0 {
             start_x = f64::from(coordinate(pair[0])) * FONT_SCALE;
             glyph.width = f64::from(coordinate(pair[1])) * FONT_SCALE - start_x;

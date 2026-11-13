@@ -198,7 +198,7 @@ impl Scene {
     }
 
     pub fn segment(&mut self, pen: Pen, a: Point, b: Point, width: f64) {
-        if !(width > 0.0) {
+        if width.is_nan() || width <= 0.0 {
             return;
         }
         self.touch(pen, a, width / 2.0);
@@ -212,7 +212,7 @@ impl Scene {
 
     /// A filled disc when `stroke` is 0, otherwise a ring centered on `radius`.
     pub fn circle(&mut self, pen: Pen, center: Point, radius: f64, stroke: f64) {
-        if !(radius > 0.0) {
+        if radius.is_nan() || radius <= 0.0 {
             return;
         }
         self.touch(pen, center, radius + stroke / 2.0);
