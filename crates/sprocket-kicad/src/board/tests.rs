@@ -8,6 +8,7 @@ struct Decoded {
 }
 
 struct DecodedLayer {
+    /// `name/part`, as in `F.Cu/main`.
     name: String,
     /// `[x1, y1, x2, y2, width]`
     segments: Vec<[f32; 5]>,
@@ -35,7 +36,11 @@ fn decode(src: &str) -> Decoded {
             .collect();
         offset += count("circles") * 20 + count("triangleVertices") * 12;
         layers.push(DecodedLayer {
-            name: layer["name"].as_str().unwrap().to_owned(),
+            name: format!(
+                "{}/{}",
+                layer["name"].as_str().unwrap(),
+                layer["part"].as_str().unwrap()
+            ),
             segments,
             circles,
             triangle_vertices: count("triangleVertices"),
@@ -77,13 +82,27 @@ fn kicad_10_99_footprint_transform_places_pads_and_holes() {
         .iter()
         .map(|layer| layer.name.as_str())
         .collect();
-    assert_eq!(names, ["B.Mask", "B.Cu", "F.Cu", "F.Mask", "Holes"]);
-    let [x1, y1, x2, y2, width] = board.layers[2].segments[0];
+    assert_eq!(
+        names,
+        [
+            "F.Cu/main",
+            "B.Cu/main",
+            "F.Mask/main",
+            "B.Mask/main",
+            "F.Cu/labels",
+            "B.Cu/labels",
+            "Holes/padWalls",
+            "Holes/padHoles"
+        ]
+    );
+    let [x1, y1, x2, y2, width] = board.layers[0].segments[0];
     // The pad's long axis is local y, turned 90° to board x, at twice the size.
     assert!(close(y1, 18.0) && close(y2, 18.0));
     assert!(close((x1 - x2).abs(), 2.0));
     assert!(close(width, 2.0));
-    let hole = board.layers[4].circles[0];
+    let wall = board.layers[6].circles[0];
+    assert!(close(wall[2], 0.5 + 1.5 * 0.035));
+    let hole = board.layers[7].circles[0];
     assert!(close(hole[0], 10.0) && close(hole[1], 18.0) && close(hole[2], 0.5));
 }
 

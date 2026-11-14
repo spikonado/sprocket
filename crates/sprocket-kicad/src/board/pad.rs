@@ -1,9 +1,13 @@
-//! Footprint pads and their drill holes.
+//! Footprint pads, their drill holes and their number and net name labels.
 
-use super::{Board, child_point, xy};
+use super::{Board, HOLE_WALL, child_point, unescape_net, xy};
 use crate::geometry::{Point, Transform, inset_convex, point};
-use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Pen};
+use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen};
 use crate::sexpr::Expr;
+use crate::text::{HAlign, TextStyle, VAlign, stroke_text};
+
+/// KiCad's `PCB_RENDER_SETTINGS::MAX_FONT_SIZE`.
+const MAX_LABEL_SIZE: f64 = 10.0;
 
 impl Board {
     pub(super) fn pad(&mut self, pad: Expr, footprint: u32, frame: &Transform) {
@@ -32,13 +36,112 @@ impl Board {
         let shape_frame = pad_frame.child(offset, degrees);
         let shape = pad.arg(2).and_then(Expr::atom).unwrap_or("circle");
         for layer in &layers {
-            let pen = self.pen(id, layer);
+            let pen = self.pen(id, layer, Part::Main);
             self.pad_shape(pen, pad, shape, size, &shape_frame);
         }
+        let board_size = point(frame.length(size.x), frame.length(size.y));
+        self.labels(id, pad, shape, board_size, net, &layers);
         if let Some(drill) = drill {
-            self.drill(id, drill, &pad_frame);
+            let plated = pad.arg(1).and_then(Expr::atom) != Some("np_thru_hole");
+            self.drill(id, drill, &pad_frame, plated.then_some(board_size));
         }
         self.scene.merge_bounds(footprint, id);
+    }
+
+    /// Writes the pad number and net name over the pad as KiCad does, after
+    /// `PCB_PAINTER::draw( const PAD* )`, on each outer copper side the pad has.
+    fn labels(
+        &mut self,
+        id: u32,
+        pad: Expr,
+        shape: &str,
+        pad_size: Point,
+        net: Option<u32>,
+        layers: &[String],
+    ) {
+        let sides: Vec<(&str, bool)> = [("F.Cu", false), ("B.Cu", true)]
+            .into_iter()
+            .filter(|(side, _)| layers.iter().any(|layer| layer == side))
+            .collect();
+        let bounds = self.scene.bounds(id);
+        if sides.is_empty() || bounds.is_empty() {
+            return;
+        }
+        let number = unescape_net(&pad.text_arg(0).unwrap_or_default());
+        let net_name = net.map_or("", |net| self.scene.net_name(net));
+        let pin_type = pad.value("pintype").unwrap_or_default();
+        let unconnected = net_name.starts_with("unconnected-(");
+        let name = if unconnected && pin_type.contains("no_connect") {
+            "x"
+        } else if unconnected && pin_type == "free" {
+            "*"
+        } else {
+            net_name.rsplit('/').next().unwrap_or_default()
+        }
+        .to_owned();
+        if name.is_empty() && number.is_empty() {
+            return;
+        }
+
+        let center = (bounds.min + bounds.max) * 0.5;
+        let mut extent = bounds.max - bounds.min;
+        let limit = pad_size.x.min(pad_size.y) * 1.1;
+        if shape != "custom" && extent.x > limit && extent.y > limit {
+            extent = point(limit, limit);
+        }
+        let vertical = extent.x < extent.y * 0.95;
+        let (mut size, along) = if vertical {
+            (extent.x, extent.y)
+        } else {
+            (extent.y, extent.x)
+        };
+        size = size.min(MAX_LABEL_SIZE);
+        let (mut name_offset, mut number_offset) = (0.0, 0.0);
+        if !name.is_empty() && !number.is_empty() {
+            size /= 2.5;
+            name_offset = size / 1.4;
+            number_offset = size / 1.7;
+        }
+
+        let mut lines = Vec::with_capacity(2);
+        if !name.is_empty() {
+            let chars = name.chars().count() + 1;
+            let mut height = (1.5 * along / chars.max(5) as f64).min(size) * 0.85;
+            if matches!(shape, "circle" | "oval") {
+                height *= 0.9;
+            }
+            lines.push((name.as_str(), height, (height * 1.4).min(name_offset)));
+        }
+        if !number.is_empty() {
+            let chars = number.chars().count();
+            let height = (1.5 * along / chars.max(3) as f64).min(size) * 0.85;
+            lines.push((number.as_str(), height, -number_offset));
+        }
+
+        for (layer, mirrored) in sides {
+            let pen = self.pen(id, layer, Part::Labels);
+            for &(text, height, offset) in &lines {
+                let glyph = point(height * 0.9, height);
+                let style = TextStyle {
+                    size: glyph,
+                    pen_width: glyph.x / 6.0,
+                    degrees: if vertical { 90.0 } else { 0.0 },
+                    mirrored,
+                    italic: false,
+                    h_align: HAlign::Center,
+                    v_align: VAlign::Center,
+                    line_spacing: 1.0,
+                };
+                let shift = if vertical {
+                    point(offset, 0.0)
+                } else {
+                    point(0.0, offset)
+                };
+                for stroke in stroke_text(text, center + shift, &style) {
+                    self.scene.polyline(pen, &stroke, style.pen_width, false);
+                }
+            }
+        }
     }
 
     fn pad_shape(&mut self, pen: Pen, pad: Expr, shape: &str, size: Point, frame: &Transform) {
@@ -120,25 +223,35 @@ impl Board {
         }
     }
 
-    fn drill(&mut self, id: u32, drill: Expr, frame: &Transform) {
-        let pen = self.pen(id, HOLES_LAYER);
+    /// Plated holes, given their pad's size, get a wall drawn around them as in KiCad.
+    fn drill(&mut self, id: u32, drill: Expr, frame: &Transform, plated_pad_size: Option<Point>) {
         let numbers: Vec<f64> = drill.args().filter_map(Expr::number).collect();
-        match (drill.has_flag("oval"), numbers.as_slice()) {
+        let (along, thickness) = match (drill.has_flag("oval"), numbers.as_slice()) {
             (true, &[width, height, ..]) => {
                 let thickness = width.min(height);
                 let along = point((width - thickness) / 2.0, (height - thickness) / 2.0);
-                self.scene.segment(
-                    pen,
-                    frame.apply(-along),
-                    frame.apply(along),
-                    frame.length(thickness),
-                );
+                (frame.apply_vector(along), frame.length(thickness))
             }
-            (_, &[diameter, ..]) => {
+            (_, &[diameter, ..]) => (Point::default(), frame.length(diameter)),
+            _ => return,
+        };
+        let center = frame.origin();
+        let mut hole = |part: Part, width: f64| {
+            let pen = self.pen(id, HOLES_LAYER, part);
+            if along == Point::default() {
+                self.scene.circle(pen, center, width / 2.0, 0.0);
+            } else {
                 self.scene
-                    .circle(pen, frame.origin(), frame.length(diameter / 2.0), 0.0)
+                    .segment(pen, center - along, center + along, width);
             }
-            _ => {}
+        };
+        match plated_pad_size {
+            Some(size) => {
+                let wall = HOLE_WALL.min(size.x / 2.0).min(size.y / 2.0);
+                hole(Part::PadWalls, thickness + 2.0 * wall);
+                hole(Part::PadHoles, thickness);
+            }
+            None => hole(Part::Npth, thickness),
         }
     }
 }

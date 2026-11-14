@@ -23,6 +23,7 @@ function encode(
 			kind,
 			userName: null,
 			side: null,
+			part: kind === 'holes' ? 'padHoles' : 'main',
 			segments: segments.length,
 			circles: circles.length,
 			triangleVertices: triangles.length

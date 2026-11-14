@@ -13,11 +13,23 @@ const layerKind = z.enum([
 	'holes'
 ]);
 
+const layerPart = z.enum([
+	'main',
+	'zones',
+	'labels',
+	'npth',
+	'padWalls',
+	'padHoles',
+	'viaWalls',
+	'viaHoles'
+]);
+
 const sceneLayerMeta = z.object({
 	name: z.string(),
 	userName: z.string().nullable(),
 	kind: layerKind,
 	side: z.enum(['front', 'back', 'inner']).nullable(),
+	part: layerPart,
 	segments: z.number().int().nonnegative(),
 	circles: z.number().int().nonnegative(),
 	triangleVertices: z.number().int().nonnegative()
@@ -63,6 +75,8 @@ const sceneMeta = z.object({
 
 export type LayerKind = z.infer<typeof layerKind>;
 
+export type LayerPart = z.infer<typeof layerPart>;
+
 export type SceneLayerMeta = z.infer<typeof sceneLayerMeta>;
 
 export type ItemKind = z.infer<typeof itemKind>;
@@ -95,7 +109,7 @@ export type Scene = {
 
 /** "SPKS" read as a little-endian u32. */
 export const MAGIC = 0x534b5053;
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 
 export function decodeScene(buffer: ArrayBuffer): Scene {
 	const view = new DataView(buffer);

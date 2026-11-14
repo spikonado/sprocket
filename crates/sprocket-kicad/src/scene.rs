@@ -6,7 +6,7 @@ use serde::{Serialize, Serializer};
 use crate::geometry::{Bounds, Point, clip_ring};
 
 const MAGIC: &[u8; 4] = b"SPKS";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 pub const HOLES_LAYER: &str = "Holes";
 const EDGE_LAYER: &str = "Edge.Cuts";
 
@@ -54,16 +54,33 @@ struct Item {
     bounds: Bounds,
 }
 
-/// Where primitives go: the item they belong to and the layer they draw on.
+/// Where primitives go: the item they belong to and the layer part they draw on.
 #[derive(Clone, Copy, Debug)]
 pub struct Pen {
     pub item: u32,
     pub layer: usize,
 }
 
+/// The separately drawn parts of a board layer, each with its own buffers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Part {
+    #[default]
+    Main,
+    Zones,
+    /// Pad numbers and net names, readable from the layer's side.
+    Labels,
+    Npth,
+    PadWalls,
+    PadHoles,
+    ViaWalls,
+    ViaHoles,
+}
+
 #[derive(Default)]
 struct Layer {
     name: String,
+    part: Part,
     segments: Vec<u8>,
     circles: Vec<u8>,
     triangles: Vec<u8>,
@@ -73,7 +90,7 @@ struct Layer {
 #[derive(Default)]
 pub struct Scene {
     layers: Vec<Layer>,
-    layer_ids: HashMap<String, usize>,
+    layer_ids: HashMap<(String, Part), usize>,
     user_names: HashMap<String, String>,
     items: Vec<Item>,
     nets: Vec<String>,
@@ -102,6 +119,7 @@ struct LayerMeta<'a> {
     user_name: Option<&'a str>,
     kind: LayerKind,
     side: Option<Side>,
+    part: Part,
     segments: usize,
     circles: usize,
     triangle_vertices: usize,
@@ -141,16 +159,18 @@ impl Scene {
         scene
     }
 
-    pub fn layer(&mut self, name: &str) -> usize {
-        if let Some(&id) = self.layer_ids.get(name) {
+    pub fn layer(&mut self, name: &str, part: Part) -> usize {
+        let key = (name.to_owned(), part);
+        if let Some(&id) = self.layer_ids.get(&key) {
             return id;
         }
         let id = self.layers.len();
         self.layers.push(Layer {
             name: name.to_owned(),
+            part,
             ..Layer::default()
         });
-        self.layer_ids.insert(name.to_owned(), id);
+        self.layer_ids.insert(key, id);
         id
     }
 
@@ -169,6 +189,10 @@ impl Scene {
         self.nets.push(name.to_owned());
         self.net_ids.insert(name.to_owned(), id);
         id
+    }
+
+    pub fn net_name(&self, net: u32) -> &str {
+        &self.nets[net as usize]
     }
 
     pub fn add_item(&mut self, kind: ItemKind, info: ItemInfo) -> u32 {
@@ -192,9 +216,17 @@ impl Scene {
         self.items[parent as usize].bounds.merge(&child);
     }
 
+    pub fn bounds(&self, item: u32) -> Bounds {
+        self.items[item as usize].bounds
+    }
+
     fn touch(&mut self, pen: Pen, p: Point, margin: f64) {
-        self.items[pen.item as usize].bounds.include(p, margin);
-        self.layers[pen.layer].bounds.include(p, margin);
+        let layer = &mut self.layers[pen.layer];
+        layer.bounds.include(p, margin);
+        // Labels can overhang their pad, whose box stays that of its copper.
+        if layer.part != Part::Labels {
+            self.items[pen.item as usize].bounds.include(p, margin);
+        }
     }
 
     pub fn segment(&mut self, pen: Pen, a: Point, b: Point, width: f64) {
@@ -298,7 +330,7 @@ impl Scene {
     }
 
     pub fn encode(self) -> Vec<u8> {
-        let mut order: Vec<usize> = (0..self.layers.len())
+        let order: Vec<usize> = (0..self.layers.len())
             .filter(|&id| {
                 let layer = &self.layers[id];
                 !(layer.segments.is_empty()
@@ -306,7 +338,6 @@ impl Scene {
                     && layer.triangles.is_empty())
             })
             .collect();
-        order.sort_by_key(|&id| layer_rank(&self.layers[id].name));
 
         let mut all = Bounds::EMPTY;
         for id in &order {
@@ -314,7 +345,7 @@ impl Scene {
         }
         let bounds = self
             .layer_ids
-            .get(EDGE_LAYER)
+            .get(&(EDGE_LAYER.to_owned(), Part::Main))
             .map(|&id| self.layers[id].bounds)
             .filter(|bounds| !bounds.is_empty())
             .unwrap_or(all);
@@ -329,6 +360,7 @@ impl Scene {
                     user_name: self.user_names.get(&layer.name).map(String::as_str),
                     kind,
                     side,
+                    part: layer.part,
                     segments: layer.segments.len() / SEGMENT_BYTES,
                     circles: layer.circles.len() / CIRCLE_BYTES,
                     triangle_vertices: layer.triangles.len() / VERTEX_BYTES,
@@ -406,50 +438,6 @@ fn classify(name: &str) -> (LayerKind, Option<Side>) {
         _ => return (LayerKind::User, None),
     };
     (kind, Some(side))
-}
-
-/// Bottom-to-top order for the front view.
-fn layer_rank(name: &str) -> (u32, u32) {
-    const BACK: [&str; 6] = [
-        "B.CrtYd", "B.Fab", "B.Adhes", "B.SilkS", "B.Paste", "B.Mask",
-    ];
-    const FRONT: [&str; 6] = [
-        "F.Mask", "F.Paste", "F.SilkS", "F.Adhes", "F.Fab", "F.CrtYd",
-    ];
-    const USER: [&str; 6] = [
-        "Edge.Cuts",
-        "Margin",
-        "Dwgs.User",
-        "Cmts.User",
-        "Eco1.User",
-        "Eco2.User",
-    ];
-    if let Some(rank) = BACK.iter().position(|&layer| layer == name) {
-        return (0, rank as u32);
-    }
-    if name == "B.Cu" {
-        return (1, 0);
-    }
-    if let Some(number) = inner_copper_number(name) {
-        return (2, u32::MAX - number);
-    }
-    if name == "F.Cu" {
-        return (3, 0);
-    }
-    if let Some(rank) = FRONT.iter().position(|&layer| layer == name) {
-        return (4, rank as u32);
-    }
-    if let Some(rank) = USER.iter().position(|&layer| layer == name) {
-        return (5, rank as u32);
-    }
-    if name == HOLES_LAYER {
-        return (7, 0);
-    }
-    let user_number = name
-        .strip_prefix("User.")
-        .and_then(|number| number.parse().ok())
-        .unwrap_or(u32::MAX);
-    (6, user_number)
 }
 
 pub fn inner_copper_number(name: &str) -> Option<u32> {

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use super::{Board, FIRST_BOLD_MULTIPLIER, Fields, LAST_IMPLICIT_POLY_FILL, child_point, points};
 use crate::geometry::{Arc, Bounds, Point, Transform, cubic_bezier, point};
-use crate::scene::{ItemInfo, ItemKind, Pen, Scene};
+use crate::scene::{ItemInfo, ItemKind, Part, Pen, Scene};
 use crate::sexpr::Expr;
 use crate::text::{HAlign, TextStyle, VAlign, pen_width, stroke_text};
 
@@ -29,7 +29,7 @@ impl Board {
                 ..ItemInfo::default()
             },
         );
-        let pen = self.pen(id, &layer);
+        let pen = self.pen(id, &layer, Part::Main);
         self.shape(pen, shape, name, &Transform::IDENTITY, false);
     }
 
@@ -179,7 +179,7 @@ impl Board {
         if hidden || raw.is_empty() {
             return bounds;
         }
-        let pen = self.pen(item, &layer);
+        let pen = self.pen(item, &layer, Part::Main);
         let font = effects.and_then(|effects| effects.child("font"));
         if let (Some(_), Some(cache)) = (
             font.and_then(|font| font.child("face")),
@@ -310,7 +310,7 @@ impl Board {
                 ..ItemInfo::default()
             },
         );
-        let pen = self.pen(id, &layer);
+        let pen = self.pen(id, &layer, Part::Main);
         let style = dimension.child("style");
         let style_number = |name: &str| style.and_then(|style| style.number_value(name));
         let thickness = style_number("thickness").unwrap_or(0.2);

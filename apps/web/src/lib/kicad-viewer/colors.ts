@@ -1,14 +1,27 @@
-import type { LayerKind, SceneLayerMeta } from '$lib/kicad-viewer/scene';
+import type { LayerKind, LayerPart, SceneLayerMeta } from '$lib/kicad-viewer/scene';
 
 export type Rgba = [r: number, g: number, b: number, a: number];
 
-/** Colors from KiCad's built-in default PCB theme, `builtin_color_themes.h`. */
+/** Colors from KiCad's built-in default PCB theme, `builtin_color_themes.h` and `themes.h`. */
 export const BACKGROUND: Rgba = [0, 16, 35, 1];
 
 export const SELECTION: Rgba = [255, 255, 255, 0.55];
 
-/** Layers draw semi-transparent so the ones beneath stay visible, as in KiCad. */
-const LAYER_OPACITY = 0.8;
+/** KiCad's default zone opacity. Everything else uses its theme color's alpha. */
+const ZONE_OPACITY = 0.6;
+
+const PAD_LABEL: Rgba = [255, 255, 255, 0.9];
+
+const VIA_HOLE: Rgba = [227, 183, 46, 1];
+
+/** KiCad paints pad hole walls in the via hole color and fills plated holes with the background. */
+const HOLE_COLORS: Partial<Record<LayerPart, Rgba>> = {
+	npth: [26, 196, 210, 1],
+	padWalls: VIA_HOLE,
+	padHoles: BACKGROUND,
+	viaWalls: [236, 236, 236, 1],
+	viaHoles: VIA_HOLE
+};
 
 const INNER_COPPER: [number, number, number][] = [
 	[127, 200, 127],
@@ -88,12 +101,16 @@ function themeColor(layer: Pick<SceneLayerMeta, 'name' | 'kind' | 'side'>): Rgba
 	return [...USER_COLORS[user ? (Number(user[1]) - 1) % USER_COLORS.length : 0], 1];
 }
 
-export function layerColor(layer: Pick<SceneLayerMeta, 'name' | 'kind' | 'side'>): Rgba {
-	if (layer.kind === 'holes') return BACKGROUND;
+export function layerColor(layer: Pick<SceneLayerMeta, 'name' | 'kind' | 'side' | 'part'>): Rgba {
+	const hole = HOLE_COLORS[layer.part];
+
+	if (hole) return hole;
+
+	if (layer.part === 'labels') return PAD_LABEL;
 
 	const [r, g, b, a] = themeColor(layer);
 
-	return [r, g, b, a * LAYER_OPACITY];
+	return layer.part === 'zones' ? [r, g, b, a * ZONE_OPACITY] : [r, g, b, a];
 }
 
 export function cssColor([r, g, b]: Rgba) {

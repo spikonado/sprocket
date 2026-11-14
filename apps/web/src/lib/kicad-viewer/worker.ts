@@ -7,22 +7,30 @@ import {
 	type Camera
 } from '$lib/kicad-viewer/camera';
 import { cssColor, layerColor } from '$lib/kicad-viewer/colors';
+import {
+	compareRanks,
+	drawRank,
+	drawsOverSelection,
+	visibleByDefault
+} from '$lib/kicad-viewer/layers';
 import { bestHit, PickIndex } from '$lib/kicad-viewer/pick-index';
 import type {
 	FromWorker,
 	PickedItem,
 	PointerPhase,
 	ToWorker,
-	ViewportSize
+	ViewportSize,
+	ViewerLayer
 } from '$lib/kicad-viewer/protocol';
 import { BoardRenderer, type DrawLayer } from '$lib/kicad-viewer/renderer';
-import { decodeScene, type Scene, type SceneLayerMeta } from '$lib/kicad-viewer/scene';
+import { decodeScene, type Scene } from '$lib/kicad-viewer/scene';
 
 const CLICK_SLOP_PX = 4;
 const PICK_TOLERANCE_PX = 3;
 const WHEEL_ZOOM_PER_PX = 0.002;
 const PINCH_ZOOM_PER_PX = 0.01;
 const LINE_PX = 16;
+const LABEL_MIN_STROKE_PX = 0.5;
 
 let canvas: OffscreenCanvas | null = null;
 let gl: WebGL2RenderingContext | null = null;
@@ -84,9 +92,9 @@ function handle(message: ToWorker) {
 		}
 
 		case 'layerVisible': {
-			const layer = scene?.layers.findIndex(({ name }) => name === message.name) ?? -1;
-
-			if (layer >= 0) visible[layer] = message.visible;
+			scene?.layers.forEach(({ name }, layer) => {
+				if (name === message.name) visible[layer] = message.visible;
+			});
 
 			return requestFrame();
 		}
@@ -157,7 +165,10 @@ function concat(chunks: Uint8Array[]) {
 	return bytes.buffer;
 }
 
-/** Keeps each layer's visibility by name, so a reload keeps the user's layer choices. */
+/**
+ * Keeps each layer's visibility by name, so a reload keeps the user's layer choices. The layer
+ * list has one entry per board layer, which toggles all of that layer's parts.
+ */
 function load(context: WebGL2RenderingContext, buffer: ArrayBuffer) {
 	const next = decodeScene(buffer);
 	const previous = new Map(scene?.layers.map(({ name }, layer) => [name, visible[layer]]));
@@ -169,24 +180,24 @@ function load(context: WebGL2RenderingContext, buffer: ArrayBuffer) {
 	visible = next.layers.map((layer) => previous.get(layer.name) ?? visibleByDefault(layer));
 	renderer = new BoardRenderer(context, next);
 
-	post({
-		type: 'loaded',
-		layers: next.layers
-			.map((layer, layerIndex) => ({
-				name: layer.name,
-				label: layer.userName ?? layer.name,
-				color: cssColor(layerColor(layer)),
-				visible: visible[layerIndex]
-			}))
-			.reverse()
-	});
+	const listed = new Map<string, ViewerLayer>();
+
+	for (const part of drawOrder(next, false)) {
+		const layer = next.layers[part];
+
+		if (listed.has(layer.name)) continue;
+		listed.set(layer.name, {
+			name: layer.name,
+			label: layer.userName ?? layer.name,
+			color: cssColor(layerColor(layer)),
+			visible: visible[part]
+		});
+	}
+
+	post({ type: 'loaded', layers: [...listed.values()].reverse() });
 
 	// Item indexes don't survive a reload, so the selection can't either.
 	select(null, selected !== null);
-}
-
-function visibleByDefault(layer: SceneLayerMeta) {
-	return layer.kind !== 'paste' && layer.name !== 'Margin';
 }
 
 function resize(viewport: ViewportSize) {
@@ -282,17 +293,11 @@ function currentCamera() {
 	return camera;
 }
 
-/** Bottom to top for the current side. Holes always come last. */
-function drawOrder(current: Scene) {
-	const order = current.layers
-		.map((_, layer) => layer)
-		.filter((layer) => current.layers[layer].kind !== 'holes');
+/** Layer part indexes from bottom to top for one side of the board. */
+function drawOrder(current: Scene, fromBack: boolean) {
+	const ranks = current.layers.map((layer) => drawRank(layer, fromBack));
 
-	if (flipped) order.reverse();
-
-	const holes = current.layers.findIndex(({ kind }) => kind === 'holes');
-
-	return holes >= 0 ? [...order, holes] : order;
+	return current.layers.map((_, layer) => layer).sort((a, b) => compareRanks(ranks[a], ranks[b]));
 }
 
 function pick(x: number, y: number) {
@@ -301,7 +306,7 @@ function pick(x: number, y: number) {
 	if (!scene || !current) return;
 	index ??= new PickIndex(scene);
 
-	const order = drawOrder(scene);
+	const order = drawOrder(scene, flipped);
 	const [bx, by] = toBoard(current, size, x, y);
 	const hits = index.hits(bx, by, PICK_TOLERANCE_PX / current.zoom, (layer) => visible[layer]);
 	const best = bestHit(hits, scene, (layer) => order.indexOf(layer));
@@ -374,22 +379,29 @@ function drawFrame() {
 
 	if (!scene || !renderer || !current || !hasSize() || gl?.isContextLost()) return;
 
-	const layerOf = (layer: number): DrawLayer => ({
-		index: layer,
-		color: layerColor(scene!.layers[layer])
-	});
+	const layers: DrawLayer[] = [];
+	const overlays: DrawLayer[] = [];
 
-	const shown = drawOrder(scene).filter((layer) => visible[layer]);
-	const top = shown.at(-1);
-	const holes = top !== undefined && scene.layers[top].kind === 'holes' ? top : null;
+	for (const part of drawOrder(scene, flipped)) {
+		if (!visible[part]) continue;
+
+		const layer = scene.layers[part];
+
+		(drawsOverSelection(drawRank(layer, flipped)) ? overlays : layers).push({
+			index: part,
+			color: layerColor(layer),
+			minWidthPx: layer.part === 'labels' ? LABEL_MIN_STROKE_PX * size.dpr : 0
+		});
+	}
+
 	const { scale, offset } = clipTransform(current, size);
 
 	renderer.draw({
 		scale,
 		offset,
 		pxPerMm: current.zoom * size.dpr,
-		layers: (holes === null ? shown : shown.slice(0, -1)).map(layerOf),
-		holes: holes === null ? null : layerOf(holes),
+		layers,
+		overlays,
 		selection: selected !== null
 	});
 

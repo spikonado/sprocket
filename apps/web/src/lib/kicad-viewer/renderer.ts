@@ -1,7 +1,8 @@
 import { BACKGROUND, SELECTION, type Rgba } from '$lib/kicad-viewer/colors';
 import { CIRCLE_BYTES, SEGMENT_BYTES, VERTEX_BYTES, type Scene } from '$lib/kicad-viewer/scene';
 
-export type DrawLayer = { index: number; color: Rgba };
+/** Segments thinner than `minWidthPx` device pixels are skipped, as KiCad hides small text. */
+export type DrawLayer = { index: number; color: Rgba; minWidthPx: number };
 
 export type Frame = {
 	scale: readonly number[];
@@ -10,8 +11,8 @@ export type Frame = {
 	pxPerMm: number;
 	/** Bottom to top. */
 	layers: DrawLayer[];
-	/** Drawn after the selection, so holes stay open in selected pads. */
-	holes: DrawLayer | null;
+	/** Drawn after the selection, so holes stay open and labels readable in selected pads. */
+	overlays: DrawLayer[];
 	selection: boolean;
 };
 
@@ -21,6 +22,7 @@ precision highp int;
 uniform vec2 u_scale;
 uniform vec2 u_offset;
 uniform float u_pxPerMm;
+uniform float u_minWidthPx;
 uniform highp sampler2D u_flags;
 uniform uint u_flagsWidth;
 uniform bool u_selectedOnly;
@@ -61,7 +63,7 @@ out float v_length;
 out float v_radius;
 
 void main() {
-	if (culled(a_item)) { gl_Position = HIDDEN; return; }
+	if (culled(a_item) || a_width * u_pxPerMm < u_minWidthPx) { gl_Position = HIDDEN; return; }
 	vec2 delta = a_line.zw - a_line.xy;
 	float len = length(delta);
 	vec2 along = len > 0.0 ? delta / len : vec2(1.0, 0.0);
@@ -144,6 +146,7 @@ const UNIFORMS = [
 	'u_scale',
 	'u_offset',
 	'u_pxPerMm',
+	'u_minWidthPx',
 	'u_flags',
 	'u_flagsWidth',
 	'u_selectedOnly',
@@ -245,14 +248,14 @@ export class BoardRenderer {
 			gl.stencilFunc(gl.NOTEQUAL, stencil, 0xff);
 			gl.blendColor(0, 0, 0, color[3]);
 
-			for (const layer of layers) this.drawLayer(frame, layer.index, color, selectedOnly);
+			for (const layer of layers) this.drawLayer(frame, layer, color, selectedOnly);
 		};
 
 		for (const layer of frame.layers) pass([layer], layer.color, false);
 
 		if (frame.selection) pass(frame.layers, SELECTION, true);
 
-		if (frame.holes) pass([frame.holes], frame.holes.color, false);
+		for (const layer of frame.overlays) pass([layer], layer.color, false);
 	}
 
 	dispose() {
@@ -267,13 +270,14 @@ export class BoardRenderer {
 		gl.deleteTexture(this.flags);
 	}
 
-	private drawLayer(frame: Frame, index: number, color: Rgba, selectedOnly: boolean) {
+	private drawLayer(frame: Frame, drawn: DrawLayer, color: Rgba, selectedOnly: boolean) {
 		const { gl, scene } = this;
-		const layer = scene.layers[index];
+		const layer = scene.layers[drawn.index];
 		const base = scene.geometryOffset;
 
 		if (layer.segments > 0) {
-			const { attributes: a } = this.use(this.segments, frame, color, selectedOnly);
+			const { attributes: a, uniforms: u } = this.use(this.segments, frame, color, selectedOnly);
+			gl.uniform1f(u.u_minWidthPx, drawn.minWidthPx);
 			const offset = layer.segmentOffset - base;
 			floatAttribute(gl, a.a_line, 4, SEGMENT_BYTES, offset, 1);
 			floatAttribute(gl, a.a_width, 1, SEGMENT_BYTES, offset + 16, 1);

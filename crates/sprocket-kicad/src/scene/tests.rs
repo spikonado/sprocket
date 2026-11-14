@@ -6,33 +6,38 @@ fn u32_at(bytes: &[u8], offset: usize) -> u32 {
 }
 
 #[test]
-fn encodes_layers_bottom_to_top_with_aligned_buffers() {
+fn encodes_nonempty_layer_parts_with_aligned_buffers() {
     let mut scene = Scene::new();
     let item = scene.add_item(ItemKind::Shape, ItemInfo::default());
     let front = Pen {
         item,
-        layer: scene.layer("F.SilkS"),
+        layer: scene.layer("F.SilkS", Part::Main),
     };
     let back = Pen {
         item,
-        layer: scene.layer("B.Cu"),
+        layer: scene.layer("B.Cu", Part::Zones),
     };
-    scene.layer("In1.Cu");
+    scene.layer("In1.Cu", Part::Main);
     scene.segment(front, point(0.0, 0.0), point(1.0, 0.0), 0.5);
     scene.circle(back, point(2.0, 2.0), 1.0, 0.0);
     let bytes = scene.encode();
 
     assert_eq!(&bytes[..4], b"SPKS");
-    assert_eq!(u32_at(&bytes, 4), 1);
+    assert_eq!(u32_at(&bytes, 4), FORMAT_VERSION);
     let meta_len = u32_at(&bytes, 8) as usize;
     let meta: serde_json::Value = serde_json::from_slice(&bytes[12..12 + meta_len]).unwrap();
-    let names: Vec<&str> = meta["layers"]
+    let names: Vec<(&str, &str)> = meta["layers"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|layer| layer["name"].as_str().unwrap())
+        .map(|layer| {
+            (
+                layer["name"].as_str().unwrap(),
+                layer["part"].as_str().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(names, ["B.Cu", "F.SilkS"]);
+    assert_eq!(names, [("F.SilkS", "main"), ("B.Cu", "zones")]);
     assert_eq!(
         meta["items"][0]["bbox"],
         serde_json::json!([-0.25, -0.25, 3.0, 3.0])
@@ -40,8 +45,9 @@ fn encodes_layers_bottom_to_top_with_aligned_buffers() {
     assert_eq!(meta["nets"], serde_json::json!([""]));
 
     let buffers = 12 + meta_len.next_multiple_of(4);
-    assert_eq!(bytes.len(), buffers + CIRCLE_BYTES + SEGMENT_BYTES);
-    let radius = f32::from_le_bytes(bytes[buffers + 8..buffers + 12].try_into().unwrap());
+    assert_eq!(bytes.len(), buffers + SEGMENT_BYTES + CIRCLE_BYTES);
+    let circle = buffers + SEGMENT_BYTES;
+    let radius = f32::from_le_bytes(bytes[circle + 8..circle + 12].try_into().unwrap());
     assert_eq!(radius, 1.0);
 }
 
@@ -63,7 +69,7 @@ fn large_polygons_split_without_losing_area() {
     let item = scene.add_item(ItemKind::Zone, ItemInfo::default());
     let pen = Pen {
         item,
-        layer: scene.layer("F.Cu"),
+        layer: scene.layer("F.Cu", Part::Zones),
     };
     scene.polygon(pen, &comb, &[]);
 

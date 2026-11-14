@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::geometry::{Arc, Point, Transform, point};
-use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Pen, Scene, inner_copper_number};
+use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen, Scene, inner_copper_number};
 use crate::sexpr::{Expr, for_each_item};
 
 mod graphics;
@@ -17,6 +17,8 @@ const FIRST_FP_AFFINE_TRANSFORM: i64 = 20260616;
 const FIRST_BOLD_MULTIPLIER: i64 = 20260826;
 /// Polygons without a `(fill)` token are filled up to this version.
 const LAST_IMPLICIT_POLY_FILL: i64 = 20210722;
+/// KiCad paints hole walls 1.5 times its default 0.035 mm plating thickness.
+const HOLE_WALL: f64 = 1.5 * 0.035;
 
 pub fn scene(src: &str) -> Result<Vec<u8>> {
     let mut board = Board {
@@ -159,10 +161,10 @@ impl Board {
         out
     }
 
-    fn pen(&mut self, item: u32, layer: &str) -> Pen {
+    fn pen(&mut self, item: u32, layer: &str, part: Part) -> Pen {
         Pen {
             item,
-            layer: self.scene.layer(layer),
+            layer: self.scene.layer(layer, part),
         }
     }
 
@@ -228,7 +230,7 @@ impl Board {
                         .filter(|shape| graphics::is_shape(shape))
                         && let Some(layer) = child.value("layer")
                     {
-                        let pen = self.pen(id, &layer);
+                        let pen = self.pen(id, &layer, Part::Main);
                         self.shape(pen, child, shape, &frame, false);
                     }
                 }
@@ -251,7 +253,7 @@ impl Board {
                 ..ItemInfo::default()
             },
         );
-        let pen = self.pen(id, &layer);
+        let pen = self.pen(id, &layer, Part::Main);
         let (Some(start), Some(end)) = (child_point(track, "start"), child_point(track, "end"))
         else {
             return;
@@ -294,12 +296,15 @@ impl Board {
         );
         let radius = via.number_value("size").unwrap_or(0.0) / 2.0;
         for layer in &spanned {
-            let pen = self.pen(id, layer);
+            let pen = self.pen(id, layer, Part::Main);
             self.scene.circle(pen, center, radius, 0.0);
         }
         if let Some(drill) = via.number_value("drill") {
-            let pen = self.pen(id, HOLES_LAYER);
-            self.scene.circle(pen, center, drill / 2.0, 0.0);
+            let wall = self.pen(id, HOLES_LAYER, Part::ViaWalls);
+            self.scene
+                .circle(wall, center, (drill / 2.0 + HOLE_WALL).min(radius), 0.0);
+            let hole = self.pen(id, HOLES_LAYER, Part::ViaHoles);
+            self.scene.circle(hole, center, drill / 2.0, 0.0);
         }
     }
 
@@ -343,7 +348,7 @@ impl Board {
             let Some(layer) = fill.value("layer") else {
                 continue;
             };
-            let pen = self.pen(id, &layer);
+            let pen = self.pen(id, &layer, Part::Zones);
             let mut rings = fill.children_named("pts").map(|pts| {
                 points(pts)
                     .into_iter()
