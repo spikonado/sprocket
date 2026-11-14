@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { Text } from '@codemirror/state';
 import { artifactWatchScopeKey } from '$lib/chat/artifacts';
 import {
 	DEFAULT_SIDE_PANEL_SNAPSHOT,
@@ -6,9 +7,9 @@ import {
 	mapPanes,
 	mapSplit,
 	panesOf,
-	removePane,
 	renamedPath,
 	type FileDraft,
+	type SidePanelContentView,
 	type SidePanelLayout,
 	type SidePanelPane,
 	type SidePanelSnapshot,
@@ -20,12 +21,60 @@ import type { ArtifactsWatchRequest, LocalApi, WorkspaceFileTarget } from '$lib/
 
 type ArtifactLocalApi = Pick<LocalApi, 'watchArtifactSync'>;
 
+export type SidePanelTabPatch = Partial<Omit<SidePanelTab, 'id' | 'view'>> & {
+	view?: SidePanelContentView | null;
+};
+
+function layoutKeyOf(scope: ArtifactsWatchRequest | null, threadId: string | null) {
+	if (threadId) return `thread:${threadId}`;
+
+	return scope ? `draft:${artifactWatchScopeKey(scope)}` : null;
+}
+
+function mapTabs(snapshot: SidePanelSnapshot, map: (tab: SidePanelTab) => SidePanelTab) {
+	return {
+		...snapshot,
+		layout: mapPanes(snapshot.layout, (pane) => ({ ...pane, tabs: pane.tabs.map(map) }))
+	};
+}
+
+function withoutTabs(snapshot: SidePanelSnapshot, matches: (tab: SidePanelTab) => boolean) {
+	function prune(node: SidePanelLayout): SidePanelLayout | null {
+		if (node.type === 'split') {
+			const first = prune(node.first);
+			const second = prune(node.second);
+
+			return first && second ? { ...node, first, second } : (first ?? second);
+		}
+
+		const tabs = node.tabs.filter((tab) => tab.view === 'transcript' || !matches(tab));
+
+		if (!tabs.length) return null;
+		const index = node.tabs.findIndex((tab) => tab.id === node.activeTabId);
+
+		const activeTabId = tabs.some((tab) => tab.id === node.activeTabId)
+			? node.activeTabId
+			: tabs[Math.min(index, tabs.length - 1)]!.id;
+
+		return { ...node, tabs, activeTabId };
+	}
+
+	const layout = prune(snapshot.layout)!;
+	const panes = panesOf(layout);
+
+	const activePaneId = panes.some((pane) => pane.id === snapshot.activePaneId)
+		? snapshot.activePaneId
+		: panes[0]!.id;
+
+	return { ...snapshot, layout, activePaneId };
+}
+
 export class ArtifactPanel implements Store<number> {
-	panel: SidePanelSnapshot = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
+	panel: SidePanelSnapshot = DEFAULT_SIDE_PANEL_SNAPSHOT;
 	fullscreenKey: string | null = null;
 
 	#snapshots = new Map<string, SidePanelSnapshot>();
-	#panelScopeKey: string | null = null;
+	#layoutKey: string | null = null;
 	#nextId = 1;
 	#version = 0;
 	readonly #listeners = new Set<() => void>();
@@ -40,16 +89,18 @@ export class ArtifactPanel implements Store<number> {
 		};
 	};
 
+	get layoutKey() {
+		return this.#layoutKey;
+	}
+
 	/** Artifacts whose content a visible tab or the fullscreen view shows. */
 	get shownArtifactKeys() {
 		const keys = new Set<string>();
 
-		if (this.panel.open) {
-			for (const pane of this.panes) {
-				const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
+		for (const pane of this.panes) {
+			const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
 
-				if (tab?.view === 'artifacts' && tab.selectedKey) keys.add(tab.selectedKey);
-			}
+			if (tab?.view === 'artifacts' && tab.selectedKey) keys.add(tab.selectedKey);
 		}
 
 		if (this.fullscreenKey) keys.add(this.fullscreenKey);
@@ -83,23 +134,19 @@ export class ArtifactPanel implements Store<number> {
 
 		return (
 			hasDraft(this.panel) ||
-			[...this.#snapshots].some(
-				([scopeKey, snapshot]) => scopeKey !== this.#panelScopeKey && hasDraft(snapshot)
-			)
+			[...this.#snapshots].some(([key, snapshot]) => key !== this.#layoutKey && hasDraft(snapshot))
 		);
 	}
 
-	selectScope(scope: ArtifactsWatchRequest | null) {
-		const scopeKey = scope ? artifactWatchScopeKey(scope) : null;
+	selectScope(scope: ArtifactsWatchRequest | null, threadId: string | null) {
+		const key = layoutKeyOf(scope, threadId);
 
-		if (scopeKey === this.#panelScopeKey) return;
+		if (key === this.#layoutKey) return;
 
-		if (this.#panelScopeKey) this.#snapshots.set(this.#panelScopeKey, this.panel);
-		this.#panelScopeKey = scopeKey;
+		if (this.#layoutKey) this.#snapshots.set(this.#layoutKey, this.panel);
+		this.#layoutKey = key;
 		this.fullscreenKey = null;
-		this.panel = {
-			...((scopeKey && this.#snapshots.get(scopeKey)) || DEFAULT_SIDE_PANEL_SNAPSHOT)
-		};
+		this.panel = (key && this.#snapshots.get(key)) || DEFAULT_SIDE_PANEL_SNAPSHOT;
 		this.#emit();
 	}
 
@@ -119,14 +166,9 @@ export class ArtifactPanel implements Store<number> {
 
 	reset() {
 		this.#snapshots.clear();
-		this.#panelScopeKey = null;
-		this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
+		this.#layoutKey = null;
+		this.panel = DEFAULT_SIDE_PANEL_SNAPSHOT;
 		this.fullscreenKey = null;
-		this.#emit();
-	}
-
-	update(patch: Partial<Pick<SidePanelSnapshot, 'open' | 'expanded'>>) {
-		this.panel = { ...this.panel, ...patch };
 		this.#emit();
 	}
 
@@ -188,50 +230,46 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	updateTab(id: string, patch: Partial<Omit<SidePanelTab, 'id'>>) {
+	updateTab(id: string, patch: SidePanelTabPatch) {
 		this.#setTabs((tab) => (tab.id === id ? { ...tab, ...patch } : tab));
 		this.#emit();
 	}
 
 	setFileDraft(id: string, draft: FileDraft | undefined) {
-		const tab = this.tabs.find((candidate) => candidate.id === id);
+		let changed = false;
+		this.#mapLayouts((snapshot) =>
+			mapTabs(snapshot, (tab) => {
+				if (tab.id !== id) return tab;
+				changed ||= !tab.draft !== !draft;
 
-		if (!tab) return;
-		this.#setTabs((candidate) => (candidate === tab ? { ...tab, draft } : candidate));
+				return { ...tab, draft };
+			})
+		);
 
-		if (!tab.draft !== !draft) this.#emit();
+		if (changed) this.#emit();
+	}
+
+	fileSaved(id: string, doc: Text, version: string) {
+		this.#mapLayouts((snapshot) =>
+			mapTabs(snapshot, (tab) => {
+				if (tab.id !== id) return tab;
+
+				const draft =
+					!tab.draft || tab.draft.doc.eq(doc) ? undefined : { ...tab.draft, base: doc, version };
+
+				return { ...tab, draft, saved: { doc, version } };
+			})
+		);
+		this.#emit();
 	}
 
 	closeTab(id: string) {
 		const pane = this.#paneOf(id);
+		const tab = pane?.tabs.find((candidate) => candidate.id === id);
 
-		if (!pane) return;
+		if (!pane || !tab || tab.view === 'transcript') return;
 
-		const panes = this.panes;
-		const index = pane.tabs.findIndex((tab) => tab.id === id);
-		const tabs = pane.tabs.filter((tab) => tab.id !== id);
-
-		if (tabs.length === 0 && panes.length === 1) {
-			this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
-		} else if (tabs.length === 0) {
-			const rest = panes.filter((candidate) => candidate !== pane);
-			const paneIndex = panes.indexOf(pane);
-
-			const activePaneId =
-				this.panel.activePaneId === pane.id
-					? rest[Math.min(paneIndex, rest.length - 1)]!.id
-					: this.panel.activePaneId;
-
-			this.panel = { ...this.panel, layout: removePane(this.panel.layout, pane.id), activePaneId };
-		} else {
-			const activeTabId =
-				pane.activeTabId === id ? tabs[Math.min(index, tabs.length - 1)]!.id : pane.activeTabId;
-
-			this.#setPanes((candidate) =>
-				candidate === pane ? { ...pane, tabs, activeTabId } : candidate
-			);
-		}
-
+		this.panel = withoutTabs(this.panel, (candidate) => candidate.id === id);
 		this.#emit();
 	}
 
@@ -256,7 +294,7 @@ export class ArtifactPanel implements Store<number> {
 				tab.file.path === file.path
 		);
 
-		if (existing && this.panel.open && this.activeTab === existing) return;
+		if (existing && this.activeTab === existing) return;
 		this.#show(existing, { view: 'file', file });
 	}
 
@@ -270,25 +308,29 @@ export class ArtifactPanel implements Store<number> {
 	renameFile(workspacePath: string, from: string, to: string) {
 		let changed = false;
 
-		this.#setTabs((tab) => {
-			if (tab.file?.workspacePath !== workspacePath) return tab;
-			const path = renamedPath(tab.file.path, from, to);
+		this.#mapLayouts((snapshot) =>
+			mapTabs(snapshot, (tab) => {
+				if (tab.file?.workspacePath !== workspacePath) return tab;
+				const path = renamedPath(tab.file.path, from, to);
 
-			if (path === null) return tab;
-			changed = true;
+				if (path === null) return tab;
+				changed = true;
 
-			return { ...tab, file: { workspacePath, path } };
-		});
+				return { ...tab, file: { workspacePath, path } };
+			})
+		);
 
 		if (changed) this.#emit();
 	}
 
 	closeFile(workspacePath: string, path: string) {
-		for (const tab of this.tabs) {
-			if (tab.file?.workspacePath === workspacePath && isSameOrInside(tab.file.path, path)) {
-				this.closeTab(tab.id);
-			}
-		}
+		this.#mapLayouts((snapshot) =>
+			withoutTabs(
+				snapshot,
+				(tab) => tab.file?.workspacePath === workspacePath && isSameOrInside(tab.file.path, path)
+			)
+		);
+		this.#emit();
 	}
 
 	#createTab(): SidePanelTab {
@@ -304,7 +346,15 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	#setTabs(map: (tab: SidePanelTab) => SidePanelTab) {
-		this.#setPanes((pane) => ({ ...pane, tabs: pane.tabs.map(map) }));
+		this.panel = mapTabs(this.panel, map);
+	}
+
+	#mapLayouts(map: (snapshot: SidePanelSnapshot) => SidePanelSnapshot) {
+		this.panel = map(this.panel);
+
+		for (const [key, snapshot] of this.#snapshots) {
+			if (key !== this.#layoutKey) this.#snapshots.set(key, map(snapshot));
+		}
 	}
 
 	#focus(pane: SidePanelPane, patch: Partial<Pick<SidePanelPane, 'tabs' | 'activeTabId'>>) {
@@ -312,7 +362,7 @@ export class ArtifactPanel implements Store<number> {
 		this.panel = { ...this.panel, activePaneId: pane.id };
 	}
 
-	#show(existing: SidePanelTab | undefined, content: Partial<Omit<SidePanelTab, 'id'>>) {
+	#show(existing: SidePanelTab | undefined, content: SidePanelTabPatch) {
 		const active = this.activeTab;
 		const target = existing ?? (active.view === null ? active : this.#createTab());
 		const tab = { ...target, ...content };
@@ -324,7 +374,6 @@ export class ArtifactPanel implements Store<number> {
 				: [...pane.tabs, tab],
 			activeTabId: tab.id
 		});
-		this.panel = { ...this.panel, open: true };
 		this.#emit();
 	}
 

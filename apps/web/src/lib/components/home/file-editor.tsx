@@ -7,7 +7,7 @@ import { basicSetup, EditorView } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 import KicadViewer from '$lib/components/home/kicad-viewer';
 import { workspaceImageUrl } from '$lib/chat/markdown-images';
-import { leafName, type FileDraft } from '$lib/chat/side-panel';
+import { leafName, type FileDraft, type FileSave } from '$lib/chat/side-panel';
 import { usePageVisible } from '$lib/page-visibility';
 import { KICAD_FILE } from '$lib/kicad';
 import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/types/sprocket';
@@ -21,8 +21,10 @@ type Props = {
 	api: FileEditorApi | null;
 	file: WorkspaceFileTarget;
 	initialDraft?: FileDraft;
+	saved?: FileSave;
 	active: boolean;
 	onDraftChange: (draft: FileDraft | undefined) => void;
+	onSaved: (doc: Text, version: string) => void;
 };
 
 type Status =
@@ -85,7 +87,7 @@ function ImagePreview({ file }: { file: WorkspaceFileTarget }) {
 	);
 }
 
-function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Props) {
+function TextFileEditor({ api, file, initialDraft, saved, active, onDraftChange, onSaved }: Props) {
 	const [status, setStatus] = useState<Status>({ kind: 'loading' });
 	const [readError, setReadError] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
@@ -98,8 +100,8 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 	const rewatch = useRef(() => {});
 	const visible = usePageVisible();
 	const language = useRef(new Compartment());
-	const latest = useRef({ api, file, onDraftChange });
-	latest.current = { api, file, onDraftChange };
+	const latest = useRef({ api, file, onDraftChange, onSaved });
+	latest.current = { api, file, onDraftChange, onSaved };
 
 	const actions = useRef<{
 		save: (overwrite: boolean) => void;
@@ -215,7 +217,7 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 	}
 
 	async function save(overwrite: boolean) {
-		const { api, file } = latest.current;
+		const { api, file, onSaved } = latest.current;
 		const view = viewRef.current;
 
 		if (!api || !view || version.current === null) return;
@@ -236,7 +238,9 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 			version.current = result.version;
 			setDiskChange(null);
 			setSaveError(null);
-			reportDraft();
+
+			if (viewRef.current === view) reportDraft();
+			onSaved(doc, result.version);
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : 'Could not save the file.');
 		} finally {
@@ -252,7 +256,11 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 		replace: replaceContent
 	};
 
-	const initialDraftRef = useRef(initialDraft);
+	const initialDraftRef = useRef(
+		initialDraft ?? (saved ? { ...saved, base: saved.doc } : undefined)
+	);
+
+	const appliedSave = useRef(saved);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -273,6 +281,17 @@ function TextFileEditor({ api, file, initialDraft, active, onDraftChange }: Prop
 			viewRef.current = null;
 		};
 	}, []);
+
+	useEffect(() => {
+		if (saved === appliedSave.current) return;
+		appliedSave.current = saved;
+
+		if (!saved || version.current === saved.version) return;
+		savedDoc.current = saved.doc;
+		version.current = saved.version;
+		setDiskChange(null);
+		reportDraft();
+	}, [saved]);
 
 	useEffect(() => {
 		if (viewRef.current) void loadLanguage(viewRef.current);

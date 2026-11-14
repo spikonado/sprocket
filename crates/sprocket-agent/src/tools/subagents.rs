@@ -19,9 +19,9 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
-use crate::catalog::{SubagentModelChoices, model_catalog};
+use crate::catalog::{SubagentModelChoice, model_catalog};
 use crate::convex::{MutationFailure, RuntimeClient};
-use crate::run_settings::{ModelSettings, ResolvedSettings, SettingsOverrides, resolve_settings};
+use crate::run_settings::{ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
     CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
     SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo, SubagentThreadSnapshot,
@@ -103,13 +103,10 @@ impl SubagentPolls {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SpawnSubagentArgs {
     pub(crate) prompt: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) reasoning: Option<String>,
+    pub(crate) model: String,
+    pub(crate) reasoning: String,
     /// Use the fast service tier.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) fast: Option<bool>,
+    pub(crate) fast: bool,
     /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
@@ -121,6 +118,13 @@ pub(crate) struct SpawnSubagentArgs {
     /// Maximum execution runtime. Without a limit, the subagent runs until it completes or is stopped.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
+}
+
+struct SubagentRequest {
+    prompt: String,
+    overrides: SettingsOverrides,
+    yield_time_ms: u64,
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -206,18 +210,49 @@ pub(crate) struct ListSubagentsArgs {
     pub(crate) cursor: Option<String>,
 }
 
-fn set_model_choices(schema: &mut serde_json::Value, choices: &SubagentModelChoices) {
-    schema["properties"]["model"] = json!({ "type": "string", "enum": choices.model_ids });
-    schema["properties"]["reasoning"] =
-        json!({ "type": "string", "enum": choices.reasoning_efforts });
+const SETTINGS_FIELDS: [&str; 3] = ["model", "reasoning", "fast"];
+
+fn set_model_choices(schema: &mut serde_json::Value, choices: &[SubagentModelChoice]) {
+    let mut reasoning_efforts: Vec<&str> = Vec::new();
+    for effort in choices.iter().flat_map(|choice| &choice.reasoning_efforts) {
+        if !reasoning_efforts.contains(&effort.as_str()) {
+            reasoning_efforts.push(effort);
+        }
+    }
+    let model_ids: Vec<&str> = choices.iter().map(|choice| choice.id.as_str()).collect();
+    schema["properties"]["model"] = json!({ "type": "string", "enum": model_ids });
+    schema["properties"]["reasoning"] = json!({ "type": "string", "enum": reasoning_efforts });
+}
+
+/// One branch per model, so a reasoning level or fast mode the model lacks fails validation.
+fn model_settings_branches(choices: &[SubagentModelChoice]) -> Vec<serde_json::Value> {
+    choices
+        .iter()
+        .map(|choice| {
+            let fast = if choice.fast {
+                json!({ "type": "boolean" })
+            } else {
+                json!({ "const": false })
+            };
+            json!({
+                "properties": {
+                    "model": { "const": choice.id },
+                    "reasoning": { "enum": choice.reasoning_efforts },
+                    "fast": fast,
+                },
+                "required": SETTINGS_FIELDS,
+            })
+        })
+        .collect()
 }
 
 fn spawn_subagent_parameters(
     max_yield_ms: u64,
-    choices: &SubagentModelChoices,
+    choices: &[SubagentModelChoice],
 ) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
     set_model_choices(&mut schema, choices);
+    schema["anyOf"] = json!(model_settings_branches(choices));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
         max_yield_ms,
@@ -238,7 +273,7 @@ fn poll_subagent_parameters(max_yield_ms: u64) -> serde_json::Value {
 
 fn control_subagent_parameters(
     max_yield_ms: u64,
-    choices: &SubagentModelChoices,
+    choices: &[SubagentModelChoice],
 ) -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ControlSubagentArgs));
     set_model_choices(&mut schema, choices);
@@ -254,14 +289,23 @@ fn control_subagent_parameters(
         max_yield_ms,
         "Maximum time to wait for completion before returning the tool call.",
     );
-    schema["anyOf"] = json!([
-        { "properties": { "action": { "enum": ["send"] } }, "required": ["prompt"] },
-        { "properties": { "action": { "enum": ["stop"] } } },
+    let mut settings = model_settings_branches(choices);
+    settings.push(json!({
+        "not": { "anyOf": SETTINGS_FIELDS.map(|field| json!({ "required": [field] })) }
+    }));
+    schema["allOf"] = json!([
         {
-            "properties": { "action": { "enum": ["answer_question"] } },
-            "required": ["questionId"],
-            "anyOf": [{ "required": ["optionId"] }, { "required": ["text"] }]
-        }
+            "anyOf": [
+                { "properties": { "action": { "enum": ["send"] } }, "required": ["prompt"] },
+                { "properties": { "action": { "enum": ["stop"] } } },
+                {
+                    "properties": { "action": { "enum": ["answer_question"] } },
+                    "required": ["questionId"],
+                    "anyOf": [{ "required": ["optionId"] }, { "required": ["text"] }]
+                }
+            ]
+        },
+        { "anyOf": settings }
     ]);
     schema
 }
@@ -348,15 +392,24 @@ impl rig::tool::Tool for SpawnSubagentTool {
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
-        mut args: Self::Args,
+        args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        args.prompt = prepare_subagent_prompt(&args.prompt)?.to_string();
+        let request = SubagentRequest {
+            prompt: prepare_subagent_prompt(&args.prompt)?.to_string(),
+            overrides: SettingsOverrides {
+                model: Some(args.model),
+                reasoning: Some(args.reasoning),
+                fast: Some(args.fast),
+            },
+            yield_time_ms: args.yield_time_ms,
+            timeout_ms: args.timeout_ms,
+        };
         execute_tool_job_with_id(
             &self.context,
             Self::NAME,
             payload,
-            |cancellation, job_id| run_subagent(&self.context, args, None, job_id, cancellation),
+            |cancellation, job_id| run_subagent(&self.context, request, None, job_id, cancellation),
         )
         .await
     }
@@ -443,7 +496,7 @@ async fn submit_child(
 
 async fn run_subagent(
     context: &AgentToolContext,
-    args: SpawnSubagentArgs,
+    request: SubagentRequest,
     thread_id: Option<String>,
     job_id: String,
     cancellation: WorkspaceCancellation,
@@ -459,13 +512,8 @@ async fn run_subagent(
     let created = if let Some(created) = recovered {
         created
     } else {
-        let overrides = SettingsOverrides {
-            model: args.model,
-            reasoning: args.reasoning,
-            fast: args.fast,
-        };
         let resolved = cancelled_read(&cancellation, async {
-            resolve_child_settings(context, thread_id.as_deref(), &overrides).await
+            resolve_child_settings(context, thread_id.as_deref(), &request.overrides).await
         })
         .await?;
 
@@ -473,7 +521,7 @@ async fn run_subagent(
         if let Some(thread_id) = &thread_id {
             fields.insert("threadId".to_string(), thread_id.clone().into());
         }
-        fields.insert("prompt".to_string(), args.prompt.into());
+        fields.insert("prompt".to_string(), request.prompt.into());
         fields.insert("model".to_string(), resolved.model.clone().into());
         fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
         fields.insert("fast".to_string(), resolved.fast.into());
@@ -481,7 +529,7 @@ async fn run_subagent(
             "completionProvider".to_string(),
             resolved.provider.as_str().into(),
         );
-        if let Some(timeout_ms) = args.timeout_ms {
+        if let Some(timeout_ms) = request.timeout_ms {
             fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
         }
         submit_child(
@@ -510,7 +558,7 @@ async fn run_subagent(
         context,
         &created.thread_id,
         Some(&created.run_id),
-        YieldMode::Action.normalize(args.yield_time_ms, context.max_yield_ms),
+        YieldMode::Action.normalize(request.yield_time_ms, context.max_yield_ms),
         &cancellation,
     )
     .await?;
@@ -668,12 +716,14 @@ impl ControlSubagentTool {
         if matches!(args.action, SubagentControlAction::Send) {
             return run_subagent(
                 &self.context,
-                SpawnSubagentArgs {
+                SubagentRequest {
                     prompt: prepare_subagent_prompt(args.prompt.as_deref().unwrap_or_default())?
                         .to_string(),
-                    model: args.model,
-                    reasoning: args.reasoning,
-                    fast: args.fast,
+                    overrides: SettingsOverrides {
+                        model: args.model,
+                        reasoning: args.reasoning,
+                        fast: args.fast,
+                    },
                     yield_time_ms: args.yield_time_ms,
                     timeout_ms: args.timeout_ms,
                 },
@@ -967,20 +1017,27 @@ async fn resolve_child_settings(
     let catalog = model_catalog(&context.gateway_url)
         .await
         .map_err(tool_error)?;
-    let saved = match thread_id {
+    // Saved settings pass as explicit overrides so a stale model, reasoning level, or fast
+    // mode fails instead of falling back to catalog defaults the agent never chose.
+    let (overrides, hint) = match thread_id {
         Some(thread_id) => {
-            let existing: SubagentThreadSnapshot =
-                fetch_thread(context, SNAPSHOT, thread_id).await?;
-            Some(ModelSettings {
-                model: existing.settings.model,
-                reasoning: existing.settings.reasoning,
-                fast: existing.settings.fast,
-            })
+            let saved = fetch_thread::<SubagentThreadSnapshot>(context, SNAPSHOT, thread_id)
+                .await?
+                .settings;
+            let overrides = SettingsOverrides {
+                model: overrides.model.clone().or(Some(saved.model)),
+                reasoning: overrides.reasoning.clone().or(Some(saved.reasoning)),
+                fast: overrides.fast.or(Some(saved.fast)),
+            };
+            (
+                overrides,
+                "; use control_subagent send with model, reasoning, and fast to choose new settings",
+            )
         }
-        None => None,
+        None => (overrides.clone(), ""),
     };
-    resolve_settings(&catalog, &providers, saved.as_ref(), overrides)
-        .map_err(|error| tool_failure(format!("{error:#}")))
+    resolve_settings(&catalog, &providers, None, &overrides)
+        .map_err(|error| tool_failure(format!("{error:#}{hint}")))
 }
 
 fn subagent_args(

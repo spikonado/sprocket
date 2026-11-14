@@ -20,37 +20,54 @@ it('notifies subscribers on panel changes and keeps one instance per mount', () 
 	expect(result.current).toBe(instance);
 
 	act(() => {
-		instance.update({ open: true });
+		instance.openArtifact('artifact-1');
 	});
 	expect(listener).toHaveBeenCalledTimes(1);
-	expect(result.current.panel).toMatchObject({ open: true });
+	expect(result.current.activeTab).toMatchObject({ view: 'artifacts', selectedKey: 'artifact-1' });
 	expect(instance.getSnapshot()).not.toBe(before);
 
 	unsubscribe();
 });
 
-it('keeps a side panel snapshot per scope and restores it on return', () => {
+it('keeps a layout per thread in the same scope and restores it on return', () => {
 	const panel = new ArtifactPanel();
-	const listener = vi.fn<() => void>();
-	panel.subscribe(listener);
 
-	panel.selectScope(scope('robot'));
-	panel.update({ expanded: true });
+	panel.selectScope(scope('robot'), 'thread-a');
 	panel.openArtifact('artifact-1');
+	panel.splitPane(panel.activePane.id, 'row');
+	const layout = panel.panel;
 
-	panel.selectScope(scope('other'));
-	expect(panel.panel.open).toBe(false);
+	panel.selectScope(scope('robot'), 'thread-b');
+	expect(panel.tabs.map((tab) => tab.view)).toEqual(['transcript']);
 	expect(panel.fullscreenKey).toBeNull();
+	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
 
-	panel.selectScope(scope('robot'));
-	expect(panel.panel).toMatchObject({ open: true, expanded: true });
-	expect(panel.activeTab).toMatchObject({ view: 'artifacts', selectedKey: 'artifact-1' });
-	expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.panel).toBe(layout);
+	panel.selectScope(scope('moved-project'), 'thread-a');
+	expect(panel.panel).toBe(layout);
+
+	panel.selectScope(scope('robot'), 'thread-b');
+	expect(panel.activeTab.file).toEqual({ workspacePath: '/repo', path: 'README.md' });
 
 	panel.reset();
-	expect(panel.panel.open).toBe(false);
-	panel.selectScope(scope('robot'));
-	expect(panel.panel.open).toBe(false);
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.tabs.map((tab) => tab.view)).toEqual(['transcript']);
+});
+
+it('keeps the transcript tab when closing tabs', () => {
+	const panel = new ArtifactPanel();
+	const transcript = panel.activeTab;
+	panel.openArtifact('a');
+	panel.splitPane(panel.activePane.id, 'row');
+	panel.openArtifact('b');
+
+	panel.closeTab(transcript.id);
+	panel.closeTab(panel.activeTab.id);
+	panel.closeTab(panel.tabs[1]!.id);
+
+	expect(panel.panel.layout).toMatchObject({ type: 'pane', tabs: [transcript] });
+	expect(panel.activeTab).toBe(transcript);
 });
 
 it('shows the content of artifacts in visible tabs and fullscreen', () => {
@@ -65,17 +82,17 @@ it('shows the content of artifacts in visible tabs and fullscreen', () => {
 	panel.closeTab(panel.activeTab.id);
 	expect(panel.shownArtifactKeys).toEqual(['artifact-2']);
 
-	panel.update({ open: false });
+	panel.activateTab(panel.tabs[0]!.id);
 	expect(panel.shownArtifactKeys).toEqual([]);
 });
 
 it('clears the fullscreen artifact when switching scope or resetting', () => {
 	const panel = new ArtifactPanel();
-	panel.selectScope(scope('robot'));
+	panel.selectScope(scope('robot'), 'thread-a');
 	panel.setFullscreenKey('artifact-1');
 	expect(panel.fullscreenKey).toBe('artifact-1');
 
-	panel.selectScope(scope('other'));
+	panel.selectScope(scope('other'), 'thread-b');
 	expect(panel.fullscreenKey).toBeNull();
 
 	panel.setFullscreenKey('artifact-2');
@@ -85,19 +102,20 @@ it('clears the fullscreen artifact when switching scope or resetting', () => {
 
 it('opens artifacts in the empty tab, then new tabs, and refocuses tabs already showing them', () => {
 	const panel = new ArtifactPanel();
+	panel.newTab();
 	panel.openArtifact('a');
 	panel.openArtifact('b');
-	expect(panel.tabs.map((tab) => tab.selectedKey)).toEqual(['a', 'b']);
+	expect(panel.tabs.map((tab) => tab.view)).toEqual(['transcript', 'artifacts', 'artifacts']);
+	expect(panel.tabs.map((tab) => tab.selectedKey)).toEqual([null, 'a', 'b']);
 
 	panel.openArtifact('a');
-	expect(panel.tabs).toHaveLength(2);
+	expect(panel.tabs).toHaveLength(3);
 	expect(panel.activeTab.selectedKey).toBe('a');
 
 	panel.closeTab(panel.activeTab.id);
 	expect(panel.activeTab.selectedKey).toBe('b');
 	panel.closeTab(panel.activeTab.id);
-	expect(panel.panel.open).toBe(false);
-	expect(panel.activeTab.view).toBeNull();
+	expect(panel.activeTab.view).toBe('transcript');
 });
 
 it('keeps at most one new tab and focuses it instead of adding another', () => {
@@ -108,11 +126,11 @@ it('keeps at most one new tab and focuses it instead of adding another', () => {
 
 	panel.activateTab(panel.tabs[0]!.id);
 	panel.newTab();
-	expect(panel.tabs).toHaveLength(2);
+	expect(panel.tabs).toHaveLength(3);
 	expect(panel.activeTab.id).toBe(emptyTabId);
 });
 
-it('opens chat links in the focused pane and refocuses tabs in other panes', () => {
+it('opens chat links in the focused pane, refocuses tabs in other panes, and removes emptied panes', () => {
 	const panel = new ArtifactPanel();
 	panel.openArtifact('a');
 	const left = panel.activePane.id;
@@ -124,33 +142,33 @@ it('opens chat links in the focused pane and refocuses tabs in other panes', () 
 
 	panel.openArtifact('b');
 	expect(panel.panes.map((pane) => pane.tabs.map((tab) => tab.selectedKey))).toEqual([
-		['a'],
+		[null, 'a'],
 		['b']
 	]);
 
 	panel.openArtifact('a');
 	expect(panel.activePane.id).toBe(left);
 
+	panel.openArtifact('b');
 	panel.closeTab(panel.activeTab.id);
-	expect(panel.panel.layout).toMatchObject({ type: 'pane', id: right });
-	expect(panel.activeTab.selectedKey).toBe('b');
+	expect(panel.panel.layout).toMatchObject({ type: 'pane', id: left });
+	expect(panel.activeTab.selectedKey).toBe('a');
 });
 
-it('opens files in the empty tab, then new tabs, and keeps them across renames until deleted', () => {
+it('opens files in new tabs and keeps them across renames until deleted', () => {
 	const panel = new ArtifactPanel();
 	const file = { workspacePath: '/repo', path: 'src/main.rs' };
 	panel.openFile(file);
 	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
 	panel.openFile(file);
-	expect(panel.tabs.map((tab) => tab.file?.path)).toEqual(['src/main.rs', 'README.md']);
+	expect(panel.tabs.map((tab) => tab.file?.path)).toEqual([undefined, 'src/main.rs', 'README.md']);
 	expect(panel.activeTab.file).toEqual(file);
-	expect(panel.panel.open).toBe(true);
 
 	panel.renameFile('/repo', 'src', 'lib');
 	expect(panel.activeTab.file).toEqual({ workspacePath: '/repo', path: 'lib/main.rs' });
 
 	panel.closeFile('/repo', 'lib');
-	expect(panel.tabs.map((tab) => tab.file?.path)).toEqual(['README.md']);
+	expect(panel.tabs.map((tab) => tab.file?.path)).toEqual([undefined, 'README.md']);
 });
 
 it('shows linked folders in one files tab', () => {
@@ -159,23 +177,72 @@ it('shows linked folders in one files tab', () => {
 	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
 	panel.openDirectory({ workspacePath: '/tmp/build', path: '' });
 
-	expect(panel.panel.open).toBe(true);
-	expect(panel.tabs.map((tab) => tab.view)).toEqual(['files', 'file']);
+	expect(panel.tabs.map((tab) => tab.view)).toEqual(['transcript', 'files', 'file']);
 	expect(panel.activeTab.directory).toEqual({ workspacePath: '/tmp/build', path: '' });
 });
 
-it('reports unsaved file edits in any scope until they are saved', () => {
+it('keeps unsaved file edits per thread and reports them until they are saved', () => {
 	const panel = new ArtifactPanel();
 	const doc = Text.of(['edited']);
 
-	panel.selectScope(scope('robot'));
+	panel.selectScope(scope('robot'), 'thread-a');
 	panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
 	panel.setFileDraft(panel.activeTab.id, { doc, base: Text.of(['saved']), version: 'v1' });
-	panel.selectScope(scope('other'));
+	const tabId = panel.activeTab.id;
+	panel.selectScope(scope('robot'), 'thread-b');
 	expect(panel.hasFileDrafts).toBe(true);
 
-	panel.selectScope(scope('robot'));
-	panel.setFileDraft(panel.activeTab.id, undefined);
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.draft?.doc).toBe(doc);
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.setFileDraft(tabId, undefined);
+	expect(panel.hasFileDrafts).toBe(false);
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.draft).toBeUndefined();
+});
+
+it('keeps file renames and deletions consistent across thread layouts', () => {
+	const panel = new ArtifactPanel();
+	panel.selectScope(scope('robot'), 'thread-a');
+	panel.splitPane(panel.activePane.id, 'row');
+	panel.openFile({ workspacePath: '/repo', path: 'src/notes.txt' });
+	panel.setFileDraft(panel.activeTab.id, {
+		doc: Text.of(['edited']),
+		base: Text.of(['saved']),
+		version: 'v1'
+	});
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.openFile({ workspacePath: '/repo', path: 'src/notes.txt' });
+	panel.renameFile('/repo', 'src', 'lib');
+	expect(panel.activeTab.file?.path).toBe('lib/notes.txt');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.file?.path).toBe('lib/notes.txt');
+	expect(panel.activeTab.draft?.doc.toString()).toBe('edited');
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.closeFile('/repo', 'lib');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.panes).toHaveLength(1);
+	expect(panel.activeTab.view).toBe('transcript');
+	expect(panel.hasFileDrafts).toBe(false);
+});
+
+it('applies a late save to the latest draft without replacing newer edits', () => {
+	const panel = new ArtifactPanel();
+	const doc = Text.of(['saving']);
+	const newer = Text.of(['saving and editing']);
+	panel.selectScope(scope('robot'), 'thread-a');
+	panel.openFile({ workspacePath: '/repo', path: 'notes.txt' });
+	const id = panel.activeTab.id;
+	panel.setFileDraft(id, { doc, base: Text.of(['saved']), version: 'v1' });
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.selectScope(scope('robot'), 'thread-a');
+	panel.setFileDraft(id, { doc: newer, base: Text.of(['saved']), version: 'v1' });
+	panel.selectScope(scope('robot'), 'thread-b');
+	panel.fileSaved(id, doc, 'v2');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.activeTab.draft).toEqual({ doc: newer, base: doc, version: 'v2' });
+	expect(panel.activeTab.saved).toEqual({ doc, version: 'v2' });
+	panel.fileSaved(id, newer, 'v3');
 	expect(panel.hasFileDrafts).toBe(false);
 });
 

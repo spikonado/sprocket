@@ -1,9 +1,13 @@
 import type { Text } from '@codemirror/state';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
-export type SidePanelView = 'artifacts' | 'files' | 'browser' | 'file';
+export type SidePanelView = 'transcript' | 'artifacts' | 'files' | 'browser' | 'file';
+
+export type SidePanelContentView = Exclude<SidePanelView, 'transcript'>;
 
 export type FileDraft = { doc: Text; base: Text; version: string };
+
+export type FileSave = Pick<FileDraft, 'doc' | 'version'>;
 
 export type SidePanelTab = {
 	id: string;
@@ -12,6 +16,7 @@ export type SidePanelTab = {
 	file?: WorkspaceFileTarget;
 	directory?: WorkspaceFileTarget;
 	draft?: FileDraft;
+	saved?: FileSave;
 };
 
 export function trimSlash(path: string) {
@@ -33,19 +38,15 @@ export function renamedPath(path: string, from: string, to: string) {
 }
 
 export type SidePanelSnapshot = {
-	open: boolean;
-	expanded: boolean;
 	layout: SidePanelLayout;
 	activePaneId: string;
 };
 
 export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
-	open: false,
-	expanded: false,
 	layout: {
 		type: 'pane',
 		id: 'pane-0',
-		tabs: [{ id: 'tab-0', view: null, selectedKey: null }],
+		tabs: [{ id: 'tab-0', view: 'transcript', selectedKey: null }],
 		activeTabId: 'tab-0'
 	},
 	activePaneId: 'pane-0'
@@ -107,16 +108,6 @@ export function mapPanes(
 	return { ...node, first: mapPanes(node.first, map), second: mapPanes(node.second, map) };
 }
 
-export function removePane(node: SidePanelLayout, id: string): SidePanelLayout {
-	if (node.type === 'pane') return node;
-
-	if (node.first.type === 'pane' && node.first.id === id) return node.second;
-
-	if (node.second.type === 'pane' && node.second.id === id) return node.first;
-
-	return { ...node, first: removePane(node.first, id), second: removePane(node.second, id) };
-}
-
 export function mapSplit(
 	node: SidePanelLayout,
 	id: string,
@@ -150,10 +141,4 @@ export function layoutRects(
 		panes: [...first.panes, ...second.panes],
 		splits: [{ split: node, rect }, ...first.splits, ...second.splits]
 	};
-}
-
-export function topRightPane(node: SidePanelLayout): SidePanelPane {
-	if (node.type === 'pane') return node;
-
-	return topRightPane(node.direction === 'row' ? node.second : node.first);
 }

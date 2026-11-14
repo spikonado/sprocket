@@ -478,6 +478,9 @@ it('keeps an unavailable project listed when removal fails and allows retry', as
 
 it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
 	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		threadRecord('thread-1', 'repo-alpha', 'Alpha thread')
+	]);
 
 	client.registerPaginatedQuery(api.artifacts.listArtifactMetadata, [
 		{ _id: fixtureId<'artifacts'>('artifact-a'), title: 'Artifact notes' }
@@ -500,7 +503,8 @@ it('deletes an attached project artifact through the local server and keeps fail
 		)
 	);
 	await projectTrigger('Alpha');
-	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.click(await screen.findByText('Alpha thread'));
+	fireEvent.click(await screen.findByRole('button', { name: 'New tab' }));
 	fireEvent.click(await screen.findByRole('button', { name: 'Artifacts' }));
 	fireEvent.contextMenu(await screen.findByText('Artifact notes'));
 	fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete artifact' }));
@@ -516,8 +520,11 @@ it('deletes an attached project artifact through the local server and keeps fail
 	});
 });
 
-it('shows live artifact content in the side panel and returns to the list once it is deleted', async () => {
+it('shows live artifact content in a workspace tab and returns to the list once it is deleted', async () => {
 	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		threadRecord('thread-1', 'repo-alpha', 'Alpha thread')
+	]);
 
 	const metadata = { _id: fixtureId<'artifacts'>('artifact-a'), title: 'Artifact notes' };
 
@@ -548,7 +555,8 @@ it('shows live artifact content in the side panel and returns to the list once i
 		)
 	);
 	await projectTrigger('Alpha');
-	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.click(await screen.findByText('Alpha thread'));
+	fireEvent.click(await screen.findByRole('button', { name: 'New tab' }));
 	fireEvent.click(await screen.findByRole('button', { name: 'Artifacts' }));
 	fireEvent.click(await screen.findByText('Artifact notes'));
 	await screen.findByText('First draft');
@@ -562,7 +570,12 @@ it('shows live artifact content in the side panel and returns to the list once i
 	await screen.findByText('No artifacts yet.');
 });
 
-it('opens the managed browser dashboard without a thread and keeps it mounted when expanded', async () => {
+it('opens the managed browser dashboard in a thread and keeps it mounted when splitting', async () => {
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		threadRecord('thread-1', 'repo-alpha', 'Alpha thread')
+	]);
+
 	const ensureBrowser = vi.fn<LocalApi['ensureBrowser']>(async () => ({
 		state: 'ready',
 		error: null
@@ -573,18 +586,64 @@ it('opens the managed browser dashboard without a thread and keeps it mounted wh
 		ensureBrowser
 	});
 
-	await renderApp(createConvexFixtures(), createRuntime(localApi));
+	await renderApp(client, createRuntime(localApi));
 	await projectTrigger('Alpha');
-	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.click(await screen.findByText('Alpha thread'));
+	fireEvent.click(await screen.findByRole('button', { name: 'New tab' }));
 	expect(ensureBrowser).not.toHaveBeenCalled();
 	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
 	const iframe = await screen.findByTitle('Agent browser dashboard');
 	expect(iframe.getAttribute('src')).toBe(localApi.browserDashboardUrl);
 	expect(ensureBrowser).toHaveBeenCalledOnce();
-	fireEvent.click(screen.getByRole('button', { name: 'Expand to full workspace' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
 	expect(screen.getByTitle('Agent browser dashboard')).toBe(iframe);
-	expect(screen.getByRole('button', { name: 'Exit full workspace' })).toBeTruthy();
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	expect(ensureBrowser).toHaveBeenCalledOnce();
+});
+
+it('restores each thread workspace when switching between threads in one project', async () => {
+	const client = createConvexFixtures();
+	const first = threadRecord('thread-1', 'repo-alpha', 'First workspace');
+	const second = threadRecord('thread-2', 'repo-alpha', 'Second workspace');
+	client.registerPaginatedQuery(api.inbox.list, [first, second]);
+	await renderApp(
+		client,
+		createRuntime(
+			createLocalApi({
+				listProjectAttachments: async () => [
+					projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')
+				]
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	expect(screen.getByRole('textbox')).toBeTruthy();
+	expect(screen.queryByRole('tablist')).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Split right' })).toBeNull();
+	fireEvent.click(await screen.findByText('First workspace'));
+	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Artifacts' }));
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
+
+	fireEvent.click(screen.getByText('Second workspace'));
+	expect(screen.getAllByRole('tab')).toHaveLength(1);
+	expect(screen.getByRole('tab', { name: 'Thread' }).getAttribute('aria-selected')).toBe('true');
+	fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+
+	fireEvent.click(screen.getByText('First workspace'));
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
+	expect(screen.getByRole('tab', { name: 'Artifacts' }).getAttribute('aria-selected')).toBe('true');
+	fireEvent.click(screen.getByText('Second workspace'));
+	expect(screen.getAllByRole('tablist')).toHaveLength(1);
+	expect(screen.getByRole('tab', { name: 'Files' }).getAttribute('aria-selected')).toBe('true');
+
+	fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+	expect(screen.getByRole('textbox')).toBeTruthy();
+	expect(screen.queryByRole('tablist')).toBeNull();
+	fireEvent.click(screen.getByText('First workspace'));
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
+	expect(screen.getByRole('tab', { name: 'Artifacts' }).getAttribute('aria-selected')).toBe('true');
 });
 
 it('shares local message recency across the project menus and recent directories', async () => {
@@ -1230,14 +1289,16 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
-	const composer = await screen.findByRole('group', { name: 'Message composer' });
+	let composer = await screen.findByRole('group', { name: 'Message composer' });
 	expect((await within(composer).findByRole('alert')).textContent).toContain(error);
 	expect(screen.getByRole('button', { name: 'Continue working' })).toBeTruthy();
 
 	fireEvent.click(await screen.findByText('Other work'));
+	composer = screen.getByRole('group', { name: 'Message composer' });
 	await waitFor(() => expect(within(composer).queryByRole('alert')).toBeNull());
 
 	fireEvent.click(await screen.findByText('Fix the robot'));
+	composer = screen.getByRole('group', { name: 'Message composer' });
 	expect((await within(composer).findByRole('alert')).textContent).toContain(error);
 	await act(async () => {
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
@@ -1278,13 +1339,14 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
-	const composer = screen.getByRole('group', { name: 'Message composer' });
+	let composer = screen.getByRole('group', { name: 'Message composer' });
 	expect((await within(composer).findByRole('status')).textContent).toContain(
 		'Reconnecting to conversation history.'
 	);
 	expect(within(composer).getByRole('combobox')).toBeTruthy();
 
 	fireEvent.click(await screen.findByText('Other work'));
+	composer = screen.getByRole('group', { name: 'Message composer' });
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 	await act(async () => {
 		watchers.get(thread._id)?.({ eventType: 'updated' });
@@ -1292,6 +1354,7 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	expect(within(composer).queryByRole('status')).toBeNull();
 
 	fireEvent.click(await screen.findByText('Fix the robot'));
+	composer = screen.getByRole('group', { name: 'Message composer' });
 	await within(composer).findByRole('status');
 	await act(async () => {
 		stale = false;
@@ -1546,7 +1609,7 @@ it('opens General by default and resets to it when reopening settings', async ()
 	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
 });
 
-it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
+it('keeps logo and settings beside the workspace when the sidebar is closed', async () => {
 	await renderApp(createConvexFixtures(), createRuntime(createLocalApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
 	const layout = document.querySelector('.inbox-layout');

@@ -60,7 +60,7 @@ pub(super) struct AgentToolContext {
     pub(super) question_polls: super::questions::QuestionPolls,
     pub(super) checkouts: super::payments::Checkouts,
     pub(super) subagent_polls: super::subagents::SubagentPolls,
-    pub(super) subagent_models: Arc<crate::catalog::SubagentModelChoices>,
+    pub(super) subagent_models: Arc<Vec<crate::catalog::SubagentModelChoice>>,
     pub(super) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 }
 

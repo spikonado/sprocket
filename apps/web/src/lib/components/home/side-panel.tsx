@@ -7,16 +7,14 @@ import {
 	FolderTree,
 	Fullscreen,
 	Globe,
-	Maximize2,
-	Minimize2,
-	PanelRight,
+	MessageSquare,
 	Plus,
 	Rows2,
 	SquarePlus,
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
@@ -24,25 +22,24 @@ import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
 import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
-import { useEscapeLayer } from '$lib/use-escape-layer';
+import type { SidePanelTabPatch } from '$lib/home/artifact-panel';
+import type { Text } from '@codemirror/state';
 import {
 	layoutRects,
 	leafName,
 	MIN_PANE_SIZE,
-	topRightPane,
 	type FileDraft,
 	type FractionalRect,
+	type SidePanelContentView,
 	type SidePanelLayout,
 	type SidePanelPane,
 	type SidePanelTab,
-	type SidePanelView,
 	type SplitDirection
 } from '$lib/chat/side-panel';
 import type { WorkspaceFileTarget } from '$lib/types/sprocket';
 
-type TabPatch = Partial<Omit<SidePanelTab, 'id'>>;
-
 type Props = {
+	transcript: ReactNode;
 	artifacts: ArtifactEntry[];
 	artifactContents: ReadonlyMap<string, ArtifactContent>;
 	workspacePath?: string;
@@ -52,14 +49,14 @@ type Props = {
 	activePaneId: string;
 	browserApi: BrowserApi | null;
 	filesApi: (FilesApi & FileEditorApi) | null;
-	expanded: boolean;
 	loading?: boolean;
 	error?: string | null;
 	onNewTab: (paneId: string) => void;
 	onActivateTab: (id: string) => void;
 	onCloseTab: (id: string) => void;
-	onUpdateTab: (id: string, patch: TabPatch) => void;
+	onUpdateTab: (id: string, patch: SidePanelTabPatch) => void;
 	onDraftChange: (id: string, draft: FileDraft | undefined) => void;
+	onFileSaved: (id: string, doc: Text, version: string) => void;
 	onFocusPane: (id: string) => void;
 	onSplitPane: (id: string, direction: SplitDirection) => void;
 	onResizeSplit: (id: string, ratio: number) => void;
@@ -67,11 +64,9 @@ type Props = {
 	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
 	onFileDeleted: (workspacePath: string, path: string) => void;
 	onOpenFullscreen: (key: string) => void;
-	onToggleExpanded?: () => void;
-	onClose: () => void;
 };
 
-const VIEWS: { id: Exclude<SidePanelView, 'file'>; label: string; icon: LucideIcon }[] = [
+const VIEWS: { id: Exclude<SidePanelContentView, 'file'>; label: string; icon: LucideIcon }[] = [
 	{ id: 'artifacts', label: 'Artifacts', icon: Files },
 	{ id: 'files', label: 'Files', icon: FolderTree },
 	{ id: 'browser', label: 'Browser', icon: Globe }
@@ -96,6 +91,8 @@ function tabIndexForKey(key: string, index: number, count: number) {
 }
 
 function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
+	if (tab.view === 'transcript') return { label: 'Thread', icon: MessageSquare };
+
 	const artifact =
 		tab.view === 'artifacts' ? artifacts.find((item) => item.key === tab.selectedKey) : undefined;
 
@@ -109,22 +106,13 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 }
 
 export default function SidePanel(props: Props) {
-	const {
-		layout,
-		activePaneId,
-		expanded,
-		onCloseTab,
-		onFocusPane,
-		onResizeSplit,
-		onToggleExpanded
-	} = props;
+	const { layout, activePaneId, onCloseTab, onFocusPane, onResizeSplit } = props;
 
-	const container = useRef<HTMLElement>(null);
+	const container = useRef<HTMLDivElement>(null);
 	const focusNewPane = useRef(false);
 	const [size, setSize] = useState<{ width: number; height: number } | null>(null);
 	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
 	const { panes, splits } = layoutRects(layout);
-	const cornerPaneId = topRightPane(layout).id;
 	const activeTabId = panes.find(({ pane }) => pane.id === activePaneId)?.pane.activeTabId;
 	const previousPaneCount = useRef(panes.length);
 
@@ -183,14 +171,8 @@ export default function SidePanel(props: Props) {
 		else onCloseTab(id);
 	}
 
-	useEscapeLayer(() => onToggleExpanded?.(), Boolean(expanded && onToggleExpanded));
-
 	return (
-		<aside
-			ref={container}
-			id="side-panel"
-			className={`bg-background relative h-full min-h-0 w-full overflow-hidden ${expanded ? '' : 'border-hairline border-l'}`}
-		>
+		<div ref={container} className="bg-background relative h-full min-h-0 w-full overflow-hidden">
 			{/* Panes render flat, keyed by id, so splitting never remounts a pane's browser or editor. */}
 			{panes.map(({ pane, rect }) => (
 				<Pane
@@ -199,7 +181,6 @@ export default function SidePanel(props: Props) {
 					pane={pane}
 					rect={rect}
 					focused={panes.length === 1 || pane.id === activePaneId}
-					showsPanelButtons={pane.id === cornerPaneId}
 					canSplitRight={!size || rect.width * size.width >= 2 * MIN_PANE_SIZE.row}
 					canSplitDown={!size || rect.height * size.height >= 2 * MIN_PANE_SIZE.column}
 					onSplit={(direction) => {
@@ -232,7 +213,7 @@ export default function SidePanel(props: Props) {
 					}}
 				/>
 			) : null}
-		</aside>
+		</div>
 	);
 }
 
@@ -240,12 +221,12 @@ function Pane({
 	pane,
 	rect,
 	focused,
-	showsPanelButtons,
 	canSplitRight,
 	canSplitDown,
 	onSplit,
 	takeNewPaneFocus,
 	onRequestCloseTab,
+	transcript,
 	artifacts,
 	artifactContents,
 	workspacePath,
@@ -253,25 +234,22 @@ function Pane({
 	onDeleteArtifact,
 	browserApi,
 	filesApi,
-	expanded,
 	loading = false,
 	error = null,
 	onNewTab,
 	onActivateTab,
 	onUpdateTab,
 	onDraftChange,
+	onFileSaved,
 	onFocusPane,
 	onOpenFile,
 	onFileRenamed,
 	onFileDeleted,
-	onOpenFullscreen,
-	onToggleExpanded,
-	onClose
+	onOpenFullscreen
 }: Props & {
 	pane: SidePanelPane;
 	rect: FractionalRect;
 	focused: boolean;
-	showsPanelButtons: boolean;
 	canSplitRight: boolean;
 	canSplitDown: boolean;
 	onSplit: (direction: SplitDirection) => void;
@@ -307,7 +285,7 @@ function Pane({
 			<div className="border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-2">
 				<div
 					role="tablist"
-					aria-label="Side panel tabs"
+					aria-label="Workspace tabs"
 					className="flex min-w-0 items-center gap-1 overflow-x-auto"
 					onKeyDown={(event) => {
 						const index = tabIndexForKey(
@@ -329,6 +307,7 @@ function Pane({
 					{tabs.map((tab) => {
 						const heading = tabHeading(tab, artifacts);
 						const active = tab.id === activeTabId;
+						const closable = tab.view !== 'transcript';
 
 						return (
 							<div
@@ -351,7 +330,7 @@ function Pane({
 									onAuxClick={(event) => {
 										if (event.button === 1) onRequestCloseTab(tab.id);
 									}}
-									className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2.5 focus-visible:ring-2 focus-visible:outline-none"
+									className={`focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2.5 focus-visible:ring-2 focus-visible:outline-none ${closable ? '' : 'pr-2.5'}`}
 								>
 									<heading.icon className="size-3.5 shrink-0" aria-hidden="true" />
 									<span className="truncate">{heading.label}</span>
@@ -362,19 +341,21 @@ function Pane({
 										/>
 									) : null}
 								</button>
-								<button
-									type="button"
-									tabIndex={active ? 0 : -1}
-									onClick={() => {
-										focusActiveTab.current = true;
-										onRequestCloseTab(tab.id);
-									}}
-									aria-label={`Close ${heading.label} tab`}
-									title="Close tab"
-									className={`hover:bg-hover-fill focus-visible:ring-ring touch:opacity-100 mx-0.5 shrink-0 rounded p-0.5 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none ${active ? '' : 'opacity-0'}`}
-								>
-									<X className="size-3" aria-hidden="true" />
-								</button>
+								{closable ? (
+									<button
+										type="button"
+										tabIndex={active ? 0 : -1}
+										onClick={() => {
+											focusActiveTab.current = true;
+											onRequestCloseTab(tab.id);
+										}}
+										aria-label={`Close ${heading.label} tab`}
+										title="Close tab"
+										className={`hover:bg-hover-fill focus-visible:ring-ring touch:opacity-100 mx-0.5 shrink-0 rounded p-0.5 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none ${active ? '' : 'opacity-0'}`}
+									>
+										<X className="size-3" aria-hidden="true" />
+									</button>
+								) : null}
 							</div>
 						);
 					})}
@@ -414,35 +395,6 @@ function Pane({
 				>
 					<Rows2 className="size-4" aria-hidden="true" />
 				</button>
-				{showsPanelButtons ? (
-					<>
-						{onToggleExpanded && (
-							<button
-								type="button"
-								className={ICON_BUTTON}
-								onClick={onToggleExpanded}
-								aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-								title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
-								aria-pressed={expanded}
-							>
-								{expanded ? (
-									<Minimize2 className="size-4" aria-hidden="true" />
-								) : (
-									<Maximize2 className="size-4" aria-hidden="true" />
-								)}
-							</button>
-						)}
-						<button
-							type="button"
-							className={ICON_BUTTON}
-							onClick={onClose}
-							aria-label="Close panel"
-							title="Close panel"
-						>
-							<PanelRight className="size-4" aria-hidden="true" />
-						</button>
-					</>
-				) : null}
 			</div>
 			{tabs.map((tab) => (
 				<section
@@ -452,7 +404,7 @@ function Pane({
 					aria-labelledby={`side-panel-tab-${tab.id}`}
 					hidden={tab.id !== activeTabId}
 					tabIndex={-1}
-					className="flex min-h-0 flex-1 flex-col focus:outline-none"
+					className={`flex min-h-0 flex-1 flex-col focus:outline-none ${tab.view === 'transcript' ? 'overflow-y-auto' : ''}`}
 				>
 					{tab.view === null ? (
 						<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
@@ -476,6 +428,8 @@ function Pane({
 								))}
 							</ul>
 						</div>
+					) : tab.view === 'transcript' ? (
+						transcript
 					) : tab.view === 'browser' ? (
 						<BrowserView browserApi={browserApi} />
 					) : tab.view === 'files' ? (
@@ -495,8 +449,10 @@ function Pane({
 							api={filesApi}
 							file={tab.file}
 							initialDraft={tab.draft}
+							saved={tab.saved}
 							active={tab.id === activeTabId}
 							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
+							onSaved={(doc, version) => onFileSaved(tab.id, doc, version)}
 						/>
 					) : (
 						<ArtifactsView
