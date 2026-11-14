@@ -92,10 +92,9 @@ export default function PcbViewer({
 
 		reload.current = (retryFailed) => {
 			const { version, state } = loaded.current;
-			const current = latestVersion.current === version;
+			const stale = latestVersion.current !== version || (retryFailed && state === 'failed');
 
-			if (state === 'loading' || !latestVersion.current) return;
-			if (current && !(retryFailed && state === 'failed')) return;
+			if (state === 'loading' || !latestVersion.current || !stale) return;
 			clearTimeout(timer);
 			timer = setTimeout(() => void load(), RELOAD_DELAY_MS);
 		};
