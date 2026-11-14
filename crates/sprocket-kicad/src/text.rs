@@ -10,7 +10,7 @@ const NEWSTROKE: &str = include_str!("text/newstroke.txt");
 const FONT_SCALE: f64 = 1.0 / 21.0;
 const FONT_OFFSET: i32 = -8;
 const ITALIC_TILT: f64 = 1.0 / 8.0;
-const TAB_WIDTH: usize = 4;
+const TAB_WIDTH: f64 = 4.0;
 const SUPER_SUB_SIZE: f64 = 0.8;
 const SUBSCRIPT_OFFSET: f64 = 0.15;
 const SUPERSCRIPT_OFFSET: f64 = -0.35;
@@ -256,15 +256,19 @@ impl Layout<'_> {
         }
         let tilt = if self.style.italic { ITALIC_TILT } else { 0.0 };
         let space_width = glyphs[0].width;
-        let mut char_count = 0;
+        let mut char_count = 0.0;
         for c in text.chars() {
             match c {
                 '\t' => {
-                    char_count = (char_count / TAB_WIDTH + 1) * TAB_WIDTH - 1;
-                    let mut next = position.x + size.x * (char_count as f64 + space_width);
-                    while size.x > 0.0 && next <= cursor.x {
-                        char_count += TAB_WIDTH;
-                        next += size.x * TAB_WIDTH as f64;
+                    char_count = ((char_count / TAB_WIDTH).floor() + 1.0) * TAB_WIDTH - 1.0;
+                    let mut next = position.x + size.x * (char_count + space_width);
+                    let stop = size.x * TAB_WIDTH;
+                    // KiCad steps one tab stop at a time, which never ends once `stop` is
+                    // below the float spacing at `next`.
+                    if stop > 0.0 && next <= cursor.x {
+                        let skipped = ((cursor.x - next) / stop).floor() + 1.0;
+                        char_count += skipped * TAB_WIDTH;
+                        next += skipped * stop;
                     }
                     cursor.x = next;
                 }
@@ -291,7 +295,7 @@ impl Layout<'_> {
                     cursor.x += glyph.width * glyph_size.x;
                 }
             }
-            char_count += 1;
+            char_count += 1.0;
         }
         point(cursor.x, position.y)
     }

@@ -60,7 +60,7 @@ export default function KicadViewer({
 					api={api}
 					workspacePath={file.workspacePath}
 					path={boardPath}
-					version={boardVersion}
+					snapshot={board.kind === 'found' ? board : null}
 					shown={view === pcbView}
 				/>
 			)}

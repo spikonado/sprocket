@@ -63,3 +63,9 @@ fn deeply_nested_markup_still_lays_out() {
     let text = format!("{}A", "~{".repeat(100_000));
     assert!(!stroke_text(&text, Point::default(), &style(HAlign::Left)).is_empty());
 }
+
+#[test]
+fn tabs_far_from_the_origin_still_lay_out() {
+    let strokes = stroke_text("\tA\t\tB", point(1e30, 0.0), &style(HAlign::Left));
+    assert!(!strokes.is_empty());
+}

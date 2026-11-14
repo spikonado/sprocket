@@ -16,19 +16,20 @@ const ICON_BUTTON =
 
 /**
  * The server parses the board and a worker draws it, so even an 85 MB board leaves the page
- * responsive. A new `version` from the file watch refetches the scene and keeps the camera.
+ * responsive. A new `snapshot` version from the file watch refetches the scene and keeps the
+ * camera. A failed load retries on the next snapshot, which a reconnecting watch sends.
  */
 export default function PcbViewer({
 	api,
 	workspacePath,
 	path,
-	version,
+	snapshot,
 	shown
 }: {
 	api: Pick<LocalApi, 'kicadScene'>;
 	workspacePath: string;
 	path: string;
-	version: string | null;
+	snapshot: { version: string } | null;
 	shown: boolean;
 }) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -39,14 +40,14 @@ export default function PcbViewer({
 	const [flipped, setFlipped] = useState(false);
 	const [layersOpen, setLayersOpen] = useState(false);
 
-	const loaded = useRef<{ version: string | null; loading: boolean }>({
+	const loaded = useRef<{ version: string | null; state: 'loading' | 'loaded' | 'failed' }>({
 		version: null,
-		loading: true
+		state: 'loading'
 	});
 
-	const latestVersion = useRef(version);
-	const reload = useRef(() => {});
-	latestVersion.current = version;
+	const latestVersion = useRef(snapshot?.version ?? null);
+	const reload = useRef<(retryFailed: boolean) => void>(() => {});
+	latestVersion.current = snapshot?.version ?? null;
 
 	useEffect(() => {
 		const container = containerRef.current;
@@ -66,8 +67,7 @@ export default function PcbViewer({
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		const load = async () => {
-			// So a board that fails to parse waits for its next change instead of retrying.
-			loaded.current = { version: latestVersion.current, loading: true };
+			loaded.current = { version: latestVersion.current, state: 'loading' };
 			setStatus({ kind: 'loading' });
 
 			try {
@@ -76,24 +76,26 @@ export default function PcbViewer({
 				if (closed.signal.aborted) return;
 				loaded.current.version = version;
 				await client.load(scene);
+				loaded.current.state = 'loaded';
 			} catch (error) {
 				if (closed.signal.aborted) return;
+				loaded.current.state = 'failed';
 				setStatus({
 					kind: 'error',
 					message: error instanceof Error ? error.message : 'Could not open the board.'
 				});
-			} finally {
-				loaded.current.loading = false;
 			}
 
 			// The file may have changed again while this load ran.
-			reload.current();
+			reload.current(false);
 		};
 
-		reload.current = () => {
-			const { version, loading } = loaded.current;
+		reload.current = (retryFailed) => {
+			const { version, state } = loaded.current;
+			const current = latestVersion.current === version;
 
-			if (loading || !latestVersion.current || latestVersion.current === version) return;
+			if (state === 'loading' || !latestVersion.current) return;
+			if (current && !(retryFailed && state === 'failed')) return;
 			clearTimeout(timer);
 			timer = setTimeout(() => void load(), RELOAD_DELAY_MS);
 		};
@@ -109,7 +111,7 @@ export default function PcbViewer({
 		};
 	}, [api, workspacePath, path]);
 
-	useEffect(() => reload.current(), [version]);
+	useEffect(() => reload.current(true), [snapshot]);
 
 	useEscapeLayer(() => viewer.current?.clearSelection(), shown && pick !== null);
 
