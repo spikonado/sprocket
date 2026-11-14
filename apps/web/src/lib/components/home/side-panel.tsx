@@ -22,47 +22,31 @@ import FileEditor, { type FileEditorApi } from '$lib/components/home/file-editor
 import FilesView, { type FilesApi } from '$lib/components/home/files-view';
 import SidePanelSplitDivider from '$lib/components/home/side-panel-split-divider';
 import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
-import type { SidePanelTabPatch } from '$lib/home/artifact-panel';
-import type { Text } from '@codemirror/state';
+import type { ArtifactPanel } from '$lib/home/artifact-panel';
 import {
 	layoutRects,
 	leafName,
 	MIN_PANE_SIZE,
-	type FileDraft,
 	type FractionalRect,
 	type SidePanelContentView,
-	type SidePanelLayout,
 	type SidePanelPane,
 	type SidePanelTab,
 	type SplitDirection
 } from '$lib/chat/side-panel';
-import type { WorkspaceFileTarget } from '$lib/types/sprocket';
+import { cn } from '$lib/utils';
 
 type Props = {
+	panel: ArtifactPanel;
 	transcript: ReactNode;
 	artifacts: ArtifactEntry[];
 	artifactContents: ReadonlyMap<string, ArtifactContent>;
 	workspacePath?: string;
 	threadCwd?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
-	layout: SidePanelLayout;
-	activePaneId: string;
 	browserApi: BrowserApi | null;
 	filesApi: (FilesApi & FileEditorApi) | null;
 	loading?: boolean;
 	error?: string | null;
-	onNewTab: (paneId: string) => void;
-	onActivateTab: (id: string) => void;
-	onCloseTab: (id: string) => void;
-	onUpdateTab: (id: string, patch: SidePanelTabPatch) => void;
-	onDraftChange: (id: string, draft: FileDraft | undefined) => void;
-	onFileSaved: (id: string, doc: Text, version: string) => void;
-	onFocusPane: (id: string) => void;
-	onSplitPane: (id: string, direction: SplitDirection) => void;
-	onResizeSplit: (id: string, ratio: number) => void;
-	onOpenFile: (file: WorkspaceFileTarget) => void;
-	onFileRenamed: (workspacePath: string, from: string, to: string) => void;
-	onFileDeleted: (workspacePath: string, path: string) => void;
 	onOpenFullscreen: (key: string) => void;
 };
 
@@ -106,13 +90,14 @@ function tabHeading(tab: SidePanelTab, artifacts: ArtifactEntry[]) {
 }
 
 export default function SidePanel(props: Props) {
-	const { layout, activePaneId, onCloseTab, onFocusPane, onResizeSplit } = props;
+	const { panel } = props;
+	const activePaneId = panel.activePane.id;
 
 	const container = useRef<HTMLDivElement>(null);
 	const focusNewPane = useRef(false);
 	const [size, setSize] = useState<{ width: number; height: number } | null>(null);
 	const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
-	const { panes, splits } = layoutRects(layout);
+	const { panes, splits } = layoutRects(panel.panel.layout);
 	const activeTabId = panes.find(({ pane }) => pane.id === activePaneId)?.pane.activeTabId;
 	const previousPaneCount = useRef(panes.length);
 
@@ -147,13 +132,13 @@ export default function SidePanel(props: Props) {
 
 				const paneId = frame.closest<HTMLElement>('[data-side-panel-pane]')?.dataset.sidePanelPane;
 
-				if (paneId) onFocusPane(paneId);
+				if (paneId) panel.focusPane(paneId);
 			});
 
 		window.addEventListener('blur', onBlur);
 
 		return () => window.removeEventListener('blur', onBlur);
-	}, [onFocusPane]);
+	}, [panel]);
 
 	useEffect(() => {
 		const paneClosed = panes.length < previousPaneCount.current;
@@ -168,11 +153,11 @@ export default function SidePanel(props: Props) {
 		const tab = panes.flatMap(({ pane }) => pane.tabs).find((candidate) => candidate.id === id);
 
 		if (tab?.draft) setConfirmCloseId(id);
-		else onCloseTab(id);
+		else panel.closeTab(id);
 	}
 
 	return (
-		<div ref={container} className="bg-background relative h-full min-h-0 w-full overflow-hidden">
+		<div ref={container} className="bg-background relative h-full min-h-0 w-full overflow-clip">
 			{/* Panes render flat, keyed by id, so splitting never remounts a pane's browser or editor. */}
 			{panes.map(({ pane, rect }) => (
 				<Pane
@@ -185,7 +170,7 @@ export default function SidePanel(props: Props) {
 					canSplitDown={!size || rect.height * size.height >= 2 * MIN_PANE_SIZE.column}
 					onSplit={(direction) => {
 						focusNewPane.current = true;
-						props.onSplitPane(pane.id, direction);
+						panel.splitPane(pane.id, direction);
 					}}
 					takeNewPaneFocus={takeNewPaneFocus}
 					onRequestCloseTab={requestCloseTab}
@@ -197,7 +182,7 @@ export default function SidePanel(props: Props) {
 					split={split}
 					rect={rect}
 					container={container}
-					onResize={(ratio) => onResizeSplit(split.id, ratio)}
+					onResize={(ratio) => panel.resizeSplit(split.id, ratio)}
 				/>
 			))}
 			{confirmCloseId ? (
@@ -209,7 +194,7 @@ export default function SidePanel(props: Props) {
 					onCancel={() => setConfirmCloseId(null)}
 					onConfirm={() => {
 						setConfirmCloseId(null);
-						onCloseTab(confirmCloseId);
+						panel.closeTab(confirmCloseId);
 					}}
 				/>
 			) : null}
@@ -226,10 +211,6 @@ function Pane({
 	onSplit,
 	takeNewPaneFocus,
 	onRequestCloseTab,
-	artifacts,
-	onNewTab,
-	onActivateTab,
-	onFocusPane,
 	...content
 }: Props & {
 	pane: SidePanelPane;
@@ -242,7 +223,9 @@ function Pane({
 	onRequestCloseTab: (id: string) => void;
 }) {
 	const focusActiveTab = useRef(false);
+	const { panel, artifacts } = content;
 	const { tabs, activeTabId } = pane;
+	const floating = tabs.find((tab) => tab.id === activeTabId)?.view === 'transcript';
 
 	useEffect(() => {
 		const tab = document.getElementById(`side-panel-tab-${activeTabId}`);
@@ -262,12 +245,23 @@ function Pane({
 				width: `${rect.width * 100}%`,
 				height: `${rect.height * 100}%`
 			}}
-			className="absolute flex min-h-0 min-w-0 flex-col overflow-hidden"
+			className="absolute flex min-h-0 min-w-0 flex-col overflow-clip"
 			data-side-panel-pane={pane.id}
-			onPointerDownCapture={() => onFocusPane(pane.id)}
-			onFocusCapture={() => onFocusPane(pane.id)}
+			onPointerDownCapture={() => panel.focusPane(pane.id)}
+			onFocusCapture={() => panel.focusPane(pane.id)}
 		>
-			<div className="border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-2">
+			{floating && (
+				<div className="transcript-fade pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rotate-180" />
+			)}
+			<div
+				className={cn(
+					'flex h-10 shrink-0 items-center gap-1 px-2',
+					floating
+						? 'pointer-events-none absolute inset-x-0 top-0 z-10 *:pointer-events-auto'
+						: 'border-hairline border-b',
+					rect.left === 0 && rect.top === 0 && 'in-[.sidebar-hidden]:pl-14'
+				)}
+			>
 				<div
 					role="tablist"
 					aria-label="Workspace tabs"
@@ -286,7 +280,7 @@ function Pane({
 
 						if (next.id === activeTabId) return;
 						focusActiveTab.current = true;
-						onActivateTab(next.id);
+						panel.activateTab(next.id);
 					}}
 				>
 					{tabs.map((tab) => {
@@ -311,7 +305,7 @@ function Pane({
 									aria-controls={`side-panel-tabpanel-${tab.id}`}
 									tabIndex={active ? 0 : -1}
 									title={'title' in heading ? heading.title : heading.label}
-									onClick={() => onActivateTab(tab.id)}
+									onClick={() => panel.activateTab(tab.id)}
 									onAuxClick={(event) => {
 										if (event.button === 1) onRequestCloseTab(tab.id);
 									}}
@@ -349,16 +343,15 @@ function Pane({
 					type="button"
 					className={ICON_BUTTON}
 					data-ph-capture-attribute-action="new_side_panel_tab"
-					onClick={() => onNewTab(pane.id)}
+					onClick={() => panel.newTab(pane.id)}
 					aria-label="New tab"
 					title="New tab"
 				>
 					<Plus className="size-4" aria-hidden="true" />
 				</button>
-				<div className="flex-1"></div>
 				<button
 					type="button"
-					className={ICON_BUTTON}
+					className={`${ICON_BUTTON} ml-auto`}
 					data-ph-capture-attribute-action="split_side_panel"
 					data-ph-capture-attribute-split_direction="row"
 					onClick={() => onSplit('row')}
@@ -382,13 +375,7 @@ function Pane({
 				</button>
 			</div>
 			{tabs.map((tab) => (
-				<TabPanel
-					key={tab.id}
-					{...content}
-					artifacts={artifacts}
-					tab={tab}
-					visible={tab.id === activeTabId}
-				/>
+				<TabPanel key={tab.id} {...content} tab={tab} visible={tab.id === activeTabId} />
 			))}
 		</div>
 	);
@@ -399,6 +386,7 @@ const TabPanel = memo(
 	function TabPanel({
 		tab,
 		visible,
+		panel,
 		transcript,
 		artifacts,
 		artifactContents,
@@ -409,17 +397,8 @@ const TabPanel = memo(
 		filesApi,
 		loading = false,
 		error = null,
-		onUpdateTab,
-		onDraftChange,
-		onFileSaved,
-		onOpenFile,
-		onFileRenamed,
-		onFileDeleted,
 		onOpenFullscreen
-	}: Omit<Props, 'onNewTab' | 'onActivateTab' | 'onFocusPane'> & {
-		tab: SidePanelTab;
-		visible: boolean;
-	}) {
+	}: Props & { tab: SidePanelTab; visible: boolean }) {
 		return (
 			<section
 				id={`side-panel-tabpanel-${tab.id}`}
@@ -427,7 +406,7 @@ const TabPanel = memo(
 				aria-labelledby={`side-panel-tab-${tab.id}`}
 				hidden={!visible}
 				tabIndex={-1}
-				className={`flex min-h-0 flex-1 flex-col focus:outline-none ${tab.view === 'transcript' ? 'overflow-y-auto' : ''}`}
+				className="flex min-h-0 flex-1 flex-col overflow-clip focus:outline-none"
 			>
 				{tab.view === null ? (
 					<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
@@ -439,7 +418,7 @@ const TabPanel = memo(
 										data-ph-capture-attribute-action="choose_side_panel_view"
 										data-ph-capture-attribute-side_panel_view={item.id}
 										onClick={(event) => {
-											onUpdateTab(tab.id, { view: item.id });
+											panel.updateTab(tab.id, { view: item.id });
 											event.currentTarget.closest<HTMLElement>('[role="tabpanel"]')?.focus();
 										}}
 										className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
@@ -462,11 +441,11 @@ const TabPanel = memo(
 						projectPath={workspacePath}
 						threadCwd={threadCwd}
 						location={tab.directory}
-						onLocationChange={(directory) => onUpdateTab(tab.id, { directory })}
+						onLocationChange={(directory) => panel.updateTab(tab.id, { directory })}
 						active={visible}
-						onOpenFile={onOpenFile}
-						onRenamed={onFileRenamed}
-						onDeleted={onFileDeleted}
+						onOpenFile={(file) => panel.openFile(file)}
+						onRenamed={(root, from, to) => panel.renameFile(root, from, to)}
+						onDeleted={(root, path) => panel.closeFile(root, path)}
 					/>
 				) : tab.view === 'file' && tab.file ? (
 					<FileEditor
@@ -475,8 +454,8 @@ const TabPanel = memo(
 						initialDraft={tab.draft}
 						saved={tab.saved}
 						active={visible}
-						onDraftChange={(draft) => onDraftChange(tab.id, draft)}
-						onSaved={(doc, version) => onFileSaved(tab.id, doc, version)}
+						onDraftChange={(draft) => panel.setFileDraft(tab.id, draft)}
+						onSaved={(doc, version) => panel.fileSaved(tab.id, doc, version)}
 					/>
 				) : (
 					<ArtifactsView
@@ -486,8 +465,8 @@ const TabPanel = memo(
 						workspacePath={workspacePath}
 						loading={loading}
 						error={error}
-						onSelect={(key) => onUpdateTab(tab.id, { selectedKey: key })}
-						onBack={() => onUpdateTab(tab.id, { selectedKey: null })}
+						onSelect={(key) => panel.updateTab(tab.id, { selectedKey: key })}
+						onBack={() => panel.updateTab(tab.id, { selectedKey: null })}
 						onOpenFullscreen={onOpenFullscreen}
 						onDeleteArtifact={onDeleteArtifact}
 					/>

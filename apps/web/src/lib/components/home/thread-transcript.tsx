@@ -721,7 +721,7 @@ export default function ThreadTranscript({
 			>
 				<div
 					ref={contentRef}
-					className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 py-8"
+					className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 pt-12 pb-8"
 				>
 					{messages.length === 0 ? (
 						emptyStateMessage ? (

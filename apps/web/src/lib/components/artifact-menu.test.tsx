@@ -5,6 +5,7 @@ import ArtifactMenu from './artifact-menu';
 import ArtifactDisplay from './home/artifact-display';
 import SidePanel from './home/side-panel';
 import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
+import { ArtifactPanel } from '$lib/home/artifact-panel';
 
 const artifact: ArtifactEntry = {
 	key: 'artifact-id',
@@ -13,33 +14,19 @@ const artifact: ArtifactEntry = {
 };
 
 function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {}) {
+	const panel = new ArtifactPanel();
+	panel.newTab();
+	panel.updateTab(panel.activeTab.id, { view: 'artifacts' });
+
 	return {
+		panel,
 		transcript: null,
 		artifacts: [artifact],
 		artifactContents: new Map<string, ArtifactContent>([
 			[artifact.key, { status: 'ready', content: '# Notes' }]
 		]),
-		layout: {
-			type: 'pane' as const,
-			id: 'pane',
-			tabs: [{ id: 'tab', view: 'artifacts' as const, selectedKey: null }],
-			activeTabId: 'tab'
-		},
-		activePaneId: 'pane',
 		browserApi: null,
 		filesApi: null,
-		onNewTab: vi.fn(),
-		onActivateTab: vi.fn(),
-		onCloseTab: vi.fn(),
-		onUpdateTab: vi.fn(),
-		onDraftChange: vi.fn(),
-		onFileSaved: vi.fn(),
-		onFocusPane: vi.fn(),
-		onSplitPane: vi.fn(),
-		onResizeSplit: vi.fn(),
-		onOpenFile: vi.fn(),
-		onFileRenamed: vi.fn(),
-		onFileDeleted: vi.fn(),
 		onOpenFullscreen: vi.fn(),
 		onDeleteArtifact: vi.fn(async () => {}),
 		...overrides
@@ -111,17 +98,8 @@ it('deletes from both the sidebar list and selected preview', async () => {
 	const view = render(<SidePanel {...props} />);
 	fireEvent.contextMenu(screen.getByText('Notes'));
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
-	view.rerender(
-		<SidePanel
-			{...props}
-			layout={{
-				type: 'pane',
-				id: 'pane',
-				activeTabId: 'tab',
-				tabs: [{ id: 'tab', view: 'artifacts', selectedKey: artifact.key }]
-			}}
-		/>
-	);
+	props.panel.openArtifact(artifact.key);
+	view.rerender(<SidePanel {...props} />);
 	fireEvent.click(screen.getByRole('button', { name: 'Notes actions' }));
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
 	expect(onDeleteArtifact).toHaveBeenCalledTimes(2);

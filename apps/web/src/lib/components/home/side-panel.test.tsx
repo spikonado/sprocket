@@ -14,25 +14,12 @@ function Harness({ transcript = 'Thread transcript' }: { transcript?: string }) 
 
 	return (
 		<SidePanel
+			panel={panel}
 			transcript={<p>{transcript}</p>}
 			artifacts={[artifact]}
 			artifactContents={new Map([[artifact.key, { status: 'ready', content: '# Notes' }]])}
-			layout={panel.panel.layout}
-			activePaneId={panel.activePane.id}
 			browserApi={null}
 			filesApi={null}
-			onNewTab={(paneId) => panel.newTab(paneId)}
-			onActivateTab={(id) => panel.activateTab(id)}
-			onCloseTab={(id) => panel.closeTab(id)}
-			onUpdateTab={(id, patch) => panel.updateTab(id, patch)}
-			onDraftChange={(id, draft) => panel.setFileDraft(id, draft)}
-			onFileSaved={(id, doc, version) => panel.fileSaved(id, doc, version)}
-			onFocusPane={(id) => panel.focusPane(id)}
-			onSplitPane={(id, direction) => panel.splitPane(id, direction)}
-			onResizeSplit={(id, ratio) => panel.resizeSplit(id, ratio)}
-			onOpenFile={(file) => panel.openFile(file)}
-			onFileRenamed={(workspacePath, from, to) => panel.renameFile(workspacePath, from, to)}
-			onFileDeleted={(workspacePath, path) => panel.closeFile(workspacePath, path)}
 			onOpenFullscreen={vi.fn()}
 		/>
 	);
