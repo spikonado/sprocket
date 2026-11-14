@@ -124,8 +124,6 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         Some(dir) => static_files::static_router(dir, api),
         None => Router::new().nest("/api", api),
     };
-    // Remote browsers reach the server through proxies that don't compress, and KiCad files
-    // are tens of megabytes of text. Fastest keeps the CPU cost low for local browsers.
     router.layer(CompressionLayer::new().quality(CompressionLevel::Fastest))
 }
 
