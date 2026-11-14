@@ -2595,7 +2595,7 @@ export default function App({
 				<main
 					className={cn(
 						'relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden',
-						!sidebarVisible && 'pl-14'
+						settingsOpen && !sidebarVisible && 'pl-14'
 					)}
 					inert={sidebarOpen && viewportWidth < 768}
 				>
@@ -2653,33 +2653,16 @@ export default function App({
 							<ThreadWorkspace
 								key={artifactPanel.layoutKey}
 								threadId={currentThreadId}
+								panel={artifactPanel}
 								workspacePath={localApi ? currentProject?.workspacePath : undefined}
 								threadCwd={threadCwd}
 								artifacts={artifactList.artifacts}
 								artifactContents={artifactContents}
 								onDeleteArtifact={deleteArtifact}
-								layout={artifactPanel.panel.layout}
-								activePaneId={artifactPanel.activePane.id}
 								browserApi={localApi}
 								filesApi={localApi}
 								loading={artifactList.loading}
 								error={artifactList.error}
-								onNewTab={(paneId) => artifactPanel.newTab(paneId)}
-								onActivateTab={(id) => artifactPanel.activateTab(id)}
-								onCloseTab={(id) => artifactPanel.closeTab(id)}
-								onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
-								onDraftChange={(id, draft) => artifactPanel.setFileDraft(id, draft)}
-								onFileSaved={(id, doc, version) => artifactPanel.fileSaved(id, doc, version)}
-								onFocusPane={(id) => artifactPanel.focusPane(id)}
-								onSplitPane={(id, direction) => artifactPanel.splitPane(id, direction)}
-								onResizeSplit={(id, ratio) => artifactPanel.resizeSplit(id, ratio)}
-								onOpenFile={(file) => artifactPanel.openFile(file)}
-								onFileRenamed={(workspacePath, from, to) =>
-									artifactPanel.renameFile(workspacePath, from, to)
-								}
-								onFileDeleted={(workspacePath, path) =>
-									artifactPanel.closeFile(workspacePath, path)
-								}
 								onOpenFullscreen={(key) => {
 									setArtifactFullscreenRequest(requestArtifactFullscreen());
 									artifactPanel.setFullscreenKey(key);
