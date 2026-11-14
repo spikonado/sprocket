@@ -8,7 +8,7 @@ How a reply renders in `region "Conversation history"`: code blocks with copy an
 - `transcript-image` shows markdown images and opens one in a preview dialog.
 - `transcript-mermaid` renders a mermaid fence as a diagram.
 - `transcript-visual` renders `html-visual` and `jsx-visual` fences in a sandboxed iframe, and `json-render` fences with the app's components.
-- `transcript-kicad` shows a card for a `kicad:<path>.kicad_pro` line that opens the project in the side panel.
+- `transcript-kicad` shows a card for a `kicad:<path>.kicad_pro` line that opens the project in a workspace tab.
 - `transcript-work` groups tool calls under a work disclosure that is open while the run works and collapses after.
 - `transcript-running` lists running commands and stops one.
 
@@ -26,7 +26,7 @@ Precondition: an open thread, and the dev `tiers` table has rows, as in [threads
 - **Visual.** `Iframe "Visual"` holds `paragraph "visual ok"`. Plain `snapshot` prints the frame's content in place, so no `frame` switch is needed.
 - **json-render.** The block renders as app text `json ok`, falling back to the source when the spec is invalid.
 - **Mermaid.** The fence first shows as source, then as a `graphics-document` with `A` and `B` once mermaid.js paints. If rendering fails, it shows `Could not render diagram.` above the source.
-- **KiCad card.** The card shows `verify`, `KiCad project` and `button "View verify"`. Click it. The side panel opens `tab "verify.kicad_pro" [selected]` with `Iframe "KiCanvas viewer for verify.kicad_pro"`.
+- **KiCad card.** The card shows `verify`, `KiCad project` and `button "View verify"`. Click it. The workspace opens `tab "verify.kicad_pro" [selected]` with `Iframe "KiCanvas viewer for verify.kicad_pro"`.
 - **Image.** The image is `button "View shot"`. Click it. `dialog "Image preview: shot"` has `button "Close image preview"` and, for a remote URL, `link "Open original image"`. Escape closes it.
 - **Running commands.** After the reply, `region "Running commands"` sits above the composer with `button "Running commands" [expanded=false]` and the count `1`. Click it. The row shows `sleep 300`, the directory `/tmp/verify-sprocket-scratch` and `button "Stop command: sleep 300"`. Click Stop. The region goes away and `pgrep -af "sleep 300"` finds nothing.
 

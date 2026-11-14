@@ -21,6 +21,6 @@ Proof follows Evidence in `SKILL.md`. Report an unreachable path as a failure wi
 - [Agent input](./agent-input.md): agent questions in the composer, `Needs input` in the inbox, purchase approvals.
 - [Transcript rendering](./transcript.md): code blocks, images, mermaid, visuals and json-render, KiCad cards, the work disclosure, running commands.
 - [Artifacts](./artifacts.md): reference cards, the Artifacts view, source and preview, fullscreen, deleting.
-- [Side panel](./side-panel.md): opening, the view picker, tabs, full workspace, closing and restoring, the Browser view.
+- [Workspace panels](./side-panel.md): the persistent Thread tab, view picker, splits, per-thread layouts, and Browser view.
 - [Files](./files.md): the project tree, editing and saving a file, KiCad in KiCanvas, save conflicts, the discard prompt, creating, renaming and deleting, search.
 - [Settings](./settings.md): the settings pages including Connectors, a preference switch, the GitHub switch.

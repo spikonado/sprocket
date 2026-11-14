@@ -14,6 +14,7 @@ const artifact: ArtifactEntry = {
 
 function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {}) {
 	return {
+		transcript: null,
 		artifacts: [artifact],
 		artifactContents: new Map<string, ArtifactContent>([
 			[artifact.key, { status: 'ready', content: '# Notes' }]
@@ -27,12 +28,12 @@ function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {
 		activePaneId: 'pane',
 		browserApi: null,
 		filesApi: null,
-		expanded: false,
 		onNewTab: vi.fn(),
 		onActivateTab: vi.fn(),
 		onCloseTab: vi.fn(),
 		onUpdateTab: vi.fn(),
 		onDraftChange: vi.fn(),
+		onFileSaved: vi.fn(),
 		onFocusPane: vi.fn(),
 		onSplitPane: vi.fn(),
 		onResizeSplit: vi.fn(),
@@ -40,8 +41,6 @@ function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {
 		onFileRenamed: vi.fn(),
 		onFileDeleted: vi.fn(),
 		onOpenFullscreen: vi.fn(),
-		onToggleExpanded: vi.fn(),
-		onClose: vi.fn(),
 		onDeleteArtifact: vi.fn(async () => {}),
 		...overrides
 	};
@@ -235,15 +234,4 @@ it('does not steal focus when a dismissed deletion finishes', async () => {
 	otherControl.focus();
 	await act(async () => pending.resolve());
 	expect(document.activeElement).toBe(otherControl);
-});
-
-it('dismisses a preview menu before collapsing the expanded sidebar', () => {
-	const onToggleExpanded = vi.fn();
-	render(<SidePanel {...sidePanelProps({ expanded: true, onToggleExpanded })} />);
-	fireEvent.contextMenu(screen.getByText('Notes'));
-	fireEvent.keyDown(window, { key: 'Escape' });
-	expect(screen.queryByRole('menu')).toBeNull();
-	expect(onToggleExpanded).not.toHaveBeenCalled();
-	fireEvent.keyDown(window, { key: 'Escape' });
-	expect(onToggleExpanded).toHaveBeenCalledOnce();
 });

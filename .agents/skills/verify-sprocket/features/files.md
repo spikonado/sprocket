@@ -1,6 +1,6 @@
 # Files
 
-The Files view in the side panel shows the selected project's tree. Opening a file adds an editor tab, and saving writes the file to disk. `.kicad_pro`, `.kicad_sch` and `.kicad_pcb` open a KiCanvas viewer instead of the text editor. A board, or a project with one, also gets a 3D view rendered from KiCad's glTF export. The tree also creates, renames and deletes files. A Thread/Project toggle appears only when the open thread's cwd differs from the project path.
+The Files view in the workspace shows the selected project's tree. Opening a file adds an editor tab, and saving writes the file to disk. `.kicad_pro`, `.kicad_sch` and `.kicad_pcb` open a KiCanvas viewer instead of the text editor. A board, or a project with one, also gets a 3D view rendered from KiCad's glTF export. The tree also creates, renames and deletes files. A Thread/Project toggle appears only when the open thread's cwd differs from the project path.
 
 ## Sub-features
 
@@ -17,11 +17,11 @@ The Files view in the side panel shows the selected project's tree. Opening a fi
 
 ## How to get to it (user POV)
 
-- Open the side panel and choose `Files` in a new tab's view picker.
+- Click `New tab` in the workspace and choose `Files` in its view picker.
 
 ## Driving it with agent-browser
 
-Precondition: the side panel shows `tab "Files" [selected]`, as in [side-panel.md](./side-panel.md).
+Precondition: the workspace shows `tab "Files" [selected]`, as in [side-panel.md](./side-panel.md).
 
 - **Tree.** `snapshot -i` shows `button "New file"`, `button "New folder"`, `button "Refresh files"`, `textbox "Search files"`, and `treeitem "src"` and `treeitem "README.md"`.
 - **Open.** Click `treeitem "README.md"`. `tab "README.md" [selected]` and `button "Close README.md tab"` appear, with a `textbox` holding `# Scratch`.

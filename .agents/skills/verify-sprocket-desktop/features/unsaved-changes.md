@@ -11,7 +11,7 @@ Closing the window or quitting while a file has unsaved edits asks `Leave Sprock
 
 ## How to get to it (user POV)
 
-- Edit a file in the side panel without saving, then close the window.
+- Edit a file in a workspace tab without saving, then close the window.
 
 ## Driving it with agent-browser and xdotool
 
