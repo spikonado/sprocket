@@ -150,6 +150,14 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
+	adoptDraft(threadId: string) {
+		if (!this.#layoutKey?.startsWith('draft:')) return;
+
+		this.#snapshots.delete(this.#layoutKey);
+		this.#layoutKey = `thread:${threadId}`;
+		this.#emit();
+	}
+
 	/** Keeps the local server syncing bound artifact files to Convex while the project is open. */
 	watchSync(localApi: ArtifactLocalApi | null, scope: ArtifactsWatchRequest | null) {
 		if (!localApi || !scope?.workspacePath) return;
