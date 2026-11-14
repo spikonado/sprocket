@@ -2698,11 +2698,7 @@ export default function App({
 											/>
 										)}
 
-										<div
-											className={
-												!currentThreadId ? 'create-thread-screen' : 'min-h-0 overflow-y-auto'
-											}
-										>
+										<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
 											{!currentThreadId && (
 												<>
 													<CreateThreadHeading
