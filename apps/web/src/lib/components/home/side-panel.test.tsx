@@ -9,12 +9,12 @@ const artifact = {
 	artifactType: 'markdown'
 } as const;
 
-function Harness() {
+function Harness({ transcript = 'Thread transcript' }: { transcript?: string }) {
 	const panel = useArtifactPanel();
 
 	return (
 		<SidePanel
-			transcript={<p>Thread transcript</p>}
+			transcript={<p>{transcript}</p>}
 			artifacts={[artifact]}
 			artifactContents={new Map([[artifact.key, { status: 'ready', content: '# Notes' }]])}
 			layout={panel.panel.layout}
@@ -39,7 +39,7 @@ function Harness() {
 }
 
 it('keeps each tab open with its own view and switches between them', () => {
-	render(<Harness />);
+	const { rerender } = render(<Harness />);
 	expect(screen.getByRole('tabpanel', { name: 'Thread' }).textContent).toBe('Thread transcript');
 
 	fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
@@ -60,11 +60,20 @@ it('keeps each tab open with its own view and switches between them', () => {
 	expect(screen.getByRole('tab', { name: 'Notes' }).getAttribute('aria-selected')).toBe('true');
 	expect(screen.getByRole('tabpanel', { name: 'Notes' })).toBeTruthy();
 	expect(screen.getByText('Thread transcript').closest('section')?.hidden).toBe(true);
+	expect(
+		document.getElementById(
+			screen.getByRole('tab', { name: 'Browser' }).getAttribute('aria-controls')!
+		)?.childElementCount
+	).toBe(0);
+
+	rerender(<Harness transcript="Updated transcript" />);
+	expect(screen.getByText('Thread transcript').closest('section')?.hidden).toBe(true);
 
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Notes' }), { key: 'ArrowRight' });
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), { key: 'ArrowRight' });
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Thread' }));
+	expect(screen.getByRole('tabpanel', { name: 'Thread' }).textContent).toBe('Updated transcript');
 
 	fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Close Notes tab' }));

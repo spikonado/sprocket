@@ -14,7 +14,7 @@ import {
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
@@ -226,26 +226,11 @@ function Pane({
 	onSplit,
 	takeNewPaneFocus,
 	onRequestCloseTab,
-	transcript,
 	artifacts,
-	artifactContents,
-	workspacePath,
-	threadCwd,
-	onDeleteArtifact,
-	browserApi,
-	filesApi,
-	loading = false,
-	error = null,
 	onNewTab,
 	onActivateTab,
-	onUpdateTab,
-	onDraftChange,
-	onFileSaved,
 	onFocusPane,
-	onOpenFile,
-	onFileRenamed,
-	onFileDeleted,
-	onOpenFullscreen
+	...content
 }: Props & {
 	pane: SidePanelPane;
 	rect: FractionalRect;
@@ -397,82 +382,121 @@ function Pane({
 				</button>
 			</div>
 			{tabs.map((tab) => (
-				<section
+				<TabPanel
 					key={tab.id}
-					id={`side-panel-tabpanel-${tab.id}`}
-					role="tabpanel"
-					aria-labelledby={`side-panel-tab-${tab.id}`}
-					hidden={tab.id !== activeTabId}
-					tabIndex={-1}
-					className={`flex min-h-0 flex-1 flex-col focus:outline-none ${tab.view === 'transcript' ? 'overflow-y-auto' : ''}`}
-				>
-					{tab.view === null ? (
-						<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
-							<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
-								{VIEWS.map((item) => (
-									<li key={item.id}>
-										<button
-											type="button"
-											data-ph-capture-attribute-action="choose_side_panel_view"
-											data-ph-capture-attribute-side_panel_view={item.id}
-											onClick={(event) => {
-												onUpdateTab(tab.id, { view: item.id });
-												event.currentTarget.closest<HTMLElement>('[role="tabpanel"]')?.focus();
-											}}
-											className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
-										>
-											<item.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
-											<span className="text-sm">{item.label}</span>
-										</button>
-									</li>
-								))}
-							</ul>
-						</div>
-					) : tab.view === 'transcript' ? (
-						transcript
-					) : tab.view === 'browser' ? (
-						<BrowserView browserApi={browserApi} />
-					) : tab.view === 'files' ? (
-						<FilesView
-							api={filesApi}
-							projectPath={workspacePath}
-							threadCwd={threadCwd}
-							location={tab.directory}
-							onLocationChange={(directory) => onUpdateTab(tab.id, { directory })}
-							active={tab.id === activeTabId}
-							onOpenFile={onOpenFile}
-							onRenamed={onFileRenamed}
-							onDeleted={onFileDeleted}
-						/>
-					) : tab.view === 'file' && tab.file ? (
-						<FileEditor
-							api={filesApi}
-							file={tab.file}
-							initialDraft={tab.draft}
-							saved={tab.saved}
-							active={tab.id === activeTabId}
-							onDraftChange={(draft) => onDraftChange(tab.id, draft)}
-							onSaved={(doc, version) => onFileSaved(tab.id, doc, version)}
-						/>
-					) : (
-						<ArtifactsView
-							artifacts={artifacts}
-							artifactContents={artifactContents}
-							selectedKey={tab.selectedKey}
-							workspacePath={workspacePath}
-							loading={loading}
-							error={error}
-							onSelect={(key) => onUpdateTab(tab.id, { selectedKey: key })}
-							onBack={() => onUpdateTab(tab.id, { selectedKey: null })}
-							onOpenFullscreen={onOpenFullscreen}
-							onDeleteArtifact={onDeleteArtifact}
-						/>
-					)}
-				</section>
+					{...content}
+					artifacts={artifacts}
+					tab={tab}
+					visible={tab.id === activeTabId}
+				/>
 			))}
 		</div>
 	);
 }
+
+// A hidden tab keeps its state but skips renders until it shows again.
+const TabPanel = memo(
+	function TabPanel({
+		tab,
+		visible,
+		transcript,
+		artifacts,
+		artifactContents,
+		workspacePath,
+		threadCwd,
+		onDeleteArtifact,
+		browserApi,
+		filesApi,
+		loading = false,
+		error = null,
+		onUpdateTab,
+		onDraftChange,
+		onFileSaved,
+		onOpenFile,
+		onFileRenamed,
+		onFileDeleted,
+		onOpenFullscreen
+	}: Omit<Props, 'onNewTab' | 'onActivateTab' | 'onFocusPane'> & {
+		tab: SidePanelTab;
+		visible: boolean;
+	}) {
+		return (
+			<section
+				id={`side-panel-tabpanel-${tab.id}`}
+				role="tabpanel"
+				aria-labelledby={`side-panel-tab-${tab.id}`}
+				hidden={!visible}
+				tabIndex={-1}
+				className={`flex min-h-0 flex-1 flex-col focus:outline-none ${tab.view === 'transcript' ? 'overflow-y-auto' : ''}`}
+			>
+				{tab.view === null ? (
+					<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+						<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
+							{VIEWS.map((item) => (
+								<li key={item.id}>
+									<button
+										type="button"
+										data-ph-capture-attribute-action="choose_side_panel_view"
+										data-ph-capture-attribute-side_panel_view={item.id}
+										onClick={(event) => {
+											onUpdateTab(tab.id, { view: item.id });
+											event.currentTarget.closest<HTMLElement>('[role="tabpanel"]')?.focus();
+										}}
+										className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
+									>
+										<item.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
+										<span className="text-sm">{item.label}</span>
+									</button>
+								</li>
+							))}
+						</ul>
+					</div>
+				) : tab.view === 'transcript' ? (
+					transcript
+				) : tab.view === 'browser' ? (
+					// The dashboard iframe streams the browser on the page's main thread, even when hidden.
+					visible && <BrowserView browserApi={browserApi} />
+				) : tab.view === 'files' ? (
+					<FilesView
+						api={filesApi}
+						projectPath={workspacePath}
+						threadCwd={threadCwd}
+						location={tab.directory}
+						onLocationChange={(directory) => onUpdateTab(tab.id, { directory })}
+						active={visible}
+						onOpenFile={onOpenFile}
+						onRenamed={onFileRenamed}
+						onDeleted={onFileDeleted}
+					/>
+				) : tab.view === 'file' && tab.file ? (
+					<FileEditor
+						api={filesApi}
+						file={tab.file}
+						initialDraft={tab.draft}
+						saved={tab.saved}
+						active={visible}
+						onDraftChange={(draft) => onDraftChange(tab.id, draft)}
+						onSaved={(doc, version) => onFileSaved(tab.id, doc, version)}
+					/>
+				) : (
+					<ArtifactsView
+						artifacts={artifacts}
+						artifactContents={artifactContents}
+						selectedKey={tab.selectedKey}
+						workspacePath={workspacePath}
+						loading={loading}
+						error={error}
+						onSelect={(key) => onUpdateTab(tab.id, { selectedKey: key })}
+						onBack={() => onUpdateTab(tab.id, { selectedKey: null })}
+						onOpenFullscreen={onOpenFullscreen}
+						onDeleteArtifact={onDeleteArtifact}
+					/>
+				)}
+			</section>
+		);
+	},
+	(previous, next) => !previous.visible && !next.visible
+);
 
 function ArtifactsView({
 	artifacts,
