@@ -21,7 +21,7 @@
 		"@tailwindcss/vite": "catalog:",
 		"@vercel/functions": "^3.10.2",
 		"@workos-inc/node": "^12.1.0",
-		"astro": "7.3.3",
+		"astro": "7.4.7",
 		"clsx": "catalog:",
 		"convex": "catalog:",
 		"posthog-js": "catalog:",
