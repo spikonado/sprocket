@@ -632,13 +632,6 @@ impl rig::tool::Tool for PollSubagentTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        if args
-            .threads
-            .iter()
-            .any(|thread| thread.thread_id.trim().is_empty())
-        {
-            return Err(tool_failure("threadId cannot be empty"));
-        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job_with_id(
             &self.context,
@@ -678,6 +671,9 @@ impl PollSubagentTool {
         cancellation: &WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
         let thread_id = &thread.thread_id;
+        if thread_id.trim().is_empty() {
+            return Err(tool_failure("threadId cannot be empty"));
+        }
         let cursor = thread.cursor.as_deref();
         cancelled_read(cancellation, async {
             if window.is_immediate() {

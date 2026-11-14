@@ -166,4 +166,28 @@ describe('multi-target poll rows', () => {
 			expected.map((item) => (item.startsWith('bun') ? item : undefined))
 		);
 	});
+
+	it('keeps each failed target error on its row', () => {
+		const rows = toolItemRows(
+			{
+				type: 'tool',
+				callId: 'poll',
+				name: 'poll_cmd',
+				input: { sessionIds: ['7', '8'] },
+				output: [
+					{
+						sessionId: '7',
+						command: 'bun run dev',
+						workdir: '/repo',
+						running: false,
+						error: 'exit 1'
+					},
+					{ sessionId: '8', error: 'Unknown session.' }
+				]
+			},
+			new Map()
+		);
+
+		expect(rows.map((row) => row.error)).toEqual([undefined, 'Unknown session.']);
+	});
 });

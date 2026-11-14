@@ -185,10 +185,21 @@ const POLLED_TARGET_LISTS = new Map([
 	['poll_pr', 'pullRequests']
 ]);
 
+/** The only fields an entry for a target that failed to poll carries. */
+const FAILED_TARGET_KEYS = new Set(['sessionId', 'threadId', 'repository', 'number', 'error']);
+
+function failedTargetOutput(entry: JsonValue): JsonValue {
+	return isJsonObject(entry) &&
+		isJsonString(entry.error) &&
+		Object.keys(entry).every((key) => FAILED_TARGET_KEYS.has(key))
+		? { status: 'failed', error: entry.error }
+		: entry;
+}
+
 /**
  * Splits a call that polls several targets into one single-target tool per target, so each
  * reads like a historical single-target poll. Result entries carry their target's fields, so
- * they replace the requested targets once present.
+ * they replace the requested targets once present. A failed target's output reads as a failure.
  */
 export function polledTargetTools(tool: AssistantTimelineTool): AssistantTimelineTool[] {
 	const kind = tool.job?.kind ?? tool.name;
@@ -216,7 +227,7 @@ export function polledTargetTools(tool: AssistantTimelineTool): AssistantTimelin
 			input: target
 		};
 
-		if (results) targetTool.output = target;
+		if (results) targetTool.output = failedTargetOutput(target);
 
 		return targetTool;
 	});

@@ -1,4 +1,4 @@
-import { use, useLayoutEffect, useState, type ReactNode } from 'react';
+import { Fragment, use, useLayoutEffect, useState, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { isJsonObject } from '@convex/lib/json';
 import {
@@ -150,24 +150,35 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 
 				return (
 					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
-						{rows.map(({ item, command }, index) => {
-							const status =
-								error && failure && index === rows.length - 1 ? (
-									<span className={`shrink-0 ${errorClass}`}>
-										({failure === 'cancelled' ? 'stopped' : failure})
-									</span>
-								) : null;
+						{rows.map((row, index) => {
+							const status = row.error ? (
+								<span className="text-destructive shrink-0">(failed)</span>
+							) : error && failure && index === rows.length - 1 ? (
+								<span className={`shrink-0 ${errorClass}`}>
+									({failure === 'cancelled' ? 'stopped' : failure})
+								</span>
+							) : null;
 
 							return (
-								<ToolRow
-									key={index}
-									Icon={Icon}
-									label={label}
-									item={item}
-									status={status}
-									command={command}
-									onOpen={onOpen}
-								/>
+								<Fragment key={index}>
+									<ToolRow
+										Icon={Icon}
+										label={label}
+										item={row.item}
+										status={status}
+										command={row.command}
+										onOpen={onOpen}
+									/>
+									{row.error ? (
+										<p
+											data-work-detail
+											className="text-destructive pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap"
+											role="status"
+										>
+											{row.error}
+										</p>
+									) : null}
+								</Fragment>
 							);
 						})}
 						{error && failure ? (

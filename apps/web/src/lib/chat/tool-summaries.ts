@@ -1,4 +1,5 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
+import { parseAssistantToolResultError } from '@convex/lib/assistantParts';
 import {
 	polledTargetTools,
 	resolveCommandSessionLabel,
@@ -408,14 +409,17 @@ function toolShellCommand(
 export function toolItemRows(
 	toolLog: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
-): { item: string; command: string | undefined }[] {
+): { item: string; command: string | undefined; error: string | undefined }[] {
 	return polledTargetTools(toolLog).flatMap((target) => {
 		const summary = toolItemSummary(target, sessionCommands);
 		const command = toolShellCommand(target, sessionCommands);
 
+		const error =
+			target === toolLog ? undefined : parseAssistantToolResultError(target.output)?.error;
+
 		const items =
 			(target.job?.kind ?? target.name) === 'apply_patch' ? summary.split('\n') : [summary];
 
-		return items.map((item) => ({ item, command }));
+		return items.map((item) => ({ item, command, error }));
 	});
 }

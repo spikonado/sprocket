@@ -208,8 +208,8 @@ async fn poll_pr(pr: &PolledPr, window: &PollWindow) -> anyhow::Result<serde_jso
     let pull_request = pull_request_ref(&pr.repository, pr.number);
     let mut seen = pr.cursor.as_deref().map(decode_cursor).transpose()?;
     let mut reader = ActivityReader::connect(&pull_request).await?;
+    let mut activity = reader.read().await?;
     loop {
-        let activity = reader.read().await?;
         let report = compare(
             seen.get_or_insert_with(|| Seen::first_look(&activity)),
             &activity,
@@ -217,10 +217,13 @@ async fn poll_pr(pr: &PolledPr, window: &PollWindow) -> anyhow::Result<serde_jso
         if !report.changes.is_empty() {
             return poll_pr_output(&activity, &report);
         }
-        tokio::select! {
-            _ = sleep(POLL_PR_INTERVAL) => {}
+        activity = tokio::select! {
+            next = async {
+                sleep(POLL_PR_INTERVAL).await;
+                reader.read().await
+            } => next?,
             _ = window.closed() => return poll_pr_output(&activity, &report),
-        }
+        };
     }
 }
 
