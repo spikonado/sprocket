@@ -12,7 +12,7 @@ import {
 	MarkdownFileLinksContext,
 	type MarkdownFileLinks
 } from '$lib/chat/markdown-file-links';
-import { toolItemLabel, toolItemSummary, toolShellCommand } from '$lib/chat/tool-summaries';
+import { toolItemLabel, toolItemRows } from '$lib/chat/tool-summaries';
 import { toolLogIcon } from '$lib/chat/tool-icons';
 import HighlightedCommand from './highlighted-command';
 
@@ -139,10 +139,8 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 			{tools.map((tool) => {
 				const kind = tool.job?.kind ?? tool.name;
 				const Icon = toolLogIcon(tool);
-				const summary = toolItemSummary(tool, commands);
-				const summaries = kind === 'apply_patch' ? summary.split('\n') : [summary];
+				const rows = toolItemRows(tool, commands);
 				const label = toolItemLabel(kind);
-				const command = toolShellCommand(tool, commands);
 				const error = assistantTimelineToolError(tool, inProgress);
 				const failure = assistantTimelineToolFailureKind(tool, inProgress);
 				const onOpen = kind === 'parse_file' ? parsedFileOpener(tool, fileLinks) : undefined;
@@ -152,9 +150,9 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 
 				return (
 					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
-						{summaries.map((item, index) => {
+						{rows.map(({ item, command }, index) => {
 							const status =
-								error && failure && index === summaries.length - 1 ? (
+								error && failure && index === rows.length - 1 ? (
 									<span className={`shrink-0 ${errorClass}`}>
 										({failure === 'cancelled' ? 'stopped' : failure})
 									</span>

@@ -74,7 +74,12 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
             std::fs::write(root.join("release"), "").unwrap();
         }
         let finished = sessions
-            .poll_command(WorkspaceCancellation::new(), &session_id, 5_000, 0)
+            .poll_command(
+                WorkspaceCancellation::new(),
+                &session_id,
+                &sprocket_workspace::async_tools::PollWindow::after_ms(5_000),
+                0,
+            )
             .await
             .unwrap();
         assert!(!finished.result.running);

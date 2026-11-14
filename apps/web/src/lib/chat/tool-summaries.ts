@@ -1,5 +1,6 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
+	polledTargetTools,
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
@@ -389,7 +390,7 @@ export function toolItemSummary(
 	return summarizeTool(toolLog.name, toolLog.input);
 }
 
-export function toolShellCommand(
+function toolShellCommand(
 	toolLog: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
 ) {
@@ -402,4 +403,19 @@ export function toolShellCommand(
 	const input: JsonValue | undefined = toolLog.job?.payload ?? toolLog.input;
 
 	return isJsonObject(input) ? jsonString(input.cmd) : undefined;
+}
+
+export function toolItemRows(
+	toolLog: AssistantTimelineTool,
+	sessionCommands: ReadonlyMap<string, string>
+): { item: string; command: string | undefined }[] {
+	return polledTargetTools(toolLog).flatMap((target) => {
+		const summary = toolItemSummary(target, sessionCommands);
+		const command = toolShellCommand(target, sessionCommands);
+
+		const items =
+			(target.job?.kind ?? target.name) === 'apply_patch' ? summary.split('\n') : [summary];
+
+		return items.map((item) => ({ item, command }));
+	});
 }

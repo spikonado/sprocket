@@ -1,9 +1,45 @@
 use std::future::Future;
 use std::time::Duration;
 
-use tokio::time::Instant;
+use tokio::time::{Instant, sleep_until};
+use tokio_util::sync::CancellationToken;
 
 const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(10);
+
+/// The wait that every target of one poll shares. It closes at its deadline or
+/// as soon as any target settles, so a poll returns on its first news.
+#[derive(Clone, Debug)]
+pub struct PollWindow {
+    deadline: Instant,
+    immediate: bool,
+    settled: CancellationToken,
+}
+
+impl PollWindow {
+    pub fn after_ms(yield_time_ms: u64) -> Self {
+        Self {
+            deadline: Instant::now() + Duration::from_millis(yield_time_ms),
+            immediate: yield_time_ms == 0,
+            settled: CancellationToken::new(),
+        }
+    }
+
+    /// Whether the caller asked for a snapshot without waiting.
+    pub fn is_immediate(&self) -> bool {
+        self.immediate
+    }
+
+    pub fn close(&self) {
+        self.settled.cancel();
+    }
+
+    pub async fn closed(&self) {
+        tokio::select! {
+            _ = sleep_until(self.deadline) => {}
+            _ = self.settled.cancelled() => {}
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct ZeroPollCooldown {

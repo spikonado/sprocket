@@ -180,7 +180,6 @@ fn activity_updates(
 
 #[tokio::test(start_paused = true)]
 async fn stop_waits_for_the_target_run_to_finish_even_with_pending_questions() {
-    let deadline = Instant::now() + Duration::from_secs(10);
     let mut updates = activity_updates(vec![
         activity(RunStatus::Running, true, true),
         activity(RunStatus::Cancelled, true, true),
@@ -188,7 +187,7 @@ async fn stop_waits_for_the_target_run_to_finish_even_with_pending_questions() {
     ]);
     wait_for_activity_using(
         &mut updates,
-        deadline,
+        &PollWindow::after_ms(10_000),
         &WorkspaceCancellation::new(),
         |activity| activity.status.is_final(),
     )
@@ -202,7 +201,7 @@ async fn stop_waits_for_the_target_run_to_finish_even_with_pending_questions() {
 
 #[tokio::test(start_paused = true)]
 async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
-    let started = Instant::now();
+    let started = tokio::time::Instant::now();
     for last in [
         activity(RunStatus::Completed, false, false),
         activity(RunStatus::Running, true, true),
@@ -210,7 +209,7 @@ async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
         let mut updates = activity_updates(vec![activity(RunStatus::Running, true, false), last]);
         wait_for_activity_using(
             &mut updates,
-            started + Duration::from_secs(10),
+            &PollWindow::after_ms(10_000),
             &WorkspaceCancellation::new(),
             SubagentActivity::settled,
         )
@@ -222,17 +221,17 @@ async fn settlement_returns_when_the_subagent_goes_idle_or_asks() {
 
 #[tokio::test(start_paused = true)]
 async fn activity_wait_yields_at_the_deadline_while_the_subagent_works() {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let started = tokio::time::Instant::now();
     let mut updates = activity_updates(vec![activity(RunStatus::Running, true, false)]);
     wait_for_activity_using(
         &mut updates,
-        deadline,
+        &PollWindow::after_ms(10_000),
         &WorkspaceCancellation::new(),
         SubagentActivity::settled,
     )
     .await
     .unwrap();
-    assert_eq!(Instant::now(), deadline);
+    assert_eq!(started.elapsed(), Duration::from_secs(10));
 }
 
 #[tokio::test]
@@ -240,10 +239,9 @@ async fn cancellation_aborts_a_stalled_activity_wait() {
     let cancellation = WorkspaceCancellation::new();
     cancellation.cancel();
     let mut updates = activity_updates(Vec::new());
-    let deadline = Instant::now() + Duration::from_secs(10);
     let error = wait_for_activity_using(
         &mut updates,
-        deadline,
+        &PollWindow::after_ms(10_000),
         &cancellation,
         SubagentActivity::settled,
     )

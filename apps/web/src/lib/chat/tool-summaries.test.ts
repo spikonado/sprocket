@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
-import { toolItemSummary } from '$lib/chat/tool-summaries';
+import { toolItemRows, toolItemSummary } from '$lib/chat/tool-summaries';
 import type { JsonValue } from '@convex/lib/json';
 
 describe('command tool summaries', () => {
@@ -120,5 +120,50 @@ describe('subagent summaries', () => {
 	])('summarizes $name as "$expected"', ({ name, input, expected }) => {
 		const tool: AssistantTimelineTool = { type: 'tool', callId: 'call', name, input };
 		expect(toolItemSummary(tool, new Map())).toBe(expected);
+	});
+});
+
+describe('multi-target poll rows', () => {
+	it.each<{ name: string; input: JsonValue; output?: JsonValue; expected: string[] }>([
+		{
+			name: 'poll_cmd',
+			input: { sessionIds: ['7', '8', '9'] },
+			expected: ['bun run build', 'Session 8', 'Session 9']
+		},
+		{
+			name: 'poll_cmd',
+			input: { sessionIds: ['7', '8'] },
+			output: [
+				{ sessionId: '7', command: 'bun run dev', workdir: '/repo', running: true },
+				{ sessionId: '8', error: 'Unknown session.' }
+			],
+			expected: ['bun run dev', 'Session 8']
+		},
+		{
+			name: 'poll_subagent',
+			input: { threads: [{ threadId: 'child-a' }, { threadId: 'child-b', cursor: '3' }] },
+			expected: ['child-a', 'child-b']
+		},
+		{
+			name: 'poll_pr',
+			input: {
+				pullRequests: [
+					{ repository: 'github.com/acme/widgets', number: 7 },
+					{ repository: 'github.com/acme/gears', number: 2 }
+				]
+			},
+			expected: ['github.com/acme/widgets#7', 'github.com/acme/gears#2']
+		}
+	])('renders one $name row per target', ({ name, input, output, expected }) => {
+		const tool: AssistantTimelineTool = { type: 'tool', callId: 'poll', name, input };
+
+		if (output !== undefined) tool.output = output;
+
+		const rows = toolItemRows(tool, new Map([['7', 'bun run build']]));
+
+		expect(rows.map((row) => row.item)).toEqual(expected);
+		expect(rows.map((row) => row.command)).toEqual(
+			expected.map((item) => (item.startsWith('bun') ? item : undefined))
+		);
 	});
 });

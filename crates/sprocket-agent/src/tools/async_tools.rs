@@ -1,4 +1,8 @@
+use std::future::Future;
+
+use rig::tool::{ToolErrorKind, ToolExecutionError};
 use serde_json::{Value, json};
+use sprocket_workspace::async_tools::PollWindow;
 
 use crate::types::CompletionProvider;
 
@@ -84,6 +88,45 @@ pub(super) fn yield_time_schema(mode: YieldMode, max_yield_ms: u64, description:
         }
     }
     schema
+}
+
+/// Polls every target in one shared window. The first target to return closes
+/// the window, so the others stop waiting and report what they have. Each
+/// entry is the target's `id` fields plus its result or `error`.
+pub(super) async fn poll_targets<'a, T, F, Fut>(
+    window: &PollWindow,
+    targets: &'a [T],
+    id: impl Fn(&T) -> Value,
+    poll: F,
+) -> Result<Value, ToolExecutionError>
+where
+    F: Fn(&'a T) -> Fut,
+    Fut: Future<Output = Result<Value, ToolExecutionError>>,
+{
+    let results = futures::future::join_all(targets.iter().map(|target| {
+        let polled = poll(target);
+        async move {
+            let result = polled.await;
+            window.close();
+            result
+        }
+    }))
+    .await;
+    targets
+        .iter()
+        .zip(results)
+        .map(|(target, result)| {
+            let mut entry = id(target);
+            match result {
+                Ok(Value::Object(fields)) => entry.as_object_mut().unwrap().extend(fields),
+                Ok(other) => entry["result"] = other,
+                Err(error) if error.kind() == ToolErrorKind::Cancelled => return Err(error),
+                Err(error) => entry["error"] = json!(error.to_string()),
+            }
+            Ok(entry)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
 }
 
 #[cfg(test)]

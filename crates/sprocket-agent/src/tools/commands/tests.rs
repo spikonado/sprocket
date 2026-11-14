@@ -137,9 +137,10 @@ fn control_action_and_chars_are_validated_before_dispatch() {
 }
 
 #[test]
-fn poll_schema_only_takes_a_session_and_a_yield_window() {
+fn poll_schema_only_takes_sessions_and_a_yield_window() {
     let schema = poll_command_parameters(MAX_YIELD_MS);
-    assert_eq!(schema["required"], json!(["sessionId"]));
+    assert_eq!(schema["required"], json!(["sessionIds"]));
+    assert_eq!(schema["properties"]["sessionIds"]["minItems"], json!(1));
     assert_eq!(schema["additionalProperties"], json!(false));
     let properties = schema["properties"].as_object().unwrap();
     assert_eq!(properties.len(), 2);
@@ -160,11 +161,13 @@ fn poll_schema_only_takes_a_session_and_a_yield_window() {
 
 #[test]
 fn poll_args_deserialize_strictly() {
-    let poll: PollCommandArgs = serde_json::from_value(json!({"sessionId": "42"})).unwrap();
+    let poll: PollCommandArgs =
+        serde_json::from_value(json!({"sessionIds": ["42", "43"]})).unwrap();
+    assert_eq!(poll.session_ids, ["42", "43"]);
     assert_eq!(poll.yield_time_ms, DEFAULT_YIELD_MS);
 
     assert!(
-        serde_json::from_value::<PollCommandArgs>(json!({"sessionId": "42", "chars": "x"}))
+        serde_json::from_value::<PollCommandArgs>(json!({"sessionIds": ["42"], "chars": "x"}))
             .is_err(),
         "poll takes no action fields"
     );
@@ -339,10 +342,22 @@ async fn cursors_resume_from_the_furthest_recorded_read_of_each_session() {
             json!({"sessionId": "b"}),
             json!({"nextOffset": 9}),
         ),
+        command_part(
+            7,
+            "poll_cmd",
+            "completed",
+            json!({"sessionIds": ["d", "c"]}),
+            json!([
+                {"sessionId": "d", "nextOffset": 7},
+                {"sessionId": "c", "error": "unknown command session: c"}
+            ]),
+        ),
     ];
     let cursors = CommandCursors::from_parts(&parts);
     assert_eq!(read_from(&cursors, "a", 6).await, 5);
     assert_eq!(read_from(&cursors, "b", 4).await, 3);
+    assert_eq!(read_from(&cursors, "d", 8).await, 7);
+    assert_eq!(read_from(&cursors, "c", 1).await, 0);
     assert_eq!(read_from(&cursors, "new", 1).await, 0);
 }
 

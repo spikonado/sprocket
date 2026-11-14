@@ -4,7 +4,7 @@ import {
 	type AssistantPart,
 	type AssistantToolCallPart
 } from '@convex/lib/assistantParts';
-import type { JsonValue } from '@convex/lib/json';
+import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import { isCommandToolKind, isExecCommandToolKind } from '@convex/lib/commandToolKinds';
 import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
@@ -158,7 +158,7 @@ export function buildCommandSessionCommandMap(
 ): Map<string, string> {
 	const sessionCommands = new Map<string, string>();
 
-	for (const tool of tools) {
+	for (const tool of tools.flatMap(polledTargetTools)) {
 		const sessionId = commandSessionIdFromTool(tool);
 
 		if (!sessionId) {
@@ -177,6 +177,49 @@ export function buildCommandSessionCommandMap(
 	}
 
 	return sessionCommands;
+}
+
+const POLLED_TARGET_LISTS = new Map([
+	['poll_cmd', 'sessionIds'],
+	['poll_subagent', 'threads'],
+	['poll_pr', 'pullRequests']
+]);
+
+/**
+ * Splits a call that polls several targets into one single-target tool per target, so each
+ * reads like a historical single-target poll. Result entries carry their target's fields, so
+ * they replace the requested targets once present.
+ */
+export function polledTargetTools(tool: AssistantTimelineTool): AssistantTimelineTool[] {
+	const kind = tool.job?.kind ?? tool.name;
+	const listKey = POLLED_TARGET_LISTS.get(kind);
+
+	if (!listKey) return [tool];
+
+	const results = Array.isArray(tool.output) && tool.output.length > 0 ? tool.output : undefined;
+	const input: JsonValue | undefined = tool.job?.payload ?? tool.input;
+	const requested = isJsonObject(input) ? input[listKey] : undefined;
+
+	const targets =
+		results ??
+		(Array.isArray(requested)
+			? requested.map((target) => (isJsonString(target) ? { sessionId: target } : target))
+			: undefined);
+
+	if (!targets) return [tool];
+
+	return targets.map((target, index) => {
+		const targetTool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: `${tool.callId}:${index}`,
+			name: kind,
+			input: target
+		};
+
+		if (results) targetTool.output = target;
+
+		return targetTool;
+	});
 }
 
 export function resolveCommandSessionLabel(

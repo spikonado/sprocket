@@ -8,6 +8,7 @@ use super::{
     CapturedOutput, CommandAction, CommandCompletion, CommandObservation, CommandOutput,
     CommandSession, CommandSessionManager, ObservationMode,
 };
+use crate::async_tools::PollWindow;
 use crate::cancellation::WorkspaceCancellation;
 use crate::command_container::CommandContainer;
 use crate::command_output::OutputChannel;
@@ -229,7 +230,12 @@ async fn try_poll(
     yield_time_ms: u64,
 ) -> anyhow::Result<CommandOutput> {
     let polled = sessions
-        .poll_command(WorkspaceCancellation::new(), id, yield_time_ms, cursor(id))
+        .poll_command(
+            WorkspaceCancellation::new(),
+            id,
+            &PollWindow::after_ms(yield_time_ms),
+            cursor(id),
+        )
         .await?;
     advance(id, polled.next_offset);
     Ok(polled.result)
@@ -443,7 +449,12 @@ async fn exec_and_control_have_distinct_flat_output_contracts() {
         })
     );
     let running = sessions
-        .poll_command(WorkspaceCancellation::new(), id, 0, 0)
+        .poll_command(
+            WorkspaceCancellation::new(),
+            id,
+            &PollWindow::after_ms(0),
+            0,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -678,6 +689,7 @@ async fn reads_from_the_same_cursor_return_the_same_output() {
         .await
         .unwrap();
     let id = started.session_id.unwrap();
+    let window = PollWindow::after_ms(5_000);
     let (finished, concurrent) = tokio::join!(
         sessions.control_command(
             WorkspaceCancellation::new(),
@@ -687,7 +699,7 @@ async fn reads_from_the_same_cursor_return_the_same_output() {
             5_000,
             0,
         ),
-        sessions.poll_command(WorkspaceCancellation::new(), &id, 5_000, 0),
+        sessions.poll_command(WorkspaceCancellation::new(), &id, &window, 0),
     );
     let finished = finished.unwrap();
     let concurrent = concurrent.unwrap();
@@ -843,9 +855,13 @@ async fn action_waits_honor_their_budgets() {
     ] {
         let session = stub.session.clone();
         let waiting = tokio::spawn(async move {
-            super::wait_for_completion(&session, &WorkspaceCancellation::new(), requested_ms)
-                .await
-                .unwrap()
+            super::wait_for_completion(
+                &session,
+                &WorkspaceCancellation::new(),
+                &PollWindow::after_ms(requested_ms),
+            )
+            .await
+            .unwrap()
         });
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(expected_ms - 1)).await;
@@ -1015,7 +1031,7 @@ async fn reports_input_dropped_during_normal_command_completion() {
         .poll_command(
             WorkspaceCancellation::new(),
             started.session_id.as_deref().unwrap(),
-            0,
+            &PollWindow::after_ms(0),
             finished.next_offset,
         )
         .await
@@ -1044,7 +1060,8 @@ async fn cancelled_observation_preserves_command_for_a_later_run() {
         .expect("command should start");
     let session_id = started.session_id.as_deref().unwrap();
     let cancellation = WorkspaceCancellation::new();
-    let observer = sessions.poll_command(cancellation.clone(), session_id, 5_000, 0);
+    let window = PollWindow::after_ms(5_000);
+    let observer = sessions.poll_command(cancellation.clone(), session_id, &window, 0);
     let cancel = async {
         tokio::task::yield_now().await;
         cancellation.cancel();
@@ -1244,7 +1261,12 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
     assert!(sessions.sessions.lock().await.is_empty());
     assert!(terminate(&sessions, &id, 0).await.output.is_empty());
     let replay = sessions
-        .poll_command(WorkspaceCancellation::new(), &id, 270_000, cursor(&id))
+        .poll_command(
+            WorkspaceCancellation::new(),
+            &id,
+            &PollWindow::after_ms(270_000),
+            cursor(&id),
+        )
         .await
         .unwrap();
     advance(&id, replay.next_offset);
@@ -1268,7 +1290,12 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
     let other = CommandSessionManager::new(root.clone(), root.join("other-thread"));
     assert!(
         other
-            .poll_command(WorkspaceCancellation::new(), &id, 0, 0)
+            .poll_command(
+                WorkspaceCancellation::new(),
+                &id,
+                &PollWindow::after_ms(0),
+                0
+            )
             .await
             .is_err()
     );
@@ -1411,7 +1438,12 @@ async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches(
     assert!(cached.error.unwrap().contains("last synced"));
     let unknown = uuid::Uuid::new_v4().to_string();
     let timed_out = sessions
-        .poll_command(WorkspaceCancellation::new(), &unknown, 0, 0)
+        .poll_command(
+            WorkspaceCancellation::new(),
+            &unknown,
+            &PollWindow::after_ms(0),
+            0,
+        )
         .await
         .unwrap_err();
     assert!(timed_out.to_string().contains("timed out"));
@@ -1729,7 +1761,12 @@ async fn waiting_poll_finishes_on_completion_not_new_output() {
     let id = stub.session.id.clone();
     let waiting = tokio::spawn(async move {
         manager
-            .poll_command(WorkspaceCancellation::new(), &id, 270_000, 0)
+            .poll_command(
+                WorkspaceCancellation::new(),
+                &id,
+                &PollWindow::after_ms(270_000),
+                0,
+            )
             .await
             .unwrap()
     });
@@ -1896,7 +1933,12 @@ async fn unknown_session_ids_are_rejected() {
     let root = temp_workspace();
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
     let error = sessions
-        .poll_command(WorkspaceCancellation::new(), "missing", 0, 0)
+        .poll_command(
+            WorkspaceCancellation::new(),
+            "missing",
+            &PollWindow::after_ms(0),
+            0,
+        )
         .await
         .expect_err("unknown sessions must be rejected");
     assert!(error.to_string().contains("unknown command session"));

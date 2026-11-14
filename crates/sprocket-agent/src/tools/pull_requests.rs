@@ -9,13 +9,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::WorkspaceOperationCancelled;
+use sprocket_workspace::async_tools::PollWindow;
 use sprocket_workspace::github::pull_requests::activity::{
     Activity, ActivityReader, CheckOutcome, Report, Seen, compare,
 };
 use sprocket_workspace::github::pull_requests::{PullRequestRef, fetch_states};
-use tokio::time::{Instant, sleep_until};
+use tokio::time::sleep;
 
-use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
+use super::async_tools::{
+    YieldMode, default_yield_ms, is_default_yield_ms, poll_targets, yield_time_schema,
+};
 use super::context::{AgentToolContext, cancelled_error, tool_error};
 use super::job::{execute_serialized_tool_job, execute_tool_job};
 
@@ -131,18 +134,25 @@ fn pull_request_ref(repository: &str, number: u32) -> PullRequestRef {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PollPrArgs {
-    /// Repository the PR was opened against, as `github.com/owner/name`. For GitHub Enterprise, use its host instead of `github.com`.
-    repository: String,
-    number: u32,
-    /// From your last poll_pr of this PR.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    cursor: Option<String>,
+    #[schemars(length(min = 1))]
+    pull_requests: Vec<PolledPr>,
     #[serde(
         default = "default_yield_ms",
         skip_serializing_if = "is_default_yield_ms"
     )]
     #[schemars(default = "default_yield_ms")]
     yield_time_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PolledPr {
+    /// Repository the PR was opened against, as `github.com/owner/name`. For GitHub Enterprise, use its host instead of `github.com`.
+    repository: String,
+    number: u32,
+    /// From your last poll_pr of this PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
 }
 
 fn poll_pr_parameters(max_yield_ms: u64) -> serde_json::Value {
@@ -162,7 +172,8 @@ impl rig::tool::Tool for PollPrTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Wait for news on a PR's checks, comments, or state.".to_string()
+        "Wait for news on PRs' checks, comments, or state. Returns once any of them has news or the wait ends."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -174,26 +185,29 @@ impl rig::tool::Tool for PollPrTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        let wait = Duration::from_millis(
-            YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
-        );
-        let poll_args = &args;
+        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms);
+        let pull_requests = &args.pull_requests;
         execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async move {
+            let window = &PollWindow::after_ms(yield_time_ms);
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(cancelled_error()),
-                result = poll_pr(poll_args, wait) => result.map_err(tool_error),
+                result = poll_targets(
+                    window,
+                    pull_requests,
+                    |pr| json!({ "repository": pr.repository, "number": pr.number }),
+                    |pr| async move { poll_pr(pr, window).await.map_err(tool_error) },
+                ) => result,
             }
         })
         .await
     }
 }
 
-async fn poll_pr(args: &PollPrArgs, wait: Duration) -> anyhow::Result<serde_json::Value> {
-    let pull_request = pull_request_ref(&args.repository, args.number);
-    let mut seen = args.cursor.as_deref().map(decode_cursor).transpose()?;
+async fn poll_pr(pr: &PolledPr, window: &PollWindow) -> anyhow::Result<serde_json::Value> {
+    let pull_request = pull_request_ref(&pr.repository, pr.number);
+    let mut seen = pr.cursor.as_deref().map(decode_cursor).transpose()?;
     let mut reader = ActivityReader::connect(&pull_request).await?;
-    let deadline = Instant::now() + wait;
     loop {
         let activity = reader.read().await?;
         let report = compare(
@@ -203,10 +217,9 @@ async fn poll_pr(args: &PollPrArgs, wait: Duration) -> anyhow::Result<serde_json
         if !report.changes.is_empty() {
             return poll_pr_output(&activity, &report);
         }
-        let next_read = Instant::now() + POLL_PR_INTERVAL;
-        sleep_until(next_read.min(deadline)).await;
-        if next_read >= deadline {
-            return poll_pr_output(&activity, &report);
+        tokio::select! {
+            _ = sleep(POLL_PR_INTERVAL) => {}
+            _ = window.closed() => return poll_pr_output(&activity, &report),
         }
     }
 }
