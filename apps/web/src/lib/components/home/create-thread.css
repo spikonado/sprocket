@@ -7,6 +7,7 @@
 	margin: auto;
 	flex-direction: column;
 	justify-content: center;
+	overflow-y: auto;
 }
 
 .create-thread-composer {
@@ -28,7 +29,6 @@
 	.create-thread-screen {
 		justify-content: flex-start;
 		padding-top: min(20dvh, 140px);
-		overflow-y: auto;
 	}
 
 	.create-thread-composer {

@@ -618,9 +618,11 @@ it('restores each thread workspace when switching between threads in one project
 	);
 	await projectTrigger('Alpha');
 	expect(screen.getByRole('textbox')).toBeTruthy();
-	expect(screen.queryByRole('tablist')).toBeNull();
-	expect(screen.queryByRole('button', { name: 'Split right' })).toBeNull();
+	expect(screen.getByRole('tab', { name: 'Thread' }).getAttribute('aria-selected')).toBe('true');
+	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	fireEvent.click(await screen.findByText('First workspace'));
+	expect(screen.getAllByRole('tablist')).toHaveLength(1);
 	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Artifacts' }));
 	expect(screen.getAllByRole('tablist')).toHaveLength(2);
@@ -640,7 +642,7 @@ it('restores each thread workspace when switching between threads in one project
 
 	fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
 	expect(screen.getByRole('textbox')).toBeTruthy();
-	expect(screen.queryByRole('tablist')).toBeNull();
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	fireEvent.click(screen.getByText('First workspace'));
 	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	expect(screen.getByRole('tab', { name: 'Artifacts' }).getAttribute('aria-selected')).toBe('true');
