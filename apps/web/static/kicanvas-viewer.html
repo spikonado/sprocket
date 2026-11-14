@@ -24,25 +24,23 @@
 			const crashed = new Promise((_, reject) => (crash = reject));
 			crashed.catch(() => {});
 
-			const appFor = (page) =>
-				embed.shadowRoot.querySelector(page.type === 'pcb' ? 'kc-board-app' : 'kc-schematic-app');
-			const project = () =>
-				embed?.shadowRoot?.querySelector('kc-schematic-app, kc-board-app')?.project;
+			// Boards draw in Sprocket's own viewer, so KiCanvas only gets schematics.
+			const app = () => embed?.shadowRoot?.querySelector('kc-schematic-app');
+			const project = () => app()?.project;
 
 			function currentView() {
 				const page = project()?.active_page;
 
 				if (!page) return null;
 
-				const { center, zoom } = appFor(page).viewer.viewport.camera;
+				const { center, zoom } = app().viewer.viewport.camera;
 
 				return { page: page.project_path, x: center.x, y: center.y, zoom };
 			}
 
 			async function drawn(page, open) {
-				const app = appFor(page);
-				await app.viewerReady;
-				const { viewer } = app;
+				await app().viewerReady;
+				const { viewer } = app();
 				const loaded = new Promise((resolve) => {
 					const onLoad = () => {
 						if (viewer.document !== page.document) return;
@@ -102,7 +100,7 @@
 			}
 
 			// Such as KiCanvas's renderer setup throwing when the browser has no WebGL2, or its
-			// painter throwing on a board it can't read. KiCanvas then never draws the page.
+			// painter throwing on a schematic it can't read. KiCanvas then never draws the page.
 			addEventListener('unhandledrejection', ({ reason }) => crash(reason));
 
 			addEventListener('message', ({ source, data }) => {

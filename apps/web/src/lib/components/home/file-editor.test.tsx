@@ -36,7 +36,8 @@ function editorApi(onDisk: WorkspaceFileContent | null) {
 		}),
 		writeWorkspaceFile: vi.fn(),
 		readWorkspaceText: vi.fn(),
-		exportBoard3d: vi.fn()
+		exportBoard3d: vi.fn(),
+		kicadScene: vi.fn()
 	};
 
 	return {

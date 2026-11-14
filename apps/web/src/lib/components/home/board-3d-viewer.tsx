@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BoardScene } from '$lib/components/home/board-3d-scene';
+import ViewerStatusNotice, { type ViewerStatus } from '$lib/components/home/viewer-status';
 import type { LocalApi } from '$lib/types/sprocket';
-
-type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 
 /** KiCad's export takes seconds, so this exports only while `shown` and for a new `revision`. */
 export default function Board3dViewer({
@@ -21,7 +20,7 @@ export default function Board3dViewer({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const scene = useRef<Promise<BoardScene> | null>(null);
 	const exported = useRef('');
-	const [status, setStatus] = useState<Status>({ kind: 'loading' });
+	const [status, setStatus] = useState<ViewerStatus>({ kind: 'loading' });
 	const [showing, setShowing] = useState(false);
 	const key = `${workspacePath}\n${path}\n${revision}`;
 
@@ -79,22 +78,11 @@ export default function Board3dViewer({
 
 	return (
 		<div ref={containerRef} className="bg-background absolute inset-0 z-20" hidden={!shown}>
-			{status.kind !== 'ready' && (
-				<div
-					role={status.kind === 'error' ? 'alert' : 'status'}
-					className={
-						showing
-							? 'bg-background/80 text-muted-foreground border-hairline absolute bottom-3 left-1/2 max-w-[80%] -translate-x-1/2 truncate rounded-md border px-3 py-1.5 text-xs backdrop-blur'
-							: 'bg-background text-muted-foreground absolute inset-0 flex items-center justify-center p-4 text-center text-sm'
-					}
-				>
-					{status.kind === 'error'
-						? status.message
-						: showing
-							? 'Updating…'
-							: 'Building the 3D model with KiCad…'}
-				</div>
-			)}
+			<ViewerStatusNotice
+				status={status}
+				drawn={showing}
+				opening="Building the 3D model with KiCad…"
+			/>
 		</div>
 	);
 }

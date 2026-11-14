@@ -413,6 +413,10 @@ export type LocalApi = {
 		signal?: AbortSignal
 	) => Promise<{ content: string; version: string }>;
 	exportBoard3d: (input: WorkspaceFileTarget, signal?: AbortSignal) => Promise<ArrayBuffer>;
+	kicadScene: (
+		input: WorkspaceFileTarget,
+		signal?: AbortSignal
+	) => Promise<{ scene: ReadableStream<Uint8Array<ArrayBuffer>>; version: string }>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;

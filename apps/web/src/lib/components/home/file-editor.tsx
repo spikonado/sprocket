@@ -14,7 +14,7 @@ import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/t
 
 export type FileEditorApi = Pick<
 	LocalApi,
-	'watchWorkspaceFile' | 'writeWorkspaceFile' | 'readWorkspaceText' | 'exportBoard3d'
+	'watchWorkspaceFile' | 'writeWorkspaceFile' | 'readWorkspaceText' | 'exportBoard3d' | 'kicadScene'
 >;
 
 type Props = {
@@ -64,7 +64,14 @@ export default function FileEditor(props: Props) {
 	if (IMAGE_EXTENSIONS.test(props.file.path)) return <ImagePreview file={props.file} />;
 
 	if (KICAD_FILE.test(props.file.path)) {
-		return <KicadViewer api={props.api} file={props.file} active={props.active} />;
+		return (
+			<KicadViewer
+				key={`${props.file.workspacePath}\n${props.file.path}`}
+				api={props.api}
+				file={props.file}
+				active={props.active}
+			/>
+		);
 	}
 
 	return <TextFileEditor {...props} />;

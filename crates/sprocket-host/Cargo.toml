@@ -31,6 +31,7 @@ sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["util
 sha2.workspace = true
 sprocket-agent.workspace = true
 sprocket-convex.workspace = true
+sprocket-kicad.workspace = true
 sprocket-transcript.workspace = true
 sprocket-workspace.workspace = true
 tar = "0.4"

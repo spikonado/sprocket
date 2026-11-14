@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::header;
 use axum::routing::{get, post};
@@ -23,9 +24,9 @@ use sprocket_host::workspace_search::{PathListing, SearchOutcome};
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, MAX_EDITABLE_FILE_BYTES, WorkspaceEntryKind,
     WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
-    default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_file,
-    read_workspace_text, rename_workspace_entry, workspace_entry_kind, workspace_file_path,
-    write_workspace_file,
+    default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_bytes,
+    read_workspace_file, read_workspace_text, rename_workspace_entry, workspace_entry_kind,
+    workspace_file_path, write_workspace_file,
 };
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
@@ -154,6 +155,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/file/rename", post(rename_entry))
         .route("/workspace/file/delete", post(delete_entry))
         .route("/workspace/file/board-3d", post(board_3d))
+        .route("/workspace/file/kicad-scene", post(kicad_scene))
         .route("/workspace/image", get(image::local_image))
 }
 
@@ -297,6 +299,31 @@ async fn board_3d(
         .await
         .map_err(ApiError::bad_request)?;
     Ok(([(header::CONTENT_TYPE, "model/gltf-binary")], model))
+}
+
+async fn kicad_scene(
+    MachineSession: MachineSession,
+    State(state): State<AppState>,
+    Json(payload): Json<WorkspaceEntryRequest>,
+) -> Result<([(header::HeaderName, String); 2], Bytes), ApiError> {
+    let board = in_workspace(payload.workspace_path, move |root| {
+        read_workspace_bytes(root, &payload.path)
+    })
+    .await?;
+    let version = board.version.clone();
+    let scene = state
+        .host
+        .kicad_scenes
+        .scene(board)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+            (header::HeaderName::from_static("x-file-version"), version),
+        ],
+        Bytes::from_owner(scene),
+    ))
 }
 
 async fn write_file(
