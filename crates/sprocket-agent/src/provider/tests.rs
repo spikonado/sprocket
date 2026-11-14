@@ -7,6 +7,56 @@ use super::{ProviderErrorDisposition, RunNoLongerActive, classify_provider_error
 use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 #[test]
+fn spikonado_budget_errors_show_capacity_message() {
+    use crate::types::CompletionProvider;
+
+    for body in [
+        serde_json::json!({
+            "type": "error",
+            "message": "Team budget exceeded."
+        }),
+        serde_json::json!({"error": {"message": "Team budget exceeded."}}),
+        serde_json::json!({"response": {"error": {"message": "Team budget exceeded."}}}),
+    ] {
+        let error = rig::completion::PromptError::Provider(rig::ProviderError::from_provider_body(
+            body.to_string(),
+        ));
+        let error = super::provider_capacity_error(
+            CompletionProvider::Spikonado,
+            anyhow::Error::new(error).context("Completion failed"),
+        );
+        assert_eq!(
+            error.to_string(),
+            "We are currently at capacity, please try again later."
+        );
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.is::<rig::completion::PromptError>())
+        );
+    }
+}
+
+#[test]
+fn other_provider_errors_keep_their_message() {
+    use crate::types::CompletionProvider;
+
+    for (provider, message) in [
+        (CompletionProvider::Vercel, "Team budget exceeded."),
+        (CompletionProvider::Spikonado, "Invalid API key."),
+    ] {
+        let error = anyhow::Error::new(rig::ProviderError::from_provider_body(
+            serde_json::json!({"type": "error", "message": message}).to_string(),
+        ));
+        let original = error.to_string();
+        assert_eq!(
+            super::provider_capacity_error(provider, error).to_string(),
+            original
+        );
+    }
+}
+
+#[test]
 fn generation_options_map_reasoning_effort() {
     let options = super::generation_options("xhigh").unwrap();
     assert_eq!(

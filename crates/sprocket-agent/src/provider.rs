@@ -102,6 +102,26 @@ fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     crate::chatgpt::user_facing_error(error)
 }
 
+fn provider_capacity_error(provider: CompletionProvider, error: anyhow::Error) -> anyhow::Error {
+    if provider != CompletionProvider::Spikonado {
+        return error;
+    }
+    if error.chain().any(|cause| {
+        crate::stream_recovery::provider_response(cause)
+            .and_then(|response| response.envelope_json())
+            .is_some_and(|body| {
+                ["/message", "/error/message", "/response/error/message"]
+                    .iter()
+                    .filter_map(|path| body.pointer(path).and_then(serde_json::Value::as_str))
+                    .any(|message| message.to_ascii_lowercase().contains("budget exceeded"))
+            })
+    }) {
+        error.context("We are currently at capacity, please try again later.")
+    } else {
+        error
+    }
+}
+
 fn usage_source(
     target: &AgentProvider,
     fast_mode: bool,
@@ -381,6 +401,7 @@ impl AgentProvider {
                     self.model
                 )
             };
+            let error = provider_capacity_error(self.completion_provider, error);
             let fell_back = self.fall_back(runtime, run_id, claim_id, &error).await?;
             if convex_error_code(&error) == Some(ConvexErrorCode::UsageLimitReached) {
                 usage_limit.get_or_insert(error);
@@ -1070,8 +1091,9 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(_)) => {}
                             Some(Err(error)) => {
+                                let source = current_usage_source!();
                                 generation_tracker.capture_failure(
-                                    &current_usage_source!(),
+                                    &source,
                                     context_handoff_hook.is_writing(),
                                     &error,
                                 );
@@ -1120,7 +1142,7 @@ async fn run_with_completion_model(
                                                 "sprocket-agent: no fallback provider could continue run {} ({fallback_error:#})",
                                                 request.run_id
                                             );
-                                            break 'agent_run transcript_error(anyhow!(error));
+                                            break 'agent_run transcript_error(provider_capacity_error(source.provider, anyhow!(error)));
                                         }
                                     }
                                     history = without_reasoning_traces(next_history);
@@ -1135,10 +1157,10 @@ async fn run_with_completion_model(
                                     continue_without_handoff!(stream, 'generations, 'agent_run, format!("{error:#}"));
                                 } else if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
-                                        error: anyhow!(error).context("Context handoff failed. Retry to continue the conversation."),
+                                        error: provider_capacity_error(source.provider, anyhow!(error).context("Context handoff failed. Retry to continue the conversation.")),
                                     };
                                 } else {
-                                    break 'agent_run transcript_error(anyhow!(error));
+                                    break 'agent_run transcript_error(provider_capacity_error(source.provider, anyhow!(error)));
                                 }
                             }
                             None => {
