@@ -60,6 +60,11 @@ it('keeps each tab open with its own view and switches between them', () => {
 	expect(screen.getByRole('tab', { name: 'Notes' }).getAttribute('aria-selected')).toBe('true');
 	expect(screen.getByRole('tabpanel', { name: 'Notes' })).toBeTruthy();
 	expect(screen.getByText('Thread transcript').closest('section')?.hidden).toBe(true);
+	expect(
+		document.getElementById(
+			screen.getByRole('tab', { name: 'Browser' }).getAttribute('aria-controls')!
+		)?.childElementCount
+	).toBe(0);
 
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Notes' }), { key: 'ArrowRight' });
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
