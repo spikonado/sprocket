@@ -2593,7 +2593,10 @@ export default function App({
 				)}
 
 				<main
-					className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+					className={cn(
+						'relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden',
+						settingsOpen && !sidebarVisible && 'pl-14'
+					)}
 					inert={sidebarOpen && viewportWidth < 768}
 				>
 					{settingsOpen ? (
@@ -2695,7 +2698,11 @@ export default function App({
 											/>
 										)}
 
-										<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
+										<div
+											className={
+												!currentThreadId ? 'create-thread-screen' : 'min-h-0 overflow-y-auto'
+											}
+										>
 											{!currentThreadId && (
 												<>
 													<CreateThreadHeading
