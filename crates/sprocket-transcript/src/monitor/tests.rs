@@ -178,6 +178,55 @@ async fn sparse_cache_downloads_missing_parts_newest_first_but_reports_chronolog
 }
 
 #[tokio::test]
+async fn resumed_polls_download_missing_parts_before_the_cursor() {
+    let parts = [
+        completion(0, vec![patch_call("inv")]),
+        result(1, "run", "inv", "completed"),
+        prompt(2, "seen"),
+        prompt(3, "new"),
+    ];
+    let first_dir = tempfile::tempdir().unwrap();
+    let first = TranscriptStore::new(first_dir.path().to_owned());
+    let _first_lease = first.open_thread("user", "thread").await.unwrap();
+    first
+        .append_parts("user", "thread", &parts[..3])
+        .await
+        .unwrap();
+    let seen = local_page(&first, None, 3, 1_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    store
+        .append_parts("user", "thread", &parts[3..])
+        .await
+        .unwrap();
+    let mut fetched = Vec::new();
+    let page = download_monitor_page(
+        &store,
+        "user",
+        "thread",
+        Some(&seen.next_cursor),
+        4,
+        &MonitorFilter::default(),
+        |start, end| {
+            fetched.push((start, end));
+            let page: Vec<_> = parts[start as usize..end as usize]
+                .iter()
+                .rev()
+                .cloned()
+                .collect();
+            async move { Ok(page) }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fetched, [(0, 3)]);
+    assert_eq!(texts(&page.entries), ["new"]);
+    assert_eq!(page.entries.len(), 1);
+    assert!(!page.has_more);
+}
+
+#[tokio::test]
 async fn cached_parts_beyond_stale_total_are_read_without_skipping_gaps() {
     let dir = tempfile::tempdir().unwrap();
     let store = TranscriptStore::new(dir.path().to_owned());

@@ -108,9 +108,8 @@ where
 {
     let cursor = MonitorCursor::read(thread, cursor)?;
     let _lease = store.open_thread(user, thread).await?;
-    store
-        .ensure_parts(user, thread, cursor.part, total, fetch)
-        .await?;
+    // Patch pairing reads the whole thread, so parts before the cursor must be cached too.
+    store.ensure_parts(user, thread, 0, total, fetch).await?;
     let mut ready_end = cursor.part;
     for number in store.part_numbers(user, thread).await? {
         if number < ready_end {
