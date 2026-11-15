@@ -528,9 +528,11 @@ async fn stale_monitor_total_preserves_newer_cached_answers_and_known_history() 
         store
             .with_work_replica("user", "thread", move |replica| {
                 assert_eq!(replica.state::<u32>("total")?, Some(known_total));
-                let display = replica.page(None, 10, None, &[], false)?;
-                assert_eq!(display["rows"][1]["text"], "final answer");
-                assert_eq!(display["syncing"], known_total > 2);
+                assert_eq!(
+                    replica.part(1)?.unwrap().content_items()[0]["text"],
+                    "final answer"
+                );
+                assert_eq!(replica.downloaded_prefix()?, 2);
                 Ok(())
             })
             .await

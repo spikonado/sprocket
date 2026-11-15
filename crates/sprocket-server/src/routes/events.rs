@@ -11,18 +11,20 @@ use axum_extra::extract::CookieJar;
 use futures::stream::BoxStream;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::AppState;
 use crate::auth::{cookie_request_is_csrf_safe, require_bootstrap_session, require_session};
 use crate::routes::api_error::ApiError;
 use crate::routes::session::UserScoped;
-use crate::routes::{agent, artifacts, auth, browser, transcript, workspace};
+use crate::routes::{agent, artifacts, auth, browser, transcript_rows, workspace};
 
 const PING_INTERVAL: Duration = Duration::from_secs(20);
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(40);
 const AUTH_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
-const OUTGOING_CAPACITY: usize = 64;
+
+mod pending;
+use pending::Outgoing;
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new().route("/events", get(upgrade))
@@ -38,8 +40,9 @@ enum ClientMessage {
 #[derive(Clone, Deserialize)]
 #[serde(tag = "kind", content = "params", rename_all = "camelCase")]
 pub(crate) enum Topic {
-    Transcript(transcript::TranscriptScope),
-    LiveCompletion(agent::LiveCompletionWatchRequest),
+    Transcript(transcript_rows::TranscriptRowsScope),
+    TranscriptWork(transcript_rows::TranscriptRowScope),
+    TranscriptItem(transcript_rows::TranscriptRowScope),
     ArtifactSync(artifacts::ArtifactWatchRequest),
     Commands(agent::CommandsRequest),
     AuthChanges,
@@ -53,7 +56,7 @@ impl Topic {
     fn user_id(&self) -> Option<&str> {
         match self {
             Self::Transcript(scope) => Some(scope.user_id()),
-            Self::LiveCompletion(request) => Some(request.user_id()),
+            Self::TranscriptWork(scope) | Self::TranscriptItem(scope) => Some(scope.user_id()),
             Self::ArtifactSync(request) => Some(request.user_id()),
             Self::Commands(request) => Some(request.user_id()),
             Self::AuthChanges
@@ -82,6 +85,14 @@ enum ServerMessage {
     },
 }
 
+impl ServerMessage {
+    fn id(&self) -> u64 {
+        match self {
+            Self::Event { id, .. } | Self::Error { id, .. } | Self::End { id } => *id,
+        }
+    }
+}
+
 async fn upgrade(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -103,29 +114,48 @@ async fn upgrade(
 
 async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
     let (mut sink, mut incoming) = socket.split();
-    let (outgoing, mut queued) = mpsc::channel::<Message>(OUTGOING_CAPACITY);
+    let outgoing = Outgoing::default();
+    let queued = outgoing.clone();
+    let connection_closed = tokio_util::sync::CancellationToken::new();
+    let sender_closed = connection_closed.clone();
+    let sender = tokio::spawn(async move {
+        let mut ping = tokio::time::interval(PING_INTERVAL);
+        loop {
+            let (deadline, message) = tokio::select! {
+                _ = sender_closed.cancelled() => break,
+                _ = ping.tick() => (
+                    tokio::time::Instant::now() + CONNECTION_TIMEOUT,
+                    Message::Ping(Default::default()),
+                ),
+                (since, messages) = queued.next() => (
+                    since + CONNECTION_TIMEOUT,
+                    encode(&messages),
+                ),
+            };
+            if !matches!(
+                tokio::time::timeout_at(deadline, sink.send(message)).await,
+                Ok(Ok(()))
+            ) {
+                break;
+            }
+        }
+        sender_closed.cancel();
+    });
     let mut subscriptions = HashMap::<u64, (Topic, JoinHandle<()>)>::new();
     let shutdown = state.host.lifetime.shutdown.clone();
-    let mut ping = tokio::time::interval(PING_INTERVAL);
+    let mut last_pong = tokio::time::Instant::now();
     let mut auth_recheck = tokio::time::interval(AUTH_RECHECK_INTERVAL);
-    'serve: loop {
+    loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
-            _ = ping.tick() => {
-                if sink.send(Message::Ping(Default::default())).await.is_err() {
-                    break;
-                }
-            }
+            _ = connection_closed.cancelled() => break,
             _ = auth_recheck.tick() => {
-                for message in revoke_unauthorized(&state, &headers, &mut subscriptions).await {
-                    if sink.send(encode(&message)).await.is_err() {
-                        break 'serve;
-                    }
-                }
-            }
-            Some(message) = queued.recv() => {
-                if sink.send(message).await.is_err() {
+                if last_pong.elapsed() >= CONNECTION_TIMEOUT {
                     break;
+                }
+                for message in revoke_unauthorized(&state, &headers, &mut subscriptions).await {
+                    outgoing.remove(message.id());
+                    outgoing.send(message);
                 }
             }
             message = incoming.next() => {
@@ -133,11 +163,20 @@ async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
                 let request = match message {
                     Message::Text(text) => serde_json::from_str::<ClientMessage>(text.as_str()),
                     Message::Close(_) => break,
+                    Message::Pong(_) => {
+                        last_pong = tokio::time::Instant::now();
+                        continue;
+                    }
                     _ => continue,
                 };
                 let Ok(request) = request else { break };
                 match request {
                     ClientMessage::Subscribe { id, topic } => {
+                        if let Some((_, replaced)) = subscriptions.remove(&id) {
+                            replaced.abort();
+                            let _ = replaced.await;
+                        }
+                        outgoing.remove(id);
                         let task = tokio::spawn(forward(
                             state.clone(),
                             headers.clone(),
@@ -145,19 +184,21 @@ async fn serve(state: AppState, headers: HeaderMap, socket: WebSocket) {
                             topic.clone(),
                             outgoing.clone(),
                         ));
-                        if let Some((_, replaced)) = subscriptions.insert(id, (topic, task)) {
-                            replaced.abort();
-                        }
+                        subscriptions.insert(id, (topic, task));
                     }
                     ClientMessage::Unsubscribe { id } => {
                         if let Some((_, task)) = subscriptions.remove(&id) {
                             task.abort();
+                            let _ = task.await;
                         }
+                        outgoing.remove(id);
                     }
                 }
             }
         }
     }
+    connection_closed.cancel();
+    sender.abort();
     for (_, task) in subscriptions.into_values() {
         task.abort();
     }
@@ -175,14 +216,15 @@ async fn revoke_unauthorized(
             revoked.push(*id);
         }
     }
-    revoked
-        .into_iter()
-        .filter_map(|id| {
-            let (_, task) = subscriptions.remove(&id)?;
+    let mut messages = Vec::new();
+    for id in revoked {
+        if let Some((_, task)) = subscriptions.remove(&id) {
             task.abort();
-            Some(error_message(id, &ApiError::authentication_required()))
-        })
-        .collect()
+            let _ = task.await;
+            messages.push(error_message(id, &ApiError::authentication_required()));
+        }
+    }
+    messages
 }
 
 async fn session_still_allows(state: &AppState, headers: &HeaderMap, topic: &Topic) -> bool {
@@ -205,29 +247,17 @@ async fn session_still_allows(state: &AppState, headers: &HeaderMap, topic: &Top
     }
 }
 
-async fn forward(
-    state: AppState,
-    headers: HeaderMap,
-    id: u64,
-    topic: Topic,
-    outgoing: mpsc::Sender<Message>,
-) {
+async fn forward(state: AppState, headers: HeaderMap, id: u64, topic: Topic, outgoing: Outgoing) {
     let last = match open(&state, &headers, topic).await {
         Ok(mut events) => {
             while let Some(data) = events.next().await {
-                if outgoing
-                    .send(encode(&ServerMessage::Event { id, data }))
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
+                outgoing.send(ServerMessage::Event { id, data });
             }
             ServerMessage::End { id }
         }
         Err(error) => error_message(id, &error),
     };
-    let _ = outgoing.send(encode(&last)).await;
+    outgoing.send(last);
 }
 
 fn error_message(id: u64, error: &ApiError) -> ServerMessage {
@@ -279,8 +309,15 @@ pub(crate) async fn open(
 ) -> Result<BoxStream<'static, serde_json::Value>, ApiError> {
     let Authorized(topic) = authorize(state, headers, topic).await?;
     Ok(match topic {
-        Topic::Transcript(scope) => json(transcript::watch_events(state, Authorized(scope)).await),
-        Topic::LiveCompletion(request) => json(agent::live_events(state, Authorized(request))),
+        Topic::Transcript(scope) => {
+            json(transcript_rows::watch_rows(state, Authorized(scope)).await?)
+        }
+        Topic::TranscriptWork(scope) => {
+            json(transcript_rows::watch_work(state, Authorized(scope)).await?)
+        }
+        Topic::TranscriptItem(scope) => {
+            json(transcript_rows::watch_item(state, Authorized(scope)).await?)
+        }
         Topic::ArtifactSync(request) => artifacts::watch_events(state, Authorized(request))
             .await?
             .map(|_| serde_json::Value::Null)
@@ -302,9 +339,15 @@ fn json<T: Serialize + Send + 'static>(
         .boxed()
 }
 
-fn encode(message: &ServerMessage) -> Message {
+fn encode(messages: &[ServerMessage]) -> Message {
+    #[derive(Serialize)]
+    #[serde(tag = "type", rename = "batch")]
+    struct Batch<'a> {
+        messages: &'a [ServerMessage],
+    }
+
     Message::Text(
-        serde_json::to_string(message)
+        serde_json::to_string(&Batch { messages })
             .expect("server messages contain only JSON values and strings")
             .into(),
     )

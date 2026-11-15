@@ -96,6 +96,14 @@ export function renderMarkdownBlocks(
 	availableArtifactIds: ReadonlySet<string>,
 	openLinksInNewTab = false
 ): MarkdownBlock[] {
+	return renderMarkdownTokens(marked.lexer(value), availableArtifactIds, openLinksInNewTab);
+}
+
+function renderMarkdownTokens(
+	tokens: Token[],
+	availableArtifactIds: ReadonlySet<string>,
+	openLinksInNewTab: boolean
+): MarkdownBlock[] {
 	const blocks: MarkdownBlock[] = [];
 	let markdownTokens: Token[] = [];
 
@@ -107,7 +115,7 @@ export function renderMarkdownBlocks(
 		markdownTokens = [];
 	};
 
-	for (const token of marked.lexer(value)) {
+	for (const token of tokens) {
 		const block = specialBlock(token, availableArtifactIds);
 
 		if (!block) {
@@ -122,4 +130,72 @@ export function renderMarkdownBlocks(
 	flushMarkdown();
 
 	return blocks;
+}
+
+export function createMarkdownBlockRenderer() {
+	let previousValue = '';
+	let previousArtifactIds = new Set<string>();
+	let previousOpenLinksInNewTab = false;
+	let mode: 'paragraphs' | 'full' = 'paragraphs';
+	let completedLength = 0;
+	let completed: MarkdownBlock[] = [];
+	let blocks: MarkdownBlock[] = [];
+
+	return (
+		value: string,
+		availableArtifactIds: ReadonlySet<string>,
+		openLinksInNewTab = false
+	): MarkdownBlock[] => {
+		const optionsChanged =
+			previousOpenLinksInNewTab !== openLinksInNewTab ||
+			previousArtifactIds.size !== availableArtifactIds.size ||
+			[...availableArtifactIds].some((id) => !previousArtifactIds.has(id));
+
+		if (optionsChanged || !value.startsWith(previousValue)) {
+			previousArtifactIds = new Set(availableArtifactIds);
+			previousOpenLinksInNewTab = openLinksInNewTab;
+			mode = 'paragraphs';
+			completedLength = 0;
+			completed = [];
+		} else if (value === previousValue) {
+			return blocks;
+		}
+
+		previousValue = value;
+		const tail = value.slice(completedLength);
+
+		// References, HTML, math, and fences can span paragraphs or change earlier output.
+		const tokens =
+			mode === 'paragraphs' && !/[[<\\$`\r]/.test(tail) ? marked.lexer(tail) : undefined;
+
+		if (!tokens || tokens.some((token) => token.type !== 'paragraph' && token.type !== 'space')) {
+			mode = 'full';
+			completed = [];
+			blocks = renderMarkdownBlocks(value, availableArtifactIds, openLinksInNewTab);
+
+			return blocks;
+		}
+
+		let pending: Token[] = [];
+		let offset = completedLength;
+
+		for (const token of tokens) {
+			pending.push(token);
+			offset += token.raw.length;
+
+			if (token.type !== 'space' || !/\n[ \t]*\n/.test(token.raw)) continue;
+
+			completed.push(...renderMarkdownTokens(pending, availableArtifactIds, openLinksInNewTab));
+			// Spaces after the last newline may become indentation in the next chunk.
+			completedLength = offset - token.raw.length + token.raw.lastIndexOf('\n') + 1;
+			pending = [];
+		}
+
+		blocks = [
+			...completed,
+			...renderMarkdownTokens(pending, availableArtifactIds, openLinksInNewTab)
+		];
+
+		return blocks;
+	};
 }

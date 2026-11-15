@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ChatGptStatus } from '$lib/types/sprocket';
+import type {
+	ChatGptStatus,
+	TranscriptEvent,
+	TranscriptRow,
+	TranscriptSnapshot
+} from '$lib/types/sprocket';
 import {
 	createLocalClient,
 	ensureLocalSession,
@@ -162,173 +167,74 @@ it('removes a project through the server', async () => {
 	);
 });
 
-describe('display transcript pages', () => {
-	it('cancels an in-flight page request when its thread is left', async () => {
-		const fetch = vi.fn(
-			(_url: string, init: RequestInit) =>
-				new Promise<Response>((_resolve, reject) => {
-					init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
-				})
-		);
+describe('transcript protocol', () => {
+	const scope = { userId: 'user-1', threadId: threadRecordId('thread-1') };
 
-		vi.stubGlobal('fetch', fetch);
-		const controller = new AbortController();
+	const textRow: TranscriptRow = {
+		id: 'completion:0',
+		runId: 'run-1',
+		kind: 'text',
+		text: 'Hi 🛠',
+		running: true
+	};
 
-		const pending = createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(
-			{ userId: 'user-1', threadId: threadRecordId('thread-1'), limit: 12 },
-			controller.signal
-		);
+	const reasoningRow: TranscriptRow = {
+		id: 'completion:1',
+		runId: 'run-1',
+		kind: 'reasoning',
+		label: 'Checking the result',
+		running: true,
+		text: 'Checking 🛠\nThe result is correct.'
+	};
 
-		controller.abort();
-		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/display',
-			expect.objectContaining({ signal: controller.signal })
-		);
-	});
+	const toolRow: TranscriptRow = {
+		id: 'completion:2',
+		runId: 'run-1',
+		kind: 'tool',
+		name: 'exec_cmd',
+		summary: 'bun test',
+		hasMore: true,
+		status: 'completed'
+	};
 
-	it('preserves display cursors, activity counts, stream acknowledgements, and row changes', async () => {
-		const row = {
-			id: 'row-499',
-			threadId: 'thread-1',
-			runId: 'run-1',
-			sequence: 499,
-			kind: 'work',
-			attachments: [],
-			toolCounts: { read_skill: 1, exec_cmd: 1, poll_cmd: 1 },
-			unpersistedToolCallIds: ['command'],
-			closed: true,
-			revision: 500
-		};
-
-		const response = {
-			rows: [row],
-			indexing: false,
-			syncing: true,
-			stale: false,
-			nextBefore: 499,
-			revision: 500,
-			persistedStreams: [{ runId: 'run-1', streamId: 'stream-499' }],
-			changes: [
-				{ id: row.id, row },
-				{ id: 'row-1', row: null }
-			],
-			changesCursor: { revision: 500, position: -1 },
-			replicaId: 'replica',
-			moreChanges: false
-		};
-
-		const fetch = vi.fn(async () => Response.json(response));
-		vi.stubGlobal('fetch', fetch);
-
-		const request = {
-			userId: 'user-1',
-			threadId: threadRecordId('thread-1'),
-			before: 500,
-			limit: 12,
-			streams: [{ runId: runId('run-1'), streamId: 'stream-499' }],
-			changesAfter: { revision: 490, position: 12 }
-		};
-
-		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(request);
-		expect(page).toEqual(response);
-		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/display',
-			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
-		);
-	});
-
-	it('maps storageId attachment metadata and ignores leftover imageUploadId', async () => {
-		const fetch = vi.fn(async () =>
-			Response.json({
-				indexing: false,
-				syncing: false,
-				stale: false,
-				revision: 1,
-				persistedStreams: [],
-				changes: [],
-				changesCursor: { revision: 1, position: -1 },
-				replicaId: 'replica',
-				moreChanges: false,
-				rows: [
+	const snapshot: TranscriptSnapshot = {
+		type: 'snapshot',
+		rows: [
+			{
+				id: 'prompt',
+				runId: 'run-1',
+				kind: 'prompt',
+				text: 'Inspect this',
+				attachments: [
 					{
-						id: 'row-1',
-						threadId: 'thread-1',
-						runId: 'run-1',
-						sequence: 0,
-						kind: 'prompt',
-						text: 'Inspect this',
-						closed: true,
-						revision: 1,
-						attachments: [
-							{
-								imageUploadId: 'upload-1',
-								storageId: 'storage-1',
-								name: 'shot.png',
-								mediaType: 'image/png',
-								size: 12,
-								url: 'http://127.0.0.1:7731/files/shot.png'
-							}
-						]
+						storageId: storageId('storage-1'),
+						name: 'shot.png',
+						mediaType: 'image/png',
+						size: 12,
+						url: 'http://127.0.0.1:7731/files/shot.png'
 					}
 				]
-			})
-		);
+			},
+			textRow,
+			{ id: 'work:0', runId: 'run-1', kind: 'work', toolCounts: { exec_cmd: 2 }, running: true },
+			reasoningRow,
+			toolRow
+		],
+		nextBefore: 200,
+		stale: true
+	};
 
-		vi.stubGlobal('fetch', fetch);
-
-		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay({
-			userId: 'user-1',
-			threadId: threadRecordId('thread-1')
-		});
-
-		expect(page.rows[0]?.attachments).toEqual([
-			{
-				storageId: 'storage-1',
-				name: 'shot.png',
-				mediaType: 'image/png',
-				size: 12,
-				url: 'http://127.0.0.1:7731/files/shot.png'
-			}
-		]);
-	});
-
-	it('requests cancellable section details and preserves item cursors', async () => {
-		const deepInput = { a: { b: { c: { d: { e: { f: { g: { h: { i: { j: 'deep' } } } } } } } } } };
-
-		const response = {
-			parts: [
-				{ type: 'reasoning', id: 'reasoning-6', text: 'Checking the result' },
-				{ type: 'tool-call', callId: 'call-1', name: 'exec_cmd', input: deepInput },
-				{ type: 'tool-result', callId: 'call-1', name: 'exec_cmd', output: null }
-			],
-			indexing: false,
-			nextAfter: 10,
-			previousBefore: 6,
-			revision: 500,
-			stale: true
-		};
-
-		const fetch = vi.fn(async () => Response.json(response));
+	it('fetches older snapshot rows and pagination and forwards the signal', async () => {
+		const request = { ...scope, before: 400 };
+		const fetch = vi.fn(async () => Response.json(snapshot));
 		vi.stubGlobal('fetch', fetch);
 		const controller = new AbortController();
 
-		const request = {
-			userId: 'user-1',
-			threadId: threadRecordId('thread-1'),
-			rowId: 'row-1',
-			after: 5,
-			limit: 5
-		};
-
-		const details = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplayDetails(
-			request,
-			controller.signal
-		);
-
-		expect(details).toEqual(response);
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').fetchTranscriptRows(request, controller.signal)
+		).resolves.toEqual(snapshot);
 		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/display-details',
+			'http://127.0.0.1:7731/api/transcript/rows',
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify(request),
@@ -336,53 +242,155 @@ describe('display transcript pages', () => {
 			})
 		);
 	});
-});
 
-describe('watchLiveCompletion', () => {
-	it('ignores unidentified overlays and parses updated and cleared events', async () => {
-		const unidentified = {
-			threadId: 'thread-1',
-			runId: 'run-1',
-			runStatus: 'running' as const,
-			text: 'Hello',
-			parts: [{ type: 'text' as const, id: 't', text: 'Hello', turnId: 'stream-1' }]
-		};
+	it.each(['running', 'completed', 'failed', 'cancelled', 'interrupted'] as const)(
+		'preserves tool rows with %s status and actions',
+		async (status) => {
+			const row: TranscriptRow = {
+				...toolRow,
+				status,
+				label: 'Run command',
+				summary: 'bun test\nFull command summary',
+				hasMore: false,
+				action:
+					status === 'completed'
+						? { kind: 'saveCard' }
+						: { kind: 'openFile', path: '/work/test.ts' }
+			};
 
-		const overlay = { ...unidentified, streamId: 'stream-1' };
+			if (status === 'failed') row.error = 'Command exited with code 1';
 
-		const sockets = stubWebSocket();
-		const events: unknown[] = [];
+			const response: TranscriptSnapshot = { ...snapshot, rows: [row], nextBefore: null };
+			const fetch = vi.fn(async () => Response.json(response));
+			vi.stubGlobal('fetch', fetch);
+			const request = { ...scope, before: 400 };
+			const controller = new AbortController();
 
-		const watching = createLocalClient('http://127.0.0.1:7101').watchLiveCompletion(
-			{ userId: 'user-1', threadId: threadRecordId('thread-1') },
-			{
-				signal: new AbortController().signal,
-				onEvent: (event) => {
-					events.push(event);
-				}
-			}
+			await expect(
+				createLocalClient('http://127.0.0.1:7731').fetchTranscriptRows(request, controller.signal)
+			).resolves.toEqual(response);
+			expect(fetch).toHaveBeenCalledWith(
+				'http://127.0.0.1:7731/api/transcript/rows',
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify(request),
+					signal: controller.signal
+				})
+			);
+		}
+	);
+
+	it.each([textRow, reasoningRow, toolRow])('fetches the full $kind row', async (row) => {
+		const response = { row };
+		const fetch = vi.fn(async () => Response.json(response));
+		vi.stubGlobal('fetch', fetch);
+		const request = { ...scope, rowId: row.id };
+		const controller = new AbortController();
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').fetchTranscriptRow(request, controller.signal)
+		).resolves.toEqual(response);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/row',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify(request),
+				signal: controller.signal
+			})
+		);
+	});
+
+	it('cancels an in-flight page request when its thread is left', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				(_url: string, init: RequestInit) =>
+					new Promise<Response>((_resolve, reject) => {
+						init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+					})
+			)
+		);
+		const controller = new AbortController();
+
+		const pending = createLocalClient('http://127.0.0.1:7731').fetchTranscriptRows(
+			{ ...scope, before: 400 },
+			controller.signal
 		);
 
+		controller.abort();
+		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+	});
+
+	it.each([
+		['watchTranscript', 'transcript', scope],
+		['watchTranscript', 'transcript', { ...scope, before: 200 }],
+		['watchTranscript', 'transcript', { ...scope, before: 0 }],
+		['watchTranscriptWork', 'transcriptWork', { ...scope, rowId: 'work:0' }],
+		['watchTranscriptItem', 'transcriptItem', { ...scope, rowId: reasoningRow.id }]
+	] as const)(
+		'%s delivers batched snapshots and row/UTF-16 append updates and cancels',
+		async (...[method, kind, request]) => {
+			const sockets = stubWebSocket();
+			const controller = new AbortController();
+			const onEvent = vi.fn();
+			const client = createLocalClient('http://127.0.0.1:7101');
+			const handlers = { signal: controller.signal, onEvent };
+
+			const watching =
+				method === 'watchTranscript'
+					? client.watchTranscript(request, handlers)
+					: client[method](request, handlers);
+
+			sockets[0].open();
+			expect(sockets[0].sent).toEqual([
+				{ type: 'subscribe', id: 1, topic: { kind, params: request } }
+			]);
+
+			const updates: TranscriptEvent = {
+				type: 'batch',
+				updates: [
+					{ type: 'row', row: { ...toolRow, status: 'failed', error: 'Command failed' } },
+					{ type: 'append', rowId: textRow.id, offset: 5, text: ' done' }
+				]
+			};
+
+			sockets[0].receive({
+				type: 'batch',
+				messages: [
+					{ type: 'event', id: 1, data: snapshot },
+					{ type: 'event', id: 1, data: updates }
+				]
+			});
+			expect(onEvent.mock.calls).toEqual([[snapshot], [updates]]);
+			controller.abort();
+			await expect(watching).resolves.toBeUndefined();
+			expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });
+		}
+	);
+
+	it('rejects a watch with an invalid transcript payload', async () => {
+		const sockets = stubWebSocket();
+		const onEvent = vi.fn();
+
+		const watching = createLocalClient('http://127.0.0.1:7101').watchTranscript(scope, {
+			signal: new AbortController().signal,
+			onEvent
+		});
+
+		const rejected = expect(watching).rejects.toMatchObject({ name: 'ZodError' });
 		sockets[0].open();
-
 		sockets[0].receive({
-			type: 'event',
-			id: 1,
-			data: { eventType: 'updated', live: unidentified }
+			type: 'batch',
+			messages: [
+				{
+					type: 'event',
+					id: 1,
+					data: { type: 'snapshot', rows: [{}], nextBefore: null, stale: false }
+				}
+			]
 		});
-
-		sockets[0].receive({
-			type: 'event',
-			id: 1,
-			data: { eventType: 'updated', live: { ...overlay, streamId: '' } }
-		});
-
-		sockets[0].receive({ type: 'event', id: 1, data: { eventType: 'updated', live: overlay } });
-		sockets[0].receive({ type: 'event', id: 1, data: { eventType: 'cleared' } });
-		sockets[0].receive({ type: 'end', id: 1 });
-		await watching;
-
-		expect(events).toEqual([{ eventType: 'updated', live: overlay }, { eventType: 'cleared' }]);
+		await rejected;
+		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });
 	});
 });
 

@@ -15,43 +15,113 @@ const scope = { userId: 'user-1', threadId: fixtureId<'threadRecords'>('thread-1
 const staleSchema = z.object({ stale: z.boolean() });
 
 describe('local socket', () => {
+	it('processes mixed batch entries in order and isolates subscription failures', async () => {
+		const sockets = stubWebSocket();
+		const socket = localSocket('http://127.0.0.1:7011');
+		const signal = new AbortController().signal;
+		const ended = vi.fn();
+		const failed = vi.fn();
+		const invalid = vi.fn();
+
+		const watching = socket.subscribeOnce(
+			{ kind: 'commands', params: scope },
+			z.number(),
+			signal,
+			ended
+		);
+
+		const error = socket.subscribeOnce({ kind: 'authChanges' }, z.number(), signal, failed);
+		const validation = socket.subscribeOnce({ kind: 'browserStatus' }, z.number(), signal, invalid);
+		sockets[0].open();
+		sockets[0].receive({
+			type: 'batch',
+			messages: [
+				{ type: 'event', id: 99, data: 'unknown subscription' },
+				{ type: 'event', id: 3, data: 'invalid payload' },
+				{ type: 'event', id: 1, data: 1 },
+				{ type: 'error', id: 2, status: 500, message: 'failed' },
+				{ type: 'event', id: 2, data: 2 },
+				{ type: 'event', id: 1, data: 3 },
+				{ type: 'end', id: 1 },
+				{ type: 'event', id: 1, data: 4 }
+			]
+		});
+		await watching;
+		await expect(error).rejects.toEqual(new LocalResponseError('failed', 500));
+		await expect(validation).rejects.toBeInstanceOf(z.ZodError);
+		expect(ended.mock.calls).toEqual([[1], [3]]);
+		expect(failed).not.toHaveBeenCalled();
+		expect(invalid).not.toHaveBeenCalled();
+		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 3 });
+	});
+
 	it('shares one socket, delivers parsed events by subscription, and unsubscribes on abort', async () => {
 		const sockets = stubWebSocket();
 		const socket = localSocket('http://127.0.0.1:7001');
 		const controller = new AbortController();
 		const transcript = vi.fn();
-		const live = vi.fn();
+		const work = vi.fn();
+		const item = vi.fn();
 
 		const watching = socket.subscribeOnce(
-			{ kind: 'transcript', params: scope },
+			{ kind: 'transcript', params: { ...scope, before: 200 } },
 			staleSchema,
 			controller.signal,
 			transcript
 		);
 
 		void socket.subscribeOnce(
-			{ kind: 'liveCompletion', params: scope },
+			{ kind: 'transcriptWork', params: { ...scope, rowId: 'work-1' } },
 			staleSchema,
 			controller.signal,
-			live
+			work
+		);
+
+		void socket.subscribeOnce(
+			{ kind: 'transcriptItem', params: { ...scope, rowId: 'item-1' } },
+			staleSchema,
+			controller.signal,
+			item
 		);
 
 		expect(sockets).toHaveLength(1);
 		expect(sockets[0].url).toBe('ws://127.0.0.1:7001/api/events');
 		sockets[0].open();
 		expect(sockets[0].sent).toEqual([
-			{ type: 'subscribe', id: 1, topic: { kind: 'transcript', params: scope } },
-			{ type: 'subscribe', id: 2, topic: { kind: 'liveCompletion', params: scope } }
+			{
+				type: 'subscribe',
+				id: 1,
+				topic: { kind: 'transcript', params: { ...scope, before: 200 } }
+			},
+			{
+				type: 'subscribe',
+				id: 2,
+				topic: { kind: 'transcriptWork', params: { ...scope, rowId: 'work-1' } }
+			},
+			{
+				type: 'subscribe',
+				id: 3,
+				topic: { kind: 'transcriptItem', params: { ...scope, rowId: 'item-1' } }
+			}
 		]);
-		sockets[0].receive({ type: 'event', id: 1, data: { stale: false } });
+		sockets[0].receive({
+			type: 'batch',
+			messages: [
+				{ type: 'event', id: 1, data: { stale: false } },
+				{ type: 'event', id: 2, data: { stale: true } },
+				{ type: 'event', id: 3, data: { stale: false } }
+			]
+		});
 		expect(transcript).toHaveBeenCalledWith({ stale: false });
-		expect(live).not.toHaveBeenCalled();
+		expect(work).toHaveBeenCalledWith({ stale: true });
+		expect(item).toHaveBeenCalledWith({ stale: false });
 
 		controller.abort();
 		await watching;
-		expect(sockets[0].sent.slice(2)).toEqual([
+		expect(sockets[0].sent.slice(3)).toEqual([
 			{ type: 'unsubscribe', id: 1 },
-			{ type: 'unsubscribe', id: 2 }
+			{ type: 'unsubscribe', id: 2 },
+			{ type: 'unsubscribe', id: 3 }
 		]);
 	});
 
@@ -64,7 +134,10 @@ describe('local socket', () => {
 		const other = socket.subscribeOnce({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
 
 		sockets[0].open();
-		sockets[0].receive({ type: 'error', id: 1, status: 401, message: 'authentication required' });
+		sockets[0].receive({
+			type: 'batch',
+			messages: [{ type: 'error', id: 1, status: 401, message: 'authentication required' }]
+		});
 
 		await expect(watching).rejects.toEqual(new LocalResponseError('authentication required', 401));
 		await expect(other).rejects.toThrow('Lost the live connection');

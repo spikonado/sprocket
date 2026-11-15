@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::types::TranscriptPart;
 pub use super::types::{WorkAssignment, WorkRange};
@@ -31,8 +31,21 @@ pub struct WorkBlock {
     pub closed: bool,
 }
 
-fn block_id(part: &TranscriptPart, item: usize) -> String {
-    format!("work:{}:{}:{item}", part.run_id, part.source_key)
+pub(super) fn item_index(item: &Value, offset: usize) -> usize {
+    item.get("id")
+        .or_else(|| item.get("partId"))
+        .and_then(Value::as_str)
+        .and_then(|id| id.rsplit(':').next())
+        .and_then(|index| index.parse().ok())
+        .unwrap_or(offset)
+}
+
+pub(super) fn item_id(kind: &str, part: &TranscriptPart, offset: usize) -> String {
+    let index = part
+        .content_items()
+        .get(offset)
+        .map_or(offset, |item| item_index(item, offset));
+    format!("{kind}:{}:{}:{index}", part.run_id, part.source_key)
 }
 
 /// Parts must be in transcript order. Blocks continue across parts within each run.
@@ -62,7 +75,7 @@ pub fn derive_work_blocks<'a>(
             }
             let index = *open.entry(part.run_id.as_str()).or_insert_with(|| {
                 blocks.push(WorkBlock {
-                    id: block_id(part, offset),
+                    id: item_id("work", part, offset),
                     run_id: part.run_id.clone(),
                     items: Vec::new(),
                     closed: false,
@@ -98,7 +111,6 @@ impl TranscriptPart {
 #[derive(Clone, Debug)]
 pub struct WorkItem {
     pub run_id: String,
-    pub section: Option<String>,
     pub source: WorkPosition,
     pub call_id: Option<String>,
     pub tool_invocation_id: Option<String>,
@@ -121,7 +133,6 @@ impl WorkItem {
         }
         Some(Self {
             run_id: part.run_id.clone(),
-            section: Some(block_id(part, 0)),
             source: WorkPosition {
                 part: part.number,
                 item: 0,
@@ -136,54 +147,6 @@ impl WorkItem {
 
 pub(super) fn string(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
-}
-
-pub(super) fn detail(
-    item: &WorkItem,
-    source: &TranscriptPart,
-    result: Option<&TranscriptPart>,
-) -> Vec<Value> {
-    let mut parts = Vec::new();
-    if item.canonical {
-        if let Some(value) = source.content_items().get(item.source.item as usize) {
-            let mut value = value.clone();
-            if let Some(object) = value.as_object_mut() {
-                object.retain(|key, _| {
-                    matches!(
-                        key.as_str(),
-                        "type"
-                            | "id"
-                            | "partId"
-                            | "turnId"
-                            | "text"
-                            | "callId"
-                            | "toolInvocationId"
-                            | "name"
-                            | "input"
-                    )
-                });
-            }
-            parts.push(value);
-        }
-    } else if let Some(tool) = &source.tool {
-        let input = tool.input.as_ref().unwrap_or(&Value::Null);
-        parts.push(
-            json!({"type":"tool-call", "callId":tool.call_id, "toolInvocationId":tool.tool_invocation_id, "name":tool.name, "input":input}),
-        );
-    }
-    if let Some(tool) = result.and_then(|part| part.tool.as_ref()) {
-        let output = tool.output.as_ref().unwrap_or(&Value::Null);
-        let call = parts.first();
-        let call_id = call
-            .and_then(|call| call["callId"].as_str())
-            .unwrap_or(&tool.call_id);
-        let name = call
-            .and_then(|call| call["name"].as_str())
-            .unwrap_or(&tool.name);
-        let result = json!({"type":"tool-result", "callId":call_id, "name":name, "toolInvocationId":tool.tool_invocation_id, "status":tool.status, "output":output});
-        parts.push(result);
-    }
-    parts
 }
 
 #[cfg(test)]

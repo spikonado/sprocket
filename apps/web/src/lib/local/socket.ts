@@ -1,6 +1,7 @@
 import type {
 	ArtifactsWatchRequest,
 	SubscriptionHandlers,
+	TranscriptRowRequest,
 	TranscriptScopeRequest,
 	WorkspaceFileTarget
 } from '$lib/types/sprocket';
@@ -8,8 +9,9 @@ import { z } from 'zod';
 import { LocalResponseError } from './transport';
 
 export type LocalTopic =
-	| { kind: 'transcript'; params: TranscriptScopeRequest }
-	| { kind: 'liveCompletion'; params: TranscriptScopeRequest }
+	| { kind: 'transcript'; params: TranscriptScopeRequest & { before?: number } }
+	| { kind: 'transcriptWork'; params: TranscriptRowRequest }
+	| { kind: 'transcriptItem'; params: TranscriptRowRequest }
 	| { kind: 'artifactSync'; params: ArtifactsWatchRequest }
 	| { kind: 'commands'; params: TranscriptScopeRequest }
 	| { kind: 'authChanges' }
@@ -18,10 +20,15 @@ export type LocalTopic =
 	| { kind: 'workspaceFiles'; params: { workspacePath: string } }
 	| { kind: 'workspaceFile'; params: WorkspaceFileTarget };
 
-const serverMessageSchema = z.discriminatedUnion('type', [
+const subscriptionMessageSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('event'), id: z.number(), data: z.json() }),
 	z.object({ type: z.literal('error'), id: z.number(), status: z.number(), message: z.string() }),
 	z.object({ type: z.literal('end'), id: z.number() })
+]);
+
+const serverMessageSchema = z.union([
+	z.object({ type: z.literal('batch'), messages: z.array(subscriptionMessageSchema) }),
+	subscriptionMessageSchema
 ]);
 
 export type LocalServerMessage = z.infer<typeof serverMessageSchema>;
@@ -174,6 +181,14 @@ class LocalSocket {
 			return;
 		}
 
+		if (message.type === 'batch') {
+			for (const entry of message.messages) this.#deliver(entry);
+		} else {
+			this.#deliver(message);
+		}
+	}
+
+	#deliver(message: z.infer<typeof subscriptionMessageSchema>) {
 		const subscription = this.#subscriptions.get(message.id);
 
 		if (!subscription) return;

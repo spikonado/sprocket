@@ -1,33 +1,32 @@
 import { ChevronRight } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ReasoningLabel } from '$lib/components/home/reasoning-disclosure';
 
 type Props = {
 	inProgress: boolean;
+	expanded: boolean;
+	onToggle: () => void;
 	summary: string | undefined;
 	children: ReactNode;
 };
 
-export default function WorkDisclosure({ inProgress, summary, children }: Props) {
-	const autoExpanded = summary !== undefined && inProgress;
-	const [expanded, setExpanded] = useState(autoExpanded);
-	const [previousAutoExpanded, setPreviousAutoExpanded] = useState(autoExpanded);
-
-	if (autoExpanded !== previousAutoExpanded) {
-		setPreviousAutoExpanded(autoExpanded);
-		setExpanded(autoExpanded);
-	}
-
+export default function WorkDisclosure({
+	inProgress,
+	expanded,
+	onToggle,
+	summary,
+	children
+}: Props) {
 	return (
 		<div className="text-muted-foreground text-sm">
 			<button
 				type="button"
 				className={`text-muted-foreground hover:text-muted-foreground inline-flex items-center transition ${summary === undefined ? 'gap-1.5' : 'gap-1'}`}
-				onClick={() => setExpanded((value) => !value)}
+				onClick={onToggle}
 				aria-expanded={expanded}
 			>
 				{summary === undefined ? (
-					<ReasoningLabel inProgress={inProgress} />
+					<ReasoningLabel label={inProgress ? 'Reasoning' : 'Reasoned'} />
 				) : (
 					<span className="text-left">{summary}</span>
 				)}

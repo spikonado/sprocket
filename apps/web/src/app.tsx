@@ -138,8 +138,7 @@ import {
 	type UseExpandedThreads
 } from '$lib/project/useThreadTree';
 import type { InboxState } from '@convex/lib/inboxState';
-import { useTranscriptReplica } from '$lib/home/transcript-replica';
-import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
+import { useTranscriptStore } from '$lib/home/transcript-store';
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
 import { isServerRejection } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
@@ -531,7 +530,7 @@ export default function App({
 		localServerRequiredMessage
 	});
 
-	const transcript = useTranscriptReplica();
+	const transcript = useTranscriptStore();
 	const artifactPanel = useArtifactPanel();
 	const artifactRepositoryKey = convexAuth.isAuthenticated ? currentRepositoryKey : null;
 
@@ -736,36 +735,13 @@ export default function App({
 
 		if (!threadId || !api || !isSignedIn || !signedInUserId) return;
 
-		return transcript.watchDisplay({
+		return transcript.watch({
 			api,
 			userId: signedInUserId,
 			threadId,
 			isCurrent: () => currentThreadIdRef.current === threadId
 		});
 	}, [currentThreadId, currentThreadIdRef, localApi, isSignedIn, transcript, signedInUserId]);
-
-	useEffect(() => {
-		const threadId = currentThreadId;
-		const api = localApi;
-
-		if (!threadId || !api || !isSignedIn || !signedInUserId) return;
-
-		return transcript.watchLiveCompletion({
-			api,
-			userId: signedInUserId,
-			threadId,
-			isCurrent: () => currentThreadIdRef.current === threadId
-		});
-	}, [currentThreadId, currentThreadIdRef, localApi, isSignedIn, transcript, signedInUserId]);
-
-	useEffect(() => {
-		transcript.syncOverlays(transcript.overlays);
-	});
-
-	const visibleMessages = transcript.visibleMessages({
-		threadId: currentThreadId,
-		userId: signedInUserId
-	});
 
 	const currentProject = useMemo<ProjectState | null>(() => {
 		if (currentWorkspacePath) {
@@ -1476,25 +1452,6 @@ export default function App({
 		const blob = await api.fetchTranscriptAttachment({ userId, threadId, storageId });
 
 		return blob ? URL.createObjectURL(blob) : null;
-	}
-
-	async function loadTranscriptSectionDetails(
-		row: TranscriptDisplayRow,
-		cursor: TranscriptDetailCursor,
-		signal: AbortSignal
-	) {
-		const api = localApi;
-		const threadId = currentThreadId;
-		const userId = signedInUserIdRef.current;
-
-		if (!api || !threadId || !userId || row.threadId !== threadId) {
-			throw new Error('Thread is no longer selected.');
-		}
-
-		return await api.fetchTranscriptDisplayDetails(
-			{ userId, threadId, rowId: row.id, ...cursor },
-			signal
-		);
 	}
 
 	async function changeInboxState(thread: Doc<'threadRecords'>, state: InboxState) {
@@ -2658,9 +2615,15 @@ export default function App({
 									<>
 										{currentThreadId && (
 											<ThreadTranscript
-												key={`${currentThreadId}:${transcript.windowVersion}`}
-												messages={visibleMessages}
-												activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
+												key={currentThreadId}
+												store={transcript}
+												activeRunId={
+													currentLifecycle
+														? isLifecycleInProgress(currentLifecycle.phase)
+															? (runState?.runId ?? null)
+															: null
+														: undefined
+												}
 												project={currentProject}
 												cwd={threadCwd}
 												artifacts={artifactList.artifacts}
@@ -2677,9 +2640,11 @@ export default function App({
 												}
 												onLoadOlder={() => void loadOlderTranscript()}
 												loadAttachment={loadTranscriptAttachment}
-												loadSectionDetails={loadTranscriptSectionDetails}
 												renderRunFooter={(runId) => (
-													<RunUsageFooter runId={runId} modelCatalog={modelCatalog} />
+													<RunUsageFooter
+														runId={convexId<'runs'>().parse(runId)}
+														modelCatalog={modelCatalog}
+													/>
 												)}
 											/>
 										)}
@@ -2736,7 +2701,7 @@ export default function App({
 																syncing={Boolean(
 																	currentThreadId &&
 																	transcript.threadId === currentThreadId &&
-																	transcript.syncing
+																	transcript.loading
 																)}
 																catalogError={catalogError !== null}
 																catalogLoading={catalogLoading}

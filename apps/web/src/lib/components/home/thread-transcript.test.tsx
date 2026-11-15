@@ -1,1757 +1,385 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render, within } from '@testing-library/react';
-import type { JsonValue } from '@convex/lib/json';
-import type {
-	TranscriptMessage,
-	TranscriptDisplayDetails,
-	TranscriptDisplayRow,
-	LiveTranscriptMessage
-} from '$lib/types/sprocket';
-import ThreadTranscript from './thread-transcript';
+import { fireEvent, render } from '@testing-library/react';
 import { fixtureId } from '$lib/convex-test-client';
+import { TranscriptStore, type TranscriptStoreApi } from '$lib/home/transcript-store';
+import type { TranscriptEvent, TranscriptRow, WatchHandlers } from '$lib/types/sprocket';
+import ThreadTranscript from './thread-transcript';
 
 type Props = React.ComponentProps<typeof ThreadTranscript>;
 
+type Watch = WatchHandlers<TranscriptEvent>;
+
+const stops: Array<() => void> = [];
 let resize: () => void;
 
-function message(number: number): TranscriptDisplayRow {
+function prompt(number: number): Extract<TranscriptRow, { kind: 'prompt' }> {
 	return {
 		id: `prompt:${number}`,
-		threadId: fixtureId<'threadRecords'>('thread'),
-		runId: fixtureId<'runs'>(`run-${number}`),
+		runId: 'run',
 		kind: 'prompt',
 		text: `Message ${number}`,
-		attachments: [],
-		sequence: number,
-		closed: true,
-		revision: 1
+		attachments: []
 	};
 }
 
-function liveMessage(): LiveTranscriptMessage {
+function snapshot(rows: TranscriptRow[]): TranscriptEvent {
+	return { type: 'snapshot', rows, nextBefore: null, stale: false };
+}
+
+function waitForAbort({ signal }: Watch) {
+	return new Promise<void>((resolve) => {
+		if (signal.aborted) resolve();
+		else signal.addEventListener('abort', () => resolve(), { once: true });
+	});
+}
+
+function transcript(rows: TranscriptRow[], activeRunId: Props['activeRunId'] = 'run') {
+	const threads: Watch[] = [];
+	const works: Watch[] = [];
+	const items: Watch[] = [];
+
+	const api: TranscriptStoreApi = {
+		fetchTranscriptRows: vi.fn(),
+		fetchTranscriptRow: vi.fn(),
+		watchTranscript: vi.fn((_scope, handlers) => {
+			threads.push(handlers);
+
+			return waitForAbort(handlers);
+		}),
+		watchTranscriptWork: vi.fn((_scope, handlers) => {
+			works.push(handlers);
+
+			return waitForAbort(handlers);
+		}),
+		watchTranscriptItem: vi.fn((_scope, handlers) => {
+			items.push(handlers);
+
+			return waitForAbort(handlers);
+		})
+	};
+
+	const store = new TranscriptStore();
+
+	function connect() {
+		stops.push(
+			store.watch({
+				api,
+				userId: 'user',
+				threadId: fixtureId<'threadRecords'>('thread'),
+				isCurrent: () => true
+			})
+		);
+	}
+
+	connect();
+	threads[0].onEvent(snapshot(rows));
+	const props: Props = { store, activeRunId, project: null, onLoadOlder: vi.fn() };
+	const view = render(<ThreadTranscript {...props} />);
+
 	return {
-		kind: 'live',
-		id: 'response:run',
-		threadId: message(3).threadId,
-		runId: message(3).runId,
-		runStatus: 'completed',
-		text: '',
-		parts: []
+		...view,
+		api,
+		props,
+		works,
+		items,
+		viewport: view.getByRole('region', { name: 'Conversation history' }),
+		connect,
+		emit(event: TranscriptEvent) {
+			act(() => threads.at(-1)!.onEvent(event));
+		},
+		setProps(patch: Partial<Props>) {
+			Object.assign(props, patch);
+			view.rerender(<ThreadTranscript {...props} />);
+		}
 	};
 }
 
-function click(element: Element | null | undefined) {
-	act(() => {
-		element?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-	});
-}
+function scrollLayout() {
+	const selector = '[aria-label="Conversation history"]';
+	const viewportHeight = 600;
+	const rowHeight = 300;
 
-function workButtons(viewport: HTMLElement) {
-	return [
-		...viewport.querySelectorAll<HTMLButtonElement>(
-			'[data-transcript-anchor] > div > button[aria-expanded]'
-		)
-	];
-}
-
-async function settle(milliseconds = 16) {
-	await act(async () => {
-		await vi.advanceTimersByTimeAsync(milliseconds);
-	});
-}
-
-async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 600) {
-	const props: Props = {
-		messages,
-		activeRunId: null,
-		project: null,
-		nextBefore: undefined,
-		onLoadOlder: vi.fn()
-	};
-
-	const viewportSelector = '[aria-label="Conversation history"]';
-
-	const messageElements = (viewport: Element) => [
+	const anchors = (viewport: Element) => [
 		...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]')
 	];
-
-	const scrollHeightOf = (viewport: HTMLElement) =>
-		Math.max(viewportHeight, messageElements(viewport).length * 300);
 
 	let scrollTop = 0;
 	vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (
 		this: HTMLElement
 	) {
-		return this.matches(viewportSelector) ? viewportHeight : 0;
+		return this.matches(selector) ? viewportHeight : 0;
 	});
 	vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
 		this: HTMLElement
 	) {
-		return this.matches(viewportSelector) ? scrollHeightOf(this) : 0;
+		return this.matches(selector) ? Math.max(viewportHeight, anchors(this).length * rowHeight) : 0;
 	});
 	vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function (
 		this: HTMLElement
 	) {
-		if (!this.matches(viewportSelector)) return 0;
-		scrollTop = Math.min(scrollTop, this.scrollHeight - this.clientHeight);
-
-		return scrollTop;
+		return this.matches(selector) ? Math.min(scrollTop, this.scrollHeight - this.clientHeight) : 0;
 	});
 	vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (
 		this: HTMLElement,
 		top: number
 	) {
-		if (this.matches(viewportSelector)) {
+		if (this.matches(selector))
 			scrollTop = Math.max(0, Math.min(top, this.scrollHeight - this.clientHeight));
-		}
 	});
 	vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 		this: HTMLElement
 	) {
-		const viewport = this.closest<HTMLElement>(viewportSelector);
-		const index = viewport ? messageElements(viewport).indexOf(this) : -1;
+		const viewport = this.closest<HTMLElement>(selector);
+		const index = viewport ? anchors(viewport).indexOf(this) : -1;
 
 		return new DOMRect(
 			0,
-			viewport && index >= 0 ? index * 300 - viewport.scrollTop : 0,
+			viewport && index >= 0 ? index * rowHeight - viewport.scrollTop : 0,
 			800,
-			index < 0 ? viewportHeight : 300
+			index < 0 ? viewportHeight : rowHeight
 		);
 	});
+}
 
-	const rendered = render(<ThreadTranscript {...props} />);
-	const viewport = rendered.container.querySelector<HTMLDivElement>(viewportSelector);
-
-	if (!viewport) throw new Error('Missing transcript viewport');
-	await settle();
-
-	return {
-		props,
-		viewport,
-		unmount: rendered.unmount,
-		setProps(patch: Partial<Props>) {
-			Object.assign(props, patch);
-			rendered.rerender(<ThreadTranscript {...props} />);
-		},
-		scrollTo(top: number) {
-			act(() => {
-				viewport.scrollTop = top;
-				viewport.dispatchEvent(new Event('scroll'));
-			});
-		}
-	};
+function scrollTo(viewport: HTMLElement, top: number) {
+	viewport.scrollTop = top;
+	fireEvent.scroll(viewport);
 }
 
 beforeEach(() => {
-	vi.useFakeTimers();
+	vi.clearAllMocks();
 	vi.stubGlobal(
 		'ResizeObserver',
 		class {
 			constructor(callback: () => void) {
 				resize = callback;
 			}
-			observe = vi.fn();
-			disconnect = vi.fn();
+			observe() {}
+			disconnect() {}
 		}
 	);
 });
 
 afterEach(() => {
+	act(() => {
+		for (const stop of stops.splice(0)) stop();
+	});
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
-	vi.useRealTimers();
 });
 
-describe('transcript viewport paging', () => {
-	it('scrolls vertically without allowing the transcript viewport to scroll horizontally', async () => {
-		const { viewport } = await renderTranscript([message(1)]);
+it('renders projected prompts and streaming text, and replaces rows on later snapshots', () => {
+	const view = transcript([
+		{ ...prompt(1), text: 'Explain **this**' },
+		{ id: 'text', runId: 'run', kind: 'text', text: 'An *answer*', running: true }
+	]);
 
-		expect(viewport.classList.contains('overflow-y-auto')).toBe(true);
-		expect(viewport.classList.contains('overflow-x-hidden')).toBe(true);
-		expect(viewport.classList.contains('overflow-auto')).toBe(false);
-	});
-
-	it('right-aligns user prompts inside a composer-width column', async () => {
-		const promptMessage: TranscriptDisplayRow = {
-			...message(1),
-			attachments: [
-				{
-					storageId: fixtureId<'_storage'>('file'),
-					name: 'notes.txt',
-					mediaType: 'text/plain',
-					size: 10
-				}
-			]
-		};
-
-		const response: TranscriptDisplayRow = {
-			...message(2),
-			id: 'text:2',
-			kind: 'text',
-			text: 'Agent reply'
-		};
-
-		const { viewport } = await renderTranscript([promptMessage, response]);
-
-		const column = viewport.firstElementChild;
-		const prompt = column?.querySelector<HTMLElement>('[data-message-id="prompt:1"]');
-		const agent = column?.querySelector<HTMLElement>('[data-message-id="text:2"]');
-		const chips = prompt?.querySelector('[aria-label="Attached files"]');
-
-		if (!column || !prompt || !agent || !chips) {
-			throw new Error('Missing transcript alignment fixtures');
-		}
-
-		expect(column.classList.contains('mx-auto')).toBe(true);
-		expect(column.classList.contains('max-w-[48rem]')).toBe(true);
-		expect(prompt.classList.contains('items-end')).toBe(true);
-		expect(prompt.classList.contains('items-start')).toBe(false);
-		expect(chips.classList.contains('justify-end')).toBe(true);
-		expect(agent.className).not.toMatch(/\b(items-end|justify-end|self-end|ml-auto|text-right)\b/);
-	});
-
-	it('opens every transcript link in a new tab without granting opener access', async () => {
-		const prompt = { ...message(1), text: '[Prompt](https://example.com/prompt)' };
-
-		const response: TranscriptDisplayRow = {
-			...message(2),
-			id: 'text-2',
-			kind: 'text',
-			text: '[Response](https://example.com/response)'
-		};
-
-		const live: LiveTranscriptMessage = {
-			...liveMessage(),
-			text: '[Live](https://example.com/live)'
-		};
-
-		const { viewport } = await renderTranscript([prompt, response, live]);
-
-		const links = [...viewport.querySelectorAll<HTMLAnchorElement>('.chat-markdown a')];
-		expect(links).toHaveLength(3);
-		expect(links.every((link) => link.target === '_blank')).toBe(true);
-		expect(links.every((link) => link.rel === 'noopener noreferrer')).toBe(true);
-	});
-
-	it('renders math in user, persisted assistant, and live assistant messages', async () => {
-		const prompt = { ...message(1), text: String.raw`Explain $E = mc^2$.` };
-
-		const response: TranscriptDisplayRow = {
-			...message(2),
-			id: 'text:2',
-			kind: 'text',
-			text: String.raw`\[\frac{1}{2}\]`
-		};
-
-		const live = { ...liveMessage(), text: String.raw`The result is \(x^2\).` };
-
-		const { viewport } = await renderTranscript([prompt, response, live]);
-
-		expect(viewport.querySelectorAll('.katex')).toHaveLength(3);
-		expect(viewport.querySelectorAll('.katex-display')).toHaveLength(1);
-		expect(viewport.querySelector('math mfrac')?.textContent).toBe('12');
-	});
-
-	it.each(['live', 'persisted'] as const)(
-		'shows patch paths and failure details inline for %s tools',
-		async (kind) => {
-			const parts: LiveTranscriptMessage['parts'] = [
-				{
-					type: 'tool-call',
-					callId: 'patch',
-					name: 'apply_patch',
-					input: {
-						patch:
-							'*** Begin Patch\n*** Add File: a.txt\n+a\n*** Add File: b.txt\n+b\n*** Add File: c.txt\n+c\n*** End Patch'
-					}
-				},
-				{ type: 'tool-result', callId: 'patch', name: 'apply_patch', output: {} },
-				{
-					type: 'tool-call',
-					callId: 'cancelled',
-					name: 'exec_command',
-					input: { cmd: 'sleep 10' }
-				},
-				{
-					type: 'tool-result',
-					callId: 'cancelled',
-					name: 'exec_command',
-					output: { status: 'cancelled', error: 'stopped by user' }
-				},
-				{ type: 'tool-call', callId: 'interrupted', name: 'read_skill', input: { name: 'test' } }
-			];
-
-			const response: TranscriptMessage =
-				kind === 'live'
-					? { ...liveMessage(), parts }
-					: {
-							...message(3),
-							kind: 'work',
-							id: 'work-3'
-						};
-
-			const { props, viewport, setProps } = await renderTranscript([response]);
-			setProps({
-				loadSectionDetails: vi
-					.fn()
-					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
-			});
-			await settle();
-			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
-			await settle();
-
-			const files = [
-				...viewport.querySelectorAll('[data-tool-kind="apply_patch"] [data-tool-row]')
-			];
-
-			expect(files.map((row) => row.textContent)).toEqual(['a.txt', 'b.txt', 'c.txt']);
-			expect(files.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
-			expect(viewport.textContent).toContain('a.txt');
-			expect(viewport.textContent).toContain('b.txt');
-			expect(viewport.textContent).toContain('c.txt');
-
-			const failures = [...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].filter(
-				(row) =>
-					row.textContent?.includes('(stopped)') || row.textContent?.includes('(interrupted)')
-			);
-
-			expect(failures.map((row) => row.textContent)).toEqual([
-				expect.stringContaining('(stopped)'),
-				expect.stringContaining('(interrupted)')
-			]);
-			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
-			expect(viewport.querySelector('[data-tool-kind] [role="status"]')?.textContent).toBe(
-				'stopped by user'
-			);
-			expect(props.loadSectionDetails).toBeDefined();
-		}
+	expect(view.getByText('this').tagName).toBe('STRONG');
+	expect(view.getByRole('log').textContent?.trim()).toBe('An answer');
+	view.emit(
+		snapshot([
+			{ id: 'replacement', runId: 'run', kind: 'text', text: 'Final answer', running: false }
+		])
 	);
+	expect(view.getByText('Final answer')).toBeTruthy();
+	expect(view.viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(1);
+});
 
-	it.each(['live', 'persisted'] as const)(
-		'lists repeated tools, artifacts, and reasoning directly inside %s work',
-		async (kind) => {
-			const calls: { name: string; input: JsonValue }[] = [
-				...Array.from({ length: 3 }, (_, index) => ({
-					name: 'exec_cmd',
-					input: { cmd: `echo command-${index}` }
-				})),
-				...Array.from({ length: 3 }, (_, index) => ({
-					name: 'read_skill',
-					input: { name: `skill-${index}` }
-				})),
-				...Array.from({ length: 3 }, (_, index) => ({
-					name: 'apply_patch',
-					input: { patch: `*** Begin Patch\n*** Add File: file-${index}.txt\n+text\n*** End Patch` }
-				})),
-				{ name: 'bind_artifact', input: { path: 'notes.md' } },
-				{ name: 'list_artifacts', input: {} },
-				{ name: 'edit_artifact', input: { path: 'notes.md' } }
-			];
-
-			const parts: LiveTranscriptMessage['parts'] = [
-				{ type: 'reasoning', id: 'plan', text: 'Inspect, edit, and validate.' },
-				...calls.flatMap((call, index): LiveTranscriptMessage['parts'] => [
-					{ type: 'tool-call', callId: `tool-${index}`, ...call },
-					{ type: 'tool-result', callId: `tool-${index}`, name: call.name, output: {} }
-				])
-			];
-
-			const response: TranscriptMessage =
-				kind === 'live'
-					? { ...liveMessage(), parts }
-					: {
-							...message(3),
-							kind: 'work',
-							id: 'work-3',
-							toolCounts: {
-								exec_cmd: 3,
-								read_skill: 3,
-								apply_patch: 3,
-								bind_artifact: 1,
-								list_artifacts: 1,
-								edit_artifact: 1
-							}
-						};
-
-			const { viewport, setProps } = await renderTranscript([response]);
-			setProps({
-				loadSectionDetails: vi
-					.fn()
-					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
-			});
-			click(workButtons(viewport)[0]);
-			await settle();
-
-			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
-			expect(rows).toHaveLength(calls.length);
-			expect(
-				rows.every(
-					(row) => row.querySelector('[data-tool-row]')?.firstElementChild?.tagName === 'svg'
-				)
-			).toBe(true);
-			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(2);
-			expect(viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')).toHaveLength(
-				calls.length
-			);
-
-			for (let index = 0; index < 3; index += 1) {
-				expect(viewport.textContent).toContain(`echo command-${index}`);
-				expect(viewport.textContent).toContain(`$skill-${index}`);
-				expect(viewport.textContent).toContain(`file-${index}.txt`);
-			}
-
-			expect(viewport.textContent).toContain('Bound Artifact:notes.md');
-			expect(viewport.textContent).toContain('Listed Artifacts');
-			expect(viewport.textContent).toContain('Updated Artifact:notes.md');
-			click(within(viewport).getByRole('button', { name: 'Reasoned' }));
-			expect(viewport.textContent).toContain('Inspect, edit, and validate.');
-		}
-	);
-
-	it('summarizes live and persisted work without loading details', async () => {
-		const counts = { apply_patch: 2, web_search: 1, exec_cmd: 2, read_skill: 1, poll_cmd: 3 };
-		const summary = 'Read 1 skill; Ran 2 commands; Applied 2 patches; Searched 1 time';
-
-		const parts: LiveTranscriptMessage['parts'] = [
-			{ type: 'reasoning', id: 'plan', text: 'Plan the changes.' },
-			...Object.entries(counts).flatMap(([name, count]) =>
-				Array.from({ length: count }, (_, index): LiveTranscriptMessage['parts'] => [
-					{ type: 'tool-call', callId: `${name}-${index}`, name, input: {} },
-					{ type: 'tool-result', callId: `${name}-${index}`, name, output: {} }
-				]).flat()
-			)
-		];
-
-		const saved: TranscriptDisplayRow = {
-			...message(2),
-			kind: 'work',
-			id: 'saved-work',
-			toolCounts: counts
-		};
-
-		const { viewport, setProps } = await renderTranscript([saved, { ...liveMessage(), parts }]);
-		const load = vi.fn();
-		setProps({ loadSectionDetails: load });
-		await settle();
-
-		expect(workButtons(viewport).map((button) => button.textContent)).toEqual([summary, summary]);
-		expect(workButtons(viewport).map((button) => button.getAttribute('aria-expanded'))).toEqual([
-			'false',
-			'false'
+it.each([true, false])(
+	'defaults running=%s work to the matching expansion and subscribes only while open',
+	(running) => {
+		const view = transcript([
+			{ id: 'work', runId: 'run', kind: 'work', toolCounts: { exec_cmd: 2 }, running }
 		]);
-		expect(load).not.toHaveBeenCalled();
-	});
 
-	it('keeps pending calls in their original section across text, later work, and settlement', async () => {
-		const first: LiveTranscriptMessage['parts'][number] = {
-			type: 'tool-call',
-			callId: 'first',
-			name: 'exec_cmd',
-			input: { cmd: 'sleep 11' }
-		};
+		const button = view.getByRole('button', { name: 'Ran 2 commands' });
+		expect(button.getAttribute('aria-expanded')).toBe(String(running));
+		expect(view.api.watchTranscriptWork).toHaveBeenCalledTimes(running ? 1 : 0);
 
-		const second: LiveTranscriptMessage['parts'][number] = {
-			type: 'tool-call',
-			callId: 'second',
-			name: 'exec_cmd',
-			input: { cmd: 'sleep 22' }
-		};
-
-		const response: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [first]
-		};
-
-		const { viewport, setProps } = await renderTranscript([response]);
-		setProps({ activeRunId: response.runId });
-		await settle();
-		const original = workButtons(viewport)[0];
-		const originalSection = original.closest('[data-transcript-anchor]');
-
-		if (!originalSection) throw new Error('Missing original work section');
-		expect(original.getAttribute('aria-expanded')).toBe('true');
-		expect(originalSection.querySelectorAll('[data-tool-kind]')).toHaveLength(1);
-
-		const boundary: LiveTranscriptMessage['parts'][number] = {
-			type: 'text',
-			id: 'boundary',
-			text: 'Progress update'
-		};
-
-		setProps({ messages: [{ ...response, parts: [first, boundary] }] });
-		await settle();
-		expect(workButtons(viewport)[0]).toBe(original);
-		expect(original.getAttribute('aria-expanded')).toBe('false');
-		expect(viewport.textContent).toContain('Progress update');
-
-		setProps({ messages: [{ ...response, parts: [first, boundary, second] }] });
-		await settle();
-		const latest = workButtons(viewport)[1];
-		const latestSection = latest.closest('[data-transcript-anchor]');
-
-		if (!latestSection) throw new Error('Missing latest work section');
-		expect(workButtons(viewport).map((button) => button.getAttribute('aria-expanded'))).toEqual([
-			'false',
-			'true'
-		]);
-		click(original);
-
-		const callRows = (section: Element) =>
-			[...section.querySelectorAll('[data-tool-row]')].map((row) => row.textContent);
-
-		expect(callRows(originalSection)).toEqual(['sleep 11']);
-		expect(callRows(latestSection)).toEqual(['sleep 22']);
-		expect(originalSection.textContent).not.toContain('(interrupted)');
-		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(2);
-		click(original);
-
-		setProps({
-			messages: [
-				{
-					...response,
-					parts: [
-						first,
-						boundary,
-						second,
-						{
-							type: 'tool-result',
-							callId: 'first',
-							name: 'exec_cmd',
-							output: { status: 'cancelled', error: 'First command stopped' }
-						}
-					]
-				}
-			]
-		});
-		await settle();
-		expect(workButtons(viewport)).toEqual([original, latest]);
-		expect(workButtons(viewport).map((button) => button.getAttribute('aria-expanded'))).toEqual([
-			'false',
-			'true'
-		]);
-		click(original);
-		expect(callRows(originalSection)).toEqual(['sleep 11(stopped)']);
-		expect(callRows(latestSection)).toEqual(['sleep 22']);
-		expect(originalSection.querySelector('[role="status"]')?.textContent).toBe(
-			'First command stopped'
+		if (!running) fireEvent.click(button);
+		expect(button.getAttribute('aria-expanded')).toBe('true');
+		expect(view.api.watchTranscriptWork).toHaveBeenCalledWith(
+			expect.objectContaining({ rowId: 'work' }),
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
 		);
-		expect(latestSection.textContent).not.toContain('(interrupted)');
-		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(2);
-	});
-
-	it('marks unfinished tools interrupted in a closed work section of the active run', async () => {
-		const parts: LiveTranscriptMessage['parts'] = [
-			{ type: 'tool-call', callId: 'done', name: 'exec_cmd', input: { cmd: 'echo ok' } },
-			{ type: 'tool-result', callId: 'done', name: 'exec_cmd', output: {} },
-			{ type: 'tool-call', callId: 'cut', name: 'exec_cmd', input: { cmd: 'sleep 10' } }
-		];
-
-		const closed: TranscriptDisplayRow = {
-			...message(2),
-			kind: 'work',
-			id: 'closed-work',
-			closed: true,
-			toolCounts: { exec_cmd: 2 }
-		};
-
-		const live: LiveTranscriptMessage = {
-			...liveMessage(),
-			runId: closed.runId,
-			runStatus: 'running',
-			parts: [{ type: 'text', id: 'later', text: 'Later text' }]
-		};
-
-		const { viewport, setProps } = await renderTranscript([closed, live]);
-		setProps({
-			activeRunId: closed.runId,
-			loadSectionDetails: vi
-				.fn()
-				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
-		});
-		click(workButtons(viewport)[0]);
-		await settle();
-
-		expect(viewport.textContent).toContain('sleep 10(interrupted)');
-		expect(viewport.textContent).toContain('echo ok');
-	});
-
-	it('keeps command counts stable as calls settle and the run completes', async () => {
-		const response: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: Array.from({ length: 3 }, (_, index) => ({
-				type: 'tool-call',
-				callId: `command-${index}`,
-				name: 'exec_cmd',
-				input: { cmd: `sleep ${index + 1}` }
-			}))
-		};
-
-		const { viewport, setProps } = await renderTranscript([response]);
-		setProps({ activeRunId: response.runId });
-		const work = workButtons(viewport)[0];
-		expect(work.textContent).toBe('Ran 3 commands');
-		expect(work.getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
-		expect(
-			[...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].map(
-				(row) => row.textContent
-			)
-		).toEqual(['sleep 1', 'sleep 2', 'sleep 3']);
-		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
-
-		const settled: LiveTranscriptMessage = {
-			...response,
-			runStatus: 'completed',
-			parts: [
-				...response.parts,
-				...response.parts
-					.filter((part) => part.type === 'tool-call')
-					.map((part) => ({
-						type: 'tool-result' as const,
-						callId: part.callId,
-						name: part.name,
-						output: { exitCode: 0 }
-					}))
-			]
-		};
-
-		setProps({ messages: [settled], activeRunId: null });
-		await settle();
-		expect(workButtons(viewport)[0]).toBe(work);
-		expect(work.textContent).toBe('Ran 3 commands');
-		expect(work.getAttribute('aria-expanded')).toBe('false');
-		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
-		click(work);
-		expect(work.getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
-		expect(viewport.querySelector('.animate-spin')).toBeNull();
-	});
-
-	it.each([false, true])(
-		'reveals a synchronous call only after its result arrives with async=%s',
-		async (withAsync) => {
-			const response: LiveTranscriptMessage = {
-				...liveMessage(),
-				runStatus: 'running',
-				parts: [
-					{ type: 'reasoning', id: 'plan', text: 'Checking the workspace.' },
-					{
-						type: 'tool-call',
-						callId: 'skill',
-						name: 'read_skill',
-						input: { name: 'hidden-skill' }
-					},
-					...(withAsync
-						? [
-								{
-									type: 'tool-call' as const,
-									callId: 'command',
-									name: 'exec_command',
-									input: { cmd: 'sleep 10' }
-								}
-							]
-						: [])
-				]
-			};
-
-			const { viewport, setProps } = await renderTranscript([response]);
-			setProps({ activeRunId: response.runId });
-			await settle();
-			expect(workButtons(viewport)[0].getAttribute('aria-expanded')).toBe('true');
-
-			expect(
-				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
-					row.textContent?.includes('sleep 10')
-				)
-			).toBe(withAsync);
-			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
-			expect(viewport.textContent).toContain('Reasoned');
-			expect(viewport.textContent).not.toContain('Reasoning');
-			expect(viewport.textContent).not.toContain('hidden-skill');
-			expect(viewport.textContent).not.toContain('Read Skill');
-
-			setProps({
-				messages: [
-					{
-						...response,
-						parts: [
-							...response.parts,
-							{ type: 'tool-result', callId: 'skill', name: 'read_skill', output: {} }
-						]
-					}
-				]
-			});
-			await settle();
-
-			expect(viewport.textContent).toContain('hidden-skill');
-			expect(
-				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
-					row.textContent?.includes('sleep 10')
-				)
-			).toBe(withAsync);
-			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
-			expect(viewport.textContent).toContain('Reasoned');
-			expect(viewport.textContent).not.toContain('Reasoning');
-		}
-	);
-
-	it.each([
-		{ kind: 'live', toolName: 'exec_cmd', group: 'Ran Commands' },
-		{ kind: 'persisted', toolName: 'exec_cmd', group: 'Ran Commands' },
-		{ kind: 'live', toolName: 'control_cmd', group: 'Controlled Commands' },
-		{ kind: 'persisted', toolName: 'control_cmd', group: 'Controlled Commands' },
-		{ kind: 'live', toolName: 'poll_cmd', group: 'Polled Commands' },
-		{ kind: 'persisted', toolName: 'poll_cmd', group: 'Polled Commands' },
-		{ kind: 'live', toolName: 'exec_command', group: 'Ran Commands' },
-		{ kind: 'persisted', toolName: 'exec_command', group: 'Ran Commands' },
-		{ kind: 'live', toolName: 'write_stdin', group: 'Monitored Commands' },
-		{ kind: 'persisted', toolName: 'write_stdin', group: 'Monitored Commands' },
-		{ kind: 'live', toolName: 'control_command', group: 'Controlled Commands' },
-		{ kind: 'persisted', toolName: 'control_command', group: 'Controlled Commands' },
-		{ kind: 'live', toolName: 'poll_command', group: 'Polled Commands' },
-		{ kind: 'persisted', toolName: 'poll_command', group: 'Polled Commands' }
-	] as const)(
-		'shows $toolName as a settled snapshot in completed $kind work',
-		async ({ kind, toolName, group }) => {
-			const output: JsonValue =
-				toolName === 'exec_cmd' || toolName === 'exec_command' || toolName === 'write_stdin'
-					? { sessionId: 'session', command: 'sleep 10', running: true }
-					: { command: 'sleep 10', workdir: '/', running: true };
-
-			const parts: LiveTranscriptMessage['parts'] = [
-				{
-					type: 'tool-call',
-					callId: 'command',
-					name: toolName,
-					input:
-						toolName === 'exec_cmd' || toolName === 'exec_command'
-							? { cmd: 'sleep 10' }
-							: toolName === 'control_cmd' || toolName === 'control_command'
-								? { sessionId: 'session', action: 'terminate' }
-								: { sessionId: 'session' }
-				},
-				{
-					type: 'tool-result',
-					callId: 'command',
-					name: toolName,
-					output
-				}
-			];
-
-			const response: TranscriptMessage =
-				kind === 'live'
-					? {
-							...liveMessage(),
-							runStatus: 'running',
-							parts: [
-								...parts,
-								{ type: 'text', id: 'after-command', text: 'Doing something else.' }
-							]
-						}
-					: {
-							...message(3),
-							kind: 'work',
-							id: 'work-3',
-							closed: true
-						};
-
-			const { viewport, setProps } = await renderTranscript([response]);
-			setProps({
-				activeRunId: response.runId,
-				loadSectionDetails: vi
-					.fn()
-					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
-			});
-			await settle();
-
-			const work = workButtons(viewport)[0];
-
-			expect(work?.getAttribute('aria-expanded')).toBe('false');
-
-			click(work);
-			await settle();
-
-			expect(viewport.textContent).not.toContain(group);
-			expect(viewport.querySelector('.animate-spin')).toBeNull();
-			expect(
-				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
-					row.textContent?.includes('sleep 10')
-				)
-			).toBe(true);
-		}
-	);
-
-	it('labels a poll_command row with the command from the originating exec_command session', async () => {
-		const parts: LiveTranscriptMessage['parts'] = [
-			{
-				type: 'tool-call',
-				callId: 'launch',
-				name: 'exec_command',
-				input: { cmd: 'npm run dev', yieldTimeMs: 0 }
-			},
-			{
-				type: 'tool-result',
-				callId: 'launch',
-				name: 'exec_command',
-				output: { sessionId: '7', running: true, success: false, output: '' }
-			},
-			{
-				type: 'tool-call',
-				callId: 'poll',
-				name: 'poll_command',
-				input: { sessionId: '7' }
-			},
-			{
-				type: 'tool-result',
-				callId: 'poll',
-				name: 'poll_command',
-				output: { workdir: '/app', running: true, success: false }
-			}
-		];
-
-		const response: TranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [...parts, { type: 'text', id: 'after', text: 'Doing something else.' }]
-		};
-
-		const { viewport, setProps } = await renderTranscript([response]);
-		setProps({
-			activeRunId: response.runId,
-			loadSectionDetails: vi
-				.fn()
-				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
-		});
-		await settle();
-
-		click(workButtons(viewport)[0]);
-		await settle();
-
-		expect(
-			[...viewport.querySelectorAll('[data-tool-row]')].filter((row) =>
-				row.textContent?.includes('npm run dev')
-			)
-		).toHaveLength(2);
-	});
-
-	it.each(['live', 'persisted'] as const)(
-		'reuses a command from an earlier run in %s monitoring rows',
-		async (kind) => {
-			const launchParts: LiveTranscriptMessage['parts'] = [
-				{
-					type: 'tool-call',
-					callId: 'launch',
-					name: 'exec_cmd',
-					input: { cmd: 'gh pr checks 567 --watch' }
-				},
-				{
-					type: 'tool-result',
-					callId: 'launch',
-					name: 'exec_cmd',
-					output: { sessionId: 'checks-session', running: true }
-				}
-			];
-
-			const pollParts: LiveTranscriptMessage['parts'] = [
-				{
-					type: 'tool-call',
-					callId: 'poll',
-					name: 'poll_cmd',
-					input: { sessionId: 'checks-session' }
-				},
-				{
-					type: 'tool-result',
-					callId: 'poll',
-					name: 'poll_cmd',
-					output: { status: 'failed', error: 'Connection interrupted' }
-				}
-			];
-
-			const launch: TranscriptDisplayRow = {
-				...message(2),
-				kind: 'work',
-				id: 'launch-work'
-			};
-
-			const poll: TranscriptMessage =
-				kind === 'live'
-					? { ...liveMessage(), parts: pollParts }
-					: { ...message(3), kind: 'work', id: 'poll-work' };
-
-			const { viewport, setProps } = await renderTranscript([launch, poll]);
-			setProps({
-				loadSectionDetails: vi.fn().mockImplementation(async (row: TranscriptDisplayRow) => ({
-					parts: row.id === launch.id ? launchParts : pollParts,
-					revision: 1,
-					stale: false,
-					indexing: false
-				}))
-			});
-			await settle();
-
-			const buttons = workButtons(viewport);
-			click(buttons[1]);
-			await settle();
-			const pollRow = viewport.querySelector('[data-tool-kind="poll_cmd"]');
-			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
-				'Session checks-session'
-			);
-
-			click(buttons[0]);
-			await settle();
-			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
-				'gh pr checks 567 --watch'
-			);
-
-			click(buttons[0]);
-			await settle();
-			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
-				'gh pr checks 567 --watch'
-			);
-		}
-	);
-
-	it('keeps a live command label when the launch moves into collapsed persisted history', async () => {
-		const launch: LiveTranscriptMessage = {
-			...liveMessage(),
-			id: 'launch-response',
-			runId: message(2).runId,
-			parts: [
-				{ type: 'tool-call', callId: 'launch', name: 'exec_cmd', input: { cmd: 'sleep 10' } },
-				{
-					type: 'tool-result',
-					callId: 'launch',
-					name: 'exec_cmd',
-					output: { sessionId: 'sleep-session', running: true }
-				}
-			]
-		};
-
-		const poll: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [
-				{
-					type: 'tool-call',
-					callId: 'poll',
-					name: 'poll_cmd',
-					input: { sessionId: 'sleep-session' }
-				}
-			]
-		};
-
-		const { viewport, setProps } = await renderTranscript([launch, poll]);
-		setProps({ activeRunId: poll.runId });
-		await settle();
-		expect(workButtons(viewport)[1].getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
-			'sleep 10'
-		);
-
-		setProps({
-			messages: [{ ...message(2), kind: 'work', id: 'launch-work' }, poll]
-		});
-		await settle();
-		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
-			'sleep 10'
-		);
-	});
-
-	it('counts saved start events and separate live calls once through completion handoff', async () => {
-		const work: TranscriptDisplayRow = {
-			...message(3),
-			kind: 'work',
-			id: 'work-3',
-			closed: false,
-			toolCounts: { exec_cmd: 2 },
-			unpersistedToolCallIds: ['running']
-		};
-
-		const live: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [
-				{ type: 'tool-call', callId: 'running', name: 'exec_cmd', input: { cmd: 'sleep 10' } },
-				{ type: 'tool-call', callId: 'new', name: 'exec_cmd', input: { cmd: 'echo new' } },
-				{ type: 'tool-call', callId: 'skill', name: 'read_skill', input: { name: 'cleanup' } }
-			]
-		};
-
-		const { viewport, setProps } = await renderTranscript([work, live]);
-		setProps({ activeRunId: live.runId });
-		await settle();
-		expect(workButtons(viewport).map((button) => button.textContent)).toEqual([
-			'Read 1 skill; Ran 3 commands'
-		]);
-		expect(viewport.textContent).toContain('sleep 10');
-		setProps({
-			messages: [
-				{ ...work, toolCounts: { exec_cmd: 3, read_skill: 1 }, unpersistedToolCallIds: [] }
-			]
-		});
-		await settle();
-		expect(workButtons(viewport).map((button) => button.textContent)).toEqual([
-			'Read 1 skill; Ran 3 commands'
-		]);
-	});
-
-	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
-		const work: TranscriptDisplayRow = {
-			...message(3),
-			kind: 'work',
-			id: 'work-3',
-			closed: false
-		};
-
-		const live: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [
-				{
-					type: 'reasoning',
-					id: 'live-reasoning',
-					text: 'Current reasoning',
-					startedAt: 2_000,
-					completedAt: 2_500
-				}
-			]
-		};
-
-		const { props, viewport, setProps } = await renderTranscript([work, live]);
-		setProps({
-			activeRunId: live.runId,
-			loadSectionDetails: vi.fn().mockResolvedValue({
-				parts: [
-					{
-						type: 'reasoning',
-						id: 'saved-reasoning',
-						text: 'Saved reasoning',
-						startedAt: 1_000,
-						completedAt: 1_500
-					}
-				],
-				revision: 1,
-				stale: false,
-				indexing: false
-			})
-		});
-		await settle();
-
-		const buttons = workButtons(viewport);
-
-		expect(buttons).toHaveLength(1);
-		expect(buttons[0].textContent).toBe('Reasoning');
-		expect(buttons[0].getAttribute('aria-expanded')).toBe('false');
-		expect(props.loadSectionDetails).not.toHaveBeenCalled();
-		click(buttons[0]);
-		await settle();
-		expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
-		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
-		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
-		expect(viewport.textContent).toContain('Saved reasoning');
-		expect(viewport.textContent).toContain('Current reasoning');
-		setProps({ activeRunId: null, messages: [{ ...work, closed: true }] });
-		await settle();
-		expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.textContent).toContain('Saved reasoning');
-	});
-
-	it('streams reasoning only after opening it and keeps it open when complete', async () => {
-		const live: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [{ type: 'reasoning', id: 'plan', text: 'Inspect' }]
-		};
-
-		const { viewport, setProps } = await renderTranscript([live]);
-		setProps({ activeRunId: live.runId });
-		await settle();
-		const button = workButtons(viewport)[0];
-
+		fireEvent.click(button);
 		expect(button.getAttribute('aria-expanded')).toBe('false');
-		click(button);
-		setProps({
-			messages: [
-				{ ...live, parts: [{ type: 'reasoning', id: 'plan', text: 'Inspect the workspace.' }] }
-			]
-		});
-		await settle();
-		expect(viewport.textContent).toContain('Inspect the workspace.');
-		setProps({ activeRunId: null, messages: [{ ...live, runStatus: 'completed' }] });
-		await settle();
-		expect(button.textContent).toBe('Reasoned');
-		expect(button.getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.textContent).toContain('Inspect');
+		expect(view.works[0].signal.aborted).toBe(true);
+	}
+);
+
+it('uses authoritative lifecycle for unresolved calls running on another machine', () => {
+	const work: TranscriptRow = {
+		id: 'work',
+		runId: 'remote-run',
+		kind: 'work',
+		toolCounts: { exec_cmd: 1 },
+		running: true
+	};
+
+	const tool: TranscriptRow = {
+		id: 'tool',
+		runId: 'remote-run',
+		kind: 'tool',
+		name: 'exec_cmd',
+		summary: 'remote command',
+		status: 'running',
+		hasMore: false
+	};
+
+	const view = transcript([work], 'remote-run');
+	expect(view.getByRole('button').getAttribute('aria-expanded')).toBe('true');
+	act(() => view.works[0].onEvent(snapshot([tool])));
+	expect(view.getByText('remote command')).toBeTruthy();
+	expect(view.queryByText('(interrupted)')).toBeNull();
+
+	view.rerender(<ThreadTranscript {...view.props} activeRunId={undefined} />);
+	expect(view.queryByText('(interrupted)')).toBeNull();
+	view.rerender(<ThreadTranscript {...view.props} activeRunId={null} />);
+	expect(view.getByText('(interrupted)')).toBeTruthy();
+	expect(view.getByText('The agent stopped before this tool call finished.')).toBeTruthy();
+	act(() => view.works[0].onEvent(snapshot([{ ...tool, status: 'completed' }])));
+	expect(view.queryByText('(interrupted)')).toBeNull();
+});
+
+it('reopens work and item subscriptions after reconnect without losing manual expansion', () => {
+	const work: TranscriptRow = {
+		id: 'work',
+		runId: 'run',
+		kind: 'work',
+		toolCounts: {},
+		running: false
+	};
+
+	const reasoning: TranscriptRow = {
+		id: 'reasoning',
+		runId: 'run',
+		kind: 'reasoning',
+		label: 'Plan',
+		running: false
+	};
+
+	const view = transcript([work]);
+	fireEvent.click(view.getByRole('button', { name: 'Reasoned' }));
+	act(() => view.works[0].onEvent(snapshot([reasoning])));
+	fireEvent.click(view.getByRole('button', { name: 'Plan' }));
+	act(() => view.items[0].onEvent(snapshot([{ ...reasoning, text: 'Initial plan' }])));
+	expect(view.getByText('Initial plan')).toBeTruthy();
+
+	act(() => view.connect());
+	expect(view.works[0].signal.aborted).toBe(true);
+	expect(view.items[0].signal.aborted).toBe(true);
+	view.emit(snapshot([work]));
+	expect(view.getByRole('button', { name: 'Reasoned' }).getAttribute('aria-expanded')).toBe('true');
+	expect(view.works).toHaveLength(2);
+	act(() => view.works[1].onEvent(snapshot([reasoning])));
+	expect(view.getByRole('button', { name: 'Plan' }).getAttribute('aria-expanded')).toBe('true');
+	expect(view.items).toHaveLength(2);
+	act(() => view.items[1].onEvent(snapshot([{ ...reasoning, text: 'Restored plan' }])));
+	expect(view.getByText('Restored plan')).toBeTruthy();
+});
+
+it('streams text appends alongside an unchanged prompt', () => {
+	const view = transcript([
+		prompt(1),
+		{ id: 'text', runId: 'run', kind: 'text', text: 'Hello', running: true }
+	]);
+
+	const promptElement = view.getByText('Message 1');
+
+	view.emit({
+		type: 'batch',
+		updates: [{ type: 'append', rowId: 'text', offset: 5, text: ' world' }]
 	});
-
-	it('starts a new disclosure when streamed model text separates work', async () => {
-		const work: TranscriptDisplayRow = {
-			...message(3),
-			kind: 'work',
-			id: 'work-3',
-			closed: false
-		};
-
-		const live: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [
-				{
-					type: 'text',
-					id: 'boundary',
-					text: 'Visible boundary',
-					startedAt: 3_000,
-					completedAt: 3_500
-				},
-				{
-					type: 'reasoning',
-					id: 'after-boundary',
-					text: 'More work',
-					startedAt: 4_000,
-					completedAt: 4_500
-				}
-			]
-		};
-
-		const { viewport, setProps } = await renderTranscript([work, live]);
-		setProps({ activeRunId: live.runId });
-		await settle();
-
-		const buttons = workButtons(viewport);
-		expect(buttons.map((button) => button.textContent)).toEqual(['Reasoned', 'Reasoning']);
-		expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
-			'false',
-			'false'
-		]);
-		expect(viewport.textContent).toContain('Visible boundary');
-	});
-
-	it('keeps long work sections as summaries and fetches a bounded page only after expansion', async () => {
-		const summary = (number: number): TranscriptDisplayRow => ({
-			...message(number),
-			id: `work-${number}`,
-			kind: 'work',
-			text: '',
-			toolCounts: { read_skill: 1_000, exec_cmd: 2_000, apply_patch: 1_000 }
-		});
-
-		const first = summary(1);
-		const { viewport, setProps } = await renderTranscript([message(0), first, summary(2)]);
-		let edgeVisible = false;
-		const geometry = vi.mocked(HTMLElement.prototype.getBoundingClientRect).getMockImplementation();
-
-		if (!geometry) throw new Error('Missing viewport geometry');
-		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-			this: HTMLElement
-		) {
-			return this.hasAttribute('data-work-edge')
-				? new DOMRect(0, edgeVisible ? 500 : 3_000, 800, 1)
-				: geometry.call(this);
-		});
-
-		const load = vi
-			.fn()
-			.mockResolvedValueOnce({
-				parts: [{ type: 'reasoning', id: 'detail', text: 'Requested detail' }],
-				nextAfter: 5,
-				revision: 1,
-				stale: false,
-				indexing: false
-			})
-			.mockImplementation(() => new Promise(() => {}));
-
-		setProps({ loadSectionDetails: load });
-		await settle();
-		expect(load).not.toHaveBeenCalled();
-		expect(viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(3);
-
-		const buttons = workButtons(viewport);
-
-		expect(buttons.map((button) => button.textContent?.trim())).toEqual([
-			'Read 1000 skills; Ran 2000 commands; Applied 1000 patches',
-			'Read 1000 skills; Ran 2000 commands; Applied 1000 patches'
-		]);
-		click(buttons[0]);
-		await settle();
-		expect(load).toHaveBeenCalledTimes(1);
-		expect(load.mock.calls[0][0].id).toBe(first.id);
-		expect(load.mock.calls[0][1]).toEqual({});
-		expect(viewport.textContent).not.toMatch(/Next details|Previous details/);
-		edgeVisible = true;
-		act(() => resize());
-		await settle();
-		expect(load.mock.calls[1][1]).toEqual({ after: 5 });
-		const signal: AbortSignal = load.mock.calls[1][2];
-		click(buttons[0]);
-		await settle();
-		expect(signal.aborted).toBe(true);
-		expect(viewport.textContent).not.toContain('Next details');
-	});
-
-	it.each([
-		{ visibleDetail: 'tool', moveWhileLoading: false },
-		{ visibleDetail: 'tool', moveWhileLoading: true },
-		{ visibleDetail: 'final patch error', moveWhileLoading: false },
-		{ visibleDetail: 'final patch error', moveWhileLoading: true }
-	])(
-		'anchors the visible $visibleDetail after prepending, movement during the request: $moveWhileLoading',
-		async ({ visibleDetail, moveWhileLoading }) => {
-			const viewingError = visibleDetail === 'final patch error';
-
-			const work: TranscriptDisplayRow = {
-				...message(2),
-				id: 'work',
-				kind: 'work',
-				closed: true,
-				toolCounts: viewingError ? { exec_cmd: 9, apply_patch: 1 } : { exec_cmd: 10 }
-			};
-
-			const { viewport, scrollTo, setProps } = await renderTranscript([
-				message(0),
-				message(1),
-				work,
-				...(viewingError ? [] : [message(3)])
-			]);
-
-			setProps({ nextBefore: undefined });
-
-			const rows = () =>
-				[
-					...viewport.querySelectorAll<HTMLElement>(
-						'[data-work-detail], [data-tool-kind] > [role="status"]'
-					)
-				].filter((element) => !element.querySelector('[data-work-detail]'));
-
-			const rowHeight = (element: HTMLElement) =>
-				element.getAttribute('role') === 'status' ? 600 : 100;
-
-			Object.defineProperty(viewport, 'scrollHeight', {
-				get: () => 1200 + rows().reduce((height, element) => height + rowHeight(element), 0)
-			});
-			let olderVisible = false;
-			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-				this: HTMLElement
-			) {
-				if (this === viewport) return new DOMRect(0, 0, 800, 600);
-
-				if (this.hasAttribute('data-work-edge'))
-					return new DOMRect(
-						0,
-						olderVisible && this.dataset.workEdge === 'older' ? 100 : 3_000,
-						800,
-						1
-					);
-				const details = rows();
-				const detailIndex = details.indexOf(this);
-
-				if (detailIndex >= 0)
-					return new DOMRect(
-						0,
-						650 +
-							details
-								.slice(0, detailIndex)
-								.reduce((height, element) => height + rowHeight(element), 0) -
-							viewport.scrollTop,
-						800,
-						rowHeight(this)
-					);
-				const index = [...viewport.querySelectorAll('[data-transcript-anchor]')].indexOf(this);
-
-				return new DOMRect(
-					0,
-					index * 300 + (index === 3 ? details.length * 100 : 0) - viewport.scrollTop,
-					800,
-					300
-				);
-			});
-
-			function page(ids: number[], previousBefore?: number): TranscriptDisplayDetails {
-				return {
-					parts: ids.flatMap((id): TranscriptDisplayDetails['parts'] => {
-						const failedPatch = viewingError && id === 7;
-						const name = failedPatch ? 'apply_patch' : 'exec_command';
-
-						return [
-							{
-								type: 'tool-call' as const,
-								callId: String(id),
-								name,
-								input: failedPatch
-									? {
-											patch:
-												'*** Begin Patch\n*** Update File: a.ts\n*** Update File: b.ts\n*** End Patch'
-										}
-									: { cmd: `echo ${id}` }
-							},
-							{
-								type: 'tool-result' as const,
-								callId: String(id),
-								name,
-								output: failedPatch ? { status: 'failed', error: 'The patch did not apply.' } : {}
-							}
-						];
-					}),
-					previousBefore,
-					revision: 1,
-					indexing: false,
-					stale: false
-				};
-			}
-
-			let resolve!: (value: TranscriptDisplayDetails) => void;
-
-			const load = vi
-				.fn()
-				.mockResolvedValueOnce(page([6, 7], 6))
-				.mockImplementation(
-					() =>
-						new Promise<TranscriptDisplayDetails>((done) => {
-							resolve = done;
-						})
-				);
-
-			setProps({ loadSectionDetails: load, activeRunId: work.runId });
-			click(workButtons(viewport)[0]);
-			await settle();
-
-			const disclosure = workButtons(viewport)[0];
-
-			expect(disclosure?.getAttribute('aria-expanded')).toBe('true');
-			expect(load).toHaveBeenCalledTimes(1);
-
-			const anchor = viewingError
-				? within(viewport).getByText('The patch did not apply.')
-				: rows()[0];
-
-			const initialTop = viewingError ? 1000 : 699;
-			scrollTo(initialTop + 1);
-			olderVisible = true;
-			scrollTo(initialTop);
-			await settle();
-			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
-
-			const top = moveWhileLoading ? initialTop - 39 : initialTop;
-
-			if (moveWhileLoading) scrollTo(top);
-			const offset = anchor.getBoundingClientRect().top;
-			await act(async () => {
-				resolve(page([4, 5]));
-			});
-			await settle();
-			expect(anchor.isConnected).toBe(true);
-			expect(anchor.getBoundingClientRect().top).toBe(offset);
-			expect(viewport.scrollTop).toBe(top + 200);
-			act(() => resize());
-			expect(viewport.scrollTop).toBe(top + 200);
-		}
-	);
-
-	it('keeps prefetching nearby history without rendering pagination controls', async () => {
-		const { props, viewport, setProps } = await renderTranscript([message(3)]);
-		setProps({ nextBefore: 3 });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		setProps({ nextBefore: 2 });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
-		setProps({ nextBefore: 1 });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
-		expect(viewport.textContent).not.toMatch(/Load(?:ing)? older messages/);
-	});
-
-	it('fills ahead after the first page arrives until history is outside the lookahead range', async () => {
-		const { props, viewport, setProps } = await renderTranscript([]);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		setProps({ messages: [message(3)], nextBefore: 3 });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		setProps({ messages: [1, 2, 3].map(message), nextBefore: 1 });
-		await settle();
-		act(() => resize());
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
-		expect(viewport.scrollTop).toBe(300);
-	});
-
-	it('does not drop an upward scroll just after a resize notification', async () => {
-		const { props, viewport, scrollTo, setProps } = await renderTranscript(
-			[1, 2, 3, 4, 5].map(message)
-		);
-
-		act(() => resize());
-		scrollTo(500);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		setProps({ messages: [...props.messages, message(6)] });
-		await settle();
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(500);
-	});
-
-	it('follows new output only at the bottom, and resumes after scrolling back down', async () => {
-		const { props, viewport, scrollTo, setProps } = await renderTranscript(
-			[1, 2, 3, 4].map(message)
-		);
-
-		setProps({ messages: [...props.messages, message(5)] });
-		await settle();
-		expect(viewport.scrollTop).toBe(900);
-		scrollTo(500);
-		setProps({ messages: [...props.messages, message(6)] });
-		await settle();
-		expect(viewport.scrollTop).toBe(500);
-		scrollTo(1200);
-		setProps({ messages: [...props.messages, message(7)] });
-		await settle();
-		expect(viewport.scrollTop).toBe(1500);
-	});
-
-	it('keeps following output after completed work details load at the thread end', async () => {
-		const work: TranscriptDisplayRow = {
-			...message(5),
-			id: 'work:5',
-			kind: 'work'
-		};
-
-		const { props, viewport, setProps } = await renderTranscript([
-			...[1, 2, 3, 4].map(message),
-			work
-		]);
-
-		setProps({
-			loadSectionDetails: vi.fn().mockResolvedValue({
-				parts: [{ type: 'reasoning', text: 'Completed work details' }],
-				revision: 1,
-				indexing: false,
-				stale: false
-			})
-		});
-		click(workButtons(viewport)[0]);
-		await settle();
-		expect(viewport.querySelector('[data-work-detail]')?.textContent).toBe(
-			'Completed work details'
-		);
-		setProps({ messages: [...props.messages, message(6)] });
-		await settle();
-		expect(viewport.scrollTop).toBe(viewport.scrollHeight - viewport.clientHeight);
-	});
-
-	it('follows content growth and viewport resizing at the thread end', async () => {
-		const { viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
-		let height = viewport.scrollHeight;
-		let clientHeight = viewport.clientHeight;
-		Object.defineProperty(viewport, 'scrollHeight', { get: () => height });
-		Object.defineProperty(viewport, 'clientHeight', { get: () => clientHeight });
-		height += 200;
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(height - clientHeight);
-		clientHeight -= 100;
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(height - clientHeight);
-		scrollTo(400);
-		height += 200;
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(400);
-		scrollTo(height - clientHeight);
-		height += 200;
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(height - clientHeight);
-	});
-
-	it.each(['wheel', 'touch', 'ArrowUp', 'PageUp', 'Home', 'Shift+Space'])(
-		'stops following on upward %s input before a scroll event, even without older pages',
-		async (input) => {
-			const { props, viewport, scrollTo, setProps } = await renderTranscript(
-				[1, 2, 3, 4, 5].map(message)
-			);
-
-			setProps({ nextBefore: undefined });
-			await settle();
-			act(() => {
-				if (input === 'wheel') {
-					viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -10, bubbles: true }));
-				} else if (input === 'touch') {
-					for (const [type, clientY] of [
-						['touchstart', 100],
-						['touchmove', 110]
-					] as const) {
-						const event = new Event(type, { bubbles: true });
-						Object.defineProperty(event, 'touches', { value: [{ clientY }] });
-						viewport.dispatchEvent(event);
-					}
-				} else {
-					viewport.dispatchEvent(
-						new KeyboardEvent('keydown', {
-							key: input === 'Shift+Space' ? ' ' : input,
-							shiftKey: input === 'Shift+Space',
-							bubbles: true
-						})
-					);
-				}
-			});
-			setProps({ messages: [...props.messages, message(6)] });
-			await settle();
-			act(() => resize());
-			expect(viewport.scrollTop).toBe(900);
-			expect(props.onLoadOlder).not.toHaveBeenCalled();
-			scrollTo(1200);
-			setProps({ messages: [...props.messages, message(7)] });
-			await settle();
-			expect(viewport.scrollTop).toBe(1500);
-		}
-	);
-
-	it('does not pull a small upward scroll back into the bottom tolerance', async () => {
-		const { props, viewport, scrollTo, setProps } = await renderTranscript(
-			[1, 2, 3, 4, 5].map(message)
-		);
-
-		scrollTo(890);
-		setProps({ messages: [...props.messages, message(6)] });
-		await settle();
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(890);
-	});
-
-	it('respects a scrollbar move before its scroll event reaches the component', async () => {
-		const { props, viewport, setProps } = await renderTranscript([1, 2, 3, 4, 5].map(message));
-		viewport.scrollTop = 700;
-		act(() => resize());
-		expect(viewport.scrollTop).toBe(700);
-		setProps({ messages: [...props.messages, message(6)] });
-		await settle();
-		expect(viewport.scrollTop).toBe(700);
-	});
-
-	it('does not write the scroll position for a resize that leaves the bottom unchanged', async () => {
-		const { viewport } = await renderTranscript([1, 2, 3, 4].map(message));
-		const writeScrollTop = vi.spyOn(viewport, 'scrollTop', 'set').mockClear();
-		act(() => resize());
-		act(() => resize());
-		expect(writeScrollTop).not.toHaveBeenCalled();
-	});
-
-	it.each([true, false])(
-		'preserves bottom-following state %s when shrinking content clamps the scroll position',
-		async (following) => {
-			const { props, viewport, scrollTo, setProps } = await renderTranscript(
-				[1, 2, 3, 4, 5].map(message)
-			);
-
-			if (!following) scrollTo(700);
-			setProps({ messages: props.messages.slice(0, 3) });
-			act(() => {
-				viewport.dispatchEvent(new Event('scroll'));
-			});
-			await settle();
-			act(() => resize());
-			expect(viewport.scrollTop).toBe(300);
-			setProps({ messages: [...props.messages, message(4)] });
-			await settle();
-			expect(viewport.scrollTop).toBe(following ? 600 : 300);
-		}
-	);
-
-	it('opens a newly mounted thread at the bottom rather than reusing the previous reading position', async () => {
-		const first = await renderTranscript([1, 2, 3, 4].map(message));
-		first.scrollTo(100);
-		first.unmount();
-		const second = await renderTranscript([]);
-		second.setProps({ messages: [11, 12, 13, 14, 15].map(message) });
-		await settle();
-		expect(second.viewport.scrollTop).toBe(900);
-		expect(second.viewport.textContent).not.toContain('Message 4');
-	});
-
-	it('starts loading three viewports ahead of the top', async () => {
-		const { props, viewport, scrollTo, setProps } = await renderTranscript(
-			[1, 2, 3, 4, 5, 6, 7, 8, 9].map(message)
-		);
-
-		setProps({ nextBefore: 3 });
-		await settle();
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		expect(viewport.scrollTop).toBe(2_100);
-		scrollTo(1_801);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		scrollTo(1_800);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		scrollTo(1_900);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		setProps({ loadingOlder: true });
-		await settle();
-		scrollTo(0);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-	});
-
-	it('bounds short-history lookahead until the reader moves', async () => {
-		const { props, viewport, setProps } = await renderTranscript([message(3)]);
-		expect(viewport.textContent).not.toContain('Load earlier messages');
-		setProps({ nextBefore: 3 });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		setProps({ loadingOlder: true });
-		await settle();
-		expect(viewport.textContent).not.toContain('Loading earlier messages');
-		setProps({ nextBefore: 2, loadingOlder: false });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
-		setProps({ nextBefore: 1 });
-		await settle();
-		setProps({ nextBefore: 0 });
-		await settle();
-		await settle(10_000);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
-		act(() => {
-			viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
-		});
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(4);
-	});
-
-	it('does not duplicate a pending cursor during repeated input', async () => {
-		const { props, viewport, setProps } = await renderTranscript([message(3)]);
-
-		const touch = (type: string, clientY: number) => {
-			act(() => {
-				const event = new Event(type, { bubbles: true });
-				Object.defineProperty(event, 'touches', { value: [{ clientY }] });
-				viewport.dispatchEvent(event);
-			});
-		};
-
-		setProps({ nextBefore: 3 });
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		setProps({ loadingOlder: true });
-		await settle();
-		setProps({ loadingOlder: false });
-		await settle();
-		await settle(10_000);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		touch('touchstart', 100);
-		touch('touchmove', 150);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-	});
-
-	it('preserves a text section when older parts are prepended inside the same response', async () => {
-		const response: LiveTranscriptMessage = {
-			...liveMessage(),
-			parts: [3, 4, 5, 6].map((number) => ({
-				type: 'text',
-				id: `text-${number}`,
-				text: `Part ${number}`
-			}))
-		};
-
-		const { viewport, scrollTo, setProps } = await renderTranscript([response]);
-		scrollTo(150);
-
-		const anchor = viewport.querySelector<HTMLElement>(
-			'[data-transcript-anchor="response:run:text::text-3"]'
-		);
-
-		if (!anchor) throw new Error('Missing visible response section');
-		const offset = anchor.getBoundingClientRect().top;
-		setProps({
-			messages: [
-				{
-					...response,
-					parts: [{ type: 'text', id: 'text-2', text: 'Older part' }, ...response.parts]
-				}
-			]
-		});
-		await settle();
-		expect(anchor.isConnected).toBe(true);
-		expect(anchor.getBoundingClientRect().top).toBe(offset);
-		expect(viewport.scrollTop).toBe(450);
-	});
-
-	it('preserves the visible message offset when an older page is prepended', async () => {
-		const { props, viewport, scrollTo, setProps } = await renderTranscript(
-			[3, 4, 5, 6].map(message)
-		);
-
-		scrollTo(150);
-		const anchor = viewport.querySelector<HTMLElement>('[data-message-id="prompt:3"]');
-
-		if (!anchor) throw new Error('Missing visible message');
-		const offset = anchor.getBoundingClientRect().top;
-		setProps({ messages: [message(1), message(2), ...props.messages] });
-		await settle();
-		act(() => {
-			viewport.dispatchEvent(new Event('scroll'));
-		});
-		expect(viewport.scrollTop).toBe(750);
-		expect(anchor.getBoundingClientRect().top).toBe(offset);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-	});
-
-	it('keeps a work disclosure open when a page prepends parts into that section', async () => {
-		const response: LiveTranscriptMessage = {
-			...liveMessage(),
-			parts: [
-				{ type: 'reasoning', id: 'r3', text: 'Recent reasoning' },
-				{ type: 'text', id: 't4', text: 'Answer' }
-			]
-		};
-
-		const { setProps, viewport } = await renderTranscript([response]);
-		const button = viewport.querySelector<HTMLButtonElement>('button[aria-expanded]');
-
-		if (!button) throw new Error('Missing work disclosure');
-		click(button);
-		await settle();
-		expect(button.getAttribute('aria-expanded')).toBe('true');
-		setProps({
-			messages: [
-				{
-					...response,
-					parts: [{ type: 'reasoning', id: 'r2', text: 'Older reasoning' }, ...response.parts]
-				}
-			]
-		});
-		await settle();
-		expect(button.isConnected).toBe(true);
-		expect(button.getAttribute('aria-expanded')).toBe('true');
-	});
-
-	it.each([false, true])(
-		'keeps disclosure state on its own work when sections split: %s',
-		async (split) => {
-			const first = { type: 'reasoning' as const, id: 'r1', text: 'First work' };
-			const second = { type: 'reasoning' as const, id: 'r2', text: 'Second work' };
-
-			const response: LiveTranscriptMessage = {
-				...liveMessage(),
-				parts: split ? [first, second] : [first]
-			};
-
-			const { setProps, viewport } = await renderTranscript([response]);
-
-			const original = viewport.querySelector<HTMLButtonElement>(
-				'[data-transcript-anchor] > div > button'
-			);
-
-			if (!original) throw new Error('Missing original work disclosure');
-			click(original);
-			await settle();
-			setProps({
-				messages: [
-					{ ...response, parts: [first, { type: 'text', id: 't1', text: 'Update' }, second] }
-				]
-			});
-			await settle();
-
-			const buttons = viewport.querySelectorAll<HTMLButtonElement>(
-				'[data-transcript-anchor] > div > button'
-			);
-
-			expect(buttons).toHaveLength(2);
-			expect(buttons[0]).toBe(original);
-			expect(buttons[0]?.getAttribute('aria-expanded')).toBe('true');
-			expect(buttons[1]?.getAttribute('aria-expanded')).toBe('false');
-		}
-	);
+	expect(view.getByRole('log').textContent?.trim()).toBe('Hello world');
+	expect(view.getByText('Message 1')).toBe(promptElement);
+});
+
+it('follows output at the bottom and resumes after the reader scrolls back down', () => {
+	scrollLayout();
+	const view = transcript([1, 2, 3, 4].map(prompt));
+
+	const add = (number: number) =>
+		view.emit({ type: 'batch', updates: [{ type: 'row', row: prompt(number) }] });
+
+	expect(view.viewport.scrollTop).toBe(600);
+	add(5);
+	expect(view.viewport.scrollTop).toBe(900);
+	scrollTo(view.viewport, 500);
+	add(6);
+	act(() => resize());
+	expect(view.viewport.scrollTop).toBe(500);
+	scrollTo(view.viewport, 1200);
+	add(7);
+	expect(view.viewport.scrollTop).toBe(1500);
+});
+
+it('preserves the visible row offset when older projected rows are prepended', () => {
+	scrollLayout();
+	const view = transcript([3, 4, 5, 6].map(prompt));
+	scrollTo(view.viewport, 150);
+	const anchor = view.viewport.querySelector<HTMLElement>('[data-transcript-anchor="prompt:3"]')!;
+	const offset = anchor.getBoundingClientRect().top;
+
+	view.emit(snapshot([1, 2, 3, 4, 5, 6].map(prompt)));
+	expect(anchor.isConnected).toBe(true);
+	expect(anchor.getBoundingClientRect().top).toBe(offset);
+	expect(view.viewport.scrollTop).toBe(750);
+});
+
+it('prefetches three viewports ahead and requests each cursor only once', () => {
+	scrollLayout();
+	const view = transcript([1, 2, 3, 4, 5, 6, 7, 8, 9].map(prompt));
+	view.setProps({ nextBefore: 3 });
+	scrollTo(view.viewport, 1801);
+	expect(view.props.onLoadOlder).not.toHaveBeenCalled();
+	scrollTo(view.viewport, 1800);
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(1);
+	fireEvent.wheel(view.viewport, { deltaY: -1 });
+	act(() => resize());
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(1);
+	view.setProps({ loadingOlder: true, nextBefore: 2 });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(1);
+	view.setProps({ loadingOlder: false });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(2);
+});
+
+it('bounds short-history prefetch until the reader asks to move upward', () => {
+	scrollLayout();
+	const view = transcript([prompt(1)]);
+
+	for (const nextBefore of [4, 3, 2, 1]) view.setProps({ nextBefore });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(3);
+	fireEvent.keyDown(view.viewport, { key: 'PageUp' });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(4);
+});
+
+it('makes a failed older-page cursor eligible after the request ends', () => {
+	scrollLayout();
+	const view = transcript([prompt(1)]);
+	view.setProps({ nextBefore: 4 });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(1);
+	view.setProps({ loadingOlder: true });
+	view.setProps({ loadingOlder: false });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(2);
+});
+
+it('loads older pages when the newest window contains only hidden prompts', () => {
+	scrollLayout();
+	const view = transcript([]);
+	view.setProps({ nextBefore: 4 });
+	expect(view.props.onLoadOlder).toHaveBeenCalledOnce();
+});
+
+it('resets history prefetch after reconnecting to the same newest window', () => {
+	scrollLayout();
+	const view = transcript([prompt(1)]);
+	view.setProps({ nextBefore: 4 });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(1);
+	act(() => view.connect());
+	view.setProps({ nextBefore: undefined });
+	view.emit(snapshot([prompt(1)]));
+	view.setProps({ nextBefore: 4 });
+	expect(view.props.onLoadOlder).toHaveBeenCalledTimes(2);
 });
