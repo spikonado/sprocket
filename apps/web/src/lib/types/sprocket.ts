@@ -420,7 +420,7 @@ export type LocalApi = {
 	kicadModels: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
-	) => Promise<{ models: ReadableStream<Uint8Array<ArrayBuffer>> | null; key: string }>;
+	) => Promise<ReadableStream<Uint8Array<ArrayBuffer>> | null>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;

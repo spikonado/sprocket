@@ -261,8 +261,7 @@ export class Board3d {
 	private drag: 'orbit' | 'pan' = 'orbit';
 	private pinchDistance = 0;
 	private size: ViewportSize;
-	private board: { group: Group; front: Group; back: Group; top: number; bottom: number } | null =
-		null;
+	private board: { group: Group; front: Group; back: Group; body: number } | null = null;
 	private models: Object3D | null = null;
 	private modelsLoad = 0;
 	private componentsVisible = true;
@@ -306,8 +305,10 @@ export class Board3d {
 		this.world.add(this.board.group);
 
 		const [minX, minY, maxX, maxY] = scene.meta.bounds;
-		const { top, bottom } = this.board;
-		this.boardBounds = new Box3(new Vector3(minX, bottom, minY), new Vector3(maxX, top, maxY));
+		this.boardBounds = new Box3(
+			new Vector3(minX, 0, minY),
+			new Vector3(maxX, this.board.body, maxY)
+		);
 		this.updateBounds();
 
 		this.requestFrame();
@@ -552,10 +553,10 @@ export class Board3d {
 		this.updateCamera();
 
 		// One side's layers show at a time, which lets both sides share the stencil bits.
-		const { front, back, top, bottom } = this.board;
+		const { front, back, body } = this.board;
 		const height = this.camera.position.y;
-		front.visible = height > top;
-		back.visible = height < bottom;
+		front.visible = height > body;
+		back.visible = height < 0;
 
 		this.uniforms.u_pxPerDistance.value =
 			(2 * Math.tan((FOV * Math.PI) / 360)) / (this.size.height * this.size.dpr);
@@ -664,7 +665,7 @@ function buildBoard(scene: Scene, uniforms: Uniforms) {
 		);
 	}
 
-	return { group, front, back, top: body, bottom: 0 };
+	return { group, front, back, body };
 }
 
 /** The outline's face as triangles in board mm, and its side walls one mm tall. */

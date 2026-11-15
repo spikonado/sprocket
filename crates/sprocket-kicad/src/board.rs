@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::geometry::{Arc, Point, Transform, point};
-use crate::models::{Fnv, ModelsWriter};
+use crate::models::ModelsWriter;
 use crate::outline::EdgeCuts;
 use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen, Scene, inner_copper_number};
 use crate::sexpr::{Expr, for_each_item};
@@ -36,7 +36,7 @@ pub fn scene(src: &str) -> Result<Vec<u8>> {
         edges: EdgeCuts::default(),
         stackup: Stackup::default(),
     };
-    let mut models = ModelsWriter::new(Fnv::default());
+    let mut models = ModelsWriter::default();
     for_each_item(src, "kicad_pcb", |item| {
         board.item(item);
         models.item(item);
@@ -44,7 +44,7 @@ pub fn scene(src: &str) -> Result<Vec<u8>> {
     })?;
     let fallback = board.scene.view_bounds();
     let meta = board.stackup.board(board.edges.outlines(fallback));
-    let key = models.finish().map(|hash| hash.key());
+    let key = models.finish().map(|models| models.key);
     board.scene.set_board(meta, key);
     Ok(board.scene.encode())
 }

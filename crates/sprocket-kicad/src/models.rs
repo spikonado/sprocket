@@ -1,6 +1,7 @@
 //! A reduced board holding only what KiCad's glTF export needs to place component models.
 
 use std::borrow::Cow;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::sexpr::Expr;
 
@@ -25,11 +26,11 @@ pub struct ModelsBoard {
 }
 
 impl ModelsBoard {
-    pub(crate) fn new(text: String) -> Self {
-        let mut hash = Fnv::default();
-        hash.push(&text);
+    fn new(text: String) -> Self {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
         Self {
-            key: hash.key(),
+            key: format!("{:016x}", hasher.finish()),
             text,
         }
     }
@@ -41,53 +42,21 @@ impl ModelsBoard {
     }
 }
 
-pub trait Sink {
-    fn push(&mut self, text: &str);
-}
-
-impl Sink for String {
-    fn push(&mut self, text: &str) {
-        self.push_str(text);
-    }
-}
-
-/// FNV-1a keeps scene keys independent of how the writer splits the text.
-pub struct Fnv(u64);
-
-impl Default for Fnv {
-    fn default() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
-    }
-}
-
-impl Sink for Fnv {
-    fn push(&mut self, text: &str) {
-        for byte in text.bytes() {
-            self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-}
-
-impl Fnv {
-    pub fn key(&self) -> String {
-        format!("{:016x}", self.0)
-    }
-}
-
-pub struct ModelsWriter<S> {
-    out: S,
+pub struct ModelsWriter {
+    out: String,
     has_models: bool,
 }
 
-impl<S: Sink> ModelsWriter<S> {
-    pub fn new(mut out: S) -> Self {
-        out.push("(kicad_pcb\n");
+impl Default for ModelsWriter {
+    fn default() -> Self {
         Self {
-            out,
+            out: "(kicad_pcb\n".to_owned(),
             has_models: false,
         }
     }
+}
 
+impl ModelsWriter {
     pub fn item(&mut self, item: Expr) {
         match item.head() {
             Some(head) if KEPT_BOARD_ITEMS.contains(&head) => self.write(&["  ", item.raw(), "\n"]),
@@ -103,14 +72,14 @@ impl<S: Sink> ModelsWriter<S> {
         }
     }
 
-    pub fn finish(mut self) -> Option<S> {
-        self.out.push(")\n");
-        self.has_models.then_some(self.out)
+    pub fn finish(mut self) -> Option<ModelsBoard> {
+        self.out.push_str(")\n");
+        self.has_models.then(|| ModelsBoard::new(self.out))
     }
 
     fn write(&mut self, parts: &[&str]) {
         for part in parts {
-            self.out.push(part);
+            self.out.push_str(part);
         }
     }
 

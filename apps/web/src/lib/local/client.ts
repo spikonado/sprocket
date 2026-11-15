@@ -546,10 +546,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				signal
 			});
 
-			return {
-				models: response.status === 204 ? null : response.body,
-				key: response.headers.get('x-models-key') ?? ''
-			};
+			return response.status === 204 ? null : response.body;
 		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {

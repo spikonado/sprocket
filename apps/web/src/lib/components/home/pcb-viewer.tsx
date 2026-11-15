@@ -148,7 +148,7 @@ export default function PcbViewer({
 
 		void (async () => {
 			try {
-				const { models } = await api.kicadModels({ workspacePath, path }, controller.signal);
+				const models = await api.kicadModels({ workspacePath, path }, controller.signal);
 
 				if (controller.signal.aborted) return;
 				await client.load('models', models);

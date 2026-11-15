@@ -124,11 +124,6 @@ pub struct KiCadConnector {
     models: KiCadCache,
 }
 
-pub struct KiCadModels {
-    pub key: String,
-    pub bytes: Arc<[u8]>,
-}
-
 impl KiCadConnector {
     pub(crate) fn new(data_dir: &Path, python: Arc<PythonTools>) -> anyhow::Result<Self> {
         Ok(Self {
@@ -297,7 +292,7 @@ impl KiCadConnector {
     pub async fn export_models(
         &self,
         board: sprocket_workspace::WorkspaceBytes,
-    ) -> anyhow::Result<Option<KiCadModels>> {
+    ) -> anyhow::Result<Option<Arc<[u8]>>> {
         let path = board.path;
         let reduced =
             tokio::task::spawn_blocking(move || sprocket_kicad::pcb_models_board(&board.bytes))
@@ -305,14 +300,10 @@ impl KiCadConnector {
         let Some(reduced) = reduced else {
             return Ok(None);
         };
-        let bytes = match self.models.get(&path, &reduced.key) {
-            Some(bytes) => bytes,
-            None => self.export_models_glb(path, &reduced).await?,
-        };
-        Ok(Some(KiCadModels {
-            key: reduced.key,
-            bytes,
-        }))
+        match self.models.get(&path, &reduced.key) {
+            Some(bytes) => Ok(Some(bytes)),
+            None => self.export_models_glb(path, &reduced).await.map(Some),
+        }
     }
 
     async fn export_models_glb(
@@ -330,7 +321,7 @@ impl KiCadConnector {
         ));
         ensure!(
             cli.is_file(),
-            "Install the KiCad connector in Settings to view boards in 3D."
+            "Install the KiCad connector in Settings to show component models."
         );
         let temporary = tempfile::tempdir()?;
         let filename = path.file_name().context("the board has no file name")?;

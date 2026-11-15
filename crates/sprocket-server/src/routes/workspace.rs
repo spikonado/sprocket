@@ -303,11 +303,8 @@ async fn kicad_models(
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
     Ok((
-        [
-            (header::CONTENT_TYPE, "model/gltf-binary".to_owned()),
-            (header::HeaderName::from_static("x-models-key"), models.key),
-        ],
-        Bytes::from_owner(models.bytes),
+        [(header::CONTENT_TYPE, "model/gltf-binary")],
+        Bytes::from_owner(models),
     )
         .into_response())
 }
