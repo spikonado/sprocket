@@ -2,20 +2,27 @@ import { expect, it } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import ReasoningDisclosure from './reasoning-disclosure';
 
-it('opens active reasoning, allows manual toggling, and collapses when reasoning finishes', () => {
-	const view = render(<ReasoningDisclosure text="Inspect the workspace." inProgress />);
-	const active = view.getByRole('button', { name: 'Reasoning' });
+it('starts closed and streams reasoning text once opened', () => {
+	const view = render(<ReasoningDisclosure text="Inspect" inProgress />);
+	const toggle = view.getByRole('button', { name: 'Reasoning' });
 
-	expect(active.getAttribute('aria-expanded')).toBe('true');
+	expect(toggle.getAttribute('aria-expanded')).toBe('false');
+	fireEvent.click(toggle);
+	view.rerender(<ReasoningDisclosure text="Inspect the workspace." inProgress />);
 	expect(view.getByText('Inspect the workspace.')).toBeTruthy();
-	fireEvent.click(active);
-	expect(active.getAttribute('aria-expanded')).toBe('false');
-	fireEvent.click(active);
 	view.rerender(<ReasoningDisclosure text="Inspect the workspace." inProgress={false} />);
-	const completed = view.getByRole('button', { name: 'Reasoned' });
+	expect(view.getByRole('button', { name: 'Reasoned' }).getAttribute('aria-expanded')).toBe('true');
+	fireEvent.click(toggle);
+	expect(toggle.getAttribute('aria-expanded')).toBe('false');
+});
 
-	expect(completed.getAttribute('aria-expanded')).toBe('false');
-	fireEvent.click(completed);
-	expect(completed.getAttribute('aria-expanded')).toBe('true');
-	expect(view.getByText('Inspect the workspace.')).toBeTruthy();
+it('keeps completed reasoning closed when reasoning resumes and finishes', () => {
+	const view = render(<ReasoningDisclosure text="Inspect" inProgress={false} />);
+	const toggle = view.getByRole('button', { name: 'Reasoned' });
+
+	expect(toggle.getAttribute('aria-expanded')).toBe('false');
+	view.rerender(<ReasoningDisclosure text="Inspect the workspace." inProgress />);
+	expect(toggle.getAttribute('aria-expanded')).toBe('false');
+	view.rerender(<ReasoningDisclosure text="Inspect the workspace." inProgress={false} />);
+	expect(toggle.getAttribute('aria-expanded')).toBe('false');
 });

@@ -302,61 +302,20 @@ function summarizePatchInput(input: JsonValue | undefined) {
 	return uniquePaths.length > 0 ? uniquePaths.join('\n') : null;
 }
 
-function summarizePatchResult(result: JsonValue | undefined) {
-	if (!isJsonObject(result) || !Array.isArray(result.changes)) {
-		return null;
-	}
-
-	const paths = result.changes.flatMap((change) => {
-		if (!isJsonObject(change)) {
-			return [];
-		}
-
-		const path = jsonString(change.path);
-
-		return path ? [path] : [];
-	});
-
-	if (paths.length === 0) {
-		return null;
-	}
-
-	return [...new Set(paths)].join('\n');
-}
-
-function patchSummary(toolLog: AssistantTimelineTool) {
-	if (toolLog.job?.kind === 'apply_patch') {
-		return summarizePatchResult(toolLog.job.result) ?? summarizePatchInput(toolLog.job.payload);
-	}
-
-	return toolLog.name === 'apply_patch' ? summarizePatchInput(toolLog.input) : null;
-}
-
-function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
-	if (kind === 'web_search' && isJsonObject(result) && Array.isArray(result.results)) {
-		const count = result.results.length;
-
-		return ` (${count} result${count === 1 ? '' : 's'})`;
-	}
-
-	return '';
-}
-
 export function toolItemSummary(
 	toolLog: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
 ) {
-	const kind = toolLog.job?.kind ?? toolLog.name;
+	const kind = toolLog.name;
 
 	if (isSessionCommandToolKind(kind)) {
 		return (
-			resolveCommandSessionLabel(toolLog, sessionCommands) ??
-			summarizeTool(kind, toolLog.job?.payload ?? toolLog.input)
+			resolveCommandSessionLabel(toolLog, sessionCommands) ?? summarizeTool(kind, toolLog.input)
 		);
 	}
 
 	if (kind === 'list_artifacts') {
-		return summarizeArtifactListResult(toolLog.job?.result ?? toolLog.output);
+		return summarizeArtifactListResult(toolLog.output);
 	}
 
 	if (
@@ -367,39 +326,21 @@ export function toolItemSummary(
 		kind === 'delete_artifact' ||
 		kind === 'create_artifact'
 	) {
-		return summarizeArtifactTool(
-			toolLog.job?.payload ?? toolLog.input,
-			toolLog.job?.result ?? toolLog.output
-		);
+		return summarizeArtifactTool(toolLog.input, toolLog.output);
 	}
 
-	if (toolLog.job) {
-		const summary = patchSummary(toolLog);
-
-		if (summary) {
-			return summary;
-		}
-
-		return (
-			summarizeTool(toolLog.job.kind, toolLog.job.payload) +
-			summarizeWebToolResult(toolLog.job.kind, toolLog.job.result)
-		);
-	}
-
-	return summarizeTool(toolLog.name, toolLog.input);
+	return summarizeTool(kind, toolLog.input);
 }
 
 export function toolShellCommand(
 	toolLog: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
 ) {
-	const kind = toolLog.job?.kind ?? toolLog.name;
+	const kind = toolLog.name;
 
 	if (isSessionCommandToolKind(kind)) return resolveCommandSessionLabel(toolLog, sessionCommands);
 
 	if (!isExecCommandToolKind(kind)) return undefined;
 
-	const input: JsonValue | undefined = toolLog.job?.payload ?? toolLog.input;
-
-	return isJsonObject(input) ? jsonString(input.cmd) : undefined;
+	return isJsonObject(toolLog.input) ? jsonString(toolLog.input.cmd) : undefined;
 }

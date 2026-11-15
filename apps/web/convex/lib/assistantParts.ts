@@ -1,4 +1,3 @@
-import type { Infer } from 'convex/values';
 import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import type {
 	AssistantMessagePart,
@@ -6,9 +5,7 @@ import type {
 	AssistantTextPart,
 	AssistantToolCallPart,
 	AssistantToolResultErrorOutput,
-	AssistantToolResultPart,
-	ExecutorJobPayload,
-	vExecutorJobKind
+	AssistantToolResultPart
 } from '@convex/lib/validators';
 
 export type {
@@ -36,13 +33,6 @@ export function parseAssistantToolResultError(
 
 export type AssistantPart = AssistantMessagePart;
 
-export type MatchableExecutorToolJob = {
-	id: string;
-	kind: Infer<typeof vExecutorJobKind>;
-	callId?: string;
-	payload: ExecutorJobPayload;
-};
-
 export function joinAssistantTextParts(parts: AssistantPart[]): string {
 	let text = '';
 	let previousTurnId: string | undefined;
@@ -67,94 +57,4 @@ export function joinAssistantTextParts(parts: AssistantPart[]): string {
 	}
 
 	return text;
-}
-
-export function matchAssistantToolCallsToJobs(
-	calls: readonly AssistantToolCallPart[],
-	jobs: readonly MatchableExecutorToolJob[]
-): Map<string, string> {
-	const callIdByJobId = new Map<string, string>();
-	const usedCallIds = new Set<string>();
-
-	const unmatchedJobs = jobs.filter((job) => {
-		if (!job.callId) return true;
-
-		const call = calls.find(
-			(candidate) => candidate.callId === job.callId && !usedCallIds.has(candidate.callId)
-		);
-
-		if (!call) return false;
-		callIdByJobId.set(job.id, call.callId);
-		usedCallIds.add(call.callId);
-
-		return false;
-	});
-
-	const matchUnique = (
-		matches: (call: AssistantToolCallPart, job: MatchableExecutorToolJob) => boolean
-	): void => {
-		const availableCalls = calls.filter((call) => !usedCallIds.has(call.callId));
-
-		const candidatesByJob = new Map(
-			unmatchedJobs.flatMap((job) =>
-				callIdByJobId.has(job.id)
-					? []
-					: [[job.id, availableCalls.filter((call) => matches(call, job))] as const]
-			)
-		);
-
-		for (const job of unmatchedJobs) {
-			if (callIdByJobId.has(job.id)) continue;
-			const candidates = candidatesByJob.get(job.id) ?? [];
-
-			if (candidates.length !== 1) continue;
-			const [call] = candidates;
-
-			const candidateJobs = unmatchedJobs.filter(
-				(candidate) =>
-					!callIdByJobId.has(candidate.id) &&
-					(candidatesByJob.get(candidate.id) ?? []).some(
-						(candidateCall) => candidateCall.callId === call.callId
-					)
-			);
-
-			if (candidateJobs.length !== 1) continue;
-			callIdByJobId.set(job.id, call.callId);
-			usedCallIds.add(call.callId);
-		}
-	};
-
-	matchUnique(
-		(call, job) => call.name === job.kind && assistantToolPayloadsEqual(call.input, job.payload)
-	);
-	matchUnique((call, job) => call.name === job.kind);
-
-	return callIdByJobId;
-}
-
-function assistantToolPayloadsEqual(left: JsonValue, right: JsonValue): boolean {
-	if (Object.is(left, right)) return true;
-
-	if (Array.isArray(left) || Array.isArray(right)) {
-		return (
-			Array.isArray(left) &&
-			Array.isArray(right) &&
-			left.length === right.length &&
-			left.every((value, index) => assistantToolPayloadsEqual(value, right[index]))
-		);
-	}
-
-	if (!isJsonObject(left) || !isJsonObject(right)) {
-		return false;
-	}
-
-	const leftKeys = Object.keys(left);
-	const rightKeys = Object.keys(right);
-
-	return (
-		leftKeys.length === rightKeys.length &&
-		leftKeys.every(
-			(key) => Object.hasOwn(right, key) && assistantToolPayloadsEqual(left[key], right[key])
-		)
-	);
 }

@@ -9,7 +9,7 @@ import {
 	vTranscriptPartsResult,
 	vTranscriptStateResult
 } from '@convex/lib/docs';
-import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
+import { transcriptContext, transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import { getTranscriptState, loadTranscriptPartsPage } from '@convex/lib/transcriptParts';
 
 export async function transcriptStateResult(
@@ -18,13 +18,14 @@ export async function transcriptStateResult(
 	thread: Doc<'threadRecords'> | null
 ): Promise<Infer<typeof vTranscriptStateResult>> {
 	const state = await getTranscriptState(ctx, threadId);
+	const context = transcriptContext(state, thread);
 
 	return {
 		threadId,
 		totalParts: state?.totalParts ?? 0,
-		historyFromNumber: transcriptHistoryFromNumber(thread),
-		contextSummary: thread?.contextSummary || undefined,
-		reasoningStrippedThroughPartNumber: thread?.reasoningStrippedThroughPartNumber
+		historyFromNumber: transcriptHistoryFromNumber(context),
+		contextSummary: context.contextSummary || undefined,
+		reasoningStrippedThroughPartNumber: context.reasoningStrippedThroughPartNumber
 	};
 }
 

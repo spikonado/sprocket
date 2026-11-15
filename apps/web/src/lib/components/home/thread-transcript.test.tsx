@@ -64,7 +64,6 @@ async function settle(milliseconds = 16) {
 async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 600) {
 	const props: Props = {
 		messages,
-		actions: [],
 		activeRunId: null,
 		project: null,
 		nextBefore: undefined,
@@ -1045,11 +1044,47 @@ describe('transcript viewport paging', () => {
 
 		expect(buttons).toHaveLength(1);
 		expect(buttons[0].textContent).toBe('Reasoning');
+		expect(buttons[0].getAttribute('aria-expanded')).toBe('false');
+		expect(props.loadSectionDetails).not.toHaveBeenCalled();
+		click(buttons[0]);
+		await settle();
 		expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
 		expect(viewport.textContent).toContain('Saved reasoning');
 		expect(viewport.textContent).toContain('Current reasoning');
+		setProps({ activeRunId: null, messages: [{ ...work, closed: true }] });
+		await settle();
+		expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.textContent).toContain('Saved reasoning');
+	});
+
+	it('streams reasoning only after opening it and keeps it open when complete', async () => {
+		const live: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [{ type: 'reasoning', id: 'plan', text: 'Inspect' }]
+		};
+
+		const { viewport, setProps } = await renderTranscript([live]);
+		setProps({ activeRunId: live.runId });
+		await settle();
+		const button = workButtons(viewport)[0];
+
+		expect(button.getAttribute('aria-expanded')).toBe('false');
+		click(button);
+		setProps({
+			messages: [
+				{ ...live, parts: [{ type: 'reasoning', id: 'plan', text: 'Inspect the workspace.' }] }
+			]
+		});
+		await settle();
+		expect(viewport.textContent).toContain('Inspect the workspace.');
+		setProps({ activeRunId: null, messages: [{ ...live, runStatus: 'completed' }] });
+		await settle();
+		expect(button.textContent).toBe('Reasoned');
+		expect(button.getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.textContent).toContain('Inspect');
 	});
 
 	it('starts a new disclosure when streamed model text separates work', async () => {
@@ -1089,7 +1124,7 @@ describe('transcript viewport paging', () => {
 		expect(buttons.map((button) => button.textContent)).toEqual(['Reasoned', 'Reasoning']);
 		expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
 			'false',
-			'true'
+			'false'
 		]);
 		expect(viewport.textContent).toContain('Visible boundary');
 	});

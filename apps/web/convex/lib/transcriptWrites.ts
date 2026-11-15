@@ -16,26 +16,20 @@ import type {
 	TranscriptPromptBody,
 	TranscriptToolBody
 } from '@convex/lib/validators';
-import {
-	writeCompletionSectionData,
-	writeToolSectionData,
-	type PersistedWork
-} from '@convex/lib/transcriptSectionWrites';
+
+type PersistedWork = Doc<'threadTranscriptParts'>['work'];
 
 type TranscriptToolJob = Pick<
 	Doc<'executorJobs'>,
 	| '_id'
-	| '_creationTime'
 	| 'status'
 	| 'callId'
 	| 'kind'
 	| 'payload'
 	| 'result'
 	| 'error'
-	| 'completedAt'
 	| 'toolInvocationId'
 	| 'sectionKey'
-	| 'sectionOrdinal'
 >;
 
 export function commandToolDisplayInput(name: string, input: JsonValue): JsonObject | undefined {
@@ -110,8 +104,7 @@ export async function recordCompletionTranscript(
 		streamId: string;
 		items: TranscriptCompletionItem[];
 		work: PersistedWork;
-		sections: { sectionKey: string; sectionOrdinal: number; closed: boolean }[];
-		toolInvocations: { callId: string; toolInvocationId: string; sectionKey?: string }[];
+		toolInvocations: { toolInvocationId: string }[];
 	}
 ): Promise<Doc<'threadTranscriptParts'> | null> {
 	if (args.items.length === 0) {
@@ -129,22 +122,13 @@ export async function recordCompletionTranscript(
 		return [{ item: index, toolInvocationId: invocation.toolInvocationId }];
 	});
 
-	const work = { ...args.work, toolInvocations };
-
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
 		completion: { streamId: args.streamId, items: args.items },
-		work
-	});
-
-	await writeCompletionSectionData(ctx, {
-		part: result.part,
-		work,
-		sections: args.sections,
-		representedCallIds: new Set(args.toolInvocations.map((invocation) => invocation.callId))
+		work: { ...args.work, toolInvocations }
 	});
 
 	return result.part;
@@ -158,25 +142,13 @@ export async function recordStartedToolTranscript(
 		job: TranscriptToolJob;
 	}
 ): Promise<void> {
-	const { toolInvocationId } = args.job;
-
-	const result = await appendTranscriptPart(ctx, {
+	await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
-		sourceKey: toolSourceKey(toolInvocationId, 'started'),
+		sourceKey: toolSourceKey(args.job.toolInvocationId, 'started'),
 		kind: 'tool',
 		runId: args.runId,
 		tool: progressToolBody(args.job, { status: 'started' }),
 		work: args.job.sectionKey ? { ranges: [], sectionKey: args.job.sectionKey } : { ranges: [] }
-	});
-
-	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;
-	await writeToolSectionData(ctx, {
-		part: result.part,
-		sectionKey: args.job.sectionKey,
-		sectionOrdinal: args.job.sectionOrdinal,
-		toolInvocationId,
-		started: true,
-		occurredAt: args.job._creationTime
 	});
 }
 
@@ -193,8 +165,7 @@ export async function recordToolTranscript(
 		return;
 	}
 
-	const { toolInvocationId } = args.job;
-	const sourceKey = toolSourceKey(toolInvocationId, 'finished');
+	const sourceKey = toolSourceKey(args.job.toolInvocationId, 'finished');
 	const tool = settledToolBody(args.job);
 
 	let work: PersistedWork = args.job.sectionKey
@@ -214,23 +185,13 @@ export async function recordToolTranscript(
 		if (existing && args.job.sectionKey === undefined) work = existing.work;
 	}
 
-	const result = await appendTranscriptPart(ctx, {
+	await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		sourceKey,
 		kind: 'tool',
 		runId: args.runId,
 		tool,
 		work
-	});
-
-	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;
-	await writeToolSectionData(ctx, {
-		part: result.part,
-		sectionKey: args.job.sectionKey,
-		sectionOrdinal: args.job.sectionOrdinal,
-		toolInvocationId,
-		started: false,
-		occurredAt: args.job.completedAt
 	});
 }
 

@@ -42,7 +42,9 @@ describe('provider fallback', () => {
 
 		expect(context.run.completionProvider).toBe('spikonado');
 		expect(thread?.completionProvider).toBe('spikonado');
-		expect(thread?.reasoningStrippedThroughPartNumber).toBe(0);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			reasoningStrippedThroughPartNumber: 0
+		});
 		await expect(insertQueuedRun(t, asUser, request)).resolves.toMatchObject({
 			created: false,
 			runId

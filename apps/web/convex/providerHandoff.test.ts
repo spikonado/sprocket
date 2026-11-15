@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { appendTranscriptPart, getOrCreateTranscriptState } from '@convex/lib/transcriptParts';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import {
 	initConvexTest,
@@ -211,7 +211,8 @@ describe('provider handoff provenance', () => {
 			(await t.query(api.agentRuntime.getContext, run)).providerHandoff?.completionProvider
 		).toBe('openai');
 		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
+			const state = await getOrCreateTranscriptState(ctx, threadId);
+			await ctx.db.patch('threadTranscriptStates', state._id, {
 				contextSummary: 'Old work summarized',
 				contextSummaryPartCount: 1
 			});

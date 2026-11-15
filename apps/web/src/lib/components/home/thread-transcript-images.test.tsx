@@ -39,7 +39,6 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 			currentError: null,
 			runError: null,
 			messages: [message],
-			actions: [],
 			activeRunId: null
 		};
 
@@ -85,7 +84,6 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 	render(
 		<ThreadTranscript
 			messages={[message]}
-			actions={[]}
 			activeRunId={null}
 			project={null}
 			loadAttachment={loadAttachment}

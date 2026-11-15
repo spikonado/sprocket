@@ -3,20 +3,16 @@ import type { AssistantPart } from '@convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
 import type { displayRowValidator } from '@convex/lib/transcriptDisplayTypes';
 import {
-	vExecutorJobKind,
-	vExecutorJobStatus,
 	vRunStatus,
-	type ExecutorJobPayload,
-	type ExecutorJobResult,
 	type LinkedPullRequest,
 	type WorkspaceInstruction
 } from '@convex/lib/validators';
 
 export type LocalAttachmentAvailability = 'available' | 'unavailable';
 
-export type { WorkspaceInstruction, ExecutorJobPayload, ExecutorJobResult };
+export type { WorkspaceInstruction };
 
-export type AgentToolName = Infer<typeof vExecutorJobKind>;
+export type RunStatus = Infer<typeof vRunStatus>;
 
 export type Project = {
 	repositoryKey: string;
@@ -35,40 +31,7 @@ export type ThreadSummary = {
 	fastMode: boolean;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
-	status: RunState['status'];
-};
-
-export type ExecutorJob = {
-	_id: Id<'executorJobs'>;
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	kind: AgentToolName;
-	callId?: string;
-	payload: ExecutorJobPayload;
-	status: Infer<typeof vExecutorJobStatus>;
-	enqueuedAt: number;
-	claimedAt?: number;
-	completedAt?: number;
-	result?: ExecutorJobResult;
-	error?: string;
-	sequence: number;
-};
-
-export type RunState = {
-	_id: Id<'runs'>;
-	threadId: Id<'threadRecords'>;
-	userId: string;
-	status: Infer<typeof vRunStatus>;
-	submissionId: string;
-	claimExpiresAt?: number;
-	selectedModel: string;
-	reasoningEffort: string;
-	fastMode: boolean;
-	startedAt: number;
-	completedAt?: number;
-	lastError?: string;
-	activeJobId?: Id<'executorJobs'>;
-	jobs: ExecutorJob[];
+	status: RunStatus;
 };
 
 export type MessageAttachment = {
@@ -108,7 +71,7 @@ export type AgentRunStart = {
 export type LiveCompletionOverlay = {
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
-	runStatus: Infer<typeof vRunStatus>;
+	runStatus: RunStatus;
 	streamId: string;
 	text: string;
 	parts: AssistantPart[];
