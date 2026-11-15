@@ -218,7 +218,7 @@ export async function appendTranscriptPart(
 			kind: existing.kind,
 			runId: existing.runId,
 			prompt: existing.prompt,
-			completion: existing.completion,
+			completion: existing.completion && normalizeCompletion(existing.completion, existing.work),
 			tool: existing.tool,
 			work: existing.work
 		};

@@ -115,6 +115,42 @@ describe('numbered transcript parts', () => {
 		expect(result).toEqual({ accepted: true, parts: [page.parts[3]] });
 	});
 
+	it('accepts retries of completions saved in the legacy format', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'legacy-retry-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'legacy', executionSecret);
+		const base = { runId, claimId: 'legacy-claim', executionSecret };
+
+		await asUser.mutation(api.agentRuntime.start, base);
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...base, attemptSeq: 1 });
+
+		const legacyCall = { type: 'tool-call' as const, callId: 'call', name: 'exec_cmd', input: {} };
+
+		const args = {
+			...base,
+			attemptSeq: 1,
+			streamId: 'legacy-stream',
+			items: [{ ...legacyCall, toolInvocationId: 'legacy-invocation' }],
+			returnParts: true
+		};
+
+		const saved = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, args);
+		const part = saved && 'parts' in saved ? saved.completion : null;
+
+		if (!part?.completion) throw new Error('Expected a saved completion.');
+
+		await t.run((ctx) =>
+			ctx.db.patch('threadTranscriptParts', part._id, {
+				completion: { streamId: args.streamId, items: [legacyCall] }
+			})
+		);
+
+		expect(await asUser.mutation(api.agentRuntime.finalizeCompletionCall, args)).toMatchObject({
+			completion: { _id: part._id }
+		});
+	});
+
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
