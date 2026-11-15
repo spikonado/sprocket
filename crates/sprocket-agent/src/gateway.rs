@@ -17,6 +17,7 @@ use crate::request_compression::ZstdResponsesRequests;
 use crate::types::GatewayCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
+pub(crate) const AT_CAPACITY_CODE: &str = "spikonado_at_capacity";
 
 struct CachedCredential {
     token: String,

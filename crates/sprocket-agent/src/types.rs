@@ -107,6 +107,23 @@ impl CompletionProvider {
             Self::Morph => "morph",
         }
     }
+
+    /// Matches `completionProviderLabels` in the web app.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Spikonado => "Spikonado",
+            Self::Openai => "OpenAI API",
+            Self::Chatgpt => "ChatGPT Subscription",
+            Self::Claude => "Claude Subscription",
+            Self::OpencodeGo => "OpenCode Go",
+            Self::Anthropic => "Anthropic API",
+            Self::Vercel => "Vercel AI Gateway",
+            Self::Openrouter => "OpenRouter",
+            Self::Opencode => "OpenCode",
+            Self::Muse => "Muse Code Subscription",
+            Self::Morph => "Morph",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
