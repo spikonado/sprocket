@@ -8,8 +8,8 @@ use sprocket_convex::{
 };
 use sprocket_transcript::sections::WorkAssignment;
 use sprocket_transcript::{
-    DownloadOrder, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, TranscriptPromptBody, TranscriptToolBody, parse_remote_page,
+    RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart, TranscriptPartKind,
+    TranscriptPromptBody, TranscriptToolBody, parse_remote_page,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -24,14 +24,15 @@ use crate::workspace_context::HiddenPrompt;
 const TRANSPORT_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PersistedTranscriptPart {
+pub(crate) struct PersistedTranscriptPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
     source_key: String,
     kind: TranscriptPartKind,
     run_id: String,
+    #[serde(default)]
     work: WorkAssignment,
     #[serde(
         rename = "_creationTime",
@@ -39,9 +40,24 @@ struct PersistedTranscriptPart {
         deserialize_with = "deserialize_creation_time"
     )]
     created_at: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "sprocket_transcript::deserialize_remote_prompt"
+    )]
     prompt: Option<TranscriptPromptBody>,
     completion: Option<TranscriptCompletionBody>,
     tool: Option<TranscriptToolBody>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PartsMutationResponse {
+    pub(crate) accepted: bool,
+    pub(crate) parts: Vec<PersistedTranscriptPart>,
+}
+
+#[derive(Deserialize)]
+struct CompletionMutationResponse {
+    parts: Vec<PersistedTranscriptPart>,
 }
 
 impl From<PersistedTranscriptPart> for TranscriptPart {
@@ -126,6 +142,18 @@ impl From<bool> for ClaimStatus {
 }
 
 impl RuntimeClient {
+    pub(crate) async fn record_parts(
+        &self,
+        parts: impl IntoIterator<Item = PersistedTranscriptPart>,
+    ) {
+        let output = self
+            .output
+            .as_ref()
+            .expect("run transcript writer is initialized");
+        let parts: Vec<_> = parts.into_iter().map(TranscriptPart::from).collect();
+        output.record_parts(&parts).await;
+    }
+
     pub(crate) fn with_execution_secret(&self, execution_secret: String) -> Self {
         Self {
             execution_secret,
@@ -237,15 +265,11 @@ impl RuntimeClient {
         thread_id: &str,
         start: u32,
         end: u32,
-        order: DownloadOrder,
     ) -> anyhow::Result<Vec<TranscriptPart>> {
         let mut args = self.run_args(run_id);
         args.insert("start".into(), Value::Float64(f64::from(start)));
         args.insert("end".into(), Value::Float64(f64::from(end)));
-        args.insert(
-            "order".into(),
-            Value::try_from(serde_json::to_value(order)?)?,
-        );
+        args.insert("order".into(), "desc".to_owned().into());
         let value = self
             .query_json("transcript:getPartsPageForRun", args)
             .await?;
@@ -440,6 +464,7 @@ impl RuntimeClient {
             "streamId".to_string(),
             crate::hooks::completion_stream_id(run_id, claim_id, attempt_seq).into(),
         );
+        args.insert("returnParts".to_string(), true.into());
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
@@ -450,15 +475,13 @@ impl RuntimeClient {
                 Value::try_from(serde_json::json!({ "contextTokens": tokens }))?,
             );
         }
-        let persisted: Option<PersistedTranscriptPart> = self
-            .mutation_json("agentRuntime:finalizeCompletionCall", args)
+        let CompletionMutationResponse { parts } = self
+            .idempotent_mutation("agentRuntime:finalizeCompletionCall", args)
             .await?;
         if empty_completion && let Some(output) = &self.output {
             output.empty_completion();
         }
-        if let (Some(output), Some(persisted)) = (&self.output, persisted) {
-            output.record_part(persisted.into()).await;
-        }
+        self.record_parts(parts).await;
         Ok(())
     }
 
@@ -532,8 +555,12 @@ impl RuntimeClient {
                 Value::try_from(serde_json::to_value(workspace_context)?)?,
             );
         }
-        self.mutation_json("agentRuntime:saveContextHandoff", args)
-            .await
+        args.insert("returnParts".to_string(), true.into());
+        let PartsMutationResponse { accepted, parts } = self
+            .idempotent_mutation("agentRuntime:saveContextHandoff", args)
+            .await?;
+        self.record_parts(parts).await;
+        Ok(accepted.into())
     }
 
     pub(crate) async fn begin_run(
@@ -551,8 +578,12 @@ impl RuntimeClient {
         if let Some(handoff) = handoff {
             args.insert("handoff".to_string(), Value::Object(handoff.args()));
         }
-        self.idempotent_mutation("agentRuntime:beginRun", args)
-            .await
+        args.insert("returnParts".to_string(), true.into());
+        let PartsMutationResponse { accepted, parts } = self
+            .idempotent_mutation("agentRuntime:beginRun", args)
+            .await?;
+        self.record_parts(parts).await;
+        Ok(accepted.into())
     }
 
     pub(crate) async fn omit_reasoning_replay(

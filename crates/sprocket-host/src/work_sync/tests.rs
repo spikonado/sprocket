@@ -1,123 +1,122 @@
+use std::sync::Mutex;
+
 use super::*;
 
-#[test]
-fn downloads_newest_pages_first_without_shifting_old_pages() {
-    for total in 301..=304 {
-        let mut pending = vec![(0, total)];
-        assert_eq!(pop_download_page(&mut pending), Some((300, total)));
-        for range in [(200, 300), (100, 200), (0, 100)] {
-            assert_eq!(pop_download_page(&mut pending), Some(range));
-        }
-        assert_eq!(pop_download_page(&mut pending), None);
-    }
+fn prompt(number: u32) -> TranscriptPart {
+    serde_json::from_value(serde_json::json!({
+        "number": number, "sourceKey": format!("prompt:{number}"),
+        "runId": "run", "kind": "prompt",
+        "prompt": {"text": format!("Part {number}"), "imageUploads": []}
+    }))
+    .unwrap()
 }
 
 #[tokio::test]
-async fn downloads_partial_pages_around_cached_gaps_and_prioritizes_live_parts() {
-    use sprocket_transcript::TranscriptPart;
-    use std::sync::Mutex;
-
-    fn prompt(number: u32) -> TranscriptPart {
-        serde_json::from_value(serde_json::json!({
-            "number": number, "sourceKey": format!("prompt:{number}"),
-            "runId": "run", "kind": "prompt",
-            "prompt": {"text": format!("Part {number}"), "imageUploads": []}
-        }))
-        .unwrap()
-    }
-
+async fn downloads_around_cached_gaps_and_new_parts_first() {
     let dir = tempfile::tempdir().unwrap();
     let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
     store
         .append_parts("user", "thread", &[prompt(115), prompt(210)])
         .await
         .unwrap();
-    store
-        .with_work_replica("user", "thread", |replica| {
-            replica.save_parts("thread", &[prompt(210)])
-        })
-        .await
-        .unwrap();
-    let state = RemoteTranscriptState {
-        thread_id: "thread".into(),
-        total_parts: 250,
-        history_from_number: 0,
-        context_summary: None,
-        reasoning_stripped_through_part_number: None,
-    };
-    let (states, state_rx) = watch::channel(state);
+    let (totals, total_rx) = watch::channel(250);
+    let mut changes = store.watch_changes();
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let fetched_numbers = Arc::new(Mutex::new(Vec::new()));
-    let (changed_tx, mut changes) = tokio::sync::mpsc::unbounded_channel();
-    let changed = move || {
-        changed_tx.send(()).unwrap();
-    };
-    let mut downloading = tokio::spawn({
+    let downloading = tokio::spawn({
         let store = Arc::clone(&store);
         let requests = Arc::clone(&requests);
-        let fetched_numbers = Arc::clone(&fetched_numbers);
         async move {
-            let fetch = |start: u32, end: u32, _order| {
+            let fetch = |start: u32, end: u32| {
                 let mut requests = requests.lock().unwrap();
                 if requests.is_empty() {
-                    states.send_modify(|state| state.total_parts = 251);
+                    raise(&totals, 251);
                 }
                 requests.push((start, end));
-                let numbers: Vec<_> = (start.max(end.saturating_sub(20))..end).rev().collect();
-                fetched_numbers
-                    .lock()
-                    .unwrap()
-                    .extend(numbers.iter().copied());
-                std::future::ready(Ok(numbers.into_iter().map(prompt).collect()))
+                let parts: Vec<TranscriptPart> = (start.max(end.saturating_sub(20))..end)
+                    .rev()
+                    .map(prompt)
+                    .collect();
+                std::future::ready(Ok(parts))
             };
-            download(&store, "user", "thread", state_rx, &changed, fetch).await
+            download(&store, "user", "thread", total_rx, fetch).await
         }
     });
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        loop {
-            tokio::select! {
-                result = &mut downloading => panic!("download stopped: {result:?}"),
-                change = changes.recv() => { change.unwrap(); }
-            }
-            let complete = store
-                .with_work_replica("user", "thread", |replica| {
-                    for number in 0..251 {
-                        if !replica.has_part(number)? {
-                            return Ok(false);
-                        }
-                    }
-                    Ok(true)
-                })
-                .await
-                .unwrap();
-            if complete {
-                break;
-            }
+        while store
+            .read_parts_range("user", "thread", 0, 251)
+            .await
+            .unwrap()
+            .len()
+            < 251
+        {
+            changes.recv().await.unwrap();
         }
     })
     .await
     .unwrap();
     downloading.abort();
     assert!(downloading.await.unwrap_err().is_cancelled());
-    {
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests[0], (211, 250));
-        assert_eq!(requests[1], (250, 251));
-        assert_eq!(requests[2], (211, 230));
-    }
-    let mut fetched = fetched_numbers.lock().unwrap().clone();
-    fetched.sort_unstable();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[..3], [(211, 250), (250, 251), (211, 230)]);
+}
+
+#[tokio::test]
+async fn cancelling_download_drops_the_in_flight_fetch() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let (_totals, total_rx) = watch::channel(1);
+    let (started, fetching) = tokio::sync::oneshot::channel();
+    let (dropped, cancelled) = tokio::sync::oneshot::channel::<()>();
+    let mut signals = Some((started, dropped));
+    let downloading = tokio::spawn(async move {
+        download(&store, "user", "thread", total_rx, move |_, _| {
+            let (started, dropped) = signals.take().unwrap();
+            async move {
+                let _fetch = dropped;
+                started.send(()).unwrap();
+                std::future::pending::<anyhow::Result<Vec<TranscriptPart>>>().await
+            }
+        })
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), fetching)
+        .await
+        .unwrap()
+        .unwrap();
+    downloading.abort();
+    assert!(downloading.await.unwrap_err().is_cancelled());
+    assert!(cancelled.await.is_err());
+}
+
+#[tokio::test]
+async fn startup_cutoff_stays_fixed_when_the_remote_total_changes() {
+    let start = RunStart::default();
     assert_eq!(
-        fetched,
-        (0..251)
-            .filter(|number| ![115, 210].contains(number))
-            .collect::<Vec<_>>()
+        start.initialize("thread", || async { Ok(100) }).await,
+        Some(100)
     );
     assert_eq!(
-        store
-            .read_parts("user", "thread", &(0..251).collect::<Vec<_>>())
-            .await
-            .unwrap(),
-        (0..251).map(prompt).collect::<Vec<_>>()
+        start.initialize("thread", || async { Ok(107) }).await,
+        Some(100)
+    );
+}
+
+#[tokio::test]
+async fn failed_startup_query_keeps_a_full_reconciliation_cutoff() {
+    let start = RunStart::default();
+    assert_eq!(
+        start
+            .initialize("thread", || async { anyhow::bail!("offline") })
+            .await,
+        None
+    );
+    assert_eq!(
+        start
+            .initialize("thread", || async {
+                panic!("startup cutoff must stay fixed")
+            })
+            .await,
+        None
     );
 }

@@ -68,11 +68,8 @@ async fn hydration_uses_each_calls_name_and_keeps_interrupted_results() {
         completion(4, "inv-3", "exec_cmd"),
         result(5, "inv-3", "/not-an-image-tool.png"),
     ];
-    let mut history = crate::history::agent_history_from_parts(
-        &TranscriptState::new("user".into(), "thread".into()),
-        &parts,
-        None,
-    );
+    let mut history =
+        crate::history::agent_history_from_parts(&TranscriptState::default(), &parts, None);
     hydrate_tool_history(&mut history, &parts, false, None).await;
     let texts: Vec<_> = history
         .iter()

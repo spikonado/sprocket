@@ -198,7 +198,7 @@ fn consecutive_text_parts_preserve_their_own_phase_and_authoritative_text() {
     .unwrap();
     let history =
         crate::types::deserialize_agent_history(crate::history::agent_history_from_parts(
-            &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+            &sprocket_transcript::TranscriptState::default(),
             &[part],
             None,
         ))
@@ -257,7 +257,7 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
         }
     ])).unwrap();
     let history = crate::history::agent_history_from_parts(
-        &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+        &sprocket_transcript::TranscriptState::default(),
         &transcript,
         None,
     );
@@ -306,7 +306,7 @@ fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
     .unwrap();
     let messages =
         crate::types::deserialize_agent_history(crate::history::agent_history_from_parts(
-            &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+            &sprocket_transcript::TranscriptState::default(),
             &[part],
             None,
         ))

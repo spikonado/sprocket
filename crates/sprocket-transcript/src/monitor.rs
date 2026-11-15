@@ -1,17 +1,11 @@
 use anyhow::Context;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use super::WorkReplica;
-use super::read_index::{DISPLAY_ITEM, ITEM_COLUMNS, ReadIndex, read_item};
-use super::sections::POSITION_STRIDE;
-use super::sections::WorkItem;
-use super::store::TranscriptStore;
-use super::{DownloadOrder, TranscriptPart};
+use super::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptStore, TranscriptToolBody};
 
 pub const MONITOR_PAGE_CHAR_LIMIT: usize = 20_000;
 
@@ -56,52 +50,47 @@ pub struct MonitorFilter {
     pub hidden_prompt_runs: BTreeSet<String>,
 }
 
-impl MonitorFilter {
-    fn keeps(&self, run: &str, entry: &MonitorEntry) -> bool {
-        self.only_run_id
-            .as_deref()
-            .is_none_or(|run_id| run_id == run)
-            && !(matches!(entry, MonitorEntry::Prompt { .. })
-                && self.hidden_prompt_runs.contains(run))
-    }
-}
-
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MonitorReadError {
     #[error("monitor cursor is malformed")]
     MalformedCursor,
     #[error("monitor cursor belongs to a different thread")]
     WrongThread,
-    #[error("monitor transcript was reset or rebuilt; restart without a cursor")]
-    MonitorCursorReset,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MonitorCursor {
     thread_id: String,
-    replica_id: String,
-    revision: u64,
-    scanned: u64,
-    resume: Option<ResumeEntry>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    fallback_patches: BTreeSet<(String, String)>,
+    part: u32,
+    item: usize,
+    offset: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ResumeEntry {
-    id: String,
-    #[serde(rename = "offset")]
-    source_offset: u64,
-    patch: bool,
-}
+impl MonitorCursor {
+    fn read(thread: &str, encoded: Option<&str>) -> anyhow::Result<Self> {
+        let Some(encoded) = encoded else {
+            return Ok(Self {
+                thread_id: thread.to_owned(),
+                ..Self::default()
+            });
+        };
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| MonitorReadError::MalformedCursor)?;
+        let cursor: Self =
+            serde_json::from_slice(&bytes).map_err(|_| MonitorReadError::MalformedCursor)?;
+        if cursor.thread_id != thread {
+            return Err(MonitorReadError::WrongThread.into());
+        }
+        Ok(cursor)
+    }
 
-fn parse_cursor(encoded: &str) -> anyhow::Result<MonitorCursor> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .map_err(|_| MonitorReadError::MalformedCursor)?;
-    serde_json::from_slice(&bytes).map_err(|_| MonitorReadError::MalformedCursor.into())
+    fn next_part(&mut self) {
+        self.part += 1;
+        self.item = 0;
+        self.offset = 0;
+    }
 }
 
 pub async fn download_monitor_page<F, Fut>(
@@ -111,395 +100,360 @@ pub async fn download_monitor_page<F, Fut>(
     cursor: Option<&str>,
     total: u32,
     filter: &MonitorFilter,
-    mut fetch: F,
+    fetch: F,
 ) -> anyhow::Result<MonitorPage>
 where
-    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    F: FnMut(u32, u32) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
 {
+    let cursor = MonitorCursor::read(thread, cursor)?;
+    let _lease = store.open_thread(user, thread).await?;
     store
-        .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
+        .ensure_parts(user, thread, cursor.part, total, fetch)
         .await?;
-    let mut cursor = cursor.map(str::to_owned);
-    loop {
-        let parsed_cursor = cursor.as_deref().map(parse_cursor).transpose()?;
-        let thread_id = thread.to_owned();
-        let filter = filter.clone();
-        let (page, prefix) = store
-            .with_work_replica(user, thread, move |replica| {
-                Ok((
-                    read_page(
-                        replica,
-                        &thread_id,
-                        parsed_cursor,
-                        &filter,
-                        MONITOR_PAGE_CHAR_LIMIT,
-                    )?,
-                    replica.downloaded_prefix()?,
-                ))
-            })
-            .await?;
-        if !page.entries.is_empty() || !page.has_more || prefix >= total {
-            return Ok(page);
+    let mut ready_end = cursor.part;
+    for number in store.part_numbers(user, thread).await? {
+        if number < ready_end {
+            continue;
         }
-        cursor = Some(page.next_cursor);
-        store
-            .download_parts_page(user, thread, prefix, total, DownloadOrder::Asc, &mut fetch)
-            .await?;
-        tokio::task::yield_now().await;
+        if number != ready_end {
+            break;
+        }
+        ready_end = number
+            .checked_add(1)
+            .context("transcript part number overflow")?;
+    }
+    read_page(
+        store,
+        user,
+        thread,
+        cursor,
+        ready_end,
+        filter,
+        MONITOR_PAGE_CHAR_LIMIT,
+    )
+    .await
+}
+
+struct PageBuilder {
+    entries: Vec<MonitorEntry>,
+    max_chars: usize,
+    remaining: usize,
+}
+
+impl PageBuilder {
+    fn new(max_chars: usize) -> Self {
+        let max_chars = max_chars.clamp(1, MONITOR_PAGE_CHAR_LIMIT);
+        Self {
+            entries: Vec::new(),
+            max_chars,
+            remaining: max_chars,
+        }
+    }
+
+    fn finish(self, cursor: MonitorCursor, has_more: bool) -> anyhow::Result<MonitorPage> {
+        Ok(MonitorPage {
+            entries: self.entries,
+            next_cursor: URL_SAFE_NO_PAD.encode(serde_json::to_vec(&cursor)?),
+            has_more,
+        })
+    }
+
+    fn text(
+        &mut self,
+        id: String,
+        text: &str,
+        prompt: bool,
+        offset: &mut usize,
+    ) -> anyhow::Result<bool> {
+        let mut chars = text
+            .get(*offset..)
+            .context("invalid text cursor offset")?
+            .chars()
+            .peekable();
+        if chars.peek().is_none() {
+            return Ok(true);
+        }
+        let overhead = id.chars().count() + 1;
+        let budget = self.remaining.saturating_sub(overhead);
+        if budget == 0 {
+            anyhow::ensure!(
+                !self.entries.is_empty(),
+                "monitor identity exceeds page budget"
+            );
+            return Ok(false);
+        }
+        let text: String = chars.by_ref().take(budget).collect();
+        let count = text.chars().count();
+        self.remaining -= overhead + count;
+        *offset += text.len();
+        self.entries.push(if prompt {
+            MonitorEntry::Prompt { id, text }
+        } else {
+            MonitorEntry::Text { id, text }
+        });
+        Ok(chars.peek().is_none())
+    }
+
+    fn patch(
+        &mut self,
+        id: String,
+        tool: &TranscriptToolBody,
+        offset: &mut usize,
+    ) -> anyhow::Result<bool> {
+        let ok = tool.status == "completed";
+        let changes = if ok {
+            patch_changes(tool.output.as_ref())
+        } else {
+            Vec::new()
+        };
+        let overhead = id.chars().count() + 1;
+        let tail = changes
+            .get(*offset..)
+            .context("invalid patch cursor offset")?;
+        let first_cost = tail.first().map_or(0, patch_change_cost);
+        anyhow::ensure!(
+            overhead + first_cost <= self.max_chars,
+            "patch path exceeds monitor page budget"
+        );
+        if overhead + first_cost > self.remaining {
+            return Ok(false);
+        }
+        self.remaining -= overhead;
+        let count = tail
+            .iter()
+            .take_while(|change| {
+                let cost = patch_change_cost(change);
+                if cost > self.remaining {
+                    return false;
+                }
+                self.remaining -= cost;
+                true
+            })
+            .count();
+        self.entries.push(MonitorEntry::Patch {
+            id,
+            ok,
+            changes: tail[..count].to_vec(),
+        });
+        *offset += count;
+        Ok(*offset == changes.len())
     }
 }
 
-fn encode_cursor(cursor: &MonitorCursor) -> anyhow::Result<String> {
-    Ok(URL_SAFE_NO_PAD.encode(serde_json::to_vec(cursor)?))
+struct PatchCall {
+    position: (u32, usize),
+    invocation: Option<String>,
 }
 
-fn read_page(
-    replica: &WorkReplica,
-    thread_id: &str,
-    cursor: Option<MonitorCursor>,
+#[derive(Default)]
+struct PatchIndex {
+    results: HashMap<(u32, usize), u32>,
+    orphans: BTreeSet<u32>,
+}
+
+fn nonempty(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.is_empty())
+}
+
+// Only identities and locations survive these scans, never tool outputs or transcript bodies.
+async fn patch_index(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    total: u32,
+) -> anyhow::Result<PatchIndex> {
+    let mut by_invocation = HashMap::new();
+    let mut by_call_id: HashMap<_, Vec<PatchCall>> = HashMap::new();
+    let mut start: u32 = 0;
+    while start < total {
+        let end = start.saturating_add(TRANSCRIPT_CHUNK_SIZE).min(total);
+        for part in store.read_parts_range(user, thread, start, end).await? {
+            let Some(completion) = part.completion else {
+                continue;
+            };
+            for (item, value) in completion.items.iter().enumerate() {
+                if value["type"] != "tool-call" || value["name"] != "apply_patch" {
+                    continue;
+                }
+                let call = PatchCall {
+                    position: (part.number, item),
+                    invocation: nonempty(value["toolInvocationId"].as_str()).map(str::to_owned),
+                };
+                if let Some(invocation) = &call.invocation {
+                    by_invocation.insert((part.run_id.clone(), invocation.clone()), call.position);
+                }
+                if let Some(call_id) = nonempty(value["callId"].as_str()) {
+                    by_call_id
+                        .entry((part.run_id.clone(), call_id.to_owned()))
+                        .or_default()
+                        .push(call);
+                }
+            }
+        }
+        start = end;
+        tokio::task::yield_now().await;
+    }
+    let mut index = PatchIndex::default();
+    start = 0;
+    while start < total {
+        let end = start.saturating_add(TRANSCRIPT_CHUNK_SIZE).min(total);
+        for part in store.read_parts_range(user, thread, start, end).await? {
+            let Some(tool) = part.tool.filter(|tool| tool.status != "started") else {
+                continue;
+            };
+            let invocation = nonempty(tool.tool_invocation_id.as_deref());
+            let position = invocation
+                .and_then(|invocation| {
+                    by_invocation.get(&(part.run_id.clone(), invocation.to_owned()))
+                })
+                .copied()
+                .or_else(|| {
+                    if !tool.name.is_empty() && tool.name != "apply_patch" {
+                        return None;
+                    }
+                    let calls = by_call_id.get(&(part.run_id.clone(), tool.call_id.clone()))?;
+                    let mut candidates = calls
+                        .iter()
+                        .filter(|call| invocation.is_none() || call.invocation.is_none());
+                    candidates
+                        .clone()
+                        .rev()
+                        .find(|call| call.position.0 < part.number)
+                        .or_else(|| candidates.next())
+                        .map(|call| call.position)
+                });
+            if let Some(position) = position {
+                index.results.entry(position).or_insert(part.number);
+            } else if tool.name == "apply_patch" {
+                index.orphans.insert(part.number);
+            }
+        }
+        start = end;
+        tokio::task::yield_now().await;
+    }
+    Ok(index)
+}
+
+async fn read_page(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    mut cursor: MonitorCursor,
+    total: u32,
     filter: &MonitorFilter,
     max_chars: usize,
 ) -> anyhow::Result<MonitorPage> {
-    let replica_id: String = replica.state("replicaId")?.context("replica id missing")?;
-    let revision = u64::try_from(replica.generation()?).unwrap_or(0);
-    let mut cursor = match cursor {
-        None => MonitorCursor {
-            thread_id: thread_id.to_string(),
-            replica_id: replica_id.clone(),
-            ..MonitorCursor::default()
-        },
-        Some(cursor) => {
-            if cursor.thread_id != thread_id {
-                return Err(MonitorReadError::WrongThread.into());
+    let mut page = PageBuilder::new(max_chars);
+    let mut patches = None;
+    while cursor.part < total {
+        let end = cursor.part.saturating_add(TRANSCRIPT_CHUNK_SIZE).min(total);
+        let parts = store
+            .read_parts_range(user, thread, cursor.part, end)
+            .await?;
+        for part in parts {
+            anyhow::ensure!(part.number == cursor.part, "monitor transcript has a gap");
+            if filter
+                .only_run_id
+                .as_deref()
+                .is_some_and(|run| run != part.run_id)
+            {
+                cursor.next_part();
+                continue;
             }
-            if cursor.replica_id != replica_id || cursor.revision > revision {
-                return Err(MonitorReadError::MonitorCursorReset.into());
+            if let Some(prompt) = &part.prompt
+                && prompt.hidden.is_none()
+                && !filter.hidden_prompt_runs.contains(&part.run_id)
+                && !page.text(
+                    format!("prompt:{}", part.source_key),
+                    &prompt.text,
+                    true,
+                    &mut cursor.offset,
+                )?
+            {
+                return page.finish(cursor, true);
             }
-            cursor
-        }
-    };
-    let max_chars = max_chars.clamp(1, MONITOR_PAGE_CHAR_LIMIT);
-
-    let prefix = replica.downloaded_prefix()?;
-    let ready_end = u64::from(prefix) * POSITION_STRIDE;
-
-    if let Some(resume) = cursor.resume.take() {
-        let (entry, next) = resume_entry(replica, &resume, max_chars)?;
-        cursor.resume = next;
-        cursor.revision = revision;
-        let scan_end = replica.first_pending_patch_sequence(cursor.scanned, ready_end)?;
-        let has_more = cursor.resume.is_some()
-            || !replica
-                .project_completed(cursor.scanned, scan_end)?
-                .is_empty()
-            || prefix < replica.total()?;
-        return Ok(MonitorPage {
-            entries: vec![entry],
-            next_cursor: encode_cursor(&cursor)?,
-            has_more,
-        });
-    }
-
-    let scan_end = replica.first_pending_patch_sequence(cursor.scanned, ready_end)?;
-    let entries = replica.project_completed(cursor.scanned, scan_end)?;
-    let mut output: Vec<MonitorEntry> = Vec::new();
-    let mut used = 0usize;
-    let mut exhausted = true;
-    for (sequence, run, mut entry) in entries {
-        let patch_identity = if matches!(entry, MonitorEntry::Patch { .. }) {
-            let source = replica
-                .patch_sources(sequence, sequence + 1)?
-                .pop()
-                .context("patch source missing")?;
-            let result = match replica.patch_result_number(&source)? {
-                Some(number) => replica.part(number)?,
-                None => None,
-            };
-            let identity = result
-                .and_then(|part| WorkItem::tool_event(&part))
-                .and_then(|event| event.identity());
-            identity.map(|identity| (source.canonical, (source.run_id, identity)))
-        } else {
-            None
-        };
-        if let Some((true, identity)) = &patch_identity
-            && cursor.fallback_patches.remove(identity)
-        {
-            cursor.scanned = sequence + 1;
-            continue;
-        }
-        if !filter.keeps(&run, &entry) {
-            cursor.scanned = sequence + 1;
-            continue;
-        }
-        if used == max_chars {
-            exhausted = false;
-            break;
-        }
-        if let MonitorEntry::Patch { changes, .. } = &entry {
-            let first_cost = changes.first().map_or(0, patch_change_cost);
-            anyhow::ensure!(
-                first_cost <= max_chars,
-                "patch path exceeds monitor page budget"
-            );
-            if first_cost > max_chars - used {
-                exhausted = false;
-                break;
-            }
-        }
-        if let Some((false, identity)) = patch_identity {
-            cursor.fallback_patches.insert(identity);
-        }
-        cursor.scanned = sequence + 1;
-        cursor.resume = truncate_entry(&mut entry, &mut used, max_chars);
-        output.push(entry);
-        if cursor.resume.is_some() {
-            exhausted = false;
-            break;
-        }
-    }
-    if exhausted {
-        cursor.scanned = scan_end;
-    }
-    anyhow::ensure!(used <= max_chars, "monitor page exceeded the char budget");
-    cursor.revision = revision;
-    let has_more =
-        cursor.resume.is_some() || cursor.scanned < scan_end || prefix < replica.total()?;
-    Ok(MonitorPage {
-        entries: output,
-        next_cursor: encode_cursor(&cursor)?,
-        has_more,
-    })
-}
-
-fn truncate_entry(
-    entry: &mut MonitorEntry,
-    used: &mut usize,
-    max_chars: usize,
-) -> Option<ResumeEntry> {
-    match entry {
-        MonitorEntry::Prompt { id, text } | MonitorEntry::Text { id, text } => {
-            let budget = max_chars.saturating_sub(*used);
-            if let Some((end, _)) = text.char_indices().nth(budget) {
-                text.truncate(end);
-                *used += budget;
-                Some(ResumeEntry {
-                    id: id.clone(),
-                    source_offset: budget as u64,
-                    patch: false,
-                })
-            } else {
-                *used += text.chars().count();
-                None
-            }
-        }
-        MonitorEntry::Patch { id, changes, .. } => {
-            for (index, change) in changes.iter().enumerate() {
-                let cost = patch_change_cost(change);
-                if used.saturating_add(cost) > max_chars && index > 0 {
-                    changes.truncate(index);
-                    return Some(ResumeEntry {
-                        id: id.clone(),
-                        source_offset: index as u64,
-                        patch: true,
-                    });
+            if let Some(completion) = &part.completion {
+                for (index, item) in completion.items.iter().enumerate().skip(cursor.item) {
+                    cursor.item = index;
+                    match item["type"].as_str() {
+                        Some("text") => {
+                            if !page.text(
+                                format!("text:{}:{index}", part.source_key),
+                                item["text"].as_str().unwrap_or_default(),
+                                false,
+                                &mut cursor.offset,
+                            )? {
+                                return page.finish(cursor, true);
+                            }
+                        }
+                        Some("tool-call") if item["name"] == "apply_patch" => {
+                            if patches.is_none() {
+                                patches = Some(patch_index(store, user, thread, total).await?);
+                            }
+                            let number = patches
+                                .as_ref()
+                                .and_then(|patches| patches.results.get(&(part.number, index)))
+                                .copied();
+                            let Some(number) = number else {
+                                // Keep the call position so a later result cannot be skipped.
+                                return page.finish(cursor, false);
+                            };
+                            let result = store
+                                .read_parts(user, thread, &[number])
+                                .await?
+                                .pop()
+                                .context("patch result part is missing")?;
+                            let tool = result.tool.context("patch result body is missing")?;
+                            if !page.patch(
+                                format!("patch:{}:{index}", part.source_key),
+                                &tool,
+                                &mut cursor.offset,
+                            )? {
+                                return page.finish(cursor, true);
+                            }
+                        }
+                        _ => {}
+                    }
+                    cursor.item = index + 1;
+                    cursor.offset = 0;
                 }
-                *used = used.saturating_add(cost);
             }
-            None
+            if let Some(tool) = &part.tool
+                && tool.status != "started"
+                && tool.name == "apply_patch"
+            {
+                if patches.is_none() {
+                    patches = Some(patch_index(store, user, thread, total).await?);
+                }
+                if patches
+                    .as_ref()
+                    .is_some_and(|patches| patches.orphans.contains(&part.number))
+                    && !page.patch(
+                        format!("patch:{}", part.source_key),
+                        tool,
+                        &mut cursor.offset,
+                    )?
+                {
+                    return page.finish(cursor, true);
+                }
+            }
+            cursor.next_part();
         }
+        anyhow::ensure!(cursor.part == end, "monitor transcript has a gap");
+        tokio::task::yield_now().await;
     }
+    page.finish(cursor, false)
 }
 
 fn patch_change_cost(change: &PatchChangeSummary) -> usize {
-    change.path.chars().count()
+    change.operation.chars().count()
+        + change.path.chars().count()
         + change
             .source_path
             .as_ref()
             .map_or(0, |source| source.chars().count())
-}
-
-fn resume_entry(
-    replica: &WorkReplica,
-    resume: &ResumeEntry,
-    max_chars: usize,
-) -> anyhow::Result<(MonitorEntry, Option<ResumeEntry>)> {
-    let mut entry = if resume.patch {
-        let sequence: u64 = resume
-            .id
-            .strip_prefix("patch-")
-            .context("invalid patch resume identity")?
-            .parse()?;
-        let source = replica.db.query_row(
-            &format!("SELECT {ITEM_COLUMNS} FROM source_refs s WHERE number=? AND offset=?"),
-            [
-                i64::try_from(sequence / POSITION_STRIDE)?,
-                i64::try_from(sequence % POSITION_STRIDE / 2)?,
-            ],
-            read_item,
-        )?;
-        let MonitorEntry::Patch {
-            ok, mut changes, ..
-        } = replica
-            .patch_outcome(&source)?
-            .context("patch resume result is gone")?
-        else {
-            anyhow::bail!("patch resume points at another entry kind");
-        };
-        let offset = usize::try_from(resume.source_offset)?;
-        anyhow::ensure!(
-            offset <= changes.len(),
-            "patch resume offset exceeds result"
-        );
-        drop(changes.drain(..offset));
-        anyhow::ensure!(
-            changes.first().map_or(0, patch_change_cost) <= max_chars,
-            "patch path exceeds monitor page budget"
-        );
-        MonitorEntry::Patch {
-            id: resume.id.clone(),
-            ok,
-            changes,
-        }
-    } else {
-        let row: Option<(String, String)> = replica
-            .db
-            .query_row(
-                "SELECT kind, json_extract(body,'$.text') FROM rows WHERE id=? AND body IS NOT NULL",
-                [&resume.id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let (kind, text) = row.with_context(|| format!("monitor entry {} is gone", resume.id))?;
-        let offset = usize::try_from(resume.source_offset).unwrap_or(usize::MAX);
-        let text = text.chars().skip(offset).collect();
-        match kind.as_str() {
-            "prompt" => MonitorEntry::Prompt {
-                id: resume.id.clone(),
-                text,
-            },
-            "text" => MonitorEntry::Text {
-                id: resume.id.clone(),
-                text,
-            },
-            other => anyhow::bail!("monitor resume points at a {other} row"),
-        }
-    };
-    let mut used = 0;
-    let mut next = truncate_entry(&mut entry, &mut used, max_chars);
-    if let Some(next) = &mut next {
-        next.source_offset = next.source_offset.saturating_add(resume.source_offset);
-    }
-    Ok((entry, next))
-}
-
-impl WorkReplica {
-    fn patch_sources(&self, after: u64, boundary: u64) -> anyhow::Result<Vec<WorkItem>> {
-        let sql = format!(
-            "SELECT {ITEM_COLUMNS} FROM source_refs s JOIN parts p ON p.number=s.number
-            WHERE s.number BETWEEN ?1/{POSITION_STRIDE} AND (?2-1)/{POSITION_STRIDE}
-            AND sequence>=?1 AND sequence<?2 AND CASE WHEN canonical=1
-                THEN json_extract(p.body,'$.completion.items['||s.offset||'].name')
-                ELSE json_extract(p.body,'$.tool.name') END='apply_patch'
-            AND {DISPLAY_ITEM} ORDER BY sequence"
-        );
-        Ok(self
-            .db
-            .prepare(&sql)?
-            .query_map(
-                rusqlite::params![i64::try_from(after)?, i64::try_from(boundary)?],
-                read_item,
-            )?
-            .collect::<Result<_, _>>()?)
-    }
-
-    fn first_pending_patch_sequence(&self, after: u64, boundary: u64) -> anyhow::Result<u64> {
-        let mut next = boundary;
-        for source in self.patch_sources(after, boundary)? {
-            if self.patch_outcome(&source)?.is_none() {
-                next = next.min(source.source.sequence());
-            }
-        }
-        Ok(next)
-    }
-
-    fn patch_result_number(&self, source: &WorkItem) -> anyhow::Result<Option<u32>> {
-        Ok(match source.result_part {
-            Some(number) => Some(number),
-            None => ReadIndex(&self.db)
-                .result_event(source)?
-                .and_then(|event| event.result_part),
-        })
-    }
-
-    fn patch_outcome(&self, source: &WorkItem) -> anyhow::Result<Option<MonitorEntry>> {
-        let Some(number) = self.patch_result_number(source)? else {
-            return Ok(None);
-        };
-        let prefix = self.downloaded_prefix()?;
-        if number >= prefix {
-            return Ok(None);
-        }
-        let part = self.part(number)?.context("patch result part missing")?;
-        let tool = part.tool.context("patch result body missing")?;
-        let ok = tool.status == "completed";
-        Ok(Some(MonitorEntry::Patch {
-            id: format!("patch-{}", source.source.sequence()),
-            ok,
-            changes: if ok {
-                patch_changes(tool.output.as_ref())
-            } else {
-                Vec::new()
-            },
-        }))
-    }
-    fn total(&self) -> anyhow::Result<u32> {
-        Ok(self.state("total")?.unwrap_or(0))
-    }
-
-    fn project_completed(
-        &self,
-        after: u64,
-        boundary: u64,
-    ) -> anyhow::Result<Vec<(u64, String, MonitorEntry)>> {
-        let mut entries: Vec<(u64, String, MonitorEntry)> = Vec::new();
-        let after_i = i64::try_from(after)?;
-        let boundary_i = i64::try_from(boundary)?;
-        let mut statement = self.db.prepare(
-            "SELECT id, sequence, kind, json_extract(body,'$.text'), json_extract(body,'$.runId') FROM rows
-            WHERE sequence>=? AND sequence<? AND body IS NOT NULL AND kind IN ('prompt','text')
-            ORDER BY sequence",
-        )?;
-        let rows: Vec<(String, i64, String, Option<String>, String)> = statement
-            .query_map(rusqlite::params![after_i, boundary_i], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })?
-            .collect::<Result<_, _>>()?;
-        for (id, sequence, kind, text, run) in rows {
-            let text = text.unwrap_or_default();
-            let entry = if kind == "prompt" {
-                MonitorEntry::Prompt { id, text }
-            } else {
-                MonitorEntry::Text { id, text }
-            };
-            entries.push((u64::try_from(sequence)?, run, entry));
-        }
-
-        for source in self.patch_sources(after, boundary)? {
-            if let Some(entry) = self.patch_outcome(&source)? {
-                entries.push((source.source.sequence(), source.run_id, entry));
-            }
-        }
-        entries.sort_by_key(|(sequence, ..)| *sequence);
-        Ok(entries)
-    }
+        + 1
 }
 
 fn patch_changes(output: Option<&JsonValue>) -> Vec<PatchChangeSummary> {

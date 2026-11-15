@@ -36,6 +36,24 @@ Transcript parts record prompts, model completions, and tool results. A completi
 
 Transcripts also contain `started` tool parts, `work` section data, and tool names and inputs copied onto results. Older Sprocket versions read these. Current versions skip `started` parts and read names and inputs from the call item.
 
+### Transcript files
+
+<Snippet file="unreleased.mdx" />
+
+Thread files live in `transcripts/<user-id>/<thread-id>/`:
+
+| Path                   | Contents                                                           |
+| ---------------------- | ------------------------------------------------------------------ |
+| `parts/00000000.jsonl` | Parts 0-99, sorted by number. Filenames start each 100-part range. |
+| `attachments/`         | Downloaded and uploaded attachments, with their metadata.          |
+| `command-logs/`        | Command output and session details.                                |
+
+Convex holds the full transcript. Sprocket caches recent parts first and downloads older parts while the thread is open in a tab or an agent is running. Closing the last tab stops background downloads unless a run is still active.
+
+From the thread directory, `cat parts/*.jsonl` reads cached parts in order. The cache can have gaps while older history downloads.
+
+After upgrading, the first open of a thread replaces its old transcript cache, including SQLite and `state.json`. Attachments and command logs are preserved.
+
 ## Credentials
 
 Sprocket stores your sign-in in the OS keyring when one is available. Otherwise it falls back to an unencrypted file in the data directory that only your user can read, and `sprocket login` tells you so.

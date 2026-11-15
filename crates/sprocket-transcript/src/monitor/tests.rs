@@ -1,716 +1,90 @@
 use serde_json::json;
 
 use super::*;
-use crate::sections::WorkPosition;
-use crate::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 
-fn patch_id_at(part: u32, item: u32) -> String {
-    format!("patch-{}", WorkPosition { part, item }.sequence())
-}
-
-fn prompt_part(number: u32, text: &str) -> TranscriptPart {
+fn prompt(number: u32, text: &str) -> TranscriptPart {
     serde_json::from_value(json!({
         "number": number,
         "sourceKey": format!("prompt:{number}"),
         "kind": "prompt",
         "runId": "run",
-        "prompt": { "text": text, "imageUploads": [] }
+        "prompt": {"text": text, "imageUploads": []}
     }))
     .unwrap()
 }
 
-fn completion_part(number: u32, items: Vec<JsonValue>) -> TranscriptPart {
+fn completion(number: u32, items: Vec<JsonValue>) -> TranscriptPart {
     serde_json::from_value(json!({
         "number": number,
-        "sourceKey": format!("completion:run:{number}"),
+        "sourceKey": format!("completion:{number}"),
         "kind": "completion",
         "runId": "run",
-        "completion": { "items": items }
+        "completion": {"items": items}
     }))
     .unwrap()
 }
 
-fn tool_part(
-    number: u32,
-    invocation: Option<&str>,
-    call_id: &str,
-    name: &str,
-    status: &str,
-    output: Option<JsonValue>,
-) -> TranscriptPart {
-    tool_part_in_run(number, "run", invocation, call_id, name, status, output)
-}
-
-fn tool_part_in_run(
-    number: u32,
-    run: &str,
-    invocation: Option<&str>,
-    call_id: &str,
-    name: &str,
-    status: &str,
-    output: Option<JsonValue>,
-) -> TranscriptPart {
-    TranscriptPart {
-        number,
-        source_key: format!("tool:{}:{status}:{number}", invocation.unwrap_or(call_id)),
-        kind: TranscriptPartKind::Tool,
-        run_id: run.into(),
-        created_at: Some(u64::from(number) * 10),
-        prompt: None,
-        completion: None,
-        tool: Some(TranscriptToolBody {
-            job_id: None,
-            tool_invocation_id: invocation.map(str::to_owned),
-            call_id: call_id.into(),
-            name: name.into(),
-            input: None,
-            output,
-            status: status.into(),
-        }),
-        work: Default::default(),
-    }
-}
-
-fn completion_part_in_run(number: u32, run: &str, items: Vec<JsonValue>) -> TranscriptPart {
-    let mut part = completion_part(number, items);
-    part.run_id = run.into();
-    part.source_key = format!("completion:{run}:{number}");
-    part
-}
-
-fn patch_call_item(call_id: &str) -> JsonValue {
+fn patch_call(invocation: &str) -> JsonValue {
     json!({
         "type": "tool-call",
-        "callId": call_id,
+        "callId": "reused-call-id",
+        "toolInvocationId": invocation,
         "name": "apply_patch",
-        "input": { "patch": "*** Begin Patch\n*** End Patch" }
+        "input": {"patch": "*** Begin Patch\n*** End Patch"}
     })
 }
 
-fn patch_call_with_invocation(call_id: &str, invocation: &str) -> JsonValue {
-    let mut item = patch_call_item(call_id);
-    item["toolInvocationId"] = json!(invocation);
-    item
+fn result(number: u32, run: &str, invocation: &str, status: &str) -> TranscriptPart {
+    serde_json::from_value(json!({
+        "number": number,
+        "sourceKey": format!("result:{number}"),
+        "kind": "tool",
+        "runId": run,
+        "tool": {
+            "toolInvocationId": invocation,
+            "status": status,
+            "output": {"changes": [{"operation": "modified", "path": "src/main.rs"}]}
+        }
+    }))
+    .unwrap()
 }
 
-fn open_replica() -> (tempfile::TempDir, WorkReplica) {
-    let dir = tempfile::tempdir().unwrap();
-    let replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    (dir, replica)
-}
-
-fn page(
-    replica: &WorkReplica,
+async fn local_page(
+    store: &TranscriptStore,
     cursor: Option<&str>,
+    total: u32,
     max_chars: usize,
-) -> anyhow::Result<MonitorPage> {
+) -> MonitorPage {
+    let _lease = store.open_thread("user", "thread").await.unwrap();
     read_page(
-        replica,
+        store,
+        "user",
         "thread",
-        cursor.map(parse_cursor).transpose()?,
+        MonitorCursor::read("thread", cursor).unwrap(),
+        total,
         &MonitorFilter::default(),
         max_chars,
     )
+    .await
+    .unwrap()
 }
 
-fn collect_all(
-    replica: &WorkReplica,
-    mut current: MonitorPage,
-    max_chars: usize,
-) -> Vec<MonitorEntry> {
-    let mut entries = Vec::new();
-    for _ in 0..64 {
-        let cost: usize = current
-            .entries
-            .iter()
-            .map(|entry| match entry {
-                MonitorEntry::Prompt { text, .. } | MonitorEntry::Text { text, .. } => {
-                    text.chars().count()
-                }
-                MonitorEntry::Patch { changes, .. } => changes.iter().map(patch_change_cost).sum(),
-            })
-            .sum();
-        assert!(cost <= max_chars, "monitor page exceeded the char budget");
-        entries.append(&mut current.entries);
-        if !current.has_more {
-            return entries;
-        }
-        current = page(replica, Some(&current.next_cursor), max_chars).unwrap();
-    }
-    panic!("monitor paging did not terminate");
+async fn cached_page(store: &TranscriptStore, cursor: Option<&str>, total: u32) -> MonitorPage {
+    download_monitor_page(
+        store,
+        "user",
+        "thread",
+        cursor,
+        total,
+        &MonitorFilter::default(),
+        |_, _| async { anyhow::bail!("cached page must not fetch") },
+    )
+    .await
+    .unwrap()
 }
 
 fn texts(entries: &[MonitorEntry]) -> Vec<&str> {
     entries
-        .iter()
-        .map(|entry| match entry {
-            MonitorEntry::Prompt { text, .. } | MonitorEntry::Text { text, .. } => text.as_str(),
-            MonitorEntry::Patch { .. } => "<patch>",
-        })
-        .collect()
-}
-
-#[test]
-fn first_prompt_and_canonical_ordering_with_patch_sources() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                prompt_part(0, "first task"),
-                completion_part(
-                    1,
-                    vec![
-                        json!({"type":"reasoning","text":"secret chain of thought"}),
-                        json!({"type":"text","text":"working on it","startedAt":10.0,"completedAt":11.0}),
-                        patch_call_item("c1"),
-                        json!({"type":"text","text":"done","startedAt":20.0,"completedAt":21.0}),
-                    ],
-                ),
-                tool_part(
-                    2,
-                    Some("inv-1"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[
-                        {"operation":"renamed","path":"new.txt","source":"old.txt"},
-                        {"operation":"copied","path":"b.txt","source":"a.txt"},
-                        {"operation":"updated","path":"c.txt"}
-                    ]})),
-                ),
-                prompt_part(3, "second task"),
-                serde_json::from_value(json!({
-                    "number": 4,
-                    "sourceKey": "hiddenPrompt:run:claim:environment",
-                    "kind": "prompt",
-                    "runId": "run",
-                    "prompt": { "text": "# Environment", "imageUploads": [], "hidden": "environment" }
-                }))
-                .unwrap(),
-            ],
-        )
-        .unwrap();
-
-    let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(!page.has_more);
-    let kinds: Vec<&str> = page
-        .entries
-        .iter()
-        .map(|entry| match entry {
-            MonitorEntry::Prompt { .. } => "prompt",
-            MonitorEntry::Text { .. } => "text",
-            MonitorEntry::Patch { .. } => "patch",
-        })
-        .collect();
-    assert_eq!(kinds, ["prompt", "text", "patch", "text", "prompt"]);
-    let MonitorEntry::Prompt { id, text } = &page.entries[0] else {
-        panic!()
-    };
-    assert_eq!(id, "prompt-0");
-    assert_eq!(text, "first task");
-    let MonitorEntry::Patch { ok, changes, .. } = &page.entries[2] else {
-        panic!()
-    };
-    assert!(ok);
-    assert_eq!(changes.len(), 3);
-    assert_eq!(changes[0].operation, "renamed");
-    assert_eq!(changes[0].path, "new.txt");
-    assert_eq!(changes[0].source_path.as_deref(), Some("old.txt"));
-    assert_eq!(changes[1].source_path.as_deref(), Some("a.txt"));
-    assert_eq!(changes[2].source_path, None);
-}
-
-#[test]
-fn excludes_reasoning_other_tools_patch_inputs_and_started_events() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(
-                    0,
-                    vec![
-                        json!({"type":"reasoning","text":"do not leak"}),
-                        json!({"type":"tool-call","callId":"r1","name":"read_file","input":{"path":"x"}}),
-                        patch_call_item("c1"),
-                    ],
-                ),
-                tool_part(1, Some("inv-r"), "r1", "read_file", "completed", Some(json!({"content":"file body"}))),
-                tool_part(2, Some("inv-c"), "c1", "apply_patch", "started", None),
-            ],
-        )
-        .unwrap();
-    let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(page.entries.is_empty(), "the patch has no terminal result");
-    assert!(!page.has_more);
-    let wire = serde_json::to_value(&page).unwrap();
-    assert_eq!(wire["entries"], json!([]));
-    assert!(!wire.to_string().contains("Begin Patch"));
-}
-
-#[test]
-fn orphan_started_patch_does_not_pin_monitor_progress() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                tool_part(0, Some("inv-c"), "c1", "apply_patch", "started", None),
-                prompt_part(1, "next task"),
-            ],
-        )
-        .unwrap();
-    let first = page(&replica, None, 1000).unwrap();
-    assert_eq!(texts(&first.entries), ["next task"]);
-    assert!(!first.has_more);
-    let second = page(&replica, Some(&first.next_cursor), 1000).unwrap();
-    assert!(second.entries.is_empty());
-    assert!(!second.has_more);
-}
-
-#[test]
-fn failed_patch_reports_failure_without_claiming_changes() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(0, vec![patch_call_item("c1")]),
-                tool_part(
-                    1,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "failed",
-                    Some(json!({"error":"failed to parse","status":"failed"})),
-                ),
-            ],
-        )
-        .unwrap();
-    let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(page.entries.len(), 1);
-    let MonitorEntry::Patch { ok, changes, .. } = &page.entries[0] else {
-        panic!()
-    };
-    assert!(!ok);
-    assert!(changes.is_empty());
-}
-
-#[test]
-fn legacy_patch_results_without_source_paths_stay_sourceless() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(0, vec![patch_call_item("c1")]),
-                tool_part(
-                    1,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"renamed","path":"new.txt"}]})),
-                ),
-            ],
-        )
-        .unwrap();
-    let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    let MonitorEntry::Patch { ok, changes, .. } = &page.entries[0] else {
-        panic!()
-    };
-    assert!(ok);
-    assert_eq!(changes.len(), 1);
-    assert_eq!(changes[0].source_path, None);
-    assert!(
-        serde_json::to_value(&changes[0])
-            .unwrap()
-            .get("sourcePath")
-            .is_none()
-    );
-}
-
-#[test]
-fn canonical_patch_without_started_event_blocks_until_result_lands() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(0, vec![patch_call_with_invocation("c1", "inv-c")]),
-                completion_part(
-                    1,
-                    vec![json!({"type":"reasoning","text":"excluded but advances coverage"})],
-                ),
-                prompt_part(2, "later prompt"),
-            ],
-        )
-        .unwrap();
-
-    let first = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(
-        first.entries.is_empty(),
-        "unfinished patch pins the boundary"
-    );
-    assert!(!first.has_more);
-
-    replica
-        .save_parts(
-            "thread",
-            &[tool_part(
-                3,
-                Some("inv-r"),
-                "r1",
-                "read_file",
-                "completed",
-                Some(json!({"content":"noise"})),
-            )],
-        )
-        .unwrap();
-    let second = page(&replica, Some(&first.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(second.entries.is_empty());
-    assert!(!second.has_more);
-
-    replica
-        .save_parts(
-            "thread",
-            &[tool_part(
-                4,
-                Some("inv-c"),
-                "c1",
-                "apply_patch",
-                "completed",
-                Some(json!({"changes":[{"operation":"created","path":"made.txt"}]})),
-            )],
-        )
-        .unwrap();
-    let third = page(&replica, Some(&second.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    let kinds: Vec<&str> = third
-        .entries
-        .iter()
-        .map(|entry| match entry {
-            MonitorEntry::Patch { .. } => "patch",
-            MonitorEntry::Prompt { .. } => "prompt",
-            MonitorEntry::Text { .. } => "text",
-        })
-        .collect();
-    assert_eq!(kinds, ["patch", "prompt"]);
-    let MonitorEntry::Patch { id, changes, .. } = &third.entries[0] else {
-        panic!()
-    };
-    assert_eq!(id, &patch_id_at(0, 0));
-    assert_eq!(changes[0].path, "made.txt");
-    let fourth = page(&replica, Some(&third.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(fourth.entries.is_empty());
-    assert!(!fourth.has_more);
-}
-
-#[test]
-fn patch_result_pairs_by_canonical_identity_without_started_event() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                tool_part(
-                    0,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"deleted","path":"gone.txt"}]})),
-                ),
-                completion_part(1, vec![patch_call_with_invocation("c1", "inv-c")]),
-            ],
-        )
-        .unwrap();
-    let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(page.entries.len(), 1);
-    let MonitorEntry::Patch { id, ok, changes } = &page.entries[0] else {
-        panic!()
-    };
-    assert_eq!(id, &patch_id_at(1, 0));
-    assert!(ok);
-    assert_eq!(changes[0].operation, "deleted");
-}
-
-#[test]
-fn reused_call_ids_pair_within_their_own_run() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part_in_run(
-                    0,
-                    "run-a",
-                    vec![patch_call_with_invocation("dup", "inv-a")],
-                ),
-                tool_part_in_run(
-                    1,
-                    "run-a",
-                    Some("inv-a"),
-                    "dup",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"created","path":"a.txt"}]})),
-                ),
-                completion_part_in_run(
-                    2,
-                    "run-b",
-                    vec![patch_call_with_invocation("dup", "inv-b")],
-                ),
-                tool_part_in_run(
-                    3,
-                    "run-b",
-                    Some("inv-b"),
-                    "dup",
-                    "apply_patch",
-                    "started",
-                    None,
-                ),
-            ],
-        )
-        .unwrap();
-    let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(page.entries.len(), 1, "run-b's patch is still running");
-    let MonitorEntry::Patch { id, changes, .. } = &page.entries[0] else {
-        panic!()
-    };
-    assert_eq!(id, "patch-0");
-    assert_eq!(changes[0].path, "a.txt");
-    assert!(!page.has_more);
-}
-
-#[test]
-fn invocation_json_disambiguates_reused_call_ids_in_both_download_orders() {
-    let parts = [
-        completion_part(0, vec![patch_call_with_invocation("dup", "inv-a")]),
-        completion_part(1, vec![patch_call_with_invocation("dup", "inv-b")]),
-        tool_part(
-            2,
-            Some("inv-b"),
-            "dup",
-            "apply_patch",
-            "completed",
-            Some(json!({"changes":[{"operation":"created","path":"b.txt"}]})),
-        ),
-        tool_part(
-            3,
-            Some("inv-a"),
-            "dup",
-            "apply_patch",
-            "completed",
-            Some(json!({"changes":[{"operation":"created","path":"a.txt"}]})),
-        ),
-    ];
-    for newest_first in [false, true] {
-        let (_dir, mut replica) = open_replica();
-        let ordered: Vec<_> = if newest_first {
-            parts.iter().rev().collect()
-        } else {
-            parts.iter().collect()
-        };
-        for part in ordered {
-            replica
-                .save_parts("thread", std::slice::from_ref(part))
-                .unwrap();
-            if newest_first && part.number != 0 {
-                let pending = page(&replica, None, 1000).unwrap();
-                assert!(pending.entries.is_empty());
-                assert!(pending.has_more);
-            }
-        }
-        let result = page(&replica, None, 1000).unwrap();
-        let patches: Vec<_> = result
-            .entries
-            .iter()
-            .map(|entry| {
-                let MonitorEntry::Patch { id, changes, .. } = entry else {
-                    panic!()
-                };
-                (id.as_str(), changes[0].path.as_str())
-            })
-            .collect();
-        assert_eq!(
-            patches,
-            [
-                (patch_id_at(0, 0).as_str(), "a.txt"),
-                (patch_id_at(1, 0).as_str(), "b.txt"),
-            ]
-        );
-        assert!(!result.has_more);
-    }
-}
-
-#[test]
-fn committed_completion_text_does_not_require_optional_timing() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[completion_part(
-                0,
-                vec![
-                    json!({"type":"text","text":" \n\t"}),
-                    json!({"type":"text","text":"without timing"}),
-                    json!({"type":"reasoning","text":" \t"}),
-                    json!({"type":"text","text":"committed","startedAt":10.0,"completedAt":12.0}),
-                ],
-            )],
-        )
-        .unwrap();
-    let first = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(texts(&first.entries), ["without timing", "committed"]);
-    assert!(!first.has_more);
-}
-
-#[test]
-fn tool_only_patch_uses_terminal_source_position_and_ignores_started() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                tool_part(0, Some("inv-c"), "c1", "apply_patch", "started", None),
-                tool_part(
-                    1,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"updated","path":"a.txt"}]})),
-                ),
-                prompt_part(2, "next"),
-            ],
-        )
-        .unwrap();
-    let first = page(&replica, None, 1000).unwrap();
-    assert_eq!(first.entries.len(), 2);
-    let MonitorEntry::Patch { id, ok, changes } = &first.entries[0] else {
-        panic!()
-    };
-    assert_eq!(id, &patch_id_at(1, 0));
-    assert!(*ok);
-    assert_eq!(changes[0].path, "a.txt");
-    let next = page(&replica, Some(&first.next_cursor), 1000).unwrap();
-    assert!(next.entries.is_empty());
-    assert!(!next.has_more);
-}
-
-#[test]
-fn late_canonical_call_does_not_repeat_an_observed_tool_only_result() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[tool_part(
-                0,
-                Some("inv-c"),
-                "c1",
-                "apply_patch",
-                "completed",
-                Some(json!({"changes":[{"operation":"updated","path":"a.txt"}]})),
-            )],
-        )
-        .unwrap();
-    let first = page(&replica, None, 1000).unwrap();
-    assert_eq!(first.entries.len(), 1);
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(1, vec![patch_call_item("c1")]),
-                prompt_part(2, "tail"),
-            ],
-        )
-        .unwrap();
-    let second = page(&replica, Some(&first.next_cursor), 1000).unwrap();
-    assert_eq!(texts(&second.entries), ["tail"]);
-    assert!(!second.has_more);
-    let fresh = page(&replica, None, 1000).unwrap();
-    assert_eq!(fresh.entries.len(), 2);
-}
-
-#[test]
-fn patch_result_beyond_a_download_gap_waits_for_contiguous_coverage() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(0, vec![patch_call_item("c1")]),
-                tool_part(
-                    2,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"updated","path":"a.txt"}]})),
-                ),
-            ],
-        )
-        .unwrap();
-    let first = page(&replica, None, 1000).unwrap();
-    assert!(first.entries.is_empty());
-    replica
-        .save_parts("thread", &[prompt_part(1, "middle")])
-        .unwrap();
-    let second = page(&replica, Some(&first.next_cursor), 1000).unwrap();
-    assert_eq!(second.entries.len(), 2);
-    assert!(matches!(second.entries[0], MonitorEntry::Patch { .. }));
-    assert_eq!(texts(&second.entries)[1], "middle");
-    assert!(!second.has_more);
-}
-
-#[test]
-fn paged_tool_only_patch_resumes_after_its_canonical_call_arrives() {
-    let (_dir, mut replica) = open_replica();
-    let changes: Vec<JsonValue> = (0..20)
-        .map(|index| json!({"operation":"updated","path":format!("file-{index}.txt")}))
-        .collect();
-    replica
-        .save_parts(
-            "thread",
-            &[tool_part(
-                0,
-                Some("inv-c"),
-                "c1",
-                "apply_patch",
-                "completed",
-                Some(json!({"changes": changes})),
-            )],
-        )
-        .unwrap();
-    let first = page(&replica, None, 30).unwrap();
-    assert!(first.has_more);
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(1, vec![patch_call_item("c1")]),
-                prompt_part(2, "tail"),
-            ],
-        )
-        .unwrap();
-    let entries = collect_all(&replica, first, 30);
-    let paths: Vec<_> = entries
-        .iter()
-        .flat_map(|entry| match entry {
-            MonitorEntry::Patch { changes, .. } => {
-                changes.iter().map(|change| change.path.clone()).collect()
-            }
-            _ => Vec::new(),
-        })
-        .collect();
-    assert_eq!(
-        paths,
-        (0..20)
-            .map(|index| format!("file-{index}.txt"))
-            .collect::<Vec<_>>()
-    );
-    let text_entries: Vec<_> = entries
         .iter()
         .filter_map(|entry| match entry {
             MonitorEntry::Prompt { text, .. } | MonitorEntry::Text { text, .. } => {
@@ -718,373 +92,463 @@ fn paged_tool_only_patch_resumes_after_its_canonical_call_arrives() {
             }
             MonitorEntry::Patch { .. } => None,
         })
-        .collect();
-    assert_eq!(text_entries, ["tail"]);
+        .collect()
 }
 
-#[test]
-fn full_page_defers_the_next_entry_without_empty_fragments() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts("thread", &[prompt_part(0, "12345"), prompt_part(1, "tail")])
-        .unwrap();
-    let first = page(&replica, None, 5).unwrap();
-    assert_eq!(texts(&first.entries), ["12345"]);
-    assert!(first.has_more);
-    let second = page(&replica, Some(&first.next_cursor), 5).unwrap();
-    assert_eq!(texts(&second.entries), ["tail"]);
-    assert!(!second.has_more);
-}
-
-#[test]
-fn patch_paths_are_kept_whole_when_text_uses_the_page_budget() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts(
-            "thread",
-            &[
-                prompt_part(0, "123"),
-                completion_part(1, vec![patch_call_item("c1")]),
-                tool_part(
-                    2,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"renamed","path":"new","source":"old"}]})),
-                ),
-            ],
-        )
-        .unwrap();
-    let first = page(&replica, None, 8).unwrap();
-    assert_eq!(texts(&first.entries), ["123"]);
-    assert!(first.has_more);
-    let second = page(&replica, Some(&first.next_cursor), 8).unwrap();
-    let [MonitorEntry::Patch { ok, changes, .. }] = second.entries.as_slice() else {
-        panic!()
-    };
-    assert!(ok);
-    assert_eq!(changes.len(), 1);
-    assert_eq!(changes[0].path, "new");
-    assert_eq!(changes[0].source_path.as_deref(), Some("old"));
-    assert!(!second.has_more);
-}
-
-#[test]
-fn multiple_oversized_entries_page_in_order_without_loss() {
-    let (_dir, mut replica) = open_replica();
-    let first_text: String = "a".repeat(600);
-    let second_text: String = "b".repeat(600);
-    replica
-        .save_parts(
-            "thread",
-            &[
-                prompt_part(0, &first_text),
-                completion_part(
-                    1,
-                    vec![json!({"type":"text","text":second_text,"completedAt":5.0})],
-                ),
-                prompt_part(2, "tail"),
-            ],
-        )
-        .unwrap();
-
-    let entries = collect_all(&replica, page(&replica, None, 500).unwrap(), 500);
-    let kinds: Vec<&str> = entries
+fn page_cost(entries: &[MonitorEntry]) -> usize {
+    entries
         .iter()
         .map(|entry| match entry {
-            MonitorEntry::Prompt { .. } => "prompt",
-            MonitorEntry::Text { .. } => "text",
-            MonitorEntry::Patch { .. } => "patch",
+            MonitorEntry::Prompt { id, text } | MonitorEntry::Text { id, text } => {
+                id.chars().count() + 1 + text.chars().count()
+            }
+            MonitorEntry::Patch { id, changes, .. } => {
+                id.chars().count() + 1 + changes.iter().map(patch_change_cost).sum::<usize>()
+            }
         })
-        .collect();
-    assert_eq!(kinds, ["prompt", "prompt", "text", "text", "prompt"]);
-    let reassembled_first = format!("{}{}", texts(&entries)[0], texts(&entries)[1]);
-    let reassembled_second = format!("{}{}", texts(&entries)[2], texts(&entries)[3]);
-    assert_eq!(reassembled_first, first_text);
-    assert_eq!(reassembled_second, second_text);
-    assert_eq!(texts(&entries)[4], "tail");
+        .sum()
 }
 
-#[test]
-fn unicode_text_resumes_cumulatively_on_char_boundaries() {
-    let (_dir, mut replica) = open_replica();
-    let long: String = "ab\u{1f600}".repeat(4000);
-    replica
-        .save_parts(
-            "thread",
-            &[
-                completion_part(
-                    0,
-                    vec![json!({"type":"text","text":long,"completedAt":5.0})],
-                ),
-                prompt_part(1, "tail"),
-            ],
-        )
-        .unwrap();
+async fn collect_pages(
+    store: &TranscriptStore,
+    mut cursor: Option<String>,
+    total: u32,
+    max_chars: usize,
+) -> (Vec<MonitorEntry>, String) {
+    let mut entries = Vec::new();
+    for _ in 0..64 {
+        let page = local_page(store, cursor.as_deref(), total, max_chars).await;
+        assert!(page_cost(&page.entries) <= max_chars);
+        entries.extend(page.entries);
+        if !page.has_more {
+            return (entries, page.next_cursor);
+        }
+        cursor = Some(page.next_cursor);
+    }
+    panic!("monitor paging did not finish");
+}
 
-    let first = page(&replica, None, 5000).unwrap();
-    assert_eq!(first.entries.len(), 1);
-    let MonitorEntry::Text { id, text } = &first.entries[0] else {
-        panic!()
-    };
-    assert_eq!(text.chars().count(), 5000);
-    assert_eq!(id, "text-0-0");
-    assert!(first.has_more);
-
-    let second = page(&replica, Some(&first.next_cursor), 5000).unwrap();
-    assert_eq!(second.entries.len(), 1);
-    let MonitorEntry::Text { text, .. } = &second.entries[0] else {
-        panic!()
-    };
-    assert_eq!(text.chars().count(), 5000);
-
-    let third = page(&replica, Some(&second.next_cursor), 5000).unwrap();
-    assert_eq!(third.entries.len(), 1);
-    let MonitorEntry::Text {
-        text: tail_text, ..
-    } = &third.entries[0]
-    else {
-        panic!()
-    };
-    assert_eq!(tail_text.chars().count(), 2000);
-    assert!(
-        third.has_more,
-        "tail prompt remains after the final text fragment"
+#[tokio::test]
+async fn sparse_cache_downloads_missing_parts_newest_first_but_reports_chronologically() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    let parts: Vec<_> = (0..205)
+        .map(|number| prompt(number, &number.to_string()))
+        .collect();
+    let cached = [parts[0].clone(), parts[102].clone(), parts[204].clone()];
+    store.append_parts("user", "thread", &cached).await.unwrap();
+    let mut fetched = Vec::new();
+    let page = download_monitor_page(
+        &store,
+        "user",
+        "thread",
+        None,
+        205,
+        &MonitorFilter::default(),
+        |start, end| {
+            // Exercise short server pages as well as sparse local chunks.
+            let batch: Vec<_> = (start..end).rev().take(17).collect();
+            fetched.extend(batch.iter().copied());
+            let parts: Vec<_> = batch
+                .iter()
+                .map(|number| parts[*number as usize].clone())
+                .collect();
+            async move { Ok(parts) }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fetched,
+        (1..204)
+            .rev()
+            .filter(|number| *number != 102)
+            .collect::<Vec<_>>()
     );
+    assert_eq!(
+        texts(&page.entries),
+        (0..205)
+            .map(|number| number.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(!page.has_more);
 
-    let fourth = page(&replica, Some(&third.next_cursor), 5000).unwrap();
-    assert_eq!(fourth.entries.len(), 1);
-    let MonitorEntry::Prompt { text, .. } = &fourth.entries[0] else {
-        panic!()
-    };
-    assert_eq!(text, "tail");
-    assert!(!fourth.has_more);
-
-    let MonitorEntry::Text { text: a, .. } = &first.entries[0] else {
-        panic!()
-    };
-    let MonitorEntry::Text { text: b, .. } = &second.entries[0] else {
-        panic!()
-    };
-    assert_eq!(format!("{a}{b}{tail_text}"), long);
+    assert_eq!(page, cached_page(&store, None, 205).await);
 }
 
-#[test]
-fn long_patch_change_lists_page_without_dropping_paths() {
-    let (_dir, mut replica) = open_replica();
-    let changes: Vec<JsonValue> = (0..200)
-        .map(|index| {
-            json!({
-                "operation":"renamed",
-                "path":format!("dir/file-{index}.txt"),
-                "source":format!("old/file-{index}.txt")
-            })
-        })
-        .collect();
-    replica
-        .save_parts(
+#[tokio::test]
+async fn cached_parts_beyond_stale_total_are_read_without_skipping_gaps() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    store
+        .append_parts(
+            "user",
             "thread",
             &[
-                completion_part(0, vec![patch_call_item("c1")]),
-                tool_part(
-                    1,
-                    Some("inv-c"),
-                    "c1",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":changes})),
-                ),
+                prompt(0, "remote"),
+                prompt(1, "local one"),
+                prompt(2, "local two"),
+                prompt(4, "after gap"),
             ],
         )
+        .await
         .unwrap();
+    let first = cached_page(&store, None, 1).await;
+    assert_eq!(texts(&first.entries), ["remote", "local one", "local two"]);
+    assert!(!first.has_more);
+    let waiting = cached_page(&store, Some(&first.next_cursor), 1).await;
+    assert!(waiting.entries.is_empty());
+    assert_eq!(waiting.next_cursor, first.next_cursor);
+    assert!(!waiting.has_more);
+    store
+        .append_parts("user", "thread", &[prompt(3, "gap filled")])
+        .await
+        .unwrap();
+    let next = cached_page(&store, Some(&waiting.next_cursor), 1).await;
+    assert_eq!(texts(&next.entries), ["gap filled", "after gap"]);
+    assert!(!next.has_more);
+}
 
-    let entries = collect_all(&replica, page(&replica, None, 1000).unwrap(), 1000);
-    let collected: Vec<_> = entries
-        .into_iter()
-        .flat_map(|entry| {
-            let MonitorEntry::Patch { changes, .. } = entry else {
-                panic!()
-            };
-            assert!(
-                !changes.is_empty(),
-                "over-budget patch must not emit empties"
-            );
-            changes
-                .into_iter()
-                .map(|change| (change.path, change.source_path))
+#[tokio::test]
+async fn unicode_fragments_resume_without_loss_and_cursor_survives_a_new_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    let text = "aé🦀".repeat(12_000);
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                prompt(0, &text),
+                completion(1, vec![json!({"type": "text", "text": text})]),
+                prompt(2, "tail"),
+            ],
+        )
+        .await
+        .unwrap();
+    let (fragments, cursor) = collect_pages(&store, None, 3, 8_000).await;
+    let mut prompt_text = String::new();
+    let mut reply_text = String::new();
+    for entry in &fragments {
+        match entry {
+            MonitorEntry::Prompt { id, text } if id == "prompt:prompt:0" => {
+                prompt_text.push_str(text)
+            }
+            MonitorEntry::Text { id, text } if id == "text:completion:1:0" => {
+                reply_text.push_str(text)
+            }
+            MonitorEntry::Prompt { text, .. } => assert_eq!(text, "tail"),
+            other => panic!("unexpected fragment: {other:?}"),
+        }
+    }
+    assert_eq!(prompt_text, text);
+    assert_eq!(reply_text, text);
+    assert_eq!(texts(&fragments).last(), Some(&"tail"));
+    drop(_lease);
+    drop(store);
+    let reopened = TranscriptStore::new(dir.path().to_owned());
+    let _lease = reopened.open_thread("user", "thread").await.unwrap();
+    reopened
+        .append_parts("user", "thread", &[prompt(3, "new")])
+        .await
+        .unwrap();
+    let next = local_page(&reopened, Some(&cursor), 4, 8_000).await;
+    assert_eq!(texts(&next.entries), ["new"]);
+    assert!(!next.has_more);
+}
+
+#[tokio::test]
+async fn late_patch_result_blocks_later_text_and_matches_run_and_invocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                completion(
+                    0,
+                    vec![json!({"type": "text", "text": "before"}), patch_call("inv")],
+                ),
+                result(1, "other-run", "inv", "completed"),
+                result(2, "run", "other-invocation", "completed"),
+                result(3, "run", "inv", "started"),
+                completion(4, vec![json!({"type": "text", "text": "after"})]),
+            ],
+        )
+        .await
+        .unwrap();
+    let first = local_page(&store, None, 5, 1_000).await;
+    assert_eq!(texts(&first.entries), ["before"]);
+    assert!(!first.has_more);
+    let pending = local_page(&store, Some(&first.next_cursor), 5, 1_000).await;
+    assert!(pending.entries.is_empty());
+    assert_eq!(first.next_cursor, pending.next_cursor);
+    store
+        .append_parts("user", "thread", &[result(5, "run", "inv", "completed")])
+        .await
+        .unwrap();
+    let settled = cached_page(&store, Some(&pending.next_cursor), 5).await;
+    assert!(matches!(
+        &settled.entries[0],
+        MonitorEntry::Patch { id, ok: true, changes }
+            if id == "patch:completion:0:1" && changes[0].path == "src/main.rs"
+    ));
+    assert_eq!(texts(&settled.entries), ["after"]);
+    assert_eq!(settled.entries.len(), 2);
+    assert!(!settled.has_more);
+}
+
+#[tokio::test]
+async fn reused_call_ids_pair_by_invocation_even_when_results_arrive_in_reverse_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                completion(0, vec![patch_call("first"), patch_call("second")]),
+                result(1, "run", "second", "cancelled"),
+                result(2, "run", "first", "completed"),
+            ],
+        )
+        .await
+        .unwrap();
+    let page = cached_page(&store, None, 3).await;
+    assert!(matches!(
+        &page.entries[0],
+        MonitorEntry::Patch { id, ok: true, .. } if id == "patch:completion:0:0"
+    ));
+    assert!(matches!(
+        &page.entries[1],
+        MonitorEntry::Patch { id, ok: false, .. } if id == "patch:completion:0:1"
+    ));
+    assert_eq!(page.entries.len(), 2);
+    assert!(!page.has_more);
+}
+
+#[tokio::test]
+async fn historical_orphan_patches_and_normalized_calls_are_reported_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    let legacy_result = |number, invocation: Option<&str>, call_id, status| {
+        let mut part = result(number, "run", "unused", status);
+        let tool = part.tool.as_mut().unwrap();
+        tool.name = "apply_patch".into();
+        tool.call_id = call_id;
+        tool.tool_invocation_id = invocation.map(str::to_owned);
+        part
+    };
+    let mapped_call: TranscriptPart = serde_json::from_value(json!({
+        "number": 2,
+        "sourceKey": "historical-completion",
+        "kind": "completion",
+        "runId": "run",
+        "completion": {"items": [{"type": "tool-call", "name": "apply_patch", "callId": "mapped"}]},
+        "work": {"toolInvocations": [{"item": 0, "toolInvocationId": "mapped-invocation"}]}
+    }))
+    .unwrap();
+    let mut unrelated = legacy_result(3, None, "mapped".into(), "failed");
+    unrelated.tool.as_mut().unwrap().name = "exec_cmd".into();
+    let unmapped_call = completion(
+        5,
+        vec![json!({"type": "tool-call", "name": "apply_patch", "callId": "unmapped"})],
+    );
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                legacy_result(0, None, "executor-job:orphan".into(), "started"),
+                legacy_result(1, None, "executor-job:orphan".into(), "completed"),
+                mapped_call,
+                unrelated,
+                legacy_result(4, Some("mapped-invocation"), "mapped".into(), "completed"),
+                unmapped_call,
+                legacy_result(6, None, "unmapped".into(), "completed"),
+                prompt(7, "tail"),
+            ],
+        )
+        .await
+        .unwrap();
+    let page = cached_page(&store, None, 8).await;
+    let ids: Vec<_> = page
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            MonitorEntry::Patch { id, ok, .. } => {
+                assert!(ok);
+                Some(id.as_str())
+            }
+            _ => None,
         })
         .collect();
     assert_eq!(
+        ids,
+        [
+            "patch:result:1",
+            "patch:historical-completion:0",
+            "patch:completion:5:0"
+        ]
+    );
+    assert_eq!(texts(&page.entries), ["tail"]);
+    assert!(!page.has_more);
+    let next = cached_page(&store, Some(&page.next_cursor), 8).await;
+    assert!(next.entries.is_empty());
+}
+
+#[tokio::test]
+async fn patch_lists_page_without_losing_changes_or_following_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    let mut patch_result = result(1, "run", "inv", "completed");
+    let changes: Vec<_> = (0..300)
+        .map(|number| {
+            json!({
+                "operation": "renamed",
+                "path": format!("新/{number}"),
+                "source": format!("old/{number}")
+            })
+        })
+        .collect();
+    patch_result.tool.as_mut().unwrap().output = Some(json!({"changes": changes}));
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                completion(
+                    0,
+                    vec![patch_call("inv"), json!({"type": "text", "text": "done"})],
+                ),
+                patch_result,
+            ],
+        )
+        .await
+        .unwrap();
+    let mut collected = Vec::new();
+    let mut replies = Vec::new();
+    let (entries, _) = collect_pages(&store, None, 2, 500).await;
+    for entry in entries {
+        match entry {
+            MonitorEntry::Patch { id, ok, changes } => {
+                assert_eq!(id, "patch:completion:0:0");
+                assert!(ok);
+                assert!(!changes.is_empty());
+                collected.extend(changes);
+            }
+            MonitorEntry::Text { text, .. } => replies.push(text),
+            other => panic!("unexpected entry: {other:?}"),
+        }
+    }
+    assert_eq!(
         collected,
-        (0..200)
-            .map(|index| (
-                format!("dir/file-{index}.txt"),
-                Some(format!("old/file-{index}.txt"))
-            ))
+        (0..300)
+            .map(|number| PatchChangeSummary {
+                operation: "renamed".into(),
+                path: format!("新/{number}"),
+                source_path: Some(format!("old/{number}")),
+            })
             .collect::<Vec<_>>()
     );
+    assert_eq!(replies, ["done"]);
 }
 
-#[test]
-fn observers_are_independent_and_repeated_reads_are_stable() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts("thread", &[prompt_part(0, "task"), prompt_part(1, "again")])
+#[tokio::test]
+async fn hidden_parts_and_filtered_runs_advance_permanently() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    let mut hidden = prompt(0, "instructions");
+    hidden.prompt.as_mut().unwrap().hidden = Some(crate::HiddenPromptKind::Instructions);
+    let mut other_run = completion(2, vec![patch_call("pending-in-another-run")]);
+    other_run.run_id = "other".into();
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                hidden,
+                prompt(1, "sender's prompt"),
+                other_run,
+                completion(3, vec![json!({"type": "reasoning", "text": "private"})]),
+                result(4, "run", "inv", "started"),
+                completion(5, vec![json!({"type": "text", "text": "visible"})]),
+            ],
+        )
+        .await
         .unwrap();
-    let first = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    let repeat = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(first.entries, repeat.entries);
-    let after = page(&replica, Some(&first.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(after.entries.is_empty());
-    assert!(!after.has_more);
-    let fresh = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(fresh.entries.len(), 2);
+    let page = download_monitor_page(
+        &store,
+        "user",
+        "thread",
+        None,
+        6,
+        &MonitorFilter {
+            only_run_id: Some("run".into()),
+            hidden_prompt_runs: BTreeSet::from(["run".into()]),
+        },
+        |_, _| async { anyhow::bail!("all parts are local") },
+    )
+    .await
+    .unwrap();
+    assert_eq!(texts(&page.entries), ["visible"]);
+    assert!(!page.has_more);
+    let next = local_page(&store, Some(&page.next_cursor), 6, 1_000).await;
+    assert!(next.entries.is_empty());
+    assert!(!next.has_more);
 }
 
-fn replica_with_cursor() -> (tempfile::TempDir, WorkReplica, String) {
-    let (dir, mut replica) = open_replica();
-    replica
-        .save_parts("thread", &[prompt_part(0, "x")])
+#[tokio::test]
+async fn failed_and_cancelled_patches_report_failure_without_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    store
+        .append_parts(
+            "user",
+            "thread",
+            &[
+                completion(0, vec![patch_call("failed"), patch_call("cancelled")]),
+                result(1, "run", "failed", "failed"),
+                result(2, "run", "cancelled", "cancelled"),
+            ],
+        )
+        .await
         .unwrap();
-    let cursor = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT)
-        .unwrap()
-        .next_cursor;
-    (dir, replica, cursor)
+    let page = local_page(&store, None, 3, 1_000).await;
+    assert_eq!(page.entries.len(), 2);
+    assert!(page.entries.iter().all(|entry| matches!(
+        entry,
+        MonitorEntry::Patch { ok: false, changes, .. } if changes.is_empty()
+    )));
 }
 
 #[test]
 fn malformed_and_foreign_cursors_fail_explicitly() {
-    let (_dir, replica, cursor) = replica_with_cursor();
-
-    let malformed = page(
-        &replica,
-        Some("!!!not-a-cursor!!!"),
-        MONITOR_PAGE_CHAR_LIMIT,
-    )
-    .unwrap_err()
-    .downcast::<MonitorReadError>()
-    .unwrap();
+    let malformed = MonitorCursor::read("thread", Some("!!!"))
+        .unwrap_err()
+        .downcast::<MonitorReadError>()
+        .unwrap();
     assert_eq!(malformed, MonitorReadError::MalformedCursor);
-
-    let foreign = read_page(
-        &replica,
-        "other-thread",
-        parse_cursor(&cursor).ok(),
-        &MonitorFilter::default(),
-        1000,
-    )
-    .unwrap_err()
-    .downcast::<MonitorReadError>()
-    .unwrap();
+    let encoded = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&MonitorCursor {
+            thread_id: "other".into(),
+            ..MonitorCursor::default()
+        })
+        .unwrap(),
+    );
+    let foreign = MonitorCursor::read("thread", Some(&encoded))
+        .unwrap_err()
+        .downcast::<MonitorReadError>()
+        .unwrap();
     assert_eq!(foreign, MonitorReadError::WrongThread);
-}
-
-#[test]
-fn cursor_survives_replica_reopen() {
-    let (dir, replica, cursor) = replica_with_cursor();
-    drop(replica);
-    let reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let continued = page(&reopened, Some(&cursor), 1000).unwrap();
-    assert!(continued.entries.is_empty());
-    assert!(!continued.has_more);
-}
-
-#[test]
-fn rebuilt_replica_invalidates_cursor() {
-    let (_dir, _replica, cursor) = replica_with_cursor();
-    let (_rebuild_dir, mut fresh) = open_replica();
-    fresh.save_parts("thread", &[prompt_part(0, "x")]).unwrap();
-    let reset = read_page(
-        &fresh,
-        "thread",
-        parse_cursor(&cursor).ok(),
-        &MonitorFilter::default(),
-        1000,
-    )
-    .unwrap_err()
-    .downcast::<MonitorReadError>()
-    .unwrap();
-    assert_eq!(reset, MonitorReadError::MonitorCursorReset);
-}
-
-#[test]
-fn filters_keep_one_run_and_hide_its_sender_prompts() {
-    let (_dir, mut replica) = open_replica();
-    let in_run = |mut part: TranscriptPart, run: &str| {
-        part.run_id = run.into();
-        part.source_key = format!("{}:{run}", part.source_key);
-        part
-    };
-    replica
-        .save_parts(
-            "thread",
-            &[
-                in_run(prompt_part(0, "old task"), "old"),
-                completion_part_in_run(1, "old", vec![json!({"type":"text","text":"old reply"})]),
-                in_run(prompt_part(2, "new task"), "new"),
-                completion_part_in_run(3, "new", vec![json!({"type":"text","text":"new reply"})]),
-            ],
-        )
-        .unwrap();
-    let read = |filter: MonitorFilter| {
-        texts(
-            &read_page(&replica, "thread", None, &filter, MONITOR_PAGE_CHAR_LIMIT)
-                .unwrap()
-                .entries,
-        )
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>()
-    };
-    let hidden_prompt_runs = BTreeSet::from(["new".to_string()]);
-    assert_eq!(
-        read(MonitorFilter {
-            only_run_id: None,
-            hidden_prompt_runs: hidden_prompt_runs.clone(),
-        }),
-        ["old task", "old reply", "new reply"]
-    );
-    assert_eq!(
-        read(MonitorFilter {
-            only_run_id: Some("new".into()),
-            hidden_prompt_runs,
-        }),
-        ["new reply"]
-    );
-}
-
-#[test]
-fn cursor_survives_new_revisions_and_keeps_progress() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts("thread", &[prompt_part(0, "one")])
-        .unwrap();
-    let first = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    replica
-        .save_parts("thread", &[prompt_part(1, "two")])
-        .unwrap();
-    let second = page(&replica, Some(&first.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(second.entries.len(), 1);
-    let MonitorEntry::Prompt { text, .. } = &second.entries[0] else {
-        panic!()
-    };
-    assert_eq!(text, "two");
-}
-
-#[test]
-fn out_of_order_downloads_do_not_leak_later_entries() {
-    let (_dir, mut replica) = open_replica();
-    replica
-        .save_parts("thread", &[prompt_part(1, "later")])
-        .unwrap();
-    let first = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(first.entries.is_empty());
-    assert!(first.has_more);
-    replica
-        .save_parts("thread", &[prompt_part(0, "earlier")])
-        .unwrap();
-    let second = page(&replica, Some(&first.next_cursor), MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert_eq!(texts(&second.entries), ["earlier", "later"]);
-    assert!(!second.has_more);
 }

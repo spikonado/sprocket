@@ -2,36 +2,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 pub const TRANSCRIPT_CHUNK_SIZE: u32 = 100;
-pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TranscriptState {
-    pub schema_version: u32,
-    pub user_id: String,
-    pub thread_id: String,
     pub remote_total_parts: u32,
     pub history_from_number: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_stripped_through_part_number: Option<i64>,
-    pub stale: bool,
-}
-
-impl TranscriptState {
-    pub fn new(user_id: String, thread_id: String) -> Self {
-        Self {
-            schema_version: TRANSCRIPT_SCHEMA_VERSION,
-            user_id,
-            thread_id,
-            remote_total_parts: 0,
-            history_from_number: 0,
-            context_summary: None,
-            reasoning_stripped_through_part_number: None,
-            stale: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

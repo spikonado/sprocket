@@ -113,7 +113,7 @@ fn result_texts(history: &[AgentHistoryMessage]) -> Vec<(&str, &str)> {
 
 #[test]
 fn replays_repeated_provider_call_ids_as_distinct_invocations() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let parts = [
         completion_with_invocation(0, "repeated", "inv-1"),
         tool_part(
@@ -164,7 +164,7 @@ fn replays_repeated_provider_call_ids_as_distinct_invocations() {
 
 #[test]
 fn interrupted_invocations_do_not_consume_a_later_calls_result() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let parts = [
         completion_with_invocation(0, "repeated", "inv-1"),
         prompt(1, "next", "continue"),
@@ -200,7 +200,7 @@ fn interrupted_invocations_do_not_consume_a_later_calls_result() {
 
 #[test]
 fn legacy_call_id_fallback_is_scoped_to_each_run() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let mut second_call = completion_with_call(2, "repeated");
     second_call.run_id = "next".into();
     let mut second_result = tool_part(
@@ -237,7 +237,7 @@ fn legacy_call_id_fallback_is_scoped_to_each_run() {
 
 #[test]
 fn migrated_calls_match_results_without_an_invocation_id() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let parts = [
         tool_part(
             0,
@@ -287,9 +287,11 @@ fn unknown_invocation_ids_only_fall_back_to_calls_without_one() {
 
 #[test]
 fn skips_the_current_run_prompt_until_that_run_has_finished_turns() {
-    let mut state = TranscriptState::new("user".into(), "thread".into());
-    state.history_from_number = 1;
-    state.context_summary = Some("Prior work is done.".into());
+    let state = TranscriptState {
+        history_from_number: 1,
+        context_summary: Some("Prior work is done.".into()),
+        ..Default::default()
+    };
     let before_resume = agent_history_from_parts(
         &state,
         &[
@@ -353,7 +355,7 @@ fn texts(history: &[AgentHistoryMessage]) -> Vec<&str> {
 
 #[test]
 fn shows_workspace_context_in_transcript_order() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let mut answer = completion_with_call(2, "call");
     answer.run_id = "earlier".into();
     let parts = [
@@ -375,7 +377,7 @@ fn shows_workspace_context_in_transcript_order() {
 
 #[test]
 fn set_cwd_outdates_earlier_environment_prompts() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let mut set_cwd = tool_part(2, "tool:cwd:finished", "cwd", "completed", None, None, None);
     set_cwd.tool.as_mut().unwrap().name = "set_cwd".into();
     let parts = [
@@ -393,8 +395,10 @@ fn set_cwd_outdates_earlier_environment_prompts() {
 
 #[test]
 fn set_cwd_result_uses_its_call_even_before_the_history_cutoff() {
-    let mut state = TranscriptState::new("user".into(), "thread".into());
-    state.history_from_number = 1;
+    let state = TranscriptState {
+        history_from_number: 1,
+        ..Default::default()
+    };
     let mut call = completion_with_invocation(0, "cwd", "inv-cwd");
     call.completion.as_mut().unwrap().items[0]["name"] = serde_json::json!("set_cwd");
     let parts = [
@@ -413,8 +417,7 @@ fn set_cwd_result_uses_its_call_even_before_the_history_cutoff() {
 
 #[test]
 fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
-    let mut state = TranscriptState::new("user".into(), "thread".into());
-    state.history_from_number = 0;
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -447,7 +450,7 @@ fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
 
 #[test]
 fn continuation_of_a_run_without_output_answers_its_prompt() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let parts = [
         prompt(0, "earlier", "first task"),
         prompt(1, "parent", "original task"),
@@ -465,7 +468,7 @@ fn continuation_of_a_run_without_output_answers_its_prompt() {
 
 #[test]
 fn skips_tool_parts_without_a_matching_completion_call() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -538,7 +541,7 @@ fn skips_tool_parts_without_a_matching_completion_call() {
 
 #[test]
 fn skips_started_tool_progress_and_emits_one_finished_result_after_the_call() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -576,7 +579,7 @@ fn skips_started_tool_progress_and_emits_one_finished_result_after_the_call() {
 
 #[test]
 fn answers_calls_whose_tools_never_settled_before_the_next_prompt() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -604,7 +607,7 @@ fn answers_calls_whose_tools_never_settled_before_the_next_prompt() {
 
 #[test]
 fn first_terminal_tool_event_wins() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -638,7 +641,7 @@ fn first_terminal_tool_event_wins() {
 
 #[test]
 fn reads_legacy_job_id_tool_parts() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -663,7 +666,7 @@ fn reads_legacy_job_id_tool_parts() {
 
 #[test]
 fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(
         &state,
         &[
@@ -789,7 +792,7 @@ fn completed_reasoning_roundtrips_summary_and_one_envelope() {
         let stored_json = serde_json::to_string(&stored).unwrap();
         assert!(stored_json.len() < encrypted.len() + 1_000);
         let stored: TranscriptPart = serde_json::from_str(&stored_json).unwrap();
-        let state = TranscriptState::new("user".into(), "thread".into());
+        let state = TranscriptState::default();
         let history = agent_history_from_parts(&state, &[stored], None);
         let reloaded = deserialize_agent_history(history).expect("reloaded durable history");
         let Message::Assistant(message) = &reloaded[0] else {
@@ -846,7 +849,7 @@ fn carries_the_first_valid_origin_for_reasoning_only_and_mixed_completions() {
                 }),
             ];
         }
-        let state = TranscriptState::new("user".into(), "thread".into());
+        let state = TranscriptState::default();
         let history = agent_history_from_parts(&state, &[part], None);
         assert_eq!(history[0].contents.len(), if mixed { 3 } else { 1 });
         assert_eq!(history[0].origin.as_ref(), Some(&origin));
@@ -859,7 +862,7 @@ fn carries_the_first_valid_origin_for_reasoning_only_and_mixed_completions() {
 }
 
 fn reloaded_assistant(item: serde_json::Value) -> AssistantMessage {
-    let state = TranscriptState::new("user".into(), "thread".into());
+    let state = TranscriptState::default();
     let history = agent_history_from_parts(&state, &[reasoning_completion(0, item)], None);
     let Message::Assistant(message) = deserialize_agent_history(history).unwrap().remove(0) else {
         panic!("expected assistant message");
@@ -1004,8 +1007,10 @@ fn reloads_empty_opaque_reasoning_without_inventing_ciphertext() {
 
 #[test]
 fn omitted_reasoning_replay_keeps_visible_history_and_later_reasoning() {
-    let mut state = TranscriptState::new("user".into(), "thread".into());
-    state.reasoning_stripped_through_part_number = Some(1);
+    let state = TranscriptState {
+        reasoning_stripped_through_part_number: Some(1),
+        ..Default::default()
+    };
     let mut covered = reasoning_completion(
         1,
         serde_json::json!({

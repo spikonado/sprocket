@@ -92,40 +92,37 @@ impl RunOutput {
         self.changed.subscribe()
     }
 
-    pub(crate) async fn record_part(&self, part: TranscriptPart) {
-        let Some(scope) = self.scope.get() else {
-            return;
-        };
-        if part.run_id != scope.run_id {
+    pub(crate) async fn record_parts(&self, parts: &[TranscriptPart]) {
+        let scope = self.scope.get().expect("run output is initialized");
+        if parts.is_empty() {
             return;
         }
         let saved = scope
             .store
-            .append_parts(
-                &scope.user_id,
-                &scope.thread_id,
-                std::slice::from_ref(&part),
-            )
+            .append_parts(&scope.user_id, &scope.thread_id, parts)
             .await;
         self.update(|state| {
-            if state.numbers.insert(part.number)
-                && let Some(completion) = &part.completion
-            {
-                state.answer = completion
-                    .items
-                    .iter()
-                    .filter(|item| item["type"] == "text")
-                    .filter_map(|item| item["text"].as_str())
-                    .collect();
-                if completion
-                    .items
-                    .iter()
-                    .any(|item| item["type"] == "tool-call")
+            for part in parts.iter().filter(|part| part.run_id == scope.run_id) {
+                if state.numbers.insert(part.number)
+                    && let Some(completion) = &part.completion
                 {
-                    state.answer.clear();
+                    state.answer = completion
+                        .items
+                        .iter()
+                        .filter(|item| item["type"] == "text")
+                        .filter_map(|item| item["text"].as_str())
+                        .collect();
+                    if completion
+                        .items
+                        .iter()
+                        .any(|item| item["type"] == "tool-call")
+                    {
+                        state.answer.clear();
+                    }
                 }
             }
             if let Err(error) = saved {
+                eprintln!("sprocket-agent: could not cache returned transcript parts: {error:#}");
                 state.output_error = Some(format!("Could not cache local run output: {error}"));
             }
         });

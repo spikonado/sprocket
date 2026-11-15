@@ -4,7 +4,6 @@ use std::time::Duration;
 use convex::{QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
-use sprocket_transcript::DownloadOrder;
 use tokio::time::sleep;
 
 #[derive(Clone)]
@@ -26,15 +25,11 @@ impl UserConvexClient {
         thread_id: &str,
         start: u32,
         end: u32,
-        order: DownloadOrder,
     ) -> anyhow::Result<Vec<sprocket_transcript::TranscriptPart>> {
         let mut args = thread_id_args(thread_id);
         args.insert("start".into(), Value::Float64(f64::from(start)));
         args.insert("end".into(), Value::Float64(f64::from(end)));
-        args.insert(
-            "order".into(),
-            Value::try_from(serde_json::to_value(order)?)?,
-        );
+        args.insert("order".into(), "desc".to_owned().into());
         sprocket_transcript::parse_remote_page(
             self.query_json("transcript:getPartsPage", args).await?,
             thread_id,
@@ -175,7 +170,7 @@ pub struct RemoteAttachmentDownload {
     pub size: u64,
 }
 
-fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
+pub(crate) fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
     let mut args = BTreeMap::new();
     args.insert("threadId".to_string(), thread_id.to_string().into());
     args

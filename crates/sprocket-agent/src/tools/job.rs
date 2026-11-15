@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
-use crate::convex::RuntimeClient;
+use crate::convex::{PartsMutationResponse, PersistedTranscriptPart, RuntimeClient};
 use crate::hooks::ToolInvocationAssignment;
 
 pub(super) const GET_JOB_FUNCTION: &str = "executor:getJob";
@@ -76,6 +76,7 @@ pub(super) struct ExecutorJobSnapshot {
     status: String,
     result: Option<serde_json::Value>,
     error: Option<String>,
+    part: Option<PersistedTranscriptPart>,
 }
 
 pub(super) async fn begin_executor_job(
@@ -187,6 +188,7 @@ pub(super) async fn execute_cloud_tool_job(
                 let Some(snapshot) = snapshot else {
                     return Err(tool_failure("executor job not found"));
                 };
+                context.runtime.record_parts(snapshot.part).await;
                 match snapshot.status.as_str() {
                     "completed" => {
                         eprintln!(
@@ -350,6 +352,7 @@ async fn finish_job(
     args.insert("jobId".to_string(), job_id.into());
     args.insert("runId".to_string(), context.run_id.clone().into());
     args.insert("claimId".to_string(), context.claim_id.clone().into());
+    args.insert("returnParts".to_string(), true.into());
     let (function, outcome) = match outcome {
         Ok((output, result)) => {
             eprintln!(
@@ -375,14 +378,18 @@ async fn finish_job(
             ("executor:fail", Err(error))
         }
     };
-    let accepted: bool = context
+    let PartsMutationResponse { accepted, parts } = context
         .runtime
         .idempotent_mutation(function, args)
         .await
         .map_err(tool_error)?;
+    context.runtime.record_parts(parts).await;
     if accepted {
         outcome
     } else {
         Err(cancelled_error())
     }
 }
+
+#[cfg(test)]
+mod tests;

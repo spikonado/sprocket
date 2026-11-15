@@ -1,4 +1,5 @@
 use super::*;
+use crate::TranscriptStore;
 
 #[test]
 fn parses_canonical_parts_without_legacy_metadata() {
