@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use earcut::Earcut;
 use serde::{Serialize, Serializer};
 
-use crate::geometry::{Bounds, Point, clip_ring};
+use crate::geometry::{Bounds, Point, clip_ring, point};
+
+mod polygon;
 
 const MAGIC: &[u8; 4] = b"SPKS";
 const FORMAT_VERSION: u32 = 2;
@@ -91,6 +93,7 @@ struct Layer {
 pub struct Scene {
     layers: Vec<Layer>,
     layer_ids: HashMap<(String, Part), usize>,
+    pending_ids: HashMap<String, usize>,
     user_names: HashMap<String, String>,
     items: Vec<Item>,
     nets: Vec<String>,
@@ -152,6 +155,16 @@ const SEGMENT_BYTES: usize = 24;
 const CIRCLE_BYTES: usize = 20;
 const VERTEX_BYTES: usize = 12;
 
+fn record_float(record: &[u8], field: usize) -> f64 {
+    f64::from(f32::from_le_bytes(
+        record[field * 4..field * 4 + 4].try_into().unwrap(),
+    ))
+}
+
+fn record_point(record: &[u8], field: usize) -> Point {
+    point(record_float(record, field), record_float(record, field + 1))
+}
+
 impl Scene {
     pub fn new() -> Scene {
         let mut scene = Scene::default();
@@ -172,6 +185,61 @@ impl Scene {
         });
         self.layer_ids.insert(key, id);
         id
+    }
+
+    /// A layer that holds conditionally flashed copper until `flash` keeps or drops it.
+    pub fn pending_layer(&mut self, name: &str) -> usize {
+        if let Some(&id) = self.pending_ids.get(name) {
+            return id;
+        }
+        let id = self.layers.len();
+        self.layers.push(Layer {
+            name: name.to_owned(),
+            ..Layer::default()
+        });
+        self.pending_ids.insert(name.to_owned(), id);
+        id
+    }
+
+    /// Moves the pending primitives that `keep(item, layer)` accepts into their layer's main
+    /// part and drops the rest.
+    pub fn flash(&mut self, keep: impl Fn(u32, &str) -> bool) {
+        let item = |bytes: &[u8], offset: usize| {
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        };
+        let mut pending: Vec<usize> = self.pending_ids.drain().map(|(_, id)| id).collect();
+        pending.sort_unstable();
+        for id in pending {
+            let pending = std::mem::take(&mut self.layers[id]);
+            let target = self.layer(&pending.name, Part::Main);
+            let layer = &mut self.layers[target];
+            let kept = |record: &&[u8], offset| keep(item(record, offset), &pending.name);
+            for record in pending
+                .segments
+                .chunks(SEGMENT_BYTES)
+                .filter(|r| kept(r, 20))
+            {
+                let half = record_float(record, 4) / 2.0;
+                layer.bounds.include(record_point(record, 0), half);
+                layer.bounds.include(record_point(record, 2), half);
+                layer.segments.extend_from_slice(record);
+            }
+            for record in pending.circles.chunks(CIRCLE_BYTES).filter(|r| kept(r, 16)) {
+                let reach = record_float(record, 2) + record_float(record, 3) / 2.0;
+                layer.bounds.include(record_point(record, 0), reach);
+                layer.circles.extend_from_slice(record);
+            }
+            for triangle in pending
+                .triangles
+                .chunks(3 * VERTEX_BYTES)
+                .filter(|r| kept(r, 8))
+            {
+                for vertex in triangle.chunks(VERTEX_BYTES) {
+                    layer.bounds.include(record_point(vertex, 0), 0.0);
+                }
+                layer.triangles.extend_from_slice(triangle);
+            }
+        }
     }
 
     pub fn set_user_name(&mut self, layer: &str, user_name: &str) {

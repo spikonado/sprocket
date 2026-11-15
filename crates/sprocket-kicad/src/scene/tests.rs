@@ -94,3 +94,80 @@ fn large_polygons_split_without_losing_area() {
         .sum();
     assert!((area - 11.0 * TEETH as f64).abs() < 1e-6, "area {area}");
 }
+
+fn polygon_area(polygons: &[Vec<Vec<Point>>]) -> f64 {
+    polygons
+        .iter()
+        .map(|polygon| {
+            polygon
+                .iter()
+                .enumerate()
+                .map(|(index, ring)| {
+                    let area = ring
+                        .iter()
+                        .zip(ring.iter().cycle().skip(1))
+                        .map(|(a, b)| a.x * b.y - a.y * b.x)
+                        .sum::<f64>()
+                        .abs()
+                        / 2.0;
+                    if index == 0 { area } else { -area }
+                })
+                .sum::<f64>()
+        })
+        .sum()
+}
+
+#[test]
+fn offsets_polygon_union_before_eroding() {
+    let mut scene = Scene::new();
+    let pen = Pen {
+        item: scene.add_item(ItemKind::Pad, ItemInfo::default()),
+        layer: scene.layer("F.Paste", Part::Main),
+    };
+    for (left, right) in [(-2.0, 0.5), (-0.5, 2.0)] {
+        scene.polygon(
+            pen,
+            &[
+                point(left, -1.0),
+                point(right, -1.0),
+                point(right, 1.0),
+                point(left, 1.0),
+            ],
+            &[],
+        );
+    }
+    let polygons = scene.offset_polygons(-0.75);
+    assert_eq!(polygons.len(), 1);
+    assert!((polygon_area(&polygons) - 1.25).abs() < 1e-6);
+}
+
+#[test]
+fn offsets_round_caps_and_filled_circles() {
+    let mut scene = Scene::new();
+    let pen = Pen {
+        item: scene.add_item(ItemKind::Pad, ItemInfo::default()),
+        layer: scene.layer("F.Mask", Part::Main),
+    };
+    scene.segment(pen, point(-1.0, 0.0), point(1.0, 0.0), 2.0);
+    scene.circle(pen, point(-1.0, 0.0), 1.0, 0.0);
+    let polygons = scene.offset_polygons(0.5);
+    assert_eq!(polygons.len(), 1);
+    let expected = 6.0 + std::f64::consts::PI * 1.5_f64.powi(2);
+    assert!((polygon_area(&polygons) - expected).abs() < 0.1);
+}
+
+#[test]
+fn offsets_ring_holes_and_erodes_away_thin_shapes() {
+    let mut scene = Scene::new();
+    let pen = Pen {
+        item: scene.add_item(ItemKind::Pad, ItemInfo::default()),
+        layer: scene.layer("F.Paste", Part::Main),
+    };
+    scene.circle(pen, point(0.0, 0.0), 2.0, 2.0);
+    let polygons = scene.offset_polygons(-0.25);
+    assert_eq!(polygons.len(), 1);
+    assert_eq!(polygons[0].len(), 2);
+    let expected = std::f64::consts::PI * (2.75_f64.powi(2) - 1.25_f64.powi(2));
+    assert!((polygon_area(&polygons) - expected).abs() < 0.15);
+    assert!(scene.offset_polygons(-1.1).is_empty());
+}
