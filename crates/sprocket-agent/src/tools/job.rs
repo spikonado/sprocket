@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
-use crate::convex::RuntimeClient;
+use crate::convex::{PartsMutationResponse, PersistedTranscriptPart, RuntimeClient};
 use crate::hooks::ToolInvocationAssignment;
 
 pub(super) const GET_JOB_FUNCTION: &str = "executor:getJob";
@@ -76,6 +76,8 @@ pub(super) struct ExecutorJobSnapshot {
     status: String,
     result: Option<serde_json::Value>,
     error: Option<String>,
+    #[serde(rename = "part")]
+    _part: Option<PersistedTranscriptPart>,
 }
 
 pub(super) async fn begin_executor_job(
@@ -92,11 +94,6 @@ pub(super) async fn begin_executor_job(
     begin_args.insert(
         "toolInvocationId".to_string(),
         assignment.tool_invocation_id.into(),
-    );
-    begin_args.insert("sectionKey".to_string(), assignment.section_key.into());
-    begin_args.insert(
-        "sectionOrdinal".to_string(),
-        Value::Float64(assignment.section_ordinal as f64),
     );
     begin_args.insert(
         "attemptSeq".to_string(),
@@ -355,6 +352,7 @@ async fn finish_job(
     args.insert("jobId".to_string(), job_id.into());
     args.insert("runId".to_string(), context.run_id.clone().into());
     args.insert("claimId".to_string(), context.claim_id.clone().into());
+    args.insert("returnParts".to_string(), true.into());
     let (function, outcome) = match outcome {
         Ok((output, result)) => {
             eprintln!(
@@ -380,7 +378,10 @@ async fn finish_job(
             ("executor:fail", Err(error))
         }
     };
-    let accepted: bool = context
+    let PartsMutationResponse {
+        accepted,
+        parts: _parts,
+    } = context
         .runtime
         .idempotent_mutation(function, args)
         .await
@@ -391,3 +392,6 @@ async fn finish_job(
         Err(cancelled_error())
     }
 }
+
+#[cfg(test)]
+mod tests;

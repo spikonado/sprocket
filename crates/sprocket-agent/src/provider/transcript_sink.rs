@@ -145,7 +145,6 @@ impl TranscriptSink {
                 &self.claim_id,
                 self.attempt_seq,
                 self.items_json(),
-                self.tool_call_tracker.completion_assignments(),
                 self.context_tokens,
             )
             .await?;
@@ -200,7 +199,9 @@ impl TranscriptSink {
     }
 
     fn items_json(&self) -> Vec<serde_json::Value> {
-        durable_items_json(&self.parts.parts, &self.provider_metadata)
+        let mut items = durable_items_json(&self.parts.parts, &self.provider_metadata);
+        self.tool_call_tracker.annotate_items(&mut items);
+        items
     }
 
     pub(super) fn has_unpublished(&self) -> bool {

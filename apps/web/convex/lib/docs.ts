@@ -23,6 +23,11 @@ export const vTranscriptPartsResult = v.object({
 	parts: v.array(schema.doc('threadTranscriptParts'))
 });
 
+export const vTranscriptMutationResult = v.object({
+	accepted: v.boolean(),
+	parts: v.array(schema.doc('threadTranscriptParts'))
+});
+
 export const vRegisterFileSuccess = v.object({
 	storageId: v.id('_storage'),
 	name: v.string(),

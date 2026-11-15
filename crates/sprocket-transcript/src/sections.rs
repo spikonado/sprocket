@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -19,6 +21,61 @@ impl WorkPosition {
     pub fn sequence(self) -> u64 {
         u64::from(self.part) * POSITION_STRIDE + u64::from(self.item) * 2
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkBlock {
+    pub id: String,
+    pub run_id: String,
+    pub items: Vec<WorkPosition>,
+    pub closed: bool,
+}
+
+fn block_id(part: &TranscriptPart, item: usize) -> String {
+    format!("work:{}:{}:{item}", part.run_id, part.source_key)
+}
+
+/// Parts must be in transcript order. Blocks continue across parts within each run.
+pub fn derive_work_blocks<'a>(
+    parts: impl IntoIterator<Item = &'a TranscriptPart>,
+) -> Vec<WorkBlock> {
+    let mut blocks: Vec<WorkBlock> = Vec::new();
+    let mut open: BTreeMap<&str, usize> = BTreeMap::new();
+    for part in parts {
+        for (offset, item) in part.content_items().iter().enumerate() {
+            match item["type"].as_str() {
+                Some("reasoning" | "text")
+                    if item["text"]
+                        .as_str()
+                        .is_none_or(|text| text.trim().is_empty()) =>
+                {
+                    continue;
+                }
+                Some("text") => {
+                    if let Some(index) = open.remove(part.run_id.as_str()) {
+                        blocks[index].closed = true;
+                    }
+                    continue;
+                }
+                Some("reasoning" | "tool-call") => {}
+                _ => continue,
+            }
+            let index = *open.entry(part.run_id.as_str()).or_insert_with(|| {
+                blocks.push(WorkBlock {
+                    id: block_id(part, offset),
+                    run_id: part.run_id.clone(),
+                    items: Vec::new(),
+                    closed: false,
+                });
+                blocks.len() - 1
+            });
+            blocks[index].items.push(WorkPosition {
+                part: part.number,
+                item: offset as u32,
+            });
+        }
+    }
+    blocks
 }
 
 impl TranscriptPart {
@@ -59,25 +116,21 @@ impl WorkItem {
 
     pub(super) fn tool_event(part: &TranscriptPart) -> Option<Self> {
         let tool = part.tool.as_ref()?;
-        let terminal = tool.status != "started";
+        if tool.status == "started" {
+            return None;
+        }
         Some(Self {
             run_id: part.run_id.clone(),
-            section: None,
+            section: Some(block_id(part, 0)),
             source: WorkPosition {
                 part: part.number,
                 item: 0,
             },
-            call_id: Some(tool.call_id.clone()),
+            call_id: (!tool.call_id.is_empty()).then(|| tool.call_id.clone()),
             tool_invocation_id: tool.tool_invocation_id.clone(),
-            result_part: terminal.then_some(part.number),
+            result_part: Some(part.number),
             canonical: false,
         })
-    }
-
-    pub(super) fn merge_event(&mut self, event: Self) {
-        if self.result_part.is_none() && event.result_part.is_some() {
-            self.result_part = event.result_part;
-        }
     }
 }
 
@@ -98,40 +151,40 @@ pub(super) fn detail(
                 object.retain(|key, _| {
                     matches!(
                         key.as_str(),
-                        "type" | "id" | "partId" | "turnId" | "text" | "callId" | "name" | "input"
+                        "type"
+                            | "id"
+                            | "partId"
+                            | "turnId"
+                            | "text"
+                            | "callId"
+                            | "toolInvocationId"
+                            | "name"
+                            | "input"
                     )
                 });
             }
             parts.push(value);
         }
     } else if let Some(tool) = &source.tool {
-        let input = tool
-            .input
-            .as_ref()
-            .or_else(|| {
-                let part = result?;
-                let terminal = part.tool.as_ref()?;
-                let invocation = tool.tool_invocation_id.as_ref().or(tool.job_id.as_ref())?;
-                (part.run_id == source.run_id
-                    && terminal.name == tool.name
-                    && terminal
-                        .tool_invocation_id
-                        .as_ref()
-                        .or(terminal.job_id.as_ref())
-                        == Some(invocation))
-                .then_some(terminal.input.as_ref())
-                .flatten()
-            })
-            .unwrap_or(&Value::Null);
+        let input = tool.input.as_ref().unwrap_or(&Value::Null);
         parts.push(
-            json!({"type":"tool-call", "callId":tool.call_id, "name":tool.name, "input":input}),
+            json!({"type":"tool-call", "callId":tool.call_id, "toolInvocationId":tool.tool_invocation_id, "name":tool.name, "input":input}),
         );
     }
     if let Some(tool) = result.and_then(|part| part.tool.as_ref()) {
         let output = tool.output.as_ref().unwrap_or(&Value::Null);
-        parts.push(
-            json!({"type":"tool-result", "callId":tool.call_id, "name":tool.name, "output":output}),
-        );
+        let call = parts.first();
+        let call_id = call
+            .and_then(|call| call["callId"].as_str())
+            .unwrap_or(&tool.call_id);
+        let name = call
+            .and_then(|call| call["name"].as_str())
+            .unwrap_or(&tool.name);
+        let result = json!({"type":"tool-result", "callId":call_id, "name":name, "toolInvocationId":tool.tool_invocation_id, "status":tool.status, "output":output});
+        parts.push(result);
     }
     parts
 }
+
+#[cfg(test)]
+mod tests;

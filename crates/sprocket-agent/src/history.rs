@@ -70,15 +70,17 @@ pub(crate) fn shown_workspace_context(
     parts: &[TranscriptPart],
 ) -> Vec<HiddenPrompt> {
     let mut shown: Vec<HiddenPrompt> = Vec::new();
+    let calls = ToolCallIndex::new(parts);
     for part in parts
         .iter()
         .filter(|part| part.number >= state.history_from_number)
     {
-        if part
-            .tool
-            .as_ref()
-            .is_some_and(|tool| tool.name == "set_cwd" && tool.status == "completed")
-        {
+        if part.tool.as_ref().is_some_and(|tool| {
+            tool.status == "completed"
+                && calls
+                    .tool_details(part)
+                    .is_some_and(|(name, _)| name == "set_cwd")
+        }) {
             shown.retain(|prompt| prompt.kind != HiddenPromptKind::Environment);
         } else if is_workspace_context_part(part)
             && let Some(prompt) = &part.prompt
@@ -119,43 +121,151 @@ fn completion_item_call_id(item: &serde_json::Value) -> Option<&str> {
     if item.get("type").and_then(|value| value.as_str()) != Some("tool-call") {
         return None;
     }
-    item.get("callId").and_then(|value| value.as_str())
+    non_empty_str(item.get("callId"))
+        .or_else(|| non_empty_str(openai_field(item, "itemId")))
+        .or_else(|| item.get("callId")?.as_str())
 }
 
-fn completion_call_ids(parts: &[TranscriptPart]) -> HashSet<&str> {
-    let mut ids = HashSet::new();
-    for part in parts {
-        let Some(completion) = &part.completion else {
-            continue;
+#[derive(Clone, Copy)]
+pub(crate) struct TranscriptToolCall<'a> {
+    part_number: u32,
+    item_index: usize,
+    item: &'a serde_json::Value,
+}
+
+impl TranscriptToolCall<'_> {
+    pub(crate) fn history_id(&self) -> String {
+        format!(
+            "transcript-tool-call:{}:{}",
+            self.part_number, self.item_index
+        )
+    }
+
+    fn call_id(&self) -> &str {
+        completion_item_call_id(self.item).expect("indexed tool call")
+    }
+}
+
+pub(crate) struct ToolCallIndex<'a> {
+    by_item: HashMap<(u32, usize), TranscriptToolCall<'a>>,
+    by_invocation: HashMap<&'a str, TranscriptToolCall<'a>>,
+    by_call_id: HashMap<(&'a str, &'a str), Vec<TranscriptToolCall<'a>>>,
+}
+
+impl<'a> ToolCallIndex<'a> {
+    pub(crate) fn new(parts: &'a [TranscriptPart]) -> Self {
+        let mut index = Self {
+            by_item: HashMap::new(),
+            by_invocation: HashMap::new(),
+            by_call_id: HashMap::new(),
         };
-        for item in &completion.items {
-            if let Some(call_id) = completion_item_call_id(item) {
-                ids.insert(call_id);
+        for part in parts {
+            let Some(completion) = &part.completion else {
+                continue;
+            };
+            for (item_index, item) in completion.items.iter().enumerate() {
+                let Some(call_id) = completion_item_call_id(item) else {
+                    continue;
+                };
+                if item
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none()
+                {
+                    continue;
+                }
+                let call = TranscriptToolCall {
+                    part_number: part.number,
+                    item_index,
+                    item,
+                };
+                index.by_item.insert((part.number, item_index), call);
+                if let Some(invocation_id) = non_empty_str(item.get("toolInvocationId")) {
+                    index.by_invocation.insert(invocation_id, call);
+                } else if let Some(invocation) = part
+                    .work
+                    .tool_invocations
+                    .iter()
+                    .find(|invocation| invocation.item as usize == item_index)
+                {
+                    index
+                        .by_invocation
+                        .insert(&invocation.tool_invocation_id, call);
+                }
+                index
+                    .by_call_id
+                    .entry((&part.run_id, call_id))
+                    .or_default()
+                    .push(call);
             }
         }
+        for calls in index.by_call_id.values_mut() {
+            calls.sort_by_key(|call| (call.part_number, call.item_index));
+        }
+        index
     }
-    ids
+
+    fn for_item(&self, part_number: u32, item_index: usize) -> Option<TranscriptToolCall<'a>> {
+        self.by_item.get(&(part_number, item_index)).copied()
+    }
+
+    pub(crate) fn for_result(&self, part: &TranscriptPart) -> Option<TranscriptToolCall<'a>> {
+        let tool = part.tool.as_ref()?;
+        if let Some(call) = tool
+            .tool_invocation_id
+            .as_deref()
+            .and_then(|id| self.by_invocation.get(id))
+        {
+            return Some(*call);
+        }
+        let calls = self
+            .by_call_id
+            .get(&(part.run_id.as_str(), tool.call_id.as_str()))?;
+        let mut candidates = calls.iter().filter(|call| {
+            tool.tool_invocation_id.is_none()
+                || non_empty_str(call.item.get("toolInvocationId")).is_none()
+        });
+        candidates
+            .clone()
+            .rev()
+            .find(|call| call.part_number < part.number)
+            .or_else(|| candidates.next())
+            .copied()
+    }
+
+    pub(crate) fn tool_details(
+        &self,
+        part: &'a TranscriptPart,
+    ) -> Option<(&'a str, Option<&'a serde_json::Value>)> {
+        let tool = part.tool.as_ref()?;
+        let call = self.for_result(part);
+        Some((
+            call.and_then(|call| call.item.get("name")?.as_str())
+                .unwrap_or(&tool.name),
+            call.and_then(|call| call.item.get("input"))
+                .or(tool.input.as_ref()),
+        ))
+    }
 }
 
-fn is_started_tool(tool: &TranscriptToolBody) -> bool {
-    tool.status == "started"
-}
-
-fn tool_result_message(tool: &TranscriptToolBody) -> AgentHistoryMessage {
+fn tool_result_message(
+    call: TranscriptToolCall<'_>,
+    tool: &TranscriptToolBody,
+) -> AgentHistoryMessage {
     let output = tool
         .output
         .as_ref()
         .unwrap_or(&serde_json::Value::Null)
         .to_string();
-    tool_result_text_message(&tool.call_id, output)
+    tool_result_text_message(call.history_id(), call.call_id(), output)
 }
 
-fn tool_result_text_message(call_id: &str, text: String) -> AgentHistoryMessage {
+fn tool_result_text_message(id: String, call_id: &str, text: String) -> AgentHistoryMessage {
     AgentHistoryMessage {
         role: AgentHistoryRole::User,
         origin: None,
         contents: vec![AgentHistoryContent::ToolResult {
-            id: call_id.to_string(),
+            id,
             call_id: Some(call_id.to_string()),
             items: vec![AgentHistoryToolResultItem::Text { text }],
         }],
@@ -165,14 +275,16 @@ fn tool_result_text_message(call_id: &str, text: String) -> AgentHistoryMessage 
 /// Providers reject a tool call without a result, and a run can stop before
 /// its tools settle, so those calls are answered before the next turn.
 fn answer_unsettled_calls(
-    awaiting_results: &mut Vec<String>,
+    awaiting_results: &mut Vec<TranscriptToolCall<'_>>,
     emitted_results: &mut HashSet<String>,
     history: &mut Vec<AgentHistoryMessage>,
 ) {
-    for call_id in awaiting_results.drain(..) {
-        if emitted_results.insert(call_id.clone()) {
+    for call in awaiting_results.drain(..) {
+        let id = call.history_id();
+        if emitted_results.insert(id.clone()) {
             history.push(tool_result_text_message(
-                &call_id,
+                format!("interrupted:{id}"),
+                call.call_id(),
                 serde_json::json!({
                     "error": "The run was interrupted before this tool call returned a result. Only the wait for its result ended. Work it started, such as a command or subagent, may still be running, so check before assuming it stopped.",
                     "status": "interrupted",
@@ -184,46 +296,42 @@ fn answer_unsettled_calls(
 }
 
 fn take_matching_tool<'a>(
+    call: TranscriptToolCall<'_>,
     tool: &'a TranscriptToolBody,
-    protocol_call_ids: &HashSet<&str>,
     opened_call_ids: &HashSet<String>,
     emitted_results: &mut HashSet<String>,
     pending_tools: &mut HashMap<String, &'a TranscriptToolBody>,
 ) -> Option<&'a TranscriptToolBody> {
-    if is_started_tool(tool) || !protocol_call_ids.contains(tool.call_id.as_str()) {
+    let id = call.history_id();
+    if tool.status == "started" || emitted_results.contains(&id) {
         return None;
     }
-    if emitted_results.contains(&tool.call_id) {
-        return None;
-    }
-    if opened_call_ids.contains(&tool.call_id) {
-        emitted_results.insert(tool.call_id.clone());
+    if opened_call_ids.contains(&id) {
+        emitted_results.insert(id);
         return Some(tool);
     }
-    pending_tools.entry(tool.call_id.clone()).or_insert(tool);
+    pending_tools.entry(id).or_insert(tool);
     None
 }
 
 fn flush_pending_tools_for_completion(
-    items: &[serde_json::Value],
+    calls: &[TranscriptToolCall<'_>],
     opened_call_ids: &mut HashSet<String>,
     emitted_results: &mut HashSet<String>,
     pending_tools: &mut HashMap<String, &TranscriptToolBody>,
     history: &mut Vec<AgentHistoryMessage>,
 ) {
-    for item in items {
-        let Some(call_id) = completion_item_call_id(item) else {
-            continue;
-        };
-        opened_call_ids.insert(call_id.to_string());
-        if emitted_results.contains(call_id) {
+    for call in calls {
+        let id = call.history_id();
+        opened_call_ids.insert(id.clone());
+        if emitted_results.contains(&id) {
             continue;
         }
-        let Some(tool) = pending_tools.remove(call_id) else {
+        let Some(tool) = pending_tools.remove(&id) else {
             continue;
         };
-        emitted_results.insert(call_id.to_string());
-        history.push(tool_result_message(tool));
+        emitted_results.insert(id);
+        history.push(tool_result_message(*call, tool));
     }
 }
 
@@ -235,7 +343,7 @@ pub fn agent_history_from_parts(
     let pending_prompt_number = skip_run_id
         .and_then(|run_id| pending_prompt_part(state, parts, run_id))
         .map(|part| part.number);
-    let protocol_call_ids = completion_call_ids(parts);
+    let calls = ToolCallIndex::new(parts);
     let mut history = Vec::new();
     if let Some(summary) = state
         .context_summary
@@ -309,12 +417,11 @@ pub fn agent_history_from_parts(
                             completion_item_to_history(item, origin.as_ref(), omit_reasoning)
                         })
                         .collect();
-                    let call_ids: Vec<_> = contents
+                    let completion_calls: Vec<_> = completion
+                        .items
                         .iter()
-                        .filter_map(|content| match content {
-                            AgentHistoryContent::ToolCall { call_id, .. } => Some(call_id.clone()),
-                            _ => None,
-                        })
+                        .enumerate()
+                        .filter_map(|(item_index, _)| calls.for_item(part.number, item_index))
                         .collect();
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
@@ -324,26 +431,27 @@ pub fn agent_history_from_parts(
                         });
                     }
                     flush_pending_tools_for_completion(
-                        &completion.items,
+                        &completion_calls,
                         &mut opened_call_ids,
                         &mut emitted_results,
                         &mut pending_tools,
                         &mut history,
                     );
-                    awaiting_results.extend(call_ids);
+                    awaiting_results.extend(completion_calls);
                 }
             }
             TranscriptPartKind::Tool => {
                 if let Some(tool) = &part.tool
+                    && let Some(call) = calls.for_result(part)
                     && let Some(ready) = take_matching_tool(
+                        call,
                         tool,
-                        &protocol_call_ids,
                         &opened_call_ids,
                         &mut emitted_results,
                         &mut pending_tools,
                     )
                 {
-                    history.push(tool_result_message(ready));
+                    history.push(tool_result_message(call, ready));
                 }
             }
         }
@@ -378,9 +486,7 @@ fn completion_item_to_history(
         "reasoning" => reasoning_history(item, origin),
         "tool-call" => {
             let item_id = non_empty_str(openai_field(item, "itemId"));
-            let call_id = non_empty_str(item.get("callId"))
-                .or(item_id)
-                .or_else(|| item.get("callId")?.as_str())?;
+            let call_id = completion_item_call_id(item)?;
             let name = item.get("name")?.as_str()?;
             let arguments = item.get("input").cloned().unwrap_or(serde_json::json!({}));
             Some(AgentHistoryContent::ToolCall {

@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::TranscriptPart;
-use super::sections::{WorkItem, WorkPosition, string};
+use super::sections::{WorkBlock, WorkItem, WorkPosition, string};
 
 pub(super) struct ReadIndex<'a>(pub &'a Connection);
 
@@ -53,51 +53,80 @@ impl ReadIndex<'_> {
         Ok(())
     }
 
-    pub fn insert_part(&self, part: &TranscriptPart) -> anyhow::Result<()> {
-        if part.completion.is_some() {
-            for (offset, value) in part.content_items().iter().enumerate() {
-                match value["type"].as_str() {
-                    Some("reasoning")
-                        if value["text"]
-                            .as_str()
-                            .is_some_and(|text| !text.trim().is_empty()) => {}
-                    Some("tool-call") => {}
-                    _ => continue,
+    pub fn run_sections(&self, run: &str) -> anyhow::Result<BTreeSet<String>> {
+        Ok(self
+            .0
+            .prepare(&format!(
+                "SELECT DISTINCT section FROM source_refs s
+                WHERE run=? AND section IS NOT NULL AND {DISPLAY_ITEM}"
+            ))?
+            .query_map([run], |row| row.get(0))?
+            .collect::<Result<_, _>>()?)
+    }
+
+    pub fn rebuild_run(
+        &self,
+        parts: &[TranscriptPart],
+        blocks: &[WorkBlock],
+    ) -> anyhow::Result<BTreeSet<String>> {
+        let Some(first) = parts.first() else {
+            return Ok(BTreeSet::new());
+        };
+        let mut previous: BTreeMap<WorkPosition, String> = self
+            .0
+            .prepare("SELECT number,offset,section FROM source_refs WHERE run=? AND canonical=1")?
+            .query_map([&first.run_id], |row| {
+                Ok((
+                    WorkPosition {
+                        part: row.get(0)?,
+                        item: row.get(1)?,
+                    },
+                    row.get(2)?,
+                ))
+            })?
+            .collect::<Result<_, _>>()?;
+        let mut changed = BTreeSet::new();
+        self.0
+            .execute("DELETE FROM source_refs WHERE run=?", [&first.run_id])?;
+        let by_number: BTreeMap<_, _> = parts.iter().map(|part| (part.number, part)).collect();
+        for block in blocks {
+            for &source in &block.items {
+                let old_section = previous.remove(&source);
+                if old_section.as_ref() != Some(&block.id) {
+                    changed.extend(old_section);
+                    changed.insert(block.id.clone());
                 }
+                let part = by_number[&source.part];
+                let value = &part.content_items()[source.item as usize];
                 let item = WorkItem {
                     run_id: part.run_id.clone(),
-                    section: None,
-                    source: WorkPosition {
-                        part: part.number,
-                        item: u32::try_from(offset)?,
-                    },
+                    section: Some(block.id.clone()),
+                    source,
                     call_id: string(value, "callId"),
-                    tool_invocation_id: part
-                        .work
-                        .tool_invocations
-                        .iter()
-                        .find(|invocation| invocation.item as usize == offset)
-                        .map(|invocation| invocation.tool_invocation_id.clone()),
+                    tool_invocation_id: string(value, "toolInvocationId"),
                     result_part: None,
                     canonical: true,
                 };
                 self.insert(&item)?;
             }
         }
-        if let Some(item) = WorkItem::tool_event(part) {
-            self.insert(&item)?;
+        for part in parts {
+            if let Some(item) = WorkItem::tool_event(part) {
+                self.insert(&item)?;
+            }
         }
-        self.link(part.number, part.work_assignment())?;
-        Ok(())
+        changed.extend(previous.into_values());
+        Ok(changed)
     }
 
     fn insert(&self, item: &WorkItem) -> anyhow::Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,?,?,?,?,?,?)",
             params![
                 item.source.part,
                 item.source.item,
                 i64::try_from(item.source.sequence())?,
+                item.section,
                 item.run_id,
                 item.call_id,
                 item.identity(),
@@ -105,28 +134,6 @@ impl ReadIndex<'_> {
                 item.result_part.is_some()
             ],
         )?;
-        Ok(())
-    }
-
-    pub fn link(
-        &self,
-        number: u32,
-        assignment: &super::sections::WorkAssignment,
-    ) -> anyhow::Result<()> {
-        self.0.execute(
-            "UPDATE source_refs SET section=NULL WHERE number=?",
-            [number],
-        )?;
-        for range in &assignment.ranges {
-            self.0.execute("UPDATE source_refs SET section=? WHERE number=? AND canonical=1 AND offset>=? AND offset<?",
-                params![range.section_key,number,range.start,range.end])?;
-        }
-        if let Some(section) = &assignment.section_key {
-            self.0.execute(
-                "UPDATE source_refs SET section=? WHERE number=? AND canonical=0",
-                params![section, number],
-            )?;
-        }
         Ok(())
     }
 
@@ -197,13 +204,11 @@ impl ReadIndex<'_> {
 
     pub fn unpersisted_tool_call_ids(&self, section: &str) -> anyhow::Result<Vec<String>> {
         Ok(self
-            .0
-            .prepare(&format!(
-                "SELECT DISTINCT call_id FROM source_refs s
-                WHERE section=? AND canonical=0 AND call_id IS NOT NULL AND {DISPLAY_ITEM}"
-            ))?
-            .query_map([section], |row| row.get(0))?
-            .collect::<Result<_, _>>()?)
+            .page(section, -1, i64::MAX, false, u32::MAX)?
+            .into_iter()
+            .filter(|item| item.canonical && item.result_part.is_none())
+            .filter_map(|item| item.call_id)
+            .collect())
     }
 
     pub(super) fn result_event(&self, item: &WorkItem) -> anyhow::Result<Option<WorkItem>> {
@@ -226,11 +231,10 @@ impl ReadIndex<'_> {
     }
 
     fn pair(&self, item: &mut WorkItem) -> anyhow::Result<()> {
-        if item.call_id.is_none() {
-            return Ok(());
-        }
-        if let Some(result) = self.result_event(item)? {
-            item.merge_event(result);
+        if item.result_part.is_none() && item.identity().is_some() {
+            item.result_part = self
+                .result_event(item)?
+                .and_then(|result| result.result_part);
         }
         Ok(())
     }

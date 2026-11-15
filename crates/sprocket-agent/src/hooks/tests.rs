@@ -1,5 +1,14 @@
 use super::*;
 
+impl ToolCallTracker {
+    pub(crate) fn completion_invocations(&self) -> Vec<ToolInvocationAssignment> {
+        self.0
+            .lock()
+            .map(|state| state.completion.clone())
+            .unwrap_or_default()
+    }
+}
+
 fn tools() -> Vec<String> {
     AGENT_TOOLS
         .iter()
@@ -66,14 +75,7 @@ fn malformed_arguments_retry_without_repairing_a_valid_tool_name() {
 #[test]
 fn tracker_associates_parallel_calls_by_dispatch_identity() {
     let tracker = ToolCallTracker::new("run", "claim");
-    tracker.record_turn(&[
-        OrderedContent::Tool {
-            call_id: "call-1".into(),
-        },
-        OrderedContent::Tool {
-            call_id: "call-2".into(),
-        },
-    ]);
+    tracker.record_turn([Some("call-1"), Some("call-2")]);
 
     let second = tracker
         .assignment_for_dispatch("internal-2", Some("call-2"))
@@ -84,7 +86,6 @@ fn tracker_associates_parallel_calls_by_dispatch_identity() {
     assert_eq!(second.call_id, "call-2");
     assert_eq!(first.call_id, "call-1");
     assert_ne!(first.tool_invocation_id, second.tool_invocation_id);
-    assert_eq!(first.section_key, second.section_key);
 
     tracker.prepare_dispatch(
         "exec_cmd",
@@ -111,22 +112,13 @@ fn tracker_associates_parallel_calls_by_dispatch_identity() {
     assert_eq!(first_dispatch.call_id, "call-1");
 
     let original_ids = tracker
-        .completion_assignments()
-        .tool_invocations
+        .completion_invocations()
         .into_iter()
         .map(|invocation| invocation.tool_invocation_id)
         .collect::<Vec<_>>();
-    tracker.record_turn(&[
-        OrderedContent::Tool {
-            call_id: "call-1".into(),
-        },
-        OrderedContent::Tool {
-            call_id: "call-2".into(),
-        },
-    ]);
+    tracker.record_turn([Some("call-1"), Some("call-2")]);
     let retry_ids = tracker
-        .completion_assignments()
-        .tool_invocations
+        .completion_invocations()
         .into_iter()
         .map(|invocation| invocation.tool_invocation_id)
         .collect::<Vec<_>>();
@@ -134,36 +126,32 @@ fn tracker_associates_parallel_calls_by_dispatch_identity() {
 }
 
 #[test]
-fn grouping_survives_turns_and_text_closes_the_current_section() {
+fn durable_call_ids_match_dispatches_and_change_when_provider_ids_repeat() {
     let tracker = ToolCallTracker::new("run", "claim");
-    tracker.record_turn(&[
-        OrderedContent::Reasoning(true),
-        OrderedContent::Tool {
-            call_id: "one".into(),
-        },
-    ]);
-    let first = tracker.completion_assignments();
-    let first_key = first.work.ranges[0].section_key.clone();
-    assert_eq!(first.work.ranges[0].start, 0);
-    assert_eq!(first.work.ranges[0].end, 2);
+    tracker.record_turn([None, Some("same"), None, Some("same")]);
+    let mut items = vec![
+        serde_json::json!({"type": "reasoning", "text": "plan"}),
+        serde_json::json!({"type": "tool-call", "callId": "same"}),
+        serde_json::json!({"type": "text", "text": "working"}),
+        serde_json::json!({"type": "tool-call", "callId": "same"}),
+    ];
+    tracker.annotate_items(&mut items);
+    let first = tracker
+        .assignment_for_dispatch("first", Some("same"))
+        .unwrap();
+    let second = tracker
+        .assignment_for_dispatch("second", Some("same"))
+        .unwrap();
+    assert_eq!(items[1]["toolInvocationId"], first.tool_invocation_id);
+    assert_eq!(items[3]["toolInvocationId"], second.tool_invocation_id);
+    assert_ne!(first.tool_invocation_id, second.tool_invocation_id);
 
     tracker.begin_attempt(2, "stream-2");
-    tracker.record_turn(&[
-        OrderedContent::Reasoning(true),
-        OrderedContent::Text(true),
-        OrderedContent::Reasoning(true),
-        OrderedContent::Tool {
-            call_id: "two".into(),
-        },
-    ]);
-    let second = tracker.completion_assignments();
-    assert_eq!(second.work.ranges[0].section_key, first_key);
-    assert_ne!(second.work.ranges[1].section_key, first_key);
-    assert!(second.sections[0].closed);
-    assert!(!second.sections[1].closed);
-    assert_eq!(second.work.ranges[1].end, 4);
-    assert_eq!(
-        second.tool_invocations[0].section_key,
-        second.work.ranges[1].section_key
-    );
+    tracker.record_turn([None, Some("same")]);
+    let next = tracker
+        .assignment_for_dispatch("first", Some("same"))
+        .unwrap();
+    assert_ne!(next.tool_invocation_id, first.tool_invocation_id);
+    assert_eq!(next.attempt_seq, 2);
+    assert_eq!(next.stream_id, "stream-2");
 }

@@ -24,14 +24,15 @@ use crate::workspace_context::HiddenPrompt;
 const TRANSPORT_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PersistedTranscriptPart {
+pub(crate) struct PersistedTranscriptPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
     source_key: String,
     kind: TranscriptPartKind,
     run_id: String,
+    #[serde(default)]
     work: WorkAssignment,
     #[serde(
         rename = "_creationTime",
@@ -42,6 +43,18 @@ struct PersistedTranscriptPart {
     prompt: Option<TranscriptPromptBody>,
     completion: Option<TranscriptCompletionBody>,
     tool: Option<TranscriptToolBody>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PartsMutationResponse {
+    pub(crate) accepted: bool,
+    pub(crate) parts: Vec<PersistedTranscriptPart>,
+}
+
+#[derive(Deserialize)]
+struct CompletionMutationResponse {
+    completion: Option<PersistedTranscriptPart>,
+    parts: Vec<PersistedTranscriptPart>,
 }
 
 impl From<PersistedTranscriptPart> for TranscriptPart {
@@ -431,7 +444,6 @@ impl RuntimeClient {
         claim_id: &str,
         attempt_seq: u64,
         items: Vec<serde_json::Value>,
-        assignments: crate::hooks::CompletionAssignments,
         context_tokens: Option<u64>,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
@@ -441,21 +453,10 @@ impl RuntimeClient {
             "streamId".to_string(),
             crate::hooks::completion_stream_id(run_id, claim_id, attempt_seq).into(),
         );
+        args.insert("returnParts".to_string(), true.into());
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
-        );
-        args.insert(
-            "work".to_string(),
-            Value::try_from(serde_json::to_value(assignments.work)?)?,
-        );
-        args.insert(
-            "toolInvocations".to_string(),
-            Value::try_from(serde_json::to_value(assignments.tool_invocations)?)?,
-        );
-        args.insert(
-            "sections".to_string(),
-            Value::try_from(serde_json::to_value(assignments.sections)?)?,
         );
         if let Some(tokens) = context_tokens {
             args.insert(
@@ -463,13 +464,16 @@ impl RuntimeClient {
                 Value::try_from(serde_json::json!({ "contextTokens": tokens }))?,
             );
         }
-        let persisted: Option<PersistedTranscriptPart> = self
+        let CompletionMutationResponse {
+            completion,
+            parts: _parts,
+        } = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
         if empty_completion && let Some(output) = &self.output {
             output.empty_completion();
         }
-        if let (Some(output), Some(persisted)) = (&self.output, persisted) {
+        if let (Some(output), Some(persisted)) = (&self.output, completion) {
             output.record_part(persisted.into()).await;
         }
         Ok(())
@@ -545,8 +549,14 @@ impl RuntimeClient {
                 Value::try_from(serde_json::to_value(workspace_context)?)?,
             );
         }
-        self.mutation_json("agentRuntime:saveContextHandoff", args)
-            .await
+        args.insert("returnParts".to_string(), true.into());
+        let PartsMutationResponse {
+            accepted,
+            parts: _parts,
+        } = self
+            .mutation_json("agentRuntime:saveContextHandoff", args)
+            .await?;
+        Ok(accepted.into())
     }
 
     pub(crate) async fn begin_run(
@@ -564,8 +574,14 @@ impl RuntimeClient {
         if let Some(handoff) = handoff {
             args.insert("handoff".to_string(), Value::Object(handoff.args()));
         }
-        self.idempotent_mutation("agentRuntime:beginRun", args)
-            .await
+        args.insert("returnParts".to_string(), true.into());
+        let PartsMutationResponse {
+            accepted,
+            parts: _parts,
+        } = self
+            .idempotent_mutation("agentRuntime:beginRun", args)
+            .await?;
+        Ok(accepted.into())
     }
 
     pub(crate) async fn omit_reasoning_replay(

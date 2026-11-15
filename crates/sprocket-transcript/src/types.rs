@@ -35,7 +35,7 @@ impl TranscriptState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "TranscriptPartReader")]
 pub struct TranscriptPart {
     pub number: u32,
     pub source_key: String,
@@ -51,6 +51,43 @@ pub struct TranscriptPart {
     pub tool: Option<TranscriptToolBody>,
     #[serde(default, skip_serializing_if = "WorkAssignment::is_empty")]
     pub work: WorkAssignment,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptPartReader {
+    number: u32,
+    source_key: String,
+    kind: TranscriptPartKind,
+    run_id: String,
+    #[serde(default)]
+    created_at: Option<u64>,
+    #[serde(default)]
+    prompt: Option<TranscriptPromptBody>,
+    #[serde(default)]
+    completion: Option<TranscriptCompletionBody>,
+    #[serde(default)]
+    tool: Option<TranscriptToolBody>,
+    #[serde(default)]
+    work: WorkAssignment,
+}
+
+impl From<TranscriptPartReader> for TranscriptPart {
+    fn from(reader: TranscriptPartReader) -> Self {
+        let mut part = Self {
+            number: reader.number,
+            source_key: reader.source_key,
+            kind: reader.kind,
+            run_id: reader.run_id,
+            created_at: reader.created_at,
+            prompt: reader.prompt,
+            completion: reader.completion,
+            tool: reader.tool,
+            work: reader.work,
+        };
+        part.normalize_legacy_tool_invocations();
+        part
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,7 +204,9 @@ pub struct TranscriptToolBody {
     pub job_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_invocation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub call_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<JsonValue>,
@@ -177,6 +216,22 @@ pub struct TranscriptToolBody {
 }
 
 impl TranscriptPart {
+    pub(crate) fn normalize_legacy_tool_invocations(&mut self) {
+        let Some(completion) = &mut self.completion else {
+            return;
+        };
+        for invocation in &self.work.tool_invocations {
+            if let Some(item) = completion.items.get_mut(invocation.item as usize)
+                && item["type"] == "tool-call"
+                && let Some(object) = item.as_object_mut()
+            {
+                object
+                    .entry("toolInvocationId")
+                    .or_insert_with(|| JsonValue::String(invocation.tool_invocation_id.clone()));
+            }
+        }
+    }
+
     pub fn without_ephemeral_urls(&self) -> Self {
         let mut part = self.clone();
         if let Some(prompt) = part.prompt.as_mut() {

@@ -83,6 +83,213 @@ fn completion_with_call(number: u32, call_id: &str) -> TranscriptPart {
     }
 }
 
+fn completion_with_invocation(number: u32, call_id: &str, invocation_id: &str) -> TranscriptPart {
+    let mut part = completion_with_call(number, call_id);
+    part.completion.as_mut().unwrap().items[0]["toolInvocationId"] =
+        serde_json::json!(invocation_id);
+    part
+}
+
+fn result_texts(history: &[AgentHistoryMessage]) -> Vec<(&str, &str)> {
+    history
+        .iter()
+        .flat_map(|message| &message.contents)
+        .filter_map(|content| {
+            let AgentHistoryContent::ToolResult {
+                call_id: Some(call_id),
+                items,
+                ..
+            } = content
+            else {
+                return None;
+            };
+            let AgentHistoryToolResultItem::Text { text } = &items[0] else {
+                panic!("expected text result");
+            };
+            Some((call_id.as_str(), text.as_str()))
+        })
+        .collect()
+}
+
+#[test]
+fn replays_repeated_provider_call_ids_as_distinct_invocations() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let parts = [
+        completion_with_invocation(0, "repeated", "inv-1"),
+        tool_part(
+            1,
+            "tool:inv-1",
+            "",
+            "completed",
+            Some(serde_json::json!("first")),
+            Some("inv-1"),
+            None,
+        ),
+        completion_with_invocation(2, "repeated", "inv-2"),
+        tool_part(
+            3,
+            "tool:inv-2",
+            "stale-copied-id",
+            "failed",
+            Some(serde_json::json!({"error": "second"})),
+            Some("inv-2"),
+            None,
+        ),
+    ];
+    let history = agent_history_from_parts(&state, &parts, None);
+    assert_eq!(
+        result_texts(&history),
+        [
+            ("repeated", "\"first\""),
+            ("repeated", "{\"error\":\"second\"}")
+        ]
+    );
+    let messages = deserialize_agent_history(history).unwrap();
+    for (call, result) in [(&messages[0], &messages[1]), (&messages[2], &messages[3])] {
+        let Message::Assistant(call) = call else {
+            panic!("expected call")
+        };
+        let AssistantContent::ToolCall(call) = &call.content[0] else {
+            panic!("expected tool call")
+        };
+        let Message::User { content } = result else {
+            panic!("expected result")
+        };
+        let rig::message::UserContent::ToolResult(result) = &content[0] else {
+            panic!("expected tool result")
+        };
+        assert_eq!(result.call, call.id);
+    }
+}
+
+#[test]
+fn interrupted_invocations_do_not_consume_a_later_calls_result() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let parts = [
+        completion_with_invocation(0, "repeated", "inv-1"),
+        prompt(1, "next", "continue"),
+        completion_with_invocation(2, "repeated", "inv-2"),
+        tool_part(
+            3,
+            "tool:inv-1",
+            "",
+            "completed",
+            Some(serde_json::json!("late first result")),
+            Some("inv-1"),
+            None,
+        ),
+        tool_part(
+            4,
+            "tool:inv-2",
+            "",
+            "cancelled",
+            Some(serde_json::json!({"status": "cancelled"})),
+            Some("inv-2"),
+            None,
+        ),
+        completion_with_invocation(5, "repeated", "inv-3"),
+    ];
+    let history = agent_history_from_parts(&state, &parts, None);
+    let results = result_texts(&history);
+    assert_eq!(results.len(), 3);
+    assert!(results[0].1.contains("interrupted"));
+    assert_eq!(results[1], ("repeated", "{\"status\":\"cancelled\"}"));
+    assert!(results[2].1.contains("interrupted"));
+    deserialize_agent_history(history).unwrap();
+}
+
+#[test]
+fn legacy_call_id_fallback_is_scoped_to_each_run() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let mut second_call = completion_with_call(2, "repeated");
+    second_call.run_id = "next".into();
+    let mut second_result = tool_part(
+        3,
+        "tool:second",
+        "repeated",
+        "completed",
+        Some(serde_json::json!("second")),
+        None,
+        Some("job-2"),
+    );
+    second_result.run_id = "next".into();
+    let parts = [
+        tool_part(
+            0,
+            "tool:first",
+            "repeated",
+            "completed",
+            Some(serde_json::json!("first")),
+            None,
+            Some("job-1"),
+        ),
+        completion_with_call(1, "repeated"),
+        second_call,
+        second_result,
+    ];
+    let history = agent_history_from_parts(&state, &parts, None);
+    assert_eq!(
+        result_texts(&history),
+        [("repeated", "\"first\""), ("repeated", "\"second\"")]
+    );
+    deserialize_agent_history(history).unwrap();
+}
+
+#[test]
+fn migrated_calls_match_results_without_an_invocation_id() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let parts = [
+        tool_part(
+            0,
+            "tool:historical",
+            "call",
+            "completed",
+            Some(serde_json::json!("historical output")),
+            None,
+            Some("legacy-job"),
+        ),
+        completion_with_invocation(1, "call", "migrated-invocation"),
+    ];
+    let history = agent_history_from_parts(&state, &parts, None);
+    assert_eq!(result_texts(&history), [("call", "\"historical output\"")]);
+    deserialize_agent_history(history).unwrap();
+}
+
+#[test]
+fn unknown_invocation_ids_only_fall_back_to_legacy_calls() {
+    let mut legacy = completion_with_call(2, "call");
+    legacy.work.tool_invocations = serde_json::from_value(serde_json::json!([
+        {"item": 0, "toolInvocationId": "legacy-invocation"}
+    ]))
+    .unwrap();
+    let parts = [
+        completion_with_invocation(0, "call", "modern-invocation"),
+        tool_part(
+            1,
+            "tool:unknown",
+            "call",
+            "completed",
+            None,
+            Some("unknown"),
+            None,
+        ),
+        legacy,
+        tool_part(
+            3,
+            "tool:legacy",
+            "stale-id",
+            "completed",
+            None,
+            Some("legacy-invocation"),
+            None,
+        ),
+    ];
+    let modern_only = ToolCallIndex::new(&parts[..2]);
+    assert!(modern_only.for_result(&parts[1]).is_none());
+    let calls = ToolCallIndex::new(&parts);
+    assert_eq!(calls.for_result(&parts[3]).unwrap().part_number, 2);
+}
+
 #[test]
 fn skips_the_current_run_prompt_until_that_run_has_finished_turns() {
     let mut state = TranscriptState::new("user".into(), "thread".into());
@@ -187,6 +394,26 @@ fn set_cwd_outdates_earlier_environment_prompts() {
         .map(|prompt| prompt.text)
         .collect();
     assert_eq!(shown, ["instructions"]);
+}
+
+#[test]
+fn set_cwd_result_uses_its_call_even_before_the_history_cutoff() {
+    let mut state = TranscriptState::new("user".into(), "thread".into());
+    state.history_from_number = 1;
+    let mut call = completion_with_invocation(0, "cwd", "inv-cwd");
+    call.completion.as_mut().unwrap().items[0]["name"] = serde_json::json!("set_cwd");
+    let parts = [
+        call,
+        hidden(1, "run", HiddenPromptKind::Instructions, "instructions"),
+        hidden(2, "run", HiddenPromptKind::Environment, "old environment"),
+        tool_part(3, "tool:cwd", "", "completed", None, Some("inv-cwd"), None),
+        hidden(4, "run", HiddenPromptKind::Environment, "new environment"),
+    ];
+    let shown: Vec<_> = shown_workspace_context(&state, &parts)
+        .into_iter()
+        .map(|prompt| prompt.text)
+        .collect();
+    assert_eq!(shown, ["instructions", "new environment"]);
 }
 
 #[test]

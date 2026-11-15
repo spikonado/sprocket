@@ -1,7 +1,29 @@
 use super::*;
 
 #[test]
-fn parses_embedded_work_without_exposing_metadata_as_completion_content() {
+fn parses_canonical_parts_without_legacy_metadata() {
+    let parts = parse_remote_page(serde_json::json!({
+        "threadId": "thread",
+        "parts": [
+            {"number":0.0, "sourceKey":"completion:run:0", "kind":"completion", "runId":"run",
+                "completion":{"items":[{"type":"tool-call", "callId":"call", "name":"read_file", "input":{}, "toolInvocationId":"invocation"}]}},
+            {"number":1.0, "sourceKey":"tool:invocation:completed", "kind":"tool", "runId":"run",
+                "tool":{"toolInvocationId":"invocation", "status":"completed", "output":{"text":"file"}}}
+        ]
+    }), "thread").unwrap();
+    assert_eq!(
+        parts[0].content_items()[0]["toolInvocationId"],
+        "invocation"
+    );
+    let tool = serde_json::to_value(parts[1].tool.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        tool,
+        serde_json::json!({"toolInvocationId":"invocation", "status":"completed", "output":{"text":"file"}})
+    );
+}
+
+#[test]
+fn parses_legacy_work_and_normalizes_call_invocations() {
     let parts = parse_remote_parts(serde_json::json!({
         "parts": [{
             "number": 2,
@@ -9,17 +31,25 @@ fn parses_embedded_work_without_exposing_metadata_as_completion_content() {
             "kind": "completion",
             "runId": "run",
             "work": {
-                "ranges": [{ "start": 0, "end": 1, "sectionKey": "section" }]
+                "ranges": [{ "start": 0, "end": 2, "sectionKey": "section" }],
+                "toolInvocations": [{ "item": 1, "toolInvocationId": "invocation" }]
             },
             "completion": {
                 "streamId": "stream",
-                "items": [{ "type": "reasoning", "text": "thinking" }]
+                "items": [
+                    { "type": "reasoning", "text": "thinking" },
+                    { "type": "tool-call", "callId": "call", "name": "read_file" }
+                ]
             }
         }]
     }))
     .unwrap();
     assert_eq!(parts[0].work_assignment().ranges[0].section_key, "section");
-    assert_eq!(parts[0].content_items().len(), 1);
+    assert_eq!(parts[0].content_items().len(), 2);
+    assert_eq!(
+        parts[0].content_items()[1]["toolInvocationId"],
+        "invocation"
+    );
 }
 
 #[test]

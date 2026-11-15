@@ -2,7 +2,8 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
-import { sameValue } from '@convex/lib/transcriptParts';
+import { completionSourceKey, sameValue } from '@convex/lib/transcriptParts';
+import { legacySectionOrdinal } from '@convex/lib/legacyTranscriptWork';
 import {
 	enqueueWebSearchJob,
 	isCloudWebSearchKind,
@@ -32,12 +33,50 @@ export async function beginExecutorJob(
 		callId?: string;
 		toolInvocationId: string;
 		sectionKey?: string;
-		sectionOrdinal: number;
+		sectionOrdinal?: number;
 		attemptSeq: number;
 		streamId: string;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
-	if (!Number.isSafeInteger(args.sectionOrdinal) || args.sectionOrdinal < 0) {
+	let { sectionKey, sectionOrdinal } = args;
+
+	if (sectionKey === undefined && sectionOrdinal === undefined) {
+		const completion = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_sourceKey', (query) =>
+				query
+					.eq('threadId', args.run.threadId)
+					.eq('sourceKey', completionSourceKey(args.run._id, args.streamId))
+			)
+			.unique();
+
+		if (!completion?.completion) {
+			throw new Error('Missing saved canonical completion for tool invocation.');
+		}
+
+		const itemIndex = completion.completion.items.findIndex(
+			(item) => item.type === 'tool-call' && item.toolInvocationId === args.toolInvocationId
+		);
+
+		const item = completion.completion.items[itemIndex];
+
+		const range = completion.work.ranges.find(
+			(range) => range.start <= itemIndex && itemIndex < range.end
+		);
+
+		if (
+			item?.type !== 'tool-call' ||
+			!range ||
+			(args.callId !== undefined && item.callId !== args.callId)
+		) {
+			throw new Error('Tool invocation does not match a saved canonical completion.');
+		}
+
+		sectionKey = range.sectionKey;
+		sectionOrdinal = legacySectionOrdinal(sectionKey);
+	}
+
+	if (sectionOrdinal === undefined || !Number.isSafeInteger(sectionOrdinal) || sectionOrdinal < 0) {
 		throw new Error('Invalid section ordinal.');
 	}
 
@@ -53,8 +92,8 @@ export async function beginExecutorJob(
 			existing.callId !== args.callId ||
 			existing.kind !== args.kind ||
 			!sameValue(existing.payload, args.payload) ||
-			existing.sectionKey !== args.sectionKey ||
-			existing.sectionOrdinal !== args.sectionOrdinal ||
+			existing.sectionKey !== sectionKey ||
+			existing.sectionOrdinal !== sectionOrdinal ||
 			existing.attemptSeq !== args.attemptSeq ||
 			existing.streamId !== args.streamId
 		) {
@@ -82,8 +121,8 @@ export async function beginExecutorJob(
 		claimedAt: Date.now(),
 		sequence: nextSequence,
 		toolInvocationId: args.toolInvocationId,
-		sectionKey: args.sectionKey,
-		sectionOrdinal: args.sectionOrdinal,
+		sectionKey,
+		sectionOrdinal,
 		attemptSeq: args.attemptSeq,
 		streamId: args.streamId
 	};

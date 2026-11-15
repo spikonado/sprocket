@@ -1155,7 +1155,7 @@ export const vTranscriptAttachmentMeta = v.object({
 export const vTranscriptCompletionItem = v.union(
 	vAssistantTextPart,
 	vAssistantReasoningPart,
-	vAssistantToolCallPart
+	vAssistantToolCallPart.extend({ toolInvocationId: v.optional(v.string()) })
 );
 
 export const vHiddenPromptKind = v.union(
@@ -1188,8 +1188,8 @@ export const vTranscriptToolStatus = v.union(
 
 export const vTranscriptToolBody = v.object({
 	toolInvocationId: v.optional(v.string()),
-	callId: v.string(),
-	name: v.string(),
+	callId: v.optional(v.string()),
+	name: v.optional(v.string()),
 	input: v.optional(vJsonValue),
 	output: v.optional(vJsonValue),
 	status: vTranscriptToolStatus

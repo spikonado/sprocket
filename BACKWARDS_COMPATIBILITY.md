@@ -4,6 +4,16 @@ Clients older than v0.4.2 are unsupported. Each shim below is temporary code wit
 
 ## Convex API shims
 
+### Transcript part format
+
+Released v0.5.x agents send completion `work`, separate `toolInvocations`, and section metadata on `beginToolJob`. Keep accepting those arguments. Current agents put `toolInvocationId` on each completion call item and omit section assignments. Completion `sections` are accepted and ignored as described below.
+
+Released agents expect boolean results from `beginRun`, `saveContextHandoff`, `executor:complete` and `executor:fail`, and a completion document or `null` from `finalizeCompletionCall`. Current agents opt into returned parts with `returnParts: true`. Once clients without that argument age out, make the part-returning responses unconditional and remove the old return variants.
+
+Released clients download parts through `transcript:getPartsPage`; their replicas require `work` for grouping, `started` tool parts for running tools, and copied `callId`, `name` and command input on tool parts. Keep writing those fields and `started` parts as a compatibility projection, including for calls from current agents. Current readers derive blocks from completion item order, pair results by `toolInvocationId`, and ignore `started` parts. New completions omit `streamId`; their `sourceKey` still identifies the completion.
+
+Remove the projection only after clients through v0.5.x age out. Then migrate `work` and old `completion.streamId` off stored parts, and remove copied tool fields where a matching call preserves them. Keep the historical orphan-tool validators and every part number, including `started` parts. The invocation-ID backfill can run before that gate because it preserves the legacy fields.
+
 ### Retired subagent provider restriction
 
 Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
@@ -159,6 +169,8 @@ An npm launcher from v0.4.3 and earlier stays in memory across in-app updates an
 
 Stored executor jobs, transcripts and local data files keep accepting these historical shapes so history stays readable. No lossless rewrite exists, so they have no removal gate:
 
+- Tool parts with `status: 'started'`. Readers skip them, but retain their part numbers so transcript ranges stay contiguous.
+- Historical tool results without a matching completion call, including `executor-job:<id>` call IDs. Their `name`, `callId`, and optional `input` preserve details unavailable in a call item.
 - `spawn_subagent` calls with `threadId`, from before follow-ups moved to `control_subagent`.
 - Retired tool names `exec_command`, `control_command`, `poll_command`, `write_stdin` and `await_question`, their historical `yieldTimeMs` values, and question text, options and poll IDs in results.
 - The optional `workdir` on `vExecCommandPayload`, shown as `(cwd …)` in the UI and ignored on replay.

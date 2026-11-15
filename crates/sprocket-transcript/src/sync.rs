@@ -60,8 +60,8 @@ struct RemoteTranscriptPart {
     )]
     created_at: Option<u64>,
     prompt: Option<RemotePrompt>,
-    completion: Option<RemoteCompletion>,
-    tool: Option<RemoteTool>,
+    completion: Option<TranscriptCompletionBody>,
+    tool: Option<TranscriptToolBody>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -83,30 +83,6 @@ struct RemoteAttachment {
     storage_id: String,
     #[serde(default)]
     url: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteCompletion {
-    #[serde(default)]
-    stream_id: Option<String>,
-    items: Vec<serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteTool {
-    #[serde(default)]
-    job_id: Option<String>,
-    #[serde(default)]
-    tool_invocation_id: Option<String>,
-    call_id: String,
-    name: String,
-    #[serde(default)]
-    input: Option<serde_json::Value>,
-    #[serde(default)]
-    output: Option<serde_json::Value>,
-    status: String,
 }
 
 fn deserialize_creation_time<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -161,28 +137,19 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         "tool" => TranscriptPartKind::Tool,
         other => anyhow::bail!("unknown transcript part kind {other}"),
     };
-    Ok(TranscriptPart {
+    let mut part = TranscriptPart {
         number: part.number,
         source_key: part.source_key,
         kind,
         run_id: part.run_id,
         created_at: part.created_at,
         prompt: part.prompt.map(TranscriptPromptBody::from),
-        completion: part.completion.map(|completion| TranscriptCompletionBody {
-            stream_id: completion.stream_id,
-            items: completion.items,
-        }),
-        tool: part.tool.map(|tool| TranscriptToolBody {
-            job_id: tool.job_id,
-            tool_invocation_id: tool.tool_invocation_id,
-            call_id: tool.call_id,
-            name: tool.name,
-            input: tool.input,
-            output: tool.output,
-            status: tool.status,
-        }),
+        completion: part.completion,
+        tool: part.tool,
         work: part.work,
-    })
+    };
+    part.normalize_legacy_tool_invocations();
+    Ok(part)
 }
 
 pub async fn apply_remote_state(

@@ -4,18 +4,35 @@ import type { Value } from 'convex/values';
 import type {
 	HiddenPrompt,
 	TranscriptCompletionBody,
+	TranscriptCompletionItem,
 	TranscriptPromptBody,
 	TranscriptToolBody
 } from '@convex/lib/validators';
 
 const MAX_TRANSCRIPT_PARTS_PER_QUERY = 100;
 
-export function normalizeCompletionTiming(
-	completion: TranscriptCompletionBody
+export function withToolInvocationIds(
+	items: TranscriptCompletionItem[],
+	assignments: Doc<'threadTranscriptParts'>['work']['toolInvocations']
+): TranscriptCompletionItem[] {
+	const invocations = new Map(
+		assignments?.map(({ item, toolInvocationId }) => [item, toolInvocationId])
+	);
+
+	return items.map((item, index) => {
+		if (item.type !== 'tool-call' || item.toolInvocationId !== undefined) return item;
+		const toolInvocationId = invocations.get(index);
+
+		return toolInvocationId === undefined ? item : { ...item, toolInvocationId };
+	});
+}
+
+function normalizeCompletion(
+	completion: TranscriptCompletionBody,
+	work: Doc<'threadTranscriptParts'>['work']
 ): TranscriptCompletionBody {
 	return {
-		...completion,
-		items: completion.items.map((item) => ({
+		items: withToolInvocationIds(completion.items, work.toolInvocations).map((item) => ({
 			...item,
 			startedAt: item.startedAt ?? null,
 			completedAt: item.completedAt ?? null
@@ -178,7 +195,7 @@ export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
 ): Promise<{ part: Doc<'threadTranscriptParts'>; inserted: boolean }> {
-	const completion = args.completion ? normalizeCompletionTiming(args.completion) : undefined;
+	const completion = args.completion ? normalizeCompletion(args.completion, args.work) : undefined;
 
 	const existing = await ctx.db
 		.query('threadTranscriptParts')
@@ -201,7 +218,9 @@ export async function appendTranscriptPart(
 			kind: existing.kind,
 			runId: existing.runId,
 			prompt: existing.prompt,
-			completion: existing.completion,
+			completion: existing.completion
+				? normalizeCompletion(existing.completion, existing.work)
+				: undefined,
 			tool: existing.tool,
 			work: existing.work
 		};
