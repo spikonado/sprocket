@@ -11,10 +11,20 @@ fn patterned_edges_restart_and_keep_the_fill() {
         let layer = &board.layers[0];
         assert_eq!(layer.triangles.len(), 2);
         for [x, y] in [[0.0, 0.0], [7.0, 0.0], [7.0, 5.0], [0.0, 5.0]] {
-            assert!(layer.segments.iter().any(|s| close(s[0], x) && close(s[1], y)));
+            assert!(
+                layer
+                    .segments
+                    .iter()
+                    .any(|s| close(s[0], x) && close(s[1], y))
+            );
         }
         assert!(layer.segments.len() > 4);
-        assert!(layer.segments.iter().all(|s| (s[2] - s[0]).hypot(s[3] - s[1]) < 3.0));
+        assert!(
+            layer
+                .segments
+                .iter()
+                .all(|s| (s[2] - s[0]).hypot(s[3] - s[1]) < 3.0)
+        );
     }
     let board = decode(
         r#"(kicad_pcb (version 20261031)
@@ -33,7 +43,11 @@ fn patterned_curves_carry_phase_and_arcs_ignore_input_winding() {
                 (stroke (width 0.2) (type dash)) (layer "F.SilkS")))"#,
     );
     let segments = &board.layers[0].segments;
-    assert!(segments.windows(2).any(|pair| (pair[1][0] - pair[0][2]).hypot(pair[1][1] - pair[0][3]) > 0.7));
+    assert!(
+        segments
+            .windows(2)
+            .any(|pair| (pair[1][0] - pair[0][2]).hypot(pair[1][1] - pair[0][3]) > 0.7)
+    );
     let arc = |start, end| {
         decode(&format!(
             r#"(kicad_pcb (version 20261031)
@@ -43,8 +57,15 @@ fn patterned_curves_carry_phase_and_arcs_ignore_input_winding() {
     };
     let forward = arc(-4, 4);
     let reverse = arc(4, -4);
-    assert_eq!(forward.layers[0].segments.len(), reverse.layers[0].segments.len());
-    for (a, b) in forward.layers[0].segments.iter().zip(&reverse.layers[0].segments) {
+    assert_eq!(
+        forward.layers[0].segments.len(),
+        reverse.layers[0].segments.len()
+    );
+    for (a, b) in forward.layers[0]
+        .segments
+        .iter()
+        .zip(&reverse.layers[0].segments)
+    {
         assert!(a.iter().zip(b).all(|(&a, &b)| close(a, f64::from(b))));
     }
 }
@@ -70,10 +91,13 @@ fn knockout_stroke_text_fills_the_margin_and_cuts_out_the_strokes() {
     let delta = [(s[2] - s[0]), (s[3] - s[1])];
     let len = delta[0].hypot(delta[1]);
     let mid = [(s[0] + s[2]) / 2.0, (s[1] + s[3]) / 2.0];
-    assert!([-1.0, 1.0].iter().any(|side| covers(layer, [
-        mid[0] - delta[1] / len * 0.2 * side,
-        mid[1] + delta[0] / len * 0.2 * side,
-    ])));
+    assert!([-1.0, 1.0].iter().any(|side| covers(
+        layer,
+        [
+            mid[0] - delta[1] / len * 0.2 * side,
+            mid[1] + delta[0] / len * 0.2 * side,
+        ]
+    )));
 }
 
 #[test]
@@ -171,10 +195,12 @@ fn via_flashing_uses_same_net_tracks_in_either_file_order_and_saved_zone_connect
         (segment (start 0 0) (end 2 0) (width 0.2) (layer "In1.Cu") (net 1))
         (segment (start 0 0) (end 2 0) (width 0.2) (layer "In3.Cu") (net 2))"#;
     for items in [format!("{via}{tracks}"), format!("{tracks}{via}")] {
-        let board = decode(&format!(r#"(kicad_pcb
+        let board = decode(&format!(
+            r#"(kicad_pcb
             (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal)
                 (8 "In3.Cu" signal) (2 "B.Cu" signal))
-            (net 1 "A") (net 2 "B") {items})"#));
+            (net 1 "A") (net 2 "B") {items})"#
+        ));
         for layer in ["F.Cu/main", "In1.Cu/main", "In2.Cu/main", "B.Cu/main"] {
             assert!(close(board.layer(layer).circles[0][2], 0.5), "{layer}");
         }
@@ -185,20 +211,27 @@ fn via_flashing_uses_same_net_tracks_in_either_file_order_and_saved_zone_connect
 #[test]
 fn blind_via_keeps_its_own_ends_and_can_remove_both_ends() {
     for (keep, expected) in [("yes", vec!["In1.Cu/main", "In3.Cu/main"]), ("no", vec![])] {
-        let board = decode(&format!(r#"(kicad_pcb
+        let board = decode(&format!(
+            r#"(kicad_pcb
             (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal)
                 (8 "In3.Cu" signal) (2 "B.Cu" signal))
             (via blind (at 0 0) (size 1) (drill 0.4) (layers "In1.Cu" "In3.Cu")
-                (remove_unused_layers yes) (keep_end_layers {keep})))"#));
-        let copper: Vec<&str> = board.layers.iter().filter(|layer| layer.name.ends_with("Cu/main"))
-            .map(|layer| layer.name.as_str()).collect();
+                (remove_unused_layers yes) (keep_end_layers {keep})))"#
+        ));
+        let copper: Vec<&str> = board
+            .layers
+            .iter()
+            .filter(|layer| layer.name.ends_with("Cu/main"))
+            .map(|layer| layer.name.as_str())
+            .collect();
         assert_eq!(copper, expected);
     }
 }
 
 #[test]
 fn through_hole_pad_flashing_preserves_mask_paste_and_drill_and_uses_arc_connections() {
-    let board = decode(r#"(kicad_pcb
+    let board = decode(
+        r#"(kicad_pcb
         (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal))
         (net 1 "A")
         (footprint "P" (layer "F.Cu") (at 10 20)
@@ -206,8 +239,13 @@ fn through_hole_pad_flashing_preserves_mask_paste_and_drill_and_uses_arc_connect
                 (layers "*.Cu" "*.Mask" "F.Paste") (solder_paste_margin -0.1)
                 (remove_unused_layers yes) (keep_end_layers no)
                 (zone_layer_connections "In1.Cu") (net 1 "A")))
-        (arc (start 11 20) (mid 12 19) (end 13 20) (width 0.2) (layer "In2.Cu") (net 1)))"#);
-    let names: Vec<&str> = board.layers.iter().map(|layer| layer.name.as_str()).collect();
+        (arc (start 11 20) (mid 12 19) (end 13 20) (width 0.2) (layer "In2.Cu") (net 1)))"#,
+    );
+    let names: Vec<&str> = board
+        .layers
+        .iter()
+        .map(|layer| layer.name.as_str())
+        .collect();
     for expected in [
         "In1.Cu/main",
         "In2.Cu/main",
@@ -227,7 +265,8 @@ fn through_hole_pad_flashing_preserves_mask_paste_and_drill_and_uses_arc_connect
 
 #[test]
 fn padstacks_select_layer_shapes_and_offsets_without_moving_drills() {
-    let board = decode(r#"(kicad_pcb
+    let board = decode(
+        r#"(kicad_pcb
         (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal))
         (footprint "P" (layer "F.Cu")
             (pad "1" thru_hole circle (size 2 2) (drill 0.5) (layers "*.Cu" "*.Mask")
@@ -235,7 +274,8 @@ fn padstacks_select_layer_shapes_and_offsets_without_moving_drills() {
                     (layer "Inner" (shape rect) (size 3 1) (offset 0.5 0))
                     (layer "B.Cu" (shape oval) (size 1 2)))))
         (via (at 10 0) (size 2) (drill 0.5) (layers "F.Cu" "B.Cu")
-            (padstack (mode custom) (layer "In1.Cu" (size 1)) (layer "B.Cu" (size 3)))))"#);
+            (padstack (mode custom) (layer "In1.Cu" (size 1)) (layer "B.Cu" (size 3)))))"#,
+    );
     assert!(close(board.layer("F.Cu/main").circles[0][2], 1.0));
     assert!(close(board.layer("In1.Cu/main").circles[0][2], 0.5));
     assert!(close(board.layer("In2.Cu/main").circles[0][2], 1.0));
@@ -254,25 +294,35 @@ fn padstacks_select_layer_shapes_and_offsets_without_moving_drills() {
 #[test]
 fn mask_and_paste_margins_inherit_independently_and_legacy_zero_inherits() {
     for (version, expected_mask, expected_paste) in [(20240201, 1.2, 0.85), (20241229, 1.0, 0.95)] {
-        let board = decode(&format!(r#"(kicad_pcb (version {version}) (layers (0 "F.Cu" signal))
+        let board = decode(&format!(
+            r#"(kicad_pcb (version {version}) (layers (0 "F.Cu" signal))
             (setup (pad_to_mask_clearance 0.1) (pad_to_paste_clearance -0.05)
                 (pad_to_paste_clearance_ratio -0.1))
             (footprint "P" (layer "F.Cu") (solder_mask_margin 0.2) (solder_paste_margin_ratio -0.05)
                 (pad "1" smd circle (size 2 2) (layers "F.Cu" "F.Mask" "F.Paste")
-                    (solder_mask_margin 0) (solder_paste_margin_ratio 0))))"#));
-        assert!(close(board.layer("F.Mask/main").circles[0][2], expected_mask));
-        assert!(close(board.layer("F.Paste/main").circles[0][2], expected_paste));
+                    (solder_mask_margin 0) (solder_paste_margin_ratio 0))))"#
+        ));
+        assert!(close(
+            board.layer("F.Mask/main").circles[0][2],
+            expected_mask
+        ));
+        assert!(close(
+            board.layer("F.Paste/main").circles[0][2],
+            expected_paste
+        ));
         assert!(close(board.layer("F.Cu/main").circles[0][2], 1.0));
     }
 }
 
 #[test]
 fn paste_ratio_resizes_each_axis_and_preserves_roundrect_radius_ratio() {
-    let board = decode(r#"(kicad_pcb (version 20241229) (layers (0 "F.Cu" signal))
+    let board = decode(
+        r#"(kicad_pcb (version 20241229) (layers (0 "F.Cu" signal))
         (footprint "P" (layer "F.Cu")
             (pad "1" smd roundrect (size 2 1) (roundrect_rratio 0.25)
                 (layers "F.Cu" "F.Mask" "F.Paste") (solder_mask_margin 0.1)
-                (solder_paste_margin -0.02) (solder_paste_margin_ratio -0.2))))"#);
+                (solder_paste_margin -0.02) (solder_paste_margin_ratio -0.2))))"#,
+    );
     let mask = board.layer("F.Mask/main");
     let paste = board.layer("F.Paste/main");
     for (a, b) in mask.bounds().into_iter().zip([-1.1, -0.6, 1.1, 0.6]) {
@@ -287,12 +337,14 @@ fn paste_ratio_resizes_each_axis_and_preserves_roundrect_radius_ratio() {
 
 #[test]
 fn chamfered_roundrect_keeps_chamfers_sharp_and_scales_shrinking_apertures() {
-    let board = decode(r#"(kicad_pcb (version 20250324) (layers (0 "F.Cu" signal))
+    let board = decode(
+        r#"(kicad_pcb (version 20250324) (layers (0 "F.Cu" signal))
         (footprint "P" (layer "F.Cu")
             (pad "1" smd roundrect (size 2 2) (roundrect_rratio 0.1)
                 (chamfer_ratio 0.3) (chamfer top_left bottom_right)
                 (layers "F.Cu" "F.Mask" "F.Paste") (solder_mask_margin -0.1)
-                (solder_paste_margin -0.02) (solder_paste_margin_ratio -0.2))))"#);
+                (solder_paste_margin -0.02) (solder_paste_margin_ratio -0.2))))"#,
+    );
     for (name, half, chamfer, radius) in [
         ("F.Cu/main", 1.0, 0.6, 0.2),
         ("F.Mask/main", 0.9, 0.54, 0.18),
@@ -310,7 +362,11 @@ fn chamfered_roundrect_keeps_chamfers_sharp_and_scales_shrinking_apertures() {
             (-half, half - radius),
         ] {
             assert!(
-                layer.triangles.iter().flatten().any(|p| close(p[0], x) && close(p[1], y)),
+                layer
+                    .triangles
+                    .iter()
+                    .flatten()
+                    .any(|p| close(p[0], x) && close(p[1], y)),
                 "{name} missing boundary vertex ({x}, {y})"
             );
         }
@@ -319,11 +375,13 @@ fn chamfered_roundrect_keeps_chamfers_sharp_and_scales_shrinking_apertures() {
 
 #[test]
 fn trapezoid_paste_insets_the_sloped_edges_without_reversing_delta() {
-    let board = decode(r#"(kicad_pcb (version 20250324) (layers (0 "F.Cu" signal))
+    let board = decode(
+        r#"(kicad_pcb (version 20250324) (layers (0 "F.Cu" signal))
         (footprint "P" (layer "F.Cu")
             (pad "1" smd trapezoid (size 2 1.5) (rect_delta 0.5 0)
                 (layers "F.Cu" "F.Paste")
-                (solder_paste_margin -0.02) (solder_paste_margin_ratio -0.2))))"#);
+                (solder_paste_margin -0.02) (solder_paste_margin_ratio -0.2))))"#,
+    );
     for (name, corners) in [
         (
             "F.Cu/main",
@@ -342,7 +400,11 @@ fn trapezoid_paste_insets_the_sloped_edges_without_reversing_delta() {
         let layer = board.layer(name);
         for (x, y) in corners {
             assert!(
-                layer.triangles.iter().flatten().any(|p| close(p[0], x) && close(p[1], y)),
+                layer
+                    .triangles
+                    .iter()
+                    .flatten()
+                    .any(|p| close(p[0], x) && close(p[1], y)),
                 "{name} missing boundary vertex ({x}, {y})"
             );
         }
@@ -351,18 +413,26 @@ fn trapezoid_paste_insets_the_sloped_edges_without_reversing_delta() {
 
 #[test]
 fn mask_only_pads_keep_their_defined_size_and_empty_paste_openings_disappear() {
-    let board = decode(r#"(kicad_pcb (layers (0 "F.Cu" signal))
+    let board = decode(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal))
         (setup (pad_to_mask_clearance 0.2))
         (footprint "P" (layer "F.Cu")
             (pad "" smd circle (size 2 2) (layers "F.Mask"))
-            (pad "1" smd rect (size 2 1) (layers "F.Cu" "F.Paste") (solder_paste_margin -1))))"#);
+            (pad "1" smd rect (size 2 1) (layers "F.Cu" "F.Paste") (solder_paste_margin -1))))"#,
+    );
     assert!(close(board.layer("F.Mask/main").circles[0][2], 1.0));
-    assert!(!board.layers.iter().any(|layer| layer.name == "F.Paste/main"));
+    assert!(
+        !board
+            .layers
+            .iter()
+            .any(|layer| layer.name == "F.Paste/main")
+    );
 }
 
 #[test]
 fn via_mask_openings_use_board_defaults_and_side_overrides_and_outer_padstack_sizes() {
-    let board = decode(r#"(kicad_pcb (version 20250324)
+    let board = decode(
+        r#"(kicad_pcb (version 20250324)
         (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (2 "B.Cu" signal))
         (setup (pad_to_mask_clearance 0.1) (tenting (front no) (back yes)))
         (via (at 0 0) (size 1) (drill 0.4) (layers "F.Cu" "B.Cu"))
@@ -370,7 +440,8 @@ fn via_mask_openings_use_board_defaults_and_side_overrides_and_outer_padstack_si
             (tenting (front yes) (back no))
             (padstack (mode front_inner_back) (layer "Inner" (size 0.6)) (layer "B.Cu" (size 1.4))))
         (via blind (at 6 0) (size 1) (drill 0.4) (layers "F.Cu" "In1.Cu")
-            (tenting (front none) (back no))))"#);
+            (tenting (front none) (back no))))"#,
+    );
     let front = &board.layer("F.Mask/main").circles;
     assert_eq!(front.len(), 2);
     assert!(close(front[0][0], 0.0) && close(front[1][0], 6.0));
@@ -383,10 +454,18 @@ fn via_mask_openings_use_board_defaults_and_side_overrides_and_outer_padstack_si
 #[test]
 fn legacy_vias_default_to_tented_and_respect_legacy_plot_setting() {
     for (setting, open) in [("", false), ("(pcbplotparams (viasonmask true))", true)] {
-        let board = decode(&format!(r#"(kicad_pcb (version 20221018)
+        let board = decode(&format!(
+            r#"(kicad_pcb (version 20221018)
             (layers (0 "F.Cu" signal) (2 "B.Cu" signal)) (setup {setting})
-            (via (at 0 0) (size 1) (drill 0.4) (layers "F.Cu" "B.Cu")))"#));
-        assert_eq!(board.layers.iter().any(|layer| layer.name == "F.Mask/main"), open);
-        assert_eq!(board.layers.iter().any(|layer| layer.name == "B.Mask/main"), open);
+            (via (at 0 0) (size 1) (drill 0.4) (layers "F.Cu" "B.Cu")))"#
+        ));
+        assert_eq!(
+            board.layers.iter().any(|layer| layer.name == "F.Mask/main"),
+            open
+        );
+        assert_eq!(
+            board.layers.iter().any(|layer| layer.name == "B.Mask/main"),
+            open
+        );
     }
 }

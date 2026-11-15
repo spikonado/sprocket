@@ -157,6 +157,16 @@ const SEGMENT_BYTES: usize = 24;
 const CIRCLE_BYTES: usize = 20;
 const VERTEX_BYTES: usize = 12;
 
+fn record_float(record: &[u8], field: usize) -> f64 {
+    f64::from(f32::from_le_bytes(
+        record[field * 4..field * 4 + 4].try_into().unwrap(),
+    ))
+}
+
+fn record_point(record: &[u8], field: usize) -> Point {
+    point(record_float(record, field), record_float(record, field + 1))
+}
+
 impl Scene {
     pub fn new() -> Scene {
         let mut scene = Scene::default();
@@ -197,11 +207,6 @@ impl Scene {
     /// Moves the pending primitives that `keep(item, layer)` accepts into their layer's main
     /// part and drops the rest.
     pub fn flash(&mut self, keep: impl Fn(u32, &str) -> bool) {
-        let float = |bytes: &[u8], field: usize| {
-            f64::from(f32::from_le_bytes(
-                bytes[field * 4..field * 4 + 4].try_into().unwrap(),
-            ))
-        };
         let item = |bytes: &[u8], offset: usize| {
             u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
         };
@@ -212,20 +217,28 @@ impl Scene {
             let target = self.layer(&pending.name, Part::Main);
             let layer = &mut self.layers[target];
             let kept = |record: &&[u8], offset| keep(item(record, offset), &pending.name);
-            for record in pending.segments.chunks(SEGMENT_BYTES).filter(|r| kept(r, 20)) {
-                let half = float(record, 4) / 2.0;
-                layer.bounds.include(point(float(record, 0), float(record, 1)), half);
-                layer.bounds.include(point(float(record, 2), float(record, 3)), half);
+            for record in pending
+                .segments
+                .chunks(SEGMENT_BYTES)
+                .filter(|r| kept(r, 20))
+            {
+                let half = record_float(record, 4) / 2.0;
+                layer.bounds.include(record_point(record, 0), half);
+                layer.bounds.include(record_point(record, 2), half);
                 layer.segments.extend_from_slice(record);
             }
             for record in pending.circles.chunks(CIRCLE_BYTES).filter(|r| kept(r, 16)) {
-                let reach = float(record, 2) + float(record, 3) / 2.0;
-                layer.bounds.include(point(float(record, 0), float(record, 1)), reach);
+                let reach = record_float(record, 2) + record_float(record, 3) / 2.0;
+                layer.bounds.include(record_point(record, 0), reach);
                 layer.circles.extend_from_slice(record);
             }
-            for triangle in pending.triangles.chunks(3 * VERTEX_BYTES).filter(|r| kept(r, 8)) {
+            for triangle in pending
+                .triangles
+                .chunks(3 * VERTEX_BYTES)
+                .filter(|r| kept(r, 8))
+            {
                 for vertex in triangle.chunks(VERTEX_BYTES) {
-                    layer.bounds.include(point(float(vertex, 0), float(vertex, 1)), 0.0);
+                    layer.bounds.include(record_point(vertex, 0), 0.0);
                 }
                 layer.triangles.extend_from_slice(triangle);
             }

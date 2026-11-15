@@ -355,7 +355,8 @@ impl Board {
         if let Some(mask) = mask {
             let margin = self.mask_margin(track);
             let pen = self.pen(id, &mask, Part::Main);
-            self.scene.polyline(pen, &points, width + 2.0 * margin, false);
+            self.scene
+                .polyline(pen, &points, width + 2.0 * margin, false);
         }
     }
 
@@ -377,8 +378,10 @@ impl Board {
             .filter_map(Expr::text)
             .map(Into::into)
             .collect();
-        let span =
-            |name: Option<&String>, default: usize| name.and_then(|name| self.copper_index(name)).unwrap_or(default);
+        let span = |name: Option<&String>, default: usize| {
+            name.and_then(|name| self.copper_index(name))
+                .unwrap_or(default)
+        };
         let last = self.copper.len().saturating_sub(1);
         let (a, b) = (span(layers.first(), 0), span(layers.get(1), last));
         let ends = (a.min(b), a.max(b));

@@ -282,8 +282,8 @@ fn point_segment_distance(p: Point, a: Point, b: Point) -> f64 {
 pub fn segment_distance(a0: Point, a1: Point, b0: Point, b1: Point) -> f64 {
     let (da, db) = (a1 - a0, b1 - b0);
     let side = |d: Point, from: Point, p: Point| d.cross(p - from);
-    let crosses = side(da, a0, b0) * side(da, a0, b1) < 0.0
-        && side(db, b0, a0) * side(db, b0, a1) < 0.0;
+    let crosses =
+        side(da, a0, b0) * side(da, a0, b1) < 0.0 && side(db, b0, a0) * side(db, b0, a1) < 0.0;
     if crosses {
         return 0.0;
     }

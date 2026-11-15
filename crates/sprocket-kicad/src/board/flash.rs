@@ -105,7 +105,7 @@ impl FlashRule {
 pub(super) struct Flashing {
     tracks: Vec<Capsule>,
     /// Track indices by copper layer, net and grid cell.
-    cells: HashMap<(usize, u32, i32, i32), Vec<u32>>,
+    cells: HashMap<(usize, u32, i32, i32), Vec<usize>>,
     pending: Vec<Pending>,
 }
 
@@ -126,7 +126,7 @@ impl Board {
                 b: pair[1],
                 radius: width / 2.0,
             };
-            let id = flashing.tracks.len() as u32;
+            let id = flashing.tracks.len();
             flashing.tracks.push(track);
             let span = track.b - track.a;
             let pieces = (span.length() / CELL).ceil().max(1.0) as usize;
@@ -195,7 +195,7 @@ impl Board {
                     .is_some_and(|tracks| {
                         tracks
                             .iter()
-                            .any(|&track| flashing.tracks[track as usize].touches(&pending.hole))
+                            .any(|&track| flashing.tracks[track].touches(&pending.hole))
                     })
             })
         };
