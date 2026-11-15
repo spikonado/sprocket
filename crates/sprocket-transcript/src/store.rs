@@ -8,6 +8,7 @@ use anyhow::Context;
 use tokio::sync::{Mutex, broadcast};
 
 use super::attachment_store::write_attachment_metadata;
+use super::monitor::{PatchIdentities, PatchIndex};
 use super::types::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart};
 
 const FORMAT_FILE: &str = "format";
@@ -34,6 +35,7 @@ fn chunk_start(number: u32) -> u32 {
 struct ThreadIndex {
     numbers: BTreeSet<u32>,
     sources: HashMap<String, u32>,
+    patches: PatchIdentities,
 }
 
 impl ThreadIndex {
@@ -44,6 +46,7 @@ impl ThreadIndex {
     fn insert(&mut self, part: &TranscriptPart) {
         self.numbers.insert(part.number);
         self.sources.insert(part.source_key.clone(), part.number);
+        self.patches.insert(part);
     }
 
     fn missing_page(&self, start: u32, end: u32) -> Option<(u32, u32)> {
@@ -181,6 +184,16 @@ impl TranscriptStore {
             Ok(index.sources.get(&source).copied())
         })
         .await
+    }
+
+    pub(super) async fn patch_index(
+        &self,
+        user: &str,
+        thread: &str,
+        total: u32,
+    ) -> anyhow::Result<PatchIndex> {
+        self.with_thread(user, thread, move |_, index| Ok(index.patches.index(total)))
+            .await
     }
 
     pub async fn append_parts(

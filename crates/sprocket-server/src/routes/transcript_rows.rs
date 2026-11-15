@@ -157,6 +157,11 @@ where
         });
     }
     let end = before.unwrap_or(highwater);
+    // A tail page that lands past a wide gap moves the window instead of downloading the gap first.
+    let fixed_start = fixed_start.filter(|start| {
+        let cached = numbers.len() - numbers.partition_point(|number| number < start);
+        (end.saturating_sub(*start) as usize).saturating_sub(cached) <= PAGE_PARTS as usize
+    });
     let mut start = fixed_start
         .unwrap_or(end.saturating_sub(PAGE_PARTS))
         .min(end);

@@ -349,7 +349,7 @@ fn remote_parts(start: u32, end: u32) -> Vec<TranscriptPart> {
 }
 
 #[tokio::test]
-async fn empty_cache_loads_the_first_available_window_and_keeps_its_boundary() {
+async fn empty_cache_loads_the_first_available_window_and_keeps_its_boundary_until_a_wide_gap() {
     let (state, _root) = state().await;
     let store = &state.host.transcript;
     let empty = load_store_window(
@@ -407,6 +407,27 @@ async fn empty_cache_loads_the_first_available_window_and_keeps_its_boundary() {
     .await
     .unwrap();
     assert_eq!(reloaded.window, 250..450);
+    store
+        .append_parts("user", "thread", &remote_parts(900, 950))
+        .await
+        .unwrap();
+    let mut fetched = Vec::new();
+    let jumped = load_store_window(
+        store,
+        "user",
+        "thread",
+        &ProjectionScope::Thread,
+        None,
+        Some(reloaded.window.start),
+        |start, end| {
+            fetched.push(start..end);
+            async move { Ok(remote_parts(start, end)) }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(jumped.window, 750..950);
+    assert!(fetched.iter().all(|range| range.start >= 750));
 }
 
 #[tokio::test]

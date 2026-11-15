@@ -3,7 +3,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptStore, TranscriptToolBody};
 
@@ -242,12 +242,27 @@ impl PageBuilder {
 }
 
 struct PatchCall {
-    position: (u32, usize),
+    run: String,
     invocation: Option<String>,
+    call_id: Option<String>,
+}
+
+struct ToolResult {
+    run: String,
+    invocation: Option<String>,
+    call_id: String,
+    name: String,
+}
+
+/// Kept in the thread's in-memory index so pages pair patches without rereading the thread.
+#[derive(Default)]
+pub(crate) struct PatchIdentities {
+    calls: BTreeMap<(u32, usize), PatchCall>,
+    results: BTreeMap<u32, ToolResult>,
 }
 
 #[derive(Default)]
-struct PatchIndex {
+pub(crate) struct PatchIndex {
     results: HashMap<(u32, usize), u32>,
     orphans: BTreeSet<u32>,
 }
@@ -256,83 +271,80 @@ fn nonempty(value: Option<&str>) -> Option<&str> {
     value.filter(|value| !value.is_empty())
 }
 
-// Only identities and locations survive these scans, never tool outputs or transcript bodies.
-async fn patch_index(
-    store: &TranscriptStore,
-    user: &str,
-    thread: &str,
-    total: u32,
-) -> anyhow::Result<PatchIndex> {
-    let mut by_invocation = HashMap::new();
-    let mut by_call_id: HashMap<_, Vec<PatchCall>> = HashMap::new();
-    let mut start: u32 = 0;
-    while start < total {
-        let end = start.saturating_add(TRANSCRIPT_CHUNK_SIZE).min(total);
-        for part in store.read_parts_range(user, thread, start, end).await? {
-            let Some(completion) = part.completion else {
-                continue;
-            };
-            for (item, value) in completion.items.iter().enumerate() {
-                if value["type"] != "tool-call" || value["name"] != "apply_patch" {
-                    continue;
-                }
-                let call = PatchCall {
-                    position: (part.number, item),
-                    invocation: nonempty(value["toolInvocationId"].as_str()).map(str::to_owned),
-                };
-                if let Some(invocation) = &call.invocation {
-                    by_invocation.insert((part.run_id.clone(), invocation.clone()), call.position);
-                }
-                if let Some(call_id) = nonempty(value["callId"].as_str()) {
-                    by_call_id
-                        .entry((part.run_id.clone(), call_id.to_owned()))
-                        .or_default()
-                        .push(call);
-                }
+impl PatchIdentities {
+    pub(crate) fn insert(&mut self, part: &TranscriptPart) {
+        for (item, value) in part
+            .completion
+            .iter()
+            .flat_map(|completion| completion.items.iter().enumerate())
+        {
+            if value["type"] == "tool-call" && value["name"] == "apply_patch" {
+                self.calls.insert(
+                    (part.number, item),
+                    PatchCall {
+                        run: part.run_id.clone(),
+                        invocation: nonempty(value["toolInvocationId"].as_str()).map(str::to_owned),
+                        call_id: nonempty(value["callId"].as_str()).map(str::to_owned),
+                    },
+                );
             }
         }
-        start = end;
-        tokio::task::yield_now().await;
+        if let Some(tool) = part.tool.as_ref().filter(|tool| tool.status != "started") {
+            self.results.insert(
+                part.number,
+                ToolResult {
+                    run: part.run_id.clone(),
+                    invocation: nonempty(tool.tool_invocation_id.as_deref()).map(str::to_owned),
+                    call_id: tool.call_id.clone(),
+                    name: tool.name.clone(),
+                },
+            );
+        }
     }
-    let mut index = PatchIndex::default();
-    start = 0;
-    while start < total {
-        let end = start.saturating_add(TRANSCRIPT_CHUNK_SIZE).min(total);
-        for part in store.read_parts_range(user, thread, start, end).await? {
-            let Some(tool) = part.tool.filter(|tool| tool.status != "started") else {
-                continue;
-            };
-            let invocation = nonempty(tool.tool_invocation_id.as_deref());
+
+    pub(crate) fn index(&self, total: u32) -> PatchIndex {
+        let mut by_invocation = HashMap::new();
+        let mut by_call_id: HashMap<_, Vec<_>> = HashMap::new();
+        for (&position, call) in self.calls.range(..(total, 0)) {
+            if let Some(invocation) = &call.invocation {
+                by_invocation.insert((call.run.as_str(), invocation.as_str()), position);
+            }
+            if let Some(call_id) = &call.call_id {
+                by_call_id
+                    .entry((call.run.as_str(), call_id.as_str()))
+                    .or_default()
+                    .push((position, call.invocation.is_some()));
+            }
+        }
+        let mut index = PatchIndex::default();
+        for (&number, result) in self.results.range(..total) {
+            let invocation = result.invocation.as_deref();
             let position = invocation
-                .and_then(|invocation| {
-                    by_invocation.get(&(part.run_id.clone(), invocation.to_owned()))
-                })
+                .and_then(|invocation| by_invocation.get(&(result.run.as_str(), invocation)))
                 .copied()
                 .or_else(|| {
-                    if !tool.name.is_empty() && tool.name != "apply_patch" {
+                    if !result.name.is_empty() && result.name != "apply_patch" {
                         return None;
                     }
-                    let calls = by_call_id.get(&(part.run_id.clone(), tool.call_id.clone()))?;
+                    let calls = by_call_id.get(&(result.run.as_str(), result.call_id.as_str()))?;
                     let mut candidates = calls
                         .iter()
-                        .filter(|call| invocation.is_none() || call.invocation.is_none());
+                        .filter(|(_, has_invocation)| invocation.is_none() || !has_invocation);
                     candidates
                         .clone()
                         .rev()
-                        .find(|call| call.position.0 < part.number)
+                        .find(|(position, _)| position.0 < number)
                         .or_else(|| candidates.next())
-                        .map(|call| call.position)
+                        .map(|(position, _)| *position)
                 });
             if let Some(position) = position {
-                index.results.entry(position).or_insert(part.number);
-            } else if tool.name == "apply_patch" {
-                index.orphans.insert(part.number);
+                index.results.entry(position).or_insert(number);
+            } else if result.name == "apply_patch" {
+                index.orphans.insert(number);
             }
         }
-        start = end;
-        tokio::task::yield_now().await;
+        index
     }
-    Ok(index)
 }
 
 async fn read_page(
@@ -389,7 +401,7 @@ async fn read_page(
                         }
                         Some("tool-call") if item["name"] == "apply_patch" => {
                             if patches.is_none() {
-                                patches = Some(patch_index(store, user, thread, total).await?);
+                                patches = Some(store.patch_index(user, thread, total).await?);
                             }
                             let number = patches
                                 .as_ref()
@@ -424,7 +436,7 @@ async fn read_page(
                 && tool.name == "apply_patch"
             {
                 if patches.is_none() {
-                    patches = Some(patch_index(store, user, thread, total).await?);
+                    patches = Some(store.patch_index(user, thread, total).await?);
                 }
                 if patches
                     .as_ref()
