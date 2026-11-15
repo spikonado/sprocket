@@ -94,11 +94,15 @@ impl Board {
         let filled = explicit_fill.unwrap_or(implicit_fill);
         let stroke = stroke.scaled(frame);
         let width = stroke.width;
+        let edge = self.scene.is_edge(pen.layer);
         let at = |key: &str| child_point(shape, key).map(|p| frame.apply(p));
         match name {
             "line" => {
                 if let (Some(start), Some(end)) = (at("start"), at("end")) {
                     stroke.line(&mut self.scene, pen, start, end);
+                    if edge {
+                        self.edges.open(vec![start, end]);
+                    }
                 }
             }
             "arc" => {
@@ -114,8 +118,20 @@ impl Board {
                     (None, None) => None,
                 };
                 match arc {
-                    Some(arc) => stroke.arc(&mut self.scene, pen, arc, frame),
-                    None => stroke.line(&mut self.scene, pen, frame.apply(start), frame.apply(end)),
+                    Some(arc) => {
+                        stroke.arc(&mut self.scene, pen, arc, frame);
+                        if edge {
+                            self.edges
+                                .open(arc.points().into_iter().map(|p| frame.apply(p)).collect());
+                        }
+                    }
+                    None => {
+                        let (start, end) = (frame.apply(start), frame.apply(end));
+                        stroke.line(&mut self.scene, pen, start, end);
+                        if edge {
+                            self.edges.open(vec![start, end]);
+                        }
+                    }
                 }
             }
             "circle" => {
@@ -125,21 +141,26 @@ impl Board {
                     return;
                 };
                 let radius = frame.length((end - center).length());
+                let circle = Arc::from_center(center, end, 360.0);
                 if !stroke.is_solid() {
                     if filled {
                         self.scene.circle(pen, frame.apply(center), radius, 0.0);
                     }
-                    stroke.arc(
-                        &mut self.scene,
-                        pen,
-                        Arc::from_center(center, end, 360.0),
-                        frame,
-                    );
+                    stroke.arc(&mut self.scene, pen, circle, frame);
                 } else if filled {
                     self.scene
                         .circle(pen, frame.apply(center), radius + width / 2.0, 0.0);
                 } else {
                     self.scene.circle(pen, frame.apply(center), radius, width);
+                }
+                if edge {
+                    self.edges.closed(
+                        circle
+                            .points()
+                            .into_iter()
+                            .map(|p| frame.apply(p))
+                            .collect(),
+                    );
                 }
             }
             "rect" => {
@@ -152,6 +173,9 @@ impl Board {
                     .map(|p| frame.apply(p))
                     .collect();
                 self.closed_shape(pen, &corners, stroke, filled);
+                if edge {
+                    self.edges.closed(corners);
+                }
             }
             "poly" => {
                 let Some(pts) = shape.child("pts") else {
@@ -159,6 +183,9 @@ impl Board {
                 };
                 let outline: Vec<Point> = points(pts).into_iter().map(|p| frame.apply(p)).collect();
                 self.closed_shape(pen, &outline, stroke, filled);
+                if edge {
+                    self.edges.closed(outline);
+                }
             }
             "curve" => {
                 let Some(pts) = shape.child("pts") else {
@@ -173,6 +200,9 @@ impl Board {
                         self.scene.polygon(pen, &curve, &[]);
                     }
                     stroke.chain(&mut self.scene, pen, &curve);
+                    if edge {
+                        self.edges.open(curve);
+                    }
                 }
             }
             _ => {}

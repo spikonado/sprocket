@@ -199,6 +199,16 @@ impl<'t, 'a> Expr<'t, 'a> {
         &self.tree.src[node.start as usize..node.end as usize]
     }
 
+    /// The node exactly as written in the file, with a string's quotes and escapes.
+    pub fn raw(self) -> &'a str {
+        let node = self.node();
+        let quotes = match node.kind {
+            Kind::Str | Kind::EscapedStr => 1,
+            Kind::List | Kind::Atom => 0,
+        };
+        &self.tree.src[node.start as usize - quotes..node.end as usize + quotes]
+    }
+
     /// The value of an atom or string; `None` for lists.
     pub fn text(self) -> Option<Cow<'a, str>> {
         match self.node().kind {

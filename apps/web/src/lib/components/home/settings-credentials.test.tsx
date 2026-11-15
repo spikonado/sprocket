@@ -86,7 +86,7 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		workspaceEntryKind: unused,
 		watchWorkspaceFile: unused,
 		readWorkspaceText: unused,
-		exportBoard3d: unused,
+		kicadModels: unused,
 		kicadScene: unused,
 		writeWorkspaceFile: unused,
 		createWorkspaceFile: unused,

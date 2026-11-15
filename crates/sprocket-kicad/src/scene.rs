@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use earcut::Earcut;
 use serde::{Serialize, Serializer};
 
+use crate::board::Colors;
 use crate::geometry::{Bounds, Point, clip_ring, point};
+use crate::outline::Outline;
 
 mod polygon;
 
@@ -102,6 +104,19 @@ pub struct Scene {
     flat: Vec<[f64; 2]>,
     hole_starts: Vec<u32>,
     indices: Vec<u32>,
+    board: Option<BoardMeta>,
+    models: Option<String>,
+}
+
+/// The physical board for the 3D view. z runs from 0 to `body` through the board body; F.Cu
+/// spans `body..body + copper[0]` and B.Cu `-copper[1]..0`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardMeta {
+    pub outlines: Vec<Outline>,
+    pub body: f64,
+    pub copper: [f64; 2],
+    pub colors: Colors,
 }
 
 #[derive(Serialize)]
@@ -113,6 +128,9 @@ struct Meta<'a> {
     layers: Vec<LayerMeta<'a>>,
     items: &'a [Item],
     nets: &'a [String],
+    board: Option<&'a BoardMeta>,
+    /// The component models key, or `None` when no footprint has a model.
+    models: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -288,6 +306,32 @@ impl Scene {
         self.items[item as usize].bounds
     }
 
+    /// The board edges' box, or the box of everything drawn when there are none.
+    pub fn view_bounds(&self) -> Bounds {
+        let edges = self
+            .layer_ids
+            .get(&(EDGE_LAYER.to_owned(), Part::Main))
+            .map(|&id| self.layers[id].bounds)
+            .filter(|bounds| !bounds.is_empty());
+        edges.unwrap_or_else(|| {
+            let mut all = Bounds::EMPTY;
+            for layer in &self.layers {
+                all.merge(&layer.bounds);
+            }
+            all
+        })
+    }
+
+    pub fn is_edge(&self, layer: usize) -> bool {
+        let layer = &self.layers[layer];
+        layer.name == EDGE_LAYER && layer.part == Part::Main
+    }
+
+    pub fn set_board(&mut self, board: BoardMeta, models: Option<String>) {
+        self.board = Some(board);
+        self.models = models;
+    }
+
     fn touch(&mut self, pen: Pen, p: Point, margin: f64) {
         let layer = &mut self.layers[pen.layer];
         layer.bounds.include(p, margin);
@@ -406,18 +450,7 @@ impl Scene {
                     && layer.triangles.is_empty())
             })
             .collect();
-
-        let mut all = Bounds::EMPTY;
-        for id in &order {
-            all.merge(&self.layers[*id].bounds);
-        }
-        let bounds = self
-            .layer_ids
-            .get(&(EDGE_LAYER.to_owned(), Part::Main))
-            .map(|&id| self.layers[id].bounds)
-            .filter(|bounds| !bounds.is_empty())
-            .unwrap_or(all);
-
+        let bounds = self.view_bounds();
         let layers = order
             .iter()
             .map(|&id| {
@@ -441,6 +474,8 @@ impl Scene {
             layers,
             items: &self.items,
             nets: &self.nets,
+            board: self.board.as_ref(),
+            models: self.models.as_deref(),
         })
         .expect("scene meta serializes");
 

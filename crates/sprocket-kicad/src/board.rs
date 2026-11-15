@@ -5,16 +5,21 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::geometry::{Arc, Point, Transform, point};
+use crate::models::ModelsWriter;
+use crate::outline::EdgeCuts;
 use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen, Scene, inner_copper_number};
 use crate::sexpr::{Expr, for_each_item};
 
 mod flash;
 mod graphics;
 mod pad;
+mod stackup;
 mod stroke;
 mod textbox;
 
 use flash::{Capsule, FlashRule, Flashing};
+pub use stackup::Colors;
+use stackup::Stackup;
 
 /// The first file version that stores footprint zones in the footprint's frame.
 const FIRST_FP_AFFINE_TRANSFORM: i64 = 20260616;
@@ -34,14 +39,22 @@ pub fn scene(src: &str) -> Result<Vec<u8>> {
         net_names: HashMap::new(),
         vars: HashMap::new(),
         copper: Vec::new(),
+        edges: EdgeCuts::default(),
+        stackup: Stackup::default(),
         setup: Setup::default(),
         flashing: Flashing::default(),
     };
+    let mut models = ModelsWriter::default();
     for_each_item(src, "kicad_pcb", |item| {
         board.item(item);
+        models.item(item);
         Ok(())
     })?;
     board.flash();
+    let fallback = board.scene.view_bounds();
+    let meta = board.stackup.board(board.edges.outlines(fallback));
+    let key = models.finish().map(|models| models.key);
+    board.scene.set_board(meta, key);
     Ok(board.scene.encode())
 }
 
@@ -100,6 +113,8 @@ struct Board {
     vars: HashMap<String, String>,
     /// Copper layers from top to bottom.
     copper: Vec<String>,
+    edges: EdgeCuts,
+    stackup: Stackup,
     setup: Setup,
     flashing: Flashing,
 }
@@ -110,9 +125,19 @@ impl Board {
             return;
         };
         match head {
-            "version" => self.version = item.number_arg(0).map_or(0, |version| version as i64),
-            "layers" => self.layers(item),
-            "setup" => self.setup(item),
+            "version" => {
+                self.version = item.number_arg(0).map_or(0, |version| version as i64);
+                self.stackup.version(self.version);
+            }
+            "general" => self.stackup.general(item),
+            "setup" => {
+                self.setup(item);
+                self.stackup.setup(item);
+            }
+            "layers" => {
+                self.layers(item);
+                self.stackup.layers(item);
+            }
             "net" => {
                 if let (Some(number), Some(name)) = (item.number_arg(0), item.text_arg(1)) {
                     self.net_names.insert(number as i64, unescape_net(&name));

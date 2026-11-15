@@ -1,8 +1,8 @@
-import { FlipHorizontal2, Layers, Maximize, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Box, FlipHorizontal2, Layers, Maximize, X } from 'lucide-react';
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import ViewerStatusNotice, { type ViewerStatus } from '$lib/components/home/viewer-status';
 import { BoardViewerClient } from '$lib/kicad-viewer/client';
-import type { PickResult, ViewerLayer } from '$lib/kicad-viewer/protocol';
+import type { PickResult, View, ViewerLayer } from '$lib/kicad-viewer/protocol';
 import type { ItemKind } from '$lib/kicad-viewer/scene';
 import type { LocalApi } from '$lib/types/sprocket';
 import { useEscapeLayer } from '$lib/use-escape-layer';
@@ -15,30 +15,38 @@ const ICON_BUTTON =
 	'focus-visible:ring-ring text-muted-foreground hover:text-foreground flex size-6 items-center justify-center rounded-full transition focus-visible:ring-2 focus-visible:outline-none';
 
 /**
- * The server parses the board and a worker draws it, so even an 85 MB board leaves the page
- * responsive. A new `snapshot` version from the file watch refetches the scene and keeps the
- * camera. A failed load retries on the next snapshot, which a reconnecting watch sends.
+ * Failed scene loads retry on the next watch snapshot, including after a reconnect.
+ * Component exports are slow, so load them only after 3D opens and their key changes.
  */
 export default function PcbViewer({
 	api,
 	workspacePath,
 	path,
 	snapshot,
-	shown
+	view
 }: {
-	api: Pick<LocalApi, 'kicadScene'>;
+	api: Pick<LocalApi, 'kicadScene' | 'kicadModels'>;
 	workspacePath: string;
 	path: string;
 	snapshot: { version: string } | null;
-	shown: boolean;
+	view: View | null;
 }) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const viewer = useRef<BoardViewerClient | null>(null);
 	const [status, setStatus] = useState<ViewerStatus>({ kind: 'loading' });
+	const [status3d, setStatus3d] = useState<ViewerStatus>({ kind: 'ready' });
 	const [layers, setLayers] = useState<ViewerLayer[] | null>(null);
+	const [modelsKey, setModelsKey] = useState<string | null | undefined>(undefined);
 	const [pick, setPick] = useState<PickResult | null>(null);
-	const [flipped, setFlipped] = useState(false);
+	const [flipped, setFlipped] = useState<Record<View, boolean>>({ '2d': false, '3d': false });
 	const [layersOpen, setLayersOpen] = useState(false);
+	const [componentsVisible, setComponentsVisible] = useState(true);
+	const [opened3d, setOpened3d] = useState(false);
+	const [modelsAttempt, setModelsAttempt] = useState(0);
+
+	const retryModels = useEffectEvent(() => {
+		if (view === '3d' && status3d.kind === 'error') setModelsAttempt((attempt) => attempt + 1);
+	});
 
 	const loaded = useRef<{ version: string | null; state: 'loading' | 'loaded' | 'failed' }>({
 		version: null,
@@ -55,12 +63,16 @@ export default function PcbViewer({
 		if (!container) return;
 
 		const client = new BoardViewerClient(container, {
-			onLoaded: (next) => {
+			onLoaded: (next, models) => {
 				setLayers(next);
+				setModelsKey(models);
 				setStatus({ kind: 'ready' });
 			},
 			onPick: setPick,
-			onError: (message) => setStatus({ kind: 'error', message })
+			onError: (failed, message) =>
+				(failed === '3d' ? setStatus3d : setStatus)({ kind: 'error', message }),
+			onModels: (error) =>
+				setStatus3d(error ? { kind: 'error', message: error } : { kind: 'ready' })
 		});
 
 		const closed = new AbortController();
@@ -75,7 +87,7 @@ export default function PcbViewer({
 
 				if (closed.signal.aborted) return;
 				loaded.current.version = version;
-				await client.load(scene);
+				await client.load('scene', scene);
 				loaded.current.state = 'loaded';
 			} catch (error) {
 				if (closed.signal.aborted) return;
@@ -107,12 +119,52 @@ export default function PcbViewer({
 			clearTimeout(timer);
 			client.dispose();
 			viewer.current = null;
+			setModelsKey(undefined);
 		};
 	}, [api, workspacePath, path]);
 
 	useEffect(() => reload.current(true), [snapshot]);
+	useEffect(() => retryModels(), [view, snapshot]);
 
-	useEscapeLayer(() => viewer.current?.clearSelection(), shown && pick !== null);
+	useEffect(() => {
+		viewer.current?.show(view);
+
+		if (view === '3d') setOpened3d(true);
+	}, [api, workspacePath, path, view]);
+
+	useEffect(() => {
+		const client = viewer.current;
+
+		if (!client || !opened3d || modelsKey === undefined) return;
+
+		if (modelsKey === null) {
+			void client.load('models', null);
+
+			return;
+		}
+
+		const controller = new AbortController();
+		setStatus3d({ kind: 'loading', message: 'Loading components…' });
+
+		void (async () => {
+			try {
+				const models = await api.kicadModels({ workspacePath, path }, controller.signal);
+
+				if (controller.signal.aborted) return;
+				await client.load('models', models);
+			} catch (error) {
+				if (controller.signal.aborted) return;
+				setStatus3d({
+					kind: 'error',
+					message: error instanceof Error ? error.message : 'Could not load the components.'
+				});
+			}
+		})();
+
+		return () => controller.abort();
+	}, [api, workspacePath, path, opened3d, modelsKey, modelsAttempt]);
+
+	useEscapeLayer(() => viewer.current?.clearSelection(), view === '2d' && pick !== null);
 
 	function toggleLayer(name: string, visible: boolean) {
 		viewer.current?.setLayerVisible(name, visible);
@@ -122,20 +174,27 @@ export default function PcbViewer({
 		);
 	}
 
-	function flip() {
-		viewer.current?.flip(!flipped);
-		setFlipped(!flipped);
+	function flip(current: View) {
+		viewer.current?.flip(current, !flipped[current]);
+		setFlipped({ ...flipped, [current]: !flipped[current] });
 	}
+
+	function toggleComponents() {
+		viewer.current?.setComponentsVisible(!componentsVisible);
+		setComponentsVisible(!componentsVisible);
+	}
+
+	const shownStatus = view === '3d' && status.kind === 'ready' ? status3d : status;
 
 	return (
 		<div
 			ref={containerRef}
-			className="absolute inset-0 z-10 overflow-hidden"
-			hidden={!shown}
+			className="bg-background absolute inset-0 z-10 overflow-hidden"
+			hidden={!view}
 			role="region"
 			aria-label={`Board viewer for ${path}`}
 		>
-			{layers && (
+			{layers && view && (
 				<>
 					<div className="absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-44 flex-col items-end gap-2">
 						<div
@@ -143,37 +202,36 @@ export default function PcbViewer({
 							aria-label="Board tools"
 							className="bg-muted flex gap-0.5 rounded-full p-0.5 shadow-sm"
 						>
-							<button
-								type="button"
-								aria-pressed={layersOpen}
-								title="Layers"
-								onClick={() => setLayersOpen(!layersOpen)}
-								className={`${ICON_BUTTON} ${layersOpen ? 'bg-background text-foreground shadow-sm' : ''}`}
-							>
-								<Layers className="size-3.5" aria-hidden="true" />
-								<span className="sr-only">Layers</span>
-							</button>
-							<button
-								type="button"
-								title="Fit board"
-								onClick={() => viewer.current?.fit()}
-								className={ICON_BUTTON}
-							>
+							{view === '2d' ? (
+								<ToolButton
+									label="Layers"
+									pressed={layersOpen}
+									onClick={() => setLayersOpen(!layersOpen)}
+								>
+									<Layers className="size-3.5" aria-hidden="true" />
+								</ToolButton>
+							) : (
+								<ToolButton
+									label="Components"
+									pressed={componentsVisible}
+									onClick={toggleComponents}
+								>
+									<Box className="size-3.5" aria-hidden="true" />
+								</ToolButton>
+							)}
+							<ToolButton label="Fit board" onClick={() => viewer.current?.fit(view)}>
 								<Maximize className="size-3.5" aria-hidden="true" />
-								<span className="sr-only">Fit board</span>
-							</button>
-							<button
-								type="button"
-								aria-pressed={flipped}
-								title={flipped ? 'Show front' : 'Show back'}
-								onClick={flip}
-								className={`${ICON_BUTTON} ${flipped ? 'bg-background text-foreground shadow-sm' : ''}`}
+							</ToolButton>
+							<ToolButton
+								label="Flip board"
+								title={flipped[view] ? 'Show front' : 'Show back'}
+								pressed={flipped[view]}
+								onClick={() => flip(view)}
 							>
 								<FlipHorizontal2 className="size-3.5" aria-hidden="true" />
-								<span className="sr-only">Flip board</span>
-							</button>
+							</ToolButton>
 						</div>
-						{layersOpen && (
+						{view === '2d' && layersOpen && (
 							<ul aria-label="Layers" className={`${PANEL} min-h-0 w-full overflow-y-auto p-1`}>
 								{layers.map((layer) => (
 									<li key={layer.name}>
@@ -200,11 +258,44 @@ export default function PcbViewer({
 							</ul>
 						)}
 					</div>
-					{pick && <Properties pick={pick} onClose={() => viewer.current?.clearSelection()} />}
+					{view === '2d' && pick && (
+						<Properties pick={pick} onClose={() => viewer.current?.clearSelection()} />
+					)}
 				</>
 			)}
-			<ViewerStatusNotice status={status} drawn={layers !== null} opening="Opening the board…" />
+			<ViewerStatusNotice
+				status={shownStatus}
+				drawn={layers !== null}
+				opening="Opening the board…"
+			/>
 		</div>
+	);
+}
+
+function ToolButton({
+	label,
+	title = label,
+	pressed,
+	onClick,
+	children
+}: {
+	label: string;
+	title?: string;
+	pressed?: boolean;
+	onClick: () => void;
+	children: ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			aria-pressed={pressed}
+			title={title}
+			onClick={onClick}
+			className={`${ICON_BUTTON} ${pressed ? 'bg-background text-foreground shadow-sm' : ''}`}
+		>
+			{children}
+			<span className="sr-only">{label}</span>
+		</button>
 	);
 }
 

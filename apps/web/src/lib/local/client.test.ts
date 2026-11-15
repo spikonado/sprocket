@@ -62,6 +62,22 @@ describe('workspace launch fragments', () => {
 	});
 });
 
+describe('KiCad component models', () => {
+	it('returns no stream for a board without models', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(null, { status: 204 }))
+		);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').kicadModels({
+				workspacePath: '/work',
+				path: 'board.kicad_pcb'
+			})
+		).resolves.toBeNull();
+	});
+});
+
 describe('workspace skill listing', () => {
 	it('preserves invocation policy for the composer command menu', async () => {
 		const result = {

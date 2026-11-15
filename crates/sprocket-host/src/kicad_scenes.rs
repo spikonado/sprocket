@@ -1,28 +1,20 @@
-use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
 use sprocket_workspace::WorkspaceBytes;
 use tokio::sync::Semaphore;
 
-const CACHED_SCENES: usize = 4;
+use crate::kicad_cache::KiCadCache;
 
 /// Encodes boards into PCB viewer scenes one at a time and keeps the most recent ones.
 pub struct KiCadScenes {
-    recent: Mutex<VecDeque<CachedScene>>,
+    recent: KiCadCache,
     parsing: Arc<Semaphore>,
-}
-
-struct CachedScene {
-    path: PathBuf,
-    version: String,
-    scene: Arc<[u8]>,
 }
 
 impl Default for KiCadScenes {
     fn default() -> Self {
         Self {
-            recent: Mutex::default(),
+            recent: KiCadCache::default(),
             parsing: Arc::new(Semaphore::new(1)),
         }
     }
@@ -30,11 +22,11 @@ impl Default for KiCadScenes {
 
 impl KiCadScenes {
     pub async fn scene(&self, board: WorkspaceBytes) -> anyhow::Result<Arc<[u8]>> {
-        if let Some(scene) = self.cached(&board) {
+        if let Some(scene) = self.recent.get(&board.path, &board.version) {
             return Ok(scene);
         }
         let permit = Arc::clone(&self.parsing).acquire_owned().await?;
-        if let Some(scene) = self.cached(&board) {
+        if let Some(scene) = self.recent.get(&board.path, &board.version) {
             return Ok(scene);
         }
         let WorkspaceBytes {
@@ -49,29 +41,7 @@ impl KiCadScenes {
         })
         .await??
         .into();
-        let mut recent = self.recent();
-        recent.retain(|cached| cached.path != path);
-        recent.push_front(CachedScene {
-            path,
-            version,
-            scene: Arc::clone(&scene),
-        });
-        recent.truncate(CACHED_SCENES);
+        self.recent.insert(path, version, Arc::clone(&scene));
         Ok(scene)
-    }
-
-    fn cached(&self, board: &WorkspaceBytes) -> Option<Arc<[u8]>> {
-        let mut recent = self.recent();
-        let index = recent
-            .iter()
-            .position(|cached| cached.path == board.path && cached.version == board.version)?;
-        let cached = recent.remove(index)?;
-        let scene = Arc::clone(&cached.scene);
-        recent.push_front(cached);
-        Some(scene)
-    }
-
-    fn recent(&self) -> MutexGuard<'_, VecDeque<CachedScene>> {
-        self.recent.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }

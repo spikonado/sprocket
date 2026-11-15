@@ -50,6 +50,26 @@ const itemKind = z.enum([
 /** `[minX, minY, maxX, maxY]` in mm. */
 const bounds = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
+const rgba = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+/** Flat `[x0, y0, x1, y1, …]` in mm. */
+const ring = z.array(z.number());
+
+/** KiCad's 3D export puts the body at z = 0…`body`, F.Cu above it and B.Cu below it. */
+const boardBody = z.object({
+	outlines: z.array(z.object({ outer: ring, holes: z.array(ring) })),
+	body: z.number().positive(),
+	copper: z.tuple([z.number().nonnegative(), z.number().nonnegative()]),
+	colors: z.object({
+		body: rgba,
+		maskFront: rgba,
+		maskBack: rgba,
+		silkFront: rgba,
+		silkBack: rgba,
+		finish: rgba
+	})
+});
+
 const sceneItem = z.object({
 	kind: itemKind,
 	parent: z.number().int().nullable(),
@@ -70,7 +90,10 @@ const sceneMeta = z.object({
 	bounds,
 	layers: z.array(sceneLayerMeta),
 	items: z.array(sceneItem),
-	nets: z.array(z.string())
+	nets: z.array(z.string()),
+	board: boardBody,
+	/** Changes whenever KiCad's component model export would. `null` when no footprint has a model. */
+	models: z.string().nullable()
 });
 
 export type LayerKind = z.infer<typeof layerKind>;
@@ -86,6 +109,8 @@ export type Bounds = z.infer<typeof bounds>;
 export type SceneItem = z.infer<typeof sceneItem>;
 
 export type SceneMeta = z.infer<typeof sceneMeta>;
+
+export type ColorRgba = z.infer<typeof rgba>;
 
 export const SEGMENT_BYTES = 24;
 export const CIRCLE_BYTES = 20;

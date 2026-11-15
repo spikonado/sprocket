@@ -1,3 +1,4 @@
+import type { WheelInput } from '$lib/kicad-viewer/protocol';
 import type { Bounds } from '$lib/kicad-viewer/scene';
 
 /** `zoom` is CSS pixels per mm. Flipping mirrors x around the view's center. */
@@ -8,6 +9,16 @@ export type Size = { width: number; height: number };
 const FIT_MARGIN = 0.92;
 const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 100_000;
+const WHEEL_ZOOM_PER_PX = 0.002;
+const PINCH_ZOOM_PER_PX = 0.01;
+const LINE_PX = 16;
+
+/** Multiplies camera distance. Pixel-based 2D zoom uses its reciprocal. */
+export function wheelZoomFactor({ deltaY, deltaMode, pinch }: WheelInput, height: number) {
+	const pixels = deltaY * (deltaMode === 1 ? LINE_PX : deltaMode === 2 ? height : 1);
+
+	return Math.exp(pixels * (pinch ? PINCH_ZOOM_PER_PX : WHEEL_ZOOM_PER_PX));
+}
 
 export function fitCamera(bounds: Bounds, size: Size, flipped: boolean): Camera {
 	const [minX, minY, maxX, maxY] = bounds;

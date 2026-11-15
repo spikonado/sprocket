@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import Board3dViewer from '$lib/components/home/board-3d-viewer';
 import KicanvasViewer, { type KicanvasViewerApi } from '$lib/components/home/kicanvas-viewer';
 import PcbViewer from '$lib/components/home/pcb-viewer';
 import ViewerStatusNotice from '$lib/components/home/viewer-status';
@@ -7,7 +6,7 @@ import { kicadBoardPath } from '$lib/kicad';
 import { usePageVisible } from '$lib/page-visibility';
 import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
 
-type KicadViewerApi = KicanvasViewerApi & Pick<LocalApi, 'exportBoard3d' | 'kicadScene'>;
+type KicadViewerApi = KicanvasViewerApi & Pick<LocalApi, 'kicadModels' | 'kicadScene'>;
 
 type View = 'Schematic' | 'PCB' | '2D' | '3D';
 
@@ -16,11 +15,7 @@ type BoardFile =
 
 const RECONNECT_MS = 1_000;
 
-/**
- * Boards draw in `PcbViewer`, schematics in KiCanvas. A project shows its schematics first, and
- * its board once `<stem>.kicad_pcb` turns out to exist. Each view stays mounted once opened, so
- * switching back never reloads it.
- */
+/** Keep opened viewers mounted so switching views preserves their cameras. */
 export default function KicadViewer({
 	api,
 	file,
@@ -45,23 +40,24 @@ export default function KicadViewer({
 
 	const [chosen, setChosen] = useState<View>(first);
 	const view = views.includes(chosen) ? chosen : first;
-	const [opened, setOpened] = useState<ReadonlySet<View>>(new Set([first]));
+	const [boardOpened, setBoardOpened] = useState(isBoard);
 
 	function choose(next: View) {
 		setChosen(next);
-		setOpened((current) => new Set([...current, next]));
+
+		if (next !== 'Schematic') setBoardOpened(true);
 	}
 
 	return (
 		<div className="relative min-h-0 flex-1">
 			{!isBoard && <KicanvasViewer api={api} file={file} active={active} />}
-			{api && boardPath && opened.has(pcbView) && board.kind !== 'missing' && (
+			{api && boardPath && boardOpened && board.kind !== 'missing' && (
 				<PcbViewer
 					api={api}
 					workspacePath={file.workspacePath}
 					path={boardPath}
 					snapshot={board.kind === 'found' ? board : null}
-					shown={view === pcbView}
+					view={view === pcbView ? '2d' : view === '3D' ? '3d' : null}
 				/>
 			)}
 			{isBoard && board.kind === 'missing' && (
@@ -69,15 +65,6 @@ export default function KicadViewer({
 					status={{ kind: 'error', message: board.message }}
 					drawn={false}
 					opening=""
-				/>
-			)}
-			{api && boardPath && boardVersion && opened.has('3D') && (
-				<Board3dViewer
-					api={api}
-					workspacePath={file.workspacePath}
-					path={boardPath}
-					revision={boardVersion}
-					shown={view === '3D'}
 				/>
 			)}
 			{views.length > 1 && (

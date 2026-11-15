@@ -412,11 +412,15 @@ export type LocalApi = {
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<{ content: string; version: string }>;
-	exportBoard3d: (input: WorkspaceFileTarget, signal?: AbortSignal) => Promise<ArrayBuffer>;
 	kicadScene: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<{ scene: ReadableStream<Uint8Array<ArrayBuffer>>; version: string }>;
+	/** KiCad's GLB of the board's component models, or `null` when no footprint has a model. */
+	kicadModels: (
+		input: WorkspaceFileTarget,
+		signal?: AbortSignal
+	) => Promise<ReadableStream<Uint8Array<ArrayBuffer>> | null>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;
