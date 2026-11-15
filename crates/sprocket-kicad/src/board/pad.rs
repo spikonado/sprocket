@@ -174,7 +174,7 @@ impl Board {
                 self.pad_shape(pen, &shape, &shape_frame, margin);
             }
         }
-        let board_size = point(frame.length(front.size.x), frame.length(front.size.y));
+        let board_size = front.size * frame.length(1.0);
         self.labels(id, pad, front.shape, board_size, net, &layers);
         if let Some(drill) = drill {
             let plated = kind != "np_thru_hole";

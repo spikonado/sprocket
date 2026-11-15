@@ -409,7 +409,7 @@ impl Board {
                 .and_then(|entry| entry.number_value("size"))
                 .unwrap_or(size)
         };
-        for copper in ends.0..=ends.1.min(last) {
+        for copper in ends.0..=ends.1 {
             let layer = self.copper[copper].clone();
             if let Some(pen) = self.flash_pen(id, &layer, copper, &rule) {
                 self.scene.circle(pen, center, diameter(&layer) / 2.0, 0.0);

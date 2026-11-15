@@ -240,22 +240,15 @@ fn margins(text: Expr, frame: &Transform, style: &TextStyle) -> [f64; 4] {
 }
 
 fn text_anchor(corners: &[Point; 4], margins: &[f64; 4], style: &TextStyle) -> Point {
-    let horizontal = match (style.h_align, style.mirrored) {
-        (HAlign::Left, false) | (HAlign::Right, true) => 0.0,
-        (HAlign::Right, false) | (HAlign::Left, true) => 1.0,
-        (HAlign::Center, _) => 0.5,
+    let (horizontal, dx) = match (style.h_align, style.mirrored) {
+        (HAlign::Left, false) | (HAlign::Right, true) => (0.0, margins[0]),
+        (HAlign::Right, false) | (HAlign::Left, true) => (1.0, -margins[2]),
+        (HAlign::Center, _) => (0.5, 0.0),
     };
     let (vertical, dy) = match style.v_align {
         VAlign::Top => (0.0, margins[1]),
         VAlign::Center => (0.5, 0.0),
         VAlign::Bottom => (1.0, -margins[3]),
-    };
-    let dx = if horizontal == 0.0 {
-        margins[0]
-    } else if horizontal == 1.0 {
-        -margins[2]
-    } else {
-        0.0
     };
     corners[0]
         + (corners[1] - corners[0]) * horizontal
@@ -295,13 +288,9 @@ fn wrap_text(text: &str, width: f64, style: &TextStyle) -> String {
                 line_width += pending_width;
             }
             bury_spaces = false;
-            if let Some(word) = word.strip_suffix(' ') {
-                wrapped.push_str(word);
-                pending_spaces = 1;
-            } else {
-                wrapped.push_str(word);
-                pending_spaces = 0;
-            }
+            let bare = word.strip_suffix(' ');
+            wrapped.push_str(bare.unwrap_or(word));
+            pending_spaces = usize::from(bare.is_some());
             line_width += word_width;
         }
     }

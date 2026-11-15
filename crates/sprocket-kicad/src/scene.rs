@@ -83,8 +83,6 @@ pub enum Part {
 struct Layer {
     name: String,
     part: Part,
-    /// Holds conditionally flashed copper until `Scene::flash` keeps or drops it.
-    pending: bool,
     segments: Vec<u8>,
     circles: Vec<u8>,
     triangles: Vec<u8>,
@@ -189,7 +187,7 @@ impl Scene {
         id
     }
 
-    /// A layer whose primitives stay hidden unless `flash` keeps them.
+    /// A layer that holds conditionally flashed copper until `flash` keeps or drops it.
     pub fn pending_layer(&mut self, name: &str) -> usize {
         if let Some(&id) = self.pending_ids.get(name) {
             return id;
@@ -197,7 +195,6 @@ impl Scene {
         let id = self.layers.len();
         self.layers.push(Layer {
             name: name.to_owned(),
-            pending: true,
             ..Layer::default()
         });
         self.pending_ids.insert(name.to_owned(), id);
@@ -293,9 +290,7 @@ impl Scene {
 
     fn touch(&mut self, pen: Pen, p: Point, margin: f64) {
         let layer = &mut self.layers[pen.layer];
-        if !layer.pending {
-            layer.bounds.include(p, margin);
-        }
+        layer.bounds.include(p, margin);
         // Labels can overhang their pad, whose box stays that of its copper.
         if layer.part != Part::Labels {
             self.items[pen.item as usize].bounds.include(p, margin);
@@ -406,10 +401,9 @@ impl Scene {
         let order: Vec<usize> = (0..self.layers.len())
             .filter(|&id| {
                 let layer = &self.layers[id];
-                !layer.pending
-                    && !(layer.segments.is_empty()
-                        && layer.circles.is_empty()
-                        && layer.triangles.is_empty())
+                !(layer.segments.is_empty()
+                    && layer.circles.is_empty()
+                    && layer.triangles.is_empty())
             })
             .collect();
 

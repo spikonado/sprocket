@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use super::scene;
+use crate::geometry::{Bounds, point};
 
 pub(super) struct Decoded {
     pub meta: Value,
@@ -69,7 +70,6 @@ impl Decoded {
 
 impl DecodedLayer {
     pub fn bounds(&self) -> [f64; 4] {
-        use crate::geometry::{Bounds, point};
         let mut bounds = Bounds::EMPTY;
         for &[x1, y1, x2, y2, width] in &self.segments {
             bounds.include(point(x1.into(), y1.into()), f64::from(width) / 2.0);

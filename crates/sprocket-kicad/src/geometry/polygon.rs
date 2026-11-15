@@ -1,3 +1,5 @@
+use std::f64::consts::PI;
+
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
@@ -6,30 +8,51 @@ use super::{Arc, Point, point};
 
 pub type Polygon = Vec<Vec<Point>>;
 
+/// The outline of the segment from `a` to `b` with round ends of `radius`.
+pub fn capsule(a: Point, b: Point, radius: f64) -> Vec<Point> {
+    let angle = (b.y - a.y).atan2(b.x - a.x);
+    let half_turn = |center, start| {
+        Arc {
+            center,
+            radius,
+            start,
+            sweep: PI,
+        }
+        .points()
+    };
+    let mut ring = half_turn(a, angle + PI / 2.0);
+    ring.extend(half_turn(b, angle - PI / 2.0));
+    ring
+}
+
 pub fn stroke_outline(strokes: &[Vec<Point>], width: f64) -> Vec<Polygon> {
     if width <= 0.0 || !width.is_finite() {
         return Vec::new();
     }
-    let mut polygons = Vec::new();
-    for stroke in strokes {
-        if let [p] = stroke[..] {
-            polygons.push(vec![
-                Arc::from_center(p, p + point(width / 2.0, 0.0), 360.0).points(),
-            ]);
-        }
-        for pair in stroke.windows(2) {
-            let delta = pair[1] - pair[0];
-            let normal = if delta.length() == 0.0 {
-                point(0.0, width / 2.0)
-            } else {
-                point(-delta.y, delta.x).resized(width / 2.0)
-            };
-            let mut ring = Arc::from_center(pair[0], pair[0] + normal, 180.0).points();
-            ring.extend(Arc::from_center(pair[1], pair[1] - normal, 180.0).points());
-            polygons.push(vec![ring]);
-        }
-    }
-    polygons
+    let radius = width / 2.0;
+    strokes
+        .iter()
+        .flat_map(|stroke| match stroke[..] {
+            [p] => vec![vec![capsule(p, p, radius)]],
+            _ => stroke
+                .windows(2)
+                .map(|pair| vec![capsule(pair[0], pair[1], radius)])
+                .collect(),
+        })
+        .collect()
+}
+
+/// Converts `i_overlay` shapes back to polygons.
+pub fn from_overlay(shapes: Vec<Vec<Vec<[f64; 2]>>>) -> Vec<Polygon> {
+    shapes
+        .into_iter()
+        .map(|shape| {
+            shape
+                .into_iter()
+                .map(|ring| ring.into_iter().map(|[x, y]| point(x, y)).collect())
+                .collect()
+        })
+        .collect()
 }
 
 pub fn difference(subject: &[Polygon], clip: &[Polygon]) -> Vec<Polygon> {
@@ -54,14 +77,5 @@ pub fn difference(subject: &[Polygon], clip: &[Polygon]) -> Vec<Polygon> {
     };
     let subject = contours(subject);
     let clip = contours(clip);
-    subject
-        .overlay(&clip, OverlayRule::Difference, FillRule::NonZero)
-        .into_iter()
-        .map(|polygon| {
-            polygon
-                .into_iter()
-                .map(|ring| ring.into_iter().map(|[x, y]| point(x, y)).collect())
-                .collect()
-        })
-        .collect()
+    from_overlay(subject.overlay(&clip, OverlayRule::Difference, FillRule::NonZero))
 }
