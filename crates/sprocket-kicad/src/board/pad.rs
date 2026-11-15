@@ -1,16 +1,109 @@
 //! Footprint pads, their drill holes and their number and net name labels.
 
-use super::{Board, HOLE_WALL, child_point, unescape_net, xy};
-use crate::geometry::{Point, Transform, inset_convex, point};
-use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen};
+use super::flash::{Capsule, FlashRule};
+use super::{Board, HOLE_WALL, Margins, child_point, padstack_layer, unescape_net, xy};
+use crate::geometry::{Arc, Point, Transform, inset_convex, point};
+use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen, Scene};
 use crate::sexpr::Expr;
 use crate::text::{HAlign, TextStyle, VAlign, stroke_text};
 
 /// KiCad's `PCB_RENDER_SETTINGS::MAX_FONT_SIZE`.
 const MAX_LABEL_SIZE: f64 = 10.0;
 
+/// A pad's shape on one layer, from the pad itself or its `(padstack …)`.
+#[derive(Clone, Copy)]
+struct PadShape<'t, 'a> {
+    shape: &'a str,
+    size: Point,
+    /// Where the shape sits relative to the drill.
+    offset: Point,
+    delta: Point,
+    radius_ratio: f64,
+    chamfer_ratio: f64,
+    chamfers: Option<Expr<'t, 'a>>,
+    anchor: &'a str,
+    primitives: Option<Expr<'t, 'a>>,
+}
+
+impl<'t, 'a> PadShape<'t, 'a> {
+    fn read(pad: Expr<'t, 'a>) -> PadShape<'t, 'a> {
+        PadShape {
+            shape: pad.arg(2).and_then(Expr::atom).unwrap_or("circle"),
+            size: Point::default(),
+            offset: pad
+                .child("drill")
+                .and_then(|drill| child_point(drill, "offset"))
+                .unwrap_or_default(),
+            delta: Point::default(),
+            radius_ratio: 0.0,
+            chamfer_ratio: 0.0,
+            chamfers: None,
+            anchor: "circle",
+            primitives: None,
+        }
+        .with(pad)
+    }
+
+    fn with(mut self, entry: Expr<'t, 'a>) -> PadShape<'t, 'a> {
+        for field in entry.args() {
+            match field.head() {
+                Some("shape") => {
+                    if let Some(shape) = field.arg(0).and_then(Expr::atom) {
+                        self.shape = shape;
+                    }
+                }
+                Some("size") => self.size = xy(field).unwrap_or(self.size),
+                Some("offset") => self.offset = xy(field).unwrap_or(self.offset),
+                Some("rect_delta") => self.delta = xy(field).unwrap_or(self.delta),
+                Some("roundrect_rratio") => self.radius_ratio = field.number_arg(0).unwrap_or(0.0),
+                Some("chamfer_ratio") => self.chamfer_ratio = field.number_arg(0).unwrap_or(0.0),
+                Some("chamfer") => self.chamfers = Some(field),
+                Some("options") => {
+                    self.anchor = match field.value("anchor").as_deref() {
+                        Some("rect") => "rect",
+                        _ => "circle",
+                    }
+                }
+                Some("primitives") => self.primitives = Some(field),
+                _ => {}
+            }
+        }
+        self
+    }
+
+    /// The shape on `layer`. Padstack entries start from the pad's front copper shape with
+    /// no offset or trapezoid delta, as KiCad's parser does.
+    fn on(self, padstack: Option<Expr<'t, 'a>>, layer: &str) -> PadShape<'t, 'a> {
+        match padstack_layer(padstack, layer) {
+            Some(entry) => PadShape {
+                offset: Point::default(),
+                delta: Point::default(),
+                ..self
+            }
+            .with(entry),
+            None => self,
+        }
+    }
+
+    fn corner_radius(&self) -> f64 {
+        let short = self.size.x.min(self.size.y);
+        if self.shape == "roundrect" {
+            (self.radius_ratio * short).min(short / 2.0)
+        } else {
+            0.0
+        }
+    }
+
+    fn chamfer(&self) -> Option<(f64, Expr<'t, 'a>)> {
+        let chamfer = self.chamfer_ratio * self.size.x.min(self.size.y);
+        self.chamfers
+            .filter(|_| chamfer > 0.0)
+            .map(|corners| (chamfer, corners))
+    }
+}
+
 impl Board {
-    pub(super) fn pad(&mut self, pad: Expr, footprint: u32, frame: &Transform) {
+    pub(super) fn pad(&mut self, pad: Expr, footprint: u32, frame: &Transform, margins: Margins) {
         let at = pad.child("at");
         let degrees = at.and_then(|at| at.number_arg(2)).unwrap_or(0.0);
         let pad_frame = frame.child(at.and_then(xy).unwrap_or_default(), degrees);
@@ -28,22 +121,67 @@ impl Board {
                 ..ItemInfo::default()
             },
         );
-        let size = child_point(pad, "size").unwrap_or_default();
-        let drill = pad.child("drill");
-        let offset = drill
-            .and_then(|drill| child_point(drill, "offset"))
-            .unwrap_or_default();
-        let shape_frame = pad_frame.child(offset, degrees);
-        let shape = pad.arg(2).and_then(Expr::atom).unwrap_or("circle");
+        let kind = pad.arg(1).and_then(Expr::atom).unwrap_or("smd");
+        let front = PadShape::read(pad);
+        let padstack = pad.child("padstack");
+        let margins = margins.overridden_by(pad, self.version);
+        let has_copper = layers.iter().any(|layer| layer.ends_with(".Cu"));
+        let drill = pad
+            .child("drill")
+            .and_then(|drill| Drill::read(drill, &pad_frame));
+        let last = self.copper.len().saturating_sub(1);
+        let rule = drill
+            .filter(|_| kind == "thru_hole")
+            .map(|drill| FlashRule::new(pad, (0, last), net.unwrap_or(0), drill.capsule));
         for layer in &layers {
-            let pen = self.pen(id, layer, Part::Main);
-            self.pad_shape(pen, pad, shape, size, &shape_frame);
+            let is_copper = layer.ends_with(".Cu");
+            let copper = if is_copper {
+                layer.as_str()
+            } else if layer.starts_with("B.") {
+                "B.Cu"
+            } else {
+                "F.Cu"
+            };
+            let shape = front.on(padstack, copper);
+            if kind == "np_thru_hole"
+                && is_copper
+                && drill.is_some_and(|drill| drill.covers(&shape))
+            {
+                continue;
+            }
+            let margin = match layer.rsplit_once('.').map(|(_, kind)| kind) {
+                Some("Mask") if has_copper => {
+                    let mask = margins.mask.max(-shape.size.x.min(shape.size.y) / 2.0);
+                    point(mask, mask)
+                }
+                Some("Paste") if has_copper => {
+                    let paste =
+                        shape.size * margins.paste_ratio + point(margins.paste, margins.paste);
+                    if shape.shape == "custom" {
+                        paste
+                    } else {
+                        point(
+                            paste.x.max(-shape.size.x / 2.0),
+                            paste.y.max(-shape.size.y / 2.0),
+                        )
+                    }
+                }
+                _ => Point::default(),
+            };
+            let pen = match (&rule, self.copper_index(copper)) {
+                (Some(rule), Some(index)) if is_copper => self.flash_pen(id, layer, index, rule),
+                _ => Some(self.pen(id, layer, Part::Main)),
+            };
+            if let Some(pen) = pen {
+                let shape_frame = pad_frame.child(shape.offset, degrees);
+                self.pad_shape(pen, &shape, &shape_frame, margin);
+            }
         }
-        let board_size = point(frame.length(size.x), frame.length(size.y));
-        self.labels(id, pad, shape, board_size, net, &layers);
+        let board_size = point(frame.length(front.size.x), frame.length(front.size.y));
+        self.labels(id, pad, front.shape, board_size, net, &layers);
         if let Some(drill) = drill {
-            let plated = pad.arg(1).and_then(Expr::atom) != Some("np_thru_hole");
-            self.drill(id, drill, &pad_frame, plated.then_some(board_size));
+            let plated = kind != "np_thru_hole";
+            self.drill(id, &drill, plated.then_some(board_size));
         }
         self.scene.merge_bounds(footprint, id);
     }
@@ -144,9 +282,37 @@ impl Board {
         }
     }
 
-    fn pad_shape(&mut self, pen: Pen, pad: Expr, shape: &str, size: Point, frame: &Transform) {
-        let half = size * 0.5;
-        match shape {
+    /// Draws a pad shape grown by `margin` on each side, as KiCad's `PlotStandardLayer` does
+    /// for mask and paste layers.
+    fn pad_shape(&mut self, pen: Pen, shape: &PadShape, frame: &Transform, margin: Point) {
+        let mut shape = *shape;
+        let mut radius = shape.corner_radius();
+        let local = margin * (1.0 / frame.length(1.0));
+        let equal = local.x == local.y;
+        let mut grow = 0.0;
+        match shape.shape {
+            "custom" => {}
+            "trapezoid" => grow = local.x,
+            "roundrect" if shape.chamfer().is_some() && equal && local.x > 0.0 => {
+                grow = local.x;
+            }
+            "circle" => shape.size = shape.size + point(local.x, local.x) * 2.0,
+            _ => {
+                shape.size = shape.size + local * 2.0;
+                radius = match shape.shape {
+                    "rect" => local.x.max(0.0),
+                    "roundrect" if equal && shape.chamfer().is_none() => {
+                        (radius + local.x).max(0.0)
+                    }
+                    _ => shape.corner_radius(),
+                };
+            }
+        }
+        if shape.shape != "custom" && (shape.size.x <= 0.0 || shape.size.y <= 0.0) {
+            return;
+        }
+        let half = shape.size * 0.5;
+        match shape.shape {
             "circle" => self
                 .scene
                 .circle(pen, frame.origin(), frame.length(half.x), 0.0),
@@ -161,27 +327,21 @@ impl Board {
                 );
             }
             "rect" | "roundrect" => {
-                let radius = if shape == "roundrect" {
-                    pad.number_value("roundrect_rratio").unwrap_or(0.0) * size.x.min(size.y)
+                if let Some((chamfer, corners)) = shape.chamfer() {
+                    let outline: Vec<Point> =
+                        chamfered_rect(half, chamfer, radius, |corner| corners.has_flag(corner))
+                            .into_iter()
+                            .map(|p| frame.apply(p))
+                            .collect();
+                    self.scene.polygon(pen, &outline, &[]);
+                    self.scene
+                        .polyline(pen, &outline, frame.length(2.0 * grow), true);
                 } else {
-                    0.0
-                };
-                let chamfer = pad.number_value("chamfer_ratio").unwrap_or(0.0) * size.x.min(size.y);
-                let corners = pad.child("chamfer").filter(|_| chamfer > 0.0);
-                match corners {
-                    Some(corners) => {
-                        let outline =
-                            chamfered_rect(half, chamfer, |corner| corners.has_flag(corner));
-                        self.rounded(pen, &inset_convex(&outline, radius), radius, frame);
-                    }
-                    None => {
-                        let inner = point((half.x - radius).max(0.0), (half.y - radius).max(0.0));
-                        self.rounded(pen, &rect(inner), radius, frame);
-                    }
+                    self.rounded(pen, &rect(half), radius, grow, frame);
                 }
             }
             "trapezoid" => {
-                let delta = child_point(pad, "rect_delta").unwrap_or_default() * 0.5;
+                let delta = shape.delta * 0.5;
                 let (hx, hy) = (half.x, half.y);
                 let corners = [
                     point(-hx - delta.y, hy + delta.x),
@@ -189,62 +349,67 @@ impl Board {
                     point(hx - delta.y, -hy + delta.x),
                     point(-hx + delta.y, -hy - delta.x),
                 ];
-                self.rounded(pen, &corners, 0.0, frame);
+                self.rounded(pen, &corners, 0.0, grow, frame);
             }
             "custom" => {
-                let anchor = match pad
-                    .child("options")
-                    .and_then(|options| options.value("anchor"))
-                    .as_deref()
-                {
-                    Some("rect") => "rect",
-                    _ => "circle",
+                if margin.x != 0.0 {
+                    let real = std::mem::replace(&mut self.scene, Scene::new());
+                    let temporary = Pen {
+                        item: self.scene.add_item(ItemKind::Pad, ItemInfo::default()),
+                        layer: self.scene.layer("F.Cu", Part::Main),
+                    };
+                    self.pad_shape(temporary, &shape, frame, Point::default());
+                    let outline = std::mem::replace(&mut self.scene, real);
+                    for polygon in outline.offset_polygons(margin.x) {
+                        self.scene.polygon(pen, &polygon[0], &polygon[1..]);
+                    }
+                    return;
+                }
+                let anchor = PadShape {
+                    shape: shape.anchor,
+                    ..shape
                 };
-                self.pad_shape(pen, pad, anchor, size, frame);
-                for primitive in pad.child("primitives").into_iter().flat_map(Expr::args) {
+                self.pad_shape(pen, &anchor, frame, Point::default());
+                for primitive in shape.primitives.into_iter().flat_map(Expr::args) {
                     let Some(name) = primitive.head().and_then(|head| head.strip_prefix("gr_"))
                     else {
                         continue;
                     };
-                    self.shape(pen, primitive, name, frame, true);
+                    self.shape(pen, primitive, name, frame, true, 0.0);
                 }
             }
             _ => {}
         }
     }
 
-    /// Fills a convex polygon and strokes its edges with `2 × radius` to round its corners.
-    fn rounded(&mut self, pen: Pen, local: &[Point], radius: f64, frame: &Transform) {
-        let outline: Vec<Point> = local.iter().map(|&p| frame.apply(p)).collect();
-        self.scene.polygon(pen, &outline, &[]);
-        if radius > 0.0 {
+    /// Fills a convex outline with its corners rounded by `radius`, grown by `grow` on each
+    /// side, or shrunk with sharp corners when `grow` eats the rounding.
+    fn rounded(&mut self, pen: Pen, outline: &[Point], radius: f64, grow: f64, frame: &Transform) {
+        let reach = radius + grow;
+        let inset = if reach >= 0.0 { radius } else { -grow };
+        let inner: Vec<Point> = inset_convex(outline, inset)
+            .into_iter()
+            .map(|p| frame.apply(p))
+            .collect();
+        self.scene.polygon(pen, &inner, &[]);
+        if reach > 0.0 {
             self.scene
-                .polyline(pen, &outline, frame.length(radius * 2.0), true);
+                .polyline(pen, &inner, frame.length(reach * 2.0), true);
         }
     }
 
     /// Plated holes, given their pad's size, get a wall drawn around them as in KiCad.
-    fn drill(&mut self, id: u32, drill: Expr, frame: &Transform, plated_pad_size: Option<Point>) {
-        let numbers: Vec<f64> = drill.args().filter_map(Expr::number).collect();
-        let (along, thickness) = match (drill.has_flag("oval"), numbers.as_slice()) {
-            (true, &[width, height, ..]) => {
-                let thickness = width.min(height);
-                let along = point((width - thickness) / 2.0, (height - thickness) / 2.0);
-                (frame.apply_vector(along), frame.length(thickness))
-            }
-            (_, &[diameter, ..]) => (Point::default(), frame.length(diameter)),
-            _ => return,
-        };
-        let center = frame.origin();
+    fn drill(&mut self, id: u32, drill: &Drill, plated_pad_size: Option<Point>) {
+        let Capsule { a, b, radius } = drill.capsule;
         let mut hole = |part: Part, width: f64| {
             let pen = self.pen(id, HOLES_LAYER, part);
-            if along == Point::default() {
-                self.scene.circle(pen, center, width / 2.0, 0.0);
+            if a == b {
+                self.scene.circle(pen, a, width / 2.0, 0.0);
             } else {
-                self.scene
-                    .segment(pen, center - along, center + along, width);
+                self.scene.segment(pen, a, b, width);
             }
         };
+        let thickness = radius * 2.0;
         match plated_pad_size {
             Some(size) => {
                 let wall = HOLE_WALL.min(size.x / 2.0).min(size.y / 2.0);
@@ -252,6 +417,53 @@ impl Board {
                 hole(Part::PadHoles, thickness);
             }
             None => hole(Part::Npth, thickness),
+        }
+    }
+}
+
+/// A pad's drill in board coordinates, and its size in the pad's frame.
+#[derive(Clone, Copy)]
+struct Drill {
+    capsule: Capsule,
+    oval: bool,
+    size: Point,
+}
+
+impl Drill {
+    fn read(drill: Expr, frame: &Transform) -> Option<Drill> {
+        let numbers: Vec<f64> = drill.args().filter_map(Expr::number).collect();
+        let oval = drill.has_flag("oval");
+        let size = match (oval, numbers.as_slice()) {
+            (true, &[width, height, ..]) => point(width, height),
+            (_, &[diameter, ..]) => point(diameter, diameter),
+            _ => return None,
+        };
+        let thickness = size.x.min(size.y);
+        let along = frame.apply_vector(point(
+            (size.x - thickness) / 2.0,
+            (size.y - thickness) / 2.0,
+        ));
+        let center = frame.origin();
+        Some(Drill {
+            capsule: Capsule {
+                a: center - along,
+                b: center + along,
+                radius: frame.length(thickness) / 2.0,
+            },
+            oval,
+            size,
+        })
+    }
+
+    /// Whether an unplated hole leaves no copper of `shape`, after KiCad's `PAD::FlashLayer`.
+    fn covers(&self, shape: &PadShape) -> bool {
+        let centered = shape.offset == Point::default();
+        match (shape.shape, self.oval) {
+            ("circle", false) => centered && self.size.x >= shape.size.x,
+            ("oval", true) => {
+                centered && self.size.x >= shape.size.x && self.size.y >= shape.size.y
+            }
+            _ => false,
         }
     }
 }
@@ -265,12 +477,22 @@ fn rect(half: Point) -> [Point; 4] {
     ]
 }
 
-fn chamfered_rect(half: Point, chamfer: f64, cut: impl Fn(&str) -> bool) -> Vec<Point> {
+fn chamfered_rect(
+    half: Point,
+    chamfer: f64,
+    radius: f64,
+    cut: impl Fn(&str) -> bool,
+) -> Vec<Point> {
     let (hx, hy, c) = (half.x, half.y, chamfer);
     let mut outline = Vec::with_capacity(8);
     let mut corner = |name: &str, square: Point, before: Point, after: Point| {
         if cut(name) {
             outline.extend([before, after]);
+        } else if radius > 0.0 {
+            let incoming = (before - square).resized(radius);
+            let outgoing = (after - square).resized(radius);
+            let center = square + incoming + outgoing;
+            outline.extend(Arc::from_center(center, square + incoming, 90.0).points());
         } else {
             outline.push(square);
         }

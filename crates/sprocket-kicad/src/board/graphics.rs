@@ -2,7 +2,9 @@
 
 use std::borrow::Cow;
 
-use super::{Board, FIRST_BOLD_MULTIPLIER, Fields, LAST_IMPLICIT_POLY_FILL, child_point, points};
+use super::{
+    Board, FIRST_BOLD_MULTIPLIER, Fields, LAST_IMPLICIT_POLY_FILL, child_point, item_layers, points,
+};
 use crate::geometry::{Arc, Bounds, Point, Transform, cubic_bezier, point};
 use crate::scene::{ItemInfo, ItemKind, Part, Pen, Scene};
 use crate::sexpr::Expr;
@@ -17,24 +19,39 @@ pub(super) fn is_shape(name: &str) -> bool {
 
 impl Board {
     pub(super) fn board_shape(&mut self, shape: Expr, name: &str) {
-        let Some(layer) = shape.value("layer") else {
+        let Some((layer, _)) = item_layers(shape) else {
             return;
         };
         let net = self.net(shape);
         let id = self.scene.add_item(
             ItemKind::Shape,
             ItemInfo {
-                layer: Some(layer.to_string()),
+                layer: Some(layer),
                 net,
                 ..ItemInfo::default()
             },
         );
+        self.masked_shape(id, shape, name, &Transform::IDENTITY);
+    }
+
+    /// Draws a shape on its layer and, for outer copper with a mask opening, on the mask layer
+    /// grown by the mask margin.
+    pub(super) fn masked_shape(&mut self, id: u32, shape: Expr, name: &str, frame: &Transform) {
+        let Some((layer, mask)) = item_layers(shape) else {
+            return;
+        };
         let pen = self.pen(id, &layer, Part::Main);
-        self.shape(pen, shape, name, &Transform::IDENTITY, false);
+        self.shape(pen, shape, name, frame, false, 0.0);
+        if let Some(mask) = mask {
+            let margin = self.mask_margin(shape);
+            let pen = self.pen(id, &mask, Part::Main);
+            self.shape(pen, shape, name, frame, false, margin);
+        }
     }
 
     /// Draws a line, arc, circle, rect, poly or curve. `default_fill` fills closed shapes
-    /// that have no `(fill)` and no width, as legacy pad primitives expect.
+    /// that have no `(fill)` and no width, as legacy pad primitives expect. `grow` widens the
+    /// outline on each side, in board units, as mask and paste margins do.
     pub(super) fn shape(
         &mut self,
         pen: Pen,
@@ -42,6 +59,7 @@ impl Board {
         name: &str,
         frame: &Transform,
         default_fill: bool,
+        grow: f64,
     ) {
         let width = shape
             .child("stroke")
@@ -58,7 +76,7 @@ impl Board {
             _ => default_fill && width == 0.0,
         };
         let filled = explicit_fill.unwrap_or(implicit_fill);
-        let width = frame.length(width);
+        let width = frame.length(width) + 2.0 * grow;
         let at = |key: &str| child_point(shape, key).map(|p| frame.apply(p));
         match name {
             "line" => {

@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use earcut::Earcut;
 use serde::{Serialize, Serializer};
 
-use crate::geometry::{Bounds, Point, clip_ring};
+use crate::geometry::{Bounds, Point, clip_ring, point};
+
+mod polygon;
 
 const MAGIC: &[u8; 4] = b"SPKS";
 const FORMAT_VERSION: u32 = 2;
@@ -81,6 +83,8 @@ pub enum Part {
 struct Layer {
     name: String,
     part: Part,
+    /// Holds conditionally flashed copper until `Scene::flash` keeps or drops it.
+    pending: bool,
     segments: Vec<u8>,
     circles: Vec<u8>,
     triangles: Vec<u8>,
@@ -91,6 +95,7 @@ struct Layer {
 pub struct Scene {
     layers: Vec<Layer>,
     layer_ids: HashMap<(String, Part), usize>,
+    pending_ids: HashMap<String, usize>,
     user_names: HashMap<String, String>,
     items: Vec<Item>,
     nets: Vec<String>,
@@ -174,6 +179,59 @@ impl Scene {
         id
     }
 
+    /// A layer whose primitives stay hidden unless `flash` keeps them.
+    pub fn pending_layer(&mut self, name: &str) -> usize {
+        if let Some(&id) = self.pending_ids.get(name) {
+            return id;
+        }
+        let id = self.layers.len();
+        self.layers.push(Layer {
+            name: name.to_owned(),
+            pending: true,
+            ..Layer::default()
+        });
+        self.pending_ids.insert(name.to_owned(), id);
+        id
+    }
+
+    /// Moves the pending primitives that `keep(item, layer)` accepts into their layer's main
+    /// part and drops the rest.
+    pub fn flash(&mut self, keep: impl Fn(u32, &str) -> bool) {
+        let float = |bytes: &[u8], field: usize| {
+            f64::from(f32::from_le_bytes(
+                bytes[field * 4..field * 4 + 4].try_into().unwrap(),
+            ))
+        };
+        let item = |bytes: &[u8], offset: usize| {
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        };
+        let mut pending: Vec<usize> = self.pending_ids.drain().map(|(_, id)| id).collect();
+        pending.sort_unstable();
+        for id in pending {
+            let pending = std::mem::take(&mut self.layers[id]);
+            let target = self.layer(&pending.name, Part::Main);
+            let layer = &mut self.layers[target];
+            let kept = |record: &&[u8], offset| keep(item(record, offset), &pending.name);
+            for record in pending.segments.chunks(SEGMENT_BYTES).filter(|r| kept(r, 20)) {
+                let half = float(record, 4) / 2.0;
+                layer.bounds.include(point(float(record, 0), float(record, 1)), half);
+                layer.bounds.include(point(float(record, 2), float(record, 3)), half);
+                layer.segments.extend_from_slice(record);
+            }
+            for record in pending.circles.chunks(CIRCLE_BYTES).filter(|r| kept(r, 16)) {
+                let reach = float(record, 2) + float(record, 3) / 2.0;
+                layer.bounds.include(point(float(record, 0), float(record, 1)), reach);
+                layer.circles.extend_from_slice(record);
+            }
+            for triangle in pending.triangles.chunks(3 * VERTEX_BYTES).filter(|r| kept(r, 8)) {
+                for vertex in triangle.chunks(VERTEX_BYTES) {
+                    layer.bounds.include(point(float(vertex, 0), float(vertex, 1)), 0.0);
+                }
+                layer.triangles.extend_from_slice(triangle);
+            }
+        }
+    }
+
     pub fn set_user_name(&mut self, layer: &str, user_name: &str) {
         if layer != user_name {
             self.user_names
@@ -222,7 +280,9 @@ impl Scene {
 
     fn touch(&mut self, pen: Pen, p: Point, margin: f64) {
         let layer = &mut self.layers[pen.layer];
-        layer.bounds.include(p, margin);
+        if !layer.pending {
+            layer.bounds.include(p, margin);
+        }
         // Labels can overhang their pad, whose box stays that of its copper.
         if layer.part != Part::Labels {
             self.items[pen.item as usize].bounds.include(p, margin);
@@ -333,9 +393,10 @@ impl Scene {
         let order: Vec<usize> = (0..self.layers.len())
             .filter(|&id| {
                 let layer = &self.layers[id];
-                !(layer.segments.is_empty()
-                    && layer.circles.is_empty()
-                    && layer.triangles.is_empty())
+                !layer.pending
+                    && !(layer.segments.is_empty()
+                        && layer.circles.is_empty()
+                        && layer.triangles.is_empty())
             })
             .collect();
 

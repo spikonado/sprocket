@@ -19,6 +19,14 @@ impl Point {
         self.x.hypot(self.y)
     }
 
+    fn dot(self, other: Point) -> f64 {
+        self.x * other.x + self.y * other.y
+    }
+
+    fn cross(self, other: Point) -> f64 {
+        self.x * other.y - self.y * other.x
+    }
+
     pub fn resized(self, length: f64) -> Point {
         let current = self.length();
         if current == 0.0 {
@@ -254,6 +262,33 @@ pub fn cubic_bezier(p: [Point; 4]) -> Vec<Point> {
                 + p[3] * (t * t * t)
         })
         .collect()
+}
+
+/// The distance from `p` to the segment from `a` to `b`.
+fn point_segment_distance(p: Point, a: Point, b: Point) -> f64 {
+    let along = b - a;
+    let squared = along.dot(along);
+    let t = if squared == 0.0 {
+        0.0
+    } else {
+        ((p - a).dot(along) / squared).clamp(0.0, 1.0)
+    };
+    (p - (a + along * t)).length()
+}
+
+/// The distance between the segments `a0`–`a1` and `b0`–`b1`, 0 where they cross.
+pub fn segment_distance(a0: Point, a1: Point, b0: Point, b1: Point) -> f64 {
+    let (da, db) = (a1 - a0, b1 - b0);
+    let side = |d: Point, from: Point, p: Point| d.cross(p - from);
+    let crosses = side(da, a0, b0) * side(da, a0, b1) < 0.0
+        && side(db, b0, a0) * side(db, b0, a1) < 0.0;
+    if crosses {
+        return 0.0;
+    }
+    point_segment_distance(a0, b0, b1)
+        .min(point_segment_distance(a1, b0, b1))
+        .min(point_segment_distance(b0, a0, a1))
+        .min(point_segment_distance(b1, a0, a1))
 }
 
 /// Moves every edge of a convex polygon inward by `distance`.
