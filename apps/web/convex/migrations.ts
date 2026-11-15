@@ -4,6 +4,7 @@ import { internalMutation } from '@convex/_generated/server';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
+import { transcriptContext } from '@convex/lib/contextHandoff';
 import { getOrCreateTranscriptState } from '@convex/lib/transcriptParts';
 import schema from '@convex/schema';
 
@@ -73,30 +74,12 @@ export const removeArtifactTypes = migrations.define({
 export const moveTranscriptContext = migrations.define({
 	table: 'threadRecords',
 	migrateOne: async (ctx, thread) => {
-		const partCount = thread.contextSummaryPartCount;
-		const stripped = thread.reasoningStrippedThroughPartNumber;
-
-		if (partCount === undefined && stripped === undefined) return;
+		if (Object.values(transcriptContext(null, thread)).every((value) => value === undefined)) {
+			return;
+		}
 
 		const state = await getOrCreateTranscriptState(ctx, thread._id);
-
-		if (partCount !== undefined && state.contextSummaryPartCount === undefined) {
-			await ctx.db.patch('threadTranscriptStates', state._id, {
-				contextSummary: thread.contextSummary,
-				contextSummaryPartCount: partCount,
-				contextSummaryHandoffKey: thread.contextSummaryHandoffKey
-			});
-		}
-
-		if (
-			stripped !== undefined &&
-			(state.reasoningStrippedThroughPartNumber === undefined ||
-				stripped > state.reasoningStrippedThroughPartNumber)
-		) {
-			await ctx.db.patch('threadTranscriptStates', state._id, {
-				reasoningStrippedThroughPartNumber: stripped
-			});
-		}
+		await ctx.db.patch('threadTranscriptStates', state._id, transcriptContext(state, thread));
 
 		return {
 			contextSummary: undefined,

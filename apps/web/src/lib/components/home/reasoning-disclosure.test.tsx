@@ -15,14 +15,3 @@ it('starts closed and streams reasoning text once opened', () => {
 	fireEvent.click(toggle);
 	expect(toggle.getAttribute('aria-expanded')).toBe('false');
 });
-
-it('keeps completed reasoning closed when reasoning resumes and finishes', () => {
-	const view = render(<ReasoningDisclosure text="Inspect" inProgress={false} />);
-	const toggle = view.getByRole('button', { name: 'Reasoned' });
-
-	expect(toggle.getAttribute('aria-expanded')).toBe('false');
-	view.rerender(<ReasoningDisclosure text="Inspect the workspace." inProgress />);
-	expect(toggle.getAttribute('aria-expanded')).toBe('false');
-	view.rerender(<ReasoningDisclosure text="Inspect the workspace." inProgress={false} />);
-	expect(toggle.getAttribute('aria-expanded')).toBe('false');
-});

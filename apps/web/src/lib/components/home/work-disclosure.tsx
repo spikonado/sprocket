@@ -15,8 +15,7 @@ export default function WorkDisclosure({ inProgress, summary, children }: Props)
 
 	if (autoExpanded !== previousAutoExpanded) {
 		setPreviousAutoExpanded(autoExpanded);
-
-		if (summary !== undefined) setExpanded(autoExpanded);
+		setExpanded(autoExpanded);
 	}
 
 	return (

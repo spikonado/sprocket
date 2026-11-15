@@ -859,26 +859,13 @@ export const finalizeCompletionCall = mutation({
 		}
 
 		const assignedItems = new Set<number>();
-		let previousEnd = 0;
 
 		for (const range of args.work.ranges) {
-			if (
-				!Number.isInteger(range.start) ||
-				!Number.isInteger(range.end) ||
-				range.start < previousEnd ||
-				range.end <= range.start ||
-				range.end > args.items.length
-			) {
-				throw new Error('Invalid completion work range.');
-			}
-
-			previousEnd = range.end;
-
 			for (let index = range.start; index < range.end; index++) {
 				const item = args.items[index];
 				const invocation = invocationsByItem.get(index);
 
-				if (!itemNeedsWorkRange(item, invocation)) {
+				if (!item || assignedItems.has(index) || !itemNeedsWorkRange(item, invocation)) {
 					throw new Error('Invalid work assignment.');
 				}
 
