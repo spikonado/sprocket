@@ -144,7 +144,7 @@ import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$
 import { isServerRejection } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import { useLocalCliStatus } from '$lib/home/local-cli-status';
-import type { LocalApi, ExecutorJob, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
+import type { LocalApi, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
 import { syncShareConversationContent } from '$lib/analytics';
 
@@ -844,8 +844,6 @@ export default function App({
 			)
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	}, [threads, currentProject]);
-
-	const visibleActions = useMemo<ExecutorJob[]>(() => [], []);
 
 	useLayoutEffect(() => {
 		const scope =
@@ -2662,7 +2660,6 @@ export default function App({
 											<ThreadTranscript
 												key={`${currentThreadId}:${transcript.windowVersion}`}
 												messages={visibleMessages}
-												actions={visibleActions}
 												activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 												project={currentProject}
 												cwd={threadCwd}

@@ -81,7 +81,6 @@ import type * as lib_tokenUsage from "../lib/tokenUsage.js";
 import type * as lib_toolJobs from "../lib/toolJobs.js";
 import type * as lib_transcriptDisplayTypes from "../lib/transcriptDisplayTypes.js";
 import type * as lib_transcriptParts from "../lib/transcriptParts.js";
-import type * as lib_transcriptSectionWrites from "../lib/transcriptSectionWrites.js";
 import type * as lib_transcriptWrites from "../lib/transcriptWrites.js";
 import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
 import type * as lib_uiPreferences from "../lib/uiPreferences.js";
@@ -195,7 +194,6 @@ declare const fullApi: ApiFromModules<{
   "lib/toolJobs": typeof lib_toolJobs;
   "lib/transcriptDisplayTypes": typeof lib_transcriptDisplayTypes;
   "lib/transcriptParts": typeof lib_transcriptParts;
-  "lib/transcriptSectionWrites": typeof lib_transcriptSectionWrites;
   "lib/transcriptWrites": typeof lib_transcriptWrites;
   "lib/uiModelCatalog": typeof lib_uiModelCatalog;
   "lib/uiPreferences": typeof lib_uiPreferences;

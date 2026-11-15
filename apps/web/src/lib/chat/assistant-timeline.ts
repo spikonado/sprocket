@@ -1,13 +1,8 @@
-import {
-	matchAssistantToolCallsToJobs,
-	parseAssistantToolResultError,
-	type AssistantPart,
-	type AssistantToolCallPart
-} from '@convex/lib/assistantParts';
+import { parseAssistantToolResultError, type AssistantPart } from '@convex/lib/assistantParts';
 import type { JsonValue } from '@convex/lib/json';
 import { isCommandToolKind, isExecCommandToolKind } from '@convex/lib/commandToolKinds';
 import { jsonObjectString } from '$lib/chat/json-fields';
-import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
+import type { LiveTranscriptMessage } from '$lib/types/sprocket';
 
 export type AssistantTimelineTool = {
 	type: 'tool';
@@ -15,7 +10,6 @@ export type AssistantTimelineTool = {
 	name: string;
 	input: JsonValue;
 	output?: JsonValue;
-	job?: ExecutorJob;
 };
 
 export type AssistantTimelineItem =
@@ -47,8 +41,8 @@ export function isAssistantResponseStreaming(
 	return message.runId === activeRunId;
 }
 
-export function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
-	return tool.name || tool.job?.kind || 'tool';
+function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
+	return tool.name || 'tool';
 }
 
 export function groupAssistantTimeline(items: AssistantTimelineItem[]): AssistantTimelineBlock[] {
@@ -108,15 +102,7 @@ export function groupAssistantTimelineSections(
 }
 
 function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean {
-	if (tool.output !== undefined) {
-		return false;
-	}
-
-	if (tool.job) {
-		return tool.job.status === 'pending' || tool.job.status === 'claimed';
-	}
-
-	return true;
+	return tool.output === undefined;
 }
 
 function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
@@ -146,11 +132,7 @@ export function isAssistantTimelineToolRunning(
 }
 
 function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
-	return (
-		jsonObjectString(tool.output, 'sessionId') ??
-		jsonObjectString(tool.input, 'sessionId') ??
-		jsonObjectString(tool.job?.payload, 'sessionId')
-	);
+	return jsonObjectString(tool.output, 'sessionId') ?? jsonObjectString(tool.input, 'sessionId');
 }
 
 export function buildCommandSessionCommandMap(
@@ -168,7 +150,7 @@ export function buildCommandSessionCommandMap(
 		const cmd =
 			jsonObjectString(tool.output, 'command') ??
 			(isExecCommandToolKind(assistantTimelineToolKey(tool))
-				? (jsonObjectString(tool.input, 'cmd') ?? jsonObjectString(tool.job?.payload, 'cmd'))
+				? jsonObjectString(tool.input, 'cmd')
 				: undefined);
 
 		if (cmd) {
@@ -239,10 +221,6 @@ export function assistantTimelineToolFailureKind(
 		return 'interrupted';
 	}
 
-	if (item.job?.status === 'cancelled' || item.job?.status === 'failed') {
-		return item.job.status;
-	}
-
 	return parseAssistantToolResultError(item.output)?.status;
 }
 
@@ -254,27 +232,10 @@ export function assistantTimelineToolError(
 		return 'The agent stopped before this tool call finished.';
 	}
 
-	const outputError = parseAssistantToolResultError(item.output)?.error;
-
-	if (item.job) {
-		if (item.job.status === 'cancelled') {
-			return item.job.error ?? outputError ?? 'Tool stopped before completion.';
-		}
-
-		if (item.job.status === 'failed') {
-			return item.job.error ?? outputError ?? 'Executor job failed.';
-		}
-
-		return undefined;
-	}
-
-	return outputError;
+	return parseAssistantToolResultError(item.output)?.error;
 }
 
-export function buildAssistantTimeline(
-	parts: AssistantPart[],
-	jobs: ExecutorJob[]
-): AssistantTimelineItem[] {
+export function buildAssistantTimeline(parts: AssistantPart[]): AssistantTimelineItem[] {
 	const resultsByCallId = new Map<string, Extract<AssistantPart, { type: 'tool-result' }>>();
 
 	parts.forEach((part) => {
@@ -283,30 +244,7 @@ export function buildAssistantTimeline(
 		}
 	});
 
-	const toolCalls = parts.filter(
-		(part): part is AssistantToolCallPart => part.type === 'tool-call'
-	);
-
-	const matchedCallIds = matchAssistantToolCallsToJobs(
-		toolCalls,
-		jobs.map((job) => ({
-			id: job._id,
-			kind: job.kind,
-			callId: job.callId,
-			payload: job.payload
-		}))
-	);
-
-	const jobsByCallId = new Map<string, ExecutorJob>();
-
-	for (const job of jobs) {
-		const callId = matchedCallIds.get(job._id);
-
-		if (callId) jobsByCallId.set(callId, job);
-	}
-
 	const timeline: AssistantTimelineItem[] = [];
-	const usedJobIds = new Set<ExecutorJob['_id']>();
 
 	for (const part of parts) {
 		if (part.type === 'tool-result') continue;
@@ -317,9 +255,6 @@ export function buildAssistantTimeline(
 		}
 
 		const result = resultsByCallId.get(part.callId);
-		const job = jobsByCallId.get(part.callId);
-
-		if (job) usedJobIds.add(job._id);
 
 		const item: AssistantTimelineTool = {
 			type: 'tool',
@@ -330,30 +265,6 @@ export function buildAssistantTimeline(
 
 		if (result) {
 			item.output = result.output;
-		} else if (job?.result !== undefined) {
-			item.output = job.result;
-		}
-
-		if (job) {
-			item.job = job;
-		}
-
-		timeline.push(item);
-	}
-
-	for (const job of jobs) {
-		if (usedJobIds.has(job._id)) continue;
-
-		const item: AssistantTimelineTool = {
-			type: 'tool',
-			callId: job.callId ?? `executor-job:${job._id}`,
-			name: job.kind,
-			input: job.payload,
-			job
-		};
-
-		if (job.result !== undefined) {
-			item.output = job.result;
 		}
 
 		timeline.push(item);

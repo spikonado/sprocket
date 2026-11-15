@@ -9,12 +9,13 @@ type Props = {
 };
 
 export default function WorkDisclosure({ inProgress, summary, children }: Props) {
-	const [expanded, setExpanded] = useState(inProgress);
-	const [previousInProgress, setPreviousInProgress] = useState(inProgress);
+	const autoExpanded = summary !== undefined && inProgress;
+	const [expanded, setExpanded] = useState(autoExpanded);
+	const [previousAutoExpanded, setPreviousAutoExpanded] = useState(autoExpanded);
 
-	if (inProgress !== previousInProgress) {
-		setPreviousInProgress(inProgress);
-		setExpanded(inProgress);
+	if (autoExpanded !== previousAutoExpanded) {
+		setPreviousAutoExpanded(autoExpanded);
+		setExpanded(autoExpanded);
 	}
 
 	return (

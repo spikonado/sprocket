@@ -2,7 +2,7 @@ import { vWorkId } from '@convex-dev/workpool';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { vCreditPackExpiry, vPackPrice, vPrice } from '@convex/lib/pricingValidators';
-import { workSectionFields, workMembership } from '@convex/lib/workSections';
+import { workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
@@ -29,6 +29,13 @@ import {
 	vTranscriptPromptBody,
 	vTranscriptToolBody
 } from '@convex/lib/validators';
+
+const transcriptContextFields = {
+	contextSummary: v.optional(v.string()),
+	contextSummaryPartCount: v.optional(v.number()),
+	contextSummaryHandoffKey: v.optional(v.string()),
+	reasoningStrippedThroughPartNumber: v.optional(v.number())
+};
 
 export default defineSchema({
 	users: defineTable({
@@ -194,11 +201,8 @@ export default defineSchema({
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
-		contextSummary: v.optional(v.string()),
-		contextSummaryPartCount: v.optional(v.number()),
-		contextSummaryThroughPartNumber: v.optional(v.number()),
-		contextSummaryHandoffKey: v.optional(v.string()),
-		reasoningStrippedThroughPartNumber: v.optional(v.number()),
+		// Moving to threadTranscriptStates; kept until migrations:moveTranscriptContext empties them.
+		...transcriptContextFields,
 		cwd: v.optional(v.string()),
 		pullRequests: v.optional(v.array(vLinkedPullRequest)),
 		lastMessageAt: v.number(),
@@ -307,7 +311,8 @@ export default defineSchema({
 	// Kept off threadRecords so appends don't invalidate thread list subscriptions.
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
-		totalParts: v.number()
+		totalParts: v.number(),
+		...transcriptContextFields
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
@@ -324,34 +329,6 @@ export default defineSchema({
 		.index('by_threadId_kind_number', ['threadId', 'kind', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
-	threadTranscriptWorkSections: defineTable({
-		threadId: v.id('threadRecords'),
-		...workSectionFields,
-		sectionOrdinal: v.number(),
-		displayOrder: v.string()
-	})
-		.index('by_threadId_and_key', ['threadId', 'key'])
-		.index('by_threadId_and_sectionOrdinal', ['threadId', 'sectionOrdinal'])
-		.index('by_threadId_and_displayOrder', ['threadId', 'displayOrder']),
-	threadTranscriptMemberships: defineTable({
-		threadId: v.id('threadRecords'),
-		entryKey: v.string(),
-		sectionKey: v.string(),
-		runId: v.id('runs'),
-		partNumber: v.number(),
-		start: v.number(),
-		end: v.number(),
-		toolInvocationId: v.optional(v.string()),
-		sectionOrdinal: v.number(),
-		closed: v.boolean()
-	})
-		.index('by_threadId_and_entryKey', ['threadId', 'entryKey'])
-		.index('by_threadId_sectionKey_partNumber_start', [
-			'threadId',
-			'sectionKey',
-			'partNumber',
-			'start'
-		]),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),

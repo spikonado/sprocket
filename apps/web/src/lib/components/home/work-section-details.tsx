@@ -117,7 +117,7 @@ export default function WorkSectionDetails({
 		nextAfter: history.nextAfter
 	};
 
-	const timeline = buildAssistantTimeline(details.parts, []);
+	const timeline = buildAssistantTimeline(details.parts);
 	const tools = timeline.filter((item) => item.type === 'tool');
 	const grouped = groupAssistantTimeline(timeline).filter((block) => block.type !== 'text');
 

@@ -101,7 +101,7 @@ describe('numbered transcript parts', () => {
 		const assignments = {
 			work: { ranges: [{ start: 0, end: 1, sectionKey }] },
 			toolInvocations: [],
-			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
+			sections: [{ sectionKey: 'ignored', sectionOrdinal: -1, closed: true }]
 		};
 
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
@@ -132,6 +132,7 @@ describe('numbered transcript parts', () => {
 		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
+		expect(parts.parts[1]?.work).toEqual({ ...assignments.work, toolInvocations: [] });
 	});
 
 	it('accepts encrypted-only reasoning without a work assignment', async () => {
@@ -585,9 +586,6 @@ describe('numbered transcript parts', () => {
 
 			await t.run((ctx) => ctx.db.patch('executorJobs', jobId, { hidden }));
 
-			expect(
-				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
-			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 1 });
 			await asUser.mutation(api.executor.complete, {
 				jobId,
 				runId,
@@ -642,9 +640,6 @@ describe('numbered transcript parts', () => {
 				},
 				work: { ranges: [], sectionKey: assignment.sectionKey }
 			});
-			expect(
-				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
-			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 0 });
 		}
 	);
 

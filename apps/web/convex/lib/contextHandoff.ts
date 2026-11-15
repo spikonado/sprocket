@@ -2,9 +2,49 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vProviderHandoff } from '@convex/lib/docs';
-import { getPromptPart, getTranscriptState } from '@convex/lib/transcriptParts';
+import {
+	getOrCreateTranscriptState,
+	getPromptPart,
+	getTranscriptState
+} from '@convex/lib/transcriptParts';
 
 export const EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER = -1;
+
+type TranscriptContext = Pick<
+	Doc<'threadTranscriptStates'>,
+	| 'contextSummary'
+	| 'contextSummaryPartCount'
+	| 'contextSummaryHandoffKey'
+	| 'reasoningStrippedThroughPartNumber'
+>;
+
+export function transcriptContext(
+	state: Doc<'threadTranscriptStates'> | null,
+	thread: Doc<'threadRecords'> | null
+): TranscriptContext {
+	return {
+		contextSummary: state?.contextSummary ?? thread?.contextSummary,
+		contextSummaryPartCount: state?.contextSummaryPartCount ?? thread?.contextSummaryPartCount,
+		contextSummaryHandoffKey: state?.contextSummaryHandoffKey ?? thread?.contextSummaryHandoffKey,
+		reasoningStrippedThroughPartNumber:
+			state?.reasoningStrippedThroughPartNumber ?? thread?.reasoningStrippedThroughPartNumber
+	};
+}
+
+export async function stripReasoningThrough(
+	ctx: MutationCtx,
+	thread: Doc<'threadRecords'>,
+	throughPartNumber: number
+): Promise<void> {
+	const state = await getOrCreateTranscriptState(ctx, thread._id);
+	const stripped = transcriptContext(state, thread).reasoningStrippedThroughPartNumber ?? -1;
+
+	if (throughPartNumber <= stripped) return;
+
+	await ctx.db.patch('threadTranscriptStates', state._id, {
+		reasoningStrippedThroughPartNumber: throughPartNumber
+	});
+}
 
 export function contextHandoffKey(runId: Id<'runs'>, claimId: string, attemptSeq: number): string {
 	return `${runId}:${claimId}:${attemptSeq}`;
@@ -58,37 +98,34 @@ export async function throughPartNumberForHandoff(
 	return await lastTranscriptPartNumber(ctx, args.threadId);
 }
 
-export function existingContextSummaryPartCount(thread: Doc<'threadRecords'>): number | undefined {
-	const legacyThrough = thread.contextSummaryThroughPartNumber;
-
-	const partCount =
-		thread.contextSummaryPartCount ?? (legacyThrough === undefined ? undefined : legacyThrough + 1);
-
-	if (thread.contextSummary !== undefined && partCount === undefined) {
+export function existingContextSummaryPartCount(context: TranscriptContext): number | undefined {
+	if (context.contextSummary !== undefined && context.contextSummaryPartCount === undefined) {
 		throw new Error('Conversation context is missing its history cutoff.');
 	}
 
-	return partCount;
+	return context.contextSummaryPartCount;
 }
 
-export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null): number {
-	if (!thread) return 0;
-
-	return existingContextSummaryPartCount(thread) ?? 0;
+export function transcriptHistoryFromNumber(context: TranscriptContext): number {
+	return existingContextSummaryPartCount(context) ?? 0;
 }
 
 export async function getProviderHandoff(
 	ctx: QueryCtx | MutationCtx,
-	run: Doc<'runs'>,
-	thread: Doc<'threadRecords'> | null
+	run: Doc<'runs'>
 ): Promise<Infer<typeof vProviderHandoff> | undefined> {
+	const context = transcriptContext(
+		await getTranscriptState(ctx, run.threadId),
+		await ctx.db.get('threadRecords', run.threadId)
+	);
+
 	const completions = ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_kind_number', (query) =>
 			query
 				.eq('threadId', run.threadId)
 				.eq('kind', 'completion')
-				.gte('number', transcriptHistoryFromNumber(thread))
+				.gte('number', transcriptHistoryFromNumber(context))
 		)
 		.order('desc');
 

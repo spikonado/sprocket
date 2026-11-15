@@ -13,7 +13,7 @@ import {
 	type MarkdownFileLinks
 } from '$lib/chat/markdown-file-links';
 import { toolItemLabel, toolItemSummary, toolShellCommand } from '$lib/chat/tool-summaries';
-import { toolLogIcon } from '$lib/chat/tool-icons';
+import { toolKindIcon } from '$lib/chat/tool-icons';
 import HighlightedCommand from './highlighted-command';
 
 type Props = {
@@ -137,8 +137,8 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 	return (
 		<div className="text-muted-foreground space-y-1.5 text-[13px] leading-6">
 			{tools.map((tool) => {
-				const kind = tool.job?.kind ?? tool.name;
-				const Icon = toolLogIcon(tool);
+				const kind = tool.name;
+				const Icon = toolKindIcon(kind);
 				const summary = toolItemSummary(tool, commands);
 				const summaries = kind === 'apply_patch' ? summary.split('\n') : [summary];
 				const label = toolItemLabel(kind);

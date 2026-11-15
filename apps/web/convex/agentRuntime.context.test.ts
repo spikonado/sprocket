@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { appendTranscriptPart, getTranscriptState } from '@convex/lib/transcriptParts';
 import { RUN_CANNOT_CONTINUE } from '@convex/lib/runResume';
 import type { ModelCallUsage } from '@convex/lib/validators';
 import {
@@ -65,11 +65,11 @@ function modelCall(overrides: Partial<ModelCallUsage> = {}): ModelCallUsage {
 
 async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
-		const thread = await ctx.db.get('threadRecords', threadId);
+		const state = await getTranscriptState(ctx, threadId);
 
 		return {
-			contextSummary: thread?.contextSummary,
-			contextSummaryPartCount: thread?.contextSummaryPartCount
+			contextSummary: state?.contextSummary,
+			contextSummaryPartCount: state?.contextSummaryPartCount
 		};
 	});
 }
@@ -959,6 +959,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret: secondSecret
 		});
 
+		expect(state).toEqual(await asUser.query(api.transcript.getState, { threadId }));
 		expect(state.historyFromNumber).toBe(2);
 		const retained = await readTranscriptRange(asUser, threadId, 2, 3);
 		expect(retained.parts[0]?.prompt?.text).toBe('New prompt');
@@ -1064,10 +1065,10 @@ describe('agentRuntime context accounting', () => {
 			})
 		).resolves.toBe(true);
 
-		const thread = await t.run(async (ctx) => ctx.db.get('threadRecords', threadId));
+		const state = await t.run((ctx) => getTranscriptState(ctx, threadId));
 
-		expect(thread?.contextSummary).toBeUndefined();
-		expect(thread?.reasoningStrippedThroughPartNumber).toBe(1);
+		expect(state?.contextSummary).toBeUndefined();
+		expect(state?.reasoningStrippedThroughPartNumber).toBe(1);
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
 			historyFromNumber: 0,
 			reasoningStrippedThroughPartNumber: 1

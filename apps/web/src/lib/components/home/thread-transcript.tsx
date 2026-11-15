@@ -37,17 +37,11 @@ import type {
 import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { mergeWorkToolCounts, workSummary, workToolCounts } from '$lib/chat/work-summary';
-import type {
-	ExecutorJob,
-	TranscriptMessage,
-	Project,
-	MessageAttachment
-} from '$lib/types/sprocket';
+import type { TranscriptMessage, Project, MessageAttachment } from '$lib/types/sprocket';
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
 	messages: TranscriptMessage[];
-	actions: ExecutorJob[];
 	activeRunId: TranscriptMessage['runId'] | null;
 	project: Project | null;
 	cwd?: string;
@@ -70,8 +64,7 @@ const SCROLL_EPSILON_PX = 28;
 
 function needsSavedCard(tool: AssistantTimelineTool) {
 	return (
-		(tool.job?.kind ?? tool.name) === 'card_checkout' &&
-		jsonObjectString(tool.output, 'status') === 'card_required'
+		tool.name === 'card_checkout' && jsonObjectString(tool.output, 'status') === 'card_required'
 	);
 }
 
@@ -88,7 +81,6 @@ type ScrollAnchor = {
 
 export default function ThreadTranscript({
 	messages,
-	actions,
 	activeRunId,
 	project,
 	cwd,
@@ -136,15 +128,12 @@ export default function ThreadTranscript({
 	}, []);
 
 	const liveCommands = useMemo(() => {
-		const tools = [
-			...buildAssistantTimeline([], actions),
-			...messages.flatMap((message) =>
-				message.kind === 'live' ? buildAssistantTimeline(message.parts, []) : []
-			)
-		].filter((item) => item.type === 'tool');
+		const tools = messages
+			.flatMap((message) => (message.kind === 'live' ? buildAssistantTimeline(message.parts) : []))
+			.filter((item) => item.type === 'tool');
 
 		return buildCommandSessionCommandMap(tools);
-	}, [messages, actions]);
+	}, [messages]);
 
 	useLayoutEffect(() => rememberCommands(liveCommands), [liveCommands, rememberCommands]);
 
@@ -160,7 +149,7 @@ export default function ThreadTranscript({
 						const details = await loadSectionDetails(row, cursor, signal);
 
 						if (!signal.aborted) {
-							const tools = buildAssistantTimeline(details.parts, []).filter(
+							const tools = buildAssistantTimeline(details.parts).filter(
 								(item) => item.type === 'tool'
 							);
 
@@ -185,13 +174,7 @@ export default function ThreadTranscript({
 	type LiveWorkState = ReturnType<typeof liveWorkState>;
 
 	function liveRenderState(message: LiveTranscriptMessage) {
-		const messageActions = actions.filter(
-			(job) =>
-				job.runId === message.runId &&
-				message.parts.some((part) => part.type === 'tool-call' && part.callId === job.callId)
-		);
-
-		const timeline = buildAssistantTimeline(message.parts, messageActions);
+		const timeline = buildAssistantTimeline(message.parts);
 
 		const sections = sectionKeys.reconcile(
 			message.id,
@@ -414,12 +397,10 @@ export default function ThreadTranscript({
 
 	// Captured during render because the scroll anchor must be read from the DOM before it commits.
 	const renderedMessagesRef = useRef(messages);
-	const renderedActionsRef = useRef(actions);
 	const anchorRef = useRef<ScrollAnchor | null>(null);
 
-	if (renderedMessagesRef.current !== messages || renderedActionsRef.current !== actions) {
+	if (renderedMessagesRef.current !== messages) {
 		renderedMessagesRef.current = messages;
-		renderedActionsRef.current = actions;
 		const root = viewportRef.current;
 		const anchor = root && !stickToBottomRef.current ? firstVisibleAnchor(root) : undefined;
 		anchorRef.current =
@@ -455,7 +436,7 @@ export default function ThreadTranscript({
 		} else if (!anchor.isConnected && root.scrollTop === scrollTop) {
 			setScrollTop(root, scrollTop + root.scrollHeight - scrollHeight);
 		}
-	}, [messages, actions]);
+	}, [messages]);
 
 	async function copyUserMessage(messageId: string, text: string) {
 		try {

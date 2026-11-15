@@ -7,13 +7,7 @@ type Props = {
 };
 
 export default function ReasoningDisclosure({ text, inProgress }: Props) {
-	const [expanded, setExpanded] = useState(inProgress);
-	const [previousInProgress, setPreviousInProgress] = useState(inProgress);
-
-	if (inProgress !== previousInProgress) {
-		setPreviousInProgress(inProgress);
-		setExpanded(inProgress);
-	}
+	const [expanded, setExpanded] = useState(false);
 
 	return (
 		<div className="text-muted-foreground text-sm">

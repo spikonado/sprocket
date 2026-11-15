@@ -223,8 +223,7 @@ export const authorizeRunCredential = internalQuery({
 
 		if (
 			(run.completionProvider ?? 'spikonado') !== args.provider &&
-			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
-				?.completionProvider !== args.provider
+			(await getProviderHandoff(ctx, run))?.completionProvider !== args.provider
 		) {
 			throw new ConvexError(`Run is not configured to use ${args.provider} credentials.`);
 		}

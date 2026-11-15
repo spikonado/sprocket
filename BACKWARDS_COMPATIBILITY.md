@@ -32,6 +32,10 @@ Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `sub
 
 Released agents send `text` to `agentRuntime.finalizeExecutorRun`, `finalizeFailedStart` and `finalizeClaimFailure`. All three accept and ignore it. Remove the argument once those agents age out.
 
+### Retired transcript section summaries
+
+Released agents send `sections` to `agentRuntime.finalizeCompletionCall`. The mutation accepts and ignores it. Remove the argument and `sectionOrder` once agents that send it age out. Transcript parts still keep `work`, and tool jobs still accept their section assignments, because supported clients use those fields to display history.
+
 ### Processed-token usage
 
 Released agents send `processedTokens` to `agentRuntime.finalizeCompletionCall` (inside `usage`) and `agentRuntime.saveContextHandoff`. Both accept and ignore it, so those agents record no token usage. Remove the argument once those agents age out.
@@ -90,9 +94,9 @@ Tool parts written by the August 2026 transcript migration, with `migrated-tool:
 
 Older `artifacts` rows carry `type`, so the schema keeps it optional. `migrations:removeArtifactTypes` deletes it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove `type` from the schema and remove the migration.
 
-### Context summary part counts
+### Transcript context location
 
-Older threads store the context summary cutoff as `contextSummaryThroughPartNumber`, the inclusive last covered part with `-1` for an empty prefix. When `contextSummaryPartCount` is missing, `existingContextSummaryPartCount` uses that value plus one. `migrations:countContextSummaryParts` rewrites those rows, and the Convex Production workflow runs it after each deploy. Once it reports done on production, remove the old field, the fallback and the migration.
+Older `threadRecords` rows carry `contextSummary`, `contextSummaryPartCount`, `contextSummaryHandoffKey` and `reasoningStrippedThroughPartNumber`. Writers now use `threadTranscriptStates`; readers fall back to the thread fields while `migrations:moveTranscriptContext` copies them and unsets the old fields. The Convex Production workflow runs it after each deploy. Once `bunx convex run --prod --component migrations lib:getStatus` reports it done, remove the four fields from `threadRecords`, the location fallback and the migration. `transcript:getState` and `getStateForRun` keep the same result shape for released clients.
 
 ### Subscription mirror legacy fields
 

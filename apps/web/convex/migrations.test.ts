@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { initConvexTest, insertUser, seedOwnedThread } from '@convex/test.setup';
+import { getOrCreateTranscriptState, getTranscriptState } from '@convex/lib/transcriptParts';
 
 const DAY = 86_400_000;
 
@@ -84,38 +85,65 @@ test('run removes stored artifact types', async () => {
 	vi.useRealTimers();
 });
 
-test('run converts context summary cutoffs to part counts', async () => {
-	vi.useFakeTimers();
-	const t = initConvexTest();
-	const { threadId: emptyPrefixThreadId } = await seedOwnedThread(t);
-	const { threadId: summarizedThreadId } = await seedOwnedThread(t);
+test.each([
+	{ legacyStripped: 2, currentStripped: 4 },
+	{ legacyStripped: -1, currentStripped: undefined }
+])(
+	'run moves legacy context and preserves active transcript state (%j)',
+	async ({ legacyStripped, currentStripped }) => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const { threadId: activeThreadId } = await seedOwnedThread(t);
 
-	await t.run(async (ctx) => {
-		await ctx.db.patch('threadRecords', emptyPrefixThreadId, {
-			contextSummary: 'Nothing yet',
-			contextSummaryThroughPartNumber: -1
-		});
-		await ctx.db.patch('threadRecords', summarizedThreadId, {
+		const oldContext = {
 			contextSummary: 'Covered work',
-			contextSummaryThroughPartNumber: 4
+			contextSummaryPartCount: 0,
+			contextSummaryHandoffKey: 'old-handoff',
+			reasoningStrippedThroughPartNumber: legacyStripped
+		};
+
+		const newContext = {
+			contextSummary: 'Newer summary',
+			contextSummaryPartCount: 5,
+			contextSummaryHandoffKey: 'new-handoff',
+			reasoningStrippedThroughPartNumber: currentStripped
+		};
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', threadId, oldContext);
+			await ctx.db.patch('threadRecords', activeThreadId, oldContext);
+			const state = await getOrCreateTranscriptState(ctx, activeThreadId);
+			await ctx.db.patch('threadTranscriptStates', state._id, {
+				...newContext,
+				totalParts: 7
+			});
 		});
-	});
 
-	await t.mutation(internal.migrations.run, {});
-	await t.finishAllScheduledFunctions(vi.runAllTimers);
+		const before = await asUser.query(api.transcript.getState, { threadId });
+		await t.mutation(internal.migrations.run, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-	const [emptyPrefix, summarized] = await t.run((ctx) =>
-		Promise.all([
-			ctx.db.get('threadRecords', emptyPrefixThreadId),
-			ctx.db.get('threadRecords', summarizedThreadId)
-		])
-	);
+		const [migrated, active, thread] = await t.run((ctx) =>
+			Promise.all([
+				getTranscriptState(ctx, threadId),
+				getTranscriptState(ctx, activeThreadId),
+				ctx.db.get('threadRecords', threadId)
+			])
+		);
 
-	expect(emptyPrefix).toMatchObject({ contextSummaryPartCount: 0 });
-	expect(emptyPrefix).not.toHaveProperty('contextSummaryThroughPartNumber');
-	expect(summarized).toMatchObject({ contextSummaryPartCount: 5 });
-	vi.useRealTimers();
-});
+		expect(migrated).toMatchObject({ ...oldContext, totalParts: 0 });
+		expect(active).toMatchObject({
+			...newContext,
+			reasoningStrippedThroughPartNumber: currentStripped ?? legacyStripped,
+			totalParts: 7
+		});
+
+		for (const field of Object.keys(oldContext)) expect(thread).not.toHaveProperty(field);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toEqual(before);
+		vi.useRealTimers();
+	}
+);
 
 test('run moves tier grants to users, strips projection fields and empties retired billing tables', async () => {
 	vi.useFakeTimers();
