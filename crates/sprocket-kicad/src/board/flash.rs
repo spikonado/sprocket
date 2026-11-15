@@ -10,6 +10,7 @@ use crate::sexpr::Expr;
 
 /// The side of the grid cells that index tracks, in mm.
 const CELL: f64 = 1.0;
+const MAX_CELLS: u64 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Unconnected {
@@ -57,7 +58,13 @@ impl Capsule {
         segment_distance(self.a, self.b, other.a, other.b) <= self.radius + other.radius
     }
 
-    fn cells(&self) -> impl Iterator<Item = (i32, i32)> + use<> {
+    fn cells(&self) -> Option<impl Iterator<Item = (i32, i32)> + use<>> {
+        if ![self.a.x, self.a.y, self.b.x, self.b.y, self.radius]
+            .into_iter()
+            .all(f64::is_finite)
+        {
+            return None;
+        }
         let cell = |value: f64| (value / CELL).floor() as i32;
         let (x0, x1) = (
             cell(self.a.x.min(self.b.x) - self.radius),
@@ -67,7 +74,15 @@ impl Capsule {
             cell(self.a.y.min(self.b.y) - self.radius),
             cell(self.a.y.max(self.b.y) + self.radius),
         );
-        (x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y)))
+        let width = (i64::from(x1) - i64::from(x0) + 1).max(0) as u64;
+        let height = (i64::from(y1) - i64::from(y0) + 1).max(0) as u64;
+        if width
+            .checked_mul(height)
+            .is_none_or(|cells| cells > MAX_CELLS)
+        {
+            return None;
+        }
+        Some((x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y))))
     }
 }
 
@@ -103,10 +118,17 @@ impl FlashRule {
 /// Copper drawn only where a track on the same net touches its hole, and the tracks to check.
 #[derive(Default)]
 pub(super) struct Flashing {
-    tracks: Vec<Capsule>,
+    tracks: Vec<Track>,
     /// Track indices by copper layer, net and grid cell.
     cells: HashMap<(usize, u32, i32, i32), Vec<usize>>,
+    unindexed: Vec<usize>,
     pending: Vec<Pending>,
+}
+
+struct Track {
+    copper: usize,
+    net: u32,
+    shape: Capsule,
 }
 
 struct Pending {
@@ -127,20 +149,15 @@ impl Board {
                 radius: width / 2.0,
             };
             let id = flashing.tracks.len();
-            flashing.tracks.push(track);
-            let span = track.b - track.a;
-            let pieces = (span.length() / CELL).ceil().max(1.0) as usize;
-            let at = |step: usize| track.a + span * (step as f64 / pieces as f64);
-            let cells: HashSet<(i32, i32)> = (0..pieces)
-                .flat_map(|piece| {
-                    Capsule {
-                        a: at(piece),
-                        b: at(piece + 1),
-                        ..track
-                    }
-                    .cells()
-                })
-                .collect();
+            flashing.tracks.push(Track {
+                copper,
+                net,
+                shape: track,
+            });
+            let Some(cells) = track.cells() else {
+                flashing.unindexed.push(id);
+                continue;
+            };
             for (x, y) in cells {
                 flashing
                     .cells
@@ -188,16 +205,26 @@ impl Board {
     pub(super) fn flash(&mut self) {
         let flashing = std::mem::take(&mut self.flashing);
         let touched = |pending: &&Pending| {
-            pending.hole.cells().any(|(x, y)| {
-                flashing
-                    .cells
-                    .get(&(pending.copper, pending.net, x, y))
-                    .is_some_and(|tracks| {
-                        tracks
-                            .iter()
-                            .any(|&track| flashing.tracks[track].touches(&pending.hole))
-                    })
-            })
+            let touches = |track: &Track| {
+                track.copper == pending.copper
+                    && track.net == pending.net
+                    && track.shape.touches(&pending.hole)
+            };
+            let Some(mut cells) = pending.hole.cells() else {
+                return flashing.tracks.iter().any(touches);
+            };
+            flashing
+                .unindexed
+                .iter()
+                .any(|&id| touches(&flashing.tracks[id]))
+                || cells.any(|(x, y)| {
+                    flashing
+                        .cells
+                        .get(&(pending.copper, pending.net, x, y))
+                        .is_some_and(|tracks| {
+                            tracks.iter().any(|&track| touches(&flashing.tracks[track]))
+                        })
+                })
         };
         let kept: HashSet<(u32, &str)> = flashing
             .pending

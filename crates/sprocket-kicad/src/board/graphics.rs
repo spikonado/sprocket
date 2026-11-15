@@ -43,17 +43,35 @@ impl Board {
             return;
         };
         let pen = self.pen(id, &layer, Part::Main);
-        self.shape(pen, shape, name, frame, false, 0.0);
+        self.shape(pen, shape, name, frame, false);
         if let Some(mask) = mask {
             let margin = self.mask_margin(shape);
             let pen = self.pen(id, &mask, Part::Main);
-            self.shape(pen, shape, name, frame, false, margin);
+            self.offset(pen, margin, |board, pen| {
+                board.shape(pen, shape, name, frame, false)
+            });
+        }
+    }
+
+    pub(super) fn offset(&mut self, pen: Pen, margin: f64, draw: impl FnOnce(&mut Self, Pen)) {
+        if margin == 0.0 {
+            draw(self, pen);
+            return;
+        }
+        let real = std::mem::replace(&mut self.scene, Scene::new());
+        let temporary = Pen {
+            item: self.scene.add_item(ItemKind::Shape, ItemInfo::default()),
+            layer: self.scene.layer("F.Cu", Part::Main),
+        };
+        draw(self, temporary);
+        let outline = std::mem::replace(&mut self.scene, real);
+        for polygon in outline.offset_polygons(margin) {
+            self.scene.polygon(pen, &polygon[0], &polygon[1..]);
         }
     }
 
     /// Draws a line, arc, circle, rect, poly or curve. `default_fill` fills closed shapes
-    /// that have no `(fill)` and no width, as legacy pad primitives expect. `grow` widens the
-    /// outline on each side, in board units, as mask and paste margins do.
+    /// that have no `(fill)` and no width, as legacy pad primitives expect.
     pub(super) fn shape(
         &mut self,
         pen: Pen,
@@ -61,7 +79,6 @@ impl Board {
         name: &str,
         frame: &Transform,
         default_fill: bool,
-        grow: f64,
     ) {
         let stroke = Stroke::from_expr(shape, 0.0);
         let width = stroke.width;
@@ -75,8 +92,7 @@ impl Board {
             _ => default_fill && width == 0.0,
         };
         let filled = explicit_fill.unwrap_or(implicit_fill);
-        let mut stroke = stroke.scaled(frame);
-        stroke.width += 2.0 * grow;
+        let stroke = stroke.scaled(frame);
         let width = stroke.width;
         let at = |key: &str| child_point(shape, key).map(|p| frame.apply(p));
         match name {

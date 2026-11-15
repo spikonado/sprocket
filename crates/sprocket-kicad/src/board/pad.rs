@@ -3,7 +3,7 @@
 use super::flash::{Capsule, FlashRule};
 use super::{Board, HOLE_WALL, Margins, child_point, padstack_layer, unescape_net, xy};
 use crate::geometry::{Arc, Point, Transform, inset_convex, point};
-use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen, Scene};
+use crate::scene::{HOLES_LAYER, ItemInfo, ItemKind, Part, Pen};
 use crate::sexpr::Expr;
 use crate::text::{HAlign, TextStyle, VAlign, stroke_text};
 
@@ -143,6 +143,7 @@ impl Board {
                 "F.Cu"
             };
             let shape = front.on(padstack, copper);
+            let size = shape.size * frame.length(1.0);
             if kind == "np_thru_hole"
                 && is_copper
                 && drill.is_some_and(|drill| drill.covers(&shape))
@@ -151,19 +152,15 @@ impl Board {
             }
             let margin = match layer.rsplit_once('.').map(|(_, kind)| kind) {
                 Some("Mask") if has_copper => {
-                    let mask = margins.mask.max(-shape.size.x.min(shape.size.y) / 2.0);
+                    let mask = margins.mask.max(-size.x.min(size.y) / 2.0);
                     point(mask, mask)
                 }
                 Some("Paste") if has_copper => {
-                    let paste =
-                        shape.size * margins.paste_ratio + point(margins.paste, margins.paste);
+                    let paste = size * margins.paste_ratio + point(margins.paste, margins.paste);
                     if shape.shape == "custom" {
                         paste
                     } else {
-                        point(
-                            paste.x.max(-shape.size.x / 2.0),
-                            paste.y.max(-shape.size.y / 2.0),
-                        )
+                        point(paste.x.max(-size.x / 2.0), paste.y.max(-size.y / 2.0))
                     }
                 }
                 _ => Point::default(),
@@ -353,16 +350,9 @@ impl Board {
             }
             "custom" => {
                 if margin.x != 0.0 {
-                    let real = std::mem::replace(&mut self.scene, Scene::new());
-                    let temporary = Pen {
-                        item: self.scene.add_item(ItemKind::Pad, ItemInfo::default()),
-                        layer: self.scene.layer("F.Cu", Part::Main),
-                    };
-                    self.pad_shape(temporary, &shape, frame, Point::default());
-                    let outline = std::mem::replace(&mut self.scene, real);
-                    for polygon in outline.offset_polygons(margin.x) {
-                        self.scene.polygon(pen, &polygon[0], &polygon[1..]);
-                    }
+                    self.offset(pen, margin.x, |board, pen| {
+                        board.pad_shape(pen, &shape, frame, Point::default());
+                    });
                     return;
                 }
                 let anchor = PadShape {
@@ -375,7 +365,7 @@ impl Board {
                     else {
                         continue;
                     };
-                    self.shape(pen, primitive, name, frame, true, 0.0);
+                    self.shape(pen, primitive, name, frame, true);
                 }
             }
             _ => {}

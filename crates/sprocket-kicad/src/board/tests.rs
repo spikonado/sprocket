@@ -1,6 +1,57 @@
 use super::test_support::{close, covers, decode};
 
 #[test]
+fn conditional_flashing_handles_tracks_and_drills_larger_than_the_grid() {
+    for (length, width, drill) in [(1.0, 20000.0, 0.4), (1e9, 0.2, 0.4), (1.0, 0.2, 20000.0)] {
+        let board = decode(&format!(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (2 "B.Cu" signal)) (net 1 "A")
+            (segment (start 0 0) (end {length} 0) (width {width}) (layer "F.Cu") (net 1))
+            (via (at 0 0) (size 30000) (drill {drill}) (layers "F.Cu" "B.Cu")
+                (remove_unused_layers yes) (net 1)))"#
+        ));
+        assert!(close(board.layer("F.Cu/main").circles[0][2], 15000.0));
+    }
+}
+
+#[test]
+fn scaled_pads_apply_paste_ratios_to_their_board_size() {
+    for (scale, size) in [(2, 2), (1, 4)] {
+        let board = decode(&format!(
+            r#"(kicad_pcb (version 20261031)
+            (layers (0 "F.Cu" signal))
+            (footprint "P" (layer "F.Cu") (transform (scale {scale} {scale}))
+                (pad "1" smd circle (size {size} {size}) (layers "F.Cu" "F.Mask" "F.Paste")
+                    (solder_mask_margin -0.1) (solder_paste_margin -0.05)
+                    (solder_paste_margin_ratio -0.1))))"#
+        ));
+        assert!(close(board.layer("F.Cu/main").circles[0][2], 2.0));
+        assert!(close(board.layer("F.Mask/main").circles[0][2], 1.9));
+        assert!(close(board.layer("F.Paste/main").circles[0][2], 1.55));
+    }
+}
+
+#[test]
+fn filled_graphic_mask_openings_offset_the_fill_and_outline_together() {
+    for width in [0.0, 0.2] {
+        let board = decode(&format!(
+            r#"(kicad_pcb (version 20261031)
+            (gr_rect (start -1 -1) (end 1 1) (stroke (width {width}) (type default))
+                (fill solid) (layers "F.Cu" "F.Mask") (solder_mask_margin -0.2)))"#
+        ));
+        let half = 0.8 + width / 2.0;
+        for (actual, expected) in board
+            .layer("F.Mask/main")
+            .bounds()
+            .into_iter()
+            .zip([-half, -half, half, half])
+        {
+            assert!((actual - expected).abs() < 1e-4);
+        }
+    }
+}
+
+#[test]
 fn patterned_edges_restart_and_keep_the_fill() {
     for style in ["dash", "dot", "dash_dot", "dash_dot_dot"] {
         let board = decode(&format!(
