@@ -505,7 +505,7 @@ export class Board3d {
 
 		const ndc = new Vector3((x / this.size.width) * 2 - 1, 1 - (y / this.size.height) * 2, 0.5);
 		const direction = ndc.unproject(this.camera).sub(this.camera.position).normalize();
-		const middle = this.bounds?.center.y ?? 0;
+		const middle = this.boardBounds?.getCenter(new Vector3()).y ?? 0;
 
 		return new Ray(this.camera.position, direction).intersectPlane(
 			new Plane(new Vector3(0, 1, 0), -middle),
