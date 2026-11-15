@@ -129,7 +129,7 @@ fn tool_labels_and_summaries() {
             "card_checkout",
             json!({"amount": "23.06", "currency": "usd"}),
             Some("Card Checkout"),
-            "Paying $23.06",
+            "Paying 23.06 USD",
         ),
         (
             "poll_checkout",
@@ -420,12 +420,6 @@ fn errors_preserve_failure_kind_and_text() {
             ToolStatus::Cancelled,
             Some("Tool stopped before completion."),
         ),
-        (
-            ToolStatus::Interrupted,
-            None,
-            ToolStatus::Interrupted,
-            Some("The agent stopped before this tool call finished."),
-        ),
     ] {
         let actual =
             ToolDisplayInput::new("parse_file", &input, output.as_ref(), status).display(None);
@@ -459,7 +453,7 @@ fn saved_tool_actions_are_display_only() {
     );
     assert_eq!(
         serde_json::to_value(checkout).unwrap(),
-        json!({"label": "Card Checkout", "summary": "Paying $23.06", "status": "completed", "action": {"kind": "saveCard"}})
+        json!({"label": "Card Checkout", "summary": "Paying 23.06 USD", "status": "completed", "action": {"kind": "saveCard"}})
     );
 }
 
@@ -477,23 +471,5 @@ fn row_summary_is_one_line_and_unicode_safe() {
             shortened(display("ask_question", json!({"question": question}), None));
         assert_eq!(row.summary, preview);
         assert_eq!(actual_has_more, has_more);
-    }
-}
-
-#[test]
-fn checkout_amounts_use_en_us_currency_display() {
-    for (amount, currency, expected) in [
-        ("1234.5", "usd", "$1,234.50"),
-        ("23.06", "eur", "€23.06"),
-        ("23.06", "gbp", "£23.06"),
-        ("1234", "jpy", "¥1,234"),
-        ("-23.06", "usd", "-$23.06"),
-        ("23.06", "kwd", "KWD\u{a0}23.060"),
-        ("-1234.5", "kwd", "-KWD\u{a0}1,234.500"),
-        ("23.06", "zzz", "ZZZ\u{a0}23.06"),
-        ("invalid", "usd", "invalid USD"),
-        ("23.06", "invalid", "23.06 INVALID"),
-    ] {
-        assert_eq!(major_amount(amount, currency), expected);
     }
 }

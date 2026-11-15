@@ -33,19 +33,16 @@ describe('local socket', () => {
 		const error = socket.subscribeOnce({ kind: 'authChanges' }, z.number(), signal, failed);
 		const validation = socket.subscribeOnce({ kind: 'browserStatus' }, z.number(), signal, invalid);
 		sockets[0].open();
-		sockets[0].receive({
-			type: 'batch',
-			messages: [
-				{ type: 'event', id: 99, data: 'unknown subscription' },
-				{ type: 'event', id: 3, data: 'invalid payload' },
-				{ type: 'event', id: 1, data: 1 },
-				{ type: 'error', id: 2, status: 500, message: 'failed' },
-				{ type: 'event', id: 2, data: 2 },
-				{ type: 'event', id: 1, data: 3 },
-				{ type: 'end', id: 1 },
-				{ type: 'event', id: 1, data: 4 }
-			]
-		});
+		sockets[0].receive(
+			{ type: 'event', id: 99, data: 'unknown subscription' },
+			{ type: 'event', id: 3, data: 'invalid payload' },
+			{ type: 'event', id: 1, data: 1 },
+			{ type: 'error', id: 2, status: 500, message: 'failed' },
+			{ type: 'event', id: 2, data: 2 },
+			{ type: 'event', id: 1, data: 3 },
+			{ type: 'end', id: 1 },
+			{ type: 'event', id: 1, data: 4 }
+		);
 		await watching;
 		await expect(error).rejects.toEqual(new LocalResponseError('failed', 500));
 		await expect(validation).rejects.toBeInstanceOf(z.ZodError);
@@ -104,14 +101,11 @@ describe('local socket', () => {
 				topic: { kind: 'transcriptItem', params: { ...scope, rowId: 'item-1' } }
 			}
 		]);
-		sockets[0].receive({
-			type: 'batch',
-			messages: [
-				{ type: 'event', id: 1, data: { stale: false } },
-				{ type: 'event', id: 2, data: { stale: true } },
-				{ type: 'event', id: 3, data: { stale: false } }
-			]
-		});
+		sockets[0].receive(
+			{ type: 'event', id: 1, data: { stale: false } },
+			{ type: 'event', id: 2, data: { stale: true } },
+			{ type: 'event', id: 3, data: { stale: false } }
+		);
 		expect(transcript).toHaveBeenCalledWith({ stale: false });
 		expect(work).toHaveBeenCalledWith({ stale: true });
 		expect(item).toHaveBeenCalledWith({ stale: false });
@@ -134,10 +128,7 @@ describe('local socket', () => {
 		const other = socket.subscribeOnce({ kind: 'packageUpdate' }, z.json(), signal, vi.fn());
 
 		sockets[0].open();
-		sockets[0].receive({
-			type: 'batch',
-			messages: [{ type: 'error', id: 1, status: 401, message: 'authentication required' }]
-		});
+		sockets[0].receive({ type: 'error', id: 1, status: 401, message: 'authentication required' });
 
 		await expect(watching).rejects.toEqual(new LocalResponseError('authentication required', 401));
 		await expect(other).rejects.toThrow('Lost the live connection');

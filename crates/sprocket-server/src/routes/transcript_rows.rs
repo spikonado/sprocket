@@ -7,7 +7,7 @@ use futures::stream::{self, BoxStream, unfold};
 use serde::{Deserialize, Serialize};
 use sprocket_host::transcript_watch::TranscriptWatchSession;
 use sprocket_transcript::rows::{
-    ProjectionScope, TranscriptRow, TranscriptSnapshot, completion_source_key, project_rows,
+    ProjectionScope, TranscriptRow, completion_source_key, project_rows,
 };
 use sprocket_transcript::{LiveCompletionOverlay, LiveCompletionWatchEvent, TranscriptPart};
 use tokio::sync::broadcast;
@@ -51,6 +51,14 @@ impl UserScoped for TranscriptRowScope {
     fn user_id(&self) -> &str {
         &self.user_id
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TranscriptSnapshot {
+    pub(crate) rows: Vec<TranscriptRow>,
+    next_before: Option<u32>,
+    stale: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -175,17 +183,18 @@ async fn project_window(
     saved: &SavedWindow,
     live: &[LiveCompletionOverlay],
 ) -> TranscriptSnapshot {
-    let mut snapshot = project_rows(
-        &saved.parts,
-        live,
-        scope,
-        saved.window.clone(),
-        saved.stale,
-        &state.host.transcript.thread_dir(user, thread),
-    )
-    .await;
-    snapshot.next_before = saved.next_before;
-    snapshot
+    TranscriptSnapshot {
+        rows: project_rows(
+            &saved.parts,
+            live,
+            scope,
+            saved.window.clone(),
+            &state.host.transcript.thread_dir(user, thread),
+        )
+        .await,
+        next_before: saved.next_before,
+        stale: saved.stale,
+    }
 }
 
 pub(crate) async fn project(

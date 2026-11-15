@@ -243,7 +243,7 @@ describe('transcript protocol', () => {
 		);
 	});
 
-	it.each(['running', 'completed', 'failed', 'cancelled', 'interrupted'] as const)(
+	it.each(['running', 'completed', 'failed', 'cancelled'] as const)(
 		'preserves tool rows with %s status and actions',
 		async (status) => {
 			const row: TranscriptRow = {
@@ -354,13 +354,10 @@ describe('transcript protocol', () => {
 				]
 			};
 
-			sockets[0].receive({
-				type: 'batch',
-				messages: [
-					{ type: 'event', id: 1, data: snapshot },
-					{ type: 'event', id: 1, data: updates }
-				]
-			});
+			sockets[0].receive(
+				{ type: 'event', id: 1, data: snapshot },
+				{ type: 'event', id: 1, data: updates }
+			);
 			expect(onEvent.mock.calls).toEqual([[snapshot], [updates]]);
 			controller.abort();
 			await expect(watching).resolves.toBeUndefined();
@@ -380,14 +377,9 @@ describe('transcript protocol', () => {
 		const rejected = expect(watching).rejects.toMatchObject({ name: 'ZodError' });
 		sockets[0].open();
 		sockets[0].receive({
-			type: 'batch',
-			messages: [
-				{
-					type: 'event',
-					id: 1,
-					data: { type: 'snapshot', rows: [{}], nextBefore: null, stale: false }
-				}
-			]
+			type: 'event',
+			id: 1,
+			data: { type: 'snapshot', rows: [{}], nextBefore: null, stale: false }
 		});
 		await rejected;
 		expect(sockets[0].sent.at(-1)).toEqual({ type: 'unsubscribe', id: 1 });

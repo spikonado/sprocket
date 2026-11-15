@@ -26,14 +26,14 @@ const subscriptionMessageSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('end'), id: z.number() })
 ]);
 
-const serverMessageSchema = z.union([
-	z.object({ type: z.literal('batch'), messages: z.array(subscriptionMessageSchema) }),
-	subscriptionMessageSchema
-]);
+const serverMessageSchema = z.object({
+	type: z.literal('batch'),
+	messages: z.array(subscriptionMessageSchema)
+});
 
-export type LocalServerMessage = z.infer<typeof serverMessageSchema>;
+export type LocalSubscriptionMessage = z.infer<typeof subscriptionMessageSchema>;
 
-type EventData = Extract<LocalServerMessage, { type: 'event' }>['data'];
+type EventData = Extract<LocalSubscriptionMessage, { type: 'event' }>['data'];
 
 type ClientMessage =
 	{ type: 'subscribe'; id: number; topic: LocalTopic } | { type: 'unsubscribe'; id: number };
@@ -173,22 +173,18 @@ class LocalSocket {
 	}
 
 	#receive(raw: string) {
-		let message: LocalServerMessage;
+		let messages: LocalSubscriptionMessage[];
 
 		try {
-			message = serverMessageSchema.parse(JSON.parse(raw));
+			messages = serverMessageSchema.parse(JSON.parse(raw)).messages;
 		} catch {
 			return;
 		}
 
-		if (message.type === 'batch') {
-			for (const entry of message.messages) this.#deliver(entry);
-		} else {
-			this.#deliver(message);
-		}
+		for (const message of messages) this.#deliver(message);
 	}
 
-	#deliver(message: z.infer<typeof subscriptionMessageSchema>) {
+	#deliver(message: LocalSubscriptionMessage) {
 		const subscription = this.#subscriptions.get(message.id);
 
 		if (!subscription) return;

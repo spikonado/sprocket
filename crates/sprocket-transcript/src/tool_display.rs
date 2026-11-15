@@ -12,7 +12,6 @@ pub enum ToolStatus {
     Completed,
     Failed,
     Cancelled,
-    Interrupted,
 }
 
 impl ToolStatus {
@@ -21,7 +20,6 @@ impl ToolStatus {
             None => Self::Running,
             Some("failed") => Self::Failed,
             Some("cancelled") => Self::Cancelled,
-            Some("interrupted") => Self::Interrupted,
             Some(_) => Self::Completed,
         }
     }
@@ -131,7 +129,6 @@ impl<'a> ToolDisplayInput<'a> {
         };
         let error = match status {
             ToolStatus::Running | ToolStatus::Completed => None,
-            ToolStatus::Interrupted => Some("The agent stopped before this tool call finished."),
             ToolStatus::Cancelled => {
                 Some(output_error.unwrap_or("Tool stopped before completion."))
             }
@@ -197,7 +194,7 @@ impl<'a> ToolDisplayInput<'a> {
             "get_workspace_instructions" => "Workspace instructions".into(),
             "card_checkout" => match (field("amount"), field("currency")) {
                 (Some(amount), Some(currency)) if !amount.is_empty() && !currency.is_empty() => {
-                    format!("Paying {}", major_amount(amount, currency))
+                    format!("Paying {amount} {}", currency.to_uppercase())
                 }
                 _ => "Payment".into(),
             },
@@ -310,7 +307,7 @@ fn label(name: &str) -> Option<String> {
     )
 }
 
-fn is_session_command(name: &str) -> bool {
+pub fn is_session_command(name: &str) -> bool {
     matches!(
         name,
         "control_cmd" | "control_command" | "poll_cmd" | "poll_command" | "write_stdin"
@@ -408,68 +405,6 @@ fn patch_input(patch: &str) -> Option<String> {
         }
     }
     unique_paths(paths)
-}
-
-fn major_amount(amount: &str, currency: &str) -> String {
-    let currency = currency.to_uppercase();
-    let value = amount
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|value| value.is_finite());
-    let Some(value) = value
-        .filter(|_| currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_alphabetic()))
-    else {
-        return format!("{amount} {currency}");
-    };
-    let decimals = match currency.as_str() {
-        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF" | "UGX"
-        | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
-        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
-        "CLF" | "UYW" => 4,
-        _ => 2,
-    };
-    let number = format!("{:.*}", decimals, value.abs());
-    let (integer, fraction) = number.split_once('.').unwrap_or((&number, ""));
-    let mut grouped = String::new();
-    for (index, digit) in integer.chars().enumerate() {
-        if index > 0 && (integer.len() - index).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    if decimals > 0 {
-        grouped.push('.');
-        grouped.push_str(fraction);
-    }
-    let symbol = match currency.as_str() {
-        "USD" => "$",
-        "EUR" => "€",
-        "GBP" => "£",
-        "JPY" => "¥",
-        "CNY" => "CN¥",
-        "CAD" => "CA$",
-        "AUD" => "A$",
-        "NZD" => "NZ$",
-        "HKD" => "HK$",
-        "SGD" => "SGD\u{a0}",
-        "TWD" => "NT$",
-        "KRW" => "₩",
-        "INR" => "₹",
-        "BRL" => "R$",
-        "MXN" => "MX$",
-        "ILS" => "₪",
-        "VND" => "₫",
-        "XAF" => "FCFA\u{a0}",
-        "XOF" => "F\u{202f}CFA\u{a0}",
-        "XPF" => "CFPF\u{a0}",
-        _ => &currency,
-    };
-    let separator = if symbol == currency { "\u{a0}" } else { "" };
-    format!(
-        "{}{symbol}{separator}{grouped}",
-        if value.is_sign_negative() { "-" } else { "" }
-    )
 }
 
 #[cfg(test)]

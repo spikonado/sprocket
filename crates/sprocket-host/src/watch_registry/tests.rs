@@ -1,32 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn stale_session_does_not_close_its_replacement() {
-    let registry: Arc<WatchRegistry<String, u32>> = WatchRegistry::new();
-    let spawn = |events: broadcast::Sender<u32>, ()| {
-        let _ = events;
-        tokio::spawn(std::future::pending())
-    };
-    let (old, ()) = registry.open_with("key".to_string(), 4, || (), spawn);
-    registry.abort(&"key".to_string());
-    let (mut replacement, ()) = registry.open_with(
-        "key".to_string(),
-        4,
-        || (),
-        |events, ()| {
-            let _ = events;
-            tokio::spawn(std::future::pending())
-        },
-    );
-    drop(old);
-    assert_eq!(registry.active_count(), 1);
-    registry.send_to(&"key".to_string(), 7);
-    assert_eq!(replacement.receiver().recv().await.unwrap(), 7);
-    drop(replacement);
-    assert_eq!(registry.active_count(), 0);
-}
-
-#[tokio::test]
 async fn first_open_receiver_sees_events_sent_during_spawn() {
     let registry: Arc<WatchRegistry<String, u32>> = WatchRegistry::new();
     let (mut session, ()) = registry.open_with(

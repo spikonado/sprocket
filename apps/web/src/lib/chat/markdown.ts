@@ -164,9 +164,10 @@ export function createMarkdownBlockRenderer() {
 		previousValue = value;
 		const tail = value.slice(completedLength);
 
-		// References, HTML, math, and fences can span paragraphs or change earlier output.
+		// Reference definitions, HTML, and math can span paragraphs or change earlier output.
+		// Fences and other multi-paragraph blocks lex as non-paragraph tokens below.
 		const tokens =
-			mode === 'paragraphs' && !/[[<\\$`\r]/.test(tail) ? marked.lexer(tail) : undefined;
+			mode === 'paragraphs' && !/^ {0,3}\[|[<\\$\r]/m.test(tail) ? marked.lexer(tail) : undefined;
 
 		if (!tokens || tokens.some((token) => token.type !== 'paragraph' && token.type !== 'space')) {
 			mode = 'full';

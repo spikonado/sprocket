@@ -58,7 +58,7 @@ function mount(
 
 	const publish = (state: UpdateState) =>
 		act(() => {
-			sockets[0]?.onmessage?.({ data: JSON.stringify({ type: 'event', id: 1, data: state }) });
+			sockets[0]?.receive({ type: 'event', id: 1, data: state });
 		});
 
 	const setContinuation = (enabled: boolean) =>

@@ -1,6 +1,6 @@
-const EXEC_COMMAND_KINDS = new Set(['exec_cmd', 'exec_command']);
-
-const SESSION_COMMAND_KINDS = new Set([
+const COMMAND_KINDS = new Set([
+	'exec_cmd',
+	'exec_command',
 	'control_cmd',
 	'control_command',
 	'poll_cmd',
@@ -8,14 +8,6 @@ const SESSION_COMMAND_KINDS = new Set([
 	'write_stdin'
 ]);
 
-export function isExecCommandToolKind(kind: string): boolean {
-	return EXEC_COMMAND_KINDS.has(kind);
-}
-
-export function isSessionCommandToolKind(kind: string): boolean {
-	return SESSION_COMMAND_KINDS.has(kind);
-}
-
 export function isCommandToolKind(kind: string): boolean {
-	return isExecCommandToolKind(kind) || isSessionCommandToolKind(kind);
+	return COMMAND_KINDS.has(kind);
 }

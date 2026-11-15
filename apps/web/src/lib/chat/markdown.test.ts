@@ -225,17 +225,18 @@ describe('paragraph-cached Markdown', () => {
 		const render = createMarkdownBlockRenderer();
 		const ids = new Set<string>();
 		const lexer = vi.spyOn(Marked.prototype, 'lexer');
+		const finished = '**Finished** with `code` and [a link](x).\n \t\n';
 
 		try {
-			const first = render('**Finished.**\n \t\nDraft', ids);
-			const appended = render('**Finished.**\n \t\nDraft grows', ids);
+			const first = render(`${finished}Draft`, ids);
+			const appended = render(`${finished}Draft grows`, ids);
 
 			expect(appended[0]).toBe(first[0]);
 			expect(lexer).toHaveBeenLastCalledWith('Draft grows');
-			expect(render('**Finished.**\n \t\nDraft grows', new Set())).toBe(appended);
+			expect(render(`${finished}Draft grows`, new Set())).toBe(appended);
 
-			const completed = render('**Finished.**\n \t\nDraft grows\n\n', ids);
-			const next = render('**Finished.**\n \t\nDraft grows\n\nNext', ids);
+			const completed = render(`${finished}Draft grows\n\n`, ids);
+			const next = render(`${finished}Draft grows\n\nNext`, ids);
 
 			expect(next[0]).toBe(first[0]);
 			expect(next[1]).toBe(completed[1]);
@@ -247,6 +248,10 @@ describe('paragraph-cached Markdown', () => {
 
 	it.each([
 		['prose', '**First.**\n\nSecond with ~~strikethrough~~.\n\nThird.'],
+		[
+			'inline code and links',
+			'Run `a\n\nb` and [x](y).\n\nAfter `c` [z].\n\n[z]: https://example.com'
+		],
 		['references', '[guide][ref]\n\nartifact:known\n\n[ref]: https://example.com "Guide"'],
 		['nested definitions', '[ref]\n\n> [ref]: https://example.com'],
 		['lists', '- first\n\n- second\n\n  continuation\n\nAfter.'],

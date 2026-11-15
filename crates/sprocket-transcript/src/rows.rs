@@ -7,7 +7,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::sections::{item_id, item_index};
-use crate::tool_display::{ToolDisplay, ToolDisplayInput, ToolStatus, load_session_command};
+use crate::tool_display::{
+    ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, load_session_command,
+};
 use crate::{
     LiveCompletionOverlay, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
     TranscriptPartKind, derive_work_blocks,
@@ -70,14 +72,6 @@ impl ProjectionScope {
             Self::Work(id) | Self::Item(id) | Self::Row(id) => id.split(':').nth(1),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptSnapshot {
-    pub rows: Vec<TranscriptRow>,
-    pub next_before: Option<u32>,
-    pub stale: bool,
 }
 
 impl TranscriptRow {
@@ -180,9 +174,8 @@ pub async fn project_rows(
     live: &[LiveCompletionOverlay],
     scope: &ProjectionScope,
     window: Range<u32>,
-    stale: bool,
     transcript_dir: &Path,
-) -> TranscriptSnapshot {
+) -> Vec<TranscriptRow> {
     let mut results = HashMap::new();
     let mut call_results = HashMap::new();
     let mut source_results = HashMap::new();
@@ -409,19 +402,18 @@ pub async fn project_rows(
                         result.and_then(|tool| tool.output.as_ref()),
                         status,
                     );
-                    let command = if let Some(session) = input.session_id() {
-                        if let std::collections::hash_map::Entry::Vacant(entry) =
-                            commands.entry(session.to_owned())
-                        {
-                            let command = match uuid::Uuid::parse_str(session) {
-                                Ok(session) => load_session_command(transcript_dir, session).await,
-                                Err(_) => None,
-                            };
-                            entry.insert(command);
+                    let command = match input.session_id().filter(|_| is_session_command(name)) {
+                        Some(session) => {
+                            if !commands.contains_key(session) {
+                                let command = match uuid::Uuid::parse_str(session) {
+                                    Ok(id) => load_session_command(transcript_dir, id).await,
+                                    Err(_) => None,
+                                };
+                                commands.insert(session.to_owned(), command);
+                            }
+                            commands[session].as_deref()
                         }
-                        commands[session].as_deref()
-                    } else {
-                        None
+                        None => None,
                     };
                     let mut display = input.display(command);
                     let has_more = if full { false } else { display.shorten() };
@@ -440,11 +432,7 @@ pub async fn project_rows(
             });
         }
     }
-    TranscriptSnapshot {
-        rows,
-        next_before: None,
-        stale,
-    }
+    rows
 }
 
 #[cfg(test)]

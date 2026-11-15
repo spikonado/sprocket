@@ -43,19 +43,19 @@ async fn legacy_calls_and_orphan_results_keep_status_actions_and_numeric_session
         ),
     ];
     let thread = project(parts.clone(), &[], ProjectionScope::Thread).await;
-    assert_eq!(thread.rows.len(), 1);
-    let work = project(parts, &[], ProjectionScope::Work(thread.rows[0].id.clone())).await;
-    assert_eq!(work.rows.len(), 3);
-    for row in &work.rows {
+    assert_eq!(thread.len(), 1);
+    let work = project(parts, &[], ProjectionScope::Work(thread[0].id.clone())).await;
+    assert_eq!(work.len(), 3);
+    for row in &work {
         assert!(
             matches!(row.body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Completed)
         );
     }
     assert!(
-        matches!(work.rows[1].body, TranscriptRowBody::Tool { ref display, .. } if display.summary == "legacy build")
+        matches!(work[1].body, TranscriptRowBody::Tool { ref display, .. } if display.summary == "legacy build")
     );
     assert!(
-        matches!(work.rows[2].body, TranscriptRowBody::Tool { ref display, .. } if matches!(&display.action, Some(crate::tool_display::ToolDisplayAction::OpenFile { path }) if path == "saved.txt"))
+        matches!(work[2].body, TranscriptRowBody::Tool { ref display, .. } if matches!(&display.action, Some(crate::tool_display::ToolDisplayAction::OpenFile { path }) if path == "saved.txt"))
     );
 }
 
@@ -106,7 +106,7 @@ async fn a_live_call_with_reused_provider_id_waits_for_its_own_saved_result() {
     )
     .await;
     assert!(
-        matches!(snapshot.rows[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running && display.action.is_none())
+        matches!(snapshot[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running && display.action.is_none())
     );
 }
 
@@ -136,13 +136,12 @@ async fn project(
     parts: Vec<TranscriptPart>,
     live: &[LiveCompletionOverlay],
     scope: ProjectionScope,
-) -> TranscriptSnapshot {
+) -> Vec<TranscriptRow> {
     project_rows(
         &parts,
         live,
         &scope,
         0..100,
-        false,
         Path::new("/unused-transcript"),
     )
     .await
@@ -168,7 +167,7 @@ async fn live_and_saved_rows_keep_ids_despite_empty_items_and_live_arrival_order
     )[0]
     .id
     .clone();
-    assert_eq!(streamed.rows[0].id, live_work_id);
+    assert_eq!(streamed[0].id, live_work_id);
     let saved = completion(
         7,
         &completion_source_key(&live),
@@ -179,10 +178,9 @@ async fn live_and_saved_rows_keep_ids_despite_empty_items_and_live_arrival_order
         ],
     );
     let persisted = project(vec![saved], &[live], ProjectionScope::Thread).await;
-    assert_eq!(streamed.rows, persisted.rows);
+    assert_eq!(streamed, persisted);
     assert_eq!(
         persisted
-            .rows
             .iter()
             .map(|row| row.id.as_str())
             .collect::<Vec<_>>(),
@@ -204,17 +202,17 @@ async fn reasoning_streams_only_in_the_item_scope_and_finishes_before_the_next_t
     )
     .await;
     assert!(matches!(
-        thread.rows[0].body,
+        thread[0].body,
         TranscriptRowBody::Work { running: true, .. }
     ));
     let work = project(
         Vec::new(),
         std::slice::from_ref(&live),
-        ProjectionScope::Work(thread.rows[0].id.clone()),
+        ProjectionScope::Work(thread[0].id.clone()),
     )
     .await;
     assert!(matches!(
-        work.rows[0].body,
+        work[0].body,
         TranscriptRowBody::Reasoning {
             running: true,
             text: None,
@@ -224,10 +222,10 @@ async fn reasoning_streams_only_in_the_item_scope_and_finishes_before_the_next_t
     let item = project(
         Vec::new(),
         std::slice::from_ref(&live),
-        ProjectionScope::Item(work.rows[0].id.clone()),
+        ProjectionScope::Item(work[0].id.clone()),
     )
     .await;
-    assert_eq!(item.rows[0].text(), Some("# Plan\nPrivate details"));
+    assert_eq!(item[0].text(), Some("# Plan\nPrivate details"));
     live.parts.push(
         serde_json::from_value(json!({
             "type":"tool-call", "partId":"stream:tool:1", "callId":"call", "name":"exec_cmd",
@@ -238,11 +236,11 @@ async fn reasoning_streams_only_in_the_item_scope_and_finishes_before_the_next_t
     let work = project(
         Vec::new(),
         &[live],
-        ProjectionScope::Work(thread.rows[0].id.clone()),
+        ProjectionScope::Work(thread[0].id.clone()),
     )
     .await;
     assert!(matches!(
-        work.rows[0].body,
+        work[0].body,
         TranscriptRowBody::Reasoning {
             running: false,
             text: None,
@@ -250,7 +248,7 @@ async fn reasoning_streams_only_in_the_item_scope_and_finishes_before_the_next_t
         }
     ));
     assert!(
-        matches!(work.rows[1].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running)
+        matches!(work[1].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running)
     );
 }
 
@@ -268,17 +266,17 @@ async fn unresolved_saved_calls_stay_running_without_a_local_overlay() {
     )
     .await;
     assert!(matches!(
-        thread.rows[0].body,
+        thread[0].body,
         TranscriptRowBody::Work { running: true, .. }
     ));
-    let scope = ProjectionScope::Work(thread.rows[0].id.clone());
+    let scope = ProjectionScope::Work(thread[0].id.clone());
     let active = project(vec![saved.clone()], &[live], scope.clone()).await;
     assert!(
-        matches!(active.rows[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running)
+        matches!(active[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running)
     );
     let stopped = project(vec![saved.clone()], &[], scope.clone()).await;
     assert!(
-        matches!(stopped.rows[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running)
+        matches!(stopped[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Running)
     );
     let result: TranscriptPart = serde_json::from_value(json!({
         "number":1, "sourceKey":"tool:invocation:finished", "runId":"run", "kind":"tool",
@@ -286,7 +284,7 @@ async fn unresolved_saved_calls_stay_running_without_a_local_overlay() {
     })).unwrap();
     let done = project(vec![saved, result], &[], scope).await;
     assert!(
-        matches!(done.rows[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Completed)
+        matches!(done[0].body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Completed)
     );
 }
 
@@ -307,22 +305,14 @@ async fn tools_only_send_display_summaries_and_item_scope_returns_the_full_summa
         ProjectionScope::Work("work:run:completion:run:stream:0".into()),
     )
     .await;
-    let wire = serde_json::to_value(&work.rows[0]).unwrap();
+    let wire = serde_json::to_value(&work[0]).unwrap();
     assert_eq!(wire["summary"], "x".repeat(300));
     assert_eq!(wire["hasMore"], true);
     assert!(!wire.to_string().contains("private input"));
     assert!(wire.get("input").is_none());
     assert!(wire.get("output").is_none());
-    let item = project(
-        vec![saved],
-        &[],
-        ProjectionScope::Item(work.rows[0].id.clone()),
-    )
-    .await;
-    assert_eq!(
-        serde_json::to_value(&item.rows[0]).unwrap()["summary"],
-        command
-    );
+    let item = project(vec![saved], &[], ProjectionScope::Item(work[0].id.clone())).await;
+    assert_eq!(serde_json::to_value(&item[0]).unwrap()["summary"], command);
 }
 
 #[tokio::test]
@@ -349,13 +339,12 @@ async fn work_groups_continue_across_parts_and_result_only_windows_keep_the_work
         &[],
         &ProjectionScope::Thread,
         2..3,
-        false,
         Path::new("/unused-transcript"),
     )
     .await;
-    assert_eq!(page.rows.len(), 1);
-    assert_eq!(page.rows[0].id, "work:run:completion:first:0");
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].id, "work:run:completion:first:0");
     assert!(
-        matches!(page.rows[0].body, TranscriptRowBody::Work { ref tool_counts, running: false } if tool_counts["exec_cmd"] == 1)
+        matches!(page[0].body, TranscriptRowBody::Work { ref tool_counts, running: false } if tool_counts["exec_cmd"] == 1)
     );
 }

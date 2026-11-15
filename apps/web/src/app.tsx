@@ -1439,10 +1439,6 @@ export default function App({
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
 	}
 
-	async function loadOlderTranscript() {
-		await transcript.loadOlder();
-	}
-
 	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
 		const api = localApi;
 		const threadId = currentThreadId;
@@ -2638,7 +2634,7 @@ export default function App({
 															? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 															: 'Add a project to begin.'
 												}
-												onLoadOlder={() => void loadOlderTranscript()}
+												onLoadOlder={() => void transcript.loadOlder()}
 												loadAttachment={loadTranscriptAttachment}
 												renderRunFooter={(runId) => (
 													<RunUsageFooter
