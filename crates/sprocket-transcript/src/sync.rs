@@ -3,8 +3,8 @@ use serde::Deserializer;
 use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
 use super::types::{
-    HiddenPromptKind, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, LegacyWork, TranscriptAttachmentMeta, TranscriptCompletionBody,
+    TranscriptPart, TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -66,7 +66,7 @@ struct RemoteTranscriptPart {
     kind: String,
     run_id: String,
     #[serde(default)]
-    work: super::sections::WorkAssignment,
+    work: LegacyWork,
     #[serde(
         rename = "_creationTime",
         default,
@@ -151,7 +151,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         "tool" => TranscriptPartKind::Tool,
         other => anyhow::bail!("unknown transcript part kind {other}"),
     };
-    let mut part = TranscriptPart {
+    let mut local = TranscriptPart {
         number: part.number,
         source_key: part.source_key,
         kind,
@@ -160,10 +160,9 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         prompt: part.prompt.map(TranscriptPromptBody::from),
         completion: part.completion,
         tool: part.tool,
-        work: part.work,
     };
-    part.normalize_legacy_tool_invocations();
-    Ok(part)
+    part.work.move_tool_invocations(local.completion.as_mut());
+    Ok(local)
 }
 
 fn parse_remote_parts(value: serde_json::Value) -> anyhow::Result<Vec<TranscriptPart>> {

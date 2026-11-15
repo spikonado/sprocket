@@ -6,13 +6,13 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::sections::{item_id, item_index};
 use crate::tool_display::{
     ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, load_session_command,
 };
+use crate::work_blocks::{item_id, item_index};
 use crate::{
     LiveCompletionOverlay, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, derive_work_blocks,
+    TranscriptPartKind, WorkBlock, derive_work_blocks,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -137,12 +137,8 @@ fn merge_live<'a>(
             run_id: overlay.run_id.clone(),
             created_at: None,
             prompt: None,
-            completion: Some(TranscriptCompletionBody {
-                stream_id: None,
-                items,
-            }),
+            completion: Some(TranscriptCompletionBody { items }),
             tool: None,
-            work: Default::default(),
         };
         if !overlay.run_status.is_final()
             && let Some(item) = part.content_items().last()
@@ -283,19 +279,17 @@ fn projection_parts<'a>(
             created_at: part.created_at,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
-                stream_id: None,
                 items: vec![json!({"type":"tool-call", "name":tool.name,
                     "input":tool.input, "resultSourceKey":part.source_key})],
             }),
             tool: None,
-            work: Default::default(),
         };
         *part = Cow::Owned(fallback);
     }
     (parts, activity)
 }
 
-pub fn saved_work_blocks(saved: &[TranscriptPart]) -> Vec<crate::sections::WorkBlock> {
+pub fn saved_work_blocks(saved: &[TranscriptPart]) -> Vec<WorkBlock> {
     let (parts, _) = projection_parts(saved, &[], &ToolResults::new(saved));
     derive_work_blocks(parts.iter().map(AsRef::as_ref))
 }

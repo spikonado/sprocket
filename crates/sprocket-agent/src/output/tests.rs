@@ -11,10 +11,8 @@ fn completion(number: u32, text: &str) -> TranscriptPart {
         prompt: None,
         tool: None,
         completion: Some(TranscriptCompletionBody {
-            stream_id: None,
             items: vec![serde_json::json!({"type": "text", "text": text})],
         }),
-        work: Default::default(),
     }
 }
 

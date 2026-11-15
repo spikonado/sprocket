@@ -214,25 +214,8 @@ where
         .ok_or_else(|| anyhow::anyhow!("invalid transcript row ID"))?;
     let run = scope.run_id().unwrap();
     let target = scope.row_id().unwrap();
-    let mut number = store.source_number(user, thread, source).await?;
-    if number.is_none()
-        && let Some(range) = store.read_run_range(user, thread, run).await?
-    {
-        store
-            .ensure_parts(user, thread, range.start, range.end, &mut *fetch)
-            .await?;
-        number = store.source_number(user, thread, source).await?;
-        let mut end = range.start;
-        while number.is_none() && end > 0 {
-            let start = end.saturating_sub(PAGE_PARTS);
-            store
-                .ensure_parts(user, thread, start, end, &mut *fetch)
-                .await?;
-            number = store.source_number(user, thread, source).await?;
-            end = start;
-        }
-    }
-    let Some(number) = number else {
+    // Row IDs come from cached parts or the live completion, so an uncached source is unsaved.
+    let Some(number) = store.source_number(user, thread, source).await? else {
         return Ok(Vec::new());
     };
     let mut parts = store.read_parts(user, thread, &[number]).await?;
@@ -322,7 +305,7 @@ where
                     .enumerate()
                     .filter(move |(offset, item)| {
                         item["type"] == "tool-call"
-                            && sprocket_transcript::sections::item_id("tool", part, *offset)
+                            && sprocket_transcript::work_blocks::item_id("tool", part, *offset)
                                 == target
                     })
                     .map(move |(offset, _)| (part.number, offset))

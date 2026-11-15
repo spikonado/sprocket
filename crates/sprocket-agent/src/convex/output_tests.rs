@@ -101,7 +101,6 @@ fn persisted_parts_still_decode_legacy_work_and_tool_fields() {
     }))
     .unwrap();
     let part: TranscriptPart = part.into();
-    assert_eq!(part.work.section_key.as_deref(), Some("section-1"));
     let tool = part.tool.unwrap();
     assert_eq!(tool.name, "exec_cmd");
     assert_eq!(tool.call_id, "call");

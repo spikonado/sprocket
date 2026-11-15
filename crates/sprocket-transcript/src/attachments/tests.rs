@@ -28,7 +28,6 @@ fn prompt_part(number: u32, attachments: Vec<TranscriptAttachmentMeta>) -> Trans
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }
 }
 
@@ -460,7 +459,6 @@ async fn moves_staged_files_into_their_thread_without_size_or_count_caps() {
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }];
     cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
         Ok(None)
@@ -614,7 +612,6 @@ async fn expired_remote_files_do_not_block_history_and_cached_files_remain_usabl
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }];
     cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
         Ok(None)

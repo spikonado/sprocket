@@ -48,7 +48,7 @@ Thread files live in `transcripts/<user-id>/<thread-id>/`:
 | `attachments/`         | Downloaded and uploaded attachments, with their metadata.          |
 | `command-logs/`        | Command output and session details.                                |
 
-Convex holds the full transcript. Sprocket caches recent parts first and downloads older parts while the thread is open in a tab or an agent is running. Closing the last tab stops background downloads unless a run is still active.
+Convex holds the full transcript. Sprocket downloads the newest parts first, and downloads older parts only while the thread is open in a tab or an agent is running in it.
 
 From the thread directory, `cat parts/*.jsonl` reads cached parts in order. The cache can have gaps while older history downloads.
 

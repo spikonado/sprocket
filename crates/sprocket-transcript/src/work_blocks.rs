@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::types::TranscriptPart;
-pub use super::types::{WorkAssignment, WorkRange};
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
@@ -84,19 +83,10 @@ pub fn derive_work_blocks<'a>(
 }
 
 impl TranscriptPart {
-    pub fn work_assignment(&self) -> &WorkAssignment {
-        &self.work
-    }
-
     pub fn content_items(&self) -> &[Value] {
         self.completion
             .as_ref()
             .map_or(&[], |completion| completion.items.as_slice())
-    }
-
-    pub fn without_work_assignment(mut self) -> Self {
-        self.work = WorkAssignment::default();
-        self
     }
 }
 

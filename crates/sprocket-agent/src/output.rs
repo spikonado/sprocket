@@ -217,10 +217,7 @@ impl RunOutput {
             });
         match parts {
             Ok(parts) => {
-                page.parts = parts
-                    .into_iter()
-                    .map(TranscriptPart::without_work_assignment)
-                    .collect();
+                page.parts = parts;
             }
             Err(error) => {
                 let error = format!("Could not read local run output: {error}");

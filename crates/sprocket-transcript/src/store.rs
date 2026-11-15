@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
@@ -35,7 +34,6 @@ fn chunk_start(number: u32) -> u32 {
 struct ThreadIndex {
     numbers: BTreeSet<u32>,
     sources: HashMap<String, u32>,
-    runs: HashMap<String, Range<u32>>,
 }
 
 impl ThreadIndex {
@@ -46,12 +44,6 @@ impl ThreadIndex {
     fn insert(&mut self, part: &TranscriptPart) {
         self.numbers.insert(part.number);
         self.sources.insert(part.source_key.clone(), part.number);
-        let run = self
-            .runs
-            .entry(part.run_id.clone())
-            .or_insert(part.number..part.number + 1);
-        run.start = run.start.min(part.number);
-        run.end = run.end.max(part.number + 1);
     }
 
     fn missing_page(&self, start: u32, end: u32) -> Option<(u32, u32)> {
@@ -218,6 +210,7 @@ impl TranscriptStore {
                     .or_default()
                     .push(part);
             }
+            let changed = !chunks.is_empty();
             for (start, additions) in chunks {
                 for attachment in additions
                     .iter()
@@ -236,7 +229,9 @@ impl TranscriptStore {
                     payload.push(b'\n');
                 }
                 atomic_write(&path, &payload)?;
-                let _ = changes.send(scope.clone());
+            }
+            if changed {
+                let _ = changes.send(scope);
             }
             Ok(())
         })
@@ -302,19 +297,6 @@ impl TranscriptStore {
         .await
     }
 
-    pub async fn read_run_range(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        run_id: &str,
-    ) -> anyhow::Result<Option<Range<u32>>> {
-        let run_id = run_id.to_owned();
-        self.with_thread(user_id, thread_id, move |_, index| {
-            Ok(index.runs.get(&run_id).cloned())
-        })
-        .await
-    }
-
     pub(super) async fn missing_page(
         &self,
         user_id: &str,
@@ -347,8 +329,9 @@ fn load_index(dir: &Path) -> anyhow::Result<ThreadIndex> {
         }
         fs::create_dir_all(&parts_dir)?;
         atomic_write(&dir.join(FORMAT_FILE), STORE_FORMAT.as_bytes())?;
+    } else {
+        fs::create_dir_all(&parts_dir)?;
     }
-    fs::create_dir_all(&parts_dir)?;
     let mut index = ThreadIndex::default();
     for entry in fs::read_dir(&parts_dir)? {
         let path = entry?.path();

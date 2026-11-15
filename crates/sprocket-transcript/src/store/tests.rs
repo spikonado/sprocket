@@ -48,13 +48,6 @@ async fn out_of_order_appends_produce_sorted_chunks_of_one_hundred() {
         range.iter().map(|part| part.number).collect::<Vec<_>>(),
         [3, 4, 100, 150]
     );
-    assert_eq!(
-        store
-            .read_run_range("user", "thread", "run-0")
-            .await
-            .unwrap(),
-        Some(0..5)
-    );
 }
 
 #[tokio::test]

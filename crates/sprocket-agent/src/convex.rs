@@ -6,10 +6,9 @@ use sprocket_convex::{
     Client as ConvexRpcClient, ConvexErrorCode, RunStatus, convex_error_code,
     decode_function_result,
 };
-use sprocket_transcript::sections::WorkAssignment;
 use sprocket_transcript::{
-    RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart, TranscriptPartKind,
-    TranscriptPromptBody, TranscriptToolBody, parse_remote_page,
+    LegacyWork, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
+    TranscriptPartKind, TranscriptPromptBody, TranscriptToolBody, parse_remote_page,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -33,7 +32,7 @@ pub(crate) struct PersistedTranscriptPart {
     kind: TranscriptPartKind,
     run_id: String,
     #[serde(default)]
-    work: WorkAssignment,
+    work: LegacyWork,
     #[serde(
         rename = "_creationTime",
         default,
@@ -62,7 +61,7 @@ struct CompletionMutationResponse {
 
 impl From<PersistedTranscriptPart> for TranscriptPart {
     fn from(part: PersistedTranscriptPart) -> Self {
-        Self {
+        let mut local = Self {
             number: part.number,
             source_key: part.source_key,
             kind: part.kind,
@@ -71,8 +70,9 @@ impl From<PersistedTranscriptPart> for TranscriptPart {
             prompt: part.prompt,
             completion: part.completion,
             tool: part.tool,
-            work: part.work,
-        }
+        };
+        part.work.move_tool_invocations(local.completion.as_mut());
+        local
     }
 }
 

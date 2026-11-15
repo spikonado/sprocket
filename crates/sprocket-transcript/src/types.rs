@@ -26,8 +26,6 @@ pub struct TranscriptPart {
     pub completion: Option<TranscriptCompletionBody>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<TranscriptToolBody>,
-    #[serde(default, skip_serializing_if = "WorkAssignment::is_empty")]
-    pub work: WorkAssignment,
 }
 
 #[derive(Deserialize)]
@@ -46,7 +44,7 @@ struct TranscriptPartReader {
     #[serde(default)]
     tool: Option<TranscriptToolBody>,
     #[serde(default)]
-    work: WorkAssignment,
+    work: LegacyWork,
 }
 
 impl From<TranscriptPartReader> for TranscriptPart {
@@ -60,46 +58,45 @@ impl From<TranscriptPartReader> for TranscriptPart {
             prompt: reader.prompt,
             completion: reader.completion,
             tool: reader.tool,
-            work: reader.work,
         };
-        part.normalize_legacy_tool_invocations();
+        reader.work.move_tool_invocations(part.completion.as_mut());
         part
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// The `work` field of parts saved for released clients. Only its tool invocation IDs, which
+/// belong on the completion's call items, are still read.
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkRange {
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    pub start: u32,
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    pub end: u32,
-    pub section_key: String,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkAssignment {
+pub struct LegacyWork {
     #[serde(default)]
-    pub ranges: Vec<WorkRange>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub section_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_invocations: Vec<WorkInvocation>,
+    tool_invocations: Vec<LegacyToolInvocation>,
 }
 
-impl WorkAssignment {
-    fn is_empty(&self) -> bool {
-        self.ranges.is_empty() && self.section_key.is_none() && self.tool_invocations.is_empty()
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkInvocation {
+struct LegacyToolInvocation {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    pub item: u32,
-    pub tool_invocation_id: String,
+    item: u32,
+    tool_invocation_id: String,
+}
+
+impl LegacyWork {
+    pub fn move_tool_invocations(self, completion: Option<&mut TranscriptCompletionBody>) {
+        let Some(completion) = completion else {
+            return;
+        };
+        for invocation in self.tool_invocations {
+            if let Some(item) = completion.items.get_mut(invocation.item as usize)
+                && item["type"] == "tool-call"
+                && let Some(object) = item.as_object_mut()
+            {
+                object
+                    .entry("toolInvocationId")
+                    .or_insert(JsonValue::String(invocation.tool_invocation_id));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -169,8 +166,6 @@ pub struct TranscriptAttachmentMeta {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptCompletionBody {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_id: Option<String>,
     pub items: Vec<JsonValue>,
 }
 
@@ -193,22 +188,6 @@ pub struct TranscriptToolBody {
 }
 
 impl TranscriptPart {
-    pub(crate) fn normalize_legacy_tool_invocations(&mut self) {
-        let Some(completion) = &mut self.completion else {
-            return;
-        };
-        for invocation in &self.work.tool_invocations {
-            if let Some(item) = completion.items.get_mut(invocation.item as usize)
-                && item["type"] == "tool-call"
-                && let Some(object) = item.as_object_mut()
-            {
-                object
-                    .entry("toolInvocationId")
-                    .or_insert_with(|| JsonValue::String(invocation.tool_invocation_id.clone()));
-            }
-        }
-    }
-
     pub fn without_ephemeral_urls(&self) -> Self {
         let mut part = self.clone();
         if let Some(prompt) = part.prompt.as_mut() {

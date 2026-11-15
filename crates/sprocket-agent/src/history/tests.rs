@@ -27,7 +27,6 @@ fn prompt(number: u32, run_id: &str, text: &str) -> TranscriptPart {
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }
 }
 
@@ -57,7 +56,6 @@ fn tool_part(
             output,
             status: status.into(),
         }),
-        work: Default::default(),
     }
 }
 
@@ -70,7 +68,6 @@ fn completion_with_call(number: u32, call_id: &str) -> TranscriptPart {
         created_at: None,
         prompt: None,
         completion: Some(TranscriptCompletionBody {
-            stream_id: Some("s".into()),
             items: vec![serde_json::json!({
                 "type": "tool-call",
                 "callId": call_id,
@@ -79,7 +76,6 @@ fn completion_with_call(number: u32, call_id: &str) -> TranscriptPart {
             })],
         }),
         tool: None,
-        work: Default::default(),
     }
 }
 
@@ -321,11 +317,9 @@ fn skips_the_current_run_prompt_until_that_run_has_finished_turns() {
                 created_at: None,
                 prompt: None,
                 completion: Some(TranscriptCompletionBody {
-                    stream_id: Some("s".into()),
                     items: vec![serde_json::json!({ "type": "text", "text": "now" })],
                 }),
                 tool: None,
-                work: Default::default(),
             },
         ],
         Some("current"),
@@ -430,11 +424,9 @@ fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
                 created_at: None,
                 prompt: None,
                 completion: Some(TranscriptCompletionBody {
-                    stream_id: Some("s".into()),
                     items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
                 }),
                 tool: None,
-                work: Default::default(),
             },
         ],
         Some("continuation"),
@@ -490,7 +482,6 @@ fn skips_tool_parts_without_a_matching_completion_call() {
                     output: Some(serde_json::json!("orphan-output")),
                     status: "completed".into(),
                 }),
-                work: Default::default(),
             },
             TranscriptPart {
                 number: 2,
@@ -500,7 +491,6 @@ fn skips_tool_parts_without_a_matching_completion_call() {
                 created_at: None,
                 prompt: None,
                 completion: Some(TranscriptCompletionBody {
-                    stream_id: Some("s".into()),
                     items: vec![serde_json::json!({
                         "type": "tool-call",
                         "callId": "keep",
@@ -509,7 +499,6 @@ fn skips_tool_parts_without_a_matching_completion_call() {
                     })],
                 }),
                 tool: None,
-                work: Default::default(),
             },
             TranscriptPart {
                 number: 3,
@@ -528,7 +517,6 @@ fn skips_tool_parts_without_a_matching_completion_call() {
                     output: Some(serde_json::json!("keep-output")),
                     status: "completed".into(),
                 }),
-                work: Default::default(),
             },
         ],
         Some("run"),
@@ -690,7 +678,6 @@ fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
                 }),
                 completion: None,
                 tool: None,
-                work: Default::default(),
             },
             TranscriptPart {
                 number: 1,
@@ -700,7 +687,6 @@ fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
                 created_at: None,
                 prompt: None,
                 completion: Some(TranscriptCompletionBody {
-                    stream_id: Some("s".into()),
                     items: vec![serde_json::json!({
                         "type": "reasoning",
                         "text": "think",
@@ -713,7 +699,6 @@ fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
                     })],
                 }),
                 tool: None,
-                work: Default::default(),
             },
         ],
         None,
@@ -735,12 +720,8 @@ fn reasoning_completion(number: u32, item: serde_json::Value) -> TranscriptPart 
         run_id: "run".into(),
         created_at: None,
         prompt: None,
-        completion: Some(TranscriptCompletionBody {
-            stream_id: Some("s".into()),
-            items: vec![item],
-        }),
+        completion: Some(TranscriptCompletionBody { items: vec![item] }),
         tool: None,
-        work: Default::default(),
     }
 }
 

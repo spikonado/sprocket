@@ -562,7 +562,11 @@ async fn explicit_work_requests_fill_gaps_and_include_interleaved_parts_after_th
         }
     };
     store
-        .append_parts("user", "thread", &[part(80), part(200), part(300)])
+        .append_parts(
+            "user",
+            "thread",
+            &[part(20), part(80), part(200), part(300)],
+        )
         .await
         .unwrap();
     let scope = ProjectionScope::Work("work:run:source:20:0".into());
