@@ -425,6 +425,24 @@ fn is_run_origin(part: &TranscriptPart) -> bool {
         .is_some_and(|prompt| prompt.hidden.is_none())
 }
 
+fn is_hidden_prompt(part: &TranscriptPart) -> bool {
+    part.prompt
+        .as_ref()
+        .is_some_and(|prompt| prompt.hidden.is_some())
+}
+
+/// Tracks runs whose earliest loaded prompt or completion is a hidden prompt.
+fn note_turn(hidden_starts: &mut HashSet<String>, part: &TranscriptPart) {
+    if part.tool.is_some() {
+        return;
+    }
+    if is_hidden_prompt(part) {
+        hidden_starts.insert(part.run_id.clone());
+    } else {
+        hidden_starts.remove(&part.run_id);
+    }
+}
+
 fn starts_with_text(part: &TranscriptPart) -> bool {
     for item in part.content_items() {
         match item["type"].as_str() {
@@ -471,13 +489,21 @@ where
     };
     let mut seen = HashSet::new();
     let mut pending = HashSet::new();
+    let mut after_turn = false;
     for part in &parts {
-        if seen.insert(&part.run_id) && !boundary(part) {
+        if seen.insert(&part.run_id) && !boundary(part) && !(after_turn && is_hidden_prompt(part)) {
             pending.insert(part.run_id.clone());
         }
+        after_turn |= part.tool.is_none();
     }
     if pending.is_empty() {
         return Ok(parts);
+    }
+    // Runs in a thread never overlap; only late tool results land after the next run starts.
+    // So a hidden prompt right after another run's prompt or completion begins a continuation run.
+    let mut hidden_starts = HashSet::new();
+    for part in parts.iter().rev() {
+        note_turn(&mut hidden_starts, part);
     }
     let mut prefix = Vec::new();
     let mut end = parts.first().map_or(0, |part| part.number);
@@ -492,12 +518,16 @@ where
             .into_iter()
             .rev()
         {
+            if part.tool.is_none() {
+                pending.retain(|run| *run == part.run_id || !hidden_starts.contains(run));
+            }
             if !pending.contains(&part.run_id) {
                 continue;
             }
             if boundary(&part) {
                 pending.remove(&part.run_id);
             }
+            note_turn(&mut hidden_starts, &part);
             prefix.push(part);
         }
         end = start;

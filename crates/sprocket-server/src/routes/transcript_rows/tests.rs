@@ -1061,3 +1061,44 @@ async fn hidden_continuation_runs_keep_the_previous_visible_history() {
     assert_eq!(snapshot.rows.len(), 1);
     assert_eq!(snapshot.rows[0].text(), Some("part 0"));
 }
+
+#[tokio::test]
+async fn hidden_continuation_runs_do_not_wait_for_history_before_them() {
+    let (state, _root) = state().await;
+    let store = &state.host.transcript;
+    let hidden = |number| -> TranscriptPart {
+        serde_json::from_value(json!({
+            "number":number, "sourceKey":"continuation", "runId":"new", "kind":"prompt",
+            "prompt":{"text":"Continue working", "hidden":"continuation", "imageUploads":[]}
+        }))
+        .unwrap()
+    };
+    let working = |number| {
+        let mut part = reasoning(number);
+        part.run_id = "new".into();
+        part
+    };
+    let old = |number| completion(number, "old", &format!("old:{number}"));
+    // The continuation starts inside the window, or before it after a long run.
+    for (thread, start, end, first) in [("short", 401, 450, 250), ("long", 300, 550, 300)] {
+        let mut parts: Vec<_> = (first.min(start - 1)..start).map(old).collect();
+        parts.push(hidden(start));
+        parts.extend((start + 1..end).map(working));
+        store.append_parts("user", thread, &parts).await.unwrap();
+        let saved = load_store_window(
+            store,
+            "user",
+            thread,
+            &ProjectionScope::Thread,
+            None,
+            None,
+            |from, to| async move {
+                assert!(from >= 150, "continuations must not wait for older history");
+                Ok((from..to).rev().map(old).collect())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved.parts[0].number, first);
+    }
+}
