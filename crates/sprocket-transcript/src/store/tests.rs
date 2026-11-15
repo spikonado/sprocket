@@ -210,6 +210,7 @@ async fn damaged_chunks_and_interrupted_writes_are_discarded_on_open() {
     let mut contents = fs::read(&torn).unwrap();
     contents.truncate(contents.len() / 2);
     fs::write(&torn, contents).unwrap();
+    fs::write(parts_dir.join("00000200.jsonl"), b"{\"text\":\"\xe2\x82").unwrap();
     fs::write(parts_dir.join(".tmp-interrupted"), "partial").unwrap();
 
     let reopened = TranscriptStore::new(dir.path().to_owned());

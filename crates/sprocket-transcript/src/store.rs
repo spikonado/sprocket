@@ -393,8 +393,9 @@ fn read_chunk(path: &Path, start: u32) -> anyhow::Result<Vec<TranscriptPart>> {
         }
     };
     let mut parts: Vec<TranscriptPart> = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let part: TranscriptPart = serde_json::from_str(&line?)
+    // Bytes, not `lines()`: invalid UTF-8 is chunk damage, not an I/O failure.
+    for line in BufReader::new(file).split(b'\n') {
+        let part: TranscriptPart = serde_json::from_slice(&line?)
             .with_context(|| format!("failed to parse {}", path.display()))?;
         anyhow::ensure!(
             chunk_start(part.number) == start
