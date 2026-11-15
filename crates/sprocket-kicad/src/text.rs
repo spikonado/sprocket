@@ -98,6 +98,10 @@ pub fn pen_width(thickness: f64, size: Point, bold: bool, bold_multiplies: bool)
     pen.min(size.x.abs().min(size.y.abs()) * 0.25)
 }
 
+pub fn text_width(text: &str, style: &TextStyle) -> f64 {
+    Layout::width(&parse_markup(text), style)
+}
+
 /// Lays out `text` anchored at `anchor` and returns its strokes in board coordinates.
 pub fn stroke_text(text: &str, anchor: Point, style: &TextStyle) -> Vec<Vec<Point>> {
     // KiCad's wxStringSplit drops one trailing empty line.
@@ -114,18 +118,13 @@ pub fn stroke_text(text: &str, anchor: Point, style: &TextStyle) -> Vec<Vec<Poin
         VAlign::Center => offset.y -= height / 2.0,
         VAlign::Bottom => offset.y -= height,
     }
-    let mut measure = Layout {
-        style,
-        origin: anchor,
-        strokes: None,
-    };
     let mut draw = Layout {
         style,
         origin: anchor,
         strokes: Some(Vec::new()),
     };
     for (index, line) in lines.iter().enumerate() {
-        let width = measure.markup(line, Point::default(), Flags::default()).x;
+        let width = Layout::width(line, style);
         let x = match style.h_align {
             HAlign::Left => offset.x,
             HAlign::Center => -width / 2.0,
@@ -202,6 +201,16 @@ struct Layout<'s> {
 }
 
 impl Layout<'_> {
+    fn width(nodes: &[Markup], style: &TextStyle) -> f64 {
+        Layout {
+            style,
+            origin: Point::default(),
+            strokes: None,
+        }
+        .markup(nodes, Point::default(), Flags::default())
+        .x
+    }
+
     /// Lays out one line of markup from `position` and returns the cursor after it.
     fn markup(&mut self, nodes: &[Markup], position: Point, flags: Flags) -> Point {
         let mut cursor = position;

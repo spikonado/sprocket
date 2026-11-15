@@ -1,6 +1,8 @@
 use std::f64::consts::{PI, TAU};
 use std::ops::{Add, Mul, Neg, Sub};
 
+pub mod polygon;
+
 /// The largest distance a tessellated arc or curve may stray from the true shape, in mm.
 pub const MAX_CHORD_ERROR: f64 = 0.005;
 

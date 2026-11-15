@@ -1,86 +1,96 @@
-use serde_json::Value;
+use super::test_support::{close, covers, decode};
 
-use super::scene;
-
-struct Decoded {
-    meta: Value,
-    layers: Vec<DecodedLayer>,
-}
-
-struct DecodedLayer {
-    /// `name/part`, as in `F.Cu/main`.
-    name: String,
-    /// `[x1, y1, x2, y2, width]`
-    segments: Vec<[f32; 5]>,
-    /// `[cx, cy, radius, strokeWidth]`
-    circles: Vec<[f32; 4]>,
-    triangle_vertices: usize,
-    triangles: Vec<[f32; 2]>,
-}
-
-fn decode(src: &str) -> Decoded {
-    let bytes = scene(src).unwrap();
-    let word = |offset: usize| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-    let float = |offset: usize| f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-    let meta_len = word(8) as usize;
-    let meta: Value = serde_json::from_slice(&bytes[12..12 + meta_len]).unwrap();
-    let mut offset = 12 + meta_len.next_multiple_of(4);
-    let mut layers = Vec::new();
-    for layer in meta["layers"].as_array().unwrap() {
-        let count = |key: &str| layer[key].as_u64().unwrap() as usize;
-        let segments = (0..count("segments"))
-            .map(|index| std::array::from_fn(|field| float(offset + index * 24 + field * 4)))
-            .collect();
-        offset += count("segments") * 24;
-        let circles = (0..count("circles"))
-            .map(|index| std::array::from_fn(|field| float(offset + index * 20 + field * 4)))
-            .collect();
-        offset += count("circles") * 20;
-        let triangles = (0..count("triangleVertices"))
-            .map(|index| std::array::from_fn(|field| float(offset + index * 12 + field * 4)))
-            .collect();
-        offset += count("triangleVertices") * 12;
-        layers.push(DecodedLayer {
-            name: format!(
-                "{}/{}",
-                layer["name"].as_str().unwrap(),
-                layer["part"].as_str().unwrap()
-            ),
-            segments,
-            circles,
-            triangle_vertices: count("triangleVertices"),
-            triangles,
-        });
+#[test]
+fn patterned_edges_restart_and_keep_the_fill() {
+    for style in ["dash", "dot", "dash_dot", "dash_dot_dot"] {
+        let board = decode(&format!(
+            r#"(kicad_pcb (version 20261031)
+                (gr_rect (start 0 0) (end 7 5) (stroke (width 0.2) (type {style}))
+                    (fill solid) (layer "F.SilkS")))"#
+        ));
+        let layer = &board.layers[0];
+        assert_eq!(layer.triangles.len(), 2);
+        for [x, y] in [[0.0, 0.0], [7.0, 0.0], [7.0, 5.0], [0.0, 5.0]] {
+            assert!(layer.segments.iter().any(|s| close(s[0], x) && close(s[1], y)));
+        }
+        assert!(layer.segments.len() > 4);
+        assert!(layer.segments.iter().all(|s| (s[2] - s[0]).hypot(s[3] - s[1]) < 3.0));
     }
-    assert_eq!(offset, bytes.len());
-    Decoded { meta, layers }
+    let board = decode(
+        r#"(kicad_pcb (version 20261031)
+            (gr_circle (center 0 0) (end 3 0) (stroke (width 0.2) (type dash))
+                (fill solid) (layer "F.SilkS")))"#,
+    );
+    assert!(close(board.layers[0].circles[0][2], 3.0));
+    assert!(!board.layers[0].segments.is_empty());
 }
 
-impl Decoded {
-    fn layer(&self, name: &str) -> &DecodedLayer {
-        self.layers.iter().find(|layer| layer.name == name).unwrap()
+#[test]
+fn patterned_curves_carry_phase_and_arcs_ignore_input_winding() {
+    let board = decode(
+        r#"(kicad_pcb (version 20261031)
+            (gr_curve (pts (xy 0 0) (xy 0 8) (xy 8 8) (xy 8 0))
+                (stroke (width 0.2) (type dash)) (layer "F.SilkS")))"#,
+    );
+    let segments = &board.layers[0].segments;
+    assert!(segments.windows(2).any(|pair| (pair[1][0] - pair[0][2]).hypot(pair[1][1] - pair[0][3]) > 0.7));
+    let arc = |start, end| {
+        decode(&format!(
+            r#"(kicad_pcb (version 20261031)
+            (gr_arc (start {start} 0) (mid 0 -4) (end {end} 0)
+                (stroke (width 0.2) (type dash_dot)) (layer "F.SilkS")))"#
+        ))
+    };
+    let forward = arc(-4, 4);
+    let reverse = arc(4, -4);
+    assert_eq!(forward.layers[0].segments.len(), reverse.layers[0].segments.len());
+    for (a, b) in forward.layers[0].segments.iter().zip(&reverse.layers[0].segments) {
+        assert!(a.iter().zip(b).all(|(&a, &b)| close(a, f64::from(b))));
     }
 }
 
-impl DecodedLayer {
-    fn bounds(&self) -> [f64; 4] {
-        let mut bounds = crate::geometry::Bounds::EMPTY;
-        for &[x1, y1, x2, y2, width] in &self.segments {
-            bounds.include(crate::geometry::point(x1.into(), y1.into()), f64::from(width) / 2.0);
-            bounds.include(crate::geometry::point(x2.into(), y2.into()), f64::from(width) / 2.0);
-        }
-        for &[x, y, radius, stroke] in &self.circles {
-            bounds.include(crate::geometry::point(x.into(), y.into()), f64::from(radius + stroke / 2.0));
-        }
-        for &[x, y] in &self.triangles {
-            bounds.include(crate::geometry::point(x.into(), y.into()), 0.0);
-        }
-        [bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y]
+#[test]
+fn knockout_stroke_text_fills_the_margin_and_cuts_out_the_strokes() {
+    let text = |knockout| {
+        decode(&format!(
+            r#"(kicad_pcb (version 20261031)
+            (gr_text "H" (at 10 20 35) (layer "F.SilkS" {knockout})
+                (effects (font (size 2 2) (thickness 0.2)))))"#
+        ))
+    };
+    let plain = text("");
+    let knockout = text("knockout");
+    let layer = &knockout.layers[0];
+    assert!(layer.segments.is_empty());
+    assert!(layer.triangles.len() > 2);
+    for s in &plain.layers[0].segments {
+        assert!(!covers(layer, [(s[0] + s[2]) / 2.0, (s[1] + s[3]) / 2.0]));
     }
+    let s = plain.layers[0].segments[0];
+    let delta = [(s[2] - s[0]), (s[3] - s[1])];
+    let len = delta[0].hypot(delta[1]);
+    let mid = [(s[0] + s[2]) / 2.0, (s[1] + s[3]) / 2.0];
+    assert!([-1.0, 1.0].iter().any(|side| covers(layer, [
+        mid[0] - delta[1] / len * 0.2 * side,
+        mid[1] + delta[0] / len * 0.2 * side,
+    ])));
 }
 
-fn close(a: f32, b: f64) -> bool {
-    (f64::from(a) - b).abs() < 1e-4
+#[test]
+fn knockout_cached_outlines_preserve_counter_islands() {
+    let board = decode(
+        r#"(kicad_pcb (version 20261031)
+            (gr_text "O" (at 2 2) (layer "F.SilkS" knockout)
+                (effects (font (face "test") (size 1 1) (thickness 0.1)))
+                (render_cache "O" 0
+                    (polygon (pts (xy 1 1) (xy 3 1) (xy 3 3) (xy 1 3))
+                        (pts (xy 1.5 1.5) (xy 2.5 1.5) (xy 2.5 2.5) (xy 1.5 2.5))))))"#,
+    );
+    let layer = &board.layers[0];
+    assert!(covers(layer, [2.0, 2.0]));
+    assert!(covers(layer, [0.9, 2.0]));
+    assert!(!covers(layer, [1.25, 2.0]));
+    assert!(layer.segments.is_empty());
 }
 
 #[test]
@@ -144,7 +154,7 @@ fn roundrect_pad_is_a_rect_with_a_rounding_stroke() {
                 (pad "1" smd roundrect (at 0 0) (size 2 1) (layers "F.Cu") (roundrect_rratio 0.25))))"#,
     );
     let layer = &board.layers[0];
-    assert_eq!(layer.triangle_vertices, 6);
+    assert_eq!(layer.triangles.len(), 2);
     assert_eq!(layer.segments.len(), 4);
     assert!(layer.segments.iter().all(|segment| close(segment[4], 0.5)));
     assert_eq!(
@@ -231,8 +241,8 @@ fn padstacks_select_layer_shapes_and_offsets_without_moving_drills() {
     assert!(close(board.layer("In2.Cu/main").circles[0][2], 1.0));
     assert!(close(board.layer("B.Cu/main").circles[0][2], 1.5));
     let inner = &board.layer("In1.Cu/main").triangles;
-    assert!(inner.iter().any(|p| close(p[0], -1.0)));
-    assert!(inner.iter().any(|p| close(p[0], 2.0)));
+    assert!(inner.iter().flatten().any(|p| close(p[0], -1.0)));
+    assert!(inner.iter().flatten().any(|p| close(p[0], 2.0)));
     let back = board.layer("B.Cu/main").segments[0];
     assert!(close(back[4], 1.0) && close((back[3] - back[1]).abs(), 1.0));
     let mask = board.layer("B.Mask/main").segments[0];
@@ -300,7 +310,7 @@ fn chamfered_roundrect_keeps_chamfers_sharp_and_scales_shrinking_apertures() {
             (-half, half - radius),
         ] {
             assert!(
-                layer.triangles.iter().any(|p| close(p[0], x) && close(p[1], y)),
+                layer.triangles.iter().flatten().any(|p| close(p[0], x) && close(p[1], y)),
                 "{name} missing boundary vertex ({x}, {y})"
             );
         }
@@ -332,7 +342,7 @@ fn trapezoid_paste_insets_the_sloped_edges_without_reversing_delta() {
         let layer = board.layer(name);
         for (x, y) in corners {
             assert!(
-                layer.triangles.iter().any(|p| close(p[0], x) && close(p[1], y)),
+                layer.triangles.iter().flatten().any(|p| close(p[0], x) && close(p[1], y)),
                 "{name} missing boundary vertex ({x}, {y})"
             );
         }

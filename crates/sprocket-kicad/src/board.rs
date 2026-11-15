@@ -11,6 +11,8 @@ use crate::sexpr::{Expr, for_each_item};
 mod flash;
 mod graphics;
 mod pad;
+mod stroke;
+mod textbox;
 
 use flash::{Capsule, FlashRule, Flashing};
 
@@ -130,6 +132,8 @@ impl Board {
                 self.zone(item, None, &Transform::IDENTITY);
             }
             "gr_text" => self.board_text(item),
+            "gr_text_box" => self.textbox(item, &Transform::IDENTITY, None),
+            "table" => self.table(item, &Transform::IDENTITY, None),
             "dimension" => self.dimension(item, None),
             _ => {
                 if let Some(shape) = head
@@ -299,6 +303,8 @@ impl Board {
                     }
                 }
                 Some("pad") => self.pad(child, id, &frame, margins),
+                Some("fp_text_box") => self.textbox(child, &frame, Some((id, &fields))),
+                Some("table") => self.table(child, &frame, Some((id, &fields))),
                 // KiCad saves footprint dimensions in board coordinates.
                 Some("dimension") => self.dimension(child, Some(id)),
                 Some("zone") => {
@@ -645,5 +651,7 @@ fn unescape_net(name: &str) -> String {
     out
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;
