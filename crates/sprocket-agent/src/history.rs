@@ -182,15 +182,6 @@ impl<'a> ToolCallIndex<'a> {
                 index.by_item.insert((part.number, item_index), call);
                 if let Some(invocation_id) = non_empty_str(item.get("toolInvocationId")) {
                     index.by_invocation.insert(invocation_id, call);
-                } else if let Some(invocation) = part
-                    .work
-                    .tool_invocations
-                    .iter()
-                    .find(|invocation| invocation.item as usize == item_index)
-                {
-                    index
-                        .by_invocation
-                        .insert(&invocation.tool_invocation_id, call);
                 }
                 index
                     .by_call_id

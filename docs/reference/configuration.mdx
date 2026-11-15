@@ -34,7 +34,7 @@ Each data directory is a separate profile with its own sign-in. Set `SPROCKET_DA
 
 Transcript parts record prompts, model completions, and tool results. A completion's tool-call item contains the tool's name, input, and `toolInvocationId`. Its result has the same invocation ID, a terminal status (`completed`, `failed`, or `cancelled`), and output. A call without a result is still running. Reasoning and tool calls form work blocks until the next non-empty text item.
 
-Older transcripts can also contain `started` tool parts and work-section metadata. Current readers ignore the `started` parts and derive blocks from item order. Those parts keep their original numbers.
+Transcripts also contain `started` tool parts, `work` section data, and tool names and inputs copied onto results. Older Sprocket versions read these. Current versions skip `started` parts and read names and inputs from the call item.
 
 ## Credentials
 

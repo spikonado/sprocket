@@ -105,9 +105,6 @@ describe('legacy completion work', () => {
 			return await ctx.db.get('executorJobs', started.jobId);
 		});
 
-		expect(job).toMatchObject({
-			sectionKey: `agent:${runId}:claim:1:section:1`,
-			sectionOrdinal: 1
-		});
+		expect(job?.sectionKey).toBe(`agent:${runId}:claim:1:section:1`);
 	});
 });

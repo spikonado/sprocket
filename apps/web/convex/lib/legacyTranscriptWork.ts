@@ -10,7 +10,7 @@ type CompletionWork = {
 	toolInvocations: { callId: string; toolInvocationId: string; sectionKey?: string }[];
 };
 
-export function legacySectionOrdinal(sectionKey: string): number {
+function legacySectionOrdinal(sectionKey: string): number {
 	const suffix = /:section:(\d+)$/u.exec(sectionKey)?.[1];
 	const ordinal = suffix === undefined ? NaN : Number(suffix);
 
@@ -139,4 +139,38 @@ export async function deriveLegacyCompletionWork(
 	});
 
 	return { work, toolInvocations };
+}
+
+/** Current agents omit sections, so their jobs take the section of their saved call item. */
+export async function legacyCallSectionKey(
+	ctx: MutationCtx,
+	args: { run: Doc<'runs'>; streamId: string; toolInvocationId: string; callId?: string }
+): Promise<string> {
+	const completion = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_sourceKey', (query) =>
+			query
+				.eq('threadId', args.run.threadId)
+				.eq('sourceKey', completionSourceKey(args.run._id, args.streamId))
+		)
+		.unique();
+
+	const items = completion?.completion?.items ?? [];
+
+	const index = items.findIndex(
+		(item) => item.type === 'tool-call' && item.toolInvocationId === args.toolInvocationId
+	);
+
+	const item = items[index];
+	const range = completion?.work.ranges.find(({ start, end }) => start <= index && index < end);
+
+	if (
+		item?.type !== 'tool-call' ||
+		!range ||
+		(args.callId !== undefined && item.callId !== args.callId)
+	) {
+		throw new Error('Tool invocation does not match a saved completion call.');
+	}
+
+	return range.sectionKey;
 }

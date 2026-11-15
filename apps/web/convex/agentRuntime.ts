@@ -604,15 +604,15 @@ export const beginRun = mutation({
 			return args.returnParts ? { accepted: false, parts: [] } : false;
 		}
 
+		const hiddenScope = args.handoff
+			? contextHandoffKey(run._id, args.claimId, args.handoff.completionAttemptSeq)
+			: `${run._id}:${args.claimId}`;
+
 		if (run.cancellationRequestedAt !== undefined) {
 			const prompt = runHasBegun(run) ? await getPromptPart(ctx, run.threadId, run._id) : null;
 			const accepted = prompt !== null;
 
 			if (!args.returnParts) return accepted;
-
-			const scope = args.handoff
-				? contextHandoffKey(run._id, args.claimId, args.handoff.completionAttemptSeq)
-				: `${run._id}:${args.claimId}`;
 
 			const hidden = await Promise.all(
 				args.workspaceContext.map((entry) =>
@@ -621,7 +621,7 @@ export const beginRun = mutation({
 						.withIndex('by_threadId_and_sourceKey', (query) =>
 							query
 								.eq('threadId', run.threadId)
-								.eq('sourceKey', hiddenPromptSourceKey(scope, entry.kind))
+								.eq('sourceKey', hiddenPromptSourceKey(hiddenScope, entry.kind))
 						)
 						.unique()
 				)
@@ -648,7 +648,7 @@ export const beginRun = mutation({
 			parts = await recordHiddenPrompts(ctx, {
 				threadId: run.threadId,
 				runId: run._id,
-				idempotencyScope: `${run._id}:${args.claimId}`,
+				idempotencyScope: hiddenScope,
 				prompts: args.workspaceContext
 			});
 		}

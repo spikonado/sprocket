@@ -6,13 +6,13 @@ Clients older than v0.4.2 are unsupported. Each shim below is temporary code wit
 
 ### Transcript part format
 
-Released v0.5.x agents send completion `work`, separate `toolInvocations`, and section metadata on `beginToolJob`. Keep accepting those arguments. Current agents put `toolInvocationId` on each completion call item and omit section assignments. Completion `sections` are accepted and ignored as described below.
+Released v0.5.x agents send completion `work`, separate `toolInvocations`, and section metadata on `beginToolJob`. Keep accepting those arguments. Current agents put `toolInvocationId` on each completion call item and send no section data. Completion `sections` are ignored, as described in "Retired transcript section summaries".
 
-Released agents expect boolean results from `beginRun`, `saveContextHandoff`, `executor:complete` and `executor:fail`, and a completion document or `null` from `finalizeCompletionCall`. Current agents opt into returned parts with `returnParts: true`. Once clients without that argument age out, make the part-returning responses unconditional and remove the old return variants.
+Released agents expect a boolean from `beginRun`, `saveContextHandoff`, `executor:complete` and `executor:fail`, and a completion document or `null` from `finalizeCompletionCall`. Callers get the created parts only with `returnParts: true`. Once agents that don't send it age out, return parts unconditionally and remove the old response shapes.
 
-Released clients download parts through `transcript:getPartsPage`; their replicas require `work` for grouping, `started` tool parts for running tools, and copied `callId`, `name` and command input on tool parts. Keep writing those fields and `started` parts as a compatibility projection, including for calls from current agents. Current readers derive blocks from completion item order, pair results by `toolInvocationId`, and ignore `started` parts. New completions omit `streamId`; their `sourceKey` still identifies the completion.
+Released clients download parts through `transcript:getPartsPage`. Their replicas need `work` for grouping, `started` tool parts for running tools, and copied `callId`, `name` and command input on tool parts. Convex keeps writing all of these, deriving `work` and job sections for current agents in `lib/legacyTranscriptWork.ts`. Current readers ignore them: they derive blocks from item order, pair results by `toolInvocationId`, and skip `started` parts.
 
-Remove the projection only after clients through v0.5.x age out. Then migrate `work` and old `completion.streamId` off stored parts, and remove copied tool fields where a matching call preserves them. Keep the historical orphan-tool validators and every part number, including `started` parts. The invocation-ID backfill can run before that gate because it preserves the legacy fields.
+Once clients through v0.5.x age out, stop writing these fields, migrate `work` and old `completion.streamId` off stored parts, and drop copied tool fields where a matching call item has them. Keep every part number, including `started` parts.
 
 ### Retired subagent provider restriction
 
@@ -104,6 +104,10 @@ Tool parts written by the August 2026 transcript migration, with `migrated-tool:
 
 Older `artifacts` rows carry `type`, so the schema keeps it optional. `migrations:removeArtifactTypes` deletes it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove `type` from the schema and remove the migration.
 
+### Completion call invocation IDs
+
+Older completion parts keep tool invocation IDs only in `work.toolInvocations`. `migrations:backfillCompletionToolInvocationIds` copies each onto its call item, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --prod --component migrations lib:getStatus` reports it done, remove the migration. `withToolInvocationIds` stays for released agents' writes, as described in "Transcript part format".
+
 ### Transcript context location
 
 Older `threadRecords` rows carry `contextSummary`, `contextSummaryPartCount`, `contextSummaryHandoffKey` and `reasoningStrippedThroughPartNumber`. Writers now use `threadTranscriptStates`; readers fall back to the thread fields while `migrations:moveTranscriptContext` copies them and unsets the old fields. The Convex Production workflow runs it after each deploy. Once `bunx convex run --prod --component migrations lib:getStatus` reports it done, remove the four fields from `threadRecords`, the location fallback and the migration. `transcript:getState` and `getStateForRun` keep the same result shape for released clients.
@@ -146,6 +150,10 @@ Each of these Convex variants goes once a full production scan confirms no retai
 - The `pending` executor job status, from before jobs were inserted as `claimed`.
 
 ## Local data directory shims
+
+### Call item invocation IDs in local transcripts
+
+Parts that released clients saved locally keep tool invocation IDs in `work.toolInvocations` instead of on their call items. `TranscriptPart` deserialization and `to_local_part` in `crates/sprocket-transcript` copy them onto the items with `normalize_legacy_tool_invocations`. Remove it once old local transcript caches are deleted and downloaded again, and `migrations:backfillCompletionToolInvocationIds` reports done on production.
 
 ### Windows private files from elevated runs
 

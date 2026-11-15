@@ -256,12 +256,7 @@ fn migrated_calls_match_results_without_an_invocation_id() {
 }
 
 #[test]
-fn unknown_invocation_ids_only_fall_back_to_legacy_calls() {
-    let mut legacy = completion_with_call(2, "call");
-    legacy.work.tool_invocations = serde_json::from_value(serde_json::json!([
-        {"item": 0, "toolInvocationId": "legacy-invocation"}
-    ]))
-    .unwrap();
+fn unknown_invocation_ids_only_fall_back_to_calls_without_one() {
     let parts = [
         completion_with_invocation(0, "call", "modern-invocation"),
         tool_part(
@@ -273,11 +268,11 @@ fn unknown_invocation_ids_only_fall_back_to_legacy_calls() {
             Some("unknown"),
             None,
         ),
-        legacy,
+        completion_with_call(2, "call"),
         tool_part(
             3,
             "tool:legacy",
-            "stale-id",
+            "call",
             "completed",
             None,
             Some("legacy-invocation"),

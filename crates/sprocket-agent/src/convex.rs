@@ -24,15 +24,14 @@ use crate::workspace_context::HiddenPrompt;
 const TRANSPORT_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PersistedTranscriptPart {
+struct PersistedTranscriptPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
     source_key: String,
     kind: TranscriptPartKind,
     run_id: String,
-    #[serde(default)]
     work: WorkAssignment,
     #[serde(
         rename = "_creationTime",
@@ -43,18 +42,6 @@ pub(crate) struct PersistedTranscriptPart {
     prompt: Option<TranscriptPromptBody>,
     completion: Option<TranscriptCompletionBody>,
     tool: Option<TranscriptToolBody>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct PartsMutationResponse {
-    pub(crate) accepted: bool,
-    pub(crate) parts: Vec<PersistedTranscriptPart>,
-}
-
-#[derive(Deserialize)]
-struct CompletionMutationResponse {
-    completion: Option<PersistedTranscriptPart>,
-    parts: Vec<PersistedTranscriptPart>,
 }
 
 impl From<PersistedTranscriptPart> for TranscriptPart {
@@ -453,7 +440,6 @@ impl RuntimeClient {
             "streamId".to_string(),
             crate::hooks::completion_stream_id(run_id, claim_id, attempt_seq).into(),
         );
-        args.insert("returnParts".to_string(), true.into());
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
@@ -464,16 +450,13 @@ impl RuntimeClient {
                 Value::try_from(serde_json::json!({ "contextTokens": tokens }))?,
             );
         }
-        let CompletionMutationResponse {
-            completion,
-            parts: _parts,
-        } = self
+        let persisted: Option<PersistedTranscriptPart> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
         if empty_completion && let Some(output) = &self.output {
             output.empty_completion();
         }
-        if let (Some(output), Some(persisted)) = (&self.output, completion) {
+        if let (Some(output), Some(persisted)) = (&self.output, persisted) {
             output.record_part(persisted.into()).await;
         }
         Ok(())
@@ -549,14 +532,8 @@ impl RuntimeClient {
                 Value::try_from(serde_json::to_value(workspace_context)?)?,
             );
         }
-        args.insert("returnParts".to_string(), true.into());
-        let PartsMutationResponse {
-            accepted,
-            parts: _parts,
-        } = self
-            .mutation_json("agentRuntime:saveContextHandoff", args)
-            .await?;
-        Ok(accepted.into())
+        self.mutation_json("agentRuntime:saveContextHandoff", args)
+            .await
     }
 
     pub(crate) async fn begin_run(
@@ -574,14 +551,8 @@ impl RuntimeClient {
         if let Some(handoff) = handoff {
             args.insert("handoff".to_string(), Value::Object(handoff.args()));
         }
-        args.insert("returnParts".to_string(), true.into());
-        let PartsMutationResponse {
-            accepted,
-            parts: _parts,
-        } = self
-            .idempotent_mutation("agentRuntime:beginRun", args)
-            .await?;
-        Ok(accepted.into())
+        self.idempotent_mutation("agentRuntime:beginRun", args)
+            .await
     }
 
     pub(crate) async fn omit_reasoning_replay(

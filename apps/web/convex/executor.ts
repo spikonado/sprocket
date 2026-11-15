@@ -15,7 +15,7 @@ type ExecutorJobSnapshot = {
 	status: Infer<typeof vExecutorJobStatus>;
 	result?: Infer<typeof vExecutorJobResult>;
 	error?: string;
-	part?: Doc<'threadTranscriptParts'> | null;
+	part: Doc<'threadTranscriptParts'> | null;
 };
 
 const settlementResult = v.union(v.boolean(), vTranscriptMutationResult);
@@ -143,7 +143,7 @@ export const getJob = query({
 			status: vExecutorJobStatus,
 			result: v.optional(vExecutorJobResult),
 			error: v.optional(v.string()),
-			part: v.optional(v.union(schema.doc('threadTranscriptParts'), v.null()))
+			part: v.union(schema.doc('threadTranscriptParts'), v.null())
 		})
 	),
 	handler: getJobHandler

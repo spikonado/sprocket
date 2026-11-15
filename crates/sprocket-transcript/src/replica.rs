@@ -239,15 +239,12 @@ impl WorkReplica {
         let tx = self.db.transaction()?;
         let mut changed_runs: BTreeMap<String, Vec<u32>> = BTreeMap::new();
         for part in parts {
-            let mut normalized = part.without_ephemeral_urls();
-            normalized.normalize_legacy_tool_invocations();
-            let part = &normalized;
             let count = part
                 .completion
                 .as_ref()
                 .map_or(1, |_| part.content_items().len().max(1));
             anyhow::ensure!(count <= 8192, "invalid completion item count");
-            let body = serde_json::to_string(part)?;
+            let body = serde_json::to_string(&part.without_ephemeral_urls())?;
             let previous: Option<(String, String)> = tx
                 .query_row(
                     "SELECT source_key,body FROM parts WHERE number=?",
