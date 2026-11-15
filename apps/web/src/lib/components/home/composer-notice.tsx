@@ -21,7 +21,7 @@ export default function ComposerNotice({ title, children, tone = 'warning', acti
 			<CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
 			<div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
 				<p className="text-[13px] leading-5">{title}</p>
-				<div className="text-[12.5px] leading-5 opacity-90">{children}</div>
+				<div className="text-[12.5px] leading-5 whitespace-pre-line opacity-90">{children}</div>
 				{action ? <div className="mt-2">{action}</div> : null}
 			</div>
 		</div>

@@ -34,6 +34,50 @@ fn spikonado_capacity_errors_show_the_gateway_message() {
 }
 
 #[test]
+fn every_failed_provider_is_shown() {
+    use crate::types::CompletionProvider;
+
+    let capacity = rig::ProviderError::from_provider_body(
+        serde_json::json!({"error": {
+            "code": crate::gateway::AT_CAPACITY_CODE,
+            "message": "We are currently at capacity, please try again later.",
+        }})
+        .to_string(),
+    );
+    let error = super::user_facing_error(super::provider_failures(vec![
+        (CompletionProvider::Spikonado, anyhow::Error::new(capacity)),
+        (
+            CompletionProvider::Openai,
+            anyhow::anyhow!("Incorrect API key provided."),
+        ),
+    ]));
+    assert_eq!(
+        error.to_string(),
+        "Every provider failed.\nSpikonado: We are currently at capacity, please try again later.\nOpenAI API: Incorrect API key provided."
+    );
+}
+
+#[test]
+fn provider_failures_preserve_usage_limit_classification() {
+    use crate::types::CompletionProvider;
+
+    let error = super::provider_failures(vec![
+        (
+            CompletionProvider::Openai,
+            anyhow::anyhow!("Invalid API key."),
+        ),
+        (
+            CompletionProvider::Spikonado,
+            coded_convex_error("USAGE_LIMIT_REACHED"),
+        ),
+    ]);
+    assert_eq!(
+        sprocket_convex::convex_error_code(&error),
+        Some(sprocket_convex::ConvexErrorCode::UsageLimitReached)
+    );
+}
+
+#[test]
 fn generation_options_map_reasoning_effort() {
     let options = super::generation_options("xhigh").unwrap();
     assert_eq!(
