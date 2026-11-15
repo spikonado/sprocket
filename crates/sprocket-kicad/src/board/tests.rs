@@ -123,3 +123,128 @@ fn roundrect_pad_is_a_rect_with_a_rounding_stroke() {
         serde_json::json!([-1.0, -0.5, 1.0, 0.5])
     );
 }
+
+fn assert_rgba(value: &Value, expected: [f64; 4]) {
+    let actual: [f64; 4] = serde_json::from_value(value.clone()).unwrap();
+    assert!(
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(a, b)| (a - b).abs() < 1e-9),
+        "{actual:?} != {expected:?}"
+    );
+}
+
+#[test]
+fn explicit_stackup_sets_thickness_and_colors() {
+    let board = decode(
+        r##"(kicad_pcb (version 20241229)
+            (general (thickness 1.6))
+            (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal))
+            (setup (stackup
+                (layer "F.SilkS" (type "Top Silk Screen") (color "Black"))
+                (layer "F.Paste" (type "Top Solder Paste"))
+                (layer "F.Mask" (type "Top Solder Mask") (color "#FF000080") (thickness 0.01))
+                (layer "F.Cu" (type "copper") (thickness 0.07))
+                (layer "dielectric 1" (type "core") (thickness 0.48) (color "FR4 natural"))
+                (layer "In1.Cu" (type "copper") (thickness 0.035))
+                (layer "dielectric 2" (type "prepreg") (thickness 0.1 locked) (material "FR4")
+                    addsublayer (thickness 0.38) (color "Polyimide"))
+                (layer "In2.Cu" (type "copper") (thickness 0.035))
+                (layer "dielectric 3" (type "core") (thickness 0.48) (color "PTFE natural"))
+                (layer "B.Cu" (type "copper") (thickness 0.018))
+                (layer "B.Mask" (type "Bottom Solder Mask") (thickness 0.01))
+                (copper_finish "ENIG"))))"##,
+    );
+    let physical = &board.meta["board"];
+    assert_eq!(physical["body"].as_f64(), Some(1.51));
+    assert_eq!(physical["copper"], serde_json::json!([0.07, 0.018]));
+    let colors = &physical["colors"];
+    let byte = |value: f64| value / 255.0;
+    assert_rgba(
+        &colors["silkFront"],
+        [byte(11.0), byte(11.0), byte(11.0), 1.0],
+    );
+    assert_rgba(&colors["silkBack"], [0.9, 0.9, 0.9, 1.0]);
+    assert_rgba(&colors["maskFront"], [1.0, 0.0, 0.0, byte(128.0)]);
+    assert_rgba(
+        &colors["maskBack"],
+        [byte(20.0), byte(51.0), byte(36.0), 0.83],
+    );
+    assert_rgba(&colors["finish"], [byte(178.0), byte(156.0), 0.0, 1.0]);
+    // The second dielectric's first sublayer has no color, which KiCad reads as opaque black,
+    // so only PTFE tints the body, while every dielectric raises its alpha.
+    assert_rgba(
+        &colors["body"],
+        [
+            byte(252.0) * 0.9,
+            byte(252.0) * 0.9,
+            byte(250.0) * 0.9,
+            0.97265125,
+        ],
+    );
+}
+
+#[test]
+fn explicit_stackup_defaults_missing_copper_thickness_but_preserves_zero() {
+    let board = decode(
+        r#"(kicad_pcb (version 20241229)
+            (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal))
+            (setup (stackup
+                (layer "F.Cu" (type "copper"))
+                (layer "dielectric 1" (type "core") (thickness 0.4))
+                (layer "In1.Cu" (type "copper"))
+                (layer "dielectric 2" (type "prepreg") (thickness 0.3))
+                (layer "In2.Cu" (type "copper") (thickness 0.018))
+                (layer "dielectric 3" (type "core") (thickness 0.8))
+                (layer "B.Cu" (type "copper") (thickness 0)))))"#,
+    );
+    let physical = &board.meta["board"];
+    assert_eq!(physical["body"].as_f64(), Some(1.553));
+    assert_eq!(physical["copper"], serde_json::json!([0.035, 0.0]));
+}
+
+#[test]
+fn default_stackup_follows_the_board_thickness() {
+    let board = decode(
+        r#"(kicad_pcb (version 20241229)
+            (general (thickness 1.0001))
+            (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal)
+                (1 "F.Mask" user) (3 "B.Mask" user)))"#,
+    );
+    let physical = &board.meta["board"];
+    // Three dielectrics of (1.0001 - 4 × 0.035 - 2 × 0.01) / 3 mm, truncated to whole nm.
+    assert_eq!(physical["body"].as_f64(), Some(0.910099));
+    assert_eq!(physical["copper"], serde_json::json!([0.035, 0.035]));
+    assert_rgba(&physical["colors"]["body"], [0.0, 0.0, 0.0, 1.0]);
+    assert_rgba(&physical["colors"]["silkFront"], [0.9, 0.9, 0.9, 1.0]);
+    assert_rgba(&physical["colors"]["finish"], [0.7, 0.61, 0.0, 1.0]);
+}
+
+#[test]
+fn footprint_edges_cut_holes_in_the_board_outline() {
+    let board = decode(
+        r#"(kicad_pcb (version 20241229)
+            (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts") (stroke (width 0.1)))
+            (footprint "lib:Hole" (layer "F.Cu") (at 5 5 90)
+                (fp_line (start -1 -1) (end 1 -1) (layer "Edge.Cuts") (stroke (width 0.1)))
+                (fp_line (start 1 -1) (end 0 2) (layer "Edge.Cuts") (stroke (width 0.1)))
+                (fp_line (start 0 2) (end -1 -1) (layer "Edge.Cuts") (stroke (width 0.1)))))"#,
+    );
+    let outlines = board.meta["board"]["outlines"].as_array().unwrap();
+    assert_eq!(outlines.len(), 1);
+    assert_eq!(
+        outlines[0]["outer"],
+        serde_json::json!([0.0, 0.0, 20.0, 0.0, 20.0, 10.0, 0.0, 10.0])
+    );
+    // The footprint's 90° turn maps its local (0, 2) to (7, 5).
+    let hole = outlines[0]["holes"][0].as_array().unwrap();
+    assert_eq!(hole.len(), 6);
+    assert!(
+        hole.as_chunks::<2>()
+            .0
+            .iter()
+            .any(|xy| xy[0] == 7.0 && xy[1] == 5.0)
+    );
+}

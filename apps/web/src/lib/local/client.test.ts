@@ -62,6 +62,49 @@ describe('workspace launch fragments', () => {
 	});
 });
 
+describe('KiCad component models', () => {
+	it('streams component models with their cache key', async () => {
+		const response = new Response(new Uint8Array([1, 2, 3]), {
+			headers: { 'x-models-key': 'models-key' }
+		});
+
+		const fetch = vi.fn(async () => response);
+		vi.stubGlobal('fetch', fetch);
+
+		const controller = new AbortController();
+		const target = { workspacePath: '/work', path: 'board.kicad_pcb' };
+
+		const result = await createLocalClient('http://127.0.0.1:7731').kicadModels(
+			target,
+			controller.signal
+		);
+
+		expect(result).toEqual({ models: response.body, key: 'models-key' });
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/workspace/file/kicad-models',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify(target),
+				signal: controller.signal
+			})
+		);
+	});
+
+	it('returns no stream for a board without models', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(null, { status: 204 }))
+		);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').kicadModels({
+				workspacePath: '/work',
+				path: 'board.kicad_pcb'
+			})
+		).resolves.toEqual({ models: null, key: '' });
+	});
+});
+
 describe('workspace skill listing', () => {
 	it('preserves invocation policy for the composer command menu', async () => {
 		const result = {

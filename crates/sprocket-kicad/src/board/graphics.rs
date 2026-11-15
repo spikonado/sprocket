@@ -59,11 +59,15 @@ impl Board {
         };
         let filled = explicit_fill.unwrap_or(implicit_fill);
         let width = frame.length(width);
+        let edge = self.scene.is_edge(pen.layer);
         let at = |key: &str| child_point(shape, key).map(|p| frame.apply(p));
         match name {
             "line" => {
                 if let (Some(start), Some(end)) = (at("start"), at("end")) {
                     self.scene.segment(pen, start, end, width);
+                    if edge {
+                        self.edges.open(vec![start, end]);
+                    }
                 }
             }
             "arc" => {
@@ -83,10 +87,17 @@ impl Board {
                         let points: Vec<Point> =
                             arc.points().into_iter().map(|p| frame.apply(p)).collect();
                         self.scene.polyline(pen, &points, width, false);
+                        if edge {
+                            self.edges.open(points);
+                        }
                     }
-                    None => self
-                        .scene
-                        .segment(pen, frame.apply(start), frame.apply(end), width),
+                    None => {
+                        let (start, end) = (frame.apply(start), frame.apply(end));
+                        self.scene.segment(pen, start, end, width);
+                        if edge {
+                            self.edges.open(vec![start, end]);
+                        }
+                    }
                 }
             }
             "circle" => {
@@ -102,6 +113,16 @@ impl Board {
                 } else {
                     self.scene.circle(pen, frame.apply(center), radius, width);
                 }
+                if edge {
+                    let circle = Arc::from_center(center, end, 360.0);
+                    self.edges.closed(
+                        circle
+                            .points()
+                            .into_iter()
+                            .map(|p| frame.apply(p))
+                            .collect(),
+                    );
+                }
             }
             "rect" => {
                 let (Some(a), Some(b)) = (child_point(shape, "start"), child_point(shape, "end"))
@@ -113,6 +134,9 @@ impl Board {
                     .map(|p| frame.apply(p))
                     .collect();
                 self.closed_shape(pen, &corners, width, filled);
+                if edge {
+                    self.edges.closed(corners);
+                }
             }
             "poly" => {
                 let Some(pts) = shape.child("pts") else {
@@ -120,6 +144,9 @@ impl Board {
                 };
                 let outline: Vec<Point> = points(pts).into_iter().map(|p| frame.apply(p)).collect();
                 self.closed_shape(pen, &outline, width, filled);
+                if edge {
+                    self.edges.closed(outline);
+                }
             }
             "curve" => {
                 let Some(pts) = shape.child("pts") else {
@@ -131,6 +158,9 @@ impl Board {
                         .map(|p| frame.apply(p))
                         .collect();
                     self.scene.polyline(pen, &curve, width, false);
+                    if edge {
+                        self.edges.open(curve);
+                    }
                 }
             }
             _ => {}

@@ -8,7 +8,8 @@ use std::time::Duration;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::header;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -26,7 +27,7 @@ use sprocket_workspace::{
     WorkspaceFileContent, WorkspaceFileWrite, browse_filesystem, create_workspace_entry,
     default_user_skills_dirs, delete_workspace_entry, load_workspace_skills, read_workspace_bytes,
     read_workspace_file, read_workspace_text, rename_workspace_entry, workspace_entry_kind,
-    workspace_file_path, write_workspace_file,
+    write_workspace_file,
 };
 
 /// JSON escaping can grow content up to 6x (`\u0000`), plus room for the other fields.
@@ -154,7 +155,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/file/create", post(create_entry))
         .route("/workspace/file/rename", post(rename_entry))
         .route("/workspace/file/delete", post(delete_entry))
-        .route("/workspace/file/board-3d", post(board_3d))
+        .route("/workspace/file/kicad-models", post(kicad_models))
         .route("/workspace/file/kicad-scene", post(kicad_scene))
         .route("/workspace/image", get(image::local_image))
 }
@@ -283,22 +284,32 @@ async fn read_text(
     Ok(([("x-file-version", text.version)], text.content))
 }
 
-async fn board_3d(
+async fn kicad_models(
     MachineSession: MachineSession,
     State(state): State<AppState>,
     Json(payload): Json<WorkspaceEntryRequest>,
-) -> Result<([(header::HeaderName, &'static str); 1], Vec<u8>), ApiError> {
+) -> Result<Response, ApiError> {
     let board = in_workspace(payload.workspace_path, move |root| {
-        workspace_file_path(root, &payload.path)
+        read_workspace_bytes(root, &payload.path)
     })
     .await?;
-    let model = state
+    let models = state
         .host
         .kicad
-        .export_board_glb(&board)
+        .export_models(board)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(([(header::CONTENT_TYPE, "model/gltf-binary")], model))
+    let Some(models) = models else {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, "model/gltf-binary".to_owned()),
+            (header::HeaderName::from_static("x-models-key"), models.key),
+        ],
+        Bytes::from_owner(models.bytes),
+    )
+        .into_response())
 }
 
 async fn kicad_scene(

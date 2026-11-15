@@ -87,7 +87,21 @@ const scene = encode(
 			item('zone', [0, 0, 10, 10]),
 			item('track', [6, 0.9, 9, 1.1]),
 			item('via', [4, 4, 6, 6])
-		]
+		],
+		board: {
+			outlines: [],
+			body: 1.5,
+			copper: [0.035, 0.035],
+			colors: {
+				body: [0, 0, 0, 1],
+				maskFront: [0, 0, 0, 1],
+				maskBack: [0, 0, 0, 1],
+				silkFront: [0, 0, 0, 1],
+				silkBack: [0, 0, 0, 1],
+				finish: [0, 0, 0, 1]
+			}
+		},
+		models: null
 	},
 	[
 		{ name: 'B.Cu', kind: 'copper', circles: [[5, 5, 1, 0.2, 4]] },

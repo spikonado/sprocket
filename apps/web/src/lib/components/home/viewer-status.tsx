@@ -1,5 +1,5 @@
 export type ViewerStatus =
-	{ kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
+	{ kind: 'loading'; message?: string } | { kind: 'ready' } | { kind: 'error'; message: string };
 
 /** Covers the viewer until its first drawing, then sits over that drawing as a small notice. */
 export default function ViewerStatusNotice({
@@ -22,7 +22,7 @@ export default function ViewerStatusNotice({
 					: 'bg-background text-muted-foreground absolute inset-0 z-10 flex items-center justify-center p-4 text-center text-sm'
 			}
 		>
-			{status.kind === 'error' ? status.message : drawn ? 'Updating…' : opening}
+			{status.message ?? (drawn ? 'Updating…' : opening)}
 		</div>
 	);
 }

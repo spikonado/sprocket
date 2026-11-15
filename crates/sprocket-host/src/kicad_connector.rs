@@ -14,6 +14,7 @@ use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use crate::kicad_cache::KiCadCache;
 use crate::python_install::PythonTools;
 use crate::tool_install::{
     Asset, INSTALL_LOCK, acquire_lock, download_atomic, is_dir, is_tombstone, is_version,
@@ -120,6 +121,12 @@ pub struct KiCadConnector {
     /// A board's export loads every component's STEP model, which takes seconds of CPU and
     /// hundreds of MB, so boards export one at a time.
     board_exports: tokio::sync::Semaphore,
+    models: KiCadCache,
+}
+
+pub struct KiCadModels {
+    pub key: String,
+    pub bytes: Arc<[u8]>,
 }
 
 impl KiCadConnector {
@@ -131,6 +138,7 @@ impl KiCadConnector {
             activity: Mutex::new(Activity::Idle),
             check: tokio::sync::Mutex::new(None),
             board_exports: tokio::sync::Semaphore::new(1),
+            models: KiCadCache::default(),
         })
     }
 
@@ -286,8 +294,36 @@ impl KiCadConnector {
         self.root.join(LAUNCHER_DIR)
     }
 
-    /// Exports `board` as binary glTF with its copper, mask, silkscreen and component models.
-    pub async fn export_board_glb(&self, board: &Path) -> anyhow::Result<Vec<u8>> {
+    pub async fn export_models(
+        &self,
+        board: sprocket_workspace::WorkspaceBytes,
+    ) -> anyhow::Result<Option<KiCadModels>> {
+        let path = board.path;
+        let reduced =
+            tokio::task::spawn_blocking(move || sprocket_kicad::pcb_models_board(&board.bytes))
+                .await??;
+        let Some(reduced) = reduced else {
+            return Ok(None);
+        };
+        let bytes = match self.models.get(&path, &reduced.key) {
+            Some(bytes) => bytes,
+            None => self.export_models_glb(path, &reduced).await?,
+        };
+        Ok(Some(KiCadModels {
+            key: reduced.key,
+            bytes,
+        }))
+    }
+
+    async fn export_models_glb(
+        &self,
+        path: PathBuf,
+        reduced: &sprocket_kicad::ModelsBoard,
+    ) -> anyhow::Result<Arc<[u8]>> {
+        let _permit = self.board_exports.acquire().await?;
+        if let Some(bytes) = self.models.get(&path, &reduced.key) {
+            return Ok(bytes);
+        }
         let cli = self.bin_dir().join(format!(
             "kicad-cli{}",
             if cfg!(windows) { ".cmd" } else { "" }
@@ -296,8 +332,20 @@ impl KiCadConnector {
             cli.is_file(),
             "Install the KiCad connector in Settings to view boards in 3D."
         );
-        let _permit = self.board_exports.acquire().await?;
-        let output = tempfile::Builder::new().suffix(".glb").tempfile()?;
+        let temporary = tempfile::tempdir()?;
+        let filename = path.file_name().context("the board has no file name")?;
+        let input = temporary.path().join(filename);
+        let project_dir = path.parent().context("the board has no directory")?;
+        tokio::fs::write(&input, reduced.text_in(&project_dir.to_string_lossy())).await?;
+        let project = path.with_extension("kicad_pro");
+        match tokio::fs::copy(&project, input.with_extension("kicad_pro")).await {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("copying {}", project.display()));
+            }
+        }
+        let output = temporary.path().join("models.glb");
         run_checked(
             "KiCad's 3D export",
             Command::new(cli)
@@ -306,20 +354,19 @@ impl KiCadConnector {
                     "export",
                     "glb",
                     "--force",
-                    // KiCad's libraries pair each VRML model with a STEP one, and glTF export reads only STEP.
-                    "--subst-models",
-                    "--include-tracks",
-                    "--include-pads",
-                    "--include-zones",
-                    "--include-silkscreen",
-                    "--include-soldermask",
+                    "--no-board-body",
+                    "--user-origin",
+                    "0x0mm",
                     "--output",
                 ])
-                .arg(output.path())
-                .arg(board),
+                .arg(&output)
+                .arg(&input),
         )
         .await?;
-        Ok(tokio::fs::read(output.path()).await?)
+        let bytes: Arc<[u8]> = tokio::fs::read(output).await?.into();
+        self.models
+            .insert(path, reduced.key.clone(), Arc::clone(&bytes));
+        Ok(bytes)
     }
 
     pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {

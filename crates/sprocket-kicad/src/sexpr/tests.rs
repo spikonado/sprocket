@@ -17,6 +17,7 @@ fn reads_escaped_strings_and_flag_forms() {
     first_item(src, |item| {
         assert_eq!(item.head(), Some("fp_text"));
         assert_eq!(item.text_arg(1).as_deref(), Some("a \"b\"\nc"));
+        assert_eq!(item.arg(1).unwrap().raw(), r#""a \"b\"\nc""#);
         assert!(item.flag("hide"));
         assert!(item.flag("unlocked"));
         assert!(!item.flag("locked"));

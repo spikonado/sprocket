@@ -527,15 +527,6 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				version: response.headers.get('x-file-version') ?? ''
 			};
 		},
-		exportBoard3d: async (input, signal) => {
-			const response = await transport.response('/api/workspace/file/board-3d', {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			});
-
-			return response.arrayBuffer();
-		},
 		kicadScene: async (input, signal) => {
 			const response = await transport.response('/api/workspace/file/kicad-scene', {
 				method: 'POST',
@@ -547,6 +538,18 @@ export function createLocalClient(baseUrl: string): LocalApi {
 
 			// A stream, since `arrayBuffer()` copies the whole scene in one main-thread task.
 			return { scene: response.body, version: response.headers.get('x-file-version') ?? '' };
+		},
+		kicadModels: async (input, signal) => {
+			const response = await transport.response('/api/workspace/file/kicad-models', {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			return {
+				models: response.status === 204 ? null : response.body,
+				key: response.headers.get('x-models-key') ?? ''
+			};
 		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
