@@ -1,5 +1,5 @@
 import { Box, FlipHorizontal2, Layers, Maximize, X } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import ViewerStatusNotice, { type ViewerStatus } from '$lib/components/home/viewer-status';
 import { BoardViewerClient } from '$lib/kicad-viewer/client';
 import type { PickResult, View, ViewerLayer } from '$lib/kicad-viewer/protocol';
@@ -42,6 +42,11 @@ export default function PcbViewer({
 	const [layersOpen, setLayersOpen] = useState(false);
 	const [componentsVisible, setComponentsVisible] = useState(true);
 	const [opened3d, setOpened3d] = useState(false);
+	const [modelsAttempt, setModelsAttempt] = useState(0);
+
+	const retryModels = useEffectEvent(() => {
+		if (view === '3d' && status3d.kind === 'error') setModelsAttempt((attempt) => attempt + 1);
+	});
 
 	const loaded = useRef<{ version: string | null; state: 'loading' | 'loaded' | 'failed' }>({
 		version: null,
@@ -119,6 +124,7 @@ export default function PcbViewer({
 	}, [api, workspacePath, path]);
 
 	useEffect(() => reload.current(true), [snapshot]);
+	useEffect(() => retryModels(), [view, snapshot]);
 
 	useEffect(() => {
 		viewer.current?.show(view);
@@ -156,7 +162,7 @@ export default function PcbViewer({
 		})();
 
 		return () => controller.abort();
-	}, [api, workspacePath, path, opened3d, modelsKey]);
+	}, [api, workspacePath, path, opened3d, modelsKey, modelsAttempt]);
 
 	useEscapeLayer(() => viewer.current?.clearSelection(), view === '2d' && pick !== null);
 

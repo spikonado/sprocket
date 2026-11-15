@@ -1,6 +1,7 @@
 import {
 	AlwaysStencilFunc,
 	BufferGeometry,
+	Box3,
 	Color,
 	DoubleSide,
 	EqualStencilFunc,
@@ -60,9 +61,10 @@ const ORBIT_PER_PX = 0.008;
 const MIN_RADIUS = 0.5;
 const WALL_SEGMENTS = 12;
 
-/** Stencil bits: inside a drill hole, and inside a solder mask opening. */
+/** Stencil bits for drills, mask openings and the board outline. */
 const HOLE_BIT = 1;
 const OPENING_BIT = 2;
+const BOARD_BIT = 4;
 
 type Role =
 	| { kind: 'paint'; color: ColorRgba; clip: number }
@@ -265,6 +267,7 @@ export class Board3d {
 	private modelsLoad = 0;
 	private componentsVisible = true;
 	private bounds: { center: Vector3; radius: number } | null = null;
+	private boardBounds: Box3 | null = null;
 	private placed = false;
 	private flipped = false;
 	private shown = false;
@@ -304,11 +307,8 @@ export class Board3d {
 
 		const [minX, minY, maxX, maxY] = scene.meta.bounds;
 		const { top, bottom } = this.board;
-		const corner = new Vector3(maxX - minX, top - bottom, maxY - minY);
-		this.bounds = {
-			center: new Vector3((minX + maxX) / 2, (top + bottom) / 2, (minY + maxY) / 2),
-			radius: Math.max(corner.length() / 2, 1)
-		};
+		this.boardBounds = new Box3(new Vector3(minX, bottom, minY), new Vector3(maxX, top, maxY));
+		this.updateBounds();
 
 		this.requestFrame();
 	}
@@ -340,6 +340,7 @@ export class Board3d {
 				this.world.add(next);
 			}
 
+			this.updateBounds();
 			this.post({ type: 'models', error: null });
 			this.requestFrame();
 		} catch (error) {
@@ -355,7 +356,19 @@ export class Board3d {
 		this.componentsVisible = visible;
 
 		if (this.models) this.models.visible = visible;
+		this.updateBounds();
 		this.requestFrame();
+	}
+
+	private updateBounds() {
+		if (!this.boardBounds) return;
+
+		const bounds = this.boardBounds.clone();
+
+		if (this.models && this.componentsVisible) bounds.union(new Box3().setFromObject(this.models));
+
+		const sphere = bounds.getBoundingSphere(new Sphere());
+		this.bounds = { center: sphere.center, radius: Math.max(sphere.radius, 1) };
 	}
 
 	resize(viewport: ViewportSize) {
@@ -599,7 +612,9 @@ function buildBoard(scene: Scene, uniforms: Uniforms) {
 		const silk = copper + sign * SILK_ABOVE_COPPER;
 
 		const onSide = (kind: SceneLayer['kind']) =>
-			scene.layers.filter((layer) => layer.kind === kind && layer.side === side);
+			scene.layers.filter(
+				(layer) => layer.kind === kind && layer.side === side && layer.part !== 'labels'
+			);
 
 		const add = (layers: SceneLayer[], height: number, role: Role, order: number) => {
 			for (const layer of layers) {
@@ -609,6 +624,9 @@ function buildBoard(scene: Scene, uniforms: Uniforms) {
 
 		add(holes, copper, { kind: 'mark', bit: HOLE_BIT }, -2);
 		add(onSide('mask'), mask, { kind: 'mark', bit: OPENING_BIT }, -1);
+		into.add(
+			flatMesh(outline.cap, 'triangles', surface, { kind: 'mark', bit: BOARD_BIT }, -3, uniforms)
+		);
 		into.add(
 			flatMesh(
 				outline.cap,
@@ -795,8 +813,8 @@ function flatMesh(
 		material.stencilFunc = AlwaysStencilFunc;
 		material.stencilZPass = ReplaceStencilOp;
 	} else {
-		material.stencilRef = 0;
-		material.stencilFuncMask = role.clip;
+		material.stencilRef = BOARD_BIT;
+		material.stencilFuncMask = role.clip | BOARD_BIT;
 		material.stencilWriteMask = 0;
 		material.stencilFunc = EqualStencilFunc;
 		material.stencilZPass = KeepStencilOp;
