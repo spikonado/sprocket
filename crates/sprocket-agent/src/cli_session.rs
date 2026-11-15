@@ -16,8 +16,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 
-use crate::stream_recovery::provider_response;
-
 pub(crate) const MCP_SERVER: &str = "sprocket";
 const UNUSED_ENDPOINT: &str = "http://cli-session.invalid";
 const DEFAULT_MAX_TOKENS: u64 = 128_000;
@@ -115,34 +113,6 @@ pub(crate) fn completion_model<C: Cli>(
         })),
     }));
     Model::new(wire, transport).erase()
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("{message}")]
-struct UserFacingError {
-    message: String,
-    #[source]
-    source: anyhow::Error,
-}
-
-pub(crate) fn user_facing_error(error: anyhow::Error, codes: &[&str]) -> anyhow::Error {
-    let message = error.chain().find_map(|cause| {
-        let response = provider_response(cause)?;
-        if !codes.contains(&response.machine_code()?.as_str()) {
-            return None;
-        }
-        response.envelope_json()?["error"]["message"]
-            .as_str()
-            .map(str::to_string)
-    });
-    match message {
-        Some(message) => UserFacingError {
-            message,
-            source: error,
-        }
-        .into(),
-        None => error,
-    }
 }
 
 pub(crate) fn error_event(code: &str, message: &str) -> Value {

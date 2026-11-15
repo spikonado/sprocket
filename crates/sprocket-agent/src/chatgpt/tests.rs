@@ -660,7 +660,7 @@ async fn assert_usage_limit_message(code: &str, expected: &str) {
             anyhow::Error::new(rig::completion::PromptError::from(raw_error.clone())),
             anyhow::Error::new(rig::completion::PromptError::from(raw_error.report())),
         ] {
-            let error = user_facing_error(
+            let error = crate::provider::user_facing_error(
                 error.context("Context handoff failed. Retry to continue the conversation."),
             );
             assert_eq!(error.to_string(), expected);
@@ -686,7 +686,10 @@ fn other_provider_errors_keep_their_diagnostics() {
             anyhow::Error::new(rig::completion::PromptError::from(provider_error)),
         ] {
             let diagnostic = format!("{error:#}");
-            assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
+            assert_eq!(
+                format!("{:#}", crate::provider::user_facing_error(error)),
+                diagnostic
+            );
         }
     }
 }
