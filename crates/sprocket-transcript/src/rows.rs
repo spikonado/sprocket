@@ -372,29 +372,6 @@ pub async fn project_rows(
     let mut rows = Vec::new();
     let mut commands: HashMap<String, Option<String>> = HashMap::new();
     for part in &parts {
-        for item in part
-            .content_items()
-            .iter()
-            .filter(|item| matches!(item["name"].as_str(), Some("exec_cmd" | "exec_command")))
-        {
-            let output = result_for(part, item).and_then(|(_, tool)| tool.output.as_ref());
-            let input = ToolDisplayInput::new(
-                item["name"].as_str().unwrap(),
-                &item["input"],
-                output,
-                ToolStatus::Completed,
-            );
-            if let Some(session) = input.session_id()
-                && uuid::Uuid::parse_str(session).is_err()
-                && let Some(command) = output
-                    .and_then(|output| output["command"].as_str())
-                    .or_else(|| item["input"]["cmd"].as_str())
-            {
-                commands.insert(session.to_owned(), Some(command.to_owned()));
-            }
-        }
-    }
-    for part in &parts {
         if let Some(prompt) = &part.prompt
             && prompt.hidden.is_none()
             && (matches!(scope, ProjectionScope::Thread) && visible(part)
