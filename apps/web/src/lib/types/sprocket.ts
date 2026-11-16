@@ -120,6 +120,7 @@ export type TranscriptSnapshot = {
 
 export type TranscriptEvent =
 	| TranscriptSnapshot
+	| { type: 'downloading' }
 	| {
 			type: 'batch';
 			updates: Array<

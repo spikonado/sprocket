@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use anyhow::Context;
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, broadcast};
 
 use super::attachment_store::write_attachment_metadata;
@@ -35,7 +37,15 @@ fn chunk_start(number: u32) -> u32 {
 struct ThreadIndex {
     numbers: BTreeSet<u32>,
     sources: HashMap<String, u32>,
-    patches: PatchIdentities,
+    // Only `poll_subagent` pairs patches, so opening a thread reads just numbers and source keys.
+    patches: Option<PatchIdentities>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PartKey {
+    number: u32,
+    source_key: String,
 }
 
 impl ThreadIndex {
@@ -44,9 +54,15 @@ impl ThreadIndex {
     }
 
     fn insert(&mut self, part: &TranscriptPart) {
-        self.numbers.insert(part.number);
-        self.sources.insert(part.source_key.clone(), part.number);
-        self.patches.insert(part);
+        self.insert_key(part.number, part.source_key.clone());
+        if let Some(patches) = &mut self.patches {
+            patches.insert(part);
+        }
+    }
+
+    fn insert_key(&mut self, number: u32, source_key: String) {
+        self.numbers.insert(number);
+        self.sources.insert(source_key, number);
     }
 
     fn missing_page(&self, start: u32, end: u32) -> Option<(u32, u32)> {
@@ -192,8 +208,20 @@ impl TranscriptStore {
         thread: &str,
         total: u32,
     ) -> anyhow::Result<PatchIndex> {
-        self.with_thread(user, thread, move |_, index| Ok(index.patches.index(total)))
-            .await
+        self.with_thread(user, thread, move |dir, index| {
+            if let Some(patches) = &index.patches {
+                return Ok(patches.index(total));
+            }
+            let mut patches = PatchIdentities::default();
+            let chunks: BTreeSet<u32> = index.numbers.iter().map(|n| chunk_start(*n)).collect();
+            for start in chunks {
+                for part in read_chunk(&chunk_path(dir, start), start)? {
+                    patches.insert(&part);
+                }
+            }
+            Ok(index.patches.insert(patches).index(total))
+        })
+        .await
     }
 
     pub async fn append_parts(
@@ -354,8 +382,10 @@ fn load_index(dir: &Path) -> anyhow::Result<ThreadIndex> {
             .and_then(|name| name.strip_suffix(".jsonl"))
             .and_then(|start| start.parse::<u32>().ok())
             .filter(|start| chunk_path(dir, *start) == path);
-        match start.map(|start| read_chunk(&path, start)) {
-            Some(Ok(parts)) => parts.iter().for_each(|part| index.insert(part)),
+        match start.map(|start| read_chunk_as(&path, start, |key: &PartKey| key.number)) {
+            Some(Ok(keys)) => keys
+                .into_iter()
+                .for_each(|key| index.insert_key(key.number, key.source_key)),
             Some(Err(error)) if error.downcast_ref::<std::io::Error>().is_some() => {
                 return Err(error);
             }
@@ -385,6 +415,14 @@ fn remove_path(path: &Path) -> anyhow::Result<()> {
 }
 
 fn read_chunk(path: &Path, start: u32) -> anyhow::Result<Vec<TranscriptPart>> {
+    read_chunk_as(path, start, |part: &TranscriptPart| part.number)
+}
+
+fn read_chunk_as<T: DeserializeOwned>(
+    path: &Path,
+    start: u32,
+    number: impl Fn(&T) -> u32,
+) -> anyhow::Result<Vec<T>> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -392,16 +430,16 @@ fn read_chunk(path: &Path, start: u32) -> anyhow::Result<Vec<TranscriptPart>> {
             return Err(error).with_context(|| format!("failed to read {}", path.display()));
         }
     };
-    let mut parts: Vec<TranscriptPart> = Vec::new();
+    let mut parts: Vec<T> = Vec::new();
     // Bytes, not `lines()`: invalid UTF-8 is chunk damage, not an I/O failure.
     for line in BufReader::new(file).split(b'\n') {
-        let part: TranscriptPart = serde_json::from_slice(&line?)
+        let part: T = serde_json::from_slice(&line?)
             .with_context(|| format!("failed to parse {}", path.display()))?;
         anyhow::ensure!(
-            chunk_start(part.number) == start
+            chunk_start(number(&part)) == start
                 && parts
                     .last()
-                    .is_none_or(|previous| previous.number < part.number),
+                    .is_none_or(|previous| number(previous) < number(&part)),
             "{} is not sorted into its chunk",
             path.display()
         );

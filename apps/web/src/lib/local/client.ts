@@ -217,6 +217,7 @@ const transcriptRowResponseSchema = z.object({ row: transcriptRowSchema });
 
 const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.union([
 	transcriptSnapshotSchema,
+	z.object({ type: z.literal('downloading') }),
 	z.object({
 		type: z.literal('batch'),
 		updates: z.array(
