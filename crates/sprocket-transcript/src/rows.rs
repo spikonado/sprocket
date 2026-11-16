@@ -165,16 +165,19 @@ struct LiveActivity {
 }
 
 fn reasoning_label(text: &str) -> String {
-    text.lines()
+    const MAX_CHARS: usize = 120;
+    let line = text
+        .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("Thinking")
         .trim()
         .trim_matches('*')
         .trim_start_matches('#')
-        .trim()
-        .chars()
-        .take(120)
-        .collect()
+        .trim();
+    match line.char_indices().nth(MAX_CHARS) {
+        Some((end, _)) => format!("{}…", line[..end].trim_end()),
+        None => line.to_owned(),
+    }
 }
 
 pub struct ToolResults<'a> {

@@ -3,6 +3,15 @@ use sprocket_convex::RunStatus;
 
 use super::*;
 
+#[test]
+fn reasoning_labels_use_the_first_line_and_mark_cuts() {
+    assert_eq!(reasoning_label("\n# Plan\nDetails"), "Plan");
+    assert_eq!(
+        reasoning_label(&format!("{} tail", "a".repeat(119))),
+        format!("{}…", "a".repeat(119))
+    );
+}
+
 #[tokio::test]
 async fn legacy_calls_and_orphan_results_keep_status_and_actions() {
     let call = completion(

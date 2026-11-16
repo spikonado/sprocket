@@ -209,6 +209,15 @@ it.each([true, false])(
 	}
 );
 
+it('keeps running reasoning-only work closed', () => {
+	const view = transcript([
+		{ id: 'work', runId: 'run', kind: 'work', toolCounts: {}, running: true }
+	]);
+	expect(view.getByRole('button', { name: 'Reasoning' }).getAttribute('aria-expanded')).toBe(
+		'false'
+	);
+});
+
 it('uses authoritative lifecycle for unresolved calls running on another machine', () => {
 	const work: TranscriptRow = {
 		id: 'work',
