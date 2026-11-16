@@ -195,6 +195,7 @@ async fn lagged_live_watch_resubscribes_at_the_latest_snapshot() {
         &ProjectionScope::Thread,
         None,
         None,
+        &|| {},
     )
     .await
     .unwrap();
@@ -253,6 +254,7 @@ async fn pages_start_with_the_newest_run_then_split_large_runs() {
         &ProjectionScope::Thread,
         None,
         None,
+        &|| {},
     )
     .await
     .unwrap();
@@ -265,6 +267,7 @@ async fn pages_start_with_the_newest_run_then_split_large_runs() {
         &ProjectionScope::Thread,
         Some(250),
         None,
+        &|| {},
     )
     .await
     .unwrap();
@@ -276,6 +279,7 @@ async fn pages_start_with_the_newest_run_then_split_large_runs() {
         &ProjectionScope::Thread,
         Some(50),
         None,
+        &|| {},
     )
     .await
     .unwrap();
@@ -287,6 +291,7 @@ async fn pages_start_with_the_newest_run_then_split_large_runs() {
         &ProjectionScope::Thread,
         Some(20),
         None,
+        &|| {},
     )
     .await
     .unwrap();
@@ -299,6 +304,7 @@ async fn pages_start_with_the_newest_run_then_split_large_runs() {
         &ProjectionScope::Thread,
         None,
         Some(20),
+        &|| {},
     )
     .await
     .unwrap();

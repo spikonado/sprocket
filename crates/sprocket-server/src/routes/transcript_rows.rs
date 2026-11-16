@@ -3,8 +3,9 @@ use std::future::Future;
 use std::ops::Range;
 use std::time::Duration;
 
-use futures::StreamExt;
-use futures::stream::{self, BoxStream, unfold};
+use futures::future::BoxFuture;
+use futures::stream::{BoxStream, unfold};
+use futures::{FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sprocket_host::transcript_watch::TranscriptWatchSession;
 use sprocket_transcript::rows::{
@@ -68,6 +69,8 @@ pub(crate) struct TranscriptSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum TranscriptRowsEvent {
+    /// Sent before the first snapshot when it waits on parts from Convex.
+    Downloading,
     Snapshot {
         #[serde(flatten)]
         snapshot: TranscriptSnapshot,
@@ -108,16 +111,17 @@ async fn load_window(
     scope: &ProjectionScope,
     before: Option<u32>,
     fixed_start: Option<u32>,
+    on_download: &(dyn Fn() + Sync),
 ) -> anyhow::Result<SavedWindow> {
-    let store = &state.host.transcript;
     load_store_window(
-        store,
+        &state.host.transcript,
         user,
         thread,
         scope,
         before,
         fixed_start,
         |start, end| async move {
+            on_download();
             state
                 .host
                 .convex_client_for(user)
@@ -127,6 +131,33 @@ async fn load_window(
         },
     )
     .await
+}
+
+/// An empty cache has no highwater to page back from, so its newest page starts at Convex's total.
+async fn download_newest_page_if_uncached(
+    state: &AppState,
+    user: &str,
+    thread: &str,
+    on_download: &(dyn Fn() + Sync),
+) -> anyhow::Result<()> {
+    let store = &state.host.transcript;
+    if !store.part_numbers(user, thread).await?.is_empty() {
+        return Ok(());
+    }
+    let client = state.host.convex_client_for(user).await?;
+    let total = client.transcript_total_parts(thread).await?;
+    store
+        .ensure_parts(
+            user,
+            thread,
+            total.saturating_sub(PAGE_PARTS),
+            total,
+            |start, end| {
+                on_download();
+                client.transcript_parts_page(thread, start, end)
+            },
+        )
+        .await
 }
 
 async fn load_store_window<F, Fut>(
@@ -566,7 +597,7 @@ pub(crate) async fn project(
     scope: ProjectionScope,
     before: Option<u32>,
 ) -> Result<TranscriptSnapshot, ApiError> {
-    let saved = load_window(state, user, thread, &scope, before, None)
+    let saved = load_window(state, user, thread, &scope, before, None, &|| {})
         .await
         .map_err(ApiError::internal)?;
     let live = if before.is_none() {
@@ -703,6 +734,14 @@ enum Refresh {
     Reload,
 }
 
+enum Phase {
+    Loading {
+        load: BoxFuture<'static, anyhow::Result<(TranscriptSnapshot, Watch)>>,
+        downloading: tokio::sync::watch::Receiver<bool>,
+    },
+    Watching(Box<Watch>),
+}
+
 async fn watch(
     state: &AppState,
     user: String,
@@ -710,21 +749,30 @@ async fn watch(
     scope: ProjectionScope,
     boundary: Option<u32>,
 ) -> Result<BoxStream<'static, TranscriptRowsEvent>, ApiError> {
-    let session = state.host.transcript_watchers.open(&user, &thread).await;
-    let subscription = state.host.live_completions.subscribe(&thread);
-    let mut saved = load_window(state, &user, &thread, &scope, None, boundary)
-        .await
-        .map_err(ApiError::internal)?;
-    saved.stale = session.stale();
-    let window_start = boundary.or_else(|| (saved.window.end > 0).then_some(saved.window.start));
-    let live = LiveWindow {
-        overlays: subscription.snapshot.into_iter().collect(),
-        ..LiveWindow::default()
-    };
-    let snapshot = project_window(state, &user, &thread, &scope, &saved, &live.overlays).await;
-    let events = unfold(
-        Watch {
-            state: state.clone(),
+    let (downloads, downloading) = tokio::sync::watch::channel(false);
+    let state = state.clone();
+    let load = async move {
+        let on_download = || {
+            downloads.send_if_modified(|downloading| !std::mem::replace(downloading, true));
+        };
+        let _lease = state.host.transcript.open_thread(&user, &thread).await?;
+        let session = state.host.transcript_watchers.open(&user, &thread).await;
+        let subscription = state.host.live_completions.subscribe(&thread);
+        if matches!(scope, ProjectionScope::Thread) {
+            download_newest_page_if_uncached(&state, &user, &thread, &on_download).await?;
+        }
+        let mut saved =
+            load_window(&state, &user, &thread, &scope, None, boundary, &on_download).await?;
+        saved.stale = session.stale();
+        let window_start =
+            boundary.or_else(|| (saved.window.end > 0).then_some(saved.window.start));
+        let live = LiveWindow {
+            overlays: subscription.snapshot.into_iter().collect(),
+            ..LiveWindow::default()
+        };
+        let snapshot = project_window(&state, &user, &thread, &scope, &saved, &live.overlays).await;
+        let watch = Watch {
+            state,
             user,
             thread,
             scope,
@@ -735,12 +783,41 @@ async fn watch(
             live,
             previous: snapshot.clone(),
             next_send: Instant::now() + UPDATE_INTERVAL,
-        },
-        next_event,
-    );
-    Ok(stream::iter([TranscriptRowsEvent::Snapshot { snapshot }])
-        .chain(events)
-        .boxed())
+        };
+        Ok((snapshot, watch))
+    };
+    let phase = Phase::Loading {
+        load: load.boxed(),
+        downloading,
+    };
+    Ok(unfold(phase, |phase| async move {
+        match phase {
+            Phase::Loading {
+                mut load,
+                mut downloading,
+            } => tokio::select! {
+                biased;
+                result = &mut load => match result {
+                    Ok((snapshot, watch)) => Some((
+                        TranscriptRowsEvent::Snapshot { snapshot },
+                        Phase::Watching(Box::new(watch)),
+                    )),
+                    Err(error) => {
+                        tracing::warn!("could not load transcript rows: {error:#}");
+                        None
+                    }
+                },
+                Ok(()) = downloading.changed() => Some((
+                    TranscriptRowsEvent::Downloading,
+                    Phase::Loading { load, downloading },
+                )),
+            },
+            Phase::Watching(watch) => next_event(*watch)
+                .await
+                .map(|(event, watch)| (event, Phase::Watching(Box::new(watch)))),
+        }
+    })
+    .boxed())
 }
 
 async fn next_event(mut watch: Watch) -> Option<(TranscriptRowsEvent, Watch)> {
@@ -774,7 +851,7 @@ async fn next_event(mut watch: Watch) -> Option<(TranscriptRowsEvent, Watch)> {
             _ = tokio::time::sleep_until(watch.next_send), if !matches!(refresh, Refresh::Idle) => {
                 if matches!(refresh, Refresh::Reload) {
                     match load_window(&watch.state, &watch.user, &watch.thread, &watch.scope, None,
-                        watch.window_start).await {
+                        watch.window_start, &|| {}).await {
                         Ok(mut saved) => {
                             saved.stale = watch.session.stale();
                             if saved.window.end > 0 {

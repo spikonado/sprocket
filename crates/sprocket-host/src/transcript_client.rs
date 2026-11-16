@@ -36,6 +36,13 @@ impl UserConvexClient {
         )
     }
 
+    pub async fn transcript_total_parts(&self, thread_id: &str) -> anyhow::Result<u32> {
+        let state: sprocket_transcript::RemoteTranscriptState = self
+            .query("transcript:getState", thread_id_args(thread_id))
+            .await?;
+        Ok(state.total_parts)
+    }
+
     pub async fn connect_with_fetcher(
         deployment_url: &str,
         fetcher: AuthTokenFetcher,

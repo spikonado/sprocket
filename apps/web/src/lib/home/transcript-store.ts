@@ -44,11 +44,14 @@ type Repair = { abort: AbortController; appends: Append[] };
 
 const NO_ROWS: readonly string[] = [];
 
+/** `downloading` means the first snapshot waits on parts from Convex. */
+export type TranscriptHistory = 'loading' | 'downloading' | 'ready';
+
 export class TranscriptStore implements Store<number> {
 	rowIds: readonly string[] = NO_ROWS;
 	threadId: Id<'threadRecords'> | null = null;
 	nextBefore: number | null = null;
-	loading = false;
+	history: TranscriptHistory = 'ready';
 	loadingOlder = false;
 	stale = false;
 	error: string | null = null;
@@ -102,7 +105,7 @@ export class TranscriptStore implements Store<number> {
 		this.#stop();
 		this.threadId = threadId;
 		this.#expanded.clear();
-		this.loading = threadId !== null;
+		this.history = threadId === null ? 'ready' : 'loading';
 		this.#emit();
 	}
 
@@ -128,7 +131,7 @@ export class TranscriptStore implements Store<number> {
 		};
 
 		this.#connection = connection;
-		this.loading = true;
+		this.history = 'loading';
 		this.#emit();
 		this.#startThread(connection);
 
@@ -206,6 +209,11 @@ export class TranscriptStore implements Store<number> {
 				if (event.type === 'snapshot') {
 					retryMs = 1_000;
 					this.#replace(target, event);
+				} else if (event.type === 'downloading') {
+					if (target === 'thread' && this.history === 'loading') {
+						this.history = 'downloading';
+						this.#emit();
+					}
 				} else this.#applyBatch(target, event);
 			};
 
@@ -253,7 +261,7 @@ export class TranscriptStore implements Store<number> {
 			this.#window = new Map(snapshot.rows.map((row) => [row.id, row]));
 			this.#refreshRowIds();
 			this.stale = snapshot.stale;
-			this.loading = false;
+			this.history = 'ready';
 			this.error = null;
 			this.#ready = true;
 
@@ -425,7 +433,7 @@ export class TranscriptStore implements Store<number> {
 		this.#workIds.clear();
 		this.rowIds = NO_ROWS;
 		this.nextBefore = null;
-		this.loading = this.threadId !== null;
+		this.history = this.threadId === null ? 'ready' : 'loading';
 		this.loadingOlder = false;
 		this.stale = this.#connection !== null;
 		this.error = null;

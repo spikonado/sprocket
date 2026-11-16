@@ -193,7 +193,10 @@ impl TranscriptWatchers {
         }
         run.start
             .initialize(thread_id, || async {
-                crate::work_sync::query_total(&self.client(user_id).await?, thread_id).await
+                self.client(user_id)
+                    .await?
+                    .transcript_total_parts(thread_id)
+                    .await
             })
             .await;
         run

@@ -67,13 +67,6 @@ pub(crate) enum SyncMode {
     Local(Arc<RunStart>),
 }
 
-pub(crate) async fn query_total(client: &UserConvexClient, thread: &str) -> anyhow::Result<u32> {
-    let state: RemoteTranscriptState = client
-        .query("transcript:getState", thread_id_args(thread))
-        .await?;
-    Ok(state.total_parts)
-}
-
 fn raise(totals: &watch::Sender<u32>, total: u32) {
     totals.send_if_modified(|current| {
         let raised = total > *current;
@@ -111,7 +104,7 @@ async fn follow_total(
         SyncMode::Remote => subscribe_total(client, thread, &totals, status).await,
         SyncMode::Local(start) => {
             match start
-                .initialize(thread, || query_total(client, thread))
+                .initialize(thread, || client.transcript_total_parts(thread))
                 .await
             {
                 Some(total) => {
@@ -197,7 +190,7 @@ pub(crate) async fn reconcile(
     thread: &str,
     from: u32,
 ) -> anyhow::Result<()> {
-    let total = query_total(client, thread).await?;
+    let total = client.transcript_total_parts(thread).await?;
     store
         .ensure_parts(user, thread, from, total, |start, end| {
             client.transcript_parts_page(thread, start, end)

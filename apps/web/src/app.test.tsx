@@ -1404,6 +1404,9 @@ it('renders transcript snapshots progressively and allows sending before older h
 		)
 	);
 	fireEvent.click(await screen.findByText('Remote robot work'));
+	await waitFor(() => expect(update).toBeDefined());
+	expect(screen.queryByText('Loading conversation history...')).toBeNull();
+	act(() => update?.({ type: 'downloading' }));
 	expect(await screen.findByText('Loading conversation history...')).toBeTruthy();
 	await act(async () => {
 		initial.resolve({

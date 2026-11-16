@@ -2627,12 +2627,14 @@ export default function App({
 												loadingOlder={transcript.loadingOlder}
 												nextBefore={transcript.nextBefore ?? undefined}
 												emptyStateMessage={
-													currentThreadId &&
-													(transcript.loading || transcript.threadId !== currentThreadId)
-														? 'Loading conversation history...'
-														: currentProject
-															? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-															: 'Add a project to begin.'
+													transcript.threadId !== currentThreadId ||
+													transcript.history === 'loading'
+														? ''
+														: transcript.history === 'downloading'
+															? 'Loading conversation history...'
+															: currentProject
+																? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+																: 'Add a project to begin.'
 												}
 												onLoadOlder={() => void transcript.loadOlder()}
 												loadAttachment={loadTranscriptAttachment}
@@ -2697,7 +2699,7 @@ export default function App({
 																syncing={Boolean(
 																	currentThreadId &&
 																	transcript.threadId === currentThreadId &&
-																	transcript.loading
+																	transcript.history === 'downloading'
 																)}
 																catalogError={catalogError !== null}
 																catalogLoading={catalogLoading}
