@@ -80,6 +80,12 @@ impl CommandHistory {
     }
 
     pub(crate) async fn read_output(&self, from_offset: u64) -> Result<UnreturnedOutput> {
+        if self.result.log_cut_off.is_some() {
+            return Ok(UnreturnedOutput {
+                output: self.result.output.clone(),
+                next_offset: from_offset,
+            });
+        }
         read_log_from(
             Path::new(&self.result.complete_log_path),
             from_offset,

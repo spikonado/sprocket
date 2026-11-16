@@ -54,18 +54,27 @@ async fn log_quota_counts_both_files_and_rejects_a_chunk_before_writing() {
 }
 
 #[tokio::test]
-async fn free_space_reserve_is_checked_again_before_appending() {
+async fn crossing_the_free_space_reserve_cuts_off_the_logs_but_not_the_preview() {
     let root = tempfile::tempdir().unwrap();
     let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
+    output.append(OutputChannel::Stdout, b"kept").await.unwrap();
+    let events = std::fs::read(&output.events_path).unwrap();
     output.limits.min_free_disk_bytes = u64::MAX;
-    let error = output
-        .append(OutputChannel::Stdout, b"full")
+    output
+        .append(OutputChannel::Stdout, b" lost")
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("free-space reserve"));
+        .unwrap();
+    output.limits.min_free_disk_bytes = 0;
+    output
+        .append(OutputChannel::Stdout, b" later")
+        .await
+        .unwrap();
     output.finish().await.unwrap();
-    assert!(std::fs::read(&output.log_path).unwrap().is_empty());
-    assert!(std::fs::read(&output.events_path).unwrap().is_empty());
+    let preview = output.full_preview();
+    assert_eq!(preview.output, "kept lost later");
+    assert!(preview.log_cut_off.unwrap().contains("MiB reserve"));
+    assert_eq!(std::fs::read(&output.log_path).unwrap(), b"kept");
+    assert_eq!(std::fs::read(&output.events_path).unwrap(), events);
 }
 
 #[tokio::test]
