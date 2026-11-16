@@ -14,6 +14,10 @@ describe('python script detection', () => {
 		expect(scripts(command)).toEqual(['import json\nprint(json.dumps({}))\n']);
 	});
 
+	it('leaves heredocs of later shell commands to the shell', () => {
+		expect(scripts("python3 script.py && cat <<'EOF'\nexport HOME=/tmp\nEOF")).toEqual([]);
+	});
+
 	it('finds -c arguments in single and escaped double quotes', () => {
 		const command = `python3 -u -c 'print(1)' && python -c "print(\\"a\\")" | cat`;
 

@@ -10,7 +10,10 @@ type Range = { start: number; end: number };
 
 const PYTHON = String.raw`\bpython(?:3(?:\.\d+)?)?\b`;
 
-const PYTHON_HEREDOC = new RegExp(String.raw`${PYTHON}[^\n]*?<<-?\s*(['"]?)(\w+)\1[^\n]*\n`, 'g');
+const PYTHON_HEREDOC = new RegExp(
+	String.raw`${PYTHON}[^\n;&|]*?<<-?\s*(['"]?)(\w+)\1[^\n]*\n`,
+	'g'
+);
 
 const PYTHON_INLINE = new RegExp(String.raw`${PYTHON}(?:\s+-[^\sc-]\S*)*\s+-c\s+(['"])`, 'g');
 
@@ -86,14 +89,15 @@ export async function highlightCommand(
 	command: string,
 	highlight: Highlight
 ): Promise<StyledRun[] | null> {
-	const ranges = pythonScriptRanges(command);
-
-	const [shell, ...scripts] = await Promise.all([
-		highlight(command, 'bash'),
-		...ranges.map(({ start, end }) => highlight(command.slice(start, end), 'python'))
-	]);
+	const shell = await highlight(command, 'bash');
 
 	if (!shell) return null;
+
+	const ranges = pythonScriptRanges(command);
+
+	const scripts = await Promise.all(
+		ranges.map(({ start, end }) => highlight(command.slice(start, end), 'python'))
+	);
 
 	const styles: (TokenStyle | undefined)[] = Array.from({ length: command.length });
 	paint(styles, shell, 0);
