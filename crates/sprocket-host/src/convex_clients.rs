@@ -58,3 +58,6 @@ impl ConvexClients {
         Ok(client)
     }
 }
+
+#[cfg(test)]
+mod tests;
