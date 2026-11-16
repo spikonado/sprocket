@@ -6,6 +6,8 @@ export type HighlightRequest = { id: number; code: string; language: string };
 
 export type HighlightResponse = { id: number; tokens: HighlightTokens };
 
+const MAX_HIGHLIGHTED_CODE_LENGTH = 50_000;
+
 let worker: Worker | undefined;
 
 let nextId = 0;
@@ -29,7 +31,7 @@ function sendNext() {
 }
 
 export function highlightCodeInWorker(code: string, language: string, signal: AbortSignal) {
-	if (signal.aborted) return Promise.resolve(null);
+	if (signal.aborted || code.length > MAX_HIGHLIGHTED_CODE_LENGTH) return Promise.resolve(null);
 
 	if (!worker) {
 		worker = new Worker(new URL('./code-highlighting-worker.ts', import.meta.url), {

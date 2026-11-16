@@ -38,6 +38,8 @@ pub struct ToolDisplay {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     pub status: ToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -46,7 +48,9 @@ pub struct ToolDisplay {
 }
 
 impl ToolDisplay {
+    /// List rows drop the command, so command rows always load details to highlight it.
     pub fn shorten(&mut self) -> bool {
+        let dropped_command = self.command.take().is_some();
         let preview: String = self
             .summary
             .split(['\r', '\n'])
@@ -55,7 +59,7 @@ impl ToolDisplay {
             .chars()
             .take(ROW_SUMMARY_CHARS)
             .collect();
-        let has_more = preview != self.summary;
+        let has_more = dropped_command || preview != self.summary;
         self.summary = preview;
         has_more
     }
@@ -90,8 +94,14 @@ impl<'a> ToolDisplayInput<'a> {
     }
 
     pub fn display(&self, session_command: Option<&str>) -> ToolDisplay {
-        let command =
-            session_command.or_else(|| self.output.and_then(|output| string(output, "command")));
+        let command = match self.name {
+            "exec_cmd" | "exec_command" => string(self.input, "cmd"),
+            name if is_session_command(name) => {
+                session_command.or_else(|| self.output.and_then(|output| string(output, "command")))
+            }
+            _ => None,
+        }
+        .filter(|command| !command.is_empty());
         let (status, error) = self.failure();
         let action = match self.name {
             "parse_file" => self
@@ -113,6 +123,7 @@ impl<'a> ToolDisplayInput<'a> {
         ToolDisplay {
             label: label(self.name),
             summary: self.summary(command),
+            command: command.map(str::to_owned),
             status,
             error,
             action,
@@ -164,7 +175,7 @@ impl<'a> ToolDisplayInput<'a> {
             | "save_artifact" | "delete_artifact" => self.artifact_summary(),
             "update_artifact" => field("title").unwrap_or("Updated artifact").into(),
             "list_artifacts" => artifact_list(self.output),
-            "exec_cmd" | "exec_command" => match field("cmd").filter(|cmd| !cmd.is_empty()) {
+            "exec_cmd" | "exec_command" => match command {
                 Some(cmd) => match field("workdir") {
                     Some(cwd) if !cwd.trim().is_empty() && cwd != "." => {
                         format!("{cmd} (cwd {cwd})")

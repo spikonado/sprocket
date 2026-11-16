@@ -309,6 +309,7 @@ fn command_aliases_and_fallbacks() {
             );
             assert_eq!(actual.label, None);
             assert_eq!(actual.summary, expected);
+            assert_eq!(actual.command.as_deref(), Some("bun run build"));
         }
     }
     for name in [
@@ -320,7 +321,9 @@ fn command_aliases_and_fallbacks() {
     ] {
         let input = json!({"sessionId": "7", "action": "terminate"});
         let tool = ToolDisplayInput::new(name, &input, None, ToolStatus::Completed);
-        assert_eq!(tool.display(Some("bun run build")).summary, "bun run build");
+        let known = tool.display(Some("bun run build"));
+        assert_eq!(known.summary, "bun run build");
+        assert_eq!(known.command.as_deref(), Some("bun run build"));
         assert_eq!(
             tool.display(None).summary,
             if name.starts_with("control") {
