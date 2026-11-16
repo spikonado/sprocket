@@ -1034,6 +1034,12 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 it('restores the prompt and shows the usage limit when the run ends before sending it', async () => {
 	const { client, thread, launch, runAgent } = await renderThreadLaunch();
 	const runId = fixtureId<'runs'>('run-new');
+
+	const emptyState =
+		'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.';
+
+	expect(await screen.findByText(emptyState)).toBeTruthy();
+
 	const composer = screen.getByRole('combobox');
 	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
@@ -1049,6 +1055,7 @@ it('restores the prompt and shows the usage limit when the run ends before sendi
 		});
 	});
 	expect(composer).toHaveProperty('value', '');
+	expect(screen.queryByText(emptyState)).toBeNull();
 	await act(async () => {
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
 			threadId: thread._id,
@@ -1064,6 +1071,7 @@ it('restores the prompt and shows the usage limit when the run ends before sendi
 		});
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
+	expect(screen.getByText(emptyState)).toBeTruthy();
 	const alert = within(screen.getByRole('group', { name: 'Message composer' })).getByRole('alert');
 	expect(alert.textContent).toContain("You're out of usage");
 	expect(alert.textContent).toContain('Usage limit reached. Try again in 3h 20m.');
