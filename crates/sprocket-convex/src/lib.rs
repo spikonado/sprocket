@@ -44,6 +44,7 @@ impl std::error::Error for AuthSignedOut {}
 
 /// The SDK wakes every subscription on a client whenever any of its queries changes, so
 /// this skips repeats of the subscription's own last result.
+#[derive(Debug)]
 pub struct Distinct<S> {
     results: S,
     last: Option<FunctionResult>,
