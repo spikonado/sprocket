@@ -138,24 +138,43 @@ async fn download_newest_page_if_uncached(
     state: &AppState,
     user: &str,
     thread: &str,
+    session: &mut TranscriptWatchSession,
     on_download: &(dyn Fn() + Sync),
 ) -> anyhow::Result<()> {
     let store = &state.host.transcript;
     if !store.part_numbers(user, thread).await?.is_empty() {
         return Ok(());
     }
-    let client = state.host.convex_client_for(user).await?;
-    let total = client.transcript_total_parts(thread).await?;
+    let lookup = async {
+        let client = state.host.convex_client_for(user).await?;
+        let total = client.transcript_total_parts(thread).await?;
+        anyhow::Ok((client, total))
+    };
+    tokio::pin!(lookup);
+    // A local run or the background watcher can save parts first, which makes the lookup moot.
+    let (client, total) = loop {
+        tokio::select! {
+            result = &mut lookup => break result?,
+            event = session.receiver().recv() => {
+                if matches!(event, Err(broadcast::error::RecvError::Closed))
+                    || !store.part_numbers(user, thread).await?.is_empty()
+                {
+                    return Ok(());
+                }
+            }
+        }
+    };
+    if total == 0 || !store.part_numbers(user, thread).await?.is_empty() {
+        return Ok(());
+    }
+    on_download();
     store
         .ensure_parts(
             user,
             thread,
             total.saturating_sub(PAGE_PARTS),
             total,
-            |start, end| {
-                on_download();
-                client.transcript_parts_page(thread, start, end)
-            },
+            |start, end| client.transcript_parts_page(thread, start, end),
         )
         .await
 }
@@ -756,10 +775,14 @@ async fn watch(
             downloads.send_if_modified(|downloading| !std::mem::replace(downloading, true));
         };
         let _lease = state.host.transcript.open_thread(&user, &thread).await?;
-        let session = state.host.transcript_watchers.open(&user, &thread).await;
+        let mut session = state.host.transcript_watchers.open(&user, &thread).await;
         let subscription = state.host.live_completions.subscribe(&thread);
-        if matches!(scope, ProjectionScope::Thread) {
-            download_newest_page_if_uncached(&state, &user, &thread, &on_download).await?;
+        if matches!(scope, ProjectionScope::Thread)
+            && let Err(error) =
+                download_newest_page_if_uncached(&state, &user, &thread, &mut session, &on_download)
+                    .await
+        {
+            tracing::warn!(%thread, "could not download the newest transcript page: {error:#}");
         }
         let mut saved =
             load_window(&state, &user, &thread, &scope, None, boundary, &on_download).await?;
