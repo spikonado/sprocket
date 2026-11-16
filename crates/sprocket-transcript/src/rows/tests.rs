@@ -318,11 +318,14 @@ async fn tools_only_send_display_summaries_and_item_scope_returns_the_full_summa
     let wire = serde_json::to_value(&work[0]).unwrap();
     assert_eq!(wire["summary"], "x".repeat(300));
     assert_eq!(wire["hasMore"], true);
+    assert!(wire.get("command").is_none());
     assert!(!wire.to_string().contains("private input"));
     assert!(wire.get("input").is_none());
     assert!(wire.get("output").is_none());
     let item = project(vec![saved], &[], ProjectionScope::Item(work[0].id.clone())).await;
-    assert_eq!(serde_json::to_value(&item[0]).unwrap()["summary"], command);
+    let full = serde_json::to_value(&item[0]).unwrap();
+    assert_eq!(full["summary"], command);
+    assert_eq!(full["command"], command);
 }
 
 #[tokio::test]

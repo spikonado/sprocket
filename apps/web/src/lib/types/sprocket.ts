@@ -103,6 +103,7 @@ export type TranscriptRow = { id: string; runId: string } & (
 			name: string;
 			label?: string;
 			summary: string;
+			command?: string;
 			hasMore: boolean;
 			status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 			error?: string;

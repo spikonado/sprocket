@@ -10,8 +10,6 @@ import {
 } from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
 
-const MAX_HIGHLIGHTED_CODE_LENGTH = 50_000;
-
 type CodeControl = {
 	target: HTMLElement;
 	wrapper: HTMLDivElement;
@@ -79,8 +77,6 @@ export default function MarkdownHtml({
 			blocks.push({ target, wrapper, pre, code, language });
 
 			if (!language) continue;
-
-			if (code.length > MAX_HIGHLIGHTED_CODE_LENGTH) continue;
 
 			void import('$lib/chat/code-highlighting-client')
 				.then(({ highlightCodeInWorker }) =>

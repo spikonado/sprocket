@@ -193,6 +193,7 @@ const transcriptRowSchema: z.ZodType<TranscriptRow> = z.discriminatedUnion('kind
 		name: z.string(),
 		label: z.string().optional(),
 		summary: z.string(),
+		command: z.string().optional(),
 		hasMore: z.boolean(),
 		status: z.enum(['running', 'completed', 'failed', 'cancelled']),
 		error: z.string().optional(),

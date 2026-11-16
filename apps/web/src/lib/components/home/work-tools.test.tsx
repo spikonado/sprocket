@@ -140,6 +140,16 @@ describe('tool rows', () => {
 		expect(store.openItem).not.toHaveBeenCalled();
 	});
 
+	it('shows the full summary of tools that do not expand in a title', () => {
+		const { store, props } = transcript(tool({ name: 'web_search', hasMore: true }));
+		const view = render(<WorkTools {...props} />);
+		expect(within(view.container).queryByRole('button')).toBeNull();
+		expect(view.container.querySelector('[data-tool-row]')?.getAttribute('title')).toBe(
+			'Server summary…'
+		);
+		expect(store.openItem).not.toHaveBeenCalled();
+	});
+
 	it.each(['running', 'completed', 'failed', 'cancelled', 'interrupted'] as const)(
 		'preserves server text and %s status',
 		(status) => {
@@ -184,9 +194,13 @@ describe('tool rows', () => {
 		expect(rows[1].textContent).toBe('Server label:Server summary');
 	});
 
-	it('opens the file action from a saved row without loading details', () => {
+	it('opens the parsed file from its row without loading details', () => {
 		const { store, props } = transcript(
-			tool({ action: { kind: 'openFile', path: '/repo/docs/design.pdf' } })
+			tool({
+				name: 'parse_file',
+				hasMore: true,
+				action: { kind: 'openFile', path: '/repo/docs/design.pdf' }
+			})
 		);
 
 		const open = vi.fn();
@@ -197,7 +211,7 @@ describe('tool rows', () => {
 			</MarkdownFileLinksContext>
 		);
 
-		fireEvent.click(within(view.container).getByRole('button', { name: 'Open file' }));
+		fireEvent.click(within(view.container).getByRole('button'));
 		expect(store.openItem).not.toHaveBeenCalled();
 		expect(open).toHaveBeenCalledWith({
 			workspacePath: '/repo',
