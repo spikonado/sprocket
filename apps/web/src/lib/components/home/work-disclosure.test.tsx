@@ -33,7 +33,7 @@ it('calls onToggle and renders details according to the controlled expanded prop
 	expect(view.queryByText('Work details')).toBeNull();
 });
 
-it('folds auto-opened work once it settles', () => {
+it('folds auto-opened work once it settles and keeps an explicit open', () => {
 	const store = new TranscriptStore();
 	const rowId = 'work:1';
 
@@ -58,5 +58,7 @@ it('folds auto-opened work once it settles', () => {
 	view.rerender(<Work running={false} />);
 	expect(view.queryByText('Work details')).toBeNull();
 	fireEvent.click(view.getByRole('button', { name: 'Read 2 files' }));
+	view.rerender(<Work running />);
+	view.rerender(<Work running={false} />);
 	expect(view.getByText('Work details')).toBeTruthy();
 });
