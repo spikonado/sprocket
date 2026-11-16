@@ -83,7 +83,7 @@ fn streaming_borrows_saved_parts_instead_of_copying_tool_outputs() {
 }
 
 #[tokio::test]
-async fn poll_rows_project_each_target_in_previews_and_details() {
+async fn poll_rows_use_one_summary_for_previews_and_details() {
     let parts = vec![
         completion(
             0,
@@ -110,28 +110,28 @@ async fn poll_rows_project_each_target_in_previews_and_details() {
     )
     .await;
     let TranscriptRowBody::Tool {
-        targets: Some(targets),
-        has_more,
-        ..
+        display, has_more, ..
     } = &preview[0].body
     else {
         panic!("expected multi-target tool");
     };
     assert!(*has_more);
-    assert_eq!(targets[0].summary, "bun run build");
-    assert_eq!(targets[1].error.as_deref(), Some("Unknown session."));
+    assert_eq!(preview.len(), 1);
+    assert_eq!(display.summary, "bun run build");
     let details = project(parts, &[], ProjectionScope::Item(preview[0].id.clone())).await;
     let TranscriptRowBody::Tool {
-        targets: Some(targets),
-        has_more,
-        ..
+        display, has_more, ..
     } = &details[0].body
     else {
         panic!("expected multi-target details");
     };
     assert!(!has_more);
-    assert_eq!(targets[0].command.as_deref(), Some("bun run build"));
-    assert_eq!(targets[1].status, ToolStatus::Failed);
+    assert_eq!(details.len(), 1);
+    assert_eq!(
+        display.summary,
+        "bun run build\nSession missing: Unknown session."
+    );
+    assert_eq!(display.status, ToolStatus::Completed);
 }
 
 #[tokio::test]

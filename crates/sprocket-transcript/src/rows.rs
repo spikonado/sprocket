@@ -54,8 +54,6 @@ pub enum TranscriptRowBody {
         name: String,
         #[serde(flatten)]
         display: ToolDisplay,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        targets: Option<Vec<ToolDisplay>>,
         has_more: bool,
     },
 }
@@ -434,32 +432,33 @@ pub async fn project_rows(
                         result.and_then(|tool| tool.output.as_ref()),
                         status,
                     );
-                    let mut display =
-                        command_display(name, &input, transcript_dir, &mut commands).await;
-                    let mut has_more = if full { false } else { display.shorten() };
-                    let targets = if let Some(targets) = polled_targets(
+                    let mut display = input.display(None);
+                    if let Some(targets) = polled_targets(
                         name,
                         &item["input"],
                         result.and_then(|tool| tool.output.as_ref()),
                         status,
                     ) {
-                        let mut displays = Vec::with_capacity(targets.len());
+                        let mut summaries = Vec::with_capacity(targets.len());
                         for input in targets {
-                            let mut display =
+                            let target =
                                 command_display(name, &input, transcript_dir, &mut commands).await;
-                            if !full {
-                                has_more |= display.shorten();
-                            }
-                            displays.push(display);
+                            summaries.push(match target.error {
+                                Some(error) if display.error.is_none() => {
+                                    format!("{}: {error}", target.summary)
+                                }
+                                _ => target.summary,
+                            });
                         }
-                        Some(displays)
+                        display.summary = summaries.join("\n");
                     } else {
-                        None
-                    };
+                        display =
+                            command_display(name, &input, transcript_dir, &mut commands).await;
+                    }
+                    let has_more = if full { false } else { display.shorten() };
                     TranscriptRowBody::Tool {
                         name: name.to_owned(),
                         display,
-                        targets,
                         has_more,
                     }
                 }

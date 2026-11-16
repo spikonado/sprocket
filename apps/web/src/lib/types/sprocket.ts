@@ -93,26 +93,22 @@ export type TranscriptScopeRequest = {
 
 export type TranscriptAttachment = Omit<MessageAttachment, 'url'> & { url?: string };
 
-export type TranscriptToolDisplay = {
-	label?: string;
-	summary: string;
-	command?: string;
-	status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
-	error?: string;
-	action?: { kind: 'openFile'; path: string } | { kind: 'saveCard' };
-};
-
 export type TranscriptRow = { id: string; runId: string } & (
 	| { kind: 'prompt'; text: string; attachments: TranscriptAttachment[] }
 	| { kind: 'text'; text: string; running: boolean }
 	| { kind: 'work'; toolCounts: Record<string, number>; running: boolean }
 	| { kind: 'reasoning'; label: string; running: boolean; text?: string }
-	| (TranscriptToolDisplay & {
+	| {
 			kind: 'tool';
 			name: string;
+			label?: string;
+			summary: string;
+			command?: string;
 			hasMore: boolean;
-			targets?: TranscriptToolDisplay[];
-	  })
+			status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+			error?: string;
+			action?: { kind: 'openFile'; path: string } | { kind: 'saveCard' };
+	  }
 );
 
 export type TranscriptSnapshot = {

@@ -85,23 +85,26 @@ afterEach(() => {
 });
 
 describe('tool rows', () => {
-	it('renders every polled target with its own command and failure', () => {
-		const row = tool({
-			name: 'poll_cmd',
-			targets: [
-				{ summary: 'bun run build', command: 'bun run build', status: 'completed' },
-				{ summary: 'Session missing', status: 'failed', error: 'Unknown session.' }
-			]
-		});
+	it.each(['apply_patch', 'poll_cmd', 'poll_subagent', 'poll_pr'])(
+		'expands one %s row to show the full summary',
+		(name) => {
+			const row = tool({
+				name,
+				summary: 'First target',
+				hasMore: true
+			});
 
-		const { props } = transcript(row);
-		const view = render(<WorkTools {...props} />);
+			const full = tool({ ...row, summary: 'First target\nSecond target: failed', hasMore: false });
+			const { props } = transcript(row, full);
+			const view = render(<WorkTools {...props} />);
 
-		expect(view.container.querySelectorAll('[data-tool-row]')).toHaveLength(2);
-		expect(within(view.container).getByText('bun run build')).toBeTruthy();
-		expect(within(view.container).getByRole('status').textContent).toBe('Unknown session.');
-		expect(within(view.container).getByText('(failed)')).toBeTruthy();
-	});
+			expect(view.container.querySelectorAll('[data-tool-row]')).toHaveLength(1);
+			expect(view.container.querySelector('p')).toBeNull();
+			fireEvent.click(within(view.container).getByRole('button'));
+			expect(view.container.querySelectorAll('[data-tool-row]')).toHaveLength(1);
+			expect(view.container.querySelector('p')?.textContent).toBe(full.summary);
+		}
+	);
 
 	it('subscribes to full summary only while expanded and releases it on unmount', () => {
 		const row = tool({ hasMore: true });

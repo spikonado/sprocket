@@ -4,7 +4,6 @@ import { fileLinkTarget, MarkdownFileLinksContext } from '$lib/chat/markdown-fil
 import { toolKindIcon } from '$lib/chat/tool-icons';
 import { useTranscriptExpanded, type TranscriptStore } from '$lib/home/transcript-store';
 import { useTranscriptRunRow } from '$lib/home/transcript-run';
-import type { TranscriptRow } from '$lib/types/sprocket';
 import HighlightedCommand from './highlighted-command';
 import SaveCardButton from './save-card-button';
 
@@ -34,36 +33,14 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 		expanded && preview?.kind === 'tool' && expands(preview.name) && preview.hasMore;
 
 	const row = useTranscriptRunRow(store, rowId, needsDetails);
+	const fileLinks = use(MarkdownFileLinksContext);
+	const [summaryElement, setSummaryElement] = useState<HTMLSpanElement | null>(null);
+	const [truncated, setTruncated] = useState(false);
+	const summary = row?.kind === 'tool' ? row.summary : '';
 
 	useEffect(() => {
 		if (needsDetails) return store.openItem(rowId);
 	}, [needsDetails, store, rowId]);
-
-	if (row?.kind !== 'tool') return null;
-
-	return (row.targets ?? [row]).map((target, index) => (
-		<WorkToolRow
-			key={index}
-			row={{ ...row, ...target }}
-			expanded={expanded}
-			setExpanded={setExpanded}
-		/>
-	));
-});
-
-function WorkToolRow({
-	row,
-	expanded,
-	setExpanded
-}: {
-	row: Extract<TranscriptRow, { kind: 'tool' }>;
-	expanded: boolean;
-	setExpanded: (expanded: boolean) => void;
-}) {
-	const fileLinks = use(MarkdownFileLinksContext);
-	const [summaryElement, setSummaryElement] = useState<HTMLSpanElement | null>(null);
-	const [truncated, setTruncated] = useState(false);
-	const summary = row.summary;
 
 	useLayoutEffect(() => {
 		if (!summaryElement) return;
@@ -76,6 +53,8 @@ function WorkToolRow({
 
 		return () => observer.disconnect();
 	}, [summaryElement, summary]);
+
+	if (row?.kind !== 'tool') return null;
 
 	const expandable = expands(row.name);
 	const showsDetail = expandable && expanded;
@@ -186,6 +165,6 @@ function WorkToolRow({
 			) : null}
 		</div>
 	);
-}
+});
 
 export default WorkTools;

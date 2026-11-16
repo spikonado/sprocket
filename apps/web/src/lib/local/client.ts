@@ -161,20 +161,6 @@ const transcriptRowBase = {
 	runId: z.string()
 };
 
-const transcriptToolDisplaySchema = z.object({
-	label: z.string().optional(),
-	summary: z.string(),
-	command: z.string().optional(),
-	status: z.enum(['running', 'completed', 'failed', 'cancelled']),
-	error: z.string().optional(),
-	action: z
-		.discriminatedUnion('kind', [
-			z.object({ kind: z.literal('openFile'), path: z.string() }),
-			z.object({ kind: z.literal('saveCard') })
-		])
-		.optional()
-});
-
 const transcriptRowSchema: z.ZodType<TranscriptRow> = z.discriminatedUnion('kind', [
 	z.object({
 		...transcriptRowBase,
@@ -203,11 +189,20 @@ const transcriptRowSchema: z.ZodType<TranscriptRow> = z.discriminatedUnion('kind
 	}),
 	z.object({
 		...transcriptRowBase,
-		...transcriptToolDisplaySchema.shape,
 		kind: z.literal('tool'),
 		name: z.string(),
+		label: z.string().optional(),
+		summary: z.string(),
+		command: z.string().optional(),
 		hasMore: z.boolean(),
-		targets: z.array(transcriptToolDisplaySchema).optional()
+		status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+		error: z.string().optional(),
+		action: z
+			.discriminatedUnion('kind', [
+				z.object({ kind: z.literal('openFile'), path: z.string() }),
+				z.object({ kind: z.literal('saveCard') })
+			])
+			.optional()
 	})
 ]);
 
