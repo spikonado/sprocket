@@ -83,6 +83,58 @@ fn streaming_borrows_saved_parts_instead_of_copying_tool_outputs() {
 }
 
 #[tokio::test]
+async fn poll_rows_use_one_summary_for_previews_and_details() {
+    let parts = vec![
+        completion(
+            0,
+            "poll",
+            vec![json!({
+                "type":"tool-call", "callId":"poll", "name":"poll_cmd",
+                "input":{"sessionIds":["7","missing"]}
+            })],
+        ),
+        serde_json::from_value(json!({
+            "number":1, "runId":"run", "sourceKey":"result:1", "kind":"tool",
+            "tool":{"name":"poll_cmd", "callId":"poll", "status":"completed", "output":[
+                {"sessionId":"7", "command":"bun run build", "workdir":"/repo"},
+                {"sessionId":"missing", "error":"Unknown session."}
+            ]}
+        }))
+        .unwrap(),
+    ];
+    let thread = project(parts.clone(), &[], ProjectionScope::Thread).await;
+    let preview = project(
+        parts.clone(),
+        &[],
+        ProjectionScope::Work(thread[0].id.clone()),
+    )
+    .await;
+    let TranscriptRowBody::Tool {
+        display, has_more, ..
+    } = &preview[0].body
+    else {
+        panic!("expected multi-target tool");
+    };
+    assert!(*has_more);
+    assert_eq!(preview.len(), 1);
+    assert_eq!(display.summary, "bun run build");
+    let details = project(parts, &[], ProjectionScope::Item(preview[0].id.clone())).await;
+    let TranscriptRowBody::Tool {
+        display, has_more, ..
+    } = &details[0].body
+    else {
+        panic!("expected multi-target details");
+    };
+    assert!(!has_more);
+    assert_eq!(details.len(), 1);
+    assert_eq!(
+        display.summary,
+        "bun run build\nSession missing: Unknown session."
+    );
+    assert_eq!(display.status, ToolStatus::Completed);
+}
+
+#[tokio::test]
 async fn a_live_call_with_reused_provider_id_waits_for_its_own_saved_result() {
     let parts = vec![
         completion(

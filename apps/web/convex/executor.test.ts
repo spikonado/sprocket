@@ -29,6 +29,10 @@ describe('command display inputs', () => {
 			workdir: '/repo'
 		});
 		expect(commandToolDisplayInput('poll_cmd', { sessionId: 'x'.repeat(500_000) })).toEqual({});
+		const sessionIds = Array.from({ length: 100 }, (_, index) => String(index));
+		expect(
+			commandToolDisplayInput('poll_cmd', { sessionIds: ['x'.repeat(500_000), ...sessionIds] })
+		).toEqual({ sessionIds: sessionIds.slice(0, 63) });
 	});
 });
 

@@ -12,11 +12,14 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_convex::RunStatus;
-use sprocket_workspace::{WorkspaceCancellation, async_tools::ZeroPollCooldown};
+use sprocket_workspace::WorkspaceCancellation;
+use sprocket_workspace::async_tools::{PollWindow, ZeroPollCooldown};
 use tokio::sync::Mutex;
-use tokio::time::{Instant, sleep, sleep_until, timeout};
+use tokio::time::{sleep, timeout};
 
-use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
+use super::async_tools::{
+    YieldMode, default_yield_ms, is_default_yield_ms, poll_targets, yield_time_schema,
+};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
 use crate::catalog::{SubagentModelChoice, model_catalog};
@@ -130,12 +133,9 @@ struct SubagentRequest {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PollSubagentArgs {
-    /// Descendant thread to observe.
-    #[serde(rename = "threadId")]
-    pub(crate) thread_id: String,
-    /// nextCursor from a previous poll.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) cursor: Option<String>,
+    /// Descendant threads to observe.
+    #[schemars(length(min = 1))]
+    pub(crate) threads: Vec<PolledThread>,
     /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
     #[serde(
         rename = "yieldTimeMs",
@@ -144,6 +144,16 @@ pub(crate) struct PollSubagentArgs {
     )]
     #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PolledThread {
+    #[serde(rename = "threadId")]
+    pub(crate) thread_id: String,
+    /// nextCursor from this thread's previous poll.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cursor: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
@@ -609,7 +619,8 @@ impl rig::tool::Tool for PollSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Read a subagent's status and its prompts, replies, and patches.".to_string()
+        "Read subagents' status and their prompts, replies, and patches. Returns once any of them settles or the wait ends."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -621,9 +632,6 @@ impl rig::tool::Tool for PollSubagentTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        if args.thread_id.trim().is_empty() {
-            return Err(tool_failure("threadId cannot be empty"));
-        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job_with_id(
             &self.context,
@@ -644,31 +652,43 @@ impl PollSubagentTool {
         args: PollSubagentArgs,
         cancellation: WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
-        let yield_time_ms =
-            YieldMode::Poll.normalize(args.yield_time_ms, self.context.max_yield_ms);
-        cancelled_read(&cancellation, async {
-            if yield_time_ms == 0 {
+        let window = &PollWindow::after_ms(
+            YieldMode::Poll.normalize(args.yield_time_ms, self.context.max_yield_ms),
+        );
+        poll_targets(
+            window,
+            &args.threads,
+            |thread| json!({ "threadId": thread.thread_id }),
+            |thread| self.poll_thread(thread, window, &cancellation),
+        )
+        .await
+    }
+
+    async fn poll_thread(
+        &self,
+        thread: &PolledThread,
+        window: &PollWindow,
+        cancellation: &WorkspaceCancellation,
+    ) -> Result<serde_json::Value, ToolExecutionError> {
+        let thread_id = &thread.thread_id;
+        if thread_id.trim().is_empty() {
+            return Err(tool_failure("threadId cannot be empty"));
+        }
+        let cursor = thread.cursor.as_deref();
+        cancelled_read(cancellation, async {
+            if window.is_immediate() {
                 return self
                     .context
                     .subagent_polls
                     .observe_pending(
-                        &args.thread_id,
-                        || fetch_monitor_info(&self.context, &args.thread_id, None),
-                        |info| {
-                            read_transcript_snapshot(
-                                &self.context,
-                                info,
-                                args.cursor.as_deref(),
-                                None,
-                            )
-                        },
+                        thread_id,
+                        || fetch_monitor_info(&self.context, thread_id, None),
+                        |info| read_transcript_snapshot(&self.context, info, cursor, None),
                     )
                     .await;
             }
-            let info =
-                wait_for_settlement(&self.context, &args.thread_id, yield_time_ms, &cancellation)
-                    .await?;
-            read_transcript_snapshot(&self.context, info, args.cursor.as_deref(), None).await
+            let info = wait_for_settlement(&self.context, thread_id, window, cancellation).await?;
+            read_transcript_snapshot(&self.context, info, cursor, None).await
         })
         .await
     }
@@ -860,11 +880,11 @@ impl ControlSubagentTool {
                 &self.context,
                 &args.thread_id,
                 stopped_run_id,
-                if stopped_run_id.is_some() {
+                &PollWindow::after_ms(if stopped_run_id.is_some() {
                     yield_time_ms
                 } else {
                     0
-                },
+                }),
                 &cancellation,
                 |activity| activity.status.is_final(),
             )
@@ -1164,14 +1184,14 @@ async fn watch_activity(
 async fn wait_for_settlement(
     context: &AgentToolContext,
     thread_id: &str,
-    yield_time_ms: u64,
+    window: &PollWindow,
     cancellation: &WorkspaceCancellation,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
     wait_for_activity(
         context,
         thread_id,
         None,
-        yield_time_ms,
+        window,
         cancellation,
         SubagentActivity::settled,
     )
@@ -1182,19 +1202,18 @@ async fn wait_for_activity(
     context: &AgentToolContext,
     thread_id: &str,
     target_run_id: Option<&str>,
-    yield_time_ms: u64,
+    window: &PollWindow,
     cancellation: &WorkspaceCancellation,
     done: fn(&SubagentActivity) -> bool,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    if yield_time_ms > 0 {
-        let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+    if !window.is_immediate() {
         let updates = cancelled_read(
             cancellation,
             watch_activity(context, thread_id, target_run_id),
         )
         .await?;
         tokio::pin!(updates);
-        wait_for_activity_using(&mut updates, deadline, cancellation, done).await?;
+        wait_for_activity_using(&mut updates, window, cancellation, done).await?;
     }
     cancelled_read(
         cancellation,
@@ -1232,7 +1251,7 @@ where
 
 async fn wait_for_activity_using<S>(
     updates: &mut S,
-    deadline: Instant,
+    window: &PollWindow,
     cancellation: &WorkspaceCancellation,
     done: fn(&SubagentActivity) -> bool,
 ) -> Result<(), ToolExecutionError>
@@ -1243,7 +1262,7 @@ where
         let activity = tokio::select! {
             biased;
             activity = next_activity(updates, cancellation) => activity?,
-            _ = sleep_until(deadline) => return Ok(()),
+            _ = window.closed() => return Ok(()),
         };
         if done(&activity) {
             return Ok(());
@@ -1285,7 +1304,13 @@ async fn action_settlement_result(
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<serde_json::Value, ToolExecutionError> {
-    let info = wait_for_settlement(context, thread_id, yield_time_ms, cancellation).await?;
+    let info = wait_for_settlement(
+        context,
+        thread_id,
+        &PollWindow::after_ms(yield_time_ms),
+        cancellation,
+    )
+    .await?;
     subagent_action_result(info, yield_time_ms, cancellation, |info| {
         let run_id = run_id.map(str::to_owned).or_else(|| info.run_id.clone());
         read_transcript_snapshot(context, info, None, run_id)

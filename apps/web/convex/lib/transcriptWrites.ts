@@ -32,6 +32,10 @@ type TranscriptToolJob = Pick<
 	| 'sectionKey'
 >;
 
+function isDisplaySessionId(value: JsonValue | undefined): value is string {
+	return isJsonString(value) && value.length <= 128;
+}
+
 export function commandToolDisplayInput(name: string, input: JsonValue): JsonObject | undefined {
 	if (!isCommandToolKind(name) || !isJsonObject(input)) return undefined;
 
@@ -46,8 +50,10 @@ export function commandToolDisplayInput(name: string, input: JsonValue): JsonObj
 		}
 	}
 
-	if (isJsonString(input.sessionId) && input.sessionId.length <= 128) {
-		display.sessionId = input.sessionId;
+	if (isDisplaySessionId(input.sessionId)) display.sessionId = input.sessionId;
+
+	if (Array.isArray(input.sessionIds)) {
+		display.sessionIds = input.sessionIds.slice(0, 64).filter(isDisplaySessionId);
 	}
 
 	if (input.action === 'write' || input.action === 'terminate') display.action = input.action;

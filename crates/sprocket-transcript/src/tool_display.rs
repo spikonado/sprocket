@@ -72,6 +72,44 @@ pub struct ToolDisplayInput<'a> {
     status: ToolStatus,
 }
 
+pub(crate) fn polled_targets<'a>(
+    name: &'a str,
+    input: &'a Value,
+    output: Option<&'a Value>,
+    status: ToolStatus,
+) -> Option<Vec<ToolDisplayInput<'a>>> {
+    let key = match name {
+        "poll_cmd" => "sessionIds",
+        "poll_subagent" => "threads",
+        "poll_pr" => "pullRequests",
+        _ => return None,
+    };
+    if let Some(results) = output.and_then(Value::as_array) {
+        return Some(
+            results
+                .iter()
+                .map(|result| {
+                    let status =
+                        if string(result, "error").is_some() && result.get("command").is_none() {
+                            ToolStatus::Failed
+                        } else {
+                            status
+                        };
+                    ToolDisplayInput::new(name, result, Some(result), status)
+                })
+                .collect(),
+        );
+    }
+    Some(
+        input
+            .get(key)?
+            .as_array()?
+            .iter()
+            .map(|target| ToolDisplayInput::new(name, target, None, status))
+            .collect(),
+    )
+}
+
 impl<'a> ToolDisplayInput<'a> {
     pub fn new(
         name: &'a str,
@@ -91,6 +129,11 @@ impl<'a> ToolDisplayInput<'a> {
         self.output
             .and_then(|output| string(output, "sessionId"))
             .or_else(|| string(self.input, "sessionId"))
+            .or_else(|| {
+                (self.name == "poll_cmd")
+                    .then(|| self.input.as_str())
+                    .flatten()
+            })
     }
 
     pub fn display(&self, session_command: Option<&str>) -> ToolDisplay {
@@ -188,7 +231,7 @@ impl<'a> ToolDisplayInput<'a> {
                 if let Some(command) = command {
                     return command.into();
                 }
-                let session_id = field("sessionId").filter(|id| !id.is_empty());
+                let session_id = self.session_id().filter(|id| !id.is_empty());
                 let session = session_id
                     .map(|id| format!("Session {id}"))
                     .unwrap_or_else(|| "Command session".into());

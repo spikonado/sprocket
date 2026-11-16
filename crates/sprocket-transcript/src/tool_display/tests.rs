@@ -12,6 +12,57 @@ fn shortened(mut display: ToolDisplay) -> (ToolDisplay, bool) {
 }
 
 #[test]
+fn multi_target_polls_keep_labels_commands_and_errors() {
+    for (name, input, output, summaries) in [
+        (
+            "poll_cmd",
+            json!({"sessionIds": ["7", "missing"]}),
+            Some(json!([
+                {"sessionId":"7", "command":"bun run build", "workdir":"/repo"},
+                {"sessionId":"missing", "error":"Unknown session."}
+            ])),
+            vec!["bun run build", "Session missing"],
+        ),
+        (
+            "poll_subagent",
+            json!({"threads":[{"threadId":"a"},{"threadId":"b","cursor":"3"}]}),
+            None,
+            vec!["a", "b"],
+        ),
+        (
+            "poll_pr",
+            json!({"pullRequests":[{"repository":"github.com/acme/repo","number":7}]}),
+            None,
+            vec!["github.com/acme/repo#7"],
+        ),
+    ] {
+        let targets = polled_targets(name, &input, output.as_ref(), ToolStatus::Completed).unwrap();
+        let displays: Vec<_> = targets.iter().map(|input| input.display(None)).collect();
+        assert_eq!(
+            displays
+                .iter()
+                .map(|display| display.summary.as_str())
+                .collect::<Vec<_>>(),
+            summaries
+        );
+        if name == "poll_cmd" {
+            assert_eq!(displays[0].command.as_deref(), Some("bun run build"));
+            assert_eq!(displays[1].status, ToolStatus::Failed);
+            assert_eq!(displays[1].error.as_deref(), Some("Unknown session."));
+        }
+    }
+    assert!(
+        polled_targets(
+            "poll_cmd",
+            &json!({"sessionId":"7"}),
+            None,
+            ToolStatus::Completed
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn tool_labels_and_summaries() {
     for (name, input, expected_label, expected_summary) in [
         (

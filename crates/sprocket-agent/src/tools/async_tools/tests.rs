@@ -41,3 +41,44 @@ fn max_yield_ends_30_seconds_before_the_providers_cache_retention() {
         );
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn polls_return_every_target_once_the_first_settles() {
+    let started = tokio::time::Instant::now();
+    let window = PollWindow::after_ms(60_000);
+    let result = poll_targets(
+        &window,
+        &["slow", "fast", "broken"],
+        |id| json!({ "id": id }),
+        |id| {
+            let window = &window;
+            async move {
+                match *id {
+                    "fast" => {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        Ok(json!({ "running": false }))
+                    }
+                    "slow" => {
+                        window.closed().await;
+                        Ok(json!({ "running": true }))
+                    }
+                    _ => {
+                        window.closed().await;
+                        Err(ToolExecutionError::other("unknown target".to_string()))
+                    }
+                }
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(started.elapsed(), std::time::Duration::from_secs(1));
+    assert_eq!(result[0], json!({ "id": "slow", "running": true }));
+    assert_eq!(result[1], json!({ "id": "fast", "running": false }));
+    assert!(
+        result[2]["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown target")
+    );
+}

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::async_tools::ZeroPollCooldown;
+use crate::async_tools::{PollWindow, ZeroPollCooldown};
 use crate::cancellation::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use crate::command_container::CommandContainer;
 use crate::command_history::{CommandHistory, history_path};
@@ -52,8 +52,8 @@ enum ObservationMode {
 }
 
 impl ObservationMode {
-    fn after_action(yield_time_ms: u64) -> Self {
-        if yield_time_ms == 0 {
+    fn after_action(window: &PollWindow) -> Self {
+        if window.is_immediate() {
             Self::Metadata
         } else {
             Self::Output
@@ -433,12 +433,13 @@ impl CommandSessionManager {
         drop(sessions);
         signal_change(&self.changes);
 
+        let window = PollWindow::after_ms(yield_time_ms);
         let (result, next_offset) = self
             .observe_session(
                 session,
                 cancellation,
-                yield_time_ms,
-                ObservationMode::after_action(yield_time_ms),
+                &window,
+                ObservationMode::after_action(&window),
                 0,
             )
             .await?;
@@ -494,7 +495,7 @@ impl CommandSessionManager {
         &self,
         cancellation: WorkspaceCancellation,
         session_id: &str,
-        yield_time_ms: u64,
+        window: &PollWindow,
         from_offset: u64,
     ) -> Result<CommandStdinOutput> {
         cancellation.ensure_active()?;
@@ -504,19 +505,13 @@ impl CommandSessionManager {
                 result = self.saved_result(session_id, true, from_offset) => result,
             };
         };
-        let mode = if yield_time_ms == 0 {
+        let mode = if window.is_immediate() {
             ObservationMode::ZeroPoll
         } else {
             ObservationMode::Output
         };
         let (result, next_offset) = self
-            .observe_session(
-                session.clone(),
-                cancellation,
-                yield_time_ms,
-                mode,
-                from_offset,
-            )
+            .observe_session(session.clone(), cancellation, window, mode, from_offset)
             .await?;
         Ok(CommandStdinOutput {
             command: session.command.clone(),
@@ -598,7 +593,7 @@ impl CommandSessionManager {
                             .observe_after_write_error(
                                 session,
                                 cancellation,
-                                yield_time_ms,
+                                &PollWindow::after_ms(yield_time_ms),
                                 error,
                                 from_offset,
                             )
@@ -609,11 +604,12 @@ impl CommandSessionManager {
             }
         }
 
+        let window = PollWindow::after_ms(yield_time_ms);
         self.observe_session(
             session,
             cancellation,
-            yield_time_ms,
-            ObservationMode::after_action(yield_time_ms),
+            &window,
+            ObservationMode::after_action(&window),
             from_offset,
         )
         .await
@@ -647,11 +643,11 @@ impl CommandSessionManager {
         &self,
         session: Arc<CommandSession>,
         cancellation: WorkspaceCancellation,
-        yield_time_ms: u64,
+        window: &PollWindow,
         mode: ObservationMode,
         from_offset: u64,
     ) -> Result<(CommandOutput, u64)> {
-        let completion = wait_for_completion(&session, &cancellation, yield_time_ms).await?;
+        let completion = wait_for_completion(&session, &cancellation, window).await?;
         session
             .output_snapshot(completion, None, mode, from_offset)
             .await
@@ -661,18 +657,18 @@ impl CommandSessionManager {
         &self,
         session: Arc<CommandSession>,
         cancellation: WorkspaceCancellation,
-        yield_time_ms: u64,
+        window: &PollWindow,
         write_error: anyhow::Error,
         from_offset: u64,
     ) -> Result<(CommandOutput, u64)> {
-        match wait_for_completion(&session, &cancellation, yield_time_ms).await {
+        match wait_for_completion(&session, &cancellation, window).await {
             Ok(Some(completion)) => {
                 let write_error = format!("failed to write command stdin: {write_error:#}");
                 session
                     .output_snapshot(
                         Some(completion),
                         Some(write_error),
-                        ObservationMode::after_action(yield_time_ms),
+                        ObservationMode::after_action(window),
                         from_offset,
                     )
                     .await
@@ -822,29 +818,22 @@ impl CommandSession {
 async fn wait_for_completion(
     session: &CommandSession,
     cancellation: &WorkspaceCancellation,
-    yield_time_ms: u64,
+    window: &PollWindow,
 ) -> Result<Option<CommandCompletion>> {
     cancellation.ensure_active()?;
     let mut completion = session.completion.clone();
     if let Some(completion) = completion.borrow().clone() {
         return Ok(Some(completion));
     }
-    if yield_time_ms == 0 {
-        return Ok(None);
-    }
 
     tokio::select! {
+        biased;
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-        result = tokio::time::timeout(
-            Duration::from_millis(yield_time_ms),
-            completion.changed(),
-        ) => {
-            match result {
-                Ok(Ok(())) => Ok(completion.borrow().clone()),
-                Ok(Err(_)) => bail!("command session {} closed unexpectedly", session.id),
-                Err(_) => Ok(None),
-            }
-        }
+        changed = completion.changed() => match changed {
+            Ok(()) => Ok(completion.borrow().clone()),
+            Err(_) => bail!("command session {} closed unexpectedly", session.id),
+        },
+        _ = window.closed() => Ok(None),
     }
 }
 

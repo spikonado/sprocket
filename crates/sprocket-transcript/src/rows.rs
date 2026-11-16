@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use crate::tool_display::{
     ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, load_session_command,
+    polled_targets,
 };
 use crate::work_blocks::{item_id, item_index};
 use crate::{
@@ -431,20 +432,29 @@ pub async fn project_rows(
                         result.and_then(|tool| tool.output.as_ref()),
                         status,
                     );
-                    let command = match input.session_id().filter(|_| is_session_command(name)) {
-                        Some(session) => {
-                            if !commands.contains_key(session) {
-                                let command = match uuid::Uuid::parse_str(session) {
-                                    Ok(id) => load_session_command(transcript_dir, id).await,
-                                    Err(_) => None,
-                                };
-                                commands.insert(session.to_owned(), command);
-                            }
-                            commands[session].as_deref()
+                    let mut display = input.display(None);
+                    if let Some(targets) = polled_targets(
+                        name,
+                        &item["input"],
+                        result.and_then(|tool| tool.output.as_ref()),
+                        status,
+                    ) {
+                        let mut summaries = Vec::with_capacity(targets.len());
+                        for input in targets {
+                            let target =
+                                command_display(name, &input, transcript_dir, &mut commands).await;
+                            summaries.push(match target.error {
+                                Some(error) if display.error.is_none() => {
+                                    format!("{}: {error}", target.summary)
+                                }
+                                _ => target.summary,
+                            });
                         }
-                        None => None,
-                    };
-                    let mut display = input.display(command);
+                        display.summary = summaries.join("\n");
+                    } else {
+                        display =
+                            command_display(name, &input, transcript_dir, &mut commands).await;
+                    }
                     let has_more = if full { false } else { display.shorten() };
                     TranscriptRowBody::Tool {
                         name: name.to_owned(),
@@ -462,6 +472,28 @@ pub async fn project_rows(
         }
     }
     rows
+}
+
+async fn command_display(
+    name: &str,
+    input: &ToolDisplayInput<'_>,
+    transcript_dir: &Path,
+    commands: &mut HashMap<String, Option<String>>,
+) -> ToolDisplay {
+    let command = match input.session_id().filter(|_| is_session_command(name)) {
+        Some(session) => {
+            if !commands.contains_key(session) {
+                let command = match uuid::Uuid::parse_str(session) {
+                    Ok(id) => load_session_command(transcript_dir, id).await,
+                    Err(_) => None,
+                };
+                commands.insert(session.to_owned(), command);
+            }
+            commands[session].as_deref()
+        }
+        None => None,
+    };
+    input.display(command)
 }
 
 #[cfg(test)]

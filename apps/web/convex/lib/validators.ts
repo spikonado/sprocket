@@ -1,10 +1,19 @@
-import { v, type Infer } from 'convex/values';
+import { v, type GenericValidator, type Infer, type VObject } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
 import { reasoningEffortIds } from '@convex/lib/models';
 import { vWiringIssue } from '@convex/lib/wiring';
 
 function literals<const TValue extends string>(values: readonly TValue[]) {
 	return values.map((value) => v.literal(value));
+}
+
+/** One entry per polled target, in input order. */
+function vPollEntries<
+	Target extends Record<string, GenericValidator>,
+	Type,
+	Fields extends Record<string, GenericValidator>
+>(target: Target, result: VObject<Type, Fields>) {
+	return v.array(v.union(result.extend(target), v.object({ ...target, error: v.string() })));
 }
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
@@ -147,6 +156,10 @@ export const vControlCommandPayload = v.object({
 
 export const vPollCommandPayload = vWriteStdinPayload.pick('sessionId', 'yieldTimeMs');
 
+export const vPollCommandsPayload = vPollCommandPayload.omit('sessionId').extend({
+	sessionIds: v.array(v.string())
+});
+
 export const vLegacyArtifactType = v.union(
 	v.literal('markdown'),
 	v.literal('html'),
@@ -196,6 +209,10 @@ export const vPollPrPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vPollPrsPayload = vPollPrPayload.pick('yieldTimeMs').extend({
+	pullRequests: v.array(vPollPrPayload.omit('yieldTimeMs'))
+});
+
 export const vPullRequestState = v.union(
 	v.literal('open'),
 	v.literal('closed'),
@@ -241,6 +258,11 @@ export const vPollPrResult = v.object({
 	),
 	moreNewComments: v.optional(v.number())
 });
+
+export const vPollPrsResult = vPollEntries(
+	vPollPrPayload.pick('repository', 'number').fields,
+	vPollPrResult
+);
 
 export const vLinkedPullRequest = v.object({
 	repository: v.string(),
@@ -407,6 +429,12 @@ export const vPollSubagentPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+const vPolledSubagentTarget = { threadId: v.string() };
+
+export const vPollSubagentsPayload = vPollSubagentPayload.pick('yieldTimeMs').extend({
+	threads: v.array(vPollSubagentPayload.pick('cursor').extend(vPolledSubagentTarget))
+});
+
 export const vListSubagentsPayload = v.object({
 	parentThreadId: v.optional(v.id('threadRecords')),
 	cursor: v.optional(v.string())
@@ -418,6 +446,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vSubagentPayload,
 	vControlSubagentPayload,
 	vPollSubagentPayload,
+	vPollSubagentsPayload,
 	vListSubagentsPayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
@@ -427,6 +456,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vSetCwdPayload,
 	vLinkPrsPayload,
 	vPollPrPayload,
+	vPollPrsPayload,
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
@@ -434,6 +464,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
+	vPollCommandsPayload,
 	vBindArtifactPayload,
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
@@ -508,6 +539,8 @@ export const vCommandStdinResult = vCommandOutput.extend({
 	command: v.string(),
 	workdir: v.string()
 });
+
+export const vPollCommandsResult = vPollEntries({ sessionId: v.string() }, vCommandStdinResult);
 
 export const vPageOutline = v.object({
 	title: v.optional(v.string()),
@@ -813,6 +846,8 @@ export const vSubagentSnapshotResult = vSubagentActionResult.extend({
 	hasMore: v.boolean()
 });
 
+export const vPollSubagentsResult = vPollEntries(vPolledSubagentTarget, vSubagentSnapshotResult);
+
 const vSubagentResultSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,
@@ -941,10 +976,12 @@ export const vExecutorJobResult = v.union(
 	vSpawnSubagentResult,
 	vControlSubagentResult,
 	vSubagentSnapshotResult,
+	vPollSubagentsResult,
 	vListSubagentsResult,
 	vListModelsResult,
 	vCommandExecResult,
 	vCommandStdinResult,
+	vPollCommandsResult,
 	vLegacyCommandResult,
 	vReadSkillResult,
 	vSetCwdResult,
@@ -956,6 +993,7 @@ export const vExecutorJobResult = v.union(
 	vListArtifactsResult,
 	vListConnectorsResult,
 	vPollPrResult,
+	vPollPrsResult,
 	vBrowserTaskResult,
 	vBrowserScreenshotResult,
 	vCachedBrowserScreenshotResult,

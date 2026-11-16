@@ -197,6 +197,7 @@ Stored executor jobs, transcripts and local data files keep accepting these hist
 - `summary` on `scrape_url` results, from before `outline` replaced it, `images`, from before image references moved into the markdown, and `highlights`, from before the tool dropped `query`.
 - `query` on `scrape_url` payloads, which released agents still send. Scrapes ignore it.
 - `numResults` on `web_search` payloads, which released agents still send. Search ignores it.
+- Single-target `poll_cmd` (`sessionId`), `poll_subagent` (`threadId`, `cursor`) and `poll_pr` (`repository`, `number`, `cursor`) payloads and their single-object results, from before each poll took a list of targets. Released agents still send them.
 - The retired `list_subagent_models` tool kind, including `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on its results.
 - `lastError: null`, empty `pendingQuestions`, `settings.fast: false` and `settings.completionProvider` on subagent tool results, and `hasMore` on `list_subagents` results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.

@@ -16,6 +16,8 @@ const EXPANDING_TOOLS = new Set([
 	'ask_question',
 	'spawn_subagent',
 	'control_subagent',
+	'poll_subagent',
+	'poll_pr',
 	'apply_patch'
 ]);
 

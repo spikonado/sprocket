@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_transcript::TranscriptPart;
 use sprocket_workspace::CommandAction;
+use sprocket_workspace::async_tools::PollWindow;
 
-use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
+use super::async_tools::{
+    YieldMode, default_yield_ms, is_default_yield_ms, poll_targets, yield_time_schema,
+};
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_serialized_tool_job;
 
@@ -36,11 +39,24 @@ impl CommandCursors {
                 && matches!(name, "exec_cmd" | "poll_cmd" | "control_cmd")
                 && let Some(output) = &tool.output
             {
-                let input_session_id = input.and_then(|input| input.get("sessionId")?.as_str());
-                cursors.record(output, input_session_id);
+                cursors.record_output(output, input);
             }
         }
         cursors
+    }
+
+    fn record_output(&self, output: &serde_json::Value, input: Option<&serde_json::Value>) {
+        match output {
+            serde_json::Value::Array(entries) => {
+                for entry in entries {
+                    self.record(entry, None);
+                }
+            }
+            output => {
+                let input_session_id = input.and_then(|input| input.get("sessionId")?.as_str());
+                self.record(output, input_session_id);
+            }
+        }
     }
 
     fn record(&self, output: &serde_json::Value, input_session_id: Option<&str>) {
@@ -55,6 +71,10 @@ impl CommandCursors {
         *cursor = (*cursor).max(read.next_offset);
     }
 
+    fn offset(&self, session_id: &str) -> u64 {
+        self.0.lock().unwrap().get(session_id).copied().unwrap_or(0)
+    }
+
     async fn read<F, Fut>(
         &self,
         session_id: &str,
@@ -64,8 +84,7 @@ impl CommandCursors {
         F: FnOnce(u64) -> Fut,
         Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
     {
-        let from_offset = self.0.lock().unwrap().get(session_id).copied().unwrap_or(0);
-        let result = read(from_offset).await?;
+        let result = read(self.offset(session_id)).await?;
         self.record(&result, Some(session_id));
         Ok(result)
     }
@@ -196,9 +215,10 @@ pub(crate) struct ControlCommandArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PollCommandArgs {
-    /// Session returned by exec_cmd.
-    #[serde(rename = "sessionId")]
-    pub(crate) session_id: String,
+    /// Sessions returned by exec_cmd.
+    #[serde(rename = "sessionIds")]
+    #[schemars(length(min = 1))]
+    pub(crate) session_ids: Vec<String>,
     /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
     #[serde(
         rename = "yieldTimeMs",
@@ -310,7 +330,8 @@ impl rig::tool::Tool for PollCmdTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Read command status and current output.".to_string()
+        "Read the status and new output of commands. Returns once any of them finishes or the wait ends."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -322,29 +343,34 @@ impl rig::tool::Tool for PollCmdTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        let args = &args;
-        self.0
-            .command_cursors
-            .read(&args.session_id, move |from_offset| {
-                execute_serialized_tool_job(
-                    &self.0,
-                    Self::NAME,
-                    args,
-                    move |cancellation| async move {
-                        self.0
-                            .command_sessions
-                            .poll_command(
-                                cancellation,
-                                &args.session_id,
-                                YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms),
-                                from_offset,
-                            )
-                            .await
-                            .map_err(tool_error)
+        let cursors = &self.0.command_cursors;
+        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms, self.0.max_yield_ms);
+        let session_ids = &args.session_ids;
+        let result =
+            execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async move {
+                let window = &PollWindow::after_ms(yield_time_ms);
+                poll_targets(
+                    window,
+                    session_ids,
+                    |session_id| json!({ "sessionId": session_id }),
+                    |session_id| {
+                        let polled = self.0.command_sessions.poll_command(
+                            cancellation.clone(),
+                            session_id,
+                            window,
+                            cursors.offset(session_id),
+                        );
+                        async move {
+                            serde_json::to_value(polled.await.map_err(tool_error)?)
+                                .map_err(|error| tool_error(error.into()))
+                        }
                     },
                 )
+                .await
             })
-            .await
+            .await?;
+        cursors.record_output(&result, None);
+        Ok(result)
     }
 }
 
