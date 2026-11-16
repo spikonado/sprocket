@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -11,7 +10,7 @@ use sprocket_workspace::{CommandHistory, CommandOutput, CommandOutputLimits, his
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::Host;
-use crate::native_auth::NativeAuthManager;
+use crate::convex_clients::ConvexClients;
 use crate::transcript_client::UserConvexClient;
 
 const CHUNK_BYTES: usize = 128 * 1024;
@@ -360,18 +359,13 @@ async fn download_log(
 }
 
 pub async fn fetch(
-    deployment: &str,
-    auth: &Arc<NativeAuthManager>,
+    convex: &ConvexClients,
     user_id: &str,
     thread_id: &str,
     session_id: &str,
     directory: &Path,
 ) -> Result<Option<CommandHistory>> {
-    let client = UserConvexClient::connect_with_fetcher(
-        deployment,
-        auth.auth_token_fetcher_for_user(user_id.to_string()),
-    )
-    .await?;
+    let client = convex.client_for(user_id).await?;
     let args = session_args(thread_id, session_id);
     let Some(mut remote): Option<RemoteCommand> =
         client.query("commands:get", args.clone()).await?

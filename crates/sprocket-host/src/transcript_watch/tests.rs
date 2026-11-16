@@ -7,12 +7,15 @@ impl TranscriptWatchers {
     }
 }
 
-fn native_auth() -> Arc<NativeAuthManager> {
-    NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
-            workos_client_id: "client_test".to_string(),
-        },
-        "http://127.0.0.1/callback".to_string(),
+fn convex() -> Arc<ConvexClients> {
+    ConvexClients::new(
+        "https://example.convex.cloud".into(),
+        crate::native_auth::NativeAuthManager::configured_for_test(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            "http://127.0.0.1/callback".to_string(),
+        ),
     )
 }
 
@@ -41,9 +44,8 @@ fn fake_watchers(
 ) {
     let (events, receiver) = mpsc::unbounded_channel();
     let watchers = TranscriptWatchers::with_starter(
-        "https://example.convex.cloud".into(),
+        convex(),
         store,
-        native_auth(),
         Arc::new(move |start| {
             let events = events.clone();
             events.send(LifecycleEvent::TaskStarted).unwrap();
@@ -91,9 +93,8 @@ async fn cloud_status_changes_notify_existing_sessions_without_part_writes() {
     let (watchers, _events) = fake_watchers(TranscriptStore::new(dir.path().to_owned()));
     let tab = watchers.open("user", "thread").await;
     let start = WatchStart {
-        deployment_url: watchers.deployment_url.clone(),
+        convex: Arc::clone(&watchers.convex),
         store: Arc::clone(&watchers.store),
-        native_auth: Arc::clone(&watchers.native_auth),
         user_id: "user".into(),
         thread_id: "thread".into(),
         events: broadcast::channel(8).0,

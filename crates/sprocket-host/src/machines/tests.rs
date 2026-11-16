@@ -96,7 +96,7 @@ async fn shutdown_interrupts_registration_waiting_for_a_stale_lease() {
 fn manager_for_test() -> (std::path::PathBuf, Arc<MachineManager>) {
     let dir = std::env::temp_dir().join(format!("sprocket-machine-{}", uuid::Uuid::new_v4()));
     let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
-    let native_auth = NativeAuthManager::configured_for_test(
+    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
         crate::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".to_string(),
         },
@@ -104,7 +104,10 @@ fn manager_for_test() -> (std::path::PathBuf, Arc<MachineManager>) {
     );
     (
         dir,
-        MachineManager::new("not a valid URL".into(), native_auth, identity),
+        MachineManager::new(
+            ConvexClients::new("not a valid URL".into(), native_auth),
+            identity,
+        ),
     )
 }
 

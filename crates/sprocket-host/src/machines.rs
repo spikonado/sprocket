@@ -9,9 +9,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
+use crate::convex_clients::ConvexClients;
 use crate::machine_identity::MachineIdentity;
-use crate::native_auth::NativeAuthManager;
-use crate::transcript_client::UserConvexClient;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
@@ -71,8 +70,7 @@ struct AccountPresence {
 }
 
 pub struct MachineManager {
-    deployment_url: String,
-    native_auth: Arc<NativeAuthManager>,
+    convex: Arc<ConvexClients>,
     identity: Arc<MachineIdentity>,
     accounts: Mutex<HashMap<String, AccountPresence>>,
     account_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -80,14 +78,9 @@ pub struct MachineManager {
 }
 
 impl MachineManager {
-    pub fn new(
-        deployment_url: String,
-        native_auth: Arc<NativeAuthManager>,
-        identity: Arc<MachineIdentity>,
-    ) -> Arc<Self> {
+    pub fn new(convex: Arc<ConvexClients>, identity: Arc<MachineIdentity>) -> Arc<Self> {
         Arc::new(Self {
-            deployment_url,
-            native_auth,
+            convex,
             identity,
             accounts: Mutex::new(HashMap::new()),
             account_locks: Mutex::new(HashMap::new()),
@@ -208,7 +201,8 @@ impl MachineManager {
         }
         let error = match timeout(RPC_TIMEOUT, async {
             let _: serde_json::Value = self
-                .connect(user_id)
+                .convex
+                .client_for(user_id)
                 .await?
                 .mutate("machines:heartbeatProcess", self.process_args())
                 .await?;
@@ -230,7 +224,8 @@ impl MachineManager {
         register_when_available(&self.shutdown, || async {
             self.ensure_running()?;
             timeout(RPC_TIMEOUT, async {
-                self.connect(expected_user_id)
+                self.convex
+                    .client_for(expected_user_id)
                     .await?
                     .mutate("machines:registerProcess", self.registration_args())
                     .await
@@ -244,7 +239,8 @@ impl MachineManager {
     async fn end_remote(&self, user_id: &str) -> anyhow::Result<()> {
         timeout(RPC_TIMEOUT, async {
             let _: serde_json::Value = self
-                .connect(user_id)
+                .convex
+                .client_for(user_id)
                 .await?
                 .mutate("machines:endProcess", self.process_args())
                 .await?;
@@ -253,15 +249,6 @@ impl MachineManager {
         .await
         .map_err(|_| anyhow::anyhow!("ending machine presence timed out"))??;
         Ok(())
-    }
-
-    async fn connect(&self, user_id: &str) -> anyhow::Result<UserConvexClient> {
-        UserConvexClient::connect_with_fetcher(
-            &self.deployment_url,
-            self.native_auth
-                .auth_token_fetcher_for_user(user_id.to_string()),
-        )
-        .await
     }
 
     fn registration_args(&self) -> BTreeMap<String, Value> {

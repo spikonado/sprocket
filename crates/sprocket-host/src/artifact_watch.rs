@@ -13,6 +13,7 @@ use sprocket_workspace::read_artifact_file;
 use tokio::sync::broadcast;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
+use crate::convex_clients::ConvexClients;
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::{ArtifactSnapshot, UserConvexClient};
 use crate::watch_registry::{WatchRegistry, WatchSession};
@@ -63,7 +64,7 @@ struct WatchKey {
 
 #[derive(Clone)]
 struct WatchSource {
-    deployment_url: String,
+    convex: Arc<ConvexClients>,
     native_auth: Arc<NativeAuthManager>,
     bindings_root: PathBuf,
 }
@@ -72,7 +73,7 @@ impl WatchSource {
     fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
         ArtifactBindings::new(
             &self.bindings_root,
-            &self.deployment_url,
+            self.convex.deployment_url(),
             user_id,
             workspace,
         )
@@ -80,12 +81,7 @@ impl WatchSource {
 
     async fn connect(&self, key: &WatchKey) -> anyhow::Result<UserConvexClient> {
         self.native_auth.require_user(&key.user_id).await?;
-        UserConvexClient::connect_with_fetcher(
-            &self.deployment_url,
-            self.native_auth
-                .auth_token_fetcher_for_user(key.user_id.clone()),
-        )
-        .await
+        self.convex.client_for(&key.user_id).await
     }
 }
 
@@ -109,13 +105,13 @@ type ArtifactSession = WatchSession<WatchKey, ArtifactWatchEvent, LatestEvent>;
 
 impl ArtifactWatchers {
     pub fn new(
-        deployment_url: String,
+        convex: Arc<ConvexClients>,
         native_auth: Arc<NativeAuthManager>,
         bindings_root: PathBuf,
     ) -> Arc<Self> {
         Arc::new(Self {
             source: WatchSource {
-                deployment_url,
+                convex,
                 native_auth,
                 bindings_root,
             },

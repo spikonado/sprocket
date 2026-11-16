@@ -132,7 +132,7 @@ fn require_compatible_client(
         ));
     }
     if request.deployment_url.trim_end_matches('/')
-        != state.host.convex_deployment_url.trim_end_matches('/')
+        != state.host.convex.deployment_url().trim_end_matches('/')
     {
         return Err(ApiError::with_status(
             StatusCode::CONFLICT,

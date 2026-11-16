@@ -2,12 +2,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
+use convex::FunctionResult;
 use convex::base_client::BaseConvexClient;
+use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::time;
 
-use crate::{AuthSignedOut, AuthTokenFetcher, Client, auth::AuthState, sdk_fetcher};
+use crate::{AuthSignedOut, AuthTokenFetcher, Client, Distinct, auth::AuthState, sdk_fetcher};
 
 fn scripted_fetcher(
     outcomes: Vec<anyhow::Result<String>>,
@@ -246,7 +248,7 @@ async fn persistent_auth_failure_closes_the_connection_and_fails_all_pending_ope
         assert!(error.to_string().contains("120 seconds"));
     }
     assert_eq!(start.elapsed(), Duration::from_secs(120));
-    assert!(client.inner.convex.lock().await.is_none());
+    assert!(client.is_closed().await);
     let start = time::Instant::now();
     client
         .query("transcript:getState", BTreeMap::new())
@@ -351,4 +353,14 @@ async fn stale_auth_failure_cannot_close_a_replacement_session() {
         .with_auth_failure(async { Ok(()) })
         .await
         .expect("current session is healthy");
+}
+
+#[tokio::test]
+async fn subscriptions_skip_repeats_of_their_own_result() {
+    let result = |n| FunctionResult::Value(convex::Value::Float64(n));
+    let results: Vec<_> =
+        Distinct::new(futures::stream::iter([1.0, 1.0, 2.0, 2.0, 1.0].map(result)))
+            .collect()
+            .await;
+    assert_eq!(results, [1.0, 2.0, 1.0].map(result));
 }

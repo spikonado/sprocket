@@ -1,9 +1,9 @@
 use anyhow::Context;
-use convex::{FunctionResult, QuerySubscription, Value};
+use convex::{FunctionResult, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use sprocket_convex::{
-    Client as ConvexRpcClient, ConvexErrorCode, RunStatus, convex_error_code,
+    Client as ConvexRpcClient, ConvexErrorCode, RunStatus, Subscription, convex_error_code,
     decode_function_result,
 };
 use sprocket_transcript::{
@@ -639,7 +639,7 @@ impl RuntimeClient {
     pub(crate) async fn run_finished_subscription(
         &self,
         run_id: &str,
-    ) -> anyhow::Result<QuerySubscription> {
+    ) -> anyhow::Result<Subscription> {
         let mut args = self.run_args(run_id);
         self.add_execution_secret(&mut args);
         self.client.subscribe("agentRuntime:isFinished", args).await
@@ -653,7 +653,7 @@ impl RuntimeClient {
         &self,
         function: &str,
         mut args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<QuerySubscription> {
+    ) -> anyhow::Result<Subscription> {
         self.add_execution_secret(&mut args);
         self.client.subscribe(function, args).await
     }

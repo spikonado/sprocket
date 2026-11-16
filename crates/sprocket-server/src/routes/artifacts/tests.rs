@@ -24,7 +24,10 @@ async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails()
         true,
         sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
-    state.host.convex_deployment_url.clear();
+    state.host.convex = sprocket_host::convex_clients::ConvexClients::new(
+        String::new(),
+        std::sync::Arc::clone(&state.host.native_auth),
+    );
     let bindings = state
         .host
         .artifact_watchers

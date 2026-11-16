@@ -113,7 +113,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
         client: CliConnectRequest {
             client_id: uuid::Uuid::new_v4().to_string(),
             client_version: sprocket_workspace::SPROCKET_VERSION.to_string(),
-            deployment_url: state.host.convex_deployment_url.clone(),
+            deployment_url: state.host.convex.deployment_url().to_owned(),
         },
         session_token: uuid::Uuid::new_v4().to_string(),
         proof: Vec::new(),
@@ -185,11 +185,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
 async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
     let (_directory, state, _, _) = fixture().await;
     for (version, deployment, guidance) in [
-        (
-            "999.0.0",
-            state.host.convex_deployment_url.as_str(),
-            "Restart",
-        ),
+        ("999.0.0", state.host.convex.deployment_url(), "Restart"),
         (
             sprocket_workspace::SPROCKET_VERSION,
             "https://other.convex.cloud",

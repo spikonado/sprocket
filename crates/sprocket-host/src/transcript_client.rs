@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use convex::{QuerySubscription, Value};
+use convex::Value;
 use serde::Deserialize;
-use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
+use sprocket_convex::{
+    AuthTokenFetcher, Client as ConvexClient, Subscription, decode_labeled_function_result,
+};
 use tokio::time::sleep;
 
 #[derive(Clone)]
@@ -16,7 +18,7 @@ impl UserConvexClient {
         &self,
         function: &str,
         args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<QuerySubscription> {
+    ) -> anyhow::Result<Subscription> {
         self.client.subscribe(function, args).await
     }
 
@@ -43,7 +45,7 @@ impl UserConvexClient {
         Ok(state.total_parts)
     }
 
-    pub async fn connect_with_fetcher(
+    pub(crate) async fn connect_with_fetcher(
         deployment_url: &str,
         fetcher: AuthTokenFetcher,
     ) -> anyhow::Result<Self> {
@@ -52,14 +54,14 @@ impl UserConvexClient {
         Ok(Self { client })
     }
 
-    pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
-        self.client.watch_all().await
+    pub(crate) async fn is_closed(&self) -> bool {
+        self.client.is_closed().await
     }
 
     pub async fn subscribe_artifact_state(
         &self,
         repository_key: &str,
-    ) -> anyhow::Result<QuerySubscription> {
+    ) -> anyhow::Result<Subscription> {
         self.client
             .subscribe(
                 "artifacts:getArtifactState",
