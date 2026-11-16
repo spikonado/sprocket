@@ -147,7 +147,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
         })).unwrap(),
     ];
     let mut history = crate::history::agent_history_from_parts(
-        &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+        &sprocket_transcript::TranscriptState::default(),
         &parts,
         None,
     );

@@ -6,13 +6,13 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::sections::{item_id, item_index};
 use crate::tool_display::{
     ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, load_session_command,
 };
+use crate::work_blocks::{item_id, item_index};
 use crate::{
     LiveCompletionOverlay, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, derive_work_blocks,
+    TranscriptPartKind, WorkBlock, derive_work_blocks,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -66,11 +66,23 @@ pub enum ProjectionScope {
 }
 
 impl ProjectionScope {
-    pub fn run_id(&self) -> Option<&str> {
+    pub fn row_id(&self) -> Option<&str> {
         match self {
             Self::Thread => None,
-            Self::Work(id) | Self::Item(id) | Self::Row(id) => id.split(':').nth(1),
+            Self::Work(id) | Self::Item(id) | Self::Row(id) => Some(id),
         }
+    }
+
+    pub fn source_key(&self) -> Option<&str> {
+        self.row_id()?
+            .splitn(3, ':')
+            .nth(2)?
+            .rsplit_once(':')
+            .map(|(source, _)| source)
+    }
+
+    pub fn run_id(&self) -> Option<&str> {
+        self.row_id()?.split(':').nth(1)
     }
 }
 
@@ -125,12 +137,8 @@ fn merge_live<'a>(
             run_id: overlay.run_id.clone(),
             created_at: None,
             prompt: None,
-            completion: Some(TranscriptCompletionBody {
-                stream_id: None,
-                items,
-            }),
+            completion: Some(TranscriptCompletionBody { items }),
             tool: None,
-            work: Default::default(),
         };
         if !overlay.run_status.is_final()
             && let Some(item) = part.content_items().last()
@@ -169,48 +177,74 @@ fn reasoning_label(text: &str) -> String {
         .collect()
 }
 
-pub async fn project_rows(
-    saved: &[TranscriptPart],
-    live: &[LiveCompletionOverlay],
-    scope: &ProjectionScope,
-    window: Range<u32>,
-    transcript_dir: &Path,
-) -> Vec<TranscriptRow> {
-    let mut results = HashMap::new();
-    let mut call_results = HashMap::new();
-    let mut source_results = HashMap::new();
-    for part in saved {
-        if let Some(tool) = &part.tool
-            && tool.status != "started"
-        {
-            let result = (part.number, tool);
-            source_results.insert(part.source_key.as_str(), result);
-            if let Some(invocation) = tool.tool_invocation_id.as_deref() {
-                results
-                    .entry((part.run_id.as_str(), invocation))
-                    .or_insert(result);
-            }
-            if !tool.call_id.is_empty() {
-                call_results
-                    .entry((part.run_id.as_str(), tool.call_id.as_str()))
-                    .or_insert(result);
+pub struct ToolResults<'a> {
+    invocations: HashMap<(&'a str, &'a str), &'a TranscriptPart>,
+    calls: HashMap<(&'a str, &'a str), &'a TranscriptPart>,
+    sources: HashMap<&'a str, &'a TranscriptPart>,
+}
+
+impl<'a> ToolResults<'a> {
+    pub fn new(saved: &'a [TranscriptPart]) -> Self {
+        let mut results = Self {
+            invocations: HashMap::new(),
+            calls: HashMap::new(),
+            sources: HashMap::new(),
+        };
+        for part in saved {
+            if let Some(tool) = &part.tool
+                && tool.status != "started"
+            {
+                results.sources.insert(part.source_key.as_str(), part);
+                if let Some(invocation) = tool.tool_invocation_id.as_deref() {
+                    results
+                        .invocations
+                        .entry((part.run_id.as_str(), invocation))
+                        .or_insert(part);
+                }
+                if !tool.call_id.is_empty() {
+                    results
+                        .calls
+                        .entry((part.run_id.as_str(), tool.call_id.as_str()))
+                        .or_insert(part);
+                }
             }
         }
+        results
     }
-    let (mut parts, activity) = merge_live(saved, live);
-    let result_for = |part: &TranscriptPart, item: &Value| {
+
+    pub fn get(
+        &self,
+        part: &TranscriptPart,
+        item: &Value,
+        saved: bool,
+    ) -> Option<&'a TranscriptPart> {
         if let Some(source) = item["resultSourceKey"].as_str() {
-            source_results.get(source).copied()
+            self.sources.get(source).copied()
         } else if let Some(invocation) = item["toolInvocationId"].as_str() {
-            results.get(&(part.run_id.as_str(), invocation)).copied()
-        } else if !activity.unsaved.contains(&part.source_key) {
+            self.invocations
+                .get(&(part.run_id.as_str(), invocation))
+                .copied()
+        } else if saved {
             item["callId"]
                 .as_str()
-                .and_then(|call| call_results.get(&(part.run_id.as_str(), call)))
+                .and_then(|call| self.calls.get(&(part.run_id.as_str(), call)))
                 .copied()
         } else {
             None
         }
+    }
+}
+
+fn projection_parts<'a>(
+    saved: &'a [TranscriptPart],
+    live: &[LiveCompletionOverlay],
+    results: &ToolResults<'a>,
+) -> (Vec<Cow<'a, TranscriptPart>>, LiveActivity) {
+    let (mut parts, activity) = merge_live(saved, live);
+    let result_for = |part: &TranscriptPart, item: &Value| {
+        results
+            .get(part, item, !activity.unsaved.contains(&part.source_key))
+            .map(|part| (part.number, part.tool.as_ref().unwrap()))
     };
     let matched: HashSet<_> = parts
         .iter()
@@ -245,15 +279,35 @@ pub async fn project_rows(
             created_at: part.created_at,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
-                stream_id: None,
                 items: vec![json!({"type":"tool-call", "name":tool.name,
                     "input":tool.input, "resultSourceKey":part.source_key})],
             }),
             tool: None,
-            work: Default::default(),
         };
         *part = Cow::Owned(fallback);
     }
+    (parts, activity)
+}
+
+pub fn saved_work_blocks(saved: &[TranscriptPart]) -> Vec<WorkBlock> {
+    let (parts, _) = projection_parts(saved, &[], &ToolResults::new(saved));
+    derive_work_blocks(parts.iter().map(AsRef::as_ref))
+}
+
+pub async fn project_rows(
+    saved: &[TranscriptPart],
+    live: &[LiveCompletionOverlay],
+    scope: &ProjectionScope,
+    window: Range<u32>,
+    transcript_dir: &Path,
+) -> Vec<TranscriptRow> {
+    let results = ToolResults::new(saved);
+    let (parts, activity) = projection_parts(saved, live, &results);
+    let result_for = |part: &TranscriptPart, item: &Value| {
+        results
+            .get(part, item, !activity.unsaved.contains(&part.source_key))
+            .map(|part| (part.number, part.tool.as_ref().unwrap()))
+    };
     let by_number: HashMap<_, _> = parts
         .iter()
         .map(|part| (part.number, part.as_ref()))
@@ -317,29 +371,6 @@ pub async fn project_rows(
     }
     let mut rows = Vec::new();
     let mut commands: HashMap<String, Option<String>> = HashMap::new();
-    for part in &parts {
-        for item in part
-            .content_items()
-            .iter()
-            .filter(|item| matches!(item["name"].as_str(), Some("exec_cmd" | "exec_command")))
-        {
-            let output = result_for(part, item).and_then(|(_, tool)| tool.output.as_ref());
-            let input = ToolDisplayInput::new(
-                item["name"].as_str().unwrap(),
-                &item["input"],
-                output,
-                ToolStatus::Completed,
-            );
-            if let Some(session) = input.session_id()
-                && uuid::Uuid::parse_str(session).is_err()
-                && let Some(command) = output
-                    .and_then(|output| output["command"].as_str())
-                    .or_else(|| item["input"]["cmd"].as_str())
-            {
-                commands.insert(session.to_owned(), Some(command.to_owned()));
-            }
-        }
-    }
     for part in &parts {
         if let Some(prompt) = &part.prompt
             && prompt.hidden.is_none()

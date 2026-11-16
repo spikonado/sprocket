@@ -4,9 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::types::TranscriptPart;
-pub use super::types::{WorkAssignment, WorkRange};
-
-pub const POSITION_STRIDE: u64 = 16_384;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
@@ -15,12 +12,6 @@ pub struct WorkPosition {
     pub part: u32,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     pub item: u32,
-}
-
-impl WorkPosition {
-    pub fn sequence(self) -> u64 {
-        u64::from(self.part) * POSITION_STRIDE + u64::from(self.item) * 2
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,7 +31,7 @@ pub(super) fn item_index(item: &Value, offset: usize) -> usize {
         .unwrap_or(offset)
 }
 
-pub(super) fn item_id(kind: &str, part: &TranscriptPart, offset: usize) -> String {
+pub fn item_id(kind: &str, part: &TranscriptPart, offset: usize) -> String {
     let index = part
         .content_items()
         .get(offset)
@@ -92,61 +83,11 @@ pub fn derive_work_blocks<'a>(
 }
 
 impl TranscriptPart {
-    pub fn work_assignment(&self) -> &WorkAssignment {
-        &self.work
-    }
-
     pub fn content_items(&self) -> &[Value] {
         self.completion
             .as_ref()
             .map_or(&[], |completion| completion.items.as_slice())
     }
-
-    pub fn without_work_assignment(mut self) -> Self {
-        self.work = WorkAssignment::default();
-        self
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkItem {
-    pub run_id: String,
-    pub source: WorkPosition,
-    pub call_id: Option<String>,
-    pub tool_invocation_id: Option<String>,
-    pub result_part: Option<u32>,
-    pub canonical: bool,
-}
-
-impl WorkItem {
-    pub(super) fn identity(&self) -> Option<String> {
-        self.tool_invocation_id
-            .as_ref()
-            .map(|id| format!("invocation:{id}"))
-            .or_else(|| self.call_id.as_ref().map(|id| format!("call:{id}")))
-    }
-
-    pub(super) fn tool_event(part: &TranscriptPart) -> Option<Self> {
-        let tool = part.tool.as_ref()?;
-        if tool.status == "started" {
-            return None;
-        }
-        Some(Self {
-            run_id: part.run_id.clone(),
-            source: WorkPosition {
-                part: part.number,
-                item: 0,
-            },
-            call_id: (!tool.call_id.is_empty()).then(|| tool.call_id.clone()),
-            tool_invocation_id: tool.tool_invocation_id.clone(),
-            result_part: Some(part.number),
-            canonical: false,
-        })
-    }
-}
-
-pub(super) fn string(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
 #[cfg(test)]

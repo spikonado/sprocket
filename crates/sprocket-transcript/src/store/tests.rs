@@ -1,72 +1,59 @@
+use serde_json::json;
+
 use super::*;
-use crate::types::{TranscriptPartKind, TranscriptPromptBody};
+use crate::types::TranscriptAttachmentMeta;
 
 fn prompt(number: u32, text: &str) -> TranscriptPart {
-    TranscriptPart {
-        number,
-        source_key: format!("prompt:{number}"),
-        kind: TranscriptPartKind::Prompt,
-        run_id: format!("run-{number}"),
-        created_at: None,
-        prompt: Some(TranscriptPromptBody {
-            text: text.to_string(),
-            image_uploads: Vec::new(),
-            hidden: None,
-        }),
-        completion: None,
-        tool: None,
-        work: Default::default(),
-    }
+    serde_json::from_value(json!({
+        "number": number,
+        "sourceKey": format!("prompt:{number}"),
+        "kind": "prompt",
+        "runId": format!("run-{}", number / 10),
+        "prompt": {"text": text, "imageUploads": []}
+    }))
+    .unwrap()
 }
 
-#[tokio::test]
-async fn only_missing_state_is_treated_as_an_empty_cache() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = TranscriptStore::new(dir.path().to_path_buf());
-    assert_eq!(
-        store.load_state("user", "thread").await.unwrap(),
-        TranscriptState::new("user".into(), "thread".into())
-    );
-    let path = store.thread_dir("user", "thread").join("state.json");
-    std::fs::create_dir_all(&path).unwrap();
-    let error = store.load_state("user", "thread").await.unwrap_err();
-    assert!(error.to_string().contains(path.to_str().unwrap()));
-    std::fs::remove_dir(&path).unwrap();
-    std::fs::write(&path, "invalid JSON").unwrap();
-    let error = store.load_state("user", "thread").await.unwrap_err();
-    assert!(error.to_string().contains(path.to_str().unwrap()));
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "invalid JSON");
+fn texts(parts: &[TranscriptPart]) -> Vec<&str> {
+    parts
+        .iter()
+        .map(|part| part.prompt.as_ref().unwrap().text.as_str())
+        .collect()
 }
 
-#[tokio::test]
-async fn independent_state_writers_do_not_share_temporary_files() {
-    let dir = tempfile::tempdir().unwrap();
-    let writes = (0..32).map(|number| {
-        let store = TranscriptStore::new(dir.path().to_path_buf());
-        async move {
-            store
-                .update_state("user", "thread", |state| {
-                    state.remote_total_parts = number;
-                })
-                .await
-        }
-    });
-    for result in futures::future::join_all(writes).await {
-        result.expect("concurrent state publication should succeed");
-    }
-    let store = TranscriptStore::new(dir.path().to_path_buf());
-    let state = store.load_state("user", "thread").await.unwrap();
-    assert!(state.remote_total_parts < 32);
-    let files = std::fs::read_dir(store.thread_dir("user", "thread"))
+fn chunk_numbers(store: &TranscriptStore, name: &str) -> Vec<u32> {
+    fs::read_to_string(store.thread_dir("user", "thread").join("parts").join(name))
         .unwrap()
-        .count();
-    assert_eq!(files, 2, "only state.json and parts should remain");
+        .lines()
+        .map(|line| serde_json::from_str::<TranscriptPart>(line).unwrap().number)
+        .collect()
 }
 
 #[tokio::test]
-async fn shared_store_preserves_concurrent_part_updates() {
+async fn out_of_order_appends_produce_sorted_chunks_of_one_hundred() {
     let dir = tempfile::tempdir().unwrap();
-    let store = TranscriptStore::new(dir.path().to_path_buf());
+    let store = TranscriptStore::new(dir.path().to_owned());
+    for numbers in [[205, 3, 150], [0, 199, 100], [2, 1, 4]] {
+        let parts: Vec<_> = numbers.iter().map(|number| prompt(*number, "x")).collect();
+        store.append_parts("user", "thread", &parts).await.unwrap();
+    }
+    assert_eq!(chunk_numbers(&store, "00000000.jsonl"), [0, 1, 2, 3, 4]);
+    assert_eq!(chunk_numbers(&store, "00000100.jsonl"), [100, 150, 199]);
+    assert_eq!(chunk_numbers(&store, "00000200.jsonl"), [205]);
+    let range = store
+        .read_parts_range("user", "thread", 3, 151)
+        .await
+        .unwrap();
+    assert_eq!(
+        range.iter().map(|part| part.number).collect::<Vec<_>>(),
+        [3, 4, 100, 150]
+    );
+}
+
+#[tokio::test]
+async fn concurrent_appends_are_all_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
     let writes = (0..32).map(|number| {
         let store = Arc::clone(&store);
         async move {
@@ -78,130 +65,27 @@ async fn shared_store_preserves_concurrent_part_updates() {
     for result in futures::future::join_all(writes).await {
         result.unwrap();
     }
-    let numbers = (0..32).collect::<Vec<_>>();
-    let parts = store.read_parts("user", "thread", &numbers).await.unwrap();
-    assert_eq!(parts.len(), numbers.len());
+    assert_eq!(
+        chunk_numbers(&store, "00000000.jsonl"),
+        (0..32).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
-async fn preserves_created_at_on_disk() {
-    let dir = std::env::temp_dir().join(format!("sprocket-created-at-{}", uuid::Uuid::new_v4()));
-    let store = TranscriptStore::new(dir.clone());
-    let mut part = prompt(0, "hello");
-    part.created_at = Some(1_700_000_000_000);
-    store.append_parts("user", "thread", &[part]).await.unwrap();
-    let read = store.read_parts("user", "thread", &[0]).await.unwrap();
-    assert_eq!(read[0].created_at, Some(1_700_000_000_000));
-    let chunk = tokio::fs::read_to_string(
-        store
-            .thread_dir("user", "thread")
-            .join("parts")
-            .join("00000000.jsonl"),
-    )
-    .await
-    .unwrap();
-    assert!(chunk.contains("\"createdAt\":1700000000000"));
-    let _ = tokio::fs::remove_dir_all(dir).await;
-}
-
-#[tokio::test]
-async fn appends_reads_and_clears_parts() {
-    let dir = std::env::temp_dir().join(format!("sprocket-transcript-{}", uuid::Uuid::new_v4()));
-    let store = TranscriptStore::new(dir.clone());
+async fn the_first_write_wins_for_a_number_or_source_key_across_chunks() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let mut retried = prompt(150, "retry of 5");
+    retried.source_key = "prompt:5".into();
     store
         .append_parts(
             "user",
             "thread",
-            &[prompt(0, "a"), prompt(1, "b"), prompt(2, "c")],
-        )
-        .await
-        .unwrap();
-    store
-        .update_state("user", "thread", |state| state.remote_total_parts = 3)
-        .await
-        .unwrap();
-    let parts = store.read_parts("user", "thread", &[1, 2]).await.unwrap();
-    assert_eq!(
-        parts
-            .iter()
-            .map(|part| part.prompt.as_ref().unwrap().text.as_str())
-            .collect::<Vec<_>>(),
-        vec!["b", "c"]
-    );
-    for invalid_id in ["", "blobs", "BLOBS", "blobs ", "../thread"] {
-        assert!(store.clear_thread("user", invalid_id).await.is_err());
-    }
-    assert_eq!(
-        store
-            .read_parts("user", "thread", &[0, 1, 2])
-            .await
-            .unwrap()
-            .len(),
-        3
-    );
-    let command_log = store
-        .thread_dir("user", "thread")
-        .join("command-logs/output.log");
-    tokio::fs::create_dir_all(command_log.parent().unwrap())
-        .await
-        .unwrap();
-    tokio::fs::write(&command_log, b"command output")
-        .await
-        .unwrap();
-    store.clear_thread("user", "thread").await.unwrap();
-    assert!(
-        store
-            .read_parts("user", "thread", &[0, 1, 2])
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        store
-            .load_state("user", "thread")
-            .await
-            .unwrap()
-            .remote_total_parts,
-        0
-    );
-    assert_eq!(
-        tokio::fs::read(command_log).await.unwrap(),
-        b"command output"
-    );
-    let _ = tokio::fs::remove_dir_all(dir).await;
-}
-
-#[tokio::test]
-async fn recovers_a_torn_final_jsonl_line() {
-    let dir = std::env::temp_dir().join(format!("sprocket-transcript-{}", uuid::Uuid::new_v4()));
-    let store = TranscriptStore::new(dir.clone());
-    store
-        .append_parts("user", "thread", &[prompt(0, "ok")])
-        .await
-        .unwrap();
-    let chunk = store
-        .thread_dir("user", "thread")
-        .join("parts")
-        .join("00000000.jsonl");
-    let mut contents = tokio::fs::read(&chunk).await.unwrap();
-    contents.extend_from_slice(b"{\"number\":1,");
-    tokio::fs::write(&chunk, contents).await.unwrap();
-    let parts = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
-    assert_eq!(parts.len(), 1);
-    assert_eq!(parts[0].number, 0);
-    let _ = tokio::fs::remove_dir_all(dir).await;
-}
-
-#[tokio::test]
-async fn append_parts_keeps_the_first_write_for_a_number() {
-    let dir =
-        std::env::temp_dir().join(format!("sprocket-transcript-dup-{}", uuid::Uuid::new_v4()));
-    let store = TranscriptStore::new(dir.clone());
-    store
-        .append_parts(
-            "user",
-            "thread",
-            &[prompt(0, "first"), prompt(0, "dup"), prompt(1, "second")],
+            &[
+                prompt(5, "first"),
+                prompt(5, "duplicate"),
+                prompt(6, "second"),
+            ],
         )
         .await
         .unwrap();
@@ -209,32 +93,165 @@ async fn append_parts_keeps_the_first_write_for_a_number() {
         .append_parts(
             "user",
             "thread",
-            &[prompt(1, "ignored"), prompt(2, "third")],
+            &[prompt(6, "ignored"), retried, prompt(7, "third")],
         )
         .await
         .unwrap();
     let parts = store
-        .read_parts("user", "thread", &[0, 1, 2])
+        .read_parts("user", "thread", &[5, 6, 7, 150])
         .await
         .unwrap();
-    assert_eq!(
-        parts
-            .iter()
-            .map(|part| part.prompt.as_ref().unwrap().text.as_str())
-            .collect::<Vec<_>>(),
-        vec!["first", "second", "third"]
+    assert_eq!(texts(&parts), ["first", "second", "third"]);
+    assert!(
+        !store
+            .thread_dir("user", "thread")
+            .join("parts/00000100.jsonl")
+            .exists()
     );
-    let chunk = store
+}
+
+#[tokio::test]
+async fn failed_append_reloads_committed_chunks_before_retrying() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let _lease = store.open_thread("user", "thread").await.unwrap();
+    let blocked_chunk = store
         .thread_dir("user", "thread")
-        .join("parts")
-        .join("00000000.jsonl");
-    let contents = tokio::fs::read_to_string(&chunk).await.unwrap();
+        .join("parts/00000100.jsonl");
+    fs::create_dir(&blocked_chunk).unwrap();
+    let parts = [prompt(0, "saved"), prompt(100, "retry")];
+
+    store
+        .append_parts("user", "thread", &parts)
+        .await
+        .unwrap_err();
+    fs::remove_dir(&blocked_chunk).unwrap();
+    assert_eq!(store.part_numbers("user", "thread").await.unwrap(), [0]);
+    store.append_parts("user", "thread", &parts).await.unwrap();
+    let saved = store.read_parts("user", "thread", &[0, 100]).await.unwrap();
+    assert_eq!(texts(&saved), ["saved", "retry"]);
+}
+
+#[tokio::test]
+async fn saves_prompt_attachment_metadata_and_created_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let mut part = prompt(0, "photo");
+    part.created_at = Some(1_700_000_000_000);
+    part.prompt
+        .as_mut()
+        .unwrap()
+        .image_uploads
+        .push(TranscriptAttachmentMeta {
+            name: "photo.png".into(),
+            media_type: "image/png".into(),
+            size: 12,
+            storage_id: "storage".into(),
+            url: Some("https://example.com/expiring".into()),
+            local_path: None,
+        });
+    store.append_parts("user", "thread", &[part]).await.unwrap();
+    let read = store.read_parts("user", "thread", &[0]).await.unwrap();
+    assert_eq!(read[0].created_at, Some(1_700_000_000_000));
+    let metadata = store
+        .attachment_metadata("user", "thread", "storage")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(metadata.name, "photo.png");
+    assert_eq!(metadata.url, None);
+}
+
+#[tokio::test]
+async fn old_caches_are_replaced_once_keeping_attachments_and_command_logs() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let thread = store.thread_dir("user", "thread");
+    for (path, contents) in [
+        ("state.json", "{}"),
+        ("display/replica.sqlite", "sqlite"),
+        ("parts/00000000.jsonl", "unsorted"),
+        ("attachments/storage/metadata.json", "{}"),
+        ("command-logs/output.log", "command output"),
+    ] {
+        fs::create_dir_all(thread.join(path).parent().unwrap()).unwrap();
+        fs::write(thread.join(path), contents).unwrap();
+    }
+    store
+        .append_parts("user", "thread", &[prompt(0, "new")])
+        .await
+        .unwrap();
+    assert!(!thread.join("state.json").exists());
+    assert!(!thread.join("display").exists());
     assert_eq!(
-        contents
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count(),
-        3
+        fs::read_to_string(thread.join("attachments/storage/metadata.json")).unwrap(),
+        "{}"
     );
-    let _ = tokio::fs::remove_dir_all(dir).await;
+    assert_eq!(
+        fs::read_to_string(thread.join("command-logs/output.log")).unwrap(),
+        "command output"
+    );
+
+    let reopened = TranscriptStore::new(dir.path().to_owned());
+    let parts = reopened.read_parts("user", "thread", &[0]).await.unwrap();
+    assert_eq!(texts(&parts), ["new"]);
+}
+
+#[tokio::test]
+async fn damaged_chunks_and_interrupted_writes_are_discarded_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    store
+        .append_parts("user", "thread", &[prompt(0, "kept"), prompt(100, "torn")])
+        .await
+        .unwrap();
+    let parts_dir = store.thread_dir("user", "thread").join("parts");
+    let torn = parts_dir.join("00000100.jsonl");
+    let mut contents = fs::read(&torn).unwrap();
+    contents.truncate(contents.len() / 2);
+    fs::write(&torn, contents).unwrap();
+    fs::write(parts_dir.join("00000200.jsonl"), b"{\"text\":\"\xe2\x82").unwrap();
+    fs::write(parts_dir.join(".tmp-interrupted"), "partial").unwrap();
+
+    let reopened = TranscriptStore::new(dir.path().to_owned());
+    let parts = reopened
+        .read_parts("user", "thread", &[0, 100])
+        .await
+        .unwrap();
+    assert_eq!(texts(&parts), ["kept"]);
+    let mut names: Vec<_> = fs::read_dir(&parts_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["00000000.jsonl"]);
+    reopened
+        .append_parts("user", "thread", &[prompt(100, "downloaded again")])
+        .await
+        .unwrap();
+    let parts = reopened.read_parts("user", "thread", &[100]).await.unwrap();
+    assert_eq!(texts(&parts), ["downloaded again"]);
+}
+
+#[tokio::test]
+async fn the_index_lives_only_while_a_lease_is_held() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_owned());
+    let loaded = |store: &TranscriptStore| {
+        store
+            .threads
+            .try_lock()
+            .unwrap()
+            .values()
+            .any(|slot| slot.strong_count() != 0)
+    };
+    store
+        .append_parts("user", "thread", &[prompt(0, "a")])
+        .await
+        .unwrap();
+    assert!(!loaded(&store));
+    let lease = store.open_thread("user", "thread").await.unwrap();
+    assert!(loaded(&store));
+    drop(lease);
+    assert!(!loaded(&store));
 }

@@ -1,11 +1,27 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 
-use super::store::{TranscriptStore, safe_segment};
+use super::store::{TranscriptStore, atomic_write, safe_segment};
 use super::types::TranscriptAttachmentMeta;
+
+pub(super) fn write_attachment_metadata(
+    thread_dir: &Path,
+    attachment: &TranscriptAttachmentMeta,
+) -> anyhow::Result<()> {
+    let dir = thread_dir
+        .join("attachments")
+        .join(safe_segment(&attachment.storage_id));
+    let path = dir.join("metadata.json");
+    fs::create_dir_all(&dir)?;
+    let mut metadata = attachment.clone();
+    metadata.url = None;
+    metadata.local_path = None;
+    atomic_write(&path, &serde_json::to_vec(&metadata)?)
+}
 
 impl TranscriptStore {
     pub fn pending_attachment_path(&self, user_id: &str, storage_id: &str) -> PathBuf {
@@ -120,18 +136,9 @@ impl TranscriptStore {
         thread_id: &str,
         attachment: &TranscriptAttachmentMeta,
     ) -> anyhow::Result<()> {
-        let dir = self
-            .thread_dir(user_id, thread_id)
-            .join("attachments")
-            .join(safe_segment(&attachment.storage_id));
-        tokio::fs::create_dir_all(&dir).await?;
-        let mut meta = attachment.clone();
-        meta.url = None;
-        meta.local_path = None;
-        let temp = tempfile::NamedTempFile::new_in(&dir)?;
-        tokio::fs::write(temp.path(), serde_json::to_vec(&meta)?).await?;
-        temp.persist(dir.join("metadata.json"))?;
-        Ok(())
+        let dir = self.thread_dir(user_id, thread_id);
+        let attachment = attachment.clone();
+        tokio::task::spawn_blocking(move || write_attachment_metadata(&dir, &attachment)).await?
     }
 
     pub async fn attachment_metadata(
@@ -154,13 +161,7 @@ impl TranscriptStore {
                 );
                 Ok(Some(meta))
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(self
-                .read_all_parts(user_id, thread_id)
-                .await?
-                .into_iter()
-                .filter_map(|part| part.prompt)
-                .flat_map(|prompt| prompt.image_uploads)
-                .find(|attachment| attachment.storage_id == storage_id)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::TranscriptStore;
 
 #[test]
 fn parses_canonical_parts_without_legacy_metadata() {
@@ -44,7 +45,6 @@ fn parses_legacy_work_and_normalizes_call_invocations() {
         }]
     }))
     .unwrap();
-    assert_eq!(parts[0].work_assignment().ranges[0].section_key, "section");
     assert_eq!(parts[0].content_items().len(), 2);
     assert_eq!(
         parts[0].content_items()[1]["toolInvocationId"],

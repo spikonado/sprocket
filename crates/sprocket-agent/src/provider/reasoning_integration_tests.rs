@@ -317,7 +317,7 @@ async fn durable_history_from_parts(
         .await
         .unwrap();
     let loaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
-    let state = store.load_state("user", "thread").await.unwrap();
+    let state = sprocket_transcript::TranscriptState::default();
     agent_history_from_parts(&state, &loaded, None)
 }
 
@@ -400,17 +400,13 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     let dir = tempfile::tempdir().expect("handoff replay cache directory");
     let store = TranscriptStore::new(dir.path().to_path_buf());
     store.append_parts("user", "thread", &parts).await.unwrap();
-    store
-        .update_state("user", "thread", |state| {
-            state.context_summary = Some(SUMMARY.to_string());
-            state.history_from_number = 2;
-            state.remote_total_parts = 5;
-        })
-        .await
-        .unwrap();
-
     let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
-    let state = reloaded_store.load_state("user", "thread").await.unwrap();
+    let state = sprocket_transcript::TranscriptState {
+        remote_total_parts: 5,
+        history_from_number: 2,
+        context_summary: Some(SUMMARY.to_string()),
+        ..Default::default()
+    };
     let loaded = reloaded_store
         .read_parts("user", "thread", &[0, 1, 2, 3, 4])
         .await
@@ -1190,7 +1186,7 @@ async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
             .append_parts("user", "thread", &transcript)
             .await
             .unwrap();
-        let state = store.load_state("user", "thread").await.unwrap();
+        let state = sprocket_transcript::TranscriptState::default();
         let reloaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
         let messages =
             deserialize_agent_history(agent_history_from_parts(&state, &reloaded, None)).unwrap();

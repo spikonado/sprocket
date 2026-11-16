@@ -28,7 +28,6 @@ fn prompt_part(number: u32, attachments: Vec<TranscriptAttachmentMeta>) -> Trans
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }
 }
 
@@ -426,12 +425,6 @@ async fn discarding_a_draft_removes_only_its_staging_and_thread_copy() {
     assert!(!path.exists());
     assert!(!staged.exists());
     assert!(unrelated.exists());
-    assert!(
-        store
-            .clear_thread("user", "pending-attachments")
-            .await
-            .is_err()
-    );
 }
 
 #[tokio::test]
@@ -466,7 +459,6 @@ async fn moves_staged_files_into_their_thread_without_size_or_count_caps() {
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }];
     cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
         Ok(None)
@@ -487,8 +479,6 @@ async fn moves_staged_files_into_their_thread_without_size_or_count_caps() {
     let text = prompt.text_with_attachments();
     assert_eq!(text.matches("local transcript cache").count(), 1);
     assert_eq!(text.matches("file-.._notes.txt").count(), 6);
-    store.clear_thread("user", "thread").await.unwrap();
-    assert!(!store.thread_dir("user", "thread").exists());
 }
 
 #[tokio::test]
@@ -622,7 +612,6 @@ async fn expired_remote_files_do_not_block_history_and_cached_files_remain_usabl
         }),
         completion: None,
         tool: None,
-        work: Default::default(),
     }];
     cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
         Ok(None)

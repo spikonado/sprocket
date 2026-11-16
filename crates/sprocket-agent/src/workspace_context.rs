@@ -39,7 +39,7 @@ impl WorkspaceContext {
                 instructions_section(workspace_instructions)
             ),
             location: format!(
-                "# Environment\n\n- This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.\n- The workspace root is `{}`.",
+                "# Environment\n\n- This conversation/thread's ID is {thread_id}. Its local transcript cache, attachments, and command logs are in `{}`.\n- `parts/*.jsonl` there, read in filename order, is the thread's history in order. It can have gaps while older history downloads during this run.\n- The workspace root is `{}`.",
                 transcript_dir.display(),
                 workspace_root.display()
             ),

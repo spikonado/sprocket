@@ -1,12 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use anyhow::Context;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, broadcast};
 
-use super::types::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptState};
+use super::attachment_store::write_attachment_metadata;
+use super::monitor::{PatchIdentities, PatchIndex};
+use super::types::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart};
+
+const FORMAT_FILE: &str = "format";
+const STORE_FORMAT: &str = "sorted-jsonl-100-v1\n";
 
 pub(super) fn safe_segment(value: &str) -> String {
     value
@@ -21,26 +27,64 @@ pub(super) fn safe_segment(value: &str) -> String {
         .collect()
 }
 
-fn display_cache_segment(value: &str) -> anyhow::Result<&str> {
-    if value.is_empty()
-        || value.contains("..")
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'(' | b')'))
-    {
-        anyhow::bail!("invalid transcript display cache component");
-    }
-    Ok(value)
-}
-
 fn chunk_start(number: u32) -> u32 {
     number / TRANSCRIPT_CHUNK_SIZE * TRANSCRIPT_CHUNK_SIZE
 }
 
+#[derive(Default)]
+struct ThreadIndex {
+    numbers: BTreeSet<u32>,
+    sources: HashMap<String, u32>,
+    patches: PatchIdentities,
+}
+
+impl ThreadIndex {
+    fn contains(&self, part: &TranscriptPart) -> bool {
+        self.numbers.contains(&part.number) || self.sources.contains_key(&part.source_key)
+    }
+
+    fn insert(&mut self, part: &TranscriptPart) {
+        self.numbers.insert(part.number);
+        self.sources.insert(part.source_key.clone(), part.number);
+        self.patches.insert(part);
+    }
+
+    fn missing_page(&self, start: u32, end: u32) -> Option<(u32, u32)> {
+        if start >= end {
+            return None;
+        }
+        let mut top = end;
+        for number in self.numbers.range(start..end).rev() {
+            if number + 1 != top {
+                break;
+            }
+            top = *number;
+        }
+        if top <= start {
+            return None;
+        }
+        let floor = chunk_start(top - 1).max(start);
+        let bottom = self
+            .numbers
+            .range(floor..top)
+            .next_back()
+            .map_or(floor, |number| number + 1);
+        Some((bottom, top))
+    }
+}
+
+type ThreadSlot = Mutex<Option<ThreadIndex>>;
+
+/// Keeps a thread's index in memory while held. Without a lease, each call rebuilds it.
+pub struct TranscriptLease {
+    _slot: Arc<ThreadSlot>,
+}
+
 pub struct TranscriptStore {
     pub(super) root: PathBuf,
-    locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
-    pub(super) replica_resets: broadcast::Sender<(String, String)>,
+    locks: Mutex<HashMap<String, Weak<Mutex<()>>>>,
+    threads: Mutex<HashMap<PathBuf, Weak<ThreadSlot>>>,
+    changes: broadcast::Sender<(String, String)>,
 }
 
 impl TranscriptStore {
@@ -48,26 +92,13 @@ impl TranscriptStore {
         Arc::new(Self {
             root,
             locks: Mutex::new(HashMap::new()),
-            replica_resets: broadcast::channel(16).0,
+            threads: Mutex::new(HashMap::new()),
+            changes: broadcast::channel(64).0,
         })
     }
 
     pub fn root(&self) -> PathBuf {
         self.root.clone()
-    }
-
-    pub(super) fn display_cache_path(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        key: &str,
-    ) -> anyhow::Result<PathBuf> {
-        Ok(self
-            .root
-            .join(display_cache_segment(user_id)?)
-            .join(display_cache_segment(thread_id)?)
-            .join("display")
-            .join(display_cache_segment(key)?))
     }
 
     pub fn thread_dir(&self, user_id: &str, thread_id: &str) -> PathBuf {
@@ -76,94 +107,93 @@ impl TranscriptStore {
             .join(safe_segment(thread_id))
     }
 
-    pub(crate) async fn lock_thread(&self, user_id: &str, thread_id: &str) -> Arc<Mutex<()>> {
-        self.lock_key(format!("{user_id}/{thread_id}")).await
-    }
-
     pub(super) async fn lock_key(&self, key: String) -> Arc<Mutex<()>> {
         let mut locks = self.locks.lock().await;
-        locks
-            .entry(key)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+        locks.retain(|_, lock| lock.strong_count() != 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
     }
 
-    pub async fn load_state(
+    async fn thread_slot(&self, dir: &Path) -> Arc<ThreadSlot> {
+        let mut threads = self.threads.lock().await;
+        threads.retain(|_, slot| slot.strong_count() != 0);
+        if let Some(slot) = threads.get(dir).and_then(Weak::upgrade) {
+            return slot;
+        }
+        let slot = Arc::new(ThreadSlot::default());
+        threads.insert(dir.to_owned(), Arc::downgrade(&slot));
+        slot
+    }
+
+    async fn with_thread<T: Send + 'static>(
         &self,
         user_id: &str,
         thread_id: &str,
-    ) -> anyhow::Result<TranscriptState> {
-        let path = self.thread_dir(user_id, thread_id).join("state.json");
-        let contents = match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(TranscriptState::new(
-                    user_id.to_string(),
-                    thread_id.to_string(),
-                ));
-            }
-            Err(error) => {
-                return Err(error).with_context(|| format!("failed to read {}", path.display()));
-            }
-        };
-        serde_json::from_str(&contents)
-            .with_context(|| format!("failed to parse transcript state {}", path.display()))
-    }
-
-    async fn write_state(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        state: &TranscriptState,
-    ) -> anyhow::Result<()> {
+        operation: impl FnOnce(&Path, &mut ThreadIndex) -> anyhow::Result<T> + Send + 'static,
+    ) -> anyhow::Result<T> {
         let dir = self.thread_dir(user_id, thread_id);
-        let parts_dir = dir.join("parts");
-        tokio::fs::create_dir_all(&parts_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to create transcript directory {}",
-                    parts_dir.display()
-                )
-            })?;
-        let path = dir.join("state.json");
-        let payload = serde_json::to_vec_pretty(state)?;
-        let temporary = tempfile::NamedTempFile::new_in(&dir).with_context(|| {
-            format!(
-                "failed to create temporary transcript state in {}",
-                dir.display()
-            )
-        })?;
-        let (file, temporary_path) = temporary.into_parts();
-        let mut file = tokio::fs::File::from_std(file);
-        file.write_all(&payload)
-            .await
-            .with_context(|| format!("failed to write transcript state {}", path.display()))?;
-        file.flush()
-            .await
-            .with_context(|| format!("failed to flush transcript state {}", path.display()))?;
-        drop(file);
-        temporary_path
-            .persist(&path)
-            .with_context(|| format!("failed to publish transcript state {}", path.display()))?;
-        Ok(())
+        let mut index = self.thread_slot(&dir).await.lock_owned().await;
+        // The blocking task finishes even if the caller is dropped, so files and index agree.
+        tokio::task::spawn_blocking(move || {
+            if index.is_none() {
+                *index = Some(load_index(&dir)?);
+            }
+            let result = operation(&dir, index.as_mut().expect("index was loaded"));
+            if result.is_err() {
+                // Reload committed chunks after a partially failed write.
+                *index = None;
+            }
+            result
+        })
+        .await?
     }
 
-    pub async fn update_state<F>(
+    pub async fn open_thread(
         &self,
         user_id: &str,
         thread_id: &str,
-        update: F,
-    ) -> anyhow::Result<TranscriptState>
-    where
-        F: FnOnce(&mut TranscriptState),
-    {
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        let mut state = self.load_state(user_id, thread_id).await?;
-        update(&mut state);
-        self.write_state(user_id, thread_id, &state).await?;
-        Ok(state)
+    ) -> anyhow::Result<TranscriptLease> {
+        let slot = self.thread_slot(&self.thread_dir(user_id, thread_id)).await;
+        self.with_thread(user_id, thread_id, |_, _| Ok(())).await?;
+        Ok(TranscriptLease { _slot: slot })
+    }
+
+    pub fn watch_changes(&self) -> broadcast::Receiver<(String, String)> {
+        self.changes.subscribe()
+    }
+
+    pub async fn part_numbers(&self, user_id: &str, thread_id: &str) -> anyhow::Result<Vec<u32>> {
+        self.with_thread(user_id, thread_id, |_, index| {
+            Ok(index.numbers.iter().copied().collect())
+        })
+        .await
+    }
+
+    pub async fn source_number(
+        &self,
+        user: &str,
+        thread: &str,
+        source: &str,
+    ) -> anyhow::Result<Option<u32>> {
+        let source = source.to_owned();
+        self.with_thread(user, thread, move |_, index| {
+            Ok(index.sources.get(&source).copied())
+        })
+        .await
+    }
+
+    pub(super) async fn patch_index(
+        &self,
+        user: &str,
+        thread: &str,
+        total: u32,
+    ) -> anyhow::Result<PatchIndex> {
+        self.with_thread(user, thread, move |_, index| Ok(index.patches.index(total)))
+            .await
     }
 
     pub async fn append_parts(
@@ -175,54 +205,50 @@ impl TranscriptStore {
         if parts.is_empty() {
             return Ok(());
         }
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        let dir = self.thread_dir(user_id, thread_id).join("parts");
-        tokio::fs::create_dir_all(&dir).await?;
-        let mut grouped: HashMap<u32, Vec<&TranscriptPart>> = HashMap::new();
-        let mut starts = Vec::new();
-        for part in parts {
-            let start = chunk_start(part.number);
-            grouped
-                .entry(start)
-                .or_insert_with(|| {
-                    starts.push(start);
-                    Vec::new()
-                })
-                .push(part);
-        }
-        for start in starts {
-            let path = chunk_path(&dir, start);
-            let existing = recover_and_read_chunk(&path).await?;
-            let mut seen = existing
-                .into_iter()
-                .map(|part| part.number)
-                .collect::<HashSet<_>>();
-            let mut file = None;
-            for part in grouped
-                .remove(&start)
-                .expect("chunk start was recorded while grouping")
-            {
-                if !seen.insert(part.number) {
+        let parts: Vec<_> = parts
+            .iter()
+            .map(TranscriptPart::without_ephemeral_urls)
+            .collect();
+        let changes = self.changes.clone();
+        let scope = (user_id.to_owned(), thread_id.to_owned());
+        self.with_thread(user_id, thread_id, move |dir, index| {
+            let mut chunks = BTreeMap::<u32, Vec<TranscriptPart>>::new();
+            for part in parts {
+                if index.contains(&part) {
                     continue;
                 }
-                if file.is_none() {
-                    file = Some(
-                        tokio::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&path)
-                            .await?,
-                    );
-                }
-                let mut line = serde_json::to_string(&part.without_ephemeral_urls())?;
-                line.push('\n');
-                let file = file.as_mut().expect("append file opened above");
-                file.write_all(line.as_bytes()).await?;
-                file.flush().await?;
+                index.insert(&part);
+                chunks
+                    .entry(chunk_start(part.number))
+                    .or_default()
+                    .push(part);
             }
-        }
-        Ok(())
+            let changed = !chunks.is_empty();
+            for (start, additions) in chunks {
+                for attachment in additions
+                    .iter()
+                    .filter_map(|part| part.prompt.as_ref())
+                    .flat_map(|prompt| &prompt.image_uploads)
+                {
+                    write_attachment_metadata(dir, attachment)?;
+                }
+                let path = chunk_path(dir, start);
+                let mut chunk = read_chunk(&path, start)?;
+                chunk.extend(additions);
+                chunk.sort_unstable_by_key(|part| part.number);
+                let mut payload = Vec::new();
+                for part in &chunk {
+                    serde_json::to_writer(&mut payload, part)?;
+                    payload.push(b'\n');
+                }
+                atomic_write(&path, &payload)?;
+            }
+            if changed {
+                let _ = changes.send(scope);
+            }
+            Ok(())
+        })
+        .await
     }
 
     pub async fn read_parts(
@@ -231,126 +257,170 @@ impl TranscriptStore {
         thread_id: &str,
         numbers: &[u32],
     ) -> anyhow::Result<Vec<TranscriptPart>> {
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        let dir = self.thread_dir(user_id, thread_id).join("parts");
-        let mut by_number = HashMap::new();
-        let mut loaded_chunks = HashSet::new();
-        for &number in numbers {
-            let start = chunk_start(number);
-            if loaded_chunks.insert(start) {
-                for part in recover_and_read_chunk(&chunk_path(&dir, number)).await? {
-                    by_number.entry(part.number).or_insert(part);
+        let numbers = numbers.to_vec();
+        self.with_thread(user_id, thread_id, move |dir, index| {
+            let wanted: BTreeSet<u32> = numbers
+                .iter()
+                .copied()
+                .filter(|number| index.numbers.contains(number))
+                .collect();
+            let chunks: BTreeSet<u32> = wanted.iter().map(|number| chunk_start(*number)).collect();
+            let mut parts = HashMap::new();
+            for start in chunks {
+                for part in read_chunk(&chunk_path(dir, start), start)? {
+                    if wanted.contains(&part.number) {
+                        parts.insert(part.number, part);
+                    }
                 }
             }
-        }
-        Ok(numbers
-            .iter()
-            .filter_map(|number| by_number.get(number).cloned())
-            .collect())
+            Ok(numbers
+                .iter()
+                .filter_map(|number| parts.get(number).cloned())
+                .collect())
+        })
+        .await
     }
 
-    pub(super) async fn read_all_parts(
+    pub async fn read_parts_range(
         &self,
         user_id: &str,
         thread_id: &str,
+        start: u32,
+        end: u32,
     ) -> anyhow::Result<Vec<TranscriptPart>> {
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        let dir = self.thread_dir(user_id, thread_id).join("parts");
-        let mut entries = match tokio::fs::read_dir(&dir).await {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error.into()),
-        };
-        let mut parts = Vec::new();
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "jsonl")
-            {
-                parts.extend(recover_and_read_chunk(&path).await?);
+        self.with_thread(user_id, thread_id, move |dir, index| {
+            let mut parts = Vec::new();
+            if start >= end {
+                return Ok(parts);
             }
-        }
-        Ok(parts)
+            let chunks: BTreeSet<u32> = index
+                .numbers
+                .range(start..end)
+                .map(|number| chunk_start(*number))
+                .collect();
+            for chunk in chunks {
+                parts.extend(
+                    read_chunk(&chunk_path(dir, chunk), chunk)?
+                        .into_iter()
+                        .filter(|part| (start..end).contains(&part.number)),
+                );
+            }
+            Ok(parts)
+        })
+        .await
     }
 
-    pub async fn clear_thread(&self, user_id: &str, thread_id: &str) -> anyhow::Result<()> {
+    pub(super) async fn missing_page(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        start: u32,
+        end: u32,
+    ) -> anyhow::Result<Option<(u32, u32)>> {
+        self.with_thread(user_id, thread_id, move |_, index| {
+            Ok(index.missing_page(start, end))
+        })
+        .await
+    }
+}
+
+fn chunk_path(dir: &Path, start: u32) -> PathBuf {
+    dir.join("parts").join(format!("{start:08}.jsonl"))
+}
+
+fn load_index(dir: &Path) -> anyhow::Result<ThreadIndex> {
+    let parts_dir = dir.join("parts");
+    let marker = match fs::read(dir.join(FORMAT_FILE)) {
+        Ok(marker) => Some(marker),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if marker.as_deref() != Some(STORE_FORMAT.as_bytes()) {
+        // Caches from older releases are downloaded again; attachments and command logs stay.
+        for name in ["state.json", "display", "parts"] {
+            remove_path(&dir.join(name))?;
+        }
+        fs::create_dir_all(&parts_dir)?;
+        atomic_write(&dir.join(FORMAT_FILE), STORE_FORMAT.as_bytes())?;
+    } else {
+        fs::create_dir_all(&parts_dir)?;
+    }
+    let mut index = ThreadIndex::default();
+    for entry in fs::read_dir(&parts_dir)? {
+        let path = entry?.path();
+        let start = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".jsonl"))
+            .and_then(|start| start.parse::<u32>().ok())
+            .filter(|start| chunk_path(dir, *start) == path);
+        match start.map(|start| read_chunk(&path, start)) {
+            Some(Ok(parts)) => parts.iter().for_each(|part| index.insert(part)),
+            Some(Err(error)) if error.downcast_ref::<std::io::Error>().is_some() => {
+                return Err(error);
+            }
+            // Damaged chunks are downloaded again.
+            Some(Err(error)) => {
+                eprintln!(
+                    "sprocket-transcript: discarding {}: {error:#}",
+                    path.display()
+                );
+                remove_path(&path)?;
+            }
+            // Temporary files left by an interrupted write.
+            None => remove_path(&path)?,
+        }
+    }
+    Ok(index)
+}
+
+fn remove_path(path: &Path) -> anyhow::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path)?,
+        Ok(_) => fs::remove_file(path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn read_chunk(path: &Path, start: u32) -> anyhow::Result<Vec<TranscriptPart>> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let mut parts: Vec<TranscriptPart> = Vec::new();
+    // Bytes, not `lines()`: invalid UTF-8 is chunk damage, not an I/O failure.
+    for line in BufReader::new(file).split(b'\n') {
+        let part: TranscriptPart = serde_json::from_slice(&line?)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
         anyhow::ensure!(
-            !thread_id.is_empty()
-                && !thread_id.eq_ignore_ascii_case("blobs")
-                && !thread_id.eq_ignore_ascii_case("pending-attachments")
-                && thread_id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
-            "invalid transcript thread ID"
+            chunk_start(part.number) == start
+                && parts
+                    .last()
+                    .is_none_or(|previous| previous.number < part.number),
+            "{} is not sorted into its chunk",
+            path.display()
         );
-        let download_lock = self
-            .lock_key(format!("download/{user_id}/{thread_id}"))
-            .await;
-        let _download_guard = download_lock.lock().await;
-        let lock = self.lock_thread(user_id, thread_id).await;
-        let _guard = lock.lock().await;
-        let dir = self.thread_dir(user_id, thread_id);
-        if tokio::fs::try_exists(&dir).await? {
-            let mut entries = tokio::fs::read_dir(&dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                if entry.file_name() == "command-logs" {
-                    continue;
-                }
-                if entry.file_type().await?.is_dir() {
-                    tokio::fs::remove_dir_all(entry.path()).await?;
-                } else {
-                    tokio::fs::remove_file(entry.path()).await?;
-                }
-            }
-            match tokio::fs::remove_dir(&dir).await {
-                Ok(()) => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                    ) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(())
-    }
-}
-
-fn chunk_path(dir: &Path, number: u32) -> PathBuf {
-    dir.join(format!("{:08}.jsonl", chunk_start(number)))
-}
-
-pub(super) async fn recover_and_read_chunk(path: &Path) -> anyhow::Result<Vec<TranscriptPart>> {
-    if !tokio::fs::try_exists(path).await? {
-        return Ok(Vec::new());
-    }
-    let contents = tokio::fs::read(path).await?;
-    if contents.is_empty() {
-        return Ok(Vec::new());
-    }
-    let text = String::from_utf8_lossy(&contents);
-    let mut valid = String::new();
-    let mut parts = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(part) = serde_json::from_str::<TranscriptPart>(trimmed) {
-            valid.push_str(trimmed);
-            valid.push('\n');
-            parts.push(part);
-        }
-    }
-    if valid.as_bytes() != contents {
-        let tmp = path.with_extension("jsonl.tmp");
-        tokio::fs::write(&tmp, valid.as_bytes()).await?;
-        tokio::fs::rename(&tmp, path).await?;
+        parts.push(part);
     }
     Ok(parts)
+}
+
+// Not synced to disk: after a crash, a damaged chunk is discarded and downloaded again.
+pub(super) fn atomic_write(path: &Path, payload: &[u8]) -> anyhow::Result<()> {
+    let dir = path
+        .parent()
+        .context("transcript file has no parent directory")?;
+    let mut temporary = tempfile::Builder::new().prefix(".tmp-").tempfile_in(dir)?;
+    temporary.write_all(payload)?;
+    temporary
+        .persist(path)
+        .with_context(|| format!("failed to save {}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]

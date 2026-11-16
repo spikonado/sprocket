@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::ops::Range;
 use std::time::Duration;
 
@@ -7,9 +8,12 @@ use futures::stream::{self, BoxStream, unfold};
 use serde::{Deserialize, Serialize};
 use sprocket_host::transcript_watch::TranscriptWatchSession;
 use sprocket_transcript::rows::{
-    ProjectionScope, TranscriptRow, completion_source_key, project_rows,
+    ProjectionScope, ToolResults, TranscriptRow, completion_source_key, project_rows,
+    saved_work_blocks,
 };
-use sprocket_transcript::{LiveCompletionOverlay, LiveCompletionWatchEvent, TranscriptPart};
+use sprocket_transcript::{
+    LiveCompletionOverlay, LiveCompletionWatchEvent, TranscriptPart, TranscriptStore,
+};
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 
@@ -106,33 +110,67 @@ async fn load_window(
     fixed_start: Option<u32>,
 ) -> anyhow::Result<SavedWindow> {
     let store = &state.host.transcript;
-    let metadata = store.load_state(user, thread).await?;
-    if let Some(run) = scope.run_id() {
-        let range = store
-            .read_run_range(user, thread, run)
-            .await?
-            .unwrap_or(0..0);
+    load_store_window(
+        store,
+        user,
+        thread,
+        scope,
+        before,
+        fixed_start,
+        |start, end| async move {
+            state
+                .host
+                .convex_client_for(user)
+                .await?
+                .transcript_parts_page(thread, start, end)
+                .await
+        },
+    )
+    .await
+}
+
+async fn load_store_window<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    scope: &ProjectionScope,
+    before: Option<u32>,
+    fixed_start: Option<u32>,
+    mut fetch: F,
+) -> anyhow::Result<SavedWindow>
+where
+    F: FnMut(u32, u32) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
+{
+    let _lease = store.open_thread(user, thread).await?;
+    let numbers = store.part_numbers(user, thread).await?;
+    let highwater = numbers.last().map_or(0, |number| number.saturating_add(1));
+    if scope.run_id().is_some() {
+        let parts = load_detail(store, user, thread, scope, highwater, &mut fetch).await?;
+        let window = parts.first().map_or(0, |part| part.number)
+            ..parts.last().map_or(0, |part| part.number.saturating_add(1));
         return Ok(SavedWindow {
-            parts: store
-                .read_parts_range(user, thread, range.start, range.end)
-                .await?,
-            window: range,
+            parts,
+            window,
             next_before: None,
-            stale: metadata.stale,
+            stale: false,
         });
     }
-    let end = before
-        .unwrap_or(metadata.remote_total_parts)
-        .min(metadata.remote_total_parts);
-    let tail_start = fixed_start
+    let end = before.unwrap_or(highwater);
+    // A tail page that lands past a wide gap moves the window instead of downloading the gap first.
+    let fixed_start = fixed_start.filter(|start| {
+        let cached = numbers.len() - numbers.partition_point(|number| number < start);
+        (end.saturating_sub(*start) as usize).saturating_sub(cached) <= PAGE_PARTS as usize
+    });
+    let mut start = fixed_start
         .unwrap_or(end.saturating_sub(PAGE_PARTS))
         .min(end);
-    let tail = store
-        .read_parts_range(user, thread, tail_start, end)
+    store
+        .ensure_parts(user, thread, start, end, &mut fetch)
         .await?;
-    let mut start = tail_start;
+    let mut parts = store.read_parts_range(user, thread, start, end).await?;
     if fixed_start.is_none()
-        && let Some(last) = tail.iter().rev().find(|part| {
+        && let Some(last) = parts.iter().rev().find(|part| {
             part.prompt
                 .as_ref()
                 .is_some_and(|prompt| prompt.hidden.is_none())
@@ -148,31 +186,355 @@ async fn load_window(
                                 .is_some_and(|text| !text.trim().is_empty())
                 })
         })
-        && let Some(range) = store.read_run_range(user, thread, &last.run_id).await?
+        && let Some(boundary) = parts
+            .iter()
+            .position(|part| part.run_id == last.run_id && is_run_origin(part))
     {
-        start = start.max(range.start);
+        start = parts[boundary].number;
+        parts.drain(..boundary);
     }
-    let context_start = if let Some(first) = tail.iter().find(|part| part.number >= start) {
-        store
-            .read_run_range(user, thread, &first.run_id)
-            .await?
-            .map_or(start, |range| range.start)
-    } else {
-        start
-    };
-    let parts = if context_start == tail_start {
-        tail
-    } else {
-        store
-            .read_parts_range(user, thread, context_start, end)
-            .await?
-    };
+    let parts = complete_prefix(store, user, thread, parts, scope, &mut fetch).await?;
     Ok(SavedWindow {
         parts,
         window: start..end,
         next_before: (start > 0).then_some(start),
-        stale: metadata.stale,
+        stale: false,
     })
+}
+
+async fn load_detail<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    scope: &ProjectionScope,
+    highwater: u32,
+    fetch: &mut F,
+) -> anyhow::Result<Vec<TranscriptPart>>
+where
+    F: FnMut(u32, u32) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
+{
+    let source = scope
+        .source_key()
+        .ok_or_else(|| anyhow::anyhow!("invalid transcript row ID"))?;
+    let run = scope.run_id().unwrap();
+    let target = scope.row_id().unwrap();
+    // Row IDs come from cached parts or the live completion, so an uncached source is unsaved.
+    let Some(number) = store.source_number(user, thread, source).await? else {
+        return Ok(Vec::new());
+    };
+    let mut parts = store.read_parts(user, thread, &[number]).await?;
+    if target.starts_with("work:") {
+        let mut start = number.saturating_add(1);
+        while start < highwater
+            && !saved_work_blocks(&parts)
+                .iter()
+                .any(|block| block.id == target && block.closed)
+        {
+            let end = start.saturating_add(PAGE_PARTS).min(highwater);
+            let cached = store.read_parts_range(user, thread, start, end).await?;
+            let mut contiguous_end = start;
+            for part in cached {
+                if part.number != contiguous_end {
+                    break;
+                }
+                contiguous_end += 1;
+                if part.run_id == run {
+                    parts.push(part);
+                }
+            }
+            if saved_work_blocks(&parts)
+                .iter()
+                .any(|block| block.id == target && block.closed)
+            {
+                break;
+            }
+            store
+                .ensure_parts(user, thread, contiguous_end, end, &mut *fetch)
+                .await?;
+            parts.extend(
+                store
+                    .read_parts_range(user, thread, contiguous_end, end)
+                    .await?
+                    .into_iter()
+                    .filter(|part| part.run_id == run),
+            );
+            start = end;
+        }
+        let blocks = saved_work_blocks(&parts);
+        let Some(block) = blocks.iter().find(|block| block.id == target) else {
+            return Ok(parts);
+        };
+        let mut wanted: HashSet<_> = block.items.iter().map(|position| position.part).collect();
+        if block.closed
+            && let Some(last) = block.items.last()
+            && let Some(closing) = parts.iter().find(|part| {
+                part.number >= last.part
+                    && starts_with_closing_text(part, last.part, last.item as usize)
+            })
+        {
+            wanted.insert(closing.number);
+        }
+        let results = ToolResults::new(&parts);
+        for position in &block.items {
+            let part = parts
+                .iter()
+                .find(|part| part.number == position.part)
+                .unwrap();
+            if let Some(item) = part.content_items().get(position.item as usize)
+                && let Some(result) = results.get(part, item, true)
+            {
+                wanted.insert(result.number);
+            }
+        }
+        parts.retain(|part| wanted.contains(&part.number));
+    }
+    let calls: Vec<_> = if target.starts_with("work:") {
+        saved_work_blocks(&parts)
+            .into_iter()
+            .find(|block| block.id == target)
+            .into_iter()
+            .flat_map(|block| block.items)
+            .filter_map(|position| {
+                let part = parts.iter().find(|part| part.number == position.part)?;
+                (part.content_items().get(position.item as usize)?["type"] == "tool-call")
+                    .then_some((position.part, position.item as usize))
+            })
+            .collect()
+    } else {
+        parts
+            .iter()
+            .flat_map(|part| {
+                part.content_items()
+                    .iter()
+                    .enumerate()
+                    .filter(move |(offset, item)| {
+                        item["type"] == "tool-call"
+                            && sprocket_transcript::work_blocks::item_id("tool", part, *offset)
+                                == target
+                    })
+                    .map(move |(offset, _)| (part.number, offset))
+            })
+            .collect()
+    };
+    let invocations: Vec<_> = calls
+        .iter()
+        .filter_map(|(number, offset)| {
+            parts
+                .iter()
+                .find(|part| part.number == *number)?
+                .content_items()[*offset]["toolInvocationId"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect();
+    for invocation in invocations {
+        if let Some(result) = store
+            .source_number(user, thread, &format!("tool:{invocation}:finished"))
+            .await?
+            && !parts.iter().any(|part| part.number == result)
+        {
+            parts.extend(store.read_parts(user, thread, &[result]).await?);
+        }
+    }
+    let unresolved = |parts: &[TranscriptPart], earlier: bool| {
+        let results = ToolResults::new(parts);
+        calls.iter().any(|(number, offset)| {
+            let part = parts.iter().find(|part| part.number == *number).unwrap();
+            let item = &part.content_items()[*offset];
+            (!earlier || item["toolInvocationId"].as_str().is_none() && item["callId"].is_string())
+                && results.get(part, item, true).is_none()
+        })
+    };
+    let retained: HashSet<_> = parts.iter().map(|part| part.number).collect();
+    let origin = store
+        .source_number(user, thread, &format!("prompt:{run}"))
+        .await?
+        .unwrap_or(0);
+    let mut after = number.saturating_add(1);
+    let mut before = number;
+    while unresolved(&parts, false)
+        && (after < highwater || before > origin && unresolved(&parts, true))
+    {
+        let earlier = after >= highwater;
+        let (start, end) = if after < highwater {
+            let start = after;
+            after = start.saturating_add(PAGE_PARTS).min(highwater);
+            (start, after)
+        } else {
+            let end = before;
+            before = end.saturating_sub(PAGE_PARTS).max(origin);
+            (before, end)
+        };
+        store
+            .ensure_parts(user, thread, start, end, &mut *fetch)
+            .await?;
+        let mut page = store.read_parts_range(user, thread, start, end).await?;
+        if earlier
+            && let Some(boundary) = page
+                .iter()
+                .rposition(|part| part.run_id == run && is_run_origin(part))
+        {
+            page.drain(..boundary);
+            before = origin;
+        }
+        let page = page
+            .into_iter()
+            .filter(|part| {
+                part.run_id == run
+                    && part
+                        .tool
+                        .as_ref()
+                        .is_some_and(|tool| tool.status != "started")
+                    && !parts.iter().any(|saved| saved.number == part.number)
+            })
+            .collect::<Vec<_>>();
+        parts.extend(page);
+        let results = ToolResults::new(&parts);
+        let wanted: HashSet<_> = calls
+            .iter()
+            .filter_map(|(number, offset)| {
+                let part = parts.iter().find(|part| part.number == *number).unwrap();
+                results
+                    .get(part, &part.content_items()[*offset], true)
+                    .map(|result| result.number)
+            })
+            .collect();
+        parts.retain(|part| retained.contains(&part.number) || wanted.contains(&part.number));
+    }
+    parts.sort_by_key(|part| part.number);
+    Ok(parts)
+}
+
+fn starts_with_closing_text(part: &TranscriptPart, last_part: u32, last_item: usize) -> bool {
+    part.content_items()
+        .iter()
+        .enumerate()
+        .any(|(offset, item)| {
+            (part.number > last_part || offset > last_item)
+                && item["type"] == "text"
+                && item["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty())
+        })
+}
+
+fn is_run_origin(part: &TranscriptPart) -> bool {
+    part.prompt
+        .as_ref()
+        .is_some_and(|prompt| prompt.hidden.is_none())
+}
+
+fn is_hidden_prompt(part: &TranscriptPart) -> bool {
+    part.prompt
+        .as_ref()
+        .is_some_and(|prompt| prompt.hidden.is_some())
+}
+
+/// Tracks runs whose earliest loaded prompt or completion is a hidden prompt.
+fn note_turn(hidden_starts: &mut HashSet<String>, part: &TranscriptPart) {
+    if part.tool.is_some() {
+        return;
+    }
+    if is_hidden_prompt(part) {
+        hidden_starts.insert(part.run_id.clone());
+    } else {
+        hidden_starts.remove(&part.run_id);
+    }
+}
+
+fn starts_with_text(part: &TranscriptPart) -> bool {
+    for item in part.content_items() {
+        match item["type"].as_str() {
+            Some("text" | "reasoning")
+                if item["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty()) =>
+            {
+                return item["type"] == "text";
+            }
+            Some("tool-call") => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+async fn complete_prefix<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    parts: Vec<TranscriptPart>,
+    scope: &ProjectionScope,
+    fetch: &mut F,
+) -> anyhow::Result<Vec<TranscriptPart>>
+where
+    F: FnMut(u32, u32) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
+{
+    let result_runs: HashSet<_> = parts
+        .iter()
+        .filter(|part| {
+            part.tool
+                .as_ref()
+                .is_some_and(|tool| tool.status != "started")
+        })
+        .map(|part| part.run_id.clone())
+        .collect();
+    let boundary = |part: &TranscriptPart| {
+        is_run_origin(part)
+            || matches!(scope, ProjectionScope::Thread)
+                && !result_runs.contains(&part.run_id)
+                && starts_with_text(part)
+    };
+    let mut seen = HashSet::new();
+    let mut pending = HashSet::new();
+    let mut after_turn = false;
+    for part in &parts {
+        if seen.insert(&part.run_id) && !boundary(part) && !(after_turn && is_hidden_prompt(part)) {
+            pending.insert(part.run_id.clone());
+        }
+        after_turn |= part.tool.is_none();
+    }
+    if pending.is_empty() {
+        return Ok(parts);
+    }
+    // Runs in a thread never overlap; only late tool results land after the next run starts.
+    // So a hidden prompt right after another run's prompt or completion begins a continuation run.
+    let mut hidden_starts = HashSet::new();
+    for part in parts.iter().rev() {
+        note_turn(&mut hidden_starts, part);
+    }
+    let mut prefix = Vec::new();
+    let mut end = parts.first().map_or(0, |part| part.number);
+    while !pending.is_empty() && end > 0 {
+        let start = end.saturating_sub(PAGE_PARTS);
+        store
+            .ensure_parts(user, thread, start, end, &mut *fetch)
+            .await?;
+        for part in store
+            .read_parts_range(user, thread, start, end)
+            .await?
+            .into_iter()
+            .rev()
+        {
+            if part.tool.is_none() {
+                pending.retain(|run| *run == part.run_id || !hidden_starts.contains(run));
+            }
+            if !pending.contains(&part.run_id) {
+                continue;
+            }
+            if boundary(&part) {
+                pending.remove(&part.run_id);
+            }
+            note_turn(&mut hidden_starts, &part);
+            prefix.push(part);
+        }
+        end = start;
+    }
+    prefix.reverse();
+    prefix.extend(parts);
+    Ok(prefix)
 }
 
 async fn project_window(
@@ -350,9 +712,10 @@ async fn watch(
 ) -> Result<BoxStream<'static, TranscriptRowsEvent>, ApiError> {
     let session = state.host.transcript_watchers.open(&user, &thread).await;
     let subscription = state.host.live_completions.subscribe(&thread);
-    let saved = load_window(state, &user, &thread, &scope, None, boundary)
+    let mut saved = load_window(state, &user, &thread, &scope, None, boundary)
         .await
         .map_err(ApiError::internal)?;
+    saved.stale = session.stale();
     let window_start = boundary.or_else(|| (saved.window.end > 0).then_some(saved.window.start));
     let live = LiveWindow {
         overlays: subscription.snapshot.into_iter().collect(),
@@ -412,7 +775,8 @@ async fn next_event(mut watch: Watch) -> Option<(TranscriptRowsEvent, Watch)> {
                 if matches!(refresh, Refresh::Reload) {
                     match load_window(&watch.state, &watch.user, &watch.thread, &watch.scope, None,
                         watch.window_start).await {
-                        Ok(saved) => {
+                        Ok(mut saved) => {
+                            saved.stale = watch.session.stale();
                             if saved.window.end > 0 {
                                 watch.window_start = Some(saved.window.start);
                             }

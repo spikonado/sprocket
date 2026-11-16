@@ -498,7 +498,7 @@ async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn
         .read_parts("user", "thread", &[0, 1])
         .await
         .unwrap();
-    let state = reloaded_store.load_state("user", "thread").await.unwrap();
+    let state = sprocket_transcript::TranscriptState::default();
     let reloaded = agent_history_from_parts(&state, &parts, None);
     let mut history = vec![Message::user("Where is the workspace?")];
     let mut reloaded = deserialize_agent_history(reloaded).expect("reload SIWC history");

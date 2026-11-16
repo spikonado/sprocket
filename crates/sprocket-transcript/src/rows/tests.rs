@@ -4,7 +4,7 @@ use sprocket_convex::RunStatus;
 use super::*;
 
 #[tokio::test]
-async fn legacy_calls_and_orphan_results_keep_status_actions_and_numeric_session_commands() {
+async fn legacy_calls_and_orphan_results_keep_status_and_actions() {
     let call = completion(
         0,
         "exec",
@@ -51,9 +51,6 @@ async fn legacy_calls_and_orphan_results_keep_status_actions_and_numeric_session
             matches!(row.body, TranscriptRowBody::Tool { ref display, .. } if display.status == ToolStatus::Completed)
         );
     }
-    assert!(
-        matches!(work[1].body, TranscriptRowBody::Tool { ref display, .. } if display.summary == "legacy build")
-    );
     assert!(
         matches!(work[2].body, TranscriptRowBody::Tool { ref display, .. } if matches!(&display.action, Some(crate::tool_display::ToolDisplayAction::OpenFile { path }) if path == "saved.txt"))
     );
