@@ -31,6 +31,7 @@ futures = "0.3.32"
 gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance"] }
 hex = "0.4.3"
 hmac = "0.13.0"
+i_overlay = "9.1.0"
 keyring = "4.2.0"
 libc = "0.2.186"
 open = "5.4.2"

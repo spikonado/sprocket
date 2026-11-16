@@ -278,16 +278,24 @@ async fn durable_history_from_parts(
     provider_metadata: &HashMap<String, JsonValue>,
     origin: &Origin,
 ) -> Vec<AgentHistoryMessage> {
+    let tracker = ToolCallTracker::new("run", "claim");
+    tracker.record_parts(parts);
     let mut items = durable_items_json(parts, provider_metadata);
+    tracker.annotate_items(&mut items);
     for item in &mut items {
         item["providerMetadata"]["origin"] = json!(origin);
     }
+    let invocation_id = items
+        .iter()
+        .find(|item| item["callId"] == TOOL_CALL_ID)
+        .expect("fixture tool call")["toolInvocationId"]
+        .clone();
     let part: TranscriptPart = serde_json::from_value(json!({
         "number": 0,
         "sourceKey": "completion:test",
         "kind": "completion",
         "runId": "run",
-        "completion": { "streamId": STREAM_ID, "items": items }
+        "completion": { "items": items }
     }))
     .expect("transcript fixture");
     let tool_result: TranscriptPart = serde_json::from_value(json!({
@@ -296,9 +304,7 @@ async fn durable_history_from_parts(
         "kind": "tool",
         "runId": "run",
         "tool": {
-            "toolInvocationId": "test",
-            "callId": TOOL_CALL_ID,
-            "name": TOOL_NAME,
+            "toolInvocationId": invocation_id,
             "output": "/workspace",
             "status": "completed"
         }
@@ -311,7 +317,7 @@ async fn durable_history_from_parts(
         .await
         .unwrap();
     let loaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
-    let state = store.load_state("user", "thread").await.unwrap();
+    let state = sprocket_transcript::TranscriptState::default();
     agent_history_from_parts(&state, &loaded, None)
 }
 
@@ -394,17 +400,13 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     let dir = tempfile::tempdir().expect("handoff replay cache directory");
     let store = TranscriptStore::new(dir.path().to_path_buf());
     store.append_parts("user", "thread", &parts).await.unwrap();
-    store
-        .update_state("user", "thread", |state| {
-            state.context_summary = Some(SUMMARY.to_string());
-            state.history_from_number = 2;
-            state.remote_total_parts = 5;
-        })
-        .await
-        .unwrap();
-
     let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
-    let state = reloaded_store.load_state("user", "thread").await.unwrap();
+    let state = sprocket_transcript::TranscriptState {
+        remote_total_parts: 5,
+        history_from_number: 2,
+        context_summary: Some(SUMMARY.to_string()),
+        ..Default::default()
+    };
     let loaded = reloaded_store
         .read_parts("user", "thread", &[0, 1, 2, 3, 4])
         .await
@@ -850,8 +852,10 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     let tracker = ToolCallTracker::new("run", "claim");
     tracker.begin_attempt(1, STREAM_ID);
     let dispatches = Arc::new(Mutex::new(Vec::new()));
+    let persisted_invocations = Arc::new(Mutex::new(Vec::<String>::new()));
     let tool_tracker = tracker.clone();
     let tool_dispatches = dispatches.clone();
+    let tool_persisted_invocations = persisted_invocations.clone();
     let agent = rig::AgentBuilder::new(model)
         .dynamic_tool(DynamicTool::new(
             ToolName::new(TOOL_NAME).expect("fixture tool name"),
@@ -860,10 +864,17 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
             move |args| {
                 let tracker = tool_tracker.clone();
                 let dispatches = tool_dispatches.clone();
+                let persisted_invocations = tool_persisted_invocations.clone();
                 Box::pin(async move {
                     let assignment = tracker
                         .claim_dispatch(TOOL_NAME, &args)
                         .expect("CompletionCall must assign even a repaired call before dispatch");
+                    assert!(
+                        persisted_invocations
+                            .lock()
+                            .unwrap()
+                            .contains(&assignment.tool_invocation_id)
+                    );
                     dispatches.lock().unwrap().push((args, assignment));
                     Ok(ToolOutput::text("/workspace"))
                 })
@@ -943,10 +954,9 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
                 }
                 parts.order_stream_parts(&stream_id);
                 tracker.record_parts(&parts.parts);
-                completed_turns.push((
-                    durable_items_json(&parts.parts, &provider_metadata),
-                    tracker.completion_assignments(),
-                ));
+                let mut items = durable_items_json(&parts.parts, &provider_metadata);
+                tracker.annotate_items(&mut items);
+                completed_turns.push((items, tracker.completion_invocations()));
                 if let Some(incomplete) =
                     super::incomplete_completion_error(call.finish_reason.as_ref())
                 {
@@ -957,6 +967,20 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
                     error = Some(incomplete.to_string());
                     break;
                 }
+            }
+            MultiTurnStreamItem::ToolCall { .. } => {
+                let items = &completed_turns
+                    .last()
+                    .expect("completion precedes tool call")
+                    .0;
+                persisted_invocations
+                    .lock()
+                    .unwrap()
+                    .extend(items.iter().filter_map(|item| {
+                        item.get("toolInvocationId")
+                            .and_then(JsonValue::as_str)
+                            .map(str::to_owned)
+                    }));
             }
             MultiTurnStreamItem::ToolExecutionCommitted { .. } if !parts.parts.is_empty() => {
                 parts.clear();
@@ -1006,26 +1030,18 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
         items[4]["providerMetadata"]["rigNative"]["id"],
         "msg_between"
     );
+    assert_eq!(assignments.len(), 2);
+    assert_eq!(assignments[0].call_id, TOOL_CALL_ID);
+    assert_eq!(assignments[1].call_id, "call_2");
     assert_eq!(
-        assignments
-            .work
-            .ranges
-            .iter()
-            .map(|range| (range.start, range.end))
-            .collect::<Vec<_>>(),
-        [(2, 4), (5, 6)]
+        items[3]["toolInvocationId"],
+        assignments[0].tool_invocation_id
     );
-    assert_eq!(assignments.tool_invocations.len(), 2);
-    assert_eq!(assignments.tool_invocations[0].call_id, TOOL_CALL_ID);
-    assert_eq!(assignments.tool_invocations[1].call_id, "call_2");
-    assert_eq!(assignments.tool_invocations[0].section_ordinal, 1);
-    assert_eq!(assignments.tool_invocations[1].section_ordinal, 2);
-    for (invocation, range) in assignments
-        .tool_invocations
-        .iter()
-        .zip(&assignments.work.ranges)
-    {
-        assert_eq!(invocation.section_key, range.section_key);
+    assert_eq!(
+        items[5]["toolInvocationId"],
+        assignments[1].tool_invocation_id
+    );
+    for invocation in assignments {
         assert_eq!(invocation.stream_id, STREAM_ID);
         assert_eq!(invocation.attempt_seq, 1);
     }
@@ -1047,17 +1063,11 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
         assert_eq!(dispatches.len(), 2);
         assert_eq!(
             dispatches[0],
-            (
-                json!({ "cmd": "pwd" }),
-                assignments.tool_invocations[0].clone()
-            )
+            (json!({ "cmd": "pwd" }), assignments[0].clone())
         );
         assert_eq!(
             dispatches[1],
-            (
-                json!({ "cmd": "ls" }),
-                assignments.tool_invocations[1].clone()
-            )
+            (json!({ "cmd": "ls" }), assignments[1].clone())
         );
         assert_ne!(
             dispatches[0].1.tool_invocation_id,
@@ -1176,7 +1186,7 @@ async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
             .append_parts("user", "thread", &transcript)
             .await
             .unwrap();
-        let state = store.load_state("user", "thread").await.unwrap();
+        let state = sprocket_transcript::TranscriptState::default();
         let reloaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
         let messages =
             deserialize_agent_history(agent_history_from_parts(&state, &reloaded, None)).unwrap();

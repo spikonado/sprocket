@@ -7,6 +7,77 @@ use super::{ProviderErrorDisposition, RunNoLongerActive, classify_provider_error
 use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
 #[test]
+fn spikonado_capacity_errors_show_the_gateway_message() {
+    let details = serde_json::json!({
+        "message": "We are currently at capacity, please try again later.",
+        "type": "server_error",
+        "param": null,
+        "code": crate::gateway::AT_CAPACITY_CODE,
+    });
+    for body in [
+        serde_json::json!({"error": details}),
+        serde_json::json!({"type": "error", "code": details["code"], "message": details["message"]}),
+        serde_json::json!({"response": {"error": details}}),
+    ] {
+        let error = rig::completion::PromptError::Provider(rig::ProviderError::from_provider_body(
+            body.to_string(),
+        ));
+        let error =
+            super::user_facing_error(anyhow::Error::new(error).context("Completion failed"));
+        assert_eq!(error.to_string(), details["message"].as_str().unwrap());
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.is::<rig::completion::PromptError>())
+        );
+    }
+}
+
+#[test]
+fn every_failed_provider_is_shown() {
+    use crate::types::CompletionProvider;
+
+    let capacity = rig::ProviderError::from_provider_body(
+        serde_json::json!({"error": {
+            "code": crate::gateway::AT_CAPACITY_CODE,
+            "message": "We are currently at capacity, please try again later.",
+        }})
+        .to_string(),
+    );
+    let error = super::user_facing_error(super::provider_failures(vec![
+        (CompletionProvider::Spikonado, anyhow::Error::new(capacity)),
+        (
+            CompletionProvider::Openai,
+            anyhow::anyhow!("Incorrect API key provided."),
+        ),
+    ]));
+    assert_eq!(
+        error.to_string(),
+        "Every provider failed.\nSpikonado: We are currently at capacity, please try again later.\nOpenAI API: Incorrect API key provided."
+    );
+}
+
+#[test]
+fn provider_failures_preserve_usage_limit_classification() {
+    use crate::types::CompletionProvider;
+
+    let error = super::provider_failures(vec![
+        (
+            CompletionProvider::Openai,
+            anyhow::anyhow!("Invalid API key."),
+        ),
+        (
+            CompletionProvider::Spikonado,
+            coded_convex_error("USAGE_LIMIT_REACHED"),
+        ),
+    ]);
+    assert_eq!(
+        sprocket_convex::convex_error_code(&error),
+        Some(sprocket_convex::ConvexErrorCode::UsageLimitReached)
+    );
+}
+
+#[test]
 fn generation_options_map_reasoning_effort() {
     let options = super::generation_options("xhigh").unwrap();
     assert_eq!(
@@ -127,7 +198,7 @@ fn consecutive_text_parts_preserve_their_own_phase_and_authoritative_text() {
     .unwrap();
     let history =
         crate::types::deserialize_agent_history(crate::history::agent_history_from_parts(
-            &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+            &sprocket_transcript::TranscriptState::default(),
             &[part],
             None,
         ))
@@ -186,7 +257,7 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
         }
     ])).unwrap();
     let history = crate::history::agent_history_from_parts(
-        &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+        &sprocket_transcript::TranscriptState::default(),
         &transcript,
         None,
     );
@@ -235,7 +306,7 @@ fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
     .unwrap();
     let messages =
         crate::types::deserialize_agent_history(crate::history::agent_history_from_parts(
-            &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
+            &sprocket_transcript::TranscriptState::default(),
             &[part],
             None,
         ))

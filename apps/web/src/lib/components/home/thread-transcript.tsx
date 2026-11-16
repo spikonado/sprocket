@@ -1,5 +1,6 @@
 import {
 	Fragment,
+	memo,
 	useCallback,
 	useLayoutEffect,
 	useMemo,
@@ -8,47 +9,29 @@ import {
 	type KeyboardEvent,
 	type ReactNode
 } from 'react';
-import {
-	assistantTimelinePartKey,
-	buildAssistantTimeline,
-	buildCommandSessionCommandMap,
-	groupAssistantTimeline,
-	groupAssistantTimelineSections,
-	isAssistantResponseStreaming,
-	partitionWorkSectionTools,
-	type AssistantTimelineTool
-} from '$lib/chat/assistant-timeline';
-import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
+import type { MarkdownImageScope } from '$lib/chat/markdown-images';
+import type { ArtifactEntry } from '$lib/chat/artifacts';
+import { workSummary } from '$lib/chat/work-summary';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer';
 import { useCopyFeedback } from '$lib/components/use-copy-feedback';
 import TranscriptPromptMessage from '$lib/components/home/transcript-prompt-message';
-import ReasoningDisclosure, { ReasoningText } from '$lib/components/home/reasoning-disclosure';
-import SaveCardButton from '$lib/components/home/save-card-button';
+import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure';
 import WorkTools from '$lib/components/home/work-tools';
 import WorkDisclosure from '$lib/components/home/work-disclosure';
 import WorkSectionDetails from '$lib/components/home/work-section-details';
-import type {
-	TranscriptDisplayRow,
-	TranscriptDisplayDetails,
-	TranscriptDetailCursor,
-	LiveTranscriptMessage
-} from '$lib/types/sprocket';
-import { jsonObjectString } from '$lib/chat/json-fields';
-import type { ArtifactEntry } from '$lib/chat/artifacts';
-import { mergeWorkToolCounts, workSummary, workToolCounts } from '$lib/chat/work-summary';
-import type {
-	ExecutorJob,
-	TranscriptMessage,
-	Project,
-	MessageAttachment
-} from '$lib/types/sprocket';
+import {
+	useTranscriptRows,
+	useTranscriptExpanded,
+	type TranscriptStore
+} from '$lib/home/transcript-store';
+import { TranscriptActiveRunContext, useTranscriptRunRow } from '$lib/home/transcript-run';
+import type { Project, MessageAttachment } from '$lib/types/sprocket';
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
-	messages: TranscriptMessage[];
-	actions: ExecutorJob[];
-	activeRunId: TranscriptMessage['runId'] | null;
+	store: TranscriptStore;
+	activeRunId: string | null | undefined;
 	project: Project | null;
 	cwd?: string;
 	emptyStateMessage?: string;
@@ -56,27 +39,14 @@ type Props = {
 	nextBefore?: number;
 	onLoadOlder?: () => void;
 	loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
-	loadSectionDetails?: (
-		row: TranscriptDisplayRow,
-		cursor: TranscriptDetailCursor,
-		signal: AbortSignal
-	) => Promise<TranscriptDisplayDetails>;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
-	renderRunFooter?: (runId: TranscriptMessage['runId']) => ReactNode;
+	renderRunFooter?: (runId: string) => ReactNode;
 };
 
+const NO_ARTIFACTS: ArtifactEntry[] = [];
 const SCROLL_EPSILON_PX = 28;
-
-function needsSavedCard(tool: AssistantTimelineTool) {
-	return (
-		(tool.job?.kind ?? tool.name) === 'card_checkout' &&
-		jsonObjectString(tool.output, 'status') === 'card_required'
-	);
-}
-
 const HISTORY_PREFETCH_VIEWPORTS = 3;
-
 const HISTORY_PREFETCH_PAGES = 3;
 
 type ScrollAnchor = {
@@ -86,9 +56,95 @@ type ScrollAnchor = {
 	scrollHeight: number;
 };
 
+type RowProps = Pick<Props, 'store' | 'loadAttachment' | 'onOpenArtifact'> & {
+	rowId: string;
+	imageScope: MarkdownImageScope;
+	artifacts: ArtifactEntry[];
+	onOpenImage: (image: ViewerImage) => void;
+};
+
+const TranscriptRow = memo(function TranscriptRow({
+	store,
+	rowId,
+	imageScope,
+	loadAttachment,
+	artifacts,
+	onOpenArtifact,
+	onOpenImage
+}: RowProps) {
+	const row = useTranscriptRunRow(store, rowId);
+	const summary = row?.kind === 'work' ? workSummary(row.toolCounts) : undefined;
+
+	const [expanded, setExpanded] = useTranscriptExpanded(
+		store,
+		rowId,
+		row?.kind === 'work' && row.running && summary !== undefined
+	);
+
+	const { copied, markCopied, resetCopied } = useCopyFeedback<string>();
+
+	if (!row) return null;
+
+	async function copyPrompt(text: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			markCopied(rowId);
+		} catch {
+			resetCopied();
+		}
+	}
+
+	if (row.kind === 'prompt') {
+		return (
+			<TranscriptPromptMessage
+				message={row}
+				imageScope={imageScope}
+				copied={copied === rowId}
+				loadAttachment={loadAttachment}
+				onCopy={() => void copyPrompt(row.text)}
+				onOpenImage={onOpenImage}
+			/>
+		);
+	}
+
+	return (
+		<div data-message-id={row.id} data-transcript-anchor={row.id} data-message-kind={row.kind}>
+			{row.kind === 'text' ? (
+				<div
+					role={row.running ? 'log' : undefined}
+					aria-live={row.running ? 'polite' : undefined}
+					aria-atomic="false"
+					aria-relevant="additions text"
+				>
+					<ChatMarkdown
+						imageScope={imageScope}
+						content={row.text || ' '}
+						className="text-foreground"
+						artifacts={artifacts}
+						onOpenArtifact={onOpenArtifact}
+						openLinksInNewTab
+					/>
+				</div>
+			) : row.kind === 'work' ? (
+				<WorkDisclosure
+					inProgress={row.running}
+					summary={summary}
+					expanded={expanded}
+					onToggle={() => setExpanded(!expanded)}
+				>
+					<WorkSectionDetails store={store} rowId={rowId} />
+				</WorkDisclosure>
+			) : row.kind === 'reasoning' ? (
+				<ReasoningDisclosure store={store} rowId={rowId} />
+			) : (
+				<WorkTools store={store} rowId={rowId} />
+			)}
+		</div>
+	);
+});
+
 export default function ThreadTranscript({
-	messages,
-	actions,
+	store,
 	activeRunId,
 	project,
 	cwd,
@@ -99,11 +155,17 @@ export default function ThreadTranscript({
 	nextBefore,
 	onLoadOlder,
 	loadAttachment,
-	loadSectionDetails,
-	artifacts = [],
+	artifacts = NO_ARTIFACTS,
 	onOpenArtifact,
 	renderRunFooter
 }: Props) {
+	const rowIds = useTranscriptRows(store);
+
+	const imageScope = useMemo(
+		() => ({ workspacePath: cwd ?? project?.workspacePath }),
+		[cwd, project?.workspacePath]
+	);
+
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const contentRef = useRef<HTMLDivElement | null>(null);
 	const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
@@ -113,140 +175,6 @@ export default function ThreadTranscript({
 	const requestedBeforeRef = useRef<number | undefined>(undefined);
 	const historyPrefetchPagesRef = useRef(HISTORY_PREFETCH_PAGES);
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
-
-	const {
-		copied: copiedMessageId,
-		markCopied: markMessageCopied,
-		resetCopied: resetMessageCopied
-	} = useCopyFeedback<string>();
-
-	const [rememberedCommands, setRememberedCommands] = useState<ReadonlyMap<string, string>>(
-		() => new Map()
-	);
-
-	const rememberCommands = useCallback((added: ReadonlyMap<string, string>) => {
-		if (added.size === 0) return;
-		setRememberedCommands((previous) => {
-			if ([...added].every(([session, command]) => previous.get(session) === command)) {
-				return previous;
-			}
-
-			return new Map([...previous, ...added]);
-		});
-	}, []);
-
-	const liveCommands = useMemo(() => {
-		const tools = [
-			...buildAssistantTimeline([], actions),
-			...messages.flatMap((message) =>
-				message.kind === 'live' ? buildAssistantTimeline(message.parts, []) : []
-			)
-		].filter((item) => item.type === 'tool');
-
-		return buildCommandSessionCommandMap(tools);
-	}, [messages, actions]);
-
-	useLayoutEffect(() => rememberCommands(liveCommands), [liveCommands, rememberCommands]);
-
-	const commands = useMemo(
-		() => new Map([...rememberedCommands, ...liveCommands]),
-		[rememberedCommands, liveCommands]
-	);
-
-	const loadWorkDetails = useMemo<Props['loadSectionDetails']>(
-		() =>
-			loadSectionDetails
-				? async (row, cursor, signal) => {
-						const details = await loadSectionDetails(row, cursor, signal);
-
-						if (!signal.aborted) {
-							const tools = buildAssistantTimeline(details.parts, []).filter(
-								(item) => item.type === 'tool'
-							);
-
-							rememberCommands(buildCommandSessionCommandMap(tools));
-						}
-
-						return details;
-					}
-				: undefined,
-		[loadSectionDetails, rememberCommands]
-	);
-
-	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
-
-	if (!sectionKeysRef.current) sectionKeysRef.current = new TranscriptSectionKeys();
-	const sectionKeys = sectionKeysRef.current;
-
-	type LiveRenderState = ReturnType<typeof liveRenderState>;
-
-	type LiveSection = ReturnType<TranscriptSectionKeys['reconcile']>[number];
-
-	type LiveWorkState = ReturnType<typeof liveWorkState>;
-
-	function liveRenderState(message: LiveTranscriptMessage) {
-		const messageActions = actions.filter(
-			(job) =>
-				job.runId === message.runId &&
-				message.parts.some((part) => part.type === 'tool-call' && part.callId === job.callId)
-		);
-
-		const timeline = buildAssistantTimeline(message.parts, messageActions);
-
-		const sections = sectionKeys.reconcile(
-			message.id,
-			groupAssistantTimelineSections(groupAssistantTimeline(timeline))
-		);
-
-		const isStreaming = isAssistantResponseStreaming(message, activeRunId);
-
-		return {
-			timeline,
-			sections,
-			isStreaming
-		};
-	}
-
-	function liveWorkState(
-		state: LiveRenderState,
-		section: Extract<LiveSection, { type: 'work' }>,
-		sectionIndex: number,
-		excludedCallIds?: ReadonlySet<string>
-	) {
-		const { settledBlocks, runningTools } = partitionWorkSectionTools(
-			section.blocks,
-			state.isStreaming
-		);
-
-		const workInProgress = state.isStreaming && sectionIndex === state.sections.length - 1;
-
-		return {
-			settledBlocks,
-			lastBlock: section.blocks.at(-1),
-			runningTools,
-			workInProgress,
-			needsSavedCard: settledBlocks.some(
-				(block) => block.type === 'tool-group' && block.tools.some(needsSavedCard)
-			),
-			toolCounts: workToolCounts(section.blocks, excludedCallIds)
-		};
-	}
-
-	function followingLiveState(messageIndex: number, runId: TranscriptDisplayRow['runId']) {
-		const message = messages.at(messageIndex + 1);
-
-		return message?.kind === 'live' && message.runId === runId
-			? liveRenderState(message)
-			: undefined;
-	}
-
-	function followsOpenPersistedWork(messageIndex: number, runId: LiveTranscriptMessage['runId']) {
-		if (messageIndex === 0) return false;
-
-		const message = messages[messageIndex - 1];
-
-		return message.kind === 'work' && message.runId === runId && !message.closed;
-	}
 
 	function firstVisibleAnchor(root: HTMLDivElement) {
 		const elements = [
@@ -275,10 +203,7 @@ export default function ThreadTranscript({
 	function scrollToBottom() {
 		const root = viewportRef.current;
 
-		if (!root || !stickToBottomRef.current) {
-			return;
-		}
-
+		if (!root || !stickToBottomRef.current) return;
 		const bottom = Math.max(0, root.scrollHeight - root.clientHeight);
 
 		// A scrollbar drag can reach layout before its scroll event. Shrinking content also clamps scrollTop.
@@ -337,8 +262,7 @@ export default function ThreadTranscript({
 		historyPrefetchPagesRef.current = HISTORY_PREFETCH_PAGES;
 
 		if (!clampedToBottom) {
-			const distanceToBottom = bottom - root.scrollTop;
-			stickToBottomRef.current = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
+			stickToBottomRef.current = !movingUp && bottom - root.scrollTop <= SCROLL_EPSILON_PX;
 
 			if (movingUp) stopFollowing();
 		}
@@ -350,34 +274,16 @@ export default function ThreadTranscript({
 		if (
 			event.target instanceof Element &&
 			event.target.closest('input, textarea, button, [contenteditable="true"]')
-		) {
+		)
 			return;
-		}
 
 		if (
 			event.key === 'ArrowUp' ||
 			event.key === 'PageUp' ||
 			event.key === 'Home' ||
 			(event.key === ' ' && event.shiftKey)
-		) {
+		)
 			stopFollowing();
-		}
-	}
-
-	function beforeDetailChange() {
-		const root = viewportRef.current;
-		const anchor = root && !stickToBottomRef.current ? firstVisibleAnchor(root) : undefined;
-		const offset = anchor?.getBoundingClientRect().top;
-		const top = root?.scrollTop;
-
-		return () => {
-			if (!root || root !== viewportRef.current) return;
-
-			if (stickToBottomRef.current) scrollToBottom();
-			else if (anchor?.isConnected && offset !== undefined && root.scrollTop === top) {
-				setScrollTop(root, root.scrollTop + anchor.getBoundingClientRect().top - offset);
-			}
-		};
 	}
 
 	const scrollToBottomRef = useRef(scrollToBottom);
@@ -388,38 +294,44 @@ export default function ThreadTranscript({
 	});
 
 	useLayoutEffect(() => {
-		prefetchOlderHistoryRef.current();
-	}, [messages, nextBefore, loadingOlder, viewport]);
+		if (!loadingOlder) requestedBeforeRef.current = undefined;
+	}, [loadingOlder]);
 
 	useLayoutEffect(() => {
-		const root = viewport;
+		if (rowIds.length === 0) {
+			if (nextBefore === undefined) {
+				requestedBeforeRef.current = undefined;
+				historyPrefetchPagesRef.current = HISTORY_PREFETCH_PAGES;
+			}
+
+			stickToBottomRef.current = true;
+		}
+
+		prefetchOlderHistoryRef.current();
+	}, [rowIds, nextBefore, loadingOlder, viewport]);
+
+	useLayoutEffect(() => {
 		const content = contentRef.current;
 
-		if (!root || !content || !globalThis.ResizeObserver) {
-			return;
-		}
+		if (!viewport || !content || !globalThis.ResizeObserver) return;
 
 		const observer = new ResizeObserver(() => {
 			scrollToBottomRef.current();
 			prefetchOlderHistoryRef.current();
 		});
 
-		observer.observe(root);
+		observer.observe(viewport);
 		observer.observe(content);
 
-		return () => {
-			observer.disconnect();
-		};
+		return () => observer.disconnect();
 	}, [viewport]);
 
-	// Captured during render because the scroll anchor must be read from the DOM before it commits.
-	const renderedMessagesRef = useRef(messages);
-	const renderedActionsRef = useRef(actions);
+	// Read the existing DOM before prepending older rows.
+	const renderedRowsRef = useRef(rowIds);
 	const anchorRef = useRef<ScrollAnchor | null>(null);
 
-	if (renderedMessagesRef.current !== messages || renderedActionsRef.current !== actions) {
-		renderedMessagesRef.current = messages;
-		renderedActionsRef.current = actions;
+	if (renderedRowsRef.current !== rowIds) {
+		renderedRowsRef.current = rowIds;
 		const root = viewportRef.current;
 		const anchor = root && !stickToBottomRef.current ? firstVisibleAnchor(root) : undefined;
 		anchorRef.current =
@@ -455,299 +367,85 @@ export default function ThreadTranscript({
 		} else if (!anchor.isConnected && root.scrollTop === scrollTop) {
 			setScrollTop(root, scrollTop + root.scrollHeight - scrollHeight);
 		}
-	}, [messages, actions]);
-
-	async function copyUserMessage(messageId: string, text: string) {
-		try {
-			await navigator.clipboard.writeText(text);
-			markMessageCopied(messageId);
-		} catch {
-			resetMessageCopied();
-		}
-	}
-
-	useLayoutEffect(() => {
-		sectionKeys.retain(
-			messages.filter((message) => message.kind === 'live').map((message) => message.id)
-		);
-	}, [messages, sectionKeys]);
+	}, [rowIds]);
 
 	const setViewportNode = useCallback((node: HTMLDivElement | null) => {
 		viewportRef.current = node;
 		setViewport(node);
 	}, []);
 
-	function renderWorkBlocks(work: LiveWorkState, state: LiveRenderState, reasoningOnly: boolean) {
-		return (
-			<>
-				{work.settledBlocks.map((block, blockIndex) => {
-					const renderKey = `${block.type}-${
-						block.type === 'tool-group'
-							? block.tools.map((tool) => tool.callId).join(',')
-							: block.id
-					}-${blockIndex}`;
-
-					if (block.type === 'reasoning') {
-						if (reasoningOnly) return <ReasoningText key={renderKey} text={block.text} />;
-
-						const reasoningInProgress =
-							work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
-
-						return (
-							<ReasoningDisclosure
-								key={renderKey}
-								text={block.text}
-								inProgress={reasoningInProgress}
-							/>
-						);
-					}
-
-					return (
-						<WorkTools
-							key={renderKey}
-							tools={block.tools}
-							inProgress={state.isStreaming}
-							commands={commands}
-						/>
-					);
-				})}
-				{work.runningTools.length > 0 ? (
-					<WorkTools tools={work.runningTools} inProgress={state.isStreaming} commands={commands} />
-				) : null}
-			</>
-		);
-	}
-
-	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
-		const imageScope = { workspacePath: cwd ?? project?.workspacePath };
-
-		if (message.kind === 'prompt') {
-			return (
-				<TranscriptPromptMessage
-					key={message.id}
-					message={message}
-					imageScope={imageScope}
-					copied={copiedMessageId === message.id}
-					loadAttachment={loadAttachment}
-					onCopy={() => void copyUserMessage(message.id, message.text ?? '')}
-					onOpenImage={setViewerImage}
-				/>
-			);
-		}
-
-		if (message.kind === 'work') {
-			const row = message;
-			const followingLive = !row.closed ? followingLiveState(messageIndex, row.runId) : undefined;
-			const firstLiveSection = followingLive?.sections[0];
-
-			const continuation =
-				followingLive && firstLiveSection?.type === 'work'
-					? liveWorkState(followingLive, firstLiveSection, 0, new Set(row.unpersistedToolCallIds))
-					: undefined;
-
-			const inProgress = continuation
-				? continuation.workInProgress
-				: firstLiveSection?.type === 'text'
-					? false
-					: row.runId === activeRunId && !row.closed;
-
-			const summary = workSummary(mergeWorkToolCounts(row.toolCounts, continuation?.toolCounts));
-
-			return (
-				<div
-					key={message.id}
-					data-message-id={message.id}
-					data-transcript-anchor={message.id}
-					data-message-kind="work"
-				>
-					<WorkDisclosure inProgress={inProgress} summary={summary}>
-						{loadWorkDetails ? (
-							<WorkSectionDetails
-								row={row}
-								load={loadWorkDetails}
-								commands={commands}
-								inProgress={!row.closed && row.runId === activeRunId}
-								reasoningOnly={summary === undefined}
-								viewport={viewport}
-								beforeChange={beforeDetailChange}
-							/>
-						) : null}
-						{continuation && followingLive
-							? renderWorkBlocks(continuation, followingLive, summary === undefined)
-							: null}
-					</WorkDisclosure>
-				</div>
-			);
-		}
-
-		if (message.kind === 'text') {
-			return (
-				<div
-					key={message.id}
-					data-message-id={message.id}
-					data-transcript-anchor={message.id}
-					data-message-kind="text"
-				>
-					<ChatMarkdown
-						imageScope={imageScope}
-						content={message.text || ' '}
-						className="text-foreground"
-						artifacts={artifacts}
-						onOpenArtifact={onOpenArtifact}
-						openLinksInNewTab
-					/>
-				</div>
-			);
-		}
-
-		if (message.kind !== 'live') return null;
-
-		const live = liveRenderState(message);
-		const continuesPreviousWork = followsOpenPersistedWork(messageIndex, message.runId);
-
-		const hasPersistedAssistantContent = live.timeline.some(
-			(part) => part.type === 'text' || part.type === 'reasoning'
-		);
-
-		return (
-			<div
-				key={message.id}
-				data-message-id={message.id}
-				className="w-full min-w-0"
-				role={live.isStreaming ? 'log' : undefined}
-				aria-live={live.isStreaming ? 'polite' : undefined}
-				aria-atomic="false"
-				aria-relevant="additions text"
-			>
-				<div className="space-y-3">
-					{!hasPersistedAssistantContent &&
-					(message.text || (live.isStreaming && live.timeline.length === 0)) ? (
-						<ChatMarkdown
-							imageScope={imageScope}
-							content={message.text || '...'}
-							className="text-foreground"
-							artifacts={artifacts}
-							onOpenArtifact={onOpenArtifact}
-							openLinksInNewTab
-						/>
-					) : null}
-					{live.sections.map((section, sectionIndex) => {
-						if (section.type === 'text') {
-							return (
-								<div
-									key={section.renderKey}
-									data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
-								>
-									<ChatMarkdown
-										imageScope={imageScope}
-										content={section.text || ' '}
-										className="text-foreground"
-										artifacts={artifacts}
-										onOpenArtifact={onOpenArtifact}
-										openLinksInNewTab
-									/>
-								</div>
-							);
-						}
-
-						const work = liveWorkState(live, section, sectionIndex);
-
-						if (
-							work.settledBlocks.length === 0 &&
-							!work.workInProgress &&
-							work.runningTools.length === 0
-						) {
-							return null;
-						}
-
-						const summary = workSummary(work.toolCounts);
-
-						return (
-							<div
-								key={section.renderKey}
-								className="space-y-3"
-								data-transcript-anchor={`${message.id}:${section.renderKey}`}
-							>
-								{!(continuesPreviousWork && sectionIndex === 0) ? (
-									<WorkDisclosure inProgress={work.workInProgress} summary={summary}>
-										{renderWorkBlocks(work, live, summary === undefined)}
-									</WorkDisclosure>
-								) : null}
-								{work.needsSavedCard ? <SaveCardButton /> : null}
-							</div>
-						);
-					})}
-				</div>
-			</div>
-		);
-	}
-
-	function endsSettledRun(messageIndex: number) {
-		const message = messages[messageIndex];
-
-		return (
-			renderRunFooter !== undefined &&
-			message.kind !== 'prompt' &&
-			message.runId !== activeRunId &&
-			messages[messageIndex + 1]?.runId !== message.runId
-		);
-	}
-
 	return (
-		<div className="relative min-h-0 flex-1">
-			<div
-				className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto"
-				role="region"
-				aria-label="Conversation history"
-				tabIndex={0}
-				ref={setViewportNode}
-				onScroll={updateStickToBottom}
-				onWheel={(event) => {
-					if (event.deltaY < 0) stopFollowing();
-				}}
-				onKeyDown={handleHistoryKey}
-				onTouchStart={(event) => {
-					touchYRef.current = event.touches[0]?.clientY;
-				}}
-				onTouchMove={(event) => {
-					const nextY = event.touches[0]?.clientY;
-
-					if (nextY !== undefined && touchYRef.current !== undefined && nextY > touchYRef.current) {
-						stopFollowing();
-					}
-
-					touchYRef.current = nextY;
-				}}
-			>
+		<TranscriptActiveRunContext value={activeRunId}>
+			<div className="relative min-h-0 flex-1">
 				<div
-					ref={contentRef}
-					className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 pt-12 pb-8"
-				>
-					{messages.length === 0 ? (
-						emptyStateMessage ? (
-							<div className="flex flex-1 items-center justify-center">
-								<div className="max-w-2xl text-center">
-									<p className="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
-								</div>
-							</div>
-						) : null
-					) : (
-						<div className="transcript-messages space-y-8 pb-14">
-							{messages.flatMap((message, messageIndex) => [
-								renderMessage(message, messageIndex),
-								endsSettledRun(messageIndex) ? (
-									<Fragment key={`${message.runId}:footer`}>
-										{renderRunFooter?.(message.runId)}
-									</Fragment>
-								) : null
-							])}
-						</div>
-					)}
-				</div>
-			</div>
+					className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto"
+					role="region"
+					aria-label="Conversation history"
+					tabIndex={0}
+					ref={setViewportNode}
+					onScroll={updateStickToBottom}
+					onWheel={(event) => {
+						if (event.deltaY < 0) stopFollowing();
+					}}
+					onKeyDown={handleHistoryKey}
+					onTouchStart={(event) => {
+						touchYRef.current = event.touches[0]?.clientY;
+					}}
+					onTouchMove={(event) => {
+						const nextY = event.touches[0]?.clientY;
 
-			<div className="transcript-fade pointer-events-none absolute inset-x-0 bottom-0 h-16"></div>
-			<ImageViewer image={viewerImage} onClose={() => setViewerImage(null)} />
-		</div>
+						if (nextY !== undefined && touchYRef.current !== undefined && nextY > touchYRef.current)
+							stopFollowing();
+						touchYRef.current = nextY;
+					}}
+				>
+					<div
+						ref={contentRef}
+						className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 pt-12 pb-8"
+					>
+						{rowIds.length === 0 ? (
+							emptyStateMessage ? (
+								<div className="flex flex-1 items-center justify-center">
+									<div className="max-w-2xl text-center">
+										<p className="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
+									</div>
+								</div>
+							) : null
+						) : (
+							<div className="transcript-messages space-y-8 pb-14">
+								{rowIds.map((rowId, index) => {
+									const row = store.getRow(rowId);
+									const next = store.getRow(rowIds[index + 1]);
+
+									const endsSettledRun =
+										row &&
+										activeRunId !== undefined &&
+										row.kind !== 'prompt' &&
+										row.runId !== activeRunId &&
+										next?.runId !== row.runId;
+
+									return (
+										<Fragment key={rowId}>
+											<TranscriptRow
+												store={store}
+												rowId={rowId}
+												imageScope={imageScope}
+												loadAttachment={loadAttachment}
+												artifacts={artifacts}
+												onOpenArtifact={onOpenArtifact}
+												onOpenImage={setViewerImage}
+											/>
+											{endsSettledRun ? renderRunFooter?.(row.runId) : null}
+										</Fragment>
+									);
+								})}
+							</div>
+						)}
+					</div>
+				</div>
+				<div className="transcript-fade pointer-events-none absolute inset-x-0 bottom-0 h-16"></div>
+				<ImageViewer image={viewerImage} onClose={() => setViewerImage(null)} />
+			</div>
+		</TranscriptActiveRunContext>
 	);
 }

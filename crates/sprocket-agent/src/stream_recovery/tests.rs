@@ -13,7 +13,7 @@ fn recovery_is_bounded_across_calls_and_accepts_relayed_truncation() {
 }
 
 #[test]
-fn only_truncation_consumes_the_saved_input() {
+fn unrecoverable_errors_preserve_the_saved_input() {
     let mut recovery = StreamRecovery::default();
     *recovery.input.0.lock().unwrap() = Some((vec![], Message::user("continue")));
     let cancelled = PromptError::cancelled(Vec::new(), "cancelled");
@@ -54,17 +54,21 @@ fn retries_one_gateway_stream_timeout_per_run() {
 }
 
 #[test]
-fn retries_overloaded_responses() {
+fn retries_server_failures_and_empty_error_events() {
     const OVERLOADED: &str = r#"{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"Overloaded"}}}"#;
+    const EMPTY_ERROR: &str =
+        r#"{"type":"error","message":"{}","code":null,"param":null,"sequence_number":0}"#;
     fn status(status: http::StatusCode, body: &str) -> ProviderError {
         ProviderError::ProviderResponse(rig::ProviderResponseError::new(status, body))
     }
-    let cases: [(fn() -> ProviderError, bool); 4] = [
+    let cases: [(fn() -> ProviderError, bool); 7] = [
         (|| ProviderError::from_provider_body(OVERLOADED), true),
         (
             || status(http::StatusCode::SERVICE_UNAVAILABLE, "busy"),
             true,
         ),
+        (|| ProviderError::from_provider_body(EMPTY_ERROR), true),
+        (|| status(http::StatusCode::OK, EMPTY_ERROR), true),
         (
             || status(http::StatusCode::TOO_MANY_REQUESTS, OVERLOADED),
             false,
@@ -75,6 +79,10 @@ fn retries_overloaded_responses() {
                     r#"{"error":{"type":"rate_limit_error","message":"Slow down"}}"#,
                 )
             },
+            false,
+        ),
+        (
+            || ProviderError::from_provider_body(r#"{"type":"error","message":"Invalid request"}"#),
             false,
         ),
     ];

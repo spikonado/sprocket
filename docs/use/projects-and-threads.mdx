@@ -51,6 +51,14 @@ Add context to a message:
 
 If a run fails or the server restarts, **Continue working** resumes the thread. Sprocket also resumes interrupted runs by itself after a restart or crash, unless you turn this off in [Settings](/reference/settings#general).
 
+### Read the agent's work
+
+<Snippet file="unreleased.mdx" />
+
+Work blocks summarize what the agent did, such as "Ran 3 commands", and show whether the work is still running. Running work opens by default. Open a block to see its tools and reasoning. Reasoning starts closed, even while the agent is thinking. Click a reasoning row to read it. An open row updates as the agent reasons.
+
+Tool rows show a one-line summary. Click a command, question, subagent, or patch row to read the full text, with commands syntax highlighted. Click a parsed file row to open the file in the file viewer. Hover any other row to see a summary that doesn't fit. Checkout results keep their **Save card** action after a reload.
+
 ### Subagents
 
 The agent can start subagents to work on parts of a task in parallel. Each subagent is its own thread and appears under its parent in the sidebar. See [Subagents](/use/agent-tools#subagents).
@@ -59,7 +67,7 @@ The agent can start subagents to work on parts of a task in parallel. Each subag
 
 <Snippet file="unreleased.mdx" />
 
-The main workspace has tabs and panels when a thread is selected. Each thread starts with a **Thread** tab that holds the conversation and message composer. You can switch away from it, but you can't close it. The new-thread screen has no tabs or split controls.
+The main workspace has tabs and panels. Each thread, and the new-thread screen, starts with a **Thread** tab that holds the conversation and message composer. You can switch away from it, but you can't close it. Tabs you open on the new-thread screen stay with the thread it creates.
 
 Use **New tab** to open a view, or **Split right** and **Split down** to add panels. Drag a divider to resize panels. Each thread keeps its own tabs and panel sizes until you reload the app.
 

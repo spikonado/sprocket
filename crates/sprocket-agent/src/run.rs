@@ -29,8 +29,8 @@ use crate::types::{
 };
 use crate::workspace_context::{HiddenPrompt, WorkspaceContext, unseen};
 use sprocket_transcript::{
-    DownloadOrder, HiddenPromptKind, LiveCompletionHub, TranscriptPart, TranscriptState,
-    TranscriptStore, apply_remote_state, cache_attachments, cache_prompt_attachments,
+    HiddenPromptKind, LiveCompletionHub, TranscriptPart, TranscriptState, TranscriptStore,
+    cache_attachments, cache_prompt_attachments,
 };
 
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -633,18 +633,12 @@ async fn load_prior_history(
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
-    let state = apply_remote_state(store, user_id, thread_id, &remote).await?;
-    let (mut parts, current_run_had_context_handoff) = load_context_parts(
-        store,
-        user_id,
-        thread_id,
-        &state,
-        run_id,
-        |start, end, order| {
-            runtime.transcript_parts_page_for_run(run_id, thread_id, start, end, order)
-        },
-    )
-    .await?;
+    let state = remote.to_state(thread_id)?;
+    let (mut parts, current_run_had_context_handoff) =
+        load_context_parts(store, user_id, thread_id, &state, run_id, |start, end| {
+            runtime.transcript_parts_page_for_run(run_id, thread_id, start, end)
+        })
+        .await?;
     cache_prompt_attachments(
         store,
         user_id,
@@ -697,7 +691,7 @@ async fn load_context_parts<F, Fut>(
     fetch: F,
 ) -> anyhow::Result<(Vec<TranscriptPart>, bool)>
 where
-    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    F: FnMut(u32, u32) -> Fut,
     Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
 {
     let check_handoff = state.context_summary.is_some() && state.history_from_number > 0;
@@ -707,9 +701,7 @@ where
         state.history_from_number <= end,
         "invalid transcript context range"
     );
-    store
-        .ensure_parts(user, thread, start, end, DownloadOrder::Desc, fetch)
-        .await?;
+    store.ensure_parts(user, thread, start, end, fetch).await?;
     let numbers: Vec<_> = (start..end).collect();
     let mut parts = store.read_parts(user, thread, &numbers).await?;
     anyhow::ensure!(
@@ -724,11 +716,16 @@ where
 }
 
 pub async fn run_agent(
-    run: AgentRun,
+    mut run: AgentRun,
     command_sessions: sprocket_workspace::CommandSessionManager,
     live: Arc<LiveCompletionHub>,
     store: Arc<TranscriptStore>,
 ) -> anyhow::Result<()> {
+    if run.runtime.output.is_none() {
+        run.observe_output(Arc::new(crate::RunOutput::default()), store.clone())
+            .await;
+    }
+
     let AgentRun {
         request,
         mut chatgpt_client,

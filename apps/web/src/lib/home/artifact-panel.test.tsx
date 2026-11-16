@@ -55,6 +55,21 @@ it('keeps a layout per thread in the same scope and restores it on return', () =
 	expect(panel.tabs.map((tab) => tab.view)).toEqual(['transcript']);
 });
 
+it('moves the new-thread layout to the thread it creates', () => {
+	const panel = new ArtifactPanel();
+
+	panel.selectScope(scope('robot'), null);
+	panel.openFile({ workspacePath: '/repo', path: 'README.md' });
+	const layout = panel.panel;
+
+	panel.adoptDraft('thread-a');
+	panel.selectScope(scope('robot'), 'thread-a');
+	expect(panel.panel).toBe(layout);
+
+	panel.selectScope(scope('robot'), null);
+	expect(panel.tabs.map((tab) => tab.view)).toEqual(['transcript']);
+});
+
 it('keeps the transcript tab when closing tabs', () => {
 	const panel = new ArtifactPanel();
 	const transcript = panel.activeTab;

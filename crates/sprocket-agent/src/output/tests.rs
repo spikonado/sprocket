@@ -11,10 +11,8 @@ fn completion(number: u32, text: &str) -> TranscriptPart {
         prompt: None,
         tool: None,
         completion: Some(TranscriptCompletionBody {
-            stream_id: None,
             items: vec![serde_json::json!({"type": "text", "text": text})],
         }),
-        work: Default::default(),
     }
 }
 
@@ -35,11 +33,11 @@ async fn caches_committed_parts_and_replays_bounded_pages_without_network_reads(
     let output = output(directory.path());
     for number in 0..18 {
         output
-            .record_part(completion(number * 2, &format!("answer {number}")))
+            .record_parts(&[completion(number * 2, &format!("answer {number}"))])
             .await;
     }
     output
-        .record_part(completion(0, "duplicate must not replace answer"))
+        .record_parts(&[completion(0, "duplicate must not replace answer")])
         .await;
     let first = output.page(-1).await.unwrap();
     assert_eq!(first.parts.len(), 16);
@@ -75,7 +73,7 @@ async fn clearing_live_output_does_not_complete_a_run_and_unconfirmed_exit_is_un
     changed.changed().await.unwrap();
     assert!(!output.page(-1).await.unwrap().finished);
     output
-        .record_part(completion(1, "unconfirmed answer"))
+        .record_parts(&[completion(1, "unconfirmed answer")])
         .await;
     output.finish(Some("finalization timed out".into()));
     let page = output.page(-1).await.unwrap();
@@ -89,7 +87,9 @@ async fn clearing_live_output_does_not_complete_a_run_and_unconfirmed_exit_is_un
 async fn cancelled_and_empty_completions_do_not_return_earlier_commentary() {
     let directory = tempfile::tempdir().unwrap();
     let output = output(directory.path());
-    output.record_part(completion(1, "earlier answer")).await;
+    output
+        .record_parts(&[completion(1, "earlier answer")])
+        .await;
     output.empty_completion();
     output.finalized(
         RunOutcome {
@@ -104,7 +104,7 @@ async fn cancelled_and_empty_completions_do_not_return_earlier_commentary() {
     let directory = tempfile::tempdir().unwrap();
     let cancelled = self::output(directory.path());
     cancelled
-        .record_part(completion(1, "answer before cancellation race"))
+        .record_parts(&[completion(1, "answer before cancellation race")])
         .await;
     cancelled.finalized(
         RunOutcome {
@@ -125,10 +125,10 @@ async fn tool_commentary_and_other_runs_cannot_become_the_final_answer() {
     let output = output(directory.path());
     let mut part = completion(2, "I'll run the tests.");
     part.completion.as_mut().unwrap().items.push(serde_json::json!({"type": "tool-call", "callId": "call", "name": "exec_command", "input": {}}));
-    output.record_part(part).await;
+    output.record_parts(&[part]).await;
     let mut other = completion(3, "another run's answer");
     other.run_id = "other".into();
-    output.record_part(other).await;
+    output.record_parts(&[other]).await;
     output.finalized(
         RunOutcome {
             status: RunStatus::Completed,
@@ -147,7 +147,7 @@ async fn another_executors_completion_cannot_confirm_the_local_answer() {
     let directory = tempfile::tempdir().unwrap();
     let output = output(directory.path());
     output
-        .record_part(completion(1, "stale local answer"))
+        .record_parts(&[completion(1, "stale local answer")])
         .await;
     output.finalized(
         RunOutcome {
@@ -171,7 +171,9 @@ async fn another_executors_completion_cannot_confirm_the_local_answer() {
 async fn failed_cache_writes_preserve_the_acknowledged_answer_and_terminal_status() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let output = output(file.path());
-    output.record_part(completion(1, "Confirmed answer.")).await;
+    output
+        .record_parts(&[completion(1, "Confirmed answer.")])
+        .await;
     output.finalized(
         RunOutcome {
             status: RunStatus::Completed,
@@ -192,7 +194,9 @@ async fn failed_cache_writes_preserve_the_acknowledged_answer_and_terminal_statu
 async fn lost_cache_files_do_not_erase_a_confirmed_result_or_restart_paging() {
     let directory = tempfile::tempdir().unwrap();
     let output = output(directory.path());
-    output.record_part(completion(1, "Confirmed answer.")).await;
+    output
+        .record_parts(&[completion(1, "Confirmed answer.")])
+        .await;
     output.finalized(
         RunOutcome {
             status: RunStatus::Completed,

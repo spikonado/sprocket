@@ -92,7 +92,3 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Wrench;
 	}
 }
-
-export function toolLogIcon(tool: { name: string; job?: { kind: string } | null }): LucideIcon {
-	return toolKindIcon(tool.job?.kind ?? tool.name);
-}

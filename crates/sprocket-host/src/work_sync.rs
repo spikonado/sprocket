@@ -1,142 +1,201 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use convex::Value;
 use futures::StreamExt;
 use sprocket_convex::decode_labeled_function_result;
-use sprocket_transcript::{
-    DownloadOrder, RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TranscriptStore,
-    apply_remote_state,
-};
-use tokio::sync::{broadcast, watch};
+use sprocket_transcript::{RemoteTranscriptState, TranscriptPart, TranscriptStore};
+use tokio::sync::{OnceCell, watch};
 
-use crate::transcript_client::UserConvexClient;
+use crate::transcript_client::{UserConvexClient, thread_id_args};
+use crate::transcript_watch::TranscriptSyncStatus;
 
-const DOWNLOAD_PAGE_SIZE: u32 = TRANSCRIPT_CHUNK_SIZE;
+const STARTUP_STATE_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn thread_args(thread: &str) -> BTreeMap<String, Value> {
-    BTreeMap::from([("threadId".into(), thread.to_owned().into())])
+pub(crate) struct RunStart {
+    pub total: OnceCell<Option<u32>>,
+    paused: watch::Sender<bool>,
 }
 
-fn pop_download_page(pending: &mut Vec<(u32, u32)>) -> Option<(u32, u32)> {
-    let (start, end) = pending.pop()?;
-    let lower = ((end - 1) / DOWNLOAD_PAGE_SIZE * DOWNLOAD_PAGE_SIZE).max(start);
-    if lower > start {
-        pending.push((start, lower));
+impl Default for RunStart {
+    fn default() -> Self {
+        Self {
+            total: OnceCell::new(),
+            paused: watch::channel(false).0,
+        }
     }
-    Some((lower, end))
 }
 
-async fn metadata(
+impl RunStart {
+    pub async fn wait_until_paused(&self) -> anyhow::Result<()> {
+        self.paused.subscribe().wait_for(|paused| *paused).await?;
+        Ok(())
+    }
+
+    pub async fn initialize<F, Fut>(&self, thread: &str, query: F) -> Option<u32>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<u32>>,
+    {
+        *self
+            .total
+            .get_or_init(|| async {
+                match tokio::time::timeout(STARTUP_STATE_TIMEOUT, query()).await {
+                    Ok(Ok(total)) => Some(total),
+                    Ok(Err(error)) => {
+                        tracing::warn!(
+                            "could not read transcript state for the run in {thread}: {error:#}"
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "timed out reading transcript state for the run in {thread}"
+                        );
+                        None
+                    }
+                }
+            })
+            .await
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum SyncMode {
+    /// Follow `totalParts`, for threads open only in tabs.
+    Remote,
+    /// A run on this machine saves the parts it creates, so only older parts download.
+    Local(Arc<RunStart>),
+}
+
+fn raise(totals: &watch::Sender<u32>, total: u32) {
+    totals.send_if_modified(|current| {
+        let raised = total > *current;
+        *current = (*current).max(total);
+        raised
+    });
+}
+
+async fn subscribe_total(
     client: &UserConvexClient,
-    store: &TranscriptStore,
-    user: &str,
     thread: &str,
-    states: watch::Sender<RemoteTranscriptState>,
-    changed: &(impl Fn() + Send + Sync),
+    totals: &watch::Sender<u32>,
+    status: &watch::Sender<TranscriptSyncStatus>,
 ) -> anyhow::Result<()> {
-    let mut updates = client.watch_all().await?;
-    let subscription = client
-        .subscribe("transcript:getState", thread_args(thread))
+    let mut subscription = client
+        .subscribe("transcript:getState", thread_id_args(thread))
         .await?;
-    let mut previous = None;
-    while let Some(results) = updates.next().await {
-        let Some(result) = results.get(subscription.id()).cloned() else {
-            continue;
-        };
+    while let Some(result) = subscription.next().await {
         let state: RemoteTranscriptState =
             decode_labeled_function_result(result, "transcript:getState")?;
-        if previous.as_ref() == Some(&state) {
-            continue;
-        }
-        apply_remote_state(store, user, thread, &state).await?;
-        let total = state.total_parts;
-        store
-            .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
-            .await?;
-        previous = Some(state.clone());
-        states.send_replace(state);
-        changed();
+        raise(totals, state.total_parts);
+        status.send_replace(TranscriptSyncStatus::Ready);
     }
     anyhow::bail!("transcript state subscription ended")
+}
+
+async fn follow_total(
+    client: &UserConvexClient,
+    thread: &str,
+    mode: &SyncMode,
+    totals: watch::Sender<u32>,
+    status: &watch::Sender<TranscriptSyncStatus>,
+) -> anyhow::Result<()> {
+    match mode {
+        SyncMode::Remote => subscribe_total(client, thread, &totals, status).await,
+        SyncMode::Local(start) => {
+            match start
+                .initialize(thread, || client.transcript_total_parts(thread))
+                .await
+            {
+                Some(total) => {
+                    raise(&totals, total);
+                    status.send_replace(TranscriptSyncStatus::Ready);
+                }
+                None => {
+                    status.send_replace(TranscriptSyncStatus::Unavailable);
+                }
+            }
+            std::future::pending().await
+        }
+    }
+}
+
+pub(crate) async fn follow_modes<F, Fut>(
+    mut modes: watch::Receiver<SyncMode>,
+    mut synchronize: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(SyncMode) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    loop {
+        let mode = modes.borrow_and_update().clone();
+        if let SyncMode::Local(start) = &mode {
+            start.paused.send_replace(true);
+        }
+        tokio::select! {
+            biased;
+            result = modes.changed() => result?,
+            result = synchronize(mode) => result?,
+        }
+    }
 }
 
 async fn download<F, Fut>(
     store: &TranscriptStore,
     user: &str,
     thread: &str,
-    mut states: watch::Receiver<RemoteTranscriptState>,
-    changed: &(impl Fn() + Send + Sync),
+    mut totals: watch::Receiver<u32>,
     mut fetch: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(u32, u32, DownloadOrder) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<Vec<sprocket_transcript::TranscriptPart>>>,
+    F: FnMut(u32, u32) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
 {
-    let mut seen_total = 0;
-    let mut pending = Vec::new();
     loop {
-        let total = states.borrow_and_update().total_parts;
-        if total > seen_total {
-            pending.push((seen_total, total));
-            seen_total = total;
+        let total = *totals.borrow_and_update();
+        if store
+            .download_missing_page(user, thread, 0, total, &mut fetch)
+            .await?
+        {
+            tokio::task::yield_now().await;
+        } else {
+            totals.changed().await?;
         }
-        let Some((lower, end)) = pop_download_page(&mut pending) else {
-            states.changed().await?;
-            continue;
-        };
-        let remaining = store
-            .download_parts_page(user, thread, lower, end, DownloadOrder::Desc, &mut fetch)
-            .await?;
-        if remaining.0 < remaining.1 {
-            pending.push(remaining);
-        }
-        changed();
-        tokio::task::yield_now().await;
     }
 }
 
-async fn wait_for_reset(
-    mut resets: broadcast::Receiver<(String, String)>,
+pub(crate) async fn synchronize(
+    client: &UserConvexClient,
+    store: &TranscriptStore,
     user: &str,
     thread: &str,
+    mode: &SyncMode,
+    status: &watch::Sender<TranscriptSyncStatus>,
 ) -> anyhow::Result<()> {
-    loop {
-        match resets.recv().await {
-            Ok((reset_user, reset_thread)) if reset_user != user || reset_thread != thread => {}
-            _ => anyhow::bail!("transcript replica reset; restarting synchronization"),
-        }
-    }
+    let (totals, total_rx) = watch::channel(0);
+    tokio::try_join!(
+        follow_total(client, thread, mode, totals, status),
+        download(store, user, thread, total_rx, |start, end| {
+            client.transcript_parts_page(thread, start, end)
+        }),
+    )
+    .map(|_| ())
 }
 
-pub async fn synchronize(
-    client: UserConvexClient,
-    store: Arc<TranscriptStore>,
-    user: String,
-    thread: String,
-    changed: impl Fn() + Send + Sync,
+pub(crate) async fn reconcile(
+    client: &UserConvexClient,
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    from: u32,
 ) -> anyhow::Result<()> {
-    let resets = store.watch_work_replica_resets();
-    store.prepare_work_replica(&user, &thread).await?;
-    let (states, state_rx) = watch::channel(RemoteTranscriptState {
-        thread_id: thread.clone(),
-        total_parts: 0,
-        history_from_number: 0,
-        context_summary: None,
-        reasoning_stripped_through_part_number: None,
-    });
-    tokio::select! {
-        result = async {
-            tokio::try_join!(
-                metadata(&client, &store, &user, &thread, states, &changed),
-                download(&store, &user, &thread, state_rx, &changed, |start, end, order| {
-                    client.transcript_parts_page(&thread, start, end, order)
-                }),
-            )
-        } => { result?; }
-        result = wait_for_reset(resets, &user, &thread) => { return result; }
-    }
-    Ok(())
+    let total = client.transcript_total_parts(thread).await?;
+    store
+        .ensure_parts(user, thread, from, total, |start, end| {
+            client.transcript_parts_page(thread, start, end)
+        })
+        .await
 }
 
 #[cfg(test)]

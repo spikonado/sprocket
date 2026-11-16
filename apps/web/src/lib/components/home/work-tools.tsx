@@ -1,198 +1,191 @@
-import { Fragment, use, useLayoutEffect, useState, type ReactNode } from 'react';
-import type { LucideIcon } from 'lucide-react';
-import { isJsonObject } from '@convex/lib/json';
-import {
-	assistantTimelineToolError,
-	assistantTimelineToolFailureKind,
-	type AssistantTimelineTool
-} from '$lib/chat/assistant-timeline';
-import { jsonObjectString } from '$lib/chat/json-fields';
-import {
-	fileLinkTarget,
-	MarkdownFileLinksContext,
-	type MarkdownFileLinks
-} from '$lib/chat/markdown-file-links';
-import { toolItemLabel, toolItemRows } from '$lib/chat/tool-summaries';
-import { toolLogIcon } from '$lib/chat/tool-icons';
+import { createElement, memo, use, useEffect, useLayoutEffect, useState } from 'react';
+import { isCommandToolKind } from '@convex/lib/commandToolKinds';
+import { fileLinkTarget, MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
+import { toolKindIcon } from '$lib/chat/tool-icons';
+import { useTranscriptExpanded, type TranscriptStore } from '$lib/home/transcript-store';
+import { useTranscriptRunRow } from '$lib/home/transcript-run';
+import type { TranscriptRow } from '$lib/types/sprocket';
 import HighlightedCommand from './highlighted-command';
+import SaveCardButton from './save-card-button';
 
-type Props = {
-	tools: AssistantTimelineTool[];
-	inProgress: boolean;
-	commands: ReadonlyMap<string, string>;
-};
+type Props = { store: TranscriptStore; rowId: string };
 
-const rowClass =
+export const workRowClass =
 	'hover:text-foreground focus-visible:ring-ring/60 flex min-w-0 cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none';
 
-function parsedFileOpener(tool: AssistantTimelineTool, fileLinks: MarkdownFileLinks | null) {
-	if (!fileLinks) return undefined;
+const EXPANDING_TOOLS = new Set([
+	'ask_question',
+	'spawn_subagent',
+	'control_subagent',
+	'poll_subagent',
+	'poll_pr',
+	'apply_patch'
+]);
 
-	const path = isJsonObject(tool.output) ? jsonObjectString(tool.output.source, 'path') : undefined;
-	const target = path ? fileLinkTarget(path, fileLinks.roots) : null;
-
-	return target ? () => fileLinks.open(target) : undefined;
+function expands(name: string) {
+	return isCommandToolKind(name) || EXPANDING_TOOLS.has(name);
 }
 
-function ToolRow({
-	Icon,
-	label,
-	item,
-	status,
-	command,
-	onOpen
+const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
+	const [expanded, setExpanded] = useTranscriptExpanded(store, rowId);
+	const preview = useTranscriptRunRow(store, rowId);
+
+	const needsDetails =
+		expanded && preview?.kind === 'tool' && expands(preview.name) && preview.hasMore;
+
+	const row = useTranscriptRunRow(store, rowId, needsDetails);
+
+	useEffect(() => {
+		if (needsDetails) return store.openItem(rowId);
+	}, [needsDetails, store, rowId]);
+
+	if (row?.kind !== 'tool') return null;
+
+	return (row.targets ?? [row]).map((target, index) => (
+		<WorkToolRow
+			key={index}
+			row={{ ...row, ...target }}
+			expanded={expanded}
+			setExpanded={setExpanded}
+		/>
+	));
+});
+
+function WorkToolRow({
+	row,
+	expanded,
+	setExpanded
 }: {
-	Icon: LucideIcon;
-	label: string | undefined;
-	item: string;
-	status: ReactNode;
-	command: string | undefined;
-	onOpen: (() => void) | undefined;
+	row: Extract<TranscriptRow, { kind: 'tool' }>;
+	expanded: boolean;
+	setExpanded: (expanded: boolean) => void;
 }) {
-	const [open, setOpen] = useState(false);
-	const [itemElement, setItemElement] = useState<HTMLSpanElement | null>(null);
+	const fileLinks = use(MarkdownFileLinksContext);
+	const [summaryElement, setSummaryElement] = useState<HTMLSpanElement | null>(null);
 	const [truncated, setTruncated] = useState(false);
-	const highlightedCommand = command && item.startsWith(command) ? command : undefined;
-	const expandable = open || highlightedCommand || truncated || item.includes('\n');
+	const summary = row.summary;
 
 	useLayoutEffect(() => {
-		if (!itemElement) return;
-		const measure = () => setTruncated(itemElement.scrollWidth > itemElement.clientWidth);
+		if (!summaryElement) return;
+		const measure = () => setTruncated(summaryElement.scrollWidth > summaryElement.clientWidth);
 		measure();
 
 		if (!globalThis.ResizeObserver) return;
 		const observer = new ResizeObserver(measure);
-		observer.observe(itemElement);
+		observer.observe(summaryElement);
 
 		return () => observer.disconnect();
-	}, [itemElement, item]);
+	}, [summaryElement, summary]);
 
-	const row = (
+	const expandable = expands(row.name);
+	const showsDetail = expandable && expanded;
+
+	const statusClass =
+		row.status === 'failed'
+			? 'text-destructive'
+			: row.status === 'cancelled' || row.status === 'interrupted'
+				? 'text-amber-800 dark:text-amber-200'
+				: '';
+
+	const fileTarget =
+		row.action?.kind === 'openFile' && fileLinks
+			? fileLinkTarget(row.action.path, fileLinks.roots)
+			: null;
+
+	const hasDetail = expanded || row.hasMore || truncated || summary.includes('\n');
+
+	let onClick: (() => void) | undefined;
+
+	if (expandable) {
+		if (hasDetail) onClick = () => setExpanded(!expanded);
+	} else if (fileTarget && fileLinks) {
+		onClick = () => fileLinks.open(fileTarget);
+	}
+
+	const title =
+		!expandable && (truncated || row.hasMore) ? `${summary}${row.hasMore ? '…' : ''}` : undefined;
+
+	const content = (
 		<>
-			<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
-			{label ? (
+			{createElement(toolKindIcon(row.name), {
+				className: 'mt-1 size-3.5 shrink-0',
+				'aria-hidden': true
+			})}
+			{row.label ? (
 				<span className="shrink-0">
-					{label}
-					{item ? ':' : ''}
+					{row.label}
+					{summary ? ':' : ''}
 				</span>
 			) : null}
-			{item ? (
-				<span ref={setItemElement} className="min-w-0 truncate">
-					{item}
+			<span ref={setSummaryElement} className="min-w-0 truncate">
+				{summary}
+			</span>
+			{statusClass ? (
+				<span className={`shrink-0 ${statusClass}`}>
+					({row.status === 'cancelled' ? 'stopped' : row.status})
 				</span>
 			) : null}
-			{status}
 		</>
 	);
 
-	if (onOpen) {
-		return (
-			<button
-				type="button"
-				data-tool-row
-				data-work-detail
-				title={item}
-				className={`${rowClass} max-w-full`}
-				onClick={onOpen}
-			>
-				{row}
-			</button>
-		);
-	}
-
-	if (!expandable) {
-		return (
-			<div data-tool-row data-work-detail className="flex min-w-0 items-start gap-1.5">
-				{row}
-			</div>
-		);
-	}
-
 	return (
-		<details className="group min-w-0" onToggle={(event) => setOpen(event.currentTarget.open)}>
-			<summary
-				data-tool-row
-				data-work-detail
-				className={`${rowClass} group-open:text-foreground list-none [&::-webkit-details-marker]:hidden`}
-			>
-				{row}
-			</summary>
-			<p className="bg-muted/50 text-foreground mt-1 ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap">
-				{open && highlightedCommand ? (
-					<>
-						<HighlightedCommand command={highlightedCommand} />
-						{item.slice(highlightedCommand.length)}
-					</>
-				) : (
-					item
-				)}
-			</p>
-		</details>
-	);
-}
-
-export default function WorkTools({ tools, inProgress, commands }: Props) {
-	const fileLinks = use(MarkdownFileLinksContext);
-
-	return (
-		<div className="text-muted-foreground space-y-1.5 text-[13px] leading-6">
-			{tools.map((tool) => {
-				const kind = tool.job?.kind ?? tool.name;
-				const Icon = toolLogIcon(tool);
-				const rows = toolItemRows(tool, commands);
-				const label = toolItemLabel(kind);
-				const error = assistantTimelineToolError(tool, inProgress);
-				const failure = assistantTimelineToolFailureKind(tool, inProgress);
-				const onOpen = kind === 'parse_file' ? parsedFileOpener(tool, fileLinks) : undefined;
-
-				const errorClass =
-					failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
-
-				return (
-					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
-						{rows.map((row, index) => {
-							const status = row.error ? (
-								<span className="text-destructive shrink-0">(failed)</span>
-							) : error && failure && index === rows.length - 1 ? (
-								<span className={`shrink-0 ${errorClass}`}>
-									({failure === 'cancelled' ? 'stopped' : failure})
-								</span>
-							) : null;
-
-							return (
-								<Fragment key={index}>
-									<ToolRow
-										Icon={Icon}
-										label={label}
-										item={row.item}
-										status={status}
-										command={row.command}
-										onOpen={onOpen}
-									/>
-									{row.error ? (
-										<p
-											data-work-detail
-											className="text-destructive pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap"
-											role="status"
-										>
-											{row.error}
-										</p>
-									) : null}
-								</Fragment>
-							);
-						})}
-						{error && failure ? (
-							<p
-								data-work-detail
-								className={`pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
-								role="status"
-							>
-								{error}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
+		<div
+			data-tool-kind={row.name}
+			className="text-muted-foreground min-w-0 space-y-1.5 text-[13px] leading-6"
+		>
+			{onClick ? (
+				<button
+					type="button"
+					data-tool-row
+					data-work-detail
+					title={title}
+					className={`${workRowClass} max-w-full`}
+					aria-expanded={expandable ? expanded : undefined}
+					onClick={onClick}
+				>
+					{content}
+				</button>
+			) : (
+				<div
+					data-tool-row
+					data-work-detail
+					title={title}
+					className="flex min-w-0 items-start gap-1.5"
+				>
+					{content}
+				</div>
+			)}
+			{showsDetail ? (
+				<p
+					data-work-detail
+					className="bg-muted/50 text-foreground ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap"
+				>
+					{row.command && summary.startsWith(row.command) ? (
+						<>
+							<HighlightedCommand command={row.command} />
+							{summary.slice(row.command.length)}
+						</>
+					) : (
+						summary
+					)}
+				</p>
+			) : null}
+			{row.error !== undefined ? (
+				<p
+					data-work-detail
+					className={`pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${statusClass}`}
+					role="status"
+				>
+					{row.error}
+				</p>
+			) : null}
+			{row.action?.kind === 'saveCard' ? (
+				<div data-work-detail className="pl-5">
+					<SaveCardButton />
+				</div>
+			) : null}
 		</div>
 	);
 }
+
+export default WorkTools;

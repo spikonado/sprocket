@@ -130,13 +130,22 @@ pub(crate) async fn hydrate_tool_history(
     image_urls: Option<&ConvexImageUrls<'_>>,
 ) {
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
+    let calls = crate::history::ToolCallIndex::new(parts);
     let mut results = std::collections::HashMap::new();
-    for tool in parts.iter().filter_map(|part| part.tool.as_ref()) {
-        if (parse_file::is_parse_file_tool(&tool.name)
-            || matches!(tool.name.as_str(), "scrape_url" | "screenshot_url"))
-            && tool.status != "started"
+    for part in parts {
+        let Some(tool) = &part.tool else { continue };
+        let Some((name, _)) = calls.tool_details(part) else {
+            continue;
+        };
+        if tool.status != "started"
+            && (parse_file::is_parse_file_tool(name)
+                || matches!(name, "scrape_url" | "screenshot_url"))
         {
-            results.entry(tool.call_id.as_str()).or_insert(tool);
+            let id = calls
+                .for_result(part)
+                .map(|call| call.history_id())
+                .unwrap_or_else(|| tool.call_id.clone());
+            results.entry(id).or_insert((tool, name));
         }
     }
     let mut replays = Vec::new();
@@ -145,7 +154,7 @@ pub(crate) async fn hydrate_tool_history(
             let AgentHistoryContent::ToolResult { id, items, .. } = content else {
                 continue;
             };
-            let Some(tool) = results.get(id.as_str()) else {
+            let Some(&(tool, name)) = results.get(id.as_str()) else {
                 continue;
             };
             if tool.status != "completed" {
@@ -154,7 +163,7 @@ pub(crate) async fn hydrate_tool_history(
             let Some(output) = &tool.output else { continue };
             let is_image =
                 output.get("outputType").and_then(serde_json::Value::as_str) == Some("image");
-            if !is_image && !parse_file::is_parse_file_tool(&tool.name) {
+            if !is_image && !parse_file::is_parse_file_tool(name) {
                 continue;
             }
             if !supports_images && is_image {

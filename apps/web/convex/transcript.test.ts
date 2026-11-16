@@ -16,6 +16,141 @@ import {
 } from './test.setup';
 
 describe('numbered transcript parts', () => {
+	it('returns canonical calls and settled results while preserving legacy display writes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'canonical-parts-secret';
+		const claimId = 'canonical-claim';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'canonical', executionSecret);
+		const base = { runId, claimId, executionSecret };
+
+		await asUser.mutation(api.agentRuntime.start, base);
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...base, attemptSeq: 1 });
+
+		const call = {
+			type: 'tool-call' as const,
+			callId: 'call',
+			toolInvocationId: 'canonical-invocation',
+			name: 'exec_cmd',
+			input: { cmd: 'pwd' }
+		};
+
+		const completionArgs = {
+			...base,
+			attemptSeq: 1,
+			streamId: 'canonical-stream',
+			items: [{ type: 'reasoning' as const, id: 'thinking', text: 'Check directory' }, call],
+			returnParts: true
+		};
+
+		const saved = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, completionArgs);
+
+		expect(saved).toMatchObject({
+			completion: {
+				number: 1,
+				completion: { items: [{ type: 'reasoning' }, { toolInvocationId: call.toolInvocationId }] },
+				work: {
+					ranges: [{ start: 0, end: 2 }],
+					toolInvocations: [{ item: 1, toolInvocationId: call.toolInvocationId }]
+				}
+			},
+			parts: [{ number: 1 }]
+		});
+
+		if (!saved || !('parts' in saved)) throw new Error('Expected returned parts.');
+
+		expect(saved.completion?.completion).not.toHaveProperty('streamId');
+		expect(await asUser.mutation(api.agentRuntime.finalizeCompletionCall, completionArgs)).toEqual(
+			saved
+		);
+
+		const jobArgs = {
+			...base,
+			attemptSeq: 1,
+			streamId: completionArgs.streamId,
+			callId: call.callId,
+			toolInvocationId: call.toolInvocationId,
+			kind: 'exec_cmd' as const,
+			payload: call.input
+		};
+
+		const job = await asUser.mutation(api.agentRuntime.beginToolJob, jobArgs);
+
+		expect(await asUser.mutation(api.agentRuntime.beginToolJob, jobArgs)).toEqual(job);
+
+		const result = await asUser.mutation(api.executor.complete, {
+			...base,
+			jobId: job.jobId,
+			returnParts: true,
+			result: { output: '/workspace' }
+		});
+
+		expect(result).toMatchObject({
+			accepted: true,
+			parts: [
+				{
+					number: 3,
+					tool: {
+						toolInvocationId: call.toolInvocationId,
+						status: 'completed',
+						output: { output: '/workspace' }
+					}
+				}
+			]
+		});
+		const retried = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, completionArgs);
+
+		expect(retried).toMatchObject({
+			completion: saved.completion,
+			parts: [{ number: 1 }, { number: 3 }]
+		});
+		const page = await readTranscriptRange(asUser, threadId, 0, 4);
+
+		expect(page.parts.map((part) => [part.kind, part.tool?.status])).toEqual([
+			['prompt', undefined],
+			['completion', undefined],
+			['tool', 'started'],
+			['tool', 'completed']
+		]);
+		expect(result).toEqual({ accepted: true, parts: [page.parts[3]] });
+	});
+
+	it('accepts retries of completions saved in the legacy format', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'legacy-retry-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'legacy', executionSecret);
+		const base = { runId, claimId: 'legacy-claim', executionSecret };
+
+		await asUser.mutation(api.agentRuntime.start, base);
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...base, attemptSeq: 1 });
+
+		const legacyCall = { type: 'tool-call' as const, callId: 'call', name: 'exec_cmd', input: {} };
+
+		const args = {
+			...base,
+			attemptSeq: 1,
+			streamId: 'legacy-stream',
+			items: [{ ...legacyCall, toolInvocationId: 'legacy-invocation' }],
+			returnParts: true
+		};
+
+		const saved = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, args);
+		const part = saved && 'parts' in saved ? saved.completion : null;
+
+		if (!part?.completion) throw new Error('Expected a saved completion.');
+
+		await t.run((ctx) =>
+			ctx.db.patch('threadTranscriptParts', part._id, {
+				completion: { streamId: args.streamId, items: [legacyCall] }
+			})
+		);
+
+		expect(await asUser.mutation(api.agentRuntime.finalizeCompletionCall, args)).toMatchObject({
+			completion: { _id: part._id }
+		});
+	});
+
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -101,7 +236,7 @@ describe('numbered transcript parts', () => {
 		const assignments = {
 			work: { ranges: [{ start: 0, end: 1, sectionKey }] },
 			toolInvocations: [],
-			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
+			sections: [{ sectionKey: 'ignored', sectionOrdinal: -1, closed: true }]
 		};
 
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
@@ -114,7 +249,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		expect(number?.number).toBe(1);
+		expect(number).toMatchObject({ number: 1 });
 
 		const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
@@ -126,12 +261,13 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		expect(again?._id).toBe(number?._id);
+		expect(again).toEqual(number);
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(2);
 		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
+		expect(parts.parts[1]?.work).toEqual({ ...assignments.work, toolInvocations: [] });
 	});
 
 	it('accepts encrypted-only reasoning without a work assignment', async () => {
@@ -192,7 +328,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		expect(part?.completion?.items).toHaveLength(2);
+		expect(part).toMatchObject({ completion: { items } });
 
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
@@ -245,7 +381,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		expect(number?.number).toBe(1);
+		expect(number).toMatchObject({ number: 1 });
 		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 
@@ -585,9 +721,6 @@ describe('numbered transcript parts', () => {
 
 			await t.run((ctx) => ctx.db.patch('executorJobs', jobId, { hidden }));
 
-			expect(
-				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
-			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 1 });
 			await asUser.mutation(api.executor.complete, {
 				jobId,
 				runId,
@@ -642,9 +775,6 @@ describe('numbered transcript parts', () => {
 				},
 				work: { ranges: [], sectionKey: assignment.sectionKey }
 			});
-			expect(
-				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
-			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 0 });
 		}
 	);
 

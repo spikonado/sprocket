@@ -14,7 +14,7 @@ import {
 	X,
 	type LucideIcon
 } from 'lucide-react';
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Activity, memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserView, { type BrowserApi } from '$lib/components/home/browser-view';
 import ConfirmDialog from '$lib/components/home/confirm-dialog';
@@ -431,7 +431,8 @@ const TabPanel = memo(
 						</ul>
 					</div>
 				) : tab.view === 'transcript' ? (
-					transcript
+					// Transcript rows subscribe to their store directly, which the memo above can't pause.
+					<Activity mode={visible ? 'visible' : 'hidden'}>{transcript}</Activity>
 				) : tab.view === 'browser' ? (
 					// The dashboard iframe streams the browser on the page's main thread, even when hidden.
 					visible && <BrowserView browserApi={browserApi} />

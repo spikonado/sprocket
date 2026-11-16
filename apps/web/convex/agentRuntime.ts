@@ -17,12 +17,14 @@ import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayOrigin, modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { gatewayQuotaStatus } from '@convex/lib/quota';
-import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
+import { vCompletionActor, vGetContextResult, vTranscriptMutationResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
 	existingContextSummaryPartCount,
 	getProviderHandoff,
-	throughPartNumberForHandoff
+	stripReasoningThrough,
+	throughPartNumberForHandoff,
+	transcriptContext
 } from '@convex/lib/contextHandoff';
 import { getThreadContextTokens, setThreadContextTokens } from '@convex/lib/threadUsage';
 import { recordModelCallUsage } from '@convex/lib/tokenUsage';
@@ -56,7 +58,13 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { enabledProviders, releasedClientProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
-import { getPromptPart, hydratePromptUrls } from '@convex/lib/transcriptParts';
+import { deriveLegacyCompletionWork } from '@convex/lib/legacyTranscriptWork';
+import {
+	getOrCreateTranscriptState,
+	getPromptPart,
+	hiddenPromptSourceKey,
+	hydratePromptUrls
+} from '@convex/lib/transcriptParts';
 import { runHasBegun, runStartedAt } from '@convex/lib/runs';
 import {
 	assertRunAcceptsWork,
@@ -247,8 +255,7 @@ export const issueGatewayCredential = mutation({
 
 		if (
 			(run.completionProvider ?? 'spikonado') !== 'spikonado' &&
-			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
-				?.completionProvider !== 'spikonado'
+			(await getProviderHandoff(ctx, run))?.completionProvider !== 'spikonado'
 		) {
 			throw new ConvexError('Run is not configured to use the Spikonado gateway.');
 		}
@@ -391,7 +398,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 	const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 	const thread = await ctx.db.get('threadRecords', run.threadId);
 	const parentThreadId = thread?.parentThreadId;
-	const providerHandoff = await getProviderHandoff(ctx, run, thread);
+	const providerHandoff = await getProviderHandoff(ctx, run);
 	const preferences = await getUiPreferences(ctx.db, run.userId);
 	const knownProviders = args.knownProviders ?? releasedClientProviders;
 
@@ -483,9 +490,9 @@ async function recordContextHandoff(
 		handoffCalls?: Infer<typeof vModelCallUsage>[];
 		workspaceContext?: HiddenPrompt[];
 	}
-): Promise<'recorded' | 'stale'> {
+): Promise<Doc<'threadTranscriptParts'>[] | null> {
 	if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
-		return 'stale';
+		return null;
 	}
 
 	if (!args.summary.trim()) {
@@ -493,6 +500,8 @@ async function recordContextHandoff(
 	}
 
 	const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+	const state = await getOrCreateTranscriptState(ctx, run.threadId);
+	const context = transcriptContext(state, thread);
 
 	const partCount =
 		(await throughPartNumberForHandoff(ctx, {
@@ -502,32 +511,32 @@ async function recordContextHandoff(
 		})) + 1;
 
 	const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
-	const existingPartCount = existingContextSummaryPartCount(thread);
-
-	if (thread.contextSummaryHandoffKey === handoffKey) {
-		if (existingPartCount !== undefined && partCount < existingPartCount) {
-			throw new Error('Invalid context handoff cutoff.');
-		}
-
-		if (thread.contextSummary !== args.summary) {
-			throw new Error('Conflicting context handoff retry.');
-		}
-
-		return 'recorded';
-	}
+	const existingPartCount = existingContextSummaryPartCount(context);
 
 	if (existingPartCount !== undefined && partCount < existingPartCount) {
 		throw new Error('Invalid context handoff cutoff.');
 	}
 
-	await ctx.db.patch('threadRecords', thread._id, {
+	if (context.contextSummaryHandoffKey === handoffKey) {
+		if (context.contextSummary !== args.summary) {
+			throw new Error('Conflicting context handoff retry.');
+		}
+
+		return await recordHiddenPrompts(ctx, {
+			threadId: thread._id,
+			runId: run._id,
+			idempotencyScope: handoffKey,
+			prompts: args.workspaceContext ?? []
+		});
+	}
+
+	await ctx.db.patch('threadTranscriptStates', state._id, {
 		contextSummary: args.summary,
 		contextSummaryPartCount: partCount,
-		contextSummaryThroughPartNumber: undefined,
 		contextSummaryHandoffKey: handoffKey
 	});
 
-	await recordHiddenPrompts(ctx, {
+	const parts = await recordHiddenPrompts(ctx, {
 		threadId: thread._id,
 		runId: run._id,
 		idempotencyScope: handoffKey,
@@ -544,7 +553,7 @@ async function recordContextHandoff(
 
 	await setThreadContextTokens(ctx, thread, undefined);
 
-	return 'recorded';
+	return parts;
 }
 
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
@@ -556,22 +565,23 @@ export const saveContextHandoff = mutation({
 		...vHandoffSummary,
 		beforePrompt: v.optional(v.boolean()),
 		processedTokens: v.optional(v.number()),
+		returnParts: v.optional(v.boolean()),
 		/** Shown after the summary; parts before the cutoff no longer reach the model. */
 		workspaceContext: v.optional(v.array(vHiddenPrompt))
 	},
-	returns: v.boolean(),
+	returns: v.union(v.boolean(), vTranscriptMutationResult),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+			return args.returnParts ? { accepted: false, parts: [] } : false;
+		}
 
-		return (await recordContextHandoff(ctx, run, args)) === 'recorded';
+		const parts = await recordContextHandoff(ctx, run, args);
+
+		return args.returnParts ? { accepted: parts !== null, parts: parts ?? [] } : parts !== null;
 	}
 });
-
-async function promptAlreadyBegun(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
-	return runHasBegun(run) && (await getPromptPart(ctx, run.threadId, run._id)) !== null;
-}
 
 /**
  * Writes what the model sees before the run's first call, in model order: an
@@ -583,15 +593,47 @@ export const beginRun = mutation({
 		claimId: v.string(),
 		executionSecret: v.string(),
 		workspaceContext: v.array(vHiddenPrompt),
-		handoff: v.optional(v.object(vHandoffSummary))
+		handoff: v.optional(v.object(vHandoffSummary)),
+		returnParts: v.optional(v.boolean())
 	},
-	returns: v.boolean(),
+	returns: v.union(v.boolean(), vTranscriptMutationResult),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+			return args.returnParts ? { accepted: false, parts: [] } : false;
+		}
 
-		if (run.cancellationRequestedAt !== undefined) return await promptAlreadyBegun(ctx, run);
+		const hiddenScope = args.handoff
+			? contextHandoffKey(run._id, args.claimId, args.handoff.completionAttemptSeq)
+			: `${run._id}:${args.claimId}`;
+
+		if (run.cancellationRequestedAt !== undefined) {
+			const prompt = runHasBegun(run) ? await getPromptPart(ctx, run.threadId, run._id) : null;
+			const accepted = prompt !== null;
+
+			if (!args.returnParts) return accepted;
+
+			const hidden = await Promise.all(
+				args.workspaceContext.map((entry) =>
+					ctx.db
+						.query('threadTranscriptParts')
+						.withIndex('by_threadId_and_sourceKey', (query) =>
+							query
+								.eq('threadId', run.threadId)
+								.eq('sourceKey', hiddenPromptSourceKey(hiddenScope, entry.kind))
+						)
+						.unique()
+				)
+			);
+
+			return {
+				accepted,
+				parts: [...hidden.filter((part) => part !== null), ...(prompt ? [prompt] : [])]
+			};
+		}
+
+		let parts: Doc<'threadTranscriptParts'>[];
 
 		if (args.handoff) {
 			const handoff = await recordContextHandoff(ctx, run, {
@@ -600,12 +642,13 @@ export const beginRun = mutation({
 				workspaceContext: args.workspaceContext
 			});
 
-			if (handoff === 'stale') return false;
+			if (handoff === null) return args.returnParts ? { accepted: false, parts: [] } : false;
+			parts = handoff;
 		} else {
-			await recordHiddenPrompts(ctx, {
+			parts = await recordHiddenPrompts(ctx, {
 				threadId: run.threadId,
 				runId: run._id,
-				idempotencyScope: `${run._id}:${args.claimId}`,
+				idempotencyScope: hiddenScope,
 				prompts: args.workspaceContext
 			});
 		}
@@ -620,9 +663,14 @@ export const beginRun = mutation({
 			await ctx.db.patch('runs', run._id, { pendingPrompt: undefined });
 			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 			await generateTitleAfterFirstPrompt(ctx, thread, promptPart);
+			parts.push(promptPart);
+		} else {
+			const prompt = await getPromptPart(ctx, run.threadId, run._id);
+
+			if (prompt) parts.push(prompt);
 		}
 
-		return true;
+		return args.returnParts ? { accepted: true, parts } : true;
 	}
 });
 
@@ -647,11 +695,7 @@ export const omitReasoningReplay = mutation({
 			beforePrompt: args.beforePrompt ?? false
 		});
 
-		if (throughPartNumber > (thread.reasoningStrippedThroughPartNumber ?? -1)) {
-			await ctx.db.patch('threadRecords', thread._id, {
-				reasoningStrippedThroughPartNumber: throughPartNumber
-			});
-		}
+		await stripReasoningThrough(ctx, thread, throughPartNumber);
 
 		return true;
 	}
@@ -681,12 +725,9 @@ export const fallBackToProvider = mutation({
 
 		await ctx.db.patch('runs', run._id, { completionProvider: args.completionProvider });
 		await ctx.db.patch('threadRecords', thread._id, {
-			completionProvider: args.completionProvider,
-			reasoningStrippedThroughPartNumber: Math.max(
-				throughPartNumber,
-				thread.reasoningStrippedThroughPartNumber ?? -1
-			)
+			completionProvider: args.completionProvider
 		});
+		await stripReasoningThrough(ctx, thread, throughPartNumber);
 
 		return true;
 	}
@@ -756,7 +797,6 @@ function existingJobConflicts(
 	expected: {
 		callId: string;
 		sectionKey?: string;
-		sectionOrdinal?: number;
 		attemptSeq: number;
 		streamId: string;
 	}
@@ -766,7 +806,6 @@ function existingJobConflicts(
 	return (
 		job.callId !== expected.callId ||
 		job.sectionKey !== expected.sectionKey ||
-		(expected.sectionKey !== undefined && job.sectionOrdinal !== expected.sectionOrdinal) ||
 		job.attemptSeq !== expected.attemptSeq ||
 		job.streamId !== expected.streamId
 	);
@@ -779,15 +818,18 @@ export const finalizeCompletionCall = mutation({
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		items: v.array(vTranscriptCompletionItem),
-		work: workMembership,
-		toolInvocations: v.array(
-			v.object({
-				callId: v.string(),
-				toolInvocationId: v.string(),
-				sectionKey: v.optional(v.string())
-			})
+		work: v.optional(workMembership),
+		toolInvocations: v.optional(
+			v.array(
+				v.object({
+					callId: v.string(),
+					toolInvocationId: v.string(),
+					sectionKey: v.optional(v.string())
+				})
+			)
 		),
-		sections: v.array(sectionOrder),
+		sections: v.optional(v.array(sectionOrder)),
+		returnParts: v.optional(v.boolean()),
 		usage: v.optional(
 			v.object({
 				contextTokens: v.number(),
@@ -797,36 +839,37 @@ export const finalizeCompletionCall = mutation({
 		),
 		executionSecret: v.string()
 	},
-	returns: v.union(schema.doc('threadTranscriptParts'), v.null()),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsWork(run, args.claimId, Date.now());
+	returns: v.union(
+		schema.doc('threadTranscriptParts'),
+		v.null(),
+		v.object({
+			completion: v.union(schema.doc('threadTranscriptParts'), v.null()),
+			parts: v.array(schema.doc('threadTranscriptParts'))
+		})
+	),
+	handler: async (ctx, input) => {
+		const run = await getExecutionRun(ctx, input.runId, input.executionSecret);
+		assertRunAcceptsWork(run, input.claimId, Date.now());
 
-		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-			return null;
+		if (!isCurrentCompletionAttempt(run, input.claimId, input.attemptSeq)) {
+			return input.returnParts ? { completion: null, parts: [] } : null;
 		}
 
-		const sectionOrdinals = new Map(
-			args.sections.map((section) => [section.sectionKey, section.sectionOrdinal])
-		);
+		const assignments =
+			input.work === undefined
+				? await deriveLegacyCompletionWork(ctx, { ...input, threadId: run.threadId })
+				: {
+						work: input.work,
+						toolInvocations: input.toolInvocations ?? []
+					};
+
+		const args = { ...input, ...assignments };
 
 		if (
-			args.sections.length > MAX_COMPLETION_ASSIGNMENTS ||
 			args.work.ranges.length > MAX_COMPLETION_ASSIGNMENTS ||
-			args.toolInvocations.length > MAX_COMPLETION_ASSIGNMENTS ||
-			sectionOrdinals.size !== args.sections.length ||
-			args.sections.some(
-				(section) =>
-					!isExpectedSectionKey(
-						run._id,
-						args.claimId,
-						args.attemptSeq,
-						section.sectionKey,
-						section.sectionOrdinal
-					)
-			)
+			args.toolInvocations.length > MAX_COMPLETION_ASSIGNMENTS
 		) {
-			throw new Error('Invalid section metadata.');
+			throw new Error('Too many completion assignments.');
 		}
 
 		const invocationIds = new Set<string>();
@@ -849,10 +892,6 @@ export const finalizeCompletionCall = mutation({
 				existingJobConflicts(job, {
 					callId: invocation.callId,
 					sectionKey: invocation.sectionKey,
-					sectionOrdinal:
-						invocation.sectionKey === undefined
-							? undefined
-							: sectionOrdinals.get(invocation.sectionKey),
 					attemptSeq: args.attemptSeq,
 					streamId: args.streamId
 				})
@@ -861,13 +900,18 @@ export const finalizeCompletionCall = mutation({
 			}
 		}
 
-		const completionCallIds = args.items.flatMap((item) =>
-			item.type === 'tool-call' ? [item.callId] : []
+		const completionToolCalls = args.items.flatMap((item) =>
+			item.type === 'tool-call' ? [item] : []
 		);
 
 		if (
-			completionCallIds.length !== args.toolInvocations.length ||
-			completionCallIds.some((callId, index) => callId !== args.toolInvocations[index]?.callId)
+			completionToolCalls.length !== args.toolInvocations.length ||
+			completionToolCalls.some(
+				(item, index) =>
+					item.callId !== args.toolInvocations[index]?.callId ||
+					(item.toolInvocationId !== undefined &&
+						item.toolInvocationId !== args.toolInvocations[index]?.toolInvocationId)
+			)
 		) {
 			throw new Error('Incomplete tool invocation assignments.');
 		}
@@ -884,8 +928,6 @@ export const finalizeCompletionCall = mutation({
 		const assignedItems = new Set<number>();
 
 		for (const range of args.work.ranges) {
-			if (!sectionOrdinals.has(range.sectionKey)) throw new Error('Unknown work section.');
-
 			for (let index = range.start; index < range.end; index++) {
 				const item = args.items[index];
 				const invocation = invocationsByItem.get(index);
@@ -914,14 +956,12 @@ export const finalizeCompletionCall = mutation({
 			streamId: args.streamId,
 			items: args.items,
 			work: args.work,
-			toolInvocations: args.toolInvocations,
-			sections: args.sections
+			toolInvocations: args.toolInvocations
 		});
 
-		await recordSettledToolTranscripts(ctx, {
+		const settledParts = await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,
 			runId: run._id,
-			items: args.items,
 			toolInvocations: args.toolInvocations
 		});
 
@@ -938,7 +978,9 @@ export const finalizeCompletionCall = mutation({
 			}
 		}
 
-		return part;
+		return args.returnParts
+			? { completion: part, parts: [...(part ? [part] : []), ...settledParts] }
+			: part;
 	}
 });
 
@@ -1049,8 +1091,8 @@ const beginToolJobArgs = {
 	kind: vCurrentExecutorJobKind,
 	callId: v.optional(v.string()),
 	toolInvocationId: v.string(),
-	sectionKey: v.string(),
-	sectionOrdinal: v.number(),
+	sectionKey: v.optional(v.string()),
+	sectionOrdinal: v.optional(v.number()),
 	attemptSeq: v.number(),
 	streamId: v.string(),
 	payload: vCurrentExecutorJobPayload,
@@ -1082,13 +1124,16 @@ export async function beginToolJobHandler(
 		}
 
 		if (
-			!isExpectedSectionKey(
-				run._id,
-				args.claimId,
-				args.attemptSeq,
-				args.sectionKey,
-				args.sectionOrdinal
-			)
+			(args.sectionKey !== undefined || args.sectionOrdinal !== undefined) &&
+			(args.sectionKey === undefined ||
+				args.sectionOrdinal === undefined ||
+				!isExpectedSectionKey(
+					run._id,
+					args.claimId,
+					args.attemptSeq,
+					args.sectionKey,
+					args.sectionOrdinal
+				))
 		) {
 			throw new Error('Invalid section identity.');
 		}

@@ -42,15 +42,6 @@ function currencyFormat(currency: string) {
 	}
 }
 
-export function formatMajorAmount(amount: string, currency: string): string {
-	const value = Number(amount);
-	const format = currencyFormat(currency);
-
-	return format && Number.isFinite(value)
-		? format.format(value)
-		: `${amount} ${currency.toUpperCase()}`;
-}
-
 export function formatMinorAmount(amount: number, currency: string): string {
 	const format = currencyFormat(currency);
 

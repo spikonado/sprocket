@@ -1336,9 +1336,6 @@ async fn read_transcript_snapshot(
         only_run_id: run_id,
         hidden_prompt_runs: info.caller_prompt_run_ids.clone(),
     };
-    sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript)
-        .await
-        .map_err(tool_error)?;
     let page = sprocket_transcript::monitor::download_monitor_page(
         store,
         user_id,
@@ -1346,14 +1343,11 @@ async fn read_transcript_snapshot(
         cursor,
         transcript.total_parts,
         &filter,
-        |start, end, order| async move {
+        |start, end| async move {
             let mut fields = thread_args(context, thread_id);
             fields.insert("start".into(), Value::Float64(f64::from(start)));
             fields.insert("end".into(), Value::Float64(f64::from(end)));
-            fields.insert(
-                "order".into(),
-                Value::try_from(serde_json::to_value(order)?)?,
-            );
+            fields.insert("order".into(), "desc".to_owned().into());
             let value: serde_json::Value = context
                 .runtime
                 .mutation_json(TRANSCRIPT_PARTS_PAGE, fields)

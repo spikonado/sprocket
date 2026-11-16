@@ -138,13 +138,12 @@ import {
 	type UseExpandedThreads
 } from '$lib/project/useThreadTree';
 import type { InboxState } from '@convex/lib/inboxState';
-import { useTranscriptReplica } from '$lib/home/transcript-replica';
-import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
+import { useTranscriptStore } from '$lib/home/transcript-store';
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveLocalApi } from '$lib/local/client';
 import { isServerRejection } from '$lib/local/transport';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import { useLocalCliStatus } from '$lib/home/local-cli-status';
-import type { LocalApi, ExecutorJob, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
+import type { LocalApi, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
 import { syncShareConversationContent } from '$lib/analytics';
 
@@ -263,17 +262,6 @@ function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: s
 
 function loadErrorMessage(error: Error, fallback: string) {
 	return convexClientErrorMessage(error) || fallback;
-}
-
-function ThreadWorkspace({
-	threadId,
-	...props
-}: ComponentProps<typeof SidePanel> & { threadId: Id<'threadRecords'> | null }) {
-	return threadId ? (
-		<SidePanel {...props} />
-	) : (
-		<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{props.transcript}</div>
-	);
 }
 
 export default function App({
@@ -542,7 +530,7 @@ export default function App({
 		localServerRequiredMessage
 	});
 
-	const transcript = useTranscriptReplica();
+	const transcript = useTranscriptStore();
 	const artifactPanel = useArtifactPanel();
 	const artifactRepositoryKey = convexAuth.isAuthenticated ? currentRepositoryKey : null;
 
@@ -747,36 +735,13 @@ export default function App({
 
 		if (!threadId || !api || !isSignedIn || !signedInUserId) return;
 
-		return transcript.watchDisplay({
+		return transcript.watch({
 			api,
 			userId: signedInUserId,
 			threadId,
 			isCurrent: () => currentThreadIdRef.current === threadId
 		});
 	}, [currentThreadId, currentThreadIdRef, localApi, isSignedIn, transcript, signedInUserId]);
-
-	useEffect(() => {
-		const threadId = currentThreadId;
-		const api = localApi;
-
-		if (!threadId || !api || !isSignedIn || !signedInUserId) return;
-
-		return transcript.watchLiveCompletion({
-			api,
-			userId: signedInUserId,
-			threadId,
-			isCurrent: () => currentThreadIdRef.current === threadId
-		});
-	}, [currentThreadId, currentThreadIdRef, localApi, isSignedIn, transcript, signedInUserId]);
-
-	useEffect(() => {
-		transcript.syncOverlays(transcript.overlays);
-	});
-
-	const visibleMessages = transcript.visibleMessages({
-		threadId: currentThreadId,
-		userId: signedInUserId
-	});
 
 	const currentProject = useMemo<ProjectState | null>(() => {
 		if (currentWorkspacePath) {
@@ -855,8 +820,6 @@ export default function App({
 			)
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	}, [threads, currentProject]);
-
-	const visibleActions = useMemo<ExecutorJob[]>(() => [], []);
 
 	useLayoutEffect(() => {
 		const scope =
@@ -1476,10 +1439,6 @@ export default function App({
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
 	}
 
-	async function loadOlderTranscript() {
-		await transcript.loadOlder();
-	}
-
 	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
 		const api = localApi;
 		const threadId = currentThreadId;
@@ -1489,25 +1448,6 @@ export default function App({
 		const blob = await api.fetchTranscriptAttachment({ userId, threadId, storageId });
 
 		return blob ? URL.createObjectURL(blob) : null;
-	}
-
-	async function loadTranscriptSectionDetails(
-		row: TranscriptDisplayRow,
-		cursor: TranscriptDetailCursor,
-		signal: AbortSignal
-	) {
-		const api = localApi;
-		const threadId = currentThreadId;
-		const userId = signedInUserIdRef.current;
-
-		if (!api || !threadId || !userId || row.threadId !== threadId) {
-			throw new Error('Thread is no longer selected.');
-		}
-
-		return await api.fetchTranscriptDisplayDetails(
-			{ userId, threadId, rowId: row.id, ...cursor },
-			signal
-		);
 	}
 
 	async function changeInboxState(thread: Doc<'threadRecords'>, state: InboxState) {
@@ -1931,6 +1871,7 @@ export default function App({
 						return;
 
 					if (!selectedThreadId) {
+						artifactPanel.adoptDraft(createdThreadId);
 						setPendingCreatedThreadId(createdThreadId);
 						bumpProjectSelectionGeneration();
 						setCurrentThreadId(createdThreadId);
@@ -2650,9 +2591,8 @@ export default function App({
 						)
 					) : (
 						<MarkdownFileLinksContext value={markdownFileLinks}>
-							<ThreadWorkspace
+							<SidePanel
 								key={artifactPanel.layoutKey}
-								threadId={currentThreadId}
 								panel={artifactPanel}
 								workspacePath={localApi ? currentProject?.workspacePath : undefined}
 								threadCwd={threadCwd}
@@ -2671,10 +2611,15 @@ export default function App({
 									<>
 										{currentThreadId && (
 											<ThreadTranscript
-												key={`${currentThreadId}:${transcript.windowVersion}`}
-												messages={visibleMessages}
-												actions={visibleActions}
-												activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
+												key={currentThreadId}
+												store={transcript}
+												activeRunId={
+													currentLifecycle
+														? isLifecycleInProgress(currentLifecycle.phase)
+															? (runState?.runId ?? null)
+															: null
+														: undefined
+												}
 												project={currentProject}
 												cwd={threadCwd}
 												artifacts={artifactList.artifacts}
@@ -2682,18 +2627,22 @@ export default function App({
 												loadingOlder={transcript.loadingOlder}
 												nextBefore={transcript.nextBefore ?? undefined}
 												emptyStateMessage={
-													currentThreadId &&
-													(transcript.loading || transcript.threadId !== currentThreadId)
-														? 'Loading conversation history...'
-														: currentProject
-															? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-															: 'Add a project to begin.'
+													transcript.threadId !== currentThreadId ||
+													transcript.history === 'loading'
+														? ''
+														: transcript.history === 'downloading'
+															? 'Loading conversation history...'
+															: currentProject
+																? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+																: 'Add a project to begin.'
 												}
-												onLoadOlder={() => void loadOlderTranscript()}
+												onLoadOlder={() => void transcript.loadOlder()}
 												loadAttachment={loadTranscriptAttachment}
-												loadSectionDetails={loadTranscriptSectionDetails}
 												renderRunFooter={(runId) => (
-													<RunUsageFooter runId={runId} modelCatalog={modelCatalog} />
+													<RunUsageFooter
+														runId={convexId<'runs'>().parse(runId)}
+														modelCatalog={modelCatalog}
+													/>
 												)}
 											/>
 										)}
@@ -2750,7 +2699,7 @@ export default function App({
 																syncing={Boolean(
 																	currentThreadId &&
 																	transcript.threadId === currentThreadId &&
-																	transcript.syncing
+																	transcript.history === 'downloading'
 																)}
 																catalogError={catalogError !== null}
 																catalogLoading={catalogLoading}

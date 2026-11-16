@@ -4,6 +4,8 @@ import { internalMutation } from '@convex/_generated/server';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
+import { transcriptContext } from '@convex/lib/contextHandoff';
+import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
 import schema from '@convex/schema';
 
 export const migrations = new Migrations(components.migrations, { schema, internalMutation });
@@ -60,6 +62,21 @@ export const backfillToolInvocationIds = migrations.define({
 	}
 });
 
+export const backfillCompletionToolInvocationIds = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: (_ctx, part) => {
+		const { completion, work } = part;
+
+		if (!completion || !work.toolInvocations?.length) return;
+
+		const items = withToolInvocationIds(completion.items, work.toolInvocations);
+
+		if (items.some((item, index) => item !== completion.items[index])) {
+			return { completion: { ...completion, items } };
+		}
+	}
+});
+
 export const removeArtifactTypes = migrations.define({
 	table: 'artifacts',
 	migrateOne: (_ctx, artifact) => {
@@ -69,14 +86,21 @@ export const removeArtifactTypes = migrations.define({
 	}
 });
 
-export const countContextSummaryParts = migrations.define({
+export const moveTranscriptContext = migrations.define({
 	table: 'threadRecords',
-	migrateOne: (_ctx, thread) => {
-		if (thread.contextSummaryThroughPartNumber === undefined) return;
+	migrateOne: async (ctx, thread) => {
+		if (Object.values(transcriptContext(null, thread)).every((value) => value === undefined)) {
+			return;
+		}
+
+		const state = await getOrCreateTranscriptState(ctx, thread._id);
+		await ctx.db.patch('threadTranscriptStates', state._id, transcriptContext(state, thread));
 
 		return {
-			contextSummaryPartCount: thread.contextSummaryThroughPartNumber + 1,
-			contextSummaryThroughPartNumber: undefined
+			contextSummary: undefined,
+			contextSummaryPartCount: undefined,
+			contextSummaryHandoffKey: undefined,
+			reasoningStrippedThroughPartNumber: undefined
 		};
 	}
 });
@@ -162,8 +186,9 @@ export const backfillRunCompletionProviders = migrations.define({
 
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
+	internal.migrations.backfillCompletionToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
-	internal.migrations.countContextSummaryParts,
+	internal.migrations.moveTranscriptContext,
 	internal.migrations.dropQuestionAnsweredAt,
 	internal.migrations.migrateSubscriptionRows,
 	internal.migrations.clearSubscriptionReconciliations,

@@ -1,0 +1,501 @@
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
+use std::path::Path;
+
+use serde::Serialize;
+use serde_json::{Value, json};
+
+use crate::tool_display::{
+    ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, load_session_command,
+    polled_targets,
+};
+use crate::work_blocks::{item_id, item_index};
+use crate::{
+    LiveCompletionOverlay, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
+    TranscriptPartKind, WorkBlock, derive_work_blocks,
+};
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptRow {
+    pub id: String,
+    pub run_id: String,
+    #[serde(flatten)]
+    pub body: TranscriptRowBody,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum TranscriptRowBody {
+    Prompt {
+        text: String,
+        attachments: Vec<TranscriptAttachmentMeta>,
+    },
+    Text {
+        text: String,
+        running: bool,
+    },
+    Work {
+        tool_counts: BTreeMap<String, u32>,
+        running: bool,
+    },
+    Reasoning {
+        label: String,
+        running: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+    Tool {
+        name: String,
+        #[serde(flatten)]
+        display: ToolDisplay,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        targets: Option<Vec<ToolDisplay>>,
+        has_more: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum ProjectionScope {
+    Thread,
+    Work(String),
+    Item(String),
+    Row(String),
+}
+
+impl ProjectionScope {
+    pub fn row_id(&self) -> Option<&str> {
+        match self {
+            Self::Thread => None,
+            Self::Work(id) | Self::Item(id) | Self::Row(id) => Some(id),
+        }
+    }
+
+    pub fn source_key(&self) -> Option<&str> {
+        self.row_id()?
+            .splitn(3, ':')
+            .nth(2)?
+            .rsplit_once(':')
+            .map(|(source, _)| source)
+    }
+
+    pub fn run_id(&self) -> Option<&str> {
+        self.row_id()?.split(':').nth(1)
+    }
+}
+
+impl TranscriptRow {
+    pub fn text(&self) -> Option<&str> {
+        match &self.body {
+            TranscriptRowBody::Text { text, .. }
+            | TranscriptRowBody::Reasoning {
+                text: Some(text), ..
+            } => Some(text),
+            _ => None,
+        }
+    }
+
+    pub fn set_text(&mut self, value: String) {
+        match &mut self.body {
+            TranscriptRowBody::Text { text, .. }
+            | TranscriptRowBody::Reasoning {
+                text: Some(text), ..
+            } => *text = value,
+            _ => {}
+        }
+    }
+}
+
+pub fn completion_source_key(live: &LiveCompletionOverlay) -> String {
+    format!("completion:{}:{}", live.run_id, live.stream_id)
+}
+
+fn merge_live<'a>(
+    saved: &'a [TranscriptPart],
+    live: &[LiveCompletionOverlay],
+) -> (Vec<Cow<'a, TranscriptPart>>, LiveActivity) {
+    let mut parts: Vec<_> = saved.iter().map(Cow::Borrowed).collect();
+    parts.sort_by_key(|part| part.number);
+    let mut sources = HashSet::new();
+    parts.retain(|part| sources.insert(part.source_key.clone()));
+    let mut activity = LiveActivity::default();
+    let mut number = parts.last().map_or(0, |part| part.number.saturating_add(1));
+    for overlay in live {
+        let source_key = completion_source_key(overlay);
+        let mut items: Vec<Value> = overlay
+            .parts
+            .iter()
+            .map(|item| serde_json::to_value(item).expect("live assistant parts serialize"))
+            .collect();
+        items.sort_by_key(|item| item_index(item, usize::MAX));
+        let part = TranscriptPart {
+            number,
+            source_key,
+            kind: TranscriptPartKind::Completion,
+            run_id: overlay.run_id.clone(),
+            created_at: None,
+            prompt: None,
+            completion: Some(TranscriptCompletionBody { items }),
+            tool: None,
+        };
+        if !overlay.run_status.is_final()
+            && let Some(item) = part.content_items().last()
+            && let Some(kind @ ("text" | "reasoning")) = item["type"].as_str()
+        {
+            activity
+                .streaming
+                .insert(item_id(kind, &part, part.content_items().len() - 1));
+        }
+        if !sources.insert(part.source_key.clone()) {
+            continue;
+        }
+        activity.unsaved.insert(part.source_key.clone());
+        parts.push(Cow::Owned(part));
+        number = number.saturating_add(1);
+    }
+    (parts, activity)
+}
+
+#[derive(Default)]
+struct LiveActivity {
+    streaming: HashSet<String>,
+    unsaved: HashSet<String>,
+}
+
+fn reasoning_label(text: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let line = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("Thinking")
+        .trim()
+        .trim_matches('*')
+        .trim_start_matches('#')
+        .trim();
+    match line.char_indices().nth(MAX_CHARS) {
+        Some((end, _)) => format!("{}…", line[..end].trim_end()),
+        None => line.to_owned(),
+    }
+}
+
+pub struct ToolResults<'a> {
+    invocations: HashMap<(&'a str, &'a str), &'a TranscriptPart>,
+    calls: HashMap<(&'a str, &'a str), &'a TranscriptPart>,
+    sources: HashMap<&'a str, &'a TranscriptPart>,
+}
+
+impl<'a> ToolResults<'a> {
+    pub fn new(saved: &'a [TranscriptPart]) -> Self {
+        let mut results = Self {
+            invocations: HashMap::new(),
+            calls: HashMap::new(),
+            sources: HashMap::new(),
+        };
+        for part in saved {
+            if let Some(tool) = &part.tool
+                && tool.status != "started"
+            {
+                results.sources.insert(part.source_key.as_str(), part);
+                if let Some(invocation) = tool.tool_invocation_id.as_deref() {
+                    results
+                        .invocations
+                        .entry((part.run_id.as_str(), invocation))
+                        .or_insert(part);
+                }
+                if !tool.call_id.is_empty() {
+                    results
+                        .calls
+                        .entry((part.run_id.as_str(), tool.call_id.as_str()))
+                        .or_insert(part);
+                }
+            }
+        }
+        results
+    }
+
+    pub fn get(
+        &self,
+        part: &TranscriptPart,
+        item: &Value,
+        saved: bool,
+    ) -> Option<&'a TranscriptPart> {
+        if let Some(source) = item["resultSourceKey"].as_str() {
+            self.sources.get(source).copied()
+        } else if let Some(invocation) = item["toolInvocationId"].as_str() {
+            self.invocations
+                .get(&(part.run_id.as_str(), invocation))
+                .copied()
+        } else if saved {
+            item["callId"]
+                .as_str()
+                .and_then(|call| self.calls.get(&(part.run_id.as_str(), call)))
+                .copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn projection_parts<'a>(
+    saved: &'a [TranscriptPart],
+    live: &[LiveCompletionOverlay],
+    results: &ToolResults<'a>,
+) -> (Vec<Cow<'a, TranscriptPart>>, LiveActivity) {
+    let (mut parts, activity) = merge_live(saved, live);
+    let result_for = |part: &TranscriptPart, item: &Value| {
+        results
+            .get(part, item, !activity.unsaved.contains(&part.source_key))
+            .map(|part| (part.number, part.tool.as_ref().unwrap()))
+    };
+    let matched: HashSet<_> = parts
+        .iter()
+        .flat_map(|part| {
+            part.content_items()
+                .iter()
+                .filter_map(|item| result_for(part, item).map(|(number, _)| number))
+        })
+        .collect();
+    let mut fallback_ids = HashSet::new();
+    for part in &mut parts {
+        let Some(tool) = &part.tool else { continue };
+        if tool.status == "started" {
+            continue;
+        }
+        let identity = tool
+            .tool_invocation_id
+            .as_deref()
+            .or_else(|| (!tool.call_id.is_empty()).then_some(tool.call_id.as_str()))
+            .or(tool.job_id.as_deref())
+            .unwrap_or(&part.source_key);
+        if !fallback_ids.insert((part.run_id.clone(), identity.to_owned()))
+            || matched.contains(&part.number)
+        {
+            continue;
+        }
+        let fallback = TranscriptPart {
+            number: part.number,
+            source_key: part.source_key.clone(),
+            run_id: part.run_id.clone(),
+            kind: TranscriptPartKind::Completion,
+            created_at: part.created_at,
+            prompt: None,
+            completion: Some(TranscriptCompletionBody {
+                items: vec![json!({"type":"tool-call", "name":tool.name,
+                    "input":tool.input, "resultSourceKey":part.source_key})],
+            }),
+            tool: None,
+        };
+        *part = Cow::Owned(fallback);
+    }
+    (parts, activity)
+}
+
+pub fn saved_work_blocks(saved: &[TranscriptPart]) -> Vec<WorkBlock> {
+    let (parts, _) = projection_parts(saved, &[], &ToolResults::new(saved));
+    derive_work_blocks(parts.iter().map(AsRef::as_ref))
+}
+
+pub async fn project_rows(
+    saved: &[TranscriptPart],
+    live: &[LiveCompletionOverlay],
+    scope: &ProjectionScope,
+    window: Range<u32>,
+    transcript_dir: &Path,
+) -> Vec<TranscriptRow> {
+    let results = ToolResults::new(saved);
+    let (parts, activity) = projection_parts(saved, live, &results);
+    let result_for = |part: &TranscriptPart, item: &Value| {
+        results
+            .get(part, item, !activity.unsaved.contains(&part.source_key))
+            .map(|part| (part.number, part.tool.as_ref().unwrap()))
+    };
+    let by_number: HashMap<_, _> = parts
+        .iter()
+        .map(|part| (part.number, part.as_ref()))
+        .collect();
+    let visible = |part: &TranscriptPart| {
+        window.contains(&part.number) || activity.unsaved.contains(&part.source_key)
+    };
+    let mut work_at = HashMap::new();
+    let mut selected_items = HashSet::new();
+    for block in derive_work_blocks(parts.iter().map(AsRef::as_ref)) {
+        let Some(first) = block.items.first() else {
+            continue;
+        };
+        let id = block.id;
+        if matches!(scope, ProjectionScope::Work(target) if *target == id) {
+            selected_items.extend(
+                block
+                    .items
+                    .iter()
+                    .map(|position| (position.part, position.item)),
+            );
+        }
+        if !(matches!(scope, ProjectionScope::Thread)
+            || matches!(scope, ProjectionScope::Row(target) if *target == id))
+        {
+            continue;
+        }
+        let mut tool_counts = BTreeMap::new();
+        let mut in_window = false;
+        for position in &block.items {
+            let part = by_number[&position.part];
+            let item = &part.content_items()[position.item as usize];
+            in_window |= visible(part);
+            if item["type"] == "tool-call" {
+                *tool_counts
+                    .entry(item["name"].as_str().unwrap_or("tool").to_owned())
+                    .or_insert(0) += 1;
+                in_window |=
+                    result_for(part, item).is_some_and(|(number, _)| window.contains(&number));
+            }
+        }
+        if in_window || matches!(scope, ProjectionScope::Row(target) if *target == id) {
+            work_at.insert(
+                (first.part, first.item),
+                TranscriptRow {
+                    id,
+                    run_id: block.run_id,
+                    body: TranscriptRowBody::Work {
+                        tool_counts,
+                        // Clients settle rows from runs that are no longer active.
+                        running: !block.closed,
+                    },
+                },
+            );
+        }
+    }
+    let mut rows = Vec::new();
+    let mut commands: HashMap<String, Option<String>> = HashMap::new();
+    for part in &parts {
+        if let Some(prompt) = &part.prompt
+            && prompt.hidden.is_none()
+            && (matches!(scope, ProjectionScope::Thread) && visible(part)
+                || matches!(scope, ProjectionScope::Row(target) if *target == item_id("prompt", part, 0)))
+        {
+            rows.push(TranscriptRow {
+                id: item_id("prompt", part, 0),
+                run_id: part.run_id.clone(),
+                body: TranscriptRowBody::Prompt {
+                    text: prompt.text.clone(),
+                    attachments: prompt.image_uploads.clone(),
+                },
+            });
+        }
+        for (offset, item) in part.content_items().iter().enumerate() {
+            let position = (part.number, offset as u32);
+            if let Some(work) = work_at.remove(&position) {
+                rows.push(work);
+            }
+            let kind = item["type"].as_str().unwrap_or_default();
+            let text = item["text"].as_str().unwrap_or_default();
+            if matches!(kind, "text" | "reasoning") && text.trim().is_empty() {
+                continue;
+            }
+            let id = item_id(
+                if kind == "tool-call" { "tool" } else { kind },
+                part,
+                offset,
+            );
+            let full = matches!(scope, ProjectionScope::Item(target) | ProjectionScope::Row(target) if *target == id);
+            if !(full
+                || selected_items.contains(&position)
+                || matches!(scope, ProjectionScope::Thread) && kind == "text" && visible(part))
+            {
+                continue;
+            }
+            let running = activity.streaming.contains(&id);
+            let body = match kind {
+                "text" => TranscriptRowBody::Text {
+                    text: text.to_owned(),
+                    running,
+                },
+                "reasoning" => TranscriptRowBody::Reasoning {
+                    label: if running {
+                        "Thinking".to_owned()
+                    } else {
+                        reasoning_label(text)
+                    },
+                    running,
+                    text: full.then(|| text.to_owned()),
+                },
+                "tool-call" => {
+                    let name = item["name"].as_str().unwrap_or("tool");
+                    let result = result_for(part, item).map(|(_, tool)| tool);
+                    let status = ToolStatus::from_result(result.map(|tool| tool.status.as_str()));
+                    let input = ToolDisplayInput::new(
+                        name,
+                        &item["input"],
+                        result.and_then(|tool| tool.output.as_ref()),
+                        status,
+                    );
+                    let mut display =
+                        command_display(name, &input, transcript_dir, &mut commands).await;
+                    let mut has_more = if full { false } else { display.shorten() };
+                    let targets = if let Some(targets) = polled_targets(
+                        name,
+                        &item["input"],
+                        result.and_then(|tool| tool.output.as_ref()),
+                        status,
+                    ) {
+                        let mut displays = Vec::with_capacity(targets.len());
+                        for input in targets {
+                            let mut display =
+                                command_display(name, &input, transcript_dir, &mut commands).await;
+                            if !full {
+                                has_more |= display.shorten();
+                            }
+                            displays.push(display);
+                        }
+                        Some(displays)
+                    } else {
+                        None
+                    };
+                    TranscriptRowBody::Tool {
+                        name: name.to_owned(),
+                        display,
+                        targets,
+                        has_more,
+                    }
+                }
+                _ => continue,
+            };
+            rows.push(TranscriptRow {
+                id,
+                run_id: part.run_id.clone(),
+                body,
+            });
+        }
+    }
+    rows
+}
+
+async fn command_display(
+    name: &str,
+    input: &ToolDisplayInput<'_>,
+    transcript_dir: &Path,
+    commands: &mut HashMap<String, Option<String>>,
+) -> ToolDisplay {
+    let command = match input.session_id().filter(|_| is_session_command(name)) {
+        Some(session) => {
+            if !commands.contains_key(session) {
+                let command = match uuid::Uuid::parse_str(session) {
+                    Ok(id) => load_session_command(transcript_dir, id).await,
+                    Err(_) => None,
+                };
+                commands.insert(session.to_owned(), command);
+            }
+            commands[session].as_deref()
+        }
+        None => None,
+    };
+    input.display(command)
+}
+
+#[cfg(test)]
+mod tests;

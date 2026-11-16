@@ -2,10 +2,9 @@ use serde::Deserialize;
 use serde::Deserializer;
 use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
-use super::store::TranscriptStore;
 use super::types::{
-    HiddenPromptKind, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, LegacyWork, TranscriptAttachmentMeta, TranscriptCompletionBody,
+    TranscriptPart, TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -20,6 +19,21 @@ pub struct RemoteTranscriptState {
     pub context_summary: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_convex_i64")]
     pub reasoning_stripped_through_part_number: Option<i64>,
+}
+
+impl RemoteTranscriptState {
+    pub fn to_state(&self, thread_id: &str) -> anyhow::Result<TranscriptState> {
+        anyhow::ensure!(
+            self.thread_id == thread_id,
+            "transcript state belongs to another thread"
+        );
+        Ok(TranscriptState {
+            remote_total_parts: self.total_parts,
+            history_from_number: self.history_from_number,
+            context_summary: self.context_summary.clone(),
+            reasoning_stripped_through_part_number: self.reasoning_stripped_through_part_number,
+        })
+    }
 }
 
 fn deserialize_optional_convex_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -52,7 +66,7 @@ struct RemoteTranscriptPart {
     kind: String,
     run_id: String,
     #[serde(default)]
-    work: super::sections::WorkAssignment,
+    work: LegacyWork,
     #[serde(
         rename = "_creationTime",
         default,
@@ -60,8 +74,8 @@ struct RemoteTranscriptPart {
     )]
     created_at: Option<u64>,
     prompt: Option<RemotePrompt>,
-    completion: Option<RemoteCompletion>,
-    tool: Option<RemoteTool>,
+    completion: Option<TranscriptCompletionBody>,
+    tool: Option<TranscriptToolBody>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -83,30 +97,6 @@ struct RemoteAttachment {
     storage_id: String,
     #[serde(default)]
     url: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteCompletion {
-    #[serde(default)]
-    stream_id: Option<String>,
-    items: Vec<serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteTool {
-    #[serde(default)]
-    job_id: Option<String>,
-    #[serde(default)]
-    tool_invocation_id: Option<String>,
-    call_id: String,
-    name: String,
-    #[serde(default)]
-    input: Option<serde_json::Value>,
-    #[serde(default)]
-    output: Option<serde_json::Value>,
-    status: String,
 }
 
 fn deserialize_creation_time<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -161,50 +151,18 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         "tool" => TranscriptPartKind::Tool,
         other => anyhow::bail!("unknown transcript part kind {other}"),
     };
-    Ok(TranscriptPart {
+    let mut local = TranscriptPart {
         number: part.number,
         source_key: part.source_key,
         kind,
         run_id: part.run_id,
         created_at: part.created_at,
         prompt: part.prompt.map(TranscriptPromptBody::from),
-        completion: part.completion.map(|completion| TranscriptCompletionBody {
-            stream_id: completion.stream_id,
-            items: completion.items,
-        }),
-        tool: part.tool.map(|tool| TranscriptToolBody {
-            job_id: tool.job_id,
-            tool_invocation_id: tool.tool_invocation_id,
-            call_id: tool.call_id,
-            name: tool.name,
-            input: tool.input,
-            output: tool.output,
-            status: tool.status,
-        }),
-        work: part.work,
-    })
-}
-
-pub async fn apply_remote_state(
-    store: &TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    remote: &RemoteTranscriptState,
-) -> anyhow::Result<TranscriptState> {
-    anyhow::ensure!(
-        remote.thread_id == thread_id,
-        "transcript state belongs to another thread"
-    );
-    store
-        .update_state(user_id, thread_id, |state| {
-            state.remote_total_parts = remote.total_parts;
-            state.history_from_number = remote.history_from_number;
-            state.context_summary = remote.context_summary.clone();
-            state.reasoning_stripped_through_part_number =
-                remote.reasoning_stripped_through_part_number;
-            state.stale = false;
-        })
-        .await
+        completion: part.completion,
+        tool: part.tool,
+    };
+    part.work.move_tool_invocations(local.completion.as_mut());
+    Ok(local)
 }
 
 fn parse_remote_parts(value: serde_json::Value) -> anyhow::Result<Vec<TranscriptPart>> {

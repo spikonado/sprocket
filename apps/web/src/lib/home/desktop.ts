@@ -6,7 +6,7 @@ import type {
 	Project,
 	ProjectAttachment,
 	ProjectAttachmentRequest,
-	RunState
+	RunStatus
 } from '$lib/types/sprocket';
 import { isRunFinalStatus, type RunFailureKind } from '@convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
@@ -55,7 +55,7 @@ export function resolveSubmissionId(args: {
 	};
 	latestRun: {
 		runId?: Id<'runs'>;
-		status: RunState['status'];
+		status: RunStatus;
 		submissionId: string;
 	} | null;
 	selectedModel: AgentRunRequest['selectedModel'];

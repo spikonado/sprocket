@@ -1,33 +1,27 @@
 mod attachment_store;
 mod attachments;
 mod download;
-#[cfg(test)]
-mod download_tests;
 mod live;
 pub mod monitor;
-mod read_index;
-mod replica;
-pub mod sections;
+pub mod rows;
 mod store;
 mod sync;
+pub mod tool_display;
 mod types;
-#[cfg(test)]
-mod work_tests;
+pub mod work_blocks;
 
 pub use attachments::{
     AttachmentUnavailable, cache_attachment, cache_attachments, cache_prompt_attachments,
 };
-pub use download::DownloadOrder;
 pub use live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     LiveCompletionSubscription, LiveCompletionWatchEvent, join_assistant_text_parts,
 };
-pub use replica::WorkReplica;
-pub use store::TranscriptStore;
-pub use sync::{
-    RemoteTranscriptState, apply_remote_state, deserialize_remote_prompt, parse_remote_page,
-};
+pub use store::{TranscriptLease, TranscriptStore};
+pub use sync::{RemoteTranscriptState, deserialize_remote_prompt, parse_remote_page};
 pub use types::{
-    HiddenPromptKind, TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta, TranscriptCompletionBody,
-    TranscriptPart, TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    HiddenPromptKind, LegacyWork, TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta,
+    TranscriptCompletionBody, TranscriptPart, TranscriptPartKind, TranscriptPromptBody,
+    TranscriptState, TranscriptToolBody,
 };
+pub use work_blocks::{WorkBlock, derive_work_blocks};

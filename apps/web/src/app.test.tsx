@@ -16,8 +16,8 @@ import type {
 	MuseStatus,
 	LocalApi,
 	ProjectAttachment,
-	TranscriptDisplayPage,
-	TranscriptDisplayRow
+	TranscriptSnapshot,
+	TranscriptRow
 } from '$lib/types/sprocket';
 import App, { type AppRuntime } from './app';
 
@@ -78,18 +78,12 @@ function threadRecord(id: string, repositoryKey: string, title: string): Doc<'th
 	};
 }
 
-function emptyDisplayPage(replicaId: string): TranscriptDisplayPage {
+function emptyTranscriptSnapshot(): TranscriptSnapshot {
 	return {
-		replicaId,
+		type: 'snapshot',
 		rows: [],
-		indexing: false,
-		syncing: false,
 		stale: false,
-		revision: 0,
-		persistedStreams: [],
-		changes: [],
-		changesCursor: { revision: 0, position: -1 },
-		moreChanges: false
+		nextBefore: null
 	};
 }
 
@@ -113,7 +107,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		workspaceEntryKind: unused,
 		watchWorkspaceFile: unused,
 		readWorkspaceText: unused,
-		exportBoard3d: unused,
+		kicadModels: unused,
 		kicadScene: unused,
 		writeWorkspaceFile: unused,
 		createWorkspaceFile: unused,
@@ -124,11 +118,15 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		attachProject: unused,
 		removeProject: unused,
 		runAgent: unused,
-		fetchTranscriptDisplay: async () => emptyDisplayPage('replica-1'),
-		fetchTranscriptDisplayDetails: unused,
-		watchTranscript: () => new Promise<void>(() => {}),
-		watchLiveCompletion: () => new Promise<void>(() => {}),
-		clearTranscriptReplica: async () => {},
+		fetchTranscriptRows: async () => emptyTranscriptSnapshot(),
+		fetchTranscriptRow: unused,
+		watchTranscript: (_request, { onEvent }) => {
+			onEvent(emptyTranscriptSnapshot());
+
+			return new Promise<void>(() => {});
+		},
+		watchTranscriptWork: () => new Promise<void>(() => {}),
+		watchTranscriptItem: () => new Promise<void>(() => {}),
 		fetchTranscriptAttachment: unused,
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
@@ -618,9 +616,11 @@ it('restores each thread workspace when switching between threads in one project
 	);
 	await projectTrigger('Alpha');
 	expect(screen.getByRole('textbox')).toBeTruthy();
-	expect(screen.queryByRole('tablist')).toBeNull();
-	expect(screen.queryByRole('button', { name: 'Split right' })).toBeNull();
+	expect(screen.getByRole('tab', { name: 'Thread' }).getAttribute('aria-selected')).toBe('true');
+	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	fireEvent.click(await screen.findByText('First workspace'));
+	expect(screen.getAllByRole('tablist')).toHaveLength(1);
 	fireEvent.click(screen.getByRole('button', { name: 'Split right' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Artifacts' }));
 	expect(screen.getAllByRole('tablist')).toHaveLength(2);
@@ -640,7 +640,7 @@ it('restores each thread workspace when switching between threads in one project
 
 	fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
 	expect(screen.getByRole('textbox')).toBeTruthy();
-	expect(screen.queryByRole('tablist')).toBeNull();
+	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	fireEvent.click(screen.getByText('First workspace'));
 	expect(screen.getAllByRole('tablist')).toHaveLength(2);
 	expect(screen.getByRole('tab', { name: 'Artifacts' }).getAttribute('aria-selected')).toBe('true');
@@ -1325,12 +1325,12 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 		createRuntime(
 			createLocalApi({
 				listProjectAttachments: async () => [alpha],
-				fetchTranscriptDisplay: async ({ threadId }) => ({
-					...emptyDisplayPage(`replica-${threadId}`),
-					stale: threadId === thread._id && stale
-				}),
 				watchTranscript: (request, handlers) => {
 					watchers.set(request.threadId, handlers.onEvent);
+					handlers.onEvent({
+						...emptyTranscriptSnapshot(),
+						stale: request.threadId === thread._id && stale
+					});
 
 					return new Promise<void>(() => {});
 				}
@@ -1349,7 +1349,7 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	composer = screen.getByRole('group', { name: 'Message composer' });
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 	await act(async () => {
-		watchers.get(thread._id)?.({ eventType: 'updated' });
+		watchers.get(thread._id)?.({ ...emptyTranscriptSnapshot(), stale });
 	});
 	expect(within(composer).queryByRole('status')).toBeNull();
 
@@ -1358,38 +1358,34 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 	await within(composer).findByRole('status');
 	await act(async () => {
 		stale = false;
-		watchers.get(thread._id)?.({ eventType: 'updated' });
+		watchers.get(thread._id)?.(emptyTranscriptSnapshot());
 	});
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 });
 
-it('renders remote history progressively and allows sending while older parts load', async () => {
+it('renders transcript snapshots progressively and allows sending before older history arrives', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Remote robot work');
 	const launch = Promise.withResolvers<Awaited<ReturnType<LocalApi['runAgent']>>>();
 	const runAgent = vi.fn<LocalApi['runAgent']>(() => launch.promise);
-	const initial = Promise.withResolvers<TranscriptDisplayPage>();
+	const initial = Promise.withResolvers<TranscriptSnapshot>();
 	let update: Parameters<LocalApi['watchTranscript']>[1]['onEvent'] | undefined;
 
-	const recent: TranscriptDisplayRow = {
+	const recent: TranscriptRow = {
 		id: 'text-40-0',
-		threadId: thread._id,
 		runId: fixtureId<'runs'>('prior-run'),
-		sequence: 40,
 		kind: 'text',
 		text: 'The latest robot update',
-		closed: true,
-		revision: 1
+		running: false
 	};
 
-	let synced = false;
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
 	client.registerQuery(api.threads.getByThreadId, thread);
 	client.registerQuery(api.chat.selectedThreadLifecycle, {
 		threadId: thread._id,
 		phase: 'completed',
-		run: { runId: recent.runId, startedAt: 1 }
+		run: { runId: fixtureId<'runs'>('prior-run'), startedAt: 1 }
 	});
 	await renderApp(
 		client,
@@ -1398,21 +1394,9 @@ it('renders remote history progressively and allows sending while older parts lo
 				listProjectAttachments: async () => [alpha],
 				resolveWorkspacePath: async () => alpha,
 				runAgent,
-				fetchTranscriptDisplay: async ({ before }) => {
-					if (!synced && before === undefined) return await initial.promise;
-
-					return {
-						...emptyDisplayPage('remote-replica'),
-						rows: synced
-							? [{ ...recent, id: 'text-1-0', sequence: 1, text: 'An older robot update' }, recent]
-							: [],
-						indexing: !synced,
-						syncing: !synced,
-						revision: synced ? 2 : 1
-					};
-				},
 				watchTranscript: (_request, handlers) => {
 					update = handlers.onEvent;
+					void initial.promise.then(handlers.onEvent);
 
 					return new Promise<void>(() => {});
 				}
@@ -1420,20 +1404,19 @@ it('renders remote history progressively and allows sending while older parts lo
 		)
 	);
 	fireEvent.click(await screen.findByText('Remote robot work'));
+	await waitFor(() => expect(update).toBeDefined());
+	expect(screen.queryByText('Loading conversation history...')).toBeNull();
+	act(() => update?.({ type: 'downloading' }));
 	expect(await screen.findByText('Loading conversation history...')).toBeTruthy();
 	await act(async () => {
 		initial.resolve({
-			...emptyDisplayPage('remote-replica'),
+			...emptyTranscriptSnapshot(),
 			rows: [recent],
-			syncing: true,
-			nextBefore: 40,
-			revision: 1
+			nextBefore: 40
 		});
 	});
 	expect(await screen.findByText('The latest robot update')).toBeTruthy();
-	expect((await screen.findByRole('status', {}, { timeout: 3_000 })).textContent).toContain(
-		'Conversation history is still loading.'
-	);
+	expect(screen.queryByText('Loading conversation history...')).toBeNull();
 	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Continue with the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
 	await waitFor(() => expect(send).toHaveProperty('disabled', false));
@@ -1443,8 +1426,10 @@ it('renders remote history progressively and allows sending while older parts lo
 		expect.objectContaining({ threadId: thread._id, prompt: 'Continue with the robot' })
 	);
 	await act(async () => {
-		synced = true;
-		update?.({ eventType: 'updated' });
+		update?.({
+			...emptyTranscriptSnapshot(),
+			rows: [{ ...recent, id: 'text-1-0', text: 'An older robot update' }, recent]
+		});
 	});
 	expect(await screen.findByText('An older robot update')).toBeTruthy();
 	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());

@@ -305,6 +305,36 @@ async fn read_from(cursors: &CommandCursors, session_id: &str, next: u64) -> u64
 }
 
 #[tokio::test]
+async fn cursors_restore_session_inputs_from_each_invocation() {
+    let completion = |number, invocation, name, input| {
+        serde_json::from_value(json!({
+            "number": number, "sourceKey": format!("completion:{number}"), "kind": "completion", "runId": "run",
+            "completion": {"items": [{"type": "tool-call", "toolInvocationId": invocation, "callId": "repeated", "name": name, "input": input}]}
+        })).unwrap()
+    };
+    let result = |number, invocation, next| {
+        serde_json::from_value(json!({
+            "number": number, "sourceKey": format!("tool:{number}"), "kind": "tool", "runId": "run",
+            "tool": {"toolInvocationId": invocation, "status": "completed", "output": {"nextOffset": next}}
+        })).unwrap()
+    };
+    let parts: [TranscriptPart; 4] = [
+        completion(0, "inv-a", "poll_cmd", json!({"sessionId": "a"})),
+        result(1, "inv-a", 12),
+        completion(
+            2,
+            "inv-b",
+            "control_cmd",
+            json!({"sessionId": "b", "action": "write", "chars": "x"}),
+        ),
+        result(3, "inv-b", 25),
+    ];
+    let cursors = CommandCursors::from_parts(&parts);
+    assert_eq!(read_from(&cursors, "a", 12).await, 12);
+    assert_eq!(read_from(&cursors, "b", 25).await, 25);
+}
+
+#[tokio::test]
 async fn cursors_resume_from_the_furthest_recorded_read_of_each_session() {
     let parts = [
         command_part(

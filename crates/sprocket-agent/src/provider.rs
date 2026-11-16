@@ -89,17 +89,84 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
     }
 }
 
-fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    let error = crate::cli_session::user_facing_error(
-        error,
-        &[
-            crate::claude_code::USAGE_LIMIT_CODE,
-            crate::claude_code::ERROR_CODE,
-            crate::muse::USAGE_LIMIT_CODE,
-            crate::muse::ERROR_CODE,
-        ],
-    );
-    crate::chatgpt::user_facing_error(error)
+/// Codes whose error message our CLI sessions or Spikonado's gateway wrote for the user.
+const USER_FACING_CODES: &[&str] = &[
+    crate::claude_code::USAGE_LIMIT_CODE,
+    crate::claude_code::ERROR_CODE,
+    crate::muse::USAGE_LIMIT_CODE,
+    crate::muse::ERROR_CODE,
+    crate::gateway::AT_CAPACITY_CODE,
+];
+
+pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
+    if error.is::<ProviderFailures>() {
+        return error;
+    }
+    let message = error.chain().find_map(|cause| {
+        let response = crate::stream_recovery::provider_response(cause)?;
+        let code = response.machine_code()?;
+        if let Some(message) = crate::chatgpt::usage_limit_message(&code) {
+            return Some(message.to_string());
+        }
+        if !USER_FACING_CODES.contains(&code.as_str()) {
+            return None;
+        }
+        let envelope = response.envelope_json()?;
+        envelope["error"]["message"]
+            .as_str()
+            .or_else(|| envelope["message"].as_str())
+            .map(str::to_string)
+    });
+    match message {
+        Some(message) => error.context(message),
+        None => error,
+    }
+}
+
+#[derive(Debug)]
+struct ProviderFailures(Vec<(CompletionProvider, anyhow::Error)>);
+
+impl ProviderFailures {
+    /// Classification reads the usage-limit failure first, as Convex records it as the run's failure kind.
+    fn primary(&self) -> &anyhow::Error {
+        &self
+            .0
+            .iter()
+            .find(|(_, error)| convex_error_code(error) == Some(ConvexErrorCode::UsageLimitReached))
+            .or_else(|| self.0.first())
+            .expect("ProviderFailures holds at least two failures")
+            .1
+    }
+}
+
+impl std::fmt::Display for ProviderFailures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Every provider failed.")?;
+        for (provider, error) in &self.0 {
+            write!(f, "\n{}: {error}", provider.label())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ProviderFailures {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        let primary: &(dyn std::error::Error + 'static) = self.primary().as_ref();
+        Some(primary)
+    }
+}
+
+fn provider_failures(mut failures: Vec<(CompletionProvider, anyhow::Error)>) -> anyhow::Error {
+    if failures.len() == 1 {
+        return failures.remove(0).1;
+    }
+    ProviderFailures(
+        failures
+            .into_iter()
+            .map(|(provider, error)| (provider, user_facing_error(error)))
+            .collect(),
+    )
+    .into()
 }
 
 fn usage_source(
@@ -149,6 +216,7 @@ pub(crate) struct AgentProvider {
     clis: LocalClis,
     cli_resume: Option<ResumePoint>,
     cwd: PathBuf,
+    failures: Vec<(CompletionProvider, anyhow::Error)>,
 }
 
 #[derive(Default)]
@@ -248,6 +316,7 @@ impl AgentProvider {
             clis,
             cli_resume: None,
             cwd,
+            failures: Vec::new(),
         }
     }
 
@@ -345,6 +414,7 @@ impl AgentProvider {
             clis: self.clis.clone(),
             cli_resume: self.cli_resume.clone(),
             cwd: self.cwd.clone(),
+            failures: Vec::new(),
         };
         let model = source
             .completion_model(runtime, run_id, claim_id, &switch.base_instructions)
@@ -363,8 +433,6 @@ impl AgentProvider {
         claim_id: &str,
         base_instructions: &str,
     ) -> anyhow::Result<DynModel<Completion>> {
-        let mut usage_limit = None;
-        let mut first_error = None;
         loop {
             let error = if self.completion_provider.serves(&self.model_route) {
                 match self
@@ -381,16 +449,8 @@ impl AgentProvider {
                     self.model
                 )
             };
-            let fell_back = self.fall_back(runtime, run_id, claim_id, &error).await?;
-            if convex_error_code(&error) == Some(ConvexErrorCode::UsageLimitReached) {
-                usage_limit.get_or_insert(error);
-            } else {
-                first_error.get_or_insert(error);
-            }
-            if !fell_back {
-                return Err(usage_limit
-                    .or(first_error)
-                    .expect("start_model keeps every failure"));
+            if !self.fall_back(runtime, run_id, claim_id, error).await? {
+                return Err(provider_failures(std::mem::take(&mut self.failures)));
             }
         }
     }
@@ -400,16 +460,21 @@ impl AgentProvider {
         runtime: &RuntimeClient,
         run_id: &str,
         claim_id: &str,
-        error: &(impl std::fmt::Display + ?Sized),
+        error: anyhow::Error,
     ) -> anyhow::Result<bool> {
-        let Some(next) = self.fallback_providers.pop_front() else {
+        let failed = self.completion_provider;
+        let next = self.fallback_providers.pop_front();
+        if let Some(next) = next {
+            eprintln!(
+                "sprocket-agent: {} failed for run {run_id} ({error:#}); falling back to {}",
+                failed.as_str(),
+                next.as_str()
+            );
+        }
+        self.failures.push((failed, error));
+        let Some(next) = next else {
             return Ok(false);
         };
-        eprintln!(
-            "sprocket-agent: {} failed for run {run_id} ({error:#}); falling back to {}",
-            self.completion_provider.as_str(),
-            next.as_str()
-        );
         if runtime
             .fall_back_to_provider(run_id, claim_id, next)
             .await?
@@ -1099,7 +1164,7 @@ async fn run_with_completion_model(
                                 {
                                     drop(stream);
                                     let next_model = async {
-                                        target.fall_back(&runtime, &request.run_id, &request.claim_id, &error).await?;
+                                        target.fall_back(&runtime, &request.run_id, &request.claim_id, anyhow!(error)).await?;
                                         target.start_model(
                                             &runtime, &request.run_id, &request.claim_id,
                                             &request.base_instructions,
@@ -1107,21 +1172,7 @@ async fn run_with_completion_model(
                                     };
                                     match next_model.await {
                                         Ok(model) => agent.set_model(model),
-                                        Err(fallback_error)
-                                            if classify_provider_error(&fallback_error)
-                                                != ProviderErrorDisposition::Failed
-                                                || convex_error_code(&fallback_error)
-                                                    == Some(ConvexErrorCode::UsageLimitReached) =>
-                                        {
-                                            break 'agent_run transcript_error(fallback_error);
-                                        }
-                                        Err(fallback_error) => {
-                                            eprintln!(
-                                                "sprocket-agent: no fallback provider could continue run {} ({fallback_error:#})",
-                                                request.run_id
-                                            );
-                                            break 'agent_run transcript_error(anyhow!(error));
-                                        }
+                                        Err(error) => break 'agent_run transcript_error(error),
                                     }
                                     history = without_reasoning_traces(next_history);
                                     prompt = next_prompt;
@@ -1137,6 +1188,9 @@ async fn run_with_completion_model(
                                     break 'agent_run AgentProviderResult::Failed {
                                         error: anyhow!(error).context("Context handoff failed. Retry to continue the conversation."),
                                     };
+                                } else if is_provider_failure(&error) {
+                                    target.failures.push((target.completion_provider, anyhow!(error)));
+                                    break 'agent_run transcript_error(provider_failures(std::mem::take(&mut target.failures)));
                                 } else {
                                     break 'agent_run transcript_error(anyhow!(error));
                                 }

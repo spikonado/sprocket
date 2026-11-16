@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { useSyncExternalStore } from 'react';
 import { expect, it, vi } from 'vitest';
 import SidePanel from './side-panel';
 import { useArtifactPanel } from '$lib/home/artifact-panel';
@@ -9,13 +10,30 @@ const artifact = {
 	artifactType: 'markdown'
 } as const;
 
+const streamed = { text: '', listeners: new Set<() => void>() };
+
+function subscribeStreamed(listener: () => void) {
+	streamed.listeners.add(listener);
+
+	return () => streamed.listeners.delete(listener);
+}
+
+function Streamed() {
+	return useSyncExternalStore(subscribeStreamed, () => streamed.text);
+}
+
 function Harness({ transcript = 'Thread transcript' }: { transcript?: string }) {
 	const panel = useArtifactPanel();
 
 	return (
 		<SidePanel
 			panel={panel}
-			transcript={<p>{transcript}</p>}
+			transcript={
+				<p>
+					{transcript}
+					<Streamed />
+				</p>
+			}
 			artifacts={[artifact]}
 			artifactContents={new Map([[artifact.key, { status: 'ready', content: '# Notes' }]])}
 			browserApi={null}
@@ -54,13 +72,20 @@ it('keeps each tab open with its own view and switches between them', () => {
 	).toBe(0);
 
 	rerender(<Harness transcript="Updated transcript" />);
+	act(() => {
+		streamed.text = ' streamed';
+
+		for (const listener of streamed.listeners) listener();
+	});
 	expect(screen.getByText('Thread transcript').closest('section')?.hidden).toBe(true);
 
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Notes' }), { key: 'ArrowRight' });
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Browser' }));
 	fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), { key: 'ArrowRight' });
 	expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Thread' }));
-	expect(screen.getByRole('tabpanel', { name: 'Thread' }).textContent).toBe('Updated transcript');
+	expect(screen.getByRole('tabpanel', { name: 'Thread' }).textContent).toBe(
+		'Updated transcript streamed'
+	);
 
 	fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Close Notes tab' }));

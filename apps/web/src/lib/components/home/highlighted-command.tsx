@@ -1,14 +1,10 @@
 import { useEffect, useState } from 'react';
 import { highlightCommand, type StyledRun } from '$lib/chat/command-highlighting';
 
-const MAX_HIGHLIGHTED_LENGTH = 50_000;
-
 export default function HighlightedCommand({ command }: { command: string }) {
 	const [highlighted, setHighlighted] = useState<{ command: string; runs: StyledRun[] }>();
 
 	useEffect(() => {
-		if (command.length > MAX_HIGHLIGHTED_LENGTH) return;
-
 		const controller = new AbortController();
 
 		void import('$lib/chat/code-highlighting-client')

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { appendTranscriptPart, getTranscriptState } from '@convex/lib/transcriptParts';
 import { RUN_CANNOT_CONTINUE } from '@convex/lib/runResume';
 import type { ModelCallUsage } from '@convex/lib/validators';
 import {
@@ -65,11 +65,11 @@ function modelCall(overrides: Partial<ModelCallUsage> = {}): ModelCallUsage {
 
 async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
-		const thread = await ctx.db.get('threadRecords', threadId);
+		const state = await getTranscriptState(ctx, threadId);
 
 		return {
-			contextSummary: thread?.contextSummary,
-			contextSummaryPartCount: thread?.contextSummaryPartCount
+			contextSummary: state?.contextSummary,
+			contextSummaryPartCount: state?.contextSummaryPartCount
 		};
 	});
 }
@@ -93,7 +93,7 @@ async function finalizeTextCompletion(
 		executionSecret: args.executionSecret
 	});
 
-	return await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+	const result = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 		runId: args.runId,
 		claimId: args.claimId,
 		attemptSeq: args.attemptSeq,
@@ -110,6 +110,10 @@ async function finalizeTextCompletion(
 		usage: args.usage,
 		executionSecret: args.executionSecret
 	});
+
+	if (result && 'parts' in result) throw new Error('Expected legacy completion return.');
+
+	return result;
 }
 
 async function registerCompletionAttempt(
@@ -583,10 +587,25 @@ describe('agentRuntime context accounting', () => {
 				asUser.mutation(api.agentRuntime.beginRun, {
 					runId,
 					...claim,
-					workspaceContext: [environment]
+					workspaceContext: [environment],
+					returnParts: true
 				})
-			).resolves.toBe(true);
+			).resolves.toMatchObject({
+				accepted: true,
+				parts: [
+					{ number: 0, prompt: { hidden: 'environment' } },
+					{ number: 1, prompt: { text: 'Do the long task' } }
+				]
+			});
 		}
+
+		await expect(
+			asUser.mutation(api.agentRuntime.beginRun, {
+				runId,
+				...claim,
+				workspaceContext: [environment]
+			})
+		).resolves.toBe(true);
 
 		await expect(
 			asUser.query(api.agentRuntime.getContext, { runId, executionSecret })
@@ -600,13 +619,25 @@ describe('agentRuntime context accounting', () => {
 			text: 'Finished the first step'
 		});
 		await registerCompletionAttempt(asUser, { runId, ...claim, attemptSeq: 2 });
-		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
+
+		const handoffArgs = {
 			runId,
 			...claim,
 			summary: 'First step is done.',
 			completionAttemptSeq: 2,
-			workspaceContext: [environment]
+			workspaceContext: [environment],
+			returnParts: true
+		};
+
+		const handoff = await asUser.mutation(api.agentRuntime.saveContextHandoff, handoffArgs);
+
+		expect(handoff).toMatchObject({
+			accepted: true,
+			parts: [{ number: 3, prompt: { hidden: 'environment' } }]
 		});
+		expect(await asUser.mutation(api.agentRuntime.saveContextHandoff, handoffArgs)).toEqual(
+			handoff
+		);
 
 		const parts = await t.run(async (ctx) =>
 			ctx.db
@@ -622,8 +653,12 @@ describe('agentRuntime context accounting', () => {
 			['prompt', 'environment']
 		]);
 		expect(await readThreadCutoff(t, threadId)).toMatchObject({
+			contextSummary: handoffArgs.summary,
 			contextSummaryPartCount: 3
 		});
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(thread).not.toHaveProperty('contextSummary');
 	});
 
 	it('begins a run with a handoff that covers the earlier runs', async () => {
@@ -806,11 +841,21 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		await asUser.mutation(api.agentRuntime.start, { runId, ...claim });
-		const begin = { runId, ...claim, workspaceContext: [] };
-		await asUser.mutation(api.agentRuntime.beginRun, begin);
+
+		const begin = {
+			runId,
+			...claim,
+			workspaceContext: [{ kind: 'environment' as const, text: 'Environment' }]
+		};
+
+		const saved = await asUser.mutation(api.agentRuntime.beginRun, { ...begin, returnParts: true });
+
 		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
 
 		await expect(asUser.mutation(api.agentRuntime.beginRun, begin)).resolves.toBe(true);
+		expect(
+			await asUser.mutation(api.agentRuntime.beginRun, { ...begin, returnParts: true })
+		).toEqual(saved);
 	});
 
 	it('rejects a handoff that would move the cutoff backwards', async () => {
@@ -959,6 +1004,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret: secondSecret
 		});
 
+		expect(state).toEqual(await asUser.query(api.transcript.getState, { threadId }));
 		expect(state.historyFromNumber).toBe(2);
 		const retained = await readTranscriptRange(asUser, threadId, 2, 3);
 		expect(retained.parts[0]?.prompt?.text).toBe('New prompt');
@@ -1064,10 +1110,10 @@ describe('agentRuntime context accounting', () => {
 			})
 		).resolves.toBe(true);
 
-		const thread = await t.run(async (ctx) => ctx.db.get('threadRecords', threadId));
+		const state = await t.run((ctx) => getTranscriptState(ctx, threadId));
 
-		expect(thread?.contextSummary).toBeUndefined();
-		expect(thread?.reasoningStrippedThroughPartNumber).toBe(1);
+		expect(state?.contextSummary).toBeUndefined();
+		expect(state?.reasoningStrippedThroughPartNumber).toBe(1);
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
 			historyFromNumber: 0,
 			reasoningStrippedThroughPartNumber: 1

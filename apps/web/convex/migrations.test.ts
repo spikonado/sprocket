@@ -1,6 +1,8 @@
 import { expect, test, vi } from 'vitest';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
+import type { TranscriptCompletionItem } from '@convex/lib/validators';
 import { initConvexTest, insertUser, seedOwnedThread } from '@convex/test.setup';
+import { getOrCreateTranscriptState, getTranscriptState } from '@convex/lib/transcriptParts';
 
 const DAY = 86_400_000;
 
@@ -57,6 +59,93 @@ test('run backfills tool invocation IDs from source keys', async () => {
 	vi.useRealTimers();
 });
 
+test('run backfills completion tool invocation IDs by item index and preserves legacy history', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId } = await seedOwnedThread(t);
+
+	const toolCall = {
+		type: 'tool-call' as const,
+		callId: 'reused-call',
+		name: 'web_search',
+		input: { query: 'transcripts' },
+		providerMetadata: { provider: 'preserved' }
+	};
+
+	const completion = {
+		streamId: 'legacy-stream',
+		items: [
+			{ type: 'text' as const, id: 'text-1', text: 'Searching.' },
+			toolCall,
+			{ type: 'reasoning' as const, id: 'reasoning-1', text: 'Compare results.' },
+			{ ...toolCall, input: { query: 'tool calls' } },
+			{ ...toolCall, toolInvocationId: 'already-present' },
+			{ ...toolCall, callId: 'unassigned-call' }
+		]
+	};
+
+	const work = {
+		ranges: [{ start: 1, end: 6, sectionKey: 'legacy-section' }],
+		toolInvocations: [
+			{ item: 3, toolInvocationId: 'second-invocation' },
+			{ item: 1, toolInvocationId: 'first-invocation' },
+			{ item: 4, toolInvocationId: 'stale-assignment' }
+		]
+	};
+
+	const parts = await t.run(async (ctx) => {
+		const run = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+			.unique();
+
+		if (!run) throw new Error('Missing fixture run.');
+
+		const bodies = [
+			{ completion, work },
+			{ completion: { items: [toolCall] }, work: { ranges: [] } }
+		];
+
+		return Promise.all(
+			bodies.map(async (body, number) => {
+				const id = await ctx.db.insert('threadTranscriptParts', {
+					threadId,
+					runId: run._id,
+					kind: 'completion',
+					number,
+					sourceKey: `completion:legacy:${number}`,
+					...body
+				});
+
+				return ctx.db.get('threadTranscriptParts', id);
+			})
+		);
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const migrated = await t.run((ctx) =>
+		ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId))
+			.collect()
+	);
+
+	const items: TranscriptCompletionItem[] = [...completion.items];
+	items[1] = { ...toolCall, toolInvocationId: 'first-invocation' };
+	items[3] = { ...toolCall, input: { query: 'tool calls' }, toolInvocationId: 'second-invocation' };
+	expect(migrated).toEqual([{ ...parts[0], completion: { ...completion, items } }, parts[1]]);
+
+	await t.mutation(internal.migrations.backfillCompletionToolInvocationIds, {
+		cursor: null,
+		oneBatchOnly: true,
+		dryRun: false
+	});
+	expect(await t.run((ctx) => ctx.db.query('threadTranscriptParts').collect())).toEqual(migrated);
+	vi.useRealTimers();
+});
+
 test('run removes stored artifact types', async () => {
 	vi.useFakeTimers();
 	const t = initConvexTest();
@@ -84,38 +173,65 @@ test('run removes stored artifact types', async () => {
 	vi.useRealTimers();
 });
 
-test('run converts context summary cutoffs to part counts', async () => {
-	vi.useFakeTimers();
-	const t = initConvexTest();
-	const { threadId: emptyPrefixThreadId } = await seedOwnedThread(t);
-	const { threadId: summarizedThreadId } = await seedOwnedThread(t);
+test.each([
+	{ legacyStripped: 2, currentStripped: 4 },
+	{ legacyStripped: -1, currentStripped: undefined }
+])(
+	'run moves legacy context and preserves active transcript state (%j)',
+	async ({ legacyStripped, currentStripped }) => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const { threadId: activeThreadId } = await seedOwnedThread(t);
 
-	await t.run(async (ctx) => {
-		await ctx.db.patch('threadRecords', emptyPrefixThreadId, {
-			contextSummary: 'Nothing yet',
-			contextSummaryThroughPartNumber: -1
-		});
-		await ctx.db.patch('threadRecords', summarizedThreadId, {
+		const oldContext = {
 			contextSummary: 'Covered work',
-			contextSummaryThroughPartNumber: 4
+			contextSummaryPartCount: 0,
+			contextSummaryHandoffKey: 'old-handoff',
+			reasoningStrippedThroughPartNumber: legacyStripped
+		};
+
+		const newContext = {
+			contextSummary: 'Newer summary',
+			contextSummaryPartCount: 5,
+			contextSummaryHandoffKey: 'new-handoff',
+			reasoningStrippedThroughPartNumber: currentStripped
+		};
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', threadId, oldContext);
+			await ctx.db.patch('threadRecords', activeThreadId, oldContext);
+			const state = await getOrCreateTranscriptState(ctx, activeThreadId);
+			await ctx.db.patch('threadTranscriptStates', state._id, {
+				...newContext,
+				totalParts: 7
+			});
 		});
-	});
 
-	await t.mutation(internal.migrations.run, {});
-	await t.finishAllScheduledFunctions(vi.runAllTimers);
+		const before = await asUser.query(api.transcript.getState, { threadId });
+		await t.mutation(internal.migrations.run, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-	const [emptyPrefix, summarized] = await t.run((ctx) =>
-		Promise.all([
-			ctx.db.get('threadRecords', emptyPrefixThreadId),
-			ctx.db.get('threadRecords', summarizedThreadId)
-		])
-	);
+		const [migrated, active, thread] = await t.run((ctx) =>
+			Promise.all([
+				getTranscriptState(ctx, threadId),
+				getTranscriptState(ctx, activeThreadId),
+				ctx.db.get('threadRecords', threadId)
+			])
+		);
 
-	expect(emptyPrefix).toMatchObject({ contextSummaryPartCount: 0 });
-	expect(emptyPrefix).not.toHaveProperty('contextSummaryThroughPartNumber');
-	expect(summarized).toMatchObject({ contextSummaryPartCount: 5 });
-	vi.useRealTimers();
-});
+		expect(migrated).toMatchObject({ ...oldContext, totalParts: 0 });
+		expect(active).toMatchObject({
+			...newContext,
+			reasoningStrippedThroughPartNumber: currentStripped ?? legacyStripped,
+			totalParts: 7
+		});
+
+		for (const field of Object.keys(oldContext)) expect(thread).not.toHaveProperty(field);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toEqual(before);
+		vi.useRealTimers();
+	}
+);
 
 test('run moves tier grants to users, strips projection fields and empties retired billing tables', async () => {
 	vi.useFakeTimers();

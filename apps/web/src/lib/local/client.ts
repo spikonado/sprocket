@@ -1,6 +1,12 @@
-import type { AssistantPart } from '@convex/lib/assistantParts';
 import { convexId } from '$lib/convex-id';
-import type { LocalApi, ProjectAttachment, SignInTarget } from '$lib/types/sprocket';
+import type {
+	LocalApi,
+	ProjectAttachment,
+	SignInTarget,
+	TranscriptRow,
+	TranscriptSnapshot,
+	TranscriptEvent
+} from '$lib/types/sprocket';
 import { z } from 'zod';
 import { localSocket } from './socket';
 import { createLocalTransport } from './transport';
@@ -150,100 +156,87 @@ function transcriptUploadPath(args: { userId: string; name: string; threadId?: s
 	return `/api/transcript/upload?${query}`;
 }
 
-const displayRowSchema = z.object({
+const transcriptRowBase = {
 	id: z.string(),
-	threadId: convexId<'threadRecords'>(),
-	runId: convexId<'runs'>(),
-	sequence: z.int().nonnegative(),
-	kind: z.enum(['prompt', 'text', 'work']),
-	text: z.string().optional(),
-	attachments: z.array(localTranscriptAttachmentSchema).optional(),
-	toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
-	unpersistedToolCallIds: z.array(z.string()).optional(),
-	closed: z.boolean().optional(),
-	revision: z.int().nonnegative()
+	runId: z.string()
+};
+
+const transcriptToolDisplaySchema = z.object({
+	label: z.string().optional(),
+	summary: z.string(),
+	command: z.string().optional(),
+	status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+	error: z.string().optional(),
+	action: z
+		.discriminatedUnion('kind', [
+			z.object({ kind: z.literal('openFile'), path: z.string() }),
+			z.object({ kind: z.literal('saveCard') })
+		])
+		.optional()
 });
 
-const displayPageSchema = z.object({
-	replicaId: z.string(),
-	rows: z.array(displayRowSchema),
-	indexing: z.boolean(),
-	syncing: z.boolean(),
-	stale: z.boolean(),
-	nextBefore: z.int().nonnegative().optional(),
-	revision: z.int().nonnegative(),
-	persistedStreams: z.array(z.object({ runId: convexId<'runs'>(), streamId: z.string() })),
-	changes: z.array(
-		z.object({
-			id: z.string(),
-			row: displayRowSchema.nullable()
-		})
-	),
-	changesCursor: z.object({ revision: z.int().nonnegative(), position: z.int().min(-1) }),
-	moreChanges: z.boolean()
-});
-
-const assistantTimestampSchema = z.number().nullable().optional();
-
-const assistantTextFieldsSchema = z.object({
-	id: z.string(),
-	text: z.string(),
-	startedAt: assistantTimestampSchema,
-	completedAt: assistantTimestampSchema,
-	turnId: z.string().optional(),
-	providerMetadata: z.json().optional()
-});
-
-const assistantPartSchema: z.ZodType<AssistantPart> = z.discriminatedUnion('type', [
-	assistantTextFieldsSchema.extend({ type: z.literal('text') }),
-	assistantTextFieldsSchema.extend({ type: z.literal('reasoning') }),
+const transcriptRowSchema: z.ZodType<TranscriptRow> = z.discriminatedUnion('kind', [
 	z.object({
-		type: z.literal('tool-call'),
-		partId: z.string().optional(),
-		callId: z.string(),
-		name: z.string(),
-		input: z.json(),
-		turnId: z.string().optional(),
-		startedAt: assistantTimestampSchema,
-		completedAt: assistantTimestampSchema,
-		providerMetadata: z.json().optional()
+		...transcriptRowBase,
+		kind: z.literal('prompt'),
+		text: z.string(),
+		attachments: z.array(localTranscriptAttachmentSchema)
 	}),
 	z.object({
-		type: z.literal('tool-result'),
-		callId: z.string(),
-		name: z.string().optional(),
-		completedAt: assistantTimestampSchema,
-		output: z.json()
+		...transcriptRowBase,
+		kind: z.literal('text'),
+		text: z.string(),
+		running: z.boolean()
+	}),
+	z.object({
+		...transcriptRowBase,
+		kind: z.literal('work'),
+		toolCounts: z.record(z.string(), z.int().nonnegative()),
+		running: z.boolean()
+	}),
+	z.object({
+		...transcriptRowBase,
+		kind: z.literal('reasoning'),
+		label: z.string(),
+		running: z.boolean(),
+		text: z.string().optional()
+	}),
+	z.object({
+		...transcriptRowBase,
+		...transcriptToolDisplaySchema.shape,
+		kind: z.literal('tool'),
+		name: z.string(),
+		hasMore: z.boolean(),
+		targets: z.array(transcriptToolDisplaySchema).optional()
 	})
 ]);
 
-const assistantPartsSchema = z.array(assistantPartSchema);
-
-const displayDetailsSchema = z.object({
-	parts: assistantPartsSchema,
-	indexing: z.boolean(),
-	nextAfter: z.int().nonnegative().optional(),
-	previousBefore: z.int().nonnegative().optional(),
-	revision: z.int().nonnegative(),
+const transcriptSnapshotSchema: z.ZodType<TranscriptSnapshot> = z.object({
+	type: z.literal('snapshot'),
+	rows: z.array(transcriptRowSchema),
+	nextBefore: z.int().nonnegative().nullable(),
 	stale: z.boolean()
 });
 
-const transcriptWatchEventSchema = z.object({
-	eventType: z.string()
-});
+const transcriptRowResponseSchema = z.object({ row: transcriptRowSchema });
 
-const liveCompletionOverlaySchema = z.object({
-	threadId: convexId<'threadRecords'>(),
-	runId: convexId<'runs'>(),
-	runStatus: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
-	streamId: z.string().min(1),
-	text: z.string(),
-	parts: assistantPartsSchema
-});
-
-const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
-	z.object({ eventType: z.literal('updated'), live: liveCompletionOverlaySchema }),
-	z.object({ eventType: z.literal('cleared') })
+const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.union([
+	transcriptSnapshotSchema,
+	z.object({ type: z.literal('downloading') }),
+	z.object({
+		type: z.literal('batch'),
+		updates: z.array(
+			z.discriminatedUnion('type', [
+				z.object({ type: z.literal('row'), row: transcriptRowSchema }),
+				z.object({
+					type: z.literal('append'),
+					rowId: z.string(),
+					offset: z.int().nonnegative(),
+					text: z.string()
+				})
+			])
+		)
+	})
 ]);
 
 const chatGptStatusSchema = z.object({
@@ -527,15 +520,6 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				version: response.headers.get('x-file-version') ?? ''
 			};
 		},
-		exportBoard3d: async (input, signal) => {
-			const response = await transport.response('/api/workspace/file/board-3d', {
-				method: 'POST',
-				body: JSON.stringify(input),
-				signal
-			});
-
-			return response.arrayBuffer();
-		},
 		kicadScene: async (input, signal) => {
 			const response = await transport.response('/api/workspace/file/kicad-scene', {
 				method: 'POST',
@@ -547,6 +531,15 @@ export function createLocalClient(baseUrl: string): LocalApi {
 
 			// A stream, since `arrayBuffer()` copies the whole scene in one main-thread task.
 			return { scene: response.body, version: response.headers.get('x-file-version') ?? '' };
+		},
+		kicadModels: async (input, signal) => {
+			const response = await transport.response('/api/workspace/file/kicad-models', {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			});
+
+			return response.status === 204 ? null : response.body;
 		},
 		writeWorkspaceFile: (input) =>
 			request('/api/workspace/file/write', workspaceFileWriteResultSchema, {
@@ -622,43 +615,39 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				throw error;
 			}
 		},
-		fetchTranscriptDisplay: async (requestBody, signal) =>
-			await request('/api/transcript/display', displayPageSchema, {
+		fetchTranscriptRows: (requestBody, signal) =>
+			request('/api/transcript/rows', transcriptSnapshotSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody),
 				signal
 			}),
-		fetchTranscriptDisplayDetails: async (requestBody, signal) => {
-			return await request('/api/transcript/display-details', displayDetailsSchema, {
+		fetchTranscriptRow: (requestBody, signal) =>
+			request('/api/transcript/row', transcriptRowResponseSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody),
 				signal
-			});
-		},
+			}),
 		watchTranscript: (requestBody, handlers) =>
 			socket.subscribeOnce(
 				{ kind: 'transcript', params: requestBody },
-				transcriptWatchEventSchema.nullable().catch(null),
+				transcriptEventSchema,
 				handlers.signal,
-				(event) => {
-					if (event) handlers.onEvent(event);
-				}
+				handlers.onEvent
 			),
-		watchLiveCompletion: (requestBody, handlers) =>
+		watchTranscriptWork: (requestBody, handlers) =>
 			socket.subscribeOnce(
-				{ kind: 'liveCompletion', params: requestBody },
-				liveCompletionWatchEventSchema.nullable().catch(null),
+				{ kind: 'transcriptWork', params: requestBody },
+				transcriptEventSchema,
 				handlers.signal,
-				(event) => {
-					if (event) handlers.onEvent(event);
-				}
+				handlers.onEvent
 			),
-		clearTranscriptReplica: async (requestBody) => {
-			await transport.response('/api/transcript/clear', {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			});
-		},
+		watchTranscriptItem: (requestBody, handlers) =>
+			socket.subscribeOnce(
+				{ kind: 'transcriptItem', params: requestBody },
+				transcriptEventSchema,
+				handlers.signal,
+				handlers.onEvent
+			),
 		fetchTranscriptAttachment: async (requestBody) => {
 			const response = await fetch(`${baseUrl}/api/transcript/attachment`, {
 				method: 'POST',

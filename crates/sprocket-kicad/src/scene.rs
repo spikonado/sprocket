@@ -3,7 +3,11 @@ use std::collections::HashMap;
 use earcut::Earcut;
 use serde::{Serialize, Serializer};
 
-use crate::geometry::{Bounds, Point, clip_ring};
+use crate::board::Colors;
+use crate::geometry::{Bounds, Point, clip_ring, point};
+use crate::outline::Outline;
+
+mod polygon;
 
 const MAGIC: &[u8; 4] = b"SPKS";
 const FORMAT_VERSION: u32 = 2;
@@ -91,6 +95,7 @@ struct Layer {
 pub struct Scene {
     layers: Vec<Layer>,
     layer_ids: HashMap<(String, Part), usize>,
+    pending_ids: HashMap<String, usize>,
     user_names: HashMap<String, String>,
     items: Vec<Item>,
     nets: Vec<String>,
@@ -99,6 +104,19 @@ pub struct Scene {
     flat: Vec<[f64; 2]>,
     hole_starts: Vec<u32>,
     indices: Vec<u32>,
+    board: Option<BoardMeta>,
+    models: Option<String>,
+}
+
+/// The physical board for the 3D view. z runs from 0 to `body` through the board body; F.Cu
+/// spans `body..body + copper[0]` and B.Cu `-copper[1]..0`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardMeta {
+    pub outlines: Vec<Outline>,
+    pub body: f64,
+    pub copper: [f64; 2],
+    pub colors: Colors,
 }
 
 #[derive(Serialize)]
@@ -110,6 +128,9 @@ struct Meta<'a> {
     layers: Vec<LayerMeta<'a>>,
     items: &'a [Item],
     nets: &'a [String],
+    board: Option<&'a BoardMeta>,
+    /// The component models key, or `None` when no footprint has a model.
+    models: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -152,6 +173,16 @@ const SEGMENT_BYTES: usize = 24;
 const CIRCLE_BYTES: usize = 20;
 const VERTEX_BYTES: usize = 12;
 
+fn record_float(record: &[u8], field: usize) -> f64 {
+    f64::from(f32::from_le_bytes(
+        record[field * 4..field * 4 + 4].try_into().unwrap(),
+    ))
+}
+
+fn record_point(record: &[u8], field: usize) -> Point {
+    point(record_float(record, field), record_float(record, field + 1))
+}
+
 impl Scene {
     pub fn new() -> Scene {
         let mut scene = Scene::default();
@@ -172,6 +203,61 @@ impl Scene {
         });
         self.layer_ids.insert(key, id);
         id
+    }
+
+    /// A layer that holds conditionally flashed copper until `flash` keeps or drops it.
+    pub fn pending_layer(&mut self, name: &str) -> usize {
+        if let Some(&id) = self.pending_ids.get(name) {
+            return id;
+        }
+        let id = self.layers.len();
+        self.layers.push(Layer {
+            name: name.to_owned(),
+            ..Layer::default()
+        });
+        self.pending_ids.insert(name.to_owned(), id);
+        id
+    }
+
+    /// Moves the pending primitives that `keep(item, layer)` accepts into their layer's main
+    /// part and drops the rest.
+    pub fn flash(&mut self, keep: impl Fn(u32, &str) -> bool) {
+        let item = |bytes: &[u8], offset: usize| {
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        };
+        let mut pending: Vec<usize> = self.pending_ids.drain().map(|(_, id)| id).collect();
+        pending.sort_unstable();
+        for id in pending {
+            let pending = std::mem::take(&mut self.layers[id]);
+            let target = self.layer(&pending.name, Part::Main);
+            let layer = &mut self.layers[target];
+            let kept = |record: &&[u8], offset| keep(item(record, offset), &pending.name);
+            for record in pending
+                .segments
+                .chunks(SEGMENT_BYTES)
+                .filter(|r| kept(r, 20))
+            {
+                let half = record_float(record, 4) / 2.0;
+                layer.bounds.include(record_point(record, 0), half);
+                layer.bounds.include(record_point(record, 2), half);
+                layer.segments.extend_from_slice(record);
+            }
+            for record in pending.circles.chunks(CIRCLE_BYTES).filter(|r| kept(r, 16)) {
+                let reach = record_float(record, 2) + record_float(record, 3) / 2.0;
+                layer.bounds.include(record_point(record, 0), reach);
+                layer.circles.extend_from_slice(record);
+            }
+            for triangle in pending
+                .triangles
+                .chunks(3 * VERTEX_BYTES)
+                .filter(|r| kept(r, 8))
+            {
+                for vertex in triangle.chunks(VERTEX_BYTES) {
+                    layer.bounds.include(record_point(vertex, 0), 0.0);
+                }
+                layer.triangles.extend_from_slice(triangle);
+            }
+        }
     }
 
     pub fn set_user_name(&mut self, layer: &str, user_name: &str) {
@@ -218,6 +304,32 @@ impl Scene {
 
     pub fn bounds(&self, item: u32) -> Bounds {
         self.items[item as usize].bounds
+    }
+
+    /// The board edges' box, or the box of everything drawn when there are none.
+    pub fn view_bounds(&self) -> Bounds {
+        let edges = self
+            .layer_ids
+            .get(&(EDGE_LAYER.to_owned(), Part::Main))
+            .map(|&id| self.layers[id].bounds)
+            .filter(|bounds| !bounds.is_empty());
+        edges.unwrap_or_else(|| {
+            let mut all = Bounds::EMPTY;
+            for layer in &self.layers {
+                all.merge(&layer.bounds);
+            }
+            all
+        })
+    }
+
+    pub fn is_edge(&self, layer: usize) -> bool {
+        let layer = &self.layers[layer];
+        layer.name == EDGE_LAYER && layer.part == Part::Main
+    }
+
+    pub fn set_board(&mut self, board: BoardMeta, models: Option<String>) {
+        self.board = Some(board);
+        self.models = models;
     }
 
     fn touch(&mut self, pen: Pen, p: Point, margin: f64) {
@@ -338,18 +450,7 @@ impl Scene {
                     && layer.triangles.is_empty())
             })
             .collect();
-
-        let mut all = Bounds::EMPTY;
-        for id in &order {
-            all.merge(&self.layers[*id].bounds);
-        }
-        let bounds = self
-            .layer_ids
-            .get(&(EDGE_LAYER.to_owned(), Part::Main))
-            .map(|&id| self.layers[id].bounds)
-            .filter(|bounds| !bounds.is_empty())
-            .unwrap_or(all);
-
+        let bounds = self.view_bounds();
         let layers = order
             .iter()
             .map(|&id| {
@@ -373,6 +474,8 @@ impl Scene {
             layers,
             items: &self.items,
             nets: &self.nets,
+            board: self.board.as_ref(),
+            models: self.models.as_deref(),
         })
         .expect("scene meta serializes");
 

@@ -274,6 +274,7 @@ async fn launch_agent_inner(
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
+                let transcript_run = transcript_watchers.open_run(&user_id, &thread_id).await;
                 if records_message
                     && let Err(error) = project_attachments
                         .record_message_sent(&attachment_key, crate::now_ms())
@@ -338,8 +339,8 @@ async fn launch_agent_inner(
                             .await,
                     )
                 };
-                let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
                 let result = run_agent(run, sessions, live, transcript).await;
+                transcript_run.finish().await;
                 if let Some(output) = &output {
                     output.finish(result.as_ref().err().map(ToString::to_string));
                 }
@@ -349,7 +350,6 @@ async fn launch_agent_inner(
                     tracing::warn!("artifact sync after run {run_id} failed: {error:#}");
                 }
                 drop(artifact_watch);
-                drop(transcript_watch);
                 if let Err(error) = result {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }

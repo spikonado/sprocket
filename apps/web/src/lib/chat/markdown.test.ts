@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Marked } from 'marked';
 
-import { renderMarkdown, renderMarkdownBlocks } from '$lib/chat/markdown';
+import {
+	createMarkdownBlockRenderer,
+	renderMarkdown,
+	renderMarkdownBlocks,
+	type MarkdownBlock
+} from '$lib/chat/markdown';
 
 describe('renderMarkdown', () => {
 	it.each([
@@ -195,5 +201,106 @@ describe('renderMarkdownBlocks', () => {
 			type: 'html',
 			html: expect.stringContaining('artifact:')
 		});
+	});
+});
+
+function mergeHtmlBlocks(blocks: MarkdownBlock[]) {
+	const merged: MarkdownBlock[] = [];
+
+	for (const block of blocks) {
+		const previous = merged.at(-1);
+
+		if (block.type === 'html' && previous?.type === 'html') {
+			merged[merged.length - 1] = { type: 'html', html: previous.html + block.html };
+		} else {
+			merged.push(block);
+		}
+	}
+
+	return merged;
+}
+
+describe('paragraph-cached Markdown', () => {
+	it('reuses completed paragraphs and lexes only the unfinished tail', () => {
+		const render = createMarkdownBlockRenderer();
+		const ids = new Set<string>();
+		const lexer = vi.spyOn(Marked.prototype, 'lexer');
+		const finished = '**Finished** with `code` and [a link](x).\n \t\n';
+
+		try {
+			const first = render(`${finished}Draft`, ids);
+			const appended = render(`${finished}Draft grows`, ids);
+
+			expect(appended[0]).toBe(first[0]);
+			expect(lexer).toHaveBeenLastCalledWith('Draft grows');
+			expect(render(`${finished}Draft grows`, new Set())).toBe(appended);
+
+			const completed = render(`${finished}Draft grows\n\n`, ids);
+			const next = render(`${finished}Draft grows\n\nNext`, ids);
+
+			expect(next[0]).toBe(first[0]);
+			expect(next[1]).toBe(completed[1]);
+			expect(lexer).toHaveBeenLastCalledWith('Next');
+		} finally {
+			lexer.mockRestore();
+		}
+	});
+
+	it.each([
+		['prose', '**First.**\n\nSecond with ~~strikethrough~~.\n\nThird.'],
+		[
+			'inline code and links',
+			'Run `a\n\nb` and [x](y).\n\nAfter `c` [z].\n\n[z]: https://example.com'
+		],
+		['references', '[guide][ref]\n\nartifact:known\n\n[ref]: https://example.com "Guide"'],
+		['nested definitions', '[ref]\n\n> [ref]: https://example.com'],
+		['lists', '- first\n\n- second\n\n  continuation\n\nAfter.'],
+		['quotes', '> first\n\n> second\n\nAfter.'],
+		['indented code', '    first\n\n    second\n\nAfter.'],
+		['fences', '```mermaid\ngraph TD\n\nA --> B\n```\n\nAfter.'],
+		['streaming JSON', '```json-render\n{"root":"ci","elements":{}}\n```'],
+		['nested fences', '```markdown\nBefore\n\n```sh\necho hi\n```\n\nAfter\n```'],
+		['tables', 'Name | Value\n--- | ---\nA | 1\n\nAfter.'],
+		['setext headings', 'Heading\n---\n\nAfter.'],
+		['HTML', '<div>\n\n**Inside**\n\n</div>\n\nAfter.'],
+		['math', '$$x\n\n+ y$$\n\nAfter.'],
+		['CRLF', 'First.\r\n\r\nSecond.'],
+		['cards', 'artifact:known\n\nkicad:boards/main.kicad_pro\n\nAfter.']
+	])('matches whole-document rendering at every append for %s', (_name, source) => {
+		const render = createMarkdownBlockRenderer();
+		const ids = new Set(['known']);
+
+		for (let length = 0; length <= source.length; length++) {
+			const content = 'Finished.\n\n' + source.slice(0, length);
+
+			expect(mergeHtmlBlocks(render(content, ids, true)), content).toEqual(
+				renderMarkdownBlocks(content, ids, true)
+			);
+		}
+	});
+
+	it('matches a full parse across initial chunks, replacements, and option changes', () => {
+		const render = createMarkdownBlockRenderer();
+		render('First.\n\n    ', new Set());
+		expect(mergeHtmlBlocks(render('First.\n\n    code', new Set()))).toEqual(
+			renderMarkdownBlocks('First.\n\n    code', new Set())
+		);
+
+		const content = 'artifact:known\n\nTail';
+
+		expect(render(content, new Set(['known']))[0]).toEqual({
+			type: 'artifact',
+			artifactId: 'known'
+		});
+		expect(mergeHtmlBlocks(render(content, new Set()))).toEqual(
+			renderMarkdownBlocks(content, new Set())
+		);
+
+		const replacement = 'Replacement\n\nhttps://example.com';
+		render(replacement, new Set());
+		expect(mergeHtmlBlocks(render(replacement, new Set(), true))).toEqual(
+			renderMarkdownBlocks(replacement, new Set(), true)
+		);
+		expect(render('Shorter', new Set())).toEqual(renderMarkdownBlocks('Shorter', new Set()));
 	});
 });

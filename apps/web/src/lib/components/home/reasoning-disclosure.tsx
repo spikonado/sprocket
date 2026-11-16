@@ -1,56 +1,63 @@
 import { Brain, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useEffect } from 'react';
+import { workRowClass } from '$lib/components/home/work-tools';
+import {
+	useTranscriptExpanded,
+	useTranscriptRow,
+	type TranscriptStore
+} from '$lib/home/transcript-store';
 
 type Props = {
-	text: string;
-	inProgress: boolean;
+	store: TranscriptStore;
+	rowId: string;
 };
 
-export default function ReasoningDisclosure({ text, inProgress }: Props) {
-	const [expanded, setExpanded] = useState(inProgress);
-	const [previousInProgress, setPreviousInProgress] = useState(inProgress);
+export default memo(function ReasoningDisclosure({ store, rowId }: Props) {
+	const row = useTranscriptRow(store, rowId);
+	const [expanded, setExpanded] = useTranscriptExpanded(store, rowId);
 
-	if (inProgress !== previousInProgress) {
-		setPreviousInProgress(inProgress);
-		setExpanded(inProgress);
-	}
+	if (row?.kind !== 'reasoning') return null;
 
 	return (
-		<div className="text-muted-foreground text-sm">
+		<div className="text-muted-foreground min-w-0 text-[13px] leading-6" data-work-detail>
 			<button
 				type="button"
-				className="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1.5 transition"
-				onClick={() => setExpanded((value) => !value)}
+				className={`${workRowClass} max-w-full`}
+				onClick={() => setExpanded(!expanded)}
 				aria-expanded={expanded}
 			>
-				<ReasoningLabel inProgress={inProgress} />
+				<Brain className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
+				<span className="min-w-0 truncate">{row.label}</span>
 				<ChevronRight
-					className={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+					className={`mt-1 size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
 					aria-hidden="true"
 				/>
 			</button>
-			{expanded ? (
-				<div className="mt-1.5">
-					<ReasoningText text={text} />
-				</div>
-			) : null}
+			{expanded ? <ReasoningDetails store={store} rowId={rowId} /> : null}
+		</div>
+	);
+});
+
+function ReasoningDetails({ store, rowId }: Props) {
+	const row = useTranscriptRow(store, rowId, true);
+	useEffect(() => store.openItem(rowId), [store, rowId]);
+
+	return (
+		<div className="mt-1.5 ml-5">
+			{row?.kind === 'reasoning' && row.text !== undefined ? (
+				<div className="[overflow-wrap:anywhere] whitespace-pre-wrap">{row.text}</div>
+			) : (
+				<p role="status">Loading reasoning...</p>
+			)}
 		</div>
 	);
 }
 
-export function ReasoningLabel({ inProgress }: { inProgress: boolean }) {
+export function ReasoningLabel({ label }: { label: string }) {
 	return (
 		<>
 			<Brain className="size-3.5 shrink-0" aria-hidden="true" />
-			<span>{inProgress ? 'Reasoning' : 'Reasoned'}</span>
+			<span>{label}</span>
 		</>
-	);
-}
-
-export function ReasoningText({ text }: { text: string }) {
-	return (
-		<div className="text-muted-foreground text-[13px] leading-6 [overflow-wrap:anywhere] whitespace-pre-wrap">
-			{text}
-		</div>
 	);
 }

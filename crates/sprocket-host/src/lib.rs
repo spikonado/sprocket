@@ -13,6 +13,7 @@ pub mod device_sign_in;
 mod gh_install;
 mod git_install;
 pub mod github_connector;
+mod kicad_cache;
 pub mod kicad_connector;
 pub mod kicad_scenes;
 pub mod lifetime;

@@ -3,6 +3,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
 import { sameValue } from '@convex/lib/transcriptParts';
+import { legacyCallSectionKey } from '@convex/lib/legacyTranscriptWork';
 import {
 	enqueueWebSearchJob,
 	isCloudWebSearchKind,
@@ -32,14 +33,22 @@ export async function beginExecutorJob(
 		callId?: string;
 		toolInvocationId: string;
 		sectionKey?: string;
-		sectionOrdinal: number;
+		sectionOrdinal?: number;
 		attemptSeq: number;
 		streamId: string;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
-	if (!Number.isSafeInteger(args.sectionOrdinal) || args.sectionOrdinal < 0) {
+	const { sectionOrdinal } = args;
+
+	if (
+		sectionOrdinal !== undefined &&
+		(!Number.isSafeInteger(sectionOrdinal) || sectionOrdinal < 0)
+	) {
 		throw new Error('Invalid section ordinal.');
 	}
+
+	const sectionKey =
+		sectionOrdinal === undefined ? await legacyCallSectionKey(ctx, args) : args.sectionKey;
 
 	const existing = await ctx.db
 		.query('executorJobs')
@@ -53,8 +62,8 @@ export async function beginExecutorJob(
 			existing.callId !== args.callId ||
 			existing.kind !== args.kind ||
 			!sameValue(existing.payload, args.payload) ||
-			existing.sectionKey !== args.sectionKey ||
-			existing.sectionOrdinal !== args.sectionOrdinal ||
+			existing.sectionKey !== sectionKey ||
+			existing.sectionOrdinal !== sectionOrdinal ||
 			existing.attemptSeq !== args.attemptSeq ||
 			existing.streamId !== args.streamId
 		) {
@@ -82,8 +91,8 @@ export async function beginExecutorJob(
 		claimedAt: Date.now(),
 		sequence: nextSequence,
 		toolInvocationId: args.toolInvocationId,
-		sectionKey: args.sectionKey,
-		sectionOrdinal: args.sectionOrdinal,
+		sectionKey,
+		sectionOrdinal,
 		attemptSeq: args.attemptSeq,
 		streamId: args.streamId
 	};

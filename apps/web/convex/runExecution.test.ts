@@ -159,7 +159,11 @@ describe('run execution state', () => {
 		).toEqual({
 			jobId,
 			status: 'completed',
-			result
+			result,
+			part: expect.objectContaining({
+				kind: 'tool',
+				tool: expect.objectContaining({ callId, name: kind, status: 'completed', output: result })
+			})
 		});
 		await t.run(async (ctx) => {
 			expect((await getRunWithExecution(ctx.db, auth.runId))?.activeJobId).toBeUndefined();
@@ -200,7 +204,15 @@ describe('run execution state', () => {
 				executionSecret: auth.executionSecret,
 				jobId
 			})
-		).toEqual({ jobId, status: 'completed', result });
+		).toEqual({
+			jobId,
+			status: 'completed',
+			result,
+			part: expect.objectContaining({
+				kind: 'tool',
+				tool: expect.objectContaining({ name: 'exec_cmd', status: 'completed', output: result })
+			})
+		});
 	});
 
 	it('does not write subscribed run or thread records during execution updates', async () => {

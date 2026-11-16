@@ -5,7 +5,7 @@ const MODEL_ID: &str = "gpt-5.6-sol";
 
 #[tokio::test]
 async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
-    use sprocket_transcript::{DownloadOrder, TranscriptPart, TranscriptState, TranscriptStore};
+    use sprocket_transcript::{TranscriptPart, TranscriptState, TranscriptStore};
     use std::sync::Mutex;
 
     fn prompt(number: u32) -> TranscriptPart {
@@ -23,11 +23,12 @@ async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
         .append_parts("user", "thread", &[prompt(109)])
         .await
         .unwrap();
-    let mut state = TranscriptState::new("user".into(), "thread".into());
-    state.history_from_number = 110;
-    state.remote_total_parts = 120;
-    state.context_summary = Some("Captured summary".into());
-    state.reasoning_stripped_through_part_number = Some(112);
+    let state = TranscriptState {
+        history_from_number: 110,
+        remote_total_parts: 120,
+        context_summary: Some("Captured summary".into()),
+        reasoning_stripped_through_part_number: Some(112),
+    };
     let requests = Mutex::new(Vec::new());
     let (parts, handoff) = super::load_context_parts(
         &store,
@@ -35,19 +36,11 @@ async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
         "thread",
         &state,
         "current-run",
-        |start, end, order| {
-            assert!(matches!(order, DownloadOrder::Desc));
+        |start, end| {
             requests.lock().unwrap().push((start, end));
             let store = store.clone();
             async move {
                 store.append_parts("user", "thread", &[prompt(120)]).await?;
-                store
-                    .update_state("user", "thread", |state| {
-                        state.history_from_number = 120;
-                        state.remote_total_parts = 121;
-                        state.context_summary = Some("Newer summary".into());
-                    })
-                    .await?;
                 Ok((start.max(end - 3)..end).rev().map(prompt).collect())
             }
         },
@@ -69,7 +62,7 @@ async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
         "thread",
         &state,
         "current-run",
-        |_, _, _| async {
+        |_, _| async {
             Err(anyhow::anyhow!(
                 "cached context requested remote transcript parts"
             ))

@@ -3,6 +3,7 @@ import {
 	fitCamera,
 	panCamera,
 	toBoard,
+	wheelZoomFactor,
 	zoomCamera,
 	type Camera
 } from '$lib/kicad-viewer/camera';
@@ -18,18 +19,18 @@ import type {
 	FromWorker,
 	PickedItem,
 	PointerPhase,
+	Stream,
 	ToWorker,
+	View,
 	ViewportSize,
 	ViewerLayer
 } from '$lib/kicad-viewer/protocol';
 import { BoardRenderer, type DrawLayer } from '$lib/kicad-viewer/renderer';
+import type { Board3d } from '$lib/kicad-viewer/board-3d';
 import { decodeScene, type Scene } from '$lib/kicad-viewer/scene';
 
 const CLICK_SLOP_PX = 4;
 const PICK_TOLERANCE_PX = 3;
-const WHEEL_ZOOM_PER_PX = 0.002;
-const PINCH_ZOOM_PER_PX = 0.01;
-const LINE_PX = 16;
 const LABEL_MIN_STROKE_PX = 0.5;
 
 let canvas: OffscreenCanvas | null = null;
@@ -44,8 +45,13 @@ let visible: boolean[] = [];
 let selected: number | null = null;
 let flags = new Uint8Array(0);
 let frameRequested = false;
-let incomingLoad = 0;
-let incomingChunks: Uint8Array[] = [];
+let shown: View | null = '2d';
+let board3d: Promise<Board3d | null> | null = null;
+
+const incoming: Record<Stream, { load: number; chunks: Uint8Array[] }> = {
+	scene: { load: 0, chunks: [] },
+	models: { load: 0, chunks: [] }
+};
 
 const pointers = new Map<number, { x: number; y: number }>();
 let gesture = { moved: false, startX: 0, startY: 0, distance: 0 };
@@ -54,43 +60,50 @@ self.addEventListener('message', ({ data }: MessageEvent<ToWorker>) => {
 	try {
 		handle(data);
 	} catch (error) {
-		post({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+		post({ type: 'error', view: '2d', message: errorMessage(error) });
 	}
 });
 
 function handle(message: ToWorker) {
 	switch (message.type) {
 		case 'init':
-			return init(message.canvas, message);
-		case 'sceneChunk':
-			receiveChunk(message.load).push(message.bytes);
+			return message.view === '2d'
+				? init(message.canvas, message)
+				: init3d(message.canvas, message);
+		case 'chunk':
+			receiveChunk(message.stream, message.load).push(message.bytes);
 
 			return;
-		case 'sceneEnd': {
-			const chunks = receiveChunk(message.load).splice(0);
+		case 'end': {
+			const bytes = concat(receiveChunk(message.stream, message.load).splice(0));
+
+			if (message.stream === 'models') return with3d((board) => board.setModels(bytes));
 
 			// Without a context, init already reported why the board can't be drawn.
-			if (gl) load(gl, concat(chunks));
+			if (gl) load(gl, bytes);
 
 			return;
 		}
 
 		case 'resize':
-			return resize(message);
+			return message.view === '2d' ? resize(message) : with3d((board) => board.resize(message));
 		case 'pointer':
+			if (message.view === '3d') return with3d((board) => board.pointer(message));
+
 			return pointer(message.phase, message.id, message.x, message.y);
 		case 'wheel': {
-			const pixels =
-				message.deltaY *
-				(message.deltaMode === 1 ? LINE_PX : message.deltaMode === 2 ? size.height : 1);
-
-			const rate = message.pinch ? PINCH_ZOOM_PER_PX : WHEEL_ZOOM_PER_PX;
+			if (message.view === '3d') return with3d((board) => board.wheel(message));
 
 			return moveCamera((current) =>
-				zoomCamera(current, size, message.x, message.y, Math.exp(-pixels * rate))
+				zoomCamera(current, size, message.x, message.y, 1 / wheelZoomFactor(message, size.height))
 			);
 		}
 
+		case 'show':
+			shown = message.view;
+			with3d((board) => board.setShown(shown === '3d'));
+
+			return requestFrame();
 		case 'layerVisible': {
 			scene?.layers.forEach(({ name }, layer) => {
 				if (name === message.name) visible[layer] = message.visible;
@@ -99,17 +112,55 @@ function handle(message: ToWorker) {
 			return requestFrame();
 		}
 
+		case 'componentsVisible':
+			return with3d((board) => board.setComponentsVisible(message.visible));
 		case 'fit':
+			if (message.view === '3d') return with3d((board) => board.fit());
 			camera = null;
 
 			return requestFrame();
 		case 'flip':
+			if (message.view === '3d') return with3d((board) => board.flip(message.flipped));
 			flipped = message.flipped;
 
 			return moveCamera((current) => ({ ...current, flipped }));
 		case 'clearSelection':
 			return select(null);
 	}
+}
+
+/** three.js loads only once the 3D view first opens, so 2D-only use never pays for it. */
+function init3d(offscreen: OffscreenCanvas, viewport: ViewportSize) {
+	board3d = import('$lib/kicad-viewer/board-3d')
+		.then(({ Board3d }) => new Board3d(offscreen, viewport, post))
+		.catch((cause: unknown) => {
+			post({ type: 'error', view: '3d', message: errorMessage(cause) });
+
+			return null;
+		});
+
+	with3d((board) => {
+		if (scene) board.setScene(scene);
+		board.setShown(shown === '3d');
+	});
+}
+
+/** Runs `use` once the 3D view exists, in message order. */
+function with3d(use: (board: Board3d) => void) {
+	board3d =
+		board3d?.then((board) => {
+			try {
+				if (board) use(board);
+			} catch (error) {
+				post({ type: 'error', view: '3d', message: errorMessage(error) });
+			}
+
+			return board;
+		}) ?? null;
+}
+
+function errorMessage(cause: unknown) {
+	return cause instanceof Error ? cause.message : String(cause);
 }
 
 function init(offscreen: OffscreenCanvas, viewport: ViewportSize) {
@@ -144,13 +195,15 @@ function init(offscreen: OffscreenCanvas, viewport: ViewportSize) {
 }
 
 /** The chunks of load `load`. A newer load drops the chunks of an unfinished older one. */
-function receiveChunk(load: number) {
-	if (load > incomingLoad) {
-		incomingLoad = load;
-		incomingChunks = [];
+function receiveChunk(stream: Stream, load: number) {
+	const current = incoming[stream];
+
+	if (load > current.load) {
+		current.load = load;
+		current.chunks = [];
 	}
 
-	return load === incomingLoad ? incomingChunks : [];
+	return load === current.load ? current.chunks : [];
 }
 
 function concat(chunks: Uint8Array[]) {
@@ -194,7 +247,8 @@ function load(context: WebGL2RenderingContext, buffer: ArrayBuffer) {
 		});
 	}
 
-	post({ type: 'loaded', layers: [...listed.values()].reverse() });
+	post({ type: 'loaded', layers: [...listed.values()].reverse(), models: next.meta.models });
+	with3d((board) => board.setScene(next));
 
 	// Item indexes don't survive a reload, so the selection can't either.
 	select(null, selected !== null);
@@ -377,7 +431,9 @@ function drawFrame() {
 
 	const current = currentCamera();
 
-	if (!scene || !renderer || !current || !hasSize() || gl?.isContextLost()) return;
+	if (shown !== '2d' || !scene || !renderer || !current || !hasSize() || gl?.isContextLost()) {
+		return;
+	}
 
 	const layers: DrawLayer[] = [];
 	const overlays: DrawLayer[] = [];

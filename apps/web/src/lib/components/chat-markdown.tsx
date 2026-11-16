@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '$lib/utils';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import { renderMarkdownBlocks } from '$lib/chat/markdown';
+import { createMarkdownBlockRenderer } from '$lib/chat/markdown';
 import ArtifactReference from '$lib/components/artifact-reference';
 import KicadReference from '$lib/components/kicad-reference';
 import LazyJsonRender from '$lib/components/lazy-json-render';
@@ -32,14 +32,12 @@ export default function ChatMarkdown({
 		[artifacts]
 	);
 
-	const blocks = useMemo(
-		() =>
-			renderMarkdownBlocks(
-				content,
-				onOpenArtifact ? new Set(artifactById.keys()) : NO_ARTIFACTS,
-				openLinksInNewTab
-			),
-		[content, onOpenArtifact, artifactById, openLinksInNewTab]
+	const [renderBlocks] = useState(createMarkdownBlockRenderer);
+
+	const blocks = renderBlocks(
+		content,
+		onOpenArtifact ? new Set(artifactById.keys()) : NO_ARTIFACTS,
+		openLinksInNewTab
 	);
 
 	return (

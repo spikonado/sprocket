@@ -1,6 +1,6 @@
 # Workspace panels
 
-The main workspace holds split panes of tabs when a thread is selected. Each thread has one persistent Thread tab with the conversation and composer. Layouts stay in memory per thread until reload.
+The main workspace holds split panes of tabs for each thread and for each project's new-thread screen. Each has one persistent Thread tab with the conversation and composer. Layouts stay in memory until reload.
 
 ## Driving it with agent-browser
 
@@ -10,7 +10,7 @@ Precondition: an existing scratch thread is open, with the sidebar visible.
 - **New tab.** Click `button "New tab"`. `tab "New tab" [selected]` offers `button "Artifacts"`, `button "Files"` and `button "Browser"`. Click Artifacts. The tab becomes `tab "Artifacts" [selected]` with `button "Close Artifacts tab"`. Select Thread to return to the conversation and composer.
 - **Split.** Click `button "Split right"`. A second `tablist` appears with a view picker and `separator "Resize panes side by side"`. Split down adds `separator "Resize stacked panes"`. Drag a separator, or focus it and press arrow keys, to resize. Close a pane's last tab to remove that pane and its separator. Closing other tabs leaves Thread and its pane intact.
 - **Thread restore.** In one existing scratch thread, open Files and split right, then resize the divider. Select a second scratch thread in the same project. It starts with only Thread. Open Artifacts there. Return to the first thread and check its Files tab, split, active tabs and divider position. Return to the second thread and check Artifacts. Reload and confirm the layout resets to Thread.
-- **New thread screen.** Click `button "New thread"`. The heading and composer appear without a tablist, New tab button, or split controls. Return to the scratch thread and confirm its panels restore.
+- **New thread screen.** Click `button "New thread"`. The heading and composer appear in `tab "Thread" [selected]` with New tab and split controls. Open Files and split right, visit the scratch thread, return, and confirm the new-thread layout restores. Send a prompt; the created thread keeps that layout and the next new-thread screen starts with only Thread.
 - **Browser.** In a new tab, click Browser. The view shows `status` `Browser ready`, `link "Open browser dashboard in a new tab"` and `Iframe "Agent browser dashboard"`. A cold start shows `Setting up the browser…` first. A failed setup shows an alert and Retry setup.
 - **Phone.** Set viewport to `390 844`, close the inbox sidebar, and switch between Thread and a new Artifacts tab. Both fit the main workspace. Restore `1440 900` afterwards.
 

@@ -5,7 +5,6 @@ use rig::agent::{
     AgentHook, DispatchAction, DispatchEvent, HookContext, InvalidToolCallAction,
     InvalidToolCallContext, InvalidToolCallReason, StepEventKind,
 };
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::tools::{AGENT_TOOLS, NormalizeToolArgs};
@@ -24,54 +23,12 @@ fn normalized_tool_args(tool_name: &str, args: &serde_json::Value) -> serde_json
         .unwrap_or_else(|| args.clone())
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkRangeAssignment {
-    pub(crate) start: u64,
-    pub(crate) end: u64,
-    pub(crate) section_key: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ToolInvocationAssignment {
     pub(crate) call_id: String,
     pub(crate) tool_invocation_id: String,
-    pub(crate) section_key: String,
-    #[serde(skip)]
-    pub(crate) section_ordinal: u64,
-    #[serde(skip)]
     pub(crate) attempt_seq: u64,
-    #[serde(skip)]
     pub(crate) stream_id: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CompletionAssignments {
-    pub(crate) work: CompletionWorkAssignments,
-    pub(crate) tool_invocations: Vec<ToolInvocationAssignment>,
-    pub(crate) sections: Vec<SectionAssignment>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub(crate) struct CompletionWorkAssignments {
-    pub(crate) ranges: Vec<WorkRangeAssignment>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SectionAssignment {
-    pub(crate) section_key: String,
-    pub(crate) section_ordinal: u64,
-    pub(crate) closed: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum OrderedContent {
-    Text(bool),
-    Reasoning(bool),
-    Tool { call_id: String },
 }
 
 #[derive(Debug)]
@@ -80,12 +37,10 @@ struct ToolCallState {
     claim_id: String,
     attempt_seq: u64,
     stream_id: String,
-    next_section_ordinal: u64,
-    open_section: Option<SectionAssignment>,
     invocations_by_internal_id: HashMap<String, ToolInvocationAssignment>,
     unbound_invocations: HashMap<String, VecDeque<ToolInvocationAssignment>>,
     dispatches_by_tool: HashMap<String, VecDeque<PendingDispatch>>,
-    completion: CompletionAssignments,
+    completion: Vec<ToolInvocationAssignment>,
 }
 
 #[derive(Debug)]
@@ -108,12 +63,10 @@ impl ToolCallTracker {
             claim_id: claim_id.to_owned(),
             attempt_seq: 1,
             stream_id: completion_stream_id(run_id, claim_id, 1),
-            next_section_ordinal: 1,
-            open_section: None,
             invocations_by_internal_id: HashMap::new(),
             unbound_invocations: HashMap::new(),
             dispatches_by_tool: HashMap::new(),
-            completion: CompletionAssignments::default(),
+            completion: Vec::new(),
         })))
     }
 
@@ -124,35 +77,30 @@ impl ToolCallTracker {
             state.invocations_by_internal_id.clear();
             state.unbound_invocations.clear();
             state.dispatches_by_tool.clear();
-            state.completion = CompletionAssignments::default();
+            state.completion.clear();
         }
-    }
-
-    pub(crate) fn completion_assignments(&self) -> CompletionAssignments {
-        self.0
-            .lock()
-            .map(|state| state.completion.clone())
-            .unwrap_or_default()
     }
 
     pub(crate) fn record_parts(&self, parts: &[sprocket_transcript::LiveAssistantPart]) {
         use sprocket_transcript::LiveAssistantPart;
 
-        let content = parts
-            .iter()
-            .map(|part| match part {
-                LiveAssistantPart::Text { text, .. } => {
-                    OrderedContent::Text(!text.trim().is_empty())
-                }
-                LiveAssistantPart::Reasoning { text, .. } => {
-                    OrderedContent::Reasoning(!text.trim().is_empty())
-                }
-                LiveAssistantPart::ToolCall { call_id, .. } => OrderedContent::Tool {
-                    call_id: call_id.clone(),
-                },
-            })
-            .collect::<Vec<_>>();
-        self.record_turn(&content);
+        self.record_turn(parts.iter().map(|part| match part {
+            LiveAssistantPart::ToolCall { call_id, .. } => Some(call_id.as_str()),
+            _ => None,
+        }));
+    }
+
+    pub(crate) fn annotate_items(&self, items: &mut [serde_json::Value]) {
+        let Ok(state) = self.0.lock() else {
+            return;
+        };
+        for (item, invocation) in items
+            .iter_mut()
+            .filter(|item| item["type"] == "tool-call")
+            .zip(&state.completion)
+        {
+            item["toolInvocationId"] = invocation.tool_invocation_id.clone().into();
+        }
     }
 
     pub(crate) fn assignment_for_dispatch(
@@ -207,109 +155,40 @@ impl ToolCallTracker {
         pending.remove(index).map(|dispatch| dispatch.assignment)
     }
 
-    fn record_turn(&self, content: &[OrderedContent]) {
+    fn record_turn<'a>(&self, content: impl IntoIterator<Item = Option<&'a str>>) {
         let Ok(mut state) = self.0.lock() else {
             return;
         };
-        state.completion = CompletionAssignments::default();
-        let mut touched_sections = Vec::new();
-        for (index, item) in content.iter().enumerate() {
-            match item {
-                OrderedContent::Text(true) => {
-                    if let Some(section) = state.open_section.take() {
-                        touched_sections.push(section);
-                    }
-                }
-                OrderedContent::Reasoning(true) => {
-                    let section = ensure_section(&mut state);
-                    touched_sections.push(section.clone());
-                    push_range(
-                        &mut state.completion.work.ranges,
-                        index as u64,
-                        &section.section_key,
-                    );
-                }
-                OrderedContent::Tool { call_id } => {
-                    let section = ensure_section(&mut state);
-                    touched_sections.push(section.clone());
-                    push_range(
-                        &mut state.completion.work.ranges,
-                        index as u64,
-                        &section.section_key,
-                    );
-                    let assignment = ToolInvocationAssignment {
-                        call_id: call_id.clone(),
-                        tool_invocation_id: stable_id(
-                            "invocation",
-                            &state.run_id,
-                            &state.claim_id,
-                            state.attempt_seq,
-                            index as u64,
-                        ),
-                        section_key: section.section_key,
-                        section_ordinal: section.section_ordinal,
-                        attempt_seq: state.attempt_seq,
-                        stream_id: state.stream_id.clone(),
-                    };
-                    state
-                        .unbound_invocations
-                        .entry(call_id.clone())
-                        .or_default()
-                        .push_back(assignment.clone());
-                    state.completion.tool_invocations.push(assignment);
-                }
-                OrderedContent::Text(false) | OrderedContent::Reasoning(false) => {}
-            }
+        state.completion.clear();
+        for (index, call_id) in content.into_iter().enumerate() {
+            let Some(call_id) = call_id else {
+                continue;
+            };
+            let assignment = ToolInvocationAssignment {
+                call_id: call_id.to_owned(),
+                tool_invocation_id: tool_invocation_id(
+                    &state.run_id,
+                    &state.claim_id,
+                    state.attempt_seq,
+                    index as u64,
+                ),
+                attempt_seq: state.attempt_seq,
+                stream_id: state.stream_id.clone(),
+            };
+            state
+                .unbound_invocations
+                .entry(call_id.to_owned())
+                .or_default()
+                .push_back(assignment.clone());
+            state.completion.push(assignment);
         }
-        touched_sections.sort_by_key(|section| section.section_ordinal);
-        touched_sections.dedup_by(|left, right| left.section_key == right.section_key);
-        for section in &mut touched_sections {
-            section.closed = state
-                .open_section
-                .as_ref()
-                .is_none_or(|open| open.section_key != section.section_key);
-        }
-        state.completion.sections = touched_sections;
     }
 }
 
-fn ensure_section(state: &mut ToolCallState) -> SectionAssignment {
-    if let Some(section) = &state.open_section {
-        return section.clone();
-    }
-    let section_ordinal = state.next_section_ordinal;
-    state.next_section_ordinal += 1;
-    let section = SectionAssignment {
-        section_key: format!(
-            "agent:{}:{}:{}:section:{section_ordinal}",
-            state.run_id, state.claim_id, state.attempt_seq
-        ),
-        section_ordinal,
-        closed: false,
-    };
-    state.open_section = Some(section.clone());
-    section
-}
-
-fn push_range(ranges: &mut Vec<WorkRangeAssignment>, index: u64, section_key: &str) {
-    if let Some(last) = ranges
-        .last_mut()
-        .filter(|range| range.end == index && range.section_key == section_key)
-    {
-        last.end += 1;
-    } else {
-        ranges.push(WorkRangeAssignment {
-            start: index,
-            end: index + 1,
-            section_key: section_key.to_owned(),
-        });
-    }
-}
-
-fn stable_id(kind: &str, run_id: &str, claim_id: &str, attempt_seq: u64, index: u64) -> String {
+fn tool_invocation_id(run_id: &str, claim_id: &str, attempt_seq: u64, index: u64) -> String {
     let mut hash = Sha256::new();
     for value in [
-        kind,
+        "invocation",
         run_id,
         claim_id,
         &attempt_seq.to_string(),
@@ -318,7 +197,7 @@ fn stable_id(kind: &str, run_id: &str, claim_id: &str, attempt_seq: u64, index: 
         hash.update((value.len() as u64).to_le_bytes());
         hash.update(value.as_bytes());
     }
-    format!("agent-{kind}-{}", hex::encode(hash.finalize()))
+    format!("agent-invocation-{}", hex::encode(hash.finalize()))
 }
 
 #[derive(Clone)]

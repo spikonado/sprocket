@@ -1,22 +1,16 @@
 import type { Id } from '@convex/_generated/dataModel';
-import type { AssistantPart } from '@convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
-import type { displayRowValidator } from '@convex/lib/transcriptDisplayTypes';
 import {
-	vExecutorJobKind,
-	vExecutorJobStatus,
 	vRunStatus,
-	type ExecutorJobPayload,
-	type ExecutorJobResult,
 	type LinkedPullRequest,
 	type WorkspaceInstruction
 } from '@convex/lib/validators';
 
 export type LocalAttachmentAvailability = 'available' | 'unavailable';
 
-export type { WorkspaceInstruction, ExecutorJobPayload, ExecutorJobResult };
+export type { WorkspaceInstruction };
 
-export type AgentToolName = Infer<typeof vExecutorJobKind>;
+export type RunStatus = Infer<typeof vRunStatus>;
 
 export type Project = {
 	repositoryKey: string;
@@ -35,40 +29,7 @@ export type ThreadSummary = {
 	fastMode: boolean;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
-	status: RunState['status'];
-};
-
-export type ExecutorJob = {
-	_id: Id<'executorJobs'>;
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	kind: AgentToolName;
-	callId?: string;
-	payload: ExecutorJobPayload;
-	status: Infer<typeof vExecutorJobStatus>;
-	enqueuedAt: number;
-	claimedAt?: number;
-	completedAt?: number;
-	result?: ExecutorJobResult;
-	error?: string;
-	sequence: number;
-};
-
-export type RunState = {
-	_id: Id<'runs'>;
-	threadId: Id<'threadRecords'>;
-	userId: string;
-	status: Infer<typeof vRunStatus>;
-	submissionId: string;
-	claimExpiresAt?: number;
-	selectedModel: string;
-	reasoningEffort: string;
-	fastMode: boolean;
-	startedAt: number;
-	completedAt?: number;
-	lastError?: string;
-	activeJobId?: Id<'executorJobs'>;
-	jobs: ExecutorJob[];
+	status: RunStatus;
 };
 
 export type MessageAttachment = {
@@ -78,13 +39,6 @@ export type MessageAttachment = {
 	size: number;
 	url: string | null;
 };
-
-export type LiveTranscriptMessage = Omit<LiveCompletionOverlay, 'streamId'> & {
-	kind: 'live';
-	id: string;
-};
-
-export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;
 
 export type AgentRunRequest = {
 	userId: string;
@@ -105,25 +59,9 @@ export type AgentRunStart = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type LiveCompletionOverlay = {
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	runStatus: Infer<typeof vRunStatus>;
-	streamId: string;
-	text: string;
-	parts: AssistantPart[];
-};
-
-export type TranscriptWatchEvent = {
-	eventType: string;
-};
-
 export type LocalUserRequest = {
 	userId: string;
 };
-
-export type LiveCompletionWatchEvent =
-	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
 
 export type TranscriptUploadRequest = {
 	userId: string;
@@ -153,46 +91,53 @@ export type TranscriptScopeRequest = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
+export type TranscriptAttachment = Omit<MessageAttachment, 'url'> & { url?: string };
 
-export type TranscriptDisplayPage = {
-	replicaId: string;
-	rows: TranscriptDisplayRow[];
-	indexing: boolean;
-	syncing: boolean;
-	stale: boolean;
-	nextBefore?: number;
-	revision: number;
-	persistedStreams: TranscriptDisplayStream[];
-	changes: Array<{ id: TranscriptDisplayRow['id']; row: TranscriptDisplayRow | null }>;
-	changesCursor: TranscriptChangeCursor;
-	moreChanges: boolean;
+export type TranscriptToolDisplay = {
+	label?: string;
+	summary: string;
+	command?: string;
+	status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+	error?: string;
+	action?: { kind: 'openFile'; path: string } | { kind: 'saveCard' };
 };
 
-export type TranscriptChangeCursor = { revision: number; position: number };
+export type TranscriptRow = { id: string; runId: string } & (
+	| { kind: 'prompt'; text: string; attachments: TranscriptAttachment[] }
+	| { kind: 'text'; text: string; running: boolean }
+	| { kind: 'work'; toolCounts: Record<string, number>; running: boolean }
+	| { kind: 'reasoning'; label: string; running: boolean; text?: string }
+	| (TranscriptToolDisplay & {
+			kind: 'tool';
+			name: string;
+			hasMore: boolean;
+			targets?: TranscriptToolDisplay[];
+	  })
+);
 
-export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
-
-export type TranscriptDisplayRequest = TranscriptScopeRequest & {
-	before?: number;
-	limit?: number;
-	streams?: TranscriptDisplayStream[];
-	changesAfter?: TranscriptChangeCursor;
-};
-
-export type TranscriptDisplayDetails = {
-	parts: AssistantPart[];
-	indexing: boolean;
-	nextAfter?: number;
-	previousBefore?: number;
-	revision: number;
+export type TranscriptSnapshot = {
+	type: 'snapshot';
+	rows: TranscriptRow[];
+	nextBefore: number | null;
 	stale: boolean;
 };
 
-export type TranscriptDetailCursor = { after?: number; before?: number; latest?: boolean };
+export type TranscriptEvent =
+	| TranscriptSnapshot
+	| { type: 'downloading' }
+	| {
+			type: 'batch';
+			updates: Array<
+				| { type: 'row'; row: TranscriptRow }
+				| { type: 'append'; rowId: string; offset: number; text: string }
+			>;
+	  };
 
-export type TranscriptDisplayDetailsRequest = TranscriptScopeRequest &
-	TranscriptDetailCursor & { rowId: TranscriptDisplayRow['id']; limit?: number };
+export type TranscriptRowsRequest = TranscriptScopeRequest & {
+	before: number;
+};
+
+export type TranscriptRowRequest = TranscriptScopeRequest & { rowId: string };
 
 export type FilesystemBrowseEntry = {
 	name: string;
@@ -412,11 +357,15 @@ export type LocalApi = {
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<{ content: string; version: string }>;
-	exportBoard3d: (input: WorkspaceFileTarget, signal?: AbortSignal) => Promise<ArrayBuffer>;
 	kicadScene: (
 		input: WorkspaceFileTarget,
 		signal?: AbortSignal
 	) => Promise<{ scene: ReadableStream<Uint8Array<ArrayBuffer>>; version: string }>;
+	/** KiCad's GLB of the board's component models, or `null` when no footprint has a model. */
+	kicadModels: (
+		input: WorkspaceFileTarget,
+		signal?: AbortSignal
+	) => Promise<ReadableStream<Uint8Array<ArrayBuffer>> | null>;
 	writeWorkspaceFile: (
 		input: WorkspaceFileTarget & { content: string; expectedVersion: string | null }
 	) => Promise<WorkspaceFileWriteResult>;
@@ -435,23 +384,26 @@ export type LocalApi = {
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	removeProject: (input: { workspacePath: string }) => Promise<void>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	fetchTranscriptDisplay: (
-		request: TranscriptDisplayRequest,
+	fetchTranscriptRows: (
+		request: TranscriptRowsRequest,
 		signal?: AbortSignal
-	) => Promise<TranscriptDisplayPage>;
-	fetchTranscriptDisplayDetails: (
-		request: TranscriptDisplayDetailsRequest,
+	) => Promise<TranscriptSnapshot>;
+	fetchTranscriptRow: (
+		request: TranscriptRowRequest,
 		signal?: AbortSignal
-	) => Promise<TranscriptDisplayDetails>;
+	) => Promise<{ row: TranscriptRow }>;
 	watchTranscript: (
-		request: TranscriptScopeRequest,
-		handlers: WatchHandlers<TranscriptWatchEvent>
+		request: TranscriptScopeRequest & { before?: number },
+		handlers: WatchHandlers<TranscriptEvent>
 	) => Promise<void>;
-	watchLiveCompletion: (
-		request: TranscriptScopeRequest,
-		handlers: WatchHandlers<LiveCompletionWatchEvent>
+	watchTranscriptWork: (
+		request: TranscriptRowRequest,
+		handlers: WatchHandlers<TranscriptEvent>
 	) => Promise<void>;
-	clearTranscriptReplica: (request: TranscriptScopeRequest) => Promise<void>;
+	watchTranscriptItem: (
+		request: TranscriptRowRequest,
+		handlers: WatchHandlers<TranscriptEvent>
+	) => Promise<void>;
 	fetchTranscriptAttachment: (
 		request: TranscriptScopeRequest & { storageId: Id<'_storage'> }
 	) => Promise<Blob | null>;

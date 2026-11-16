@@ -11,7 +11,6 @@ use rig::{DynModel, Model};
 use crate::now_ms;
 use crate::openai::{StatelessResponses, transport_auth_config};
 use crate::request_compression::zstd_compress;
-use crate::stream_recovery::provider_error_code;
 use crate::types::ChatGptCredentials;
 
 const CONNECTION_CHANGED: &str =
@@ -28,44 +27,19 @@ const WORKSPACE_USAGE_LIMIT_CODE: &str =
     "subscription_sharing_workplace_individual_usage_limit_exceeded";
 
 #[derive(Debug, thiserror::Error)]
-enum UsageLimit {
-    #[error(
-        "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider."
-    )]
-    Subscription {
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error(
-        "Your ChatGPT workspace's usage limit has been reached. Ask your workspace admin to raise it, or switch to another provider."
-    )]
-    Workspace {
-        #[source]
-        source: anyhow::Error,
-    },
-}
-
-#[derive(Debug, thiserror::Error)]
 #[error("ChatGPT is not connected. Connect in Settings.")]
 pub(crate) struct ChatGptNotConnected;
 
-pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    let code = error.chain().find_map(|cause| {
-        provider_error_code(cause)
-            .as_deref()
-            .and_then(usage_limit_code)
-    });
+pub(crate) fn usage_limit_message(code: &str) -> Option<&'static str> {
     match code {
-        Some(SUBSCRIPTION_USAGE_LIMIT_CODE) => UsageLimit::Subscription { source: error }.into(),
-        Some(WORKSPACE_USAGE_LIMIT_CODE) => UsageLimit::Workspace { source: error }.into(),
-        _ => error,
+        SUBSCRIPTION_USAGE_LIMIT_CODE => Some(
+            "Your ChatGPT subscription's usage limit for connected apps has been reached. Review your limits at https://chatgpt.com/settings/usage, or switch to another provider.",
+        ),
+        WORKSPACE_USAGE_LIMIT_CODE => Some(
+            "Your ChatGPT workspace's usage limit has been reached. Ask your workspace admin to raise it, or switch to another provider.",
+        ),
+        _ => None,
     }
-}
-
-fn usage_limit_code(code: &str) -> Option<&'static str> {
-    [SUBSCRIPTION_USAGE_LIMIT_CODE, WORKSPACE_USAGE_LIMIT_CODE]
-        .into_iter()
-        .find(|known| *known == code)
 }
 
 const UNSUPPORTED_FIELDS: &[&str] = &[
@@ -369,7 +343,10 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
     let mut usage_limit = None;
     match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
         Ok(Ok(body)) => {
-            usage_limit = body["error"]["code"].as_str().and_then(usage_limit_code);
+            usage_limit = body["error"]["code"]
+                .as_str()
+                .filter(|code| usage_limit_message(code).is_some())
+                .map(str::to_string);
             let recognized = [
                 ("error.message", body["error"]["message"].as_str()),
                 ("error.code", body["error"]["code"].as_str()),

@@ -4,6 +4,7 @@ import { vPollQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
+import { toolSourceKey } from '@convex/lib/transcriptParts';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -113,6 +114,97 @@ const commandResult = {
 };
 
 describe('executor', () => {
+	it.each(['complete', 'fail'] as const)(
+		'returns the persisted part from %s and settled retries',
+		async (kind) => {
+			const t = initConvexTest();
+
+			const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+				executionSecret: `executor-parts-${kind}`
+			});
+
+			const jobArgs = { runId, jobId, executionSecret };
+			const auth = { ...jobArgs, claimId };
+
+			const finish = (returnParts: boolean) =>
+				kind === 'complete'
+					? asUser.mutation(api.executor.complete, { ...auth, result: commandResult, returnParts })
+					: asUser.mutation(api.executor.fail, { ...auth, error: 'boom', returnParts });
+
+			await expect(asUser.query(api.executor.getJob, jobArgs)).resolves.toEqual({
+				jobId,
+				status: 'claimed',
+				part: null
+			});
+
+			const response = await finish(true);
+
+			const parts = await t.run(async (ctx) => {
+				const job = await ctx.db.get('executorJobs', jobId);
+
+				if (!job) throw new Error('Executor job not found.');
+
+				return ctx.db
+					.query('threadTranscriptParts')
+					.withIndex('by_threadId_and_sourceKey', (query) =>
+						query
+							.eq('threadId', job.threadId)
+							.eq('sourceKey', toolSourceKey(job.toolInvocationId, 'finished'))
+					)
+					.collect();
+			});
+
+			expect(parts).toHaveLength(1);
+			expect(response).toEqual({ accepted: true, parts });
+			await expect(asUser.query(api.executor.getJob, jobArgs)).resolves.toEqual({
+				jobId,
+				status: kind === 'complete' ? 'completed' : 'failed',
+				...(kind === 'complete' ? { result: commandResult } : { error: 'boom' }),
+				part: parts[0]
+			});
+
+			await t.run(async (ctx) => {
+				await ctx.db.patch('runs', runId, { status: 'completed' });
+				await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
+			});
+
+			await expect(finish(true)).resolves.toEqual(response);
+			await expect(finish(false)).resolves.toBe(true);
+
+			const rejectedRetry =
+				kind === 'complete'
+					? asUser.mutation(api.executor.fail, { ...auth, error: 'late', returnParts: true })
+					: asUser.mutation(api.executor.complete, {
+							...auth,
+							result: commandResult,
+							returnParts: true
+						});
+
+			await expect(rejectedRetry).resolves.toEqual({ accepted: false, parts });
+		}
+	);
+
+	it.each(['complete', 'fail'] as const)(
+		'returns no parts when %s is rejected before settlement',
+		async (kind) => {
+			const t = initConvexTest();
+
+			const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+				executionSecret: `executor-rejected-parts-${kind}`,
+				claimExpiresAt: Date.now() - 1
+			});
+
+			const auth = { runId, jobId, claimId, executionSecret, returnParts: true };
+
+			const response =
+				kind === 'complete'
+					? await asUser.mutation(api.executor.complete, { ...auth, result: commandResult })
+					: await asUser.mutation(api.executor.fail, { ...auth, error: 'late' });
+
+			expect(response).toEqual({ accepted: false, parts: [] });
+		}
+	);
+
 	it('persists wiring feedback from a completed patch', async () => {
 		const t = initConvexTest();
 		const auth = await seedRunWithJob(t, { executionSecret: 'wiring-check' });

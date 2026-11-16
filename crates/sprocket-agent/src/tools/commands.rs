@@ -29,13 +29,17 @@ struct RecordedRead {
 impl CommandCursors {
     pub(crate) fn from_parts(parts: &[TranscriptPart]) -> Self {
         let cursors = Self::default();
+        let calls = crate::history::ToolCallIndex::new(parts);
         for part in parts {
             let Some(tool) = &part.tool else { continue };
+            let Some((name, input)) = calls.tool_details(part) else {
+                continue;
+            };
             if tool.status == "completed"
-                && matches!(tool.name.as_str(), "exec_cmd" | "poll_cmd" | "control_cmd")
+                && matches!(name, "exec_cmd" | "poll_cmd" | "control_cmd")
                 && let Some(output) = &tool.output
             {
-                cursors.record_output(output, tool.input.as_ref());
+                cursors.record_output(output, input);
             }
         }
         cursors

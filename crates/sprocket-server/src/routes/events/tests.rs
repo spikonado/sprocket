@@ -55,10 +55,10 @@ async fn subscriptions_require_the_session_user() {
     let Ok(mut transcript_events) = open(&state, &headers, transcript("user")).await else {
         panic!("the session user can watch their transcript");
     };
-    assert_eq!(
-        transcript_events.next().await,
-        Some(serde_json::json!({ "eventType": "updated" }))
-    );
+    let snapshot = transcript_events.next().await.unwrap();
+    assert_eq!(snapshot["type"], "snapshot");
+    assert_eq!(snapshot["rows"], serde_json::json!([]));
+    assert_eq!(snapshot["nextBefore"], serde_json::Value::Null);
 
     let browser_status =
         serde_json::from_value::<Topic>(serde_json::json!({ "kind": "browserStatus" })).unwrap();
@@ -84,7 +84,7 @@ async fn subscriptions_require_the_session_user() {
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 }
 
-async fn next_message<S>(socket: &mut S) -> serde_json::Value
+async fn next_messages<S>(socket: &mut S) -> Vec<serde_json::Value>
 where
     S: futures::Stream<Item = Result<ClientFrame, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
@@ -95,7 +95,9 @@ where
             .unwrap()
             .unwrap();
         if let ClientFrame::Text(text) = frame {
-            return serde_json::from_str(text.as_str()).unwrap();
+            let message: serde_json::Value = serde_json::from_str(text.as_str()).unwrap();
+            assert_eq!(message["type"], "batch");
+            return message["messages"].as_array().unwrap().clone();
         }
     }
 }
@@ -149,11 +151,12 @@ async fn serves_subscriptions_over_a_same_origin_socket_until_the_session_ends()
     }
     let mut snapshots = HashMap::new();
     while snapshots.len() < 2 {
-        let message = next_message(&mut socket).await;
-        assert_eq!(message["type"], "event");
-        snapshots
-            .entry(message["id"].as_u64().unwrap())
-            .or_insert(message["data"].clone());
+        for message in next_messages(&mut socket).await {
+            assert_eq!(message["type"], "event");
+            snapshots
+                .entry(message["id"].as_u64().unwrap())
+                .or_insert(message["data"].clone());
+        }
     }
     assert_eq!(snapshots[&1]["status"], "unavailable");
     assert_eq!(
@@ -172,8 +175,11 @@ async fn serves_subscriptions_over_a_same_origin_socket_until_the_session_ends()
     tokio::time::sleep(Duration::from_millis(200)).await;
     auth.end_session(&token).await.unwrap();
     let revoked = loop {
-        let message = next_message(&mut socket).await;
-        if message["type"] != "event" {
+        if let Some(message) = next_messages(&mut socket)
+            .await
+            .into_iter()
+            .find(|message| message["type"] != "event")
+        {
             break message;
         }
     };

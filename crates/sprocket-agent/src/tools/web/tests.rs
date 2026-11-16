@@ -103,9 +103,7 @@ async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
 
 async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache: &Path) {
     use super::super::image_urls::ImageUrlMap;
-    use crate::types::{
-        AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-    };
+    use crate::types::AgentHistoryToolResultItem;
     use rig::message::{ImageMediaType, ToolResultContent};
 
     let path = Path::new(metadata["path"].as_str().unwrap());
@@ -138,29 +136,27 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
         ] if text == &saved_path && image_json == &serde_json::to_string(&by_url).unwrap()
     ));
 
-    let part = serde_json::from_value(json!({
-        "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
-        "tool": {"toolInvocationId": "inv-1", "callId": "call", "name": name, "status": "completed", "output": metadata}
-    }))
-    .unwrap();
-    let mut history = vec![AgentHistoryMessage {
-        role: AgentHistoryRole::User,
-        origin: None,
-        contents: vec![AgentHistoryContent::ToolResult {
-            id: "call".into(),
-            call_id: Some("call".into()),
-            items: vec![AgentHistoryToolResultItem::Text {
-                text: metadata.to_string(),
-            }],
-        }],
-    }];
-    super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), true, None).await;
+    let parts: [sprocket_transcript::TranscriptPart; 2] = [
+        serde_json::from_value(json!({
+            "number": 0, "sourceKey": "completion:run", "kind": "completion", "runId": "run",
+            "completion": {"items": [{"type": "tool-call", "toolInvocationId": "inv-1", "callId": "call", "name": name, "input": {}}]}
+        })).unwrap(),
+        serde_json::from_value(json!({
+            "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
+            "tool": {"toolInvocationId": "inv-1", "status": "completed", "output": metadata}
+        })).unwrap(),
+    ];
+    let mut history = crate::history::agent_history_from_parts(
+        &sprocket_transcript::TranscriptState::default(),
+        &parts,
+        None,
+    );
+    super::super::hydrate_tool_history(&mut history, &parts, true, None).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("could not be sent to the model"));
     assert!(!serialized.contains("imageJson"));
 
-    super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), false, None)
-        .await;
+    super::super::hydrate_tool_history(&mut history, &parts, false, None).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("Image omitted"));
     assert!(!serialized.contains("imageJson"));
@@ -168,7 +164,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     tokio::fs::remove_file(metadata["path"].as_str().unwrap())
         .await
         .unwrap();
-    super::super::hydrate_tool_history(&mut history, &[part], true, None).await;
+    super::super::hydrate_tool_history(&mut history, &parts, true, None).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("not available in the local cache"));
     assert!(!serialized.contains("imageJson"));

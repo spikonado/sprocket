@@ -14,7 +14,7 @@ import type { LocalApi, WorkspaceFileContent, WorkspaceFileTarget } from '$lib/t
 
 export type FileEditorApi = Pick<
 	LocalApi,
-	'watchWorkspaceFile' | 'writeWorkspaceFile' | 'readWorkspaceText' | 'exportBoard3d' | 'kicadScene'
+	'watchWorkspaceFile' | 'writeWorkspaceFile' | 'readWorkspaceText' | 'kicadModels' | 'kicadScene'
 >;
 
 type Props = {
