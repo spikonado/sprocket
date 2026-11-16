@@ -61,9 +61,11 @@ fn is_transient_server_failure(error: &PromptError) -> bool {
     };
     match response.status.filter(|status| !status.is_success()) {
         Some(status) => status.is_server_error(),
-        None => response
-            .machine_code()
-            .is_some_and(|code| SERVER_FAILURE_CODES.contains(&code.as_str())),
+        None => match response.machine_code() {
+            Some(code) => SERVER_FAILURE_CODES.contains(&code.as_str()),
+            None => serde_json::from_str::<serde_json::Value>(&response.body)
+                .is_ok_and(|event| event["type"] == "error" && event["message"] == "{}"),
+        },
     }
 }
 
