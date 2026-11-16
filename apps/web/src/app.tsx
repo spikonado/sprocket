@@ -2629,8 +2629,8 @@ export default function App({
 												emptyStateMessage={
 													transcript.threadId !== currentThreadId ||
 													transcript.history === 'loading' ||
-													(currentLifecycle != null &&
-														isLifecycleInProgress(currentLifecycle.phase))
+													currentLifecycle == null ||
+													isLifecycleInProgress(currentLifecycle.phase)
 														? ''
 														: transcript.history === 'downloading'
 															? 'Loading conversation history...'
