@@ -55,30 +55,3 @@ async fn last_close_cancels_the_watch_task() {
     assert_eq!(live.load(Ordering::SeqCst), 0);
     let _ = tokio::fs::remove_dir_all(dir).await;
 }
-
-#[tokio::test]
-async fn closing_an_aborted_session_does_not_cancel_its_replacement() {
-    let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
-    let watchers = TranscriptWatchers::with_starter(
-        "https://example.convex.cloud".into(),
-        TranscriptStore::new(dir.clone()),
-        native_auth(),
-        Arc::new(|_start| tokio::spawn(std::future::pending())),
-    );
-    let old = watchers.open("user", "thread").await;
-    watchers.abort_thread("user", "thread").await;
-    let mut replacement = watchers.open("user", "thread").await;
-    drop(old);
-    assert_eq!(watchers.active_count(), 1);
-    watchers.registry.send_to(
-        &WatchKey {
-            user_id: "user".into(),
-            thread_id: "thread".into(),
-        },
-        TranscriptWatchEvent::UPDATED,
-    );
-    assert!(replacement.receiver().recv().await.is_ok());
-    drop(replacement);
-    assert_eq!(watchers.active_count(), 0);
-    let _ = tokio::fs::remove_dir_all(dir).await;
-}

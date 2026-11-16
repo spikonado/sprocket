@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { resetLocalSockets, type LocalServerMessage } from './socket';
+import { resetLocalSockets, type LocalSubscriptionMessage } from './socket';
 
 export class FakeWebSocket {
 	static readonly CONNECTING = 0;
@@ -26,8 +26,8 @@ export class FakeWebSocket {
 		this.onopen?.();
 	}
 
-	receive(message: LocalServerMessage) {
-		this.onmessage?.({ data: JSON.stringify(message) });
+	receive(...messages: LocalSubscriptionMessage[]) {
+		this.onmessage?.({ data: JSON.stringify({ type: 'batch', messages }) });
 	}
 
 	close() {

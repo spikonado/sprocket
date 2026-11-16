@@ -7,9 +7,11 @@ mod live;
 pub mod monitor;
 mod read_index;
 mod replica;
+pub mod rows;
 pub mod sections;
 mod store;
 mod sync;
+pub mod tool_display;
 mod types;
 #[cfg(test)]
 mod work_tests;

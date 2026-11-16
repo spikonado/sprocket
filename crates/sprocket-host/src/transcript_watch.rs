@@ -78,13 +78,6 @@ impl TranscriptWatchers {
         })
     }
 
-    pub async fn abort_thread(&self, user_id: &str, thread_id: &str) {
-        self.registry.abort(&WatchKey {
-            user_id: user_id.to_string(),
-            thread_id: thread_id.to_string(),
-        });
-    }
-
     pub async fn open(self: &Arc<Self>, user_id: &str, thread_id: &str) -> TranscriptWatchSession {
         let key = WatchKey {
             user_id: user_id.to_string(),

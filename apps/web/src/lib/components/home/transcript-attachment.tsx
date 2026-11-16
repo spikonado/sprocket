@@ -32,7 +32,11 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 	useEffect(() => {
 		const current = ownedUrl;
 
-		return () => revokeAttachmentPreview(current ?? undefined);
+		return () => {
+			revokeAttachmentPreview(current ?? undefined);
+			// A hidden <Activity> runs this cleanup but keeps state, so drop the revoked URL.
+			setOwnedUrl((value) => (value === current ? null : value));
+		};
 	}, [ownedUrl]);
 
 	useEffect(() => {
@@ -76,6 +80,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 	useEffect(() => {
 		return () => {
 			downloadGeneration.current += 1;
+			setDownloadPending(false);
 		};
 	}, []);
 

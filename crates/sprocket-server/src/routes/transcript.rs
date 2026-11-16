@@ -5,28 +5,17 @@ use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use futures::StreamExt;
-use futures::stream::{self, BoxStream, unfold};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sprocket_transcript::rows::{ProjectionScope, TranscriptRow};
 use sprocket_transcript::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
-use tokio::sync::broadcast;
 use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::routes::events::Authorized;
 use crate::routes::session::{AuthorizedJson, UserScoped};
-use sprocket_host::transcript_watch::TranscriptWatchEvent;
-
-const RESYNC: TranscriptWatchEvent = TranscriptWatchEvent::UPDATED;
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptScope {
-    user_id: String,
-    #[serde(deserialize_with = "deserialize_path_safe_id")]
-    thread_id: String,
-}
+use crate::routes::transcript_rows::{
+    self, TranscriptRowScope, TranscriptRowsEvent, TranscriptRowsScope,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -37,19 +26,13 @@ struct TranscriptAttachmentRequest {
     storage_id: String,
 }
 
-impl UserScoped for TranscriptScope {
-    fn user_id(&self) -> &str {
-        &self.user_id
-    }
-}
-
 impl UserScoped for TranscriptAttachmentRequest {
     fn user_id(&self) -> &str {
         &self.user_id
     }
 }
 
-fn deserialize_path_safe_id<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn deserialize_path_safe_id<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<String, D::Error> {
     let id = String::deserialize(deserializer)?;
@@ -65,16 +48,11 @@ fn deserialize_path_safe_id<'de, D: serde::Deserializer<'de>>(
     Ok(id)
 }
 
-fn deserialize_row_id<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn deserialize_row_id<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<String, D::Error> {
     let id = String::deserialize(deserializer)?;
-    if id.is_empty()
-        || id.len() > 512
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
-    {
+    if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) {
         return Err(serde::de::Error::custom("invalid transcript row ID"));
     }
     Ok(id)
@@ -82,9 +60,8 @@ fn deserialize_row_id<'de, D: serde::Deserializer<'de>>(
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/transcript/display", post(display_handler))
-        .route("/transcript/display-details", post(display_details_handler))
-        .route("/transcript/clear", post(clear_handler))
+        .route("/transcript/rows", post(rows_handler))
+        .route("/transcript/row", post(row_handler))
         .route("/transcript/attachment", post(attachment_handler))
         .route(
             "/transcript/upload",
@@ -96,184 +73,42 @@ pub fn routes() -> axum::Router<AppState> {
         )
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DisplayDetailsRequest {
-    user_id: String,
-    #[serde(deserialize_with = "deserialize_path_safe_id")]
-    thread_id: String,
-    #[serde(deserialize_with = "deserialize_row_id")]
-    row_id: String,
-    after: Option<u64>,
-    before: Option<u64>,
-    latest: Option<bool>,
-    limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DisplayStream {
-    #[serde(deserialize_with = "deserialize_path_safe_id")]
-    run_id: String,
-    stream_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DisplayChangeCursor {
-    revision: u64,
-    position: i64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DisplayRequest {
-    user_id: String,
-    #[serde(deserialize_with = "deserialize_path_safe_id")]
-    thread_id: String,
-    before: Option<u64>,
-    limit: Option<u32>,
-    #[serde(default)]
-    streams: Vec<DisplayStream>,
-    changes_after: Option<DisplayChangeCursor>,
-}
-
-impl UserScoped for DisplayDetailsRequest {
-    fn user_id(&self) -> &str {
-        &self.user_id
-    }
-}
-
-impl UserScoped for DisplayRequest {
-    fn user_id(&self) -> &str {
-        &self.user_id
-    }
-}
-
-async fn display_handler(
+async fn rows_handler(
     State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<DisplayRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let limit = payload.limit.unwrap_or(12);
-    if !(1..=40).contains(&limit)
-        || payload.streams.len() > 64
-        || payload
-            .before
-            .is_some_and(|before| before > 9_007_199_254_740_991)
-    {
-        return Err(ApiError::bad_request(anyhow!("invalid display page limit")));
-    }
-    if let Some(cursor) = &payload.changes_after
-        && (cursor.revision > 9_007_199_254_740_991
-            || !(-1..=9_007_199_254_740_991).contains(&cursor.position))
-    {
-        return Err(ApiError::bad_request(anyhow!(
-            "invalid display change cursor"
-        )));
-    }
-    let changes = payload.changes_after.map(|c| (c.revision, c.position));
-    let streams = payload
-        .streams
-        .into_iter()
-        .map(|s| (s.run_id, s.stream_id))
-        .collect::<Vec<_>>();
-    let stale = state
-        .host
-        .transcript
-        .load_state(&payload.user_id, &payload.thread_id)
-        .await
-        .map_err(ApiError::internal)?
-        .stale;
-    state
-        .host
-        .transcript
-        .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
-            replica.page(payload.before, limit, changes, &streams, stale)
-        })
-        .await
-        .map(Json)
-        .map_err(ApiError::internal)
+    AuthorizedJson(payload): AuthorizedJson<TranscriptRowsScope>,
+) -> Result<Json<TranscriptRowsEvent>, ApiError> {
+    let snapshot = transcript_rows::project(
+        &state,
+        &payload.user_id,
+        &payload.thread_id,
+        ProjectionScope::Thread,
+        payload.before,
+    )
+    .await?;
+    Ok(Json(TranscriptRowsEvent::Snapshot { snapshot }))
 }
 
-async fn display_details_handler(
+#[derive(Serialize)]
+struct RowResponse {
+    row: TranscriptRow,
+}
+
+async fn row_handler(
     State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<DisplayDetailsRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let limit = payload.limit.unwrap_or(5);
-    if !(1..=5).contains(&limit)
-        || [payload.after, payload.before]
-            .into_iter()
-            .flatten()
-            .any(|value| value > 9_007_199_254_740_991)
-        || (payload.after.is_some() && payload.before.is_some())
-        || (payload.latest == Some(true) && (payload.after.is_some() || payload.before.is_some()))
-    {
-        return Err(ApiError::bad_request(anyhow!(
-            "invalid display detail page"
-        )));
-    }
-    let stale = state
-        .host
-        .transcript
-        .load_state(&payload.user_id, &payload.thread_id)
-        .await
-        .map_err(ApiError::internal)?
-        .stale;
-    state
-        .host
-        .transcript
-        .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
-            replica.details(
-                &payload.row_id,
-                payload.after,
-                payload.before,
-                payload.latest.unwrap_or(false),
-                limit,
-                stale,
-            )
-        })
-        .await
-        .map(Json)
-        .map_err(ApiError::internal)
-}
-
-pub(crate) async fn watch_events(
-    state: &AppState,
-    scope: Authorized<TranscriptScope>,
-) -> BoxStream<'static, TranscriptWatchEvent> {
-    let payload = scope.into_inner();
-    let session = state
-        .host
-        .transcript_watchers
-        .open(&payload.user_id, &payload.thread_id)
-        .await;
-    stream::once(async { RESYNC })
-        .chain(unfold(session, |mut session| async move {
-            match session.receiver().recv().await {
-                Ok(event) => Some((event, session)),
-                Err(broadcast::error::RecvError::Lagged(_)) => Some((RESYNC, session)),
-                Err(broadcast::error::RecvError::Closed) => None,
-            }
-        }))
-        .boxed()
-}
-
-async fn clear_handler(
-    State(state): State<AppState>,
-    AuthorizedJson(payload): AuthorizedJson<TranscriptScope>,
-) -> Result<StatusCode, ApiError> {
-    state
-        .host
-        .transcript_watchers
-        .abort_thread(&payload.user_id, &payload.thread_id)
-        .await;
-    state
-        .host
-        .transcript
-        .clear_thread(&payload.user_id, &payload.thread_id)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to clear transcript replica", error))?;
-    Ok(StatusCode::NO_CONTENT)
+    AuthorizedJson(payload): AuthorizedJson<TranscriptRowScope>,
+) -> Result<Json<RowResponse>, ApiError> {
+    let snapshot = transcript_rows::project(
+        &state,
+        &payload.user_id,
+        &payload.thread_id,
+        ProjectionScope::Row(payload.row_id),
+        None,
+    )
+    .await?;
+    let row = snapshot.rows.into_iter().next().ok_or_else(|| {
+        ApiError::with_status(StatusCode::NOT_FOUND, anyhow!("transcript row not found"))
+    })?;
+    Ok(Json(RowResponse { row }))
 }
 
 async fn attachment_handler(

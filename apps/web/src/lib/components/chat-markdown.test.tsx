@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { highlightCode } from '$lib/chat/code-highlighting';
 import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
@@ -21,6 +21,30 @@ function renderChatMarkdown(props: {
 }) {
 	render(<ChatMarkdown {...props} />);
 }
+
+it('keeps finished paragraph DOM while the last paragraph streams', () => {
+	const { container, rerender } = render(
+		<StrictMode>
+			<ChatMarkdown content={'**Finished.**\n\nDraft'} />
+		</StrictMode>
+	);
+
+	const finished = container.querySelector('p');
+
+	for (const tail of ['Draft grows', 'Draft grows\n\nNext', 'Draft grows\n\nNext grows']) {
+		rerender(
+			<StrictMode>
+				<ChatMarkdown content={`**Finished.**\n\n${tail}`} />
+			</StrictMode>
+		);
+
+		expect(container.querySelector('p')).toBe(finished);
+		expect(container.querySelector('p')?.innerHTML).toBe('<strong>Finished.</strong>');
+	}
+
+	expect(container.querySelectorAll('p')).toHaveLength(3);
+	expect(container.textContent).toContain('Next grows');
+});
 
 describe('math', () => {
 	it('renders completed formulas as a transcript message streams', () => {
@@ -73,6 +97,7 @@ describe('json-render', () => {
 			<ChatMarkdown content={'```json-render\n' + patches.join('\n')} />
 		);
 
+		await act(() => vi.dynamicImportSettled());
 		expect(await findByText('CI')).not.toBeNull();
 		expect(container.querySelector('table')).toBeNull();
 

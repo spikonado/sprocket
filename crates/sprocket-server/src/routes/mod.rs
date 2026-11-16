@@ -18,6 +18,7 @@ mod run_settings;
 pub(crate) mod session;
 pub mod threads;
 pub mod transcript;
+pub(crate) mod transcript_rows;
 pub mod update;
 pub(crate) mod vercel;
 pub mod workspace;

@@ -1,6 +1,5 @@
 import type { Infer } from 'convex/values';
 import type { vCurrentExecutorJobKind } from '@convex/lib/validators';
-import type { AssistantTimelineWorkBlock } from './assistant-timeline';
 
 type Activity = { verb: string; noun: string; plural?: string };
 
@@ -48,37 +47,6 @@ const LEGACY_TOOL_NAMES = new Map<string, keyof typeof ACTIVITIES>([
 
 function isPoll(name: string): boolean {
 	return name.startsWith('poll_') || name === 'await_question';
-}
-
-export function workToolCounts(
-	blocks: readonly AssistantTimelineWorkBlock[],
-	excludedCallIds: ReadonlySet<string> = new Set()
-) {
-	const counts: Record<string, number> = {};
-	const seen = new Set<string>();
-
-	for (const block of blocks) {
-		if (block.type !== 'tool-group') continue;
-
-		for (const tool of block.tools) {
-			if (seen.has(tool.callId) || excludedCallIds.has(tool.callId)) continue;
-			seen.add(tool.callId);
-			counts[tool.name] = (counts[tool.name] ?? 0) + 1;
-		}
-	}
-
-	return counts;
-}
-
-export function mergeWorkToolCounts(
-	left: Record<string, number> = {},
-	right: Record<string, number> = {}
-) {
-	const counts = { ...left };
-
-	for (const [name, count] of Object.entries(right)) counts[name] = (counts[name] ?? 0) + count;
-
-	return counts;
 }
 
 export function workSummary(counts: Record<string, number>): string | undefined {

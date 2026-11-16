@@ -1,44 +1,67 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
-import type { TranscriptDisplayRow, TranscriptMessage } from '$lib/types/sprocket';
+import { expect, it, onTestFinished, vi } from 'vitest';
+import type {
+	TranscriptEvent,
+	TranscriptRow,
+	TranscriptScopeRequest,
+	TranscriptSnapshot,
+	WatchHandlers
+} from '$lib/types/sprocket';
+import { TranscriptStore } from '$lib/home/transcript-store';
 import ThreadTranscript from './thread-transcript';
 import { fixtureId } from '$lib/convex-test-client';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
 
-it.each(['persisted', 'live-fallback', 'live-section'])(
-	"resolves %s model images against the thread's cwd, falling back to the project",
-	(kind) => {
-		const threadId = fixtureId<'threadRecords'>('image-thread');
-		const runId = fixtureId<'runs'>('image-run');
+function transcript(rows: TranscriptRow[]) {
+	const threadId = fixtureId<'threadRecords'>('image-thread');
+	const snapshot: TranscriptSnapshot = { type: 'snapshot', rows, nextBefore: null, stale: false };
 
+	function watch(_request: TranscriptScopeRequest, { signal }: WatchHandlers<TranscriptEvent>) {
+		return new Promise<void>((resolve) => {
+			if (signal.aborted) resolve();
+			else signal.addEventListener('abort', () => resolve(), { once: true });
+		});
+	}
+
+	const store = new TranscriptStore();
+	store.selectThread(threadId);
+	onTestFinished(
+		store.watch({
+			api: {
+				fetchTranscriptRows: async () => snapshot,
+				fetchTranscriptRow: async ({ rowId }) => {
+					const row = rows.find((row) => row.id === rowId);
+
+					if (!row) throw new Error(`Unknown transcript row: ${rowId}`);
+
+					return { row };
+				},
+				watchTranscript: (_request, handlers) => {
+					handlers.onEvent(snapshot);
+
+					return watch(_request, handlers);
+				},
+				watchTranscriptWork: watch,
+				watchTranscriptItem: watch
+			},
+			userId: 'user',
+			threadId,
+			isCurrent: () => true
+		})
+	);
+
+	return store;
+}
+
+it.each([false, true])(
+	"resolves model images with running=%s against the thread's cwd, falling back to the project",
+	(running) => {
 		const text = '![Model screenshot](shots/a.png)';
 
-		const message: TranscriptMessage =
-			kind === 'persisted'
-				? {
-						id: 'text:1',
-						threadId,
-						runId,
-						kind: 'text',
-						text,
-						sequence: 1,
-						closed: true,
-						revision: 1
-					}
-				: {
-						id: 'live:1',
-						threadId,
-						runId,
-						kind: 'live',
-						text,
-						runStatus: 'completed',
-						parts: kind === 'live-section' ? [{ type: 'text', id: 'image', text }] : []
-					};
+		const store = transcript([{ id: 'text:1', runId: 'run', kind: 'text', text, running }]);
 
 		const props = {
-			currentError: null,
-			runError: null,
-			messages: [message],
+			store,
 			activeRunId: null
 		};
 
@@ -64,7 +87,6 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 
 	const message = {
 		id: 'prompt:1',
-		threadId: fixtureId<'threadRecords'>('thread'),
 		runId: fixtureId<'runs'>('run'),
 		kind: 'prompt',
 		text: 'Check this board',
@@ -75,15 +97,14 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 				mediaType: 'image/png',
 				size: 100
 			}
-		],
-		sequence: 1,
-		closed: true,
-		revision: 1
-	} satisfies TranscriptDisplayRow;
+		]
+	} satisfies TranscriptRow;
+
+	const store = transcript([message]);
 
 	render(
 		<ThreadTranscript
-			messages={[message]}
+			store={store}
 			activeRunId={null}
 			project={null}
 			loadAttachment={loadAttachment}
@@ -94,11 +115,13 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 
 	const closeMenu = vi.fn();
 
-	const stopMenu = listenOpenMenuDismiss({
-		getRoot: () => null,
-		onOutside: vi.fn(),
-		onEscape: closeMenu
-	});
+	onTestFinished(
+		listenOpenMenuDismiss({
+			getRoot: () => null,
+			onOutside: vi.fn(),
+			onEscape: closeMenu
+		})
+	);
 
 	trigger.focus();
 	fireEvent.click(trigger);
@@ -110,5 +133,4 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 	expect(document.activeElement).toBe(trigger);
 	fireEvent.keyDown(document, { key: 'Escape' });
 	expect(closeMenu).toHaveBeenCalledOnce();
-	stopMenu();
 });

@@ -1,189 +1,134 @@
-import { use, useLayoutEffect, useState, type ReactNode } from 'react';
-import type { LucideIcon } from 'lucide-react';
-import { isJsonObject } from '@convex/lib/json';
-import {
-	assistantTimelineToolError,
-	assistantTimelineToolFailureKind,
-	type AssistantTimelineTool
-} from '$lib/chat/assistant-timeline';
-import { jsonObjectString } from '$lib/chat/json-fields';
-import {
-	fileLinkTarget,
-	MarkdownFileLinksContext,
-	type MarkdownFileLinks
-} from '$lib/chat/markdown-file-links';
-import { toolItemLabel, toolItemSummary, toolShellCommand } from '$lib/chat/tool-summaries';
+import { createElement, memo, use, useEffect, useLayoutEffect, useState } from 'react';
+import { fileLinkTarget, MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
 import { toolKindIcon } from '$lib/chat/tool-icons';
-import HighlightedCommand from './highlighted-command';
+import { useTranscriptExpanded, type TranscriptStore } from '$lib/home/transcript-store';
+import { useTranscriptRunRow } from '$lib/home/transcript-run';
+import SaveCardButton from './save-card-button';
 
-type Props = {
-	tools: AssistantTimelineTool[];
-	inProgress: boolean;
-	commands: ReadonlyMap<string, string>;
-};
+type Props = { store: TranscriptStore; rowId: string };
 
 const rowClass =
 	'hover:text-foreground focus-visible:ring-ring/60 flex min-w-0 cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none';
 
-function parsedFileOpener(tool: AssistantTimelineTool, fileLinks: MarkdownFileLinks | null) {
-	if (!fileLinks) return undefined;
-
-	const path = isJsonObject(tool.output) ? jsonObjectString(tool.output.source, 'path') : undefined;
-	const target = path ? fileLinkTarget(path, fileLinks.roots) : null;
-
-	return target ? () => fileLinks.open(target) : undefined;
-}
-
-function ToolRow({
-	Icon,
-	label,
-	item,
-	status,
-	command,
-	onOpen
-}: {
-	Icon: LucideIcon;
-	label: string | undefined;
-	item: string;
-	status: ReactNode;
-	command: string | undefined;
-	onOpen: (() => void) | undefined;
-}) {
-	const [open, setOpen] = useState(false);
-	const [itemElement, setItemElement] = useState<HTMLSpanElement | null>(null);
+const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
+	const [expanded, setExpanded] = useTranscriptExpanded(store, rowId);
+	const preview = useTranscriptRunRow(store, rowId);
+	const needsDetails = expanded && preview?.kind === 'tool' && preview.hasMore;
+	const row = useTranscriptRunRow(store, rowId, needsDetails);
+	const fileLinks = use(MarkdownFileLinksContext);
+	const [summaryElement, setSummaryElement] = useState<HTMLSpanElement | null>(null);
 	const [truncated, setTruncated] = useState(false);
-	const highlightedCommand = command && item.startsWith(command) ? command : undefined;
-	const expandable = open || highlightedCommand || truncated || item.includes('\n');
+	const summary = row?.kind === 'tool' ? row.summary : '';
+
+	useEffect(() => {
+		if (needsDetails) return store.openItem(rowId);
+	}, [needsDetails, store, rowId]);
 
 	useLayoutEffect(() => {
-		if (!itemElement) return;
-		const measure = () => setTruncated(itemElement.scrollWidth > itemElement.clientWidth);
+		if (!summaryElement) return;
+		const measure = () => setTruncated(summaryElement.scrollWidth > summaryElement.clientWidth);
 		measure();
 
 		if (!globalThis.ResizeObserver) return;
 		const observer = new ResizeObserver(measure);
-		observer.observe(itemElement);
+		observer.observe(summaryElement);
 
 		return () => observer.disconnect();
-	}, [itemElement, item]);
+	}, [summaryElement, summary]);
 
-	const row = (
+	if (row?.kind !== 'tool') return null;
+
+	const expandable = expanded || row.hasMore || truncated || summary.includes('\n');
+
+	const statusClass =
+		row.status === 'failed'
+			? 'text-destructive'
+			: row.status === 'cancelled' || row.status === 'interrupted'
+				? 'text-amber-800 dark:text-amber-200'
+				: '';
+
+	const fileTarget =
+		row.action?.kind === 'openFile' && fileLinks
+			? fileLinkTarget(row.action.path, fileLinks.roots)
+			: null;
+
+	const content = (
 		<>
-			<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
-			{label ? (
+			{createElement(toolKindIcon(row.name), {
+				className: 'mt-1 size-3.5 shrink-0',
+				'aria-hidden': true
+			})}
+			{row.label ? (
 				<span className="shrink-0">
-					{label}
-					{item ? ':' : ''}
+					{row.label}
+					{summary ? ':' : ''}
 				</span>
 			) : null}
-			{item ? (
-				<span ref={setItemElement} className="min-w-0 truncate">
-					{item}
+			<span ref={setSummaryElement} className="min-w-0 truncate">
+				{summary}
+			</span>
+			{statusClass ? (
+				<span className={`shrink-0 ${statusClass}`}>
+					({row.status === 'cancelled' ? 'stopped' : row.status})
 				</span>
 			) : null}
-			{status}
 		</>
 	);
 
-	if (onOpen) {
-		return (
-			<button
-				type="button"
-				data-tool-row
-				data-work-detail
-				title={item}
-				className={`${rowClass} max-w-full`}
-				onClick={onOpen}
-			>
-				{row}
-			</button>
-		);
-	}
-
-	if (!expandable) {
-		return (
-			<div data-tool-row data-work-detail className="flex min-w-0 items-start gap-1.5">
-				{row}
-			</div>
-		);
-	}
-
 	return (
-		<details className="group min-w-0" onToggle={(event) => setOpen(event.currentTarget.open)}>
-			<summary
-				data-tool-row
-				data-work-detail
-				className={`${rowClass} group-open:text-foreground list-none [&::-webkit-details-marker]:hidden`}
-			>
-				{row}
-			</summary>
-			<p className="bg-muted/50 text-foreground mt-1 ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap">
-				{open && highlightedCommand ? (
-					<>
-						<HighlightedCommand command={highlightedCommand} />
-						{item.slice(highlightedCommand.length)}
-					</>
-				) : (
-					item
-				)}
-			</p>
-		</details>
-	);
-}
-
-export default function WorkTools({ tools, inProgress, commands }: Props) {
-	const fileLinks = use(MarkdownFileLinksContext);
-
-	return (
-		<div className="text-muted-foreground space-y-1.5 text-[13px] leading-6">
-			{tools.map((tool) => {
-				const kind = tool.name;
-				const Icon = toolKindIcon(kind);
-				const summary = toolItemSummary(tool, commands);
-				const summaries = kind === 'apply_patch' ? summary.split('\n') : [summary];
-				const label = toolItemLabel(kind);
-				const command = toolShellCommand(tool, commands);
-				const error = assistantTimelineToolError(tool, inProgress);
-				const failure = assistantTimelineToolFailureKind(tool, inProgress);
-				const onOpen = kind === 'parse_file' ? parsedFileOpener(tool, fileLinks) : undefined;
-
-				const errorClass =
-					failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
-
-				return (
-					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
-						{summaries.map((item, index) => {
-							const status =
-								error && failure && index === summaries.length - 1 ? (
-									<span className={`shrink-0 ${errorClass}`}>
-										({failure === 'cancelled' ? 'stopped' : failure})
-									</span>
-								) : null;
-
-							return (
-								<ToolRow
-									key={index}
-									Icon={Icon}
-									label={label}
-									item={item}
-									status={status}
-									command={command}
-									onOpen={onOpen}
-								/>
-							);
-						})}
-						{error && failure ? (
-							<p
-								data-work-detail
-								className={`pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
-								role="status"
-							>
-								{error}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
+		<div
+			data-tool-kind={row.name}
+			className="text-muted-foreground min-w-0 space-y-1.5 text-[13px] leading-6"
+		>
+			{expandable ? (
+				<button
+					type="button"
+					data-tool-row
+					data-work-detail
+					className={`${rowClass} max-w-full`}
+					aria-expanded={expanded}
+					onClick={() => setExpanded(!expanded)}
+				>
+					{content}
+				</button>
+			) : (
+				<div data-tool-row data-work-detail className="flex min-w-0 items-start gap-1.5">
+					{content}
+				</div>
+			)}
+			{expanded ? (
+				<p
+					data-work-detail
+					className="bg-muted/50 text-foreground ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap"
+				>
+					{summary}
+				</p>
+			) : null}
+			{row.error !== undefined ? (
+				<p
+					data-work-detail
+					className={`pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${statusClass}`}
+					role="status"
+				>
+					{row.error}
+				</p>
+			) : null}
+			{row.action?.kind === 'saveCard' ? (
+				<div data-work-detail className="pl-5">
+					<SaveCardButton />
+				</div>
+			) : fileTarget && fileLinks ? (
+				<button
+					type="button"
+					data-work-detail
+					className={`${rowClass} ml-5 text-xs`}
+					onClick={() => fileLinks.open(fileTarget)}
+				>
+					Open file
+				</button>
+			) : null}
 		</div>
 	);
-}
+});
+
+export default WorkTools;

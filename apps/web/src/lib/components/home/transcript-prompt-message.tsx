@@ -3,9 +3,9 @@ import type { MarkdownImageScope } from '$lib/chat/markdown-images';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import TranscriptAttachment from '$lib/components/home/transcript-attachment';
 import type { ViewerImage } from '$lib/components/image-viewer';
-import type { MessageAttachment, TranscriptDisplayRow } from '$lib/types/sprocket';
+import type { MessageAttachment, TranscriptRow } from '$lib/types/sprocket';
 
-type PromptMessage = Pick<TranscriptDisplayRow, 'id' | 'text' | 'attachments'>;
+type PromptMessage = Extract<TranscriptRow, { kind: 'prompt' }>;
 
 type Props = {
 	message: PromptMessage;
@@ -27,7 +27,7 @@ export default function TranscriptPromptMessage({
 	onCopy,
 	onOpenImage
 }: Props) {
-	const attachments = message.attachments ?? [];
+	const attachments = message.attachments;
 
 	return (
 		<div
