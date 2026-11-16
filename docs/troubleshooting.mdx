@@ -45,6 +45,12 @@ npm install -g usesprocket
 
 If your platform isn't [supported](/install#cli-and-web-app), use the desktop app.
 
+## A model fails with `"message":"{}"`
+
+<Snippet file="unreleased.mdx" />
+
+The provider ended the stream with an error that doesn't name a cause. Sprocket retries it up to three times per run. If it keeps failing, send your message again or switch providers.
+
 ## Still stuck
 
 Email [aarav@spikonado.com](mailto:aarav@spikonado.com) or open an issue on [GitHub](https://github.com/spikonado/sprocket/issues).
