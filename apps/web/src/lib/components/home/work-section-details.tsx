@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect } from 'react';
+import { memo, useEffect } from 'react';
 import {
 	useTranscriptRow,
 	useTranscriptWork,
@@ -14,11 +14,7 @@ type Props = {
 
 export default function WorkSectionDetails({ store, rowId }: Props) {
 	const itemIds = useTranscriptWork(store, rowId);
-	useLayoutEffect(() => {
-		store.setExpanded(rowId, true);
-
-		return store.openWork(rowId);
-	}, [store, rowId]);
+	useEffect(() => store.openWork(rowId), [store, rowId]);
 
 	return (
 		<div className="space-y-2">

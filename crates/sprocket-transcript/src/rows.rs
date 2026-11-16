@@ -165,16 +165,19 @@ struct LiveActivity {
 }
 
 fn reasoning_label(text: &str) -> String {
-    text.lines()
+    const MAX_CHARS: usize = 120;
+    let line = text
+        .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("Thinking")
         .trim()
         .trim_matches('*')
         .trim_start_matches('#')
-        .trim()
-        .chars()
-        .take(120)
-        .collect()
+        .trim();
+    match line.char_indices().nth(MAX_CHARS) {
+        Some((end, _)) => format!("{}…", line[..end].trim_end()),
+        None => line.to_owned(),
+    }
 }
 
 pub struct ToolResults<'a> {
@@ -336,7 +339,6 @@ pub async fn project_rows(
             continue;
         }
         let mut tool_counts = BTreeMap::new();
-        let mut running = false;
         let mut in_window = false;
         for position in &block.items {
             let part = by_number[&position.part];
@@ -346,14 +348,9 @@ pub async fn project_rows(
                 *tool_counts
                     .entry(item["name"].as_str().unwrap_or("tool").to_owned())
                     .or_insert(0) += 1;
-                let result = result_for(part, item);
-                running |= result.is_none();
-                in_window |= result.is_some_and(|(number, _)| window.contains(&number));
+                in_window |=
+                    result_for(part, item).is_some_and(|(number, _)| window.contains(&number));
             }
-            running |=
-                activity
-                    .streaming
-                    .contains(&item_id("reasoning", part, position.item as usize));
         }
         if in_window || matches!(scope, ProjectionScope::Row(target) if *target == id) {
             work_at.insert(
@@ -363,7 +360,8 @@ pub async fn project_rows(
                     run_id: block.run_id,
                     body: TranscriptRowBody::Work {
                         tool_counts,
-                        running,
+                        // Clients settle rows from runs that are no longer active.
+                        running: !block.closed,
                     },
                 },
             );

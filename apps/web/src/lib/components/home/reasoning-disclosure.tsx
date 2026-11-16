@@ -1,5 +1,6 @@
 import { Brain, ChevronRight } from 'lucide-react';
 import { memo, useEffect } from 'react';
+import { workRowClass } from '$lib/components/home/work-tools';
 import {
 	useTranscriptExpanded,
 	useTranscriptRow,
@@ -18,16 +19,17 @@ export default memo(function ReasoningDisclosure({ store, rowId }: Props) {
 	if (row?.kind !== 'reasoning') return null;
 
 	return (
-		<div className="text-muted-foreground text-sm" data-work-detail>
+		<div className="text-muted-foreground min-w-0 text-[13px] leading-6" data-work-detail>
 			<button
 				type="button"
-				className="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1.5 transition"
+				className={`${workRowClass} max-w-full`}
 				onClick={() => setExpanded(!expanded)}
 				aria-expanded={expanded}
 			>
-				<ReasoningLabel label={row.label} />
+				<Brain className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
+				<span className="min-w-0 truncate">{row.label}</span>
 				<ChevronRight
-					className={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+					className={`mt-1 size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
 					aria-hidden="true"
 				/>
 			</button>
@@ -41,11 +43,9 @@ function ReasoningDetails({ store, rowId }: Props) {
 	useEffect(() => store.openItem(rowId), [store, rowId]);
 
 	return (
-		<div className="mt-1.5">
+		<div className="mt-1.5 ml-5">
 			{row?.kind === 'reasoning' && row.text !== undefined ? (
-				<div className="text-muted-foreground text-[13px] leading-6 [overflow-wrap:anywhere] whitespace-pre-wrap">
-					{row.text}
-				</div>
+				<div className="[overflow-wrap:anywhere] whitespace-pre-wrap">{row.text}</div>
 			) : (
 				<p role="status">Loading reasoning...</p>
 			)}

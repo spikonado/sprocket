@@ -209,6 +209,16 @@ it.each([true, false])(
 	}
 );
 
+it('keeps running reasoning-only work closed', () => {
+	const view = transcript([
+		{ id: 'work', runId: 'run', kind: 'work', toolCounts: {}, running: true }
+	]);
+
+	expect(view.getByRole('button', { name: 'Reasoning' }).getAttribute('aria-expanded')).toBe(
+		'false'
+	);
+});
+
 it('uses authoritative lifecycle for unresolved calls running on another machine', () => {
 	const work: TranscriptRow = {
 		id: 'work',
@@ -237,9 +247,12 @@ it('uses authoritative lifecycle for unresolved calls running on another machine
 	view.rerender(<ThreadTranscript {...view.props} activeRunId={undefined} />);
 	expect(view.queryByText('(interrupted)')).toBeNull();
 	view.rerender(<ThreadTranscript {...view.props} activeRunId={null} />);
+	expect(view.getByRole('button').getAttribute('aria-expanded')).toBe('false');
+	fireEvent.click(view.getByRole('button'));
+	act(() => view.works[1].onEvent(snapshot([tool])));
 	expect(view.getByText('(interrupted)')).toBeTruthy();
 	expect(view.getByText('The agent stopped before this tool call finished.')).toBeTruthy();
-	act(() => view.works[0].onEvent(snapshot([{ ...tool, status: 'completed' }])));
+	act(() => view.works[1].onEvent(snapshot([{ ...tool, status: 'completed' }])));
 	expect(view.queryByText('(interrupted)')).toBeNull();
 });
 

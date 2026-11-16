@@ -3,6 +3,15 @@ use sprocket_convex::RunStatus;
 
 use super::*;
 
+#[test]
+fn reasoning_labels_use_the_first_line_and_mark_cuts() {
+    assert_eq!(reasoning_label("\n# Plan\nDetails"), "Plan");
+    assert_eq!(
+        reasoning_label(&format!("{} tail", "a".repeat(119))),
+        format!("{}…", "a".repeat(119))
+    );
+}
+
 #[tokio::test]
 async fn legacy_calls_and_orphan_results_keep_status_and_actions() {
     let call = completion(
@@ -176,6 +185,10 @@ async fn live_and_saved_rows_keep_ids_despite_empty_items_and_live_arrival_order
     );
     let persisted = project(vec![saved], &[live], ProjectionScope::Thread).await;
     assert_eq!(streamed, persisted);
+    assert!(matches!(
+        persisted[0].body,
+        TranscriptRowBody::Work { running: false, .. }
+    ));
     assert_eq!(
         persisted
             .iter()
@@ -342,6 +355,6 @@ async fn work_groups_continue_across_parts_and_result_only_windows_keep_the_work
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].id, "work:run:completion:first:0");
     assert!(
-        matches!(page[0].body, TranscriptRowBody::Work { ref tool_counts, running: false } if tool_counts["exec_cmd"] == 1)
+        matches!(page[0].body, TranscriptRowBody::Work { ref tool_counts, running: true } if tool_counts["exec_cmd"] == 1)
     );
 }

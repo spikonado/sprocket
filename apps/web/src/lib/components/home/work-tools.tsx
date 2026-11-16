@@ -7,7 +7,7 @@ import SaveCardButton from './save-card-button';
 
 type Props = { store: TranscriptStore; rowId: string };
 
-const rowClass =
+export const workRowClass =
 	'hover:text-foreground focus-visible:ring-ring/60 flex min-w-0 cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none';
 
 const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
@@ -85,7 +85,7 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 					type="button"
 					data-tool-row
 					data-work-detail
-					className={`${rowClass} max-w-full`}
+					className={`${workRowClass} max-w-full`}
 					aria-expanded={expanded}
 					onClick={() => setExpanded(!expanded)}
 				>
@@ -121,7 +121,7 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 				<button
 					type="button"
 					data-work-detail
-					className={`${rowClass} ml-5 text-xs`}
+					className={`${workRowClass} ml-5 text-xs`}
 					onClick={() => fileLinks.open(fileTarget)}
 				>
 					Open file

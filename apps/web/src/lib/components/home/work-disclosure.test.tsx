@@ -33,7 +33,7 @@ it('calls onToggle and renders details according to the controlled expanded prop
 	expect(view.queryByText('Work details')).toBeNull();
 });
 
-it('keeps auto-opened work open after completion and respects an explicit close', () => {
+it('folds auto-opened work once it settles and keeps explicit choices', () => {
 	const store = new TranscriptStore();
 	const rowId = 'work:1';
 
@@ -56,10 +56,12 @@ it('keeps auto-opened work open after completion and respects an explicit close'
 	const view = render(<Work running />);
 	expect(view.getByText('Work details')).toBeTruthy();
 	view.rerender(<Work running={false} />);
-	expect(view.getByText('Work details')).toBeTruthy();
+	expect(view.queryByText('Work details')).toBeNull();
 	fireEvent.click(view.getByRole('button', { name: 'Read 2 files' }));
 	view.rerender(<Work running />);
 	view.rerender(<Work running={false} />);
-	expect(view.getByRole('button').getAttribute('aria-expanded')).toBe('false');
+	expect(view.getByText('Work details')).toBeTruthy();
+	fireEvent.click(view.getByRole('button', { name: 'Read 2 files' }));
+	view.rerender(<Work running />);
 	expect(view.queryByText('Work details')).toBeNull();
 });

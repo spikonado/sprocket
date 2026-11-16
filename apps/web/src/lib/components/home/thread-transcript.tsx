@@ -73,11 +73,12 @@ const TranscriptRow = memo(function TranscriptRow({
 	onOpenImage
 }: RowProps) {
 	const row = useTranscriptRunRow(store, rowId);
+	const summary = row?.kind === 'work' ? workSummary(row.toolCounts) : undefined;
 
 	const [expanded, setExpanded] = useTranscriptExpanded(
 		store,
 		rowId,
-		row?.kind === 'work' && row.running
+		row?.kind === 'work' && row.running && summary !== undefined
 	);
 
 	const { copied, markCopied, resetCopied } = useCopyFeedback<string>();
@@ -127,7 +128,7 @@ const TranscriptRow = memo(function TranscriptRow({
 			) : row.kind === 'work' ? (
 				<WorkDisclosure
 					inProgress={row.running}
-					summary={workSummary(row.toolCounts)}
+					summary={summary}
 					expanded={expanded}
 					onToggle={() => setExpanded(!expanded)}
 				>
